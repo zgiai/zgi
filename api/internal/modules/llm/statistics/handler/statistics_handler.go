@@ -36,10 +36,29 @@ func (h *StatisticsHandler) UpdateInvocationContentSettings(c *gin.Context) {
 	}
 	var req dto.UpdateInvocationContentSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 	result, err := h.statisticsService.UpdateInvocationContentSettings(c.Request.Context(), organizationID.(string), &req)
+	if err != nil {
+		handleStatisticsError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *StatisticsHandler) PurgeInvocationContent(c *gin.Context) {
+	organizationID, exists := c.Get("organization_id")
+	if !exists {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	result, err := h.statisticsService.PurgeInvocationContent(c.Request.Context(), organizationID.(string), accountID)
 	if err != nil {
 		handleStatisticsError(c, err)
 		return
@@ -61,7 +80,7 @@ func (h *StatisticsHandler) GetInvocationContent(c *gin.Context) {
 	result, err := h.statisticsService.GetInvocationContent(c.Request.Context(), organizationID.(string), accountID, c.Param("invocation_id"))
 	if err != nil {
 		if errors.Is(err, service.ErrInvocationContentNotFound) {
-			response.FailWithMessage(c, response.ErrNotFound, err.Error())
+			response.Fail(c, response.ErrNotFound)
 			return
 		}
 		handleStatisticsError(c, err)

@@ -17,6 +17,7 @@ import type {
   ModelUsageSummary,
   GetInvocationLogParams,
   InvocationLogData,
+  UpdateInvocationContentSettingsInput,
 } from '@/services/types/statistics';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { normalizeAiCreditValue, normalizeModelUsageData } from '@/utils/ai-credits';
@@ -224,22 +225,36 @@ export function useInvocationLog(params: GetInvocationLogParams, enabled = true)
   return { ...query, data };
 }
 
-export function useInvocationContentSettings(enabled = true) {
+export function useInvocationContentSettings(organizationId: string | undefined, enabled = true) {
   return useQuery({
-    queryKey: STATS_KEYS.invocationContentSettings(),
+    queryKey: STATS_KEYS.invocationContentSettings(organizationId ?? ''),
     queryFn: () => statisticsService.getInvocationContentSettings(),
-    enabled,
+    enabled: enabled && Boolean(organizationId),
     staleTime: 60_000,
     retry: false,
   });
 }
 
-export function useUpdateInvocationContentSettings() {
+export function useUpdateInvocationContentSettings(organizationId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (enabled: boolean) => statisticsService.updateInvocationContentSettings(enabled),
+    mutationFn: (input: UpdateInvocationContentSettingsInput) =>
+      statisticsService.updateInvocationContentSettings(input),
     onSuccess: data => {
-      queryClient.setQueryData(STATS_KEYS.invocationContentSettings(), data);
+      queryClient.setQueryData(STATS_KEYS.invocationContentSettings(organizationId ?? ''), data);
+    },
+  });
+}
+
+export function usePurgeInvocationContent(organizationId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => statisticsService.purgeInvocationContent(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: STATS_KEYS.invocationContentSettings(organizationId ?? ''),
+      });
+      void queryClient.invalidateQueries({ queryKey: STATS_KEYS.all });
     },
   });
 }

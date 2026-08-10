@@ -535,7 +535,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		}
 		s.recordUpstreamProviderError(ctx, nil, billingCtx, lastError)
 		billingCtx.Status = billingContextStatusError
-		billingCtx.ErrorMessage = lastError.Error()
+		setBillingFailure(billingCtx, lastError)
 		billingCtx.PromptTokens = 0
 		billingCtx.CompletionTokens = 0
 		billingCtx.TotalTokens = 0
@@ -582,7 +582,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			if !useSystemProvider {
 				billingCtx.Status = billingContextStatusPartial
 			}
-			billingCtx.ErrorMessage = missingUsageErr.Error()
+			setBillingFailure(billingCtx, missingUsageErr)
 			billingCtx.PromptTokens = 0
 			billingCtx.CompletionTokens = 0
 			billingCtx.TotalTokens = 0

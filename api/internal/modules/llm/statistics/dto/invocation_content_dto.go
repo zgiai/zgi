@@ -3,14 +3,22 @@ package dto
 type InvocationContentSettings struct {
 	// Available is retained as true for compatibility with older web clients
 	// during rolling upgrades. Organization Enabled is the only feature switch.
-	Available     bool `json:"available"`
-	Enabled       bool `json:"enabled"`
-	MaxBytes      int  `json:"max_bytes"`
-	RetentionDays int  `json:"retention_days"`
+	Available         bool  `json:"available"`
+	Enabled           bool  `json:"enabled"`
+	MaxBytes          int   `json:"max_bytes"`
+	RetentionDays     int   `json:"retention_days"`
+	StoredCount       int64 `json:"stored_count"`
+	StoredCountCapped bool  `json:"stored_count_capped"`
 }
 
 type UpdateInvocationContentSettingsRequest struct {
-	Enabled bool `json:"enabled"`
+	Enabled       *bool `json:"enabled"`
+	RetentionDays *int  `json:"retention_days"`
+}
+
+type InvocationContentPurgeResult struct {
+	DeletedCount int64 `json:"deleted_count"`
+	HasMore      bool  `json:"has_more"`
 }
 
 type InvocationContentDetail struct {

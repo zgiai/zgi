@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -51,6 +53,59 @@ func missingTokenUsageError(providerName, modelName string) error {
 	default:
 		return errors.New(missingTokenUsageMessage)
 	}
+}
+
+func stableInvocationErrorCode(err error) string {
+	switch {
+	case errors.Is(err, adapter.ErrTimeout):
+		return llmerrors.AppCodeProviderTimeout.String()
+	case errors.Is(err, adapter.ErrAuthFailed):
+		return llmerrors.AppCodeProviderAuthFailed.String()
+	case errors.Is(err, adapter.ErrRateLimited), errors.Is(err, adapter.ErrQuotaExhausted):
+		return llmerrors.AppCodeProviderRateLimited.String()
+	case errors.Is(err, adapter.ErrInvalidRequest), errors.Is(err, adapter.ErrContentPolicyViolation):
+		return llmerrors.AppCodeRequestInvalid.String()
+	case errors.Is(err, adapter.ErrModelNotFound):
+		return llmerrors.AppCodeModelNotFound.String()
+	case errors.Is(err, adapter.ErrPlatformChannelUnavailable), errors.Is(err, adapter.ErrUpstreamError),
+		errors.Is(err, adapter.ErrProxyError), errors.Is(err, adapter.ErrInsufficientBalance),
+		errors.Is(err, adapter.ErrBillingUnavailable):
+		return llmerrors.AppCodeProviderUnavailable.String()
+	}
+
+	statusCode := 0
+	var adapterErr *adapter.AdapterError
+	if errors.As(err, &adapterErr) {
+		statusCode = adapterErr.StatusCode
+	}
+	var statusErr *adapter.HTTPStatusError
+	if errors.As(err, &statusErr) {
+		statusCode = statusErr.StatusCode
+	}
+	switch {
+	case statusCode == http.StatusBadRequest:
+		return llmerrors.AppCodeRequestInvalid.String()
+	case statusCode == http.StatusNotFound:
+		return llmerrors.AppCodeModelNotFound.String()
+	case statusCode == http.StatusGatewayTimeout:
+		return llmerrors.AppCodeProviderTimeout.String()
+	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
+		return llmerrors.AppCodeProviderAuthFailed.String()
+	case statusCode == http.StatusTooManyRequests:
+		return llmerrors.AppCodeProviderRateLimited.String()
+	case statusCode >= http.StatusInternalServerError:
+		return llmerrors.AppCodeProviderUnavailable.String()
+	default:
+		return llmerrors.AppCodeInvocationFailed.String()
+	}
+}
+
+func setBillingFailure(billingCtx *BillingContext, err error) {
+	if billingCtx == nil || err == nil {
+		return
+	}
+	billingCtx.ErrorCode = stableInvocationErrorCode(err)
+	billingCtx.ErrorMessage = err.Error()
 }
 
 func resolveQuotaSubjectType(appCtx *AppContext) string {
@@ -420,7 +475,7 @@ func (s *llmGatewayServiceImpl) handleProviderError(
 ) error {
 	s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 	billingCtx.Status = "error"
-	billingCtx.ErrorMessage = err.Error()
+	setBillingFailure(billingCtx, err)
 	billingCtx.ResponseTime = responseTime
 	billingCtx.ActualCredits = 0
 	billingCtx.PromptTokens = 0

@@ -18,6 +18,8 @@ type fakeStatisticsService struct {
 	invocationLogErr error
 	invocationLogReq *dto.InvocationLogRequest
 	invocationLogOrg string
+	purgeOrg         string
+	purgeAccount     string
 }
 
 func (f *fakeStatisticsService) GetModelUsage(_ context.Context, _ string, req *dto.ModelUsageRequest) (*dto.ModelUsageResponse, error) {
@@ -37,6 +39,12 @@ func (f *fakeStatisticsService) GetInvocationContentSettings(context.Context, st
 
 func (f *fakeStatisticsService) UpdateInvocationContentSettings(context.Context, string, *dto.UpdateInvocationContentSettingsRequest) (*dto.InvocationContentSettings, error) {
 	return &dto.InvocationContentSettings{}, nil
+}
+
+func (f *fakeStatisticsService) PurgeInvocationContent(_ context.Context, organizationID, accountID string) (*dto.InvocationContentPurgeResult, error) {
+	f.purgeOrg = organizationID
+	f.purgeAccount = accountID
+	return &dto.InvocationContentPurgeResult{DeletedCount: 2}, nil
 }
 
 func (f *fakeStatisticsService) GetInvocationContent(context.Context, string, string, string) (*dto.InvocationContentDetail, error) {
@@ -69,6 +77,23 @@ func TestGetInvocationLog_BindsBusinessFilters(t *testing.T) {
 	req := fakeSvc.invocationLogReq
 	if req.InvocationSource == nil || *req.InvocationSource != "product" || req.AppType == nil || *req.AppType != "workflow" || req.ModelName == nil || *req.ModelName != "gpt-test" || req.Limit != 50 {
 		t.Fatalf("unexpected filters: %#v", req)
+	}
+}
+
+func TestPurgeInvocationContentUsesAuthenticatedTenantAndAdministrator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fakeSvc := &fakeStatisticsService{}
+	h := NewStatisticsHandler(fakeSvc)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("organization_id", "org-1")
+	c.Set("account_id", "account-1")
+	c.Request = httptest.NewRequest(http.MethodDelete, "/console/api/llm/statistics/invocation-content", nil)
+
+	h.PurgeInvocationContent(c)
+
+	if w.Code != http.StatusOK || fakeSvc.purgeOrg != "org-1" || fakeSvc.purgeAccount != "account-1" {
+		t.Fatalf("status=%d org=%q account=%q body=%s", w.Code, fakeSvc.purgeOrg, fakeSvc.purgeAccount, w.Body.String())
 	}
 }
 
