@@ -1,0 +1,394 @@
+package gateway
+
+import (
+	"context"
+	"encoding/json"
+	"regexp"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/zgiai/zgi/api/config"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+const invocationContentRedactionVersion = "v1"
+
+var invocationContentSecretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[a-z0-9._~+/=-]+`),
+	regexp.MustCompile(`\bsk-[a-zA-Z0-9_-]{8,}\b`),
+	regexp.MustCompile(`(?i)\b(?:api[_-]?key|access_token|refresh_token|password|secret)=([^\s&]+)`),
+}
+
+type invocationContentRecord struct {
+	RequestID       string
+	OrganizationID  string
+	InputText       string
+	OutputText      string
+	InputJSON       string
+	OutputJSON      string
+	InputTruncated  bool
+	OutputTruncated bool
+	SettingsProbe   bool
+}
+
+type invocationContentRow struct {
+	RequestID        string    `gorm:"column:request_id;primaryKey"`
+	OrganizationID   string    `gorm:"column:organization_id"`
+	InputText        string    `gorm:"column:input_text"`
+	OutputText       string    `gorm:"column:output_text"`
+	InputJSON        string    `gorm:"column:input_json"`
+	OutputJSON       string    `gorm:"column:output_json"`
+	ContentStatus    string    `gorm:"column:content_status"`
+	InputTruncated   bool      `gorm:"column:input_truncated"`
+	OutputTruncated  bool      `gorm:"column:output_truncated"`
+	RedactionVersion string    `gorm:"column:redaction_version"`
+	ExpiresAt        time.Time `gorm:"column:expires_at"`
+	CreatedAt        time.Time `gorm:"column:created_at"`
+	UpdatedAt        time.Time `gorm:"column:updated_at"`
+}
+
+func (invocationContentRow) TableName() string { return "llm_invocation_contents" }
+
+// invocationContentRecorder is deliberately lossy under pressure. Content is
+// optional audit data; billing and the metadata log must never wait for it.
+type invocationContentRecorder struct {
+	db       *gorm.DB
+	config   config.LLMInvocationContentConfig
+	queue    chan invocationContentRecord
+	done     chan struct{}
+	dropped  atomic.Uint64
+	settings *sync.Map
+}
+
+// All gateway services backed by the same database share organization content
+// settings. The API process creates multiple gateway services for public and
+// internal routes, so per-service caches can otherwise disagree after an admin
+// changes the setting.
+var invocationContentSettingsByDatabase sync.Map
+
+type invocationContentSettingCache struct {
+	enabled       bool
+	retentionDays int
+	expiresAt     time.Time
+}
+
+type invocationContentOrganizationSetting struct {
+	ID            string `gorm:"column:id"`
+	Enabled       bool   `gorm:"column:enabled"`
+	RetentionDays *int   `gorm:"column:retention_days"`
+}
+
+func newInvocationContentRecorder(db *gorm.DB, cfg config.LLMInvocationContentConfig) *invocationContentRecorder {
+	if db == nil {
+		return nil
+	}
+	recorder := &invocationContentRecorder{
+		db: db, config: cfg, queue: make(chan invocationContentRecord, cfg.QueueSize), done: make(chan struct{}),
+		settings: invocationContentSettingsCache(db),
+	}
+	go recorder.run()
+	return recorder
+}
+
+func (r *invocationContentRecorder) RecordChat(billing *BillingContext, input any, output any, inputText, outputText string) {
+	if r == nil || billing == nil || strings.TrimSpace(billing.RequestID) == "" || strings.TrimSpace(billing.OrganizationID) == "" {
+		return
+	}
+	if r.settings != nil {
+		if cached, ok := r.settings.Load(billing.OrganizationID); ok {
+			setting := cached.(invocationContentSettingCache)
+			now := time.Now()
+			if !setting.enabled && now.Before(setting.expiresAt) {
+				return
+			}
+			if !setting.enabled {
+				// Refresh an expired disabled setting without serializing any user
+				// content. CompareAndSwap limits a busy organization to one probe.
+				probePending := setting
+				probePending.expiresAt = now.Add(250 * time.Millisecond)
+				if r.settings.CompareAndSwap(billing.OrganizationID, cached, probePending) {
+					select {
+					case r.queue <- invocationContentRecord{OrganizationID: billing.OrganizationID, SettingsProbe: true}:
+					default:
+						r.dropped.Add(1)
+					}
+				}
+				return
+			}
+		}
+	}
+	// Avoid doing redaction work when backpressure is already visible. The
+	// final non-blocking send below still handles races with other producers.
+	if cap(r.queue) > 0 && len(r.queue) >= cap(r.queue) {
+		r.dropped.Add(1)
+		return
+	}
+	record := r.prepareRecord(billing, input, output, inputText, outputText)
+	select {
+	case r.queue <- record:
+	default:
+		r.dropped.Add(1)
+	}
+}
+
+// prepareRecord creates an immutable, redacted and bounded snapshot before it
+// enters the asynchronous queue. This prevents callers from racing with the
+// worker by reusing request objects and keeps raw secrets out of queue memory.
+func (r *invocationContentRecorder) prepareRecord(billing *BillingContext, input any, output any, inputText, outputText string) invocationContentRecord {
+	inputJSON, inputTruncated := sanitizeInvocationContent(input, r.config.MaxBytes)
+	outputJSON, outputTruncated := sanitizeInvocationContent(output, r.config.MaxBytes)
+	sanitizedInputText, inputTextTruncated := sanitizeInvocationContentText(inputText, r.config.MaxBytes)
+	sanitizedOutputText, outputTextTruncated := sanitizeInvocationContentText(outputText, r.config.MaxBytes)
+	return invocationContentRecord{
+		RequestID: billing.RequestID, OrganizationID: billing.OrganizationID,
+		InputText: sanitizedInputText, OutputText: sanitizedOutputText,
+		InputJSON: inputJSON, OutputJSON: outputJSON,
+		InputTruncated:  inputTruncated || inputTextTruncated,
+		OutputTruncated: outputTruncated || outputTextTruncated,
+	}
+}
+
+func (r *invocationContentRecorder) run() {
+	flushEvery := time.NewTicker(200 * time.Millisecond)
+	dropReportEvery := time.NewTicker(time.Minute)
+	defer flushEvery.Stop()
+	defer dropReportEvery.Stop()
+	batch := make([]invocationContentRecord, 0, r.config.BatchSize)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		r.flush(batch)
+		batch = batch[:0]
+	}
+	for {
+		select {
+		case record := <-r.queue:
+			batch = append(batch, record)
+			if len(batch) >= r.config.BatchSize {
+				flush()
+			}
+		case <-flushEvery.C:
+			flush()
+		case <-dropReportEvery.C:
+			if dropped := r.dropped.Swap(0); dropped > 0 {
+				logger.Warn("llm invocation content dropped", zap.Uint64("count", dropped), zap.String("reason", "queue_full"))
+			}
+		case <-r.done:
+			for {
+				select {
+				case record := <-r.queue:
+					batch = append(batch, record)
+				default:
+					flush()
+					return
+				}
+			}
+		}
+	}
+}
+
+func (r *invocationContentRecorder) flush(records []invocationContentRecord) {
+	organizationIDs := make([]string, 0, len(records))
+	seen := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		if _, ok := seen[record.OrganizationID]; !ok {
+			seen[record.OrganizationID] = struct{}{}
+			organizationIDs = append(organizationIDs, record.OrganizationID)
+		}
+	}
+	var organizationSettings []invocationContentOrganizationSetting
+	if err := r.db.WithContext(context.Background()).Table("organizations").
+		Where("id IN ?", organizationIDs).
+		Select("id", "llm_content_capture_enabled AS enabled", "llm_content_retention_days AS retention_days").
+		Find(&organizationSettings).Error; err != nil {
+		logger.Warn("failed to resolve llm invocation content settings", zap.Error(err))
+		return
+	}
+	settings := make(map[string]invocationContentSettingCache, len(organizationSettings))
+	for _, setting := range organizationSettings {
+		retentionDays := r.config.RetentionDays
+		if setting.RetentionDays != nil && *setting.RetentionDays >= 1 && *setting.RetentionDays <= 30 {
+			retentionDays = *setting.RetentionDays
+		}
+		settings[setting.ID] = invocationContentSettingCache{
+			enabled: setting.Enabled, retentionDays: retentionDays,
+		}
+	}
+	settingExpiresAt := time.Now().Add(5 * time.Second)
+	for _, id := range organizationIDs {
+		setting, found := settings[id]
+		if !found {
+			setting = invocationContentSettingCache{retentionDays: r.config.RetentionDays}
+		}
+		setting.expiresAt = settingExpiresAt
+		settings[id] = setting
+		if r.settings != nil {
+			r.settings.Store(id, setting)
+		}
+	}
+
+	now := time.Now().UTC()
+	rows := make([]invocationContentRow, 0, len(records))
+	for _, record := range records {
+		setting := settings[record.OrganizationID]
+		if !setting.enabled || record.SettingsProbe {
+			continue
+		}
+		rows = append(rows, invocationContentRow{
+			RequestID: record.RequestID, OrganizationID: record.OrganizationID,
+			InputText: record.InputText, OutputText: record.OutputText, InputJSON: record.InputJSON, OutputJSON: record.OutputJSON,
+			ContentStatus: "available", InputTruncated: record.InputTruncated,
+			OutputTruncated: record.OutputTruncated, RedactionVersion: invocationContentRedactionVersion,
+			ExpiresAt: now.AddDate(0, 0, setting.retentionDays), CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	if len(rows) == 0 {
+		return
+	}
+	if err := r.db.WithContext(context.Background()).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "request_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"input_text", "output_text", "input_json", "output_json", "content_status", "input_truncated", "output_truncated", "redaction_version", "expires_at", "updated_at"}),
+	}).Create(&rows).Error; err != nil {
+		logger.Warn("failed to write llm invocation content batch", zap.Error(err), zap.Int("count", len(rows)))
+	}
+}
+
+func invocationContentSettingsCache(db *gorm.DB) *sync.Map {
+	if db == nil {
+		return nil
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return &sync.Map{}
+	}
+	cache, _ := invocationContentSettingsByDatabase.LoadOrStore(sqlDB, &sync.Map{})
+	return cache.(*sync.Map)
+}
+
+// UpdateInvocationContentSettingsCache makes a saved organization setting
+// visible to every gateway service in this API process without adding database
+// or Redis work to the model request path.
+func UpdateInvocationContentSettingsCache(db *gorm.DB, organizationID string, enabled bool, retentionDays int) {
+	organizationID = strings.TrimSpace(organizationID)
+	if organizationID == "" {
+		return
+	}
+	settings := invocationContentSettingsCache(db)
+	if settings == nil {
+		return
+	}
+	settings.Store(organizationID, invocationContentSettingCache{
+		enabled:       enabled,
+		retentionDays: retentionDays,
+		expiresAt:     time.Now().Add(5 * time.Second),
+	})
+}
+
+func sanitizeInvocationContent(value any, maxBytes int) (string, bool) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		data = []byte(`null`)
+	}
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err == nil {
+		decoded = redactInvocationContentValue("", decoded)
+		if sanitized, marshalErr := json.Marshal(decoded); marshalErr == nil {
+			data = sanitized
+		}
+	}
+	return truncateInvocationContent(string(data), maxBytes)
+}
+
+func redactInvocationContentValue(key string, value any) any {
+	if invocationContentSensitiveKey(key) {
+		return "[REDACTED]"
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for nestedKey, nested := range typed {
+			out[nestedKey] = redactInvocationContentValue(nestedKey, nested)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, nested := range typed {
+			out[i] = redactInvocationContentValue("", nested)
+		}
+		return out
+	case string:
+		redacted := redactInvocationContentString(typed)
+		if invocationContentURLKey(key) {
+			if index := strings.IndexAny(redacted, "?#"); index >= 0 {
+				return redacted[:index]
+			}
+		}
+		return redacted
+	default:
+		return typed
+	}
+}
+
+func invocationContentURLKey(key string) bool {
+	normalized := strings.ToLower(strings.NewReplacer("-", "_", ".", "_").Replace(key))
+	return normalized == "url" || strings.HasSuffix(normalized, "_url")
+}
+
+func invocationContentSensitiveKey(key string) bool {
+	normalized := strings.ToLower(strings.NewReplacer("-", "_", ".", "_").Replace(key))
+	for _, sensitive := range []string{"password", "passwd", "secret", "api_key", "apikey", "authorization", "cookie", "credential", "private_key", "access_token", "refresh_token"} {
+		if normalized == sensitive || strings.Contains(normalized, sensitive) {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeInvocationContentText(value string, maxBytes int) (string, bool) {
+	return truncateInvocationContent(redactInvocationContentString(value), maxBytes)
+}
+
+func redactInvocationContentString(value string) string {
+	value = strings.ToValidUTF8(value, "\uFFFD")
+	for _, pattern := range invocationContentSecretPatterns {
+		value = pattern.ReplaceAllString(value, "[REDACTED]")
+	}
+	return value
+}
+
+func truncateInvocationContent(value string, maxBytes int) (string, bool) {
+	if maxBytes <= 0 || len(value) <= maxBytes {
+		return value, false
+	}
+	return strings.ToValidUTF8(value[:maxBytes], "\uFFFD") + "...[truncated]", true
+}
+
+func lastUserMessageText(req *adapter.ChatRequest) string {
+	if req == nil {
+		return ""
+	}
+	for index := len(req.Messages) - 1; index >= 0; index-- {
+		if strings.EqualFold(req.Messages[index].Role, "user") {
+			return messageContentText(req.Messages[index].Content)
+		}
+	}
+	return ""
+}
+
+func invocationChatResponseText(resp *adapter.ChatResponse) string {
+	if resp == nil {
+		return ""
+	}
+	var text strings.Builder
+	for _, choice := range resp.Choices {
+		appendText(&text, messageContentText(choice.Message.Content))
+	}
+	return text.String()
+}

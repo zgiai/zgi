@@ -40,6 +40,7 @@ type Config struct {
 	Encryption             EncryptionConfig
 	Observability          ObservabilityConfig
 	OpenTelemetry          OpenTelemetryConfig
+	LLMInvocationContent   LLMInvocationContentConfig
 	ModelMeta              ModelMetaConfig
 	Neo4j                  Neo4jConfig
 	Sentry                 SentryConfig
@@ -314,6 +315,15 @@ type OpenTelemetryConfig struct {
 	LLMCaptureMaxChars    int               `json:"llm_capture_max_chars"`
 }
 
+// LLMInvocationContentConfig controls the optional business audit copy of LLM
+// inputs and outputs. It is independent from OpenTelemetry/Langfuse tracing.
+type LLMInvocationContentConfig struct {
+	MaxBytes      int `json:"max_bytes"`
+	RetentionDays int `json:"retention_days"`
+	QueueSize     int `json:"queue_size"`
+	BatchSize     int `json:"batch_size"`
+}
+
 type ModelMetaConfig struct {
 	APIURL string `json:"api_url"`
 }
@@ -326,9 +336,10 @@ type Neo4jConfig struct {
 }
 
 type SentryConfig struct {
-	DSN         string `json:"-"`
-	Environment string `json:"environment"`
-	Release     string `json:"release"`
+	DSN             string  `json:"-"`
+	Environment     string  `json:"environment"`
+	Release         string  `json:"release"`
+	TraceSampleRate float64 `json:"trace_sample_rate"`
 }
 
 type CloudBootstrapConfig struct {

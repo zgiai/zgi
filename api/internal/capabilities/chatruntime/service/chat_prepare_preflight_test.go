@@ -102,25 +102,33 @@ func TestApplyModelCapabilitiesRejectsUnknownModelSpec(t *testing.T) {
 	}
 }
 
-func TestApplyModelCapabilitiesRejectsKnownUnsupportedModel(t *testing.T) {
+func TestApplyModelCapabilitiesFallsBackToDirectChatWithoutFunctionCalling(t *testing.T) {
 	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
 		return ModelSpec{SupportsToolCall: false}, true, nil
 	})}
 	parts := &chatRequestParts{Provider: "private", ModelName: "legacy-model", Surface: aiChatSurfaceContextualSidebar}
 
-	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts); err == nil {
-		t.Fatal("applyModelCapabilities() error = nil, want function-calling error")
+	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts); err != nil {
+		t.Fatalf("applyModelCapabilities() error = %v", err)
+	}
+	if err := finalizeExecutionMode(Caller{}, parts); err != nil {
+		t.Fatalf("finalizeExecutionMode() error = %v", err)
+	}
+	if parts.ExecutionMode != executionModeDirectChat || parts.ExecutionRouteReason != executionRouteFunctionCallingUnavailable {
+		t.Fatalf("mode = %q reason = %q, want direct fallback", parts.ExecutionMode, parts.ExecutionRouteReason)
 	}
 }
 
 func TestApplyModelCapabilitiesSelectsWorkChatExecutionMode(t *testing.T) {
 	tests := []struct {
-		name string
-		spec ModelSpec
-		want string
+		name     string
+		spec     ModelSpec
+		skillIDs []string
+		want     string
 	}{
-		{name: "agent", spec: ModelSpec{UseCases: []string{"text-chat", "agent"}, SupportsToolCall: true}, want: executionModeAgentLoop},
-		{name: "legacy tool chat", spec: ModelSpec{UseCases: []string{"text-chat"}, SupportsToolCall: true}, want: executionModeLegacyToolChat},
+		{name: "native tools for agent-capable model", spec: ModelSpec{UseCases: []string{"text-chat", "agent"}, SupportsToolCall: true}, skillIDs: []string{"calculator"}, want: executionModeNativeToolLoop},
+		{name: "native tools for text-chat model", spec: ModelSpec{UseCases: []string{"text-chat"}, SupportsToolCall: true}, skillIDs: []string{"calculator"}, want: executionModeNativeToolLoop},
+		{name: "direct chat without skills", spec: ModelSpec{UseCases: []string{"text-chat"}, SupportsToolCall: true}, want: executionModeDirectChat},
 		{name: "direct chat", spec: ModelSpec{UseCases: []string{"text-chat"}}, want: executionModeDirectChat},
 	}
 	for _, tt := range tests {
@@ -128,9 +136,12 @@ func TestApplyModelCapabilitiesSelectsWorkChatExecutionMode(t *testing.T) {
 			svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
 				return tt.spec, true, nil
 			})}
-			parts := &chatRequestParts{Provider: "private", ModelName: "model", Surface: aiChatSurfaceWorkChat}
+			parts := &chatRequestParts{Provider: "private", ModelName: "model", Surface: aiChatSurfaceWorkChat, SkillIDs: tt.skillIDs}
 			if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts); err != nil {
 				t.Fatalf("applyModelCapabilities() error = %v", err)
+			}
+			if err := finalizeExecutionMode(Caller{}, parts); err != nil {
+				t.Fatalf("finalizeExecutionMode() error = %v", err)
 			}
 			if parts.ExecutionMode != tt.want {
 				t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, tt.want)
@@ -139,7 +150,7 @@ func TestApplyModelCapabilitiesSelectsWorkChatExecutionMode(t *testing.T) {
 	}
 }
 
-func TestApplyModelCapabilitiesKeepsAgentCallerOnAgentLoop(t *testing.T) {
+func TestApplyModelCapabilitiesUsesNativeLoopForNewAgentCaller(t *testing.T) {
 	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
 		return ModelSpec{UseCases: []string{"text-chat"}, SupportsToolCall: true}, true, nil
 	})}
@@ -148,8 +159,11 @@ func TestApplyModelCapabilitiesKeepsAgentCallerOnAgentLoop(t *testing.T) {
 	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, caller, parts); err != nil {
 		t.Fatalf("applyModelCapabilities() error = %v", err)
 	}
-	if parts.ExecutionMode != executionModeAgentLoop {
-		t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeAgentLoop)
+	if err := finalizeExecutionMode(caller, parts); err != nil {
+		t.Fatalf("finalizeExecutionMode() error = %v", err)
+	}
+	if parts.ExecutionMode != executionModeNativeAgentLoop {
+		t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeNativeAgentLoop)
 	}
 }
 

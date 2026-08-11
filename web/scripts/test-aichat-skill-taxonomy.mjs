@@ -105,4 +105,25 @@ assert.equal(catalogIcons.length, 31);
 assert.equal(new Set(catalogIcons).size, 31, 'built-in Skills should use distinct icons');
 assert.equal(isHiddenSystemSkill('web-search'), true, 'retired Web Search metadata must stay hidden');
 
+const skillSettingsSource = fs.readFileSync(
+  path.resolve('src/components/dashboard/organization/aichat-skill-settings-section.tsx'),
+  'utf8'
+);
+assert.match(skillSettingsSource, /usePageContextRegistration\(skillPageContextItems/);
+for (const field of [
+  'manageable_skill_count',
+  'visible_skill_count',
+  'enabled_skill_count',
+  'disabled_skill_count',
+  'invalid_skill_count',
+  'dependency_unavailable_count',
+  'auto_save_status',
+  'selected_skill_name',
+  'selected_skill_status',
+  'selected_skill_dependency_availability',
+]) {
+  assert.match(skillSettingsSource, new RegExp(field));
+}
+assert.doesNotMatch(skillSettingsSource, /instruction_messages|provider_tools|tool_bindings/);
+
 console.log('AIChat Skill taxonomy checks passed.');

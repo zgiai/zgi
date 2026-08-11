@@ -48,6 +48,19 @@ func NewEstimator() *Estimator {
 	return &Estimator{}
 }
 
+// EstimateText estimates one standalone text value with the model's tokenizer
+// when available and the same conservative fallback used for chat requests.
+func (e *Estimator) EstimateText(text string, model string) Result {
+	if e == nil {
+		e = NewEstimator()
+	}
+	tokenizerName := e.tokenizerName(model)
+	return Result{
+		Tokens:    e.estimateText(text, model, tokenizerName),
+		Tokenizer: tokenizerName,
+	}
+}
+
 func (e *Estimator) EstimateMessages(messages []adapter.Message, model string) Result {
 	tokenizerName := e.tokenizerName(model)
 	total := replyPrimerTokens

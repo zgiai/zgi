@@ -5800,13 +5800,16 @@ func TestRunnerRetriesWhenReadyExternalGuideWasNotExecuted(t *testing.T) {
 }
 
 type runnerTestLLMClient struct {
-	appChatResponses      []*adapter.ChatResponse
-	appChatErrors         []error
-	appChatRequests       []*adapter.ChatRequest
-	appChatCalls          int
-	appChatStreams        [][]adapter.StreamResponse
-	appChatStreamRequests []*adapter.ChatRequest
-	appChatStreamCalls    int
+	appChatResponses            []*adapter.ChatResponse
+	appChatErrors               []error
+	appChatRequests             []*adapter.ChatRequest
+	appChatCalls                int
+	appChatDelays               []time.Duration
+	appChatStreams              [][]adapter.StreamResponse
+	appChatStreamOpenDelays     []time.Duration
+	appChatStreamResponseDelays [][]time.Duration
+	appChatStreamRequests       []*adapter.ChatRequest
+	appChatStreamCalls          int
 }
 
 type runnerTestWorkflowRunner struct {
@@ -6983,6 +6986,15 @@ func (f *runnerTestLLMClient) AppChat(ctx context.Context, appCtx *llmclient.App
 	callIndex := f.appChatCalls
 	f.appChatRequests = append(f.appChatRequests, cloneChatRequest(req))
 	f.appChatCalls++
+	if callIndex < len(f.appChatDelays) && f.appChatDelays[callIndex] > 0 {
+		timer := time.NewTimer(f.appChatDelays[callIndex])
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	if callIndex < len(f.appChatErrors) && f.appChatErrors[callIndex] != nil {
 		return nil, f.appChatErrors[callIndex]
 	}
@@ -6993,12 +7005,51 @@ func (f *runnerTestLLMClient) AppChat(ctx context.Context, appCtx *llmclient.App
 }
 
 func (f *runnerTestLLMClient) AppChatStream(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
-	if f.appChatStreamCalls >= len(f.appChatStreams) {
+	callIndex := f.appChatStreamCalls
+	if callIndex >= len(f.appChatStreams) {
 		return nil, errors.New("unexpected AppChatStream call")
 	}
+	if callIndex < len(f.appChatStreamOpenDelays) && f.appChatStreamOpenDelays[callIndex] > 0 {
+		timer := time.NewTimer(f.appChatStreamOpenDelays[callIndex])
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 	f.appChatStreamRequests = append(f.appChatStreamRequests, cloneChatRequest(req))
-	responses := append([]adapter.StreamResponse(nil), f.appChatStreams[f.appChatStreamCalls]...)
+	responses := append([]adapter.StreamResponse(nil), f.appChatStreams[callIndex]...)
+	delays := []time.Duration(nil)
+	if callIndex < len(f.appChatStreamResponseDelays) {
+		delays = append(delays, f.appChatStreamResponseDelays[callIndex]...)
+	}
 	f.appChatStreamCalls++
+	if len(delays) > 0 {
+		stream := make(chan adapter.StreamResponse)
+		go func() {
+			defer close(stream)
+			for index, response := range responses {
+				if index < len(delays) && delays[index] > 0 {
+					timer := time.NewTimer(delays[index])
+					select {
+					case <-ctx.Done():
+						if !timer.Stop() {
+							<-timer.C
+						}
+						return
+					case <-timer.C:
+					}
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case stream <- response:
+				}
+			}
+		}()
+		return stream, nil
+	}
 	stream := make(chan adapter.StreamResponse, len(responses))
 	for _, response := range responses {
 		stream <- response

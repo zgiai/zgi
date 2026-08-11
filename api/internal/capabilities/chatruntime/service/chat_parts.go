@@ -273,6 +273,9 @@ func replacementRootMessage(source *runtimemodel.Message, parts *chatRequestPart
 	message := newStreamingMessage(source.ConversationID, nil, parts)
 	message.ID = source.ID
 	message.Metadata = withOperationPlanTaskID(message.Metadata, source.ID.String())
+	if protocol := strings.TrimSpace(stringMetadataValue(source.Metadata["native_skill_protocol"])); protocol != "" {
+		message.Metadata["native_skill_protocol"] = protocol
+	}
 	message.CreatedAt = source.CreatedAt
 	message.UpdatedAt = time.Now()
 	return message
@@ -329,11 +332,12 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	}
 	if mode := normalizeExecutionMode(parts.ExecutionMode); mode != "" {
 		metadata["execution_mode"] = mode
-		if mode == executionModeAgentLoop {
-			metadata["model_use_case"] = "agent"
-		} else {
-			metadata["model_use_case"] = "text-chat"
+		if useCase := executionModeModelUseCase(mode); useCase != "" {
+			metadata["model_use_case"] = useCase
 		}
+	}
+	if reason := strings.TrimSpace(parts.ExecutionRouteReason); reason != "" {
+		metadata["execution_route_reason"] = reason
 	}
 	if parts.ProtocolToolsEnabled {
 		metadata["protocol_tools_enabled"] = true
@@ -412,6 +416,10 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 
 func normalizeExecutionMode(value string) string {
 	switch strings.TrimSpace(value) {
+	case executionModeNativeAgentLoop:
+		return executionModeNativeAgentLoop
+	case executionModeNativeToolLoop:
+		return executionModeNativeToolLoop
 	case executionModeAgentLoop:
 		return executionModeAgentLoop
 	case executionModeLegacyToolChat:
@@ -428,6 +436,7 @@ func restoreExecutionModeFromMetadata(parts *chatRequestParts, metadata map[stri
 		return
 	}
 	parts.ExecutionMode = normalizeExecutionMode(stringMetadataValue(metadata["execution_mode"]))
+	parts.ExecutionRouteReason = executionRoutePersistedMode
 	if parts.ExecutionMode == "" {
 		// Messages created before execution mode was persisted already entered the
 		// Agent loop. Keep their continuation semantics instead of switching the

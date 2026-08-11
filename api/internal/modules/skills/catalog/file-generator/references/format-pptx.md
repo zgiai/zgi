@@ -23,9 +23,9 @@ This path is for new decks only. It does not edit an existing PPTX template.
 - HTML-to-PPTX conversion.
 - External images or remote assets.
 
-## Presentation JSON
+## Presentation Object
 
-Pass a JSON string as `presentation`.
+Pass the structured object directly as `presentation`; do not stringify it.
 
 Top-level fields:
 
@@ -145,4 +145,4 @@ Shape fields:
 }
 ```
 
-Call `generate_pptx` with the JSON string, a concise filename, and the default persistent lifecycle unless the user asks otherwise.
+Call `generate_pptx` with the structured presentation object, a concise filename, and the default temporary lifecycle unless the user asks otherwise.

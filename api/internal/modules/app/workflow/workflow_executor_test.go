@@ -22,6 +22,16 @@ type mockWorkflowLLMClient struct {
 	appChatStreamFn func(ctx context.Context, appCtx *llmClient.AppContext, req *llmAdapter.ChatRequest) (<-chan llmAdapter.StreamResponse, error)
 }
 
+func TestWorkflowExecutorStatusTreatsExplicitCancellationAsStopped(t *testing.T) {
+	executor := &WorkflowExecutor{}
+	if got := executor.getWorkflowStatus(context.Canceled); got != "stopped" {
+		t.Fatalf("getWorkflowStatus(context.Canceled) = %q, want stopped", got)
+	}
+	if got := executor.getWorkflowStatus(errors.New("provider failed")); got != "failed" {
+		t.Fatalf("getWorkflowStatus(provider error) = %q, want failed", got)
+	}
+}
+
 func normalizeWorkflowTestValue(t *testing.T, value any) any {
 	t.Helper()
 

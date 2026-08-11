@@ -1,6 +1,7 @@
 package filegenerator
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -117,17 +118,21 @@ type pptxTextMeasure struct {
 }
 
 func parsePPTXDocumentSpec(raw string) (*PPTXDocumentSpec, string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, "", fmt.Errorf("presentation is required")
+	return parsePPTXDocumentSpecValue(raw)
+}
+
+func parsePPTXDocumentSpecValue(raw interface{}) (*PPTXDocumentSpec, string, error) {
+	data, err := structuredObjectJSON(raw, "presentation", pptxMaxSpecBytes)
+	if err != nil {
+		return nil, "", err
 	}
-	if len(raw) > pptxMaxSpecBytes {
-		return nil, "", fmt.Errorf("presentation exceeds %d bytes", pptxMaxSpecBytes)
-	}
-	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	var spec PPTXDocumentSpec
 	if err := decoder.Decode(&spec); err != nil {
 		return nil, "", fmt.Errorf("presentation must be valid PPTX JSON: %w", err)
+	}
+	if err := requireJSONDecoderEOF(decoder, "presentation"); err != nil {
+		return nil, "", err
 	}
 	if err := normalizeAndValidatePPTXSpec(&spec); err != nil {
 		return nil, "", err

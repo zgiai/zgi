@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { emitWebAppOffline, isWebAppOfflineError } from '@/utils/webapp/errors';
 import { ErrorNotificationService } from '@/utils/error-notifications';
+import { pinWorkflowRunId, workflowEventData } from '@/utils/workflow/run-identity.js';
 
 export interface UseRunWebAppWorkflowStreamOptions {
   enabled?: boolean;
@@ -182,19 +183,18 @@ export function useRunWebAppWorkflowStream(
       let gracefulStreamBoundary = false;
       let transportRecoveryRequested = false;
       let suppressNextTransportErrorCallback = false;
-      const captureWorkflowRunId = (eventPayload: unknown): void => {
-        const data =
-          eventPayload && typeof eventPayload === 'object' && 'data' in eventPayload
-            ? ((eventPayload as { data?: unknown }).data ?? eventPayload)
-            : eventPayload;
-        if (!data || typeof data !== 'object') return;
-        const record = data as Record<string, unknown>;
-        const candidate = [record.task_id, record.id, record.workflow_run_id].find(
-          value => typeof value === 'string' && value.length > 0
-        );
-        if (typeof candidate !== 'string') return;
-        workflowRunId = candidate;
-        taskIdRef.current = candidate;
+      const captureWorkflowRunId = (
+        eventPayload: unknown,
+        options: { allowLegacyId?: boolean } = {}
+      ): void => {
+        workflowRunId = pinWorkflowRunId(workflowRunId, eventPayload, options);
+        const record = workflowEventData(eventPayload);
+        const taskId = typeof record.task_id === 'string' ? record.task_id.trim() : '';
+        if (taskId) {
+          taskIdRef.current = taskId;
+        } else if (!taskIdRef.current && workflowRunId) {
+          taskIdRef.current = workflowRunId;
+        }
       };
       const requestTransportRecovery = (error: Error): boolean => {
         if (terminalReceived || transportRecoveryRequested) return transportRecoveryRequested;
@@ -212,7 +212,7 @@ export function useRunWebAppWorkflowStream(
       try {
         const merged: WebAppRunSseCallbacks = {
           onWorkflowStarted: p => {
-            captureWorkflowRunId(p);
+            captureWorkflowRunId(p, { allowLegacyId: true });
             callbacks.onWorkflowStarted?.(p);
             perRunCallbacks?.onWorkflowStarted?.(p);
           },
@@ -358,7 +358,9 @@ export function useRunWebAppWorkflowStream(
   const stop = useCallback(async () => {
     const taskId = taskIdRef.current;
     if (!taskId || !agentId) {
-      return;
+      const error = new Error('workflow stop is unavailable');
+      toast.error(t('workflow.stopFailed'));
+      throw error;
     }
     setIsStopping(true);
     try {

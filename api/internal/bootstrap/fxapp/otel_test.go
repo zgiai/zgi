@@ -9,9 +9,60 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zgiai/zgi/api/config"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.uber.org/zap"
 )
+
+func TestProvideOpenTelemetryResourceDisablesRuntimeGateWhenExporterIsUnavailable(t *testing.T) {
+	tests := []struct {
+		name      string
+		reporters []string
+		protocol  string
+		endpoint  string
+	}{
+		{
+			name:      "reporter selection disables otel",
+			reporters: []string{"none"},
+			protocol:  otelHTTPProtobufProtocol,
+			endpoint:  "http://collector:4318",
+		},
+		{
+			name:     "unsupported protocol disables otel",
+			protocol: "grpc",
+			endpoint: "http://collector:4318",
+		},
+		{
+			name:     "invalid endpoint disables otel",
+			protocol: otelHTTPProtobufProtocol,
+			endpoint: "ftp://collector:4318",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Observability: config.ObservabilityConfig{Reporters: test.reporters},
+				OpenTelemetry: config.OpenTelemetryConfig{
+					Enabled:  true,
+					Protocol: test.protocol,
+					Endpoint: test.endpoint,
+				},
+			}
+			resource, err := provideOpenTelemetryResource(cfg, zap.NewNop(), &SentryResource{})
+			if err != nil {
+				t.Fatalf("provideOpenTelemetryResource() error = %v, want nil", err)
+			}
+			if resource.Enabled || resource.TracerProvider != nil {
+				t.Fatalf("resource = %+v, want disabled", resource)
+			}
+			if cfg.OpenTelemetry.Enabled {
+				t.Fatal("effective OpenTelemetry config remained enabled")
+			}
+		})
+	}
+}
 
 func TestBuildOTLPHTTPOptionsAppendsTracePathForBaseEndpoint(t *testing.T) {
 	var gotPath string

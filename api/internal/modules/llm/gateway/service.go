@@ -31,6 +31,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	paymentRepo "github.com/zgiai/zgi/api/internal/modules/payment/repository"
 	paymentservice "github.com/zgiai/zgi/api/internal/modules/payment/service"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -131,6 +132,7 @@ type llmGatewayServiceImpl struct {
 	officialCreditChecker paymentservice.OfficialCreditChecker
 	policyPrompt          llmPolicyPromptInjector
 	upstreamState         *upstreamstate.Service
+	invocationContent     *invocationContentRecorder
 }
 
 func (s *llmGatewayServiceImpl) isModelRoutable(ctx context.Context, organizationID uuid.UUID, modelName string) (bool, error) {
@@ -227,6 +229,7 @@ func NewLLMGatewayServiceWithCrypto(
 		billing = remoteBilling
 		logger.Info("llm gateway remote billing enabled", "grpc_addr", grpcAddr)
 	}
+	startInvocationContentCleanup(db)
 
 	return &llmGatewayServiceImpl{
 		db:                    db,
@@ -243,6 +246,7 @@ func NewLLMGatewayServiceWithCrypto(
 		officialCreditChecker: paymentservice.NewConsoleOfficialCreditChecker(),
 		policyPrompt:          newLLMPolicyPromptInjector(cfg.LLMPolicyPrompt),
 		upstreamState:         upstreamStateService,
+		invocationContent:     newInvocationContentRecorder(db, cfg.LLMInvocationContent),
 	}, nil
 }
 
@@ -316,17 +320,17 @@ func (s *llmGatewayServiceImpl) selectProvidersWithChannelRouter(
 	}
 
 	if len(channelSelections) == 0 {
-		return nil, fmt.Errorf("no channel selections available for model '%s' (tenant: %s)", modelName, organizationID)
+		return nil, NewNoProviderAvailableError(modelName, organizationID.String())
 	}
 
 	selections := make([]*ProviderSelection, 0, len(channelSelections))
-	conversionErrors := make([]string, 0)
+	conversionErrors := make([]error, 0)
 
 	for _, cs := range channelSelections {
 		ps, err := cs.ConvertToProviderSelectionWithCache(ctx, s.db, s.configCache)
 		if err != nil {
 			conversionErrors = append(conversionErrors,
-				fmt.Sprintf("routeID=%s channel_provider=%s model=%s err=%v", cs.RouteID, cs.ChannelProvider, modelName, err))
+				fmt.Errorf("routeID=%s channel_provider=%s model=%s: %w", cs.RouteID, cs.ChannelProvider, modelName, err))
 
 			logger.WarnContext(logCtx, "failed to convert LLM channel selection to provider selection",
 				err,
@@ -344,7 +348,7 @@ func (s *llmGatewayServiceImpl) selectProvidersWithChannelRouter(
 		return selections, nil
 	}
 	if len(conversionErrors) > 0 {
-		return nil, fmt.Errorf("failed to convert channel selections: %v", conversionErrors)
+		return nil, NewProviderSelectionConversionError(conversionErrors...)
 	}
 	if len(channelSelections) > 0 {
 		return nil, fmt.Errorf("%w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
@@ -495,6 +499,9 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 
 		// Check for errors
 		if response.Error != nil {
+			// This channel is owned by the selected provider adapter, so a raw
+			// deadline here is known to be a post-connect provider timeout.
+			response.Error = adapter.NormalizeTransportError(response.Error)
 			lastError = response.Error
 			outputChan <- response
 			break
@@ -515,9 +522,20 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 
 	// Settle billing
 	if lastError != nil {
+		if IsPersistentChannelFailure(lastError) {
+			reportLLMProviderFailure(ctx, lastError, "llm.provider.stream_failed",
+				billingCtx.ProviderName,
+				billingCtx.ModelName,
+				billingCtx.OrganizationID,
+				0,
+				channelID,
+				useSystemProvider,
+				true,
+			)
+		}
 		s.recordUpstreamProviderError(ctx, nil, billingCtx, lastError)
 		billingCtx.Status = billingContextStatusError
-		billingCtx.ErrorMessage = lastError.Error()
+		setBillingFailure(billingCtx, lastError)
 		billingCtx.PromptTokens = 0
 		billingCtx.CompletionTokens = 0
 		billingCtx.TotalTokens = 0
@@ -564,7 +582,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			if !useSystemProvider {
 				billingCtx.Status = billingContextStatusPartial
 			}
-			billingCtx.ErrorMessage = missingUsageErr.Error()
+			setBillingFailure(billingCtx, missingUsageErr)
 			billingCtx.PromptTokens = 0
 			billingCtx.CompletionTokens = 0
 			billingCtx.TotalTokens = 0
@@ -593,6 +611,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 					"error",
 					err,
 				)
+				s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, time.Now(), billingCtx, 0, 0, wrappedErr)
 				outputChan <- adapter.StreamResponse{Error: wrappedErr}
 				return
 			}
@@ -625,7 +644,9 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		if !useSystemProvider {
 			quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), billingCtx.PromptTokens, billingCtx.CompletionTokens)
 			if err != nil {
-				outputChan <- adapter.StreamResponse{Error: fmt.Errorf("failed to calculate credits: %w", err)}
+				wrappedErr := wrapPricingCalculationError(err)
+				s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, time.Now(), billingCtx, totalPromptTokens, totalCompletionTokens, wrappedErr)
+				outputChan <- adapter.StreamResponse{Error: wrappedErr}
 				return
 			}
 
@@ -658,8 +679,11 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			"error",
 			settleErr,
 		)
+		s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, time.Now(), billingCtx, totalPromptTokens, totalCompletionTokens, wrappedErr)
 		if lastError == nil {
 			outputChan <- adapter.StreamResponse{Error: wrappedErr}
+		} else {
+			reportLLMBillingSettlementFailure(ctx, wrappedErr, billingCtx, routeID, useSystemProvider)
 		}
 		return
 	}
@@ -717,7 +741,7 @@ func (s *llmGatewayServiceImpl) ListAvailableModels(
 		if err := s.db.WithContext(ctx).
 			Where("name IN ? AND is_active = ? AND deleted_at IS NULL", modelNames, true).
 			Find(&models).Error; err != nil {
-			return nil, fmt.Errorf("failed to list limited models: %w", err)
+			return nil, database.WrapOperationError("failed to list limited models", err)
 		}
 	} else {
 		// No model limits, get models from tenant's enterprise group shadow tenant
@@ -756,7 +780,7 @@ func (s *llmGatewayServiceImpl) ListAvailableModels(
 			Preload("Model").
 			Where("organization_id = ? AND is_enabled = ? AND deleted_at IS NULL", shadowOrganizationID, true).
 			Find(&modelConfigs).Error; err != nil {
-			return nil, fmt.Errorf("failed to list tenant model configs: %w", err)
+			return nil, database.WrapOperationError("failed to list tenant model configs", err)
 		}
 
 		if len(modelConfigs) == 0 {

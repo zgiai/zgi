@@ -17,6 +17,7 @@ func TestRegisterStatisticsRoutes_CurrentRoutesExist(t *testing.T) {
 
 	paths := []string{
 		"/console/api/llm/statistics/model-usage",
+		"/console/api/llm/statistics/invocations",
 		"/console/api/llm/statistics/workspace-quota",
 	}
 

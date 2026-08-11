@@ -83,6 +83,7 @@ const messages: CommonMessages = {
   iconInput: {
     uploadImage: '上传图片',
     aiGenerate: 'AI生成',
+    avatarLibrary: '头像库',
     textIcon: '文字图标',
     supportedFormats: '支持jpg、png格式,大小不超过2M',
     defaultIcon: 'Z',
@@ -101,6 +102,19 @@ const messages: CommonMessages = {
       selectFile: '选择文件',
       cancel: '取消',
       crop: '裁切',
+    },
+    avatarLibraryDialog: {
+      title: '选择应用头像',
+      description: '挑选一个聪明的海洋伙伴，也可以继续上传自己的图片。',
+      uploadFailed: '头像保存失败，请重试',
+      avatars: {
+        littleZ: '小 Z',
+        dolphin: '小海豚',
+        octopus: '小章鱼',
+        jellyfish: '小水母',
+        whale: '小鲸鱼',
+        mantaRay: '小蝠鲼',
+      },
     },
   },
 

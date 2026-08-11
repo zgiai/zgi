@@ -454,10 +454,14 @@ const (
 	envOTELInstrumentGRPC = "OTEL_INSTRUMENT_GRPC"
 	// envOTELLLMLangfuseAttributes controls Langfuse-specific LLM trace attributes. Default: true.
 	envOTELLLMLangfuseAttributes = "OTEL_LLM_LANGFUSE_ATTRIBUTES"
-	// envOTELLLMCaptureContent controls LLM input/output capture: none, summary, or full. Default: summary.
+	// envOTELLLMCaptureContent controls LLM content/model-parameter capture: none, summary, or full. Default: none.
 	envOTELLLMCaptureContent = "OTEL_LLM_CAPTURE_CONTENT"
 	// envOTELLLMCaptureMaxChars caps serialized LLM input/output attributes. Default: 65536.
-	envOTELLLMCaptureMaxChars = "OTEL_LLM_CAPTURE_MAX_CHARS"
+	envOTELLLMCaptureMaxChars            = "OTEL_LLM_CAPTURE_MAX_CHARS"
+	envLLMInvocationContentMaxBytes      = "LLM_INVOCATION_CONTENT_MAX_BYTES"
+	envLLMInvocationContentRetentionDays = "LLM_INVOCATION_CONTENT_RETENTION_DAYS"
+	envLLMInvocationContentQueueSize     = "LLM_INVOCATION_CONTENT_QUEUE_SIZE"
+	envLLMInvocationContentBatchSize     = "LLM_INVOCATION_CONTENT_BATCH_SIZE"
 	// envLangfuseEnabled switches the OpenTelemetry exporter to Langfuse direct ingest when keys are present.
 	envLangfuseEnabled = "LANGFUSE_ENABLED"
 	// envLangfusePublicKey sets the Langfuse project public key.
@@ -476,6 +480,8 @@ const (
 	envSentryDSN = "SENTRY_DSN"
 	// envSentryEnvironment overrides the Sentry environment label. Default: ENV.
 	envSentryEnvironment = "SENTRY_ENVIRONMENT"
+	// envSentryTracesSampleRate controls backend Sentry performance trace sampling. Default: 0.1.
+	envSentryTracesSampleRate = "SENTRY_TRACES_SAMPLE_RATE"
 
 	// Dependency services.
 	// envModelMetaAPIURL sets the ModelMeta-compatible API base URL. Default: https://models.zgi.ai.

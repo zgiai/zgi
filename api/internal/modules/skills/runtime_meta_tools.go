@@ -45,6 +45,93 @@ func MetaToolsForSkillStateWithOptions(resolved *ResolvedSkills, loadedSkillIDs 
 	return tools
 }
 
+// NativeControlToolsForSkills returns only the lightweight state and reference
+// tools used by the native agent loop. Business tools are projected separately.
+func NativeControlToolsForSkills(resolved *ResolvedSkills, activeSkillIDs []string) []llmadapter.Tool {
+	return NativeControlToolsForSession(resolved, activeSkillIDs, nil, false)
+}
+
+// NativeControlToolsForSession returns state, reference, and progressive
+// discovery controls for one native skill session.
+func NativeControlToolsForSession(resolved *ResolvedSkills, activeSkillIDs []string, exposedCandidateSkillIDs []string, searchAvailable bool) []llmadapter.Tool {
+	active := make(map[string]struct{}, len(activeSkillIDs))
+	for _, skillID := range activeSkillIDs {
+		if normalized := normalizeSkillID(skillID); normalized != "" {
+			active[normalized] = struct{}{}
+		}
+	}
+	result := []llmadapter.Tool{
+		requestUserInputMetaTool(),
+		turnStateMetaTool(),
+		updatePlanMetaTool(),
+	}
+	if len(exposedCandidateSkillIDs) > 0 {
+		result = append(result, activateSkillsMetaTool(exposedCandidateSkillIDs))
+	}
+	if searchAvailable {
+		result = append(result, searchSkillsMetaTool())
+	}
+	if skillIDs, paths := loadedReferenceOptions(resolved, active); len(skillIDs) > 0 && len(paths) > 0 {
+		result = append(result, readReferenceMetaTool(skillIDs, paths))
+	}
+	return result
+}
+
+func activateSkillsMetaTool(skillIDs []string) llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolActivateSkills,
+			Description: "Activate the smallest relevant set of candidate skills before using their instructions or business tools. Do not narrate this internal activation to the user.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"skill_ids": map[string]interface{}{
+						"type":        "array",
+						"description": "One to three candidate skill IDs to activate for the current task.",
+						"items":       stringSchema("A candidate skill ID.", normalizeSkillIDs(skillIDs)),
+						"minItems":    1,
+						"maxItems":    MaxNativeSkillActivationBatch,
+						"uniqueItems": true,
+					},
+				},
+				"required":             []string{"skill_ids"},
+				"additionalProperties": false,
+			},
+		},
+	}
+}
+
+func searchSkillsMetaTool() llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolSearchSkills,
+			Description: "Search omitted candidate skills only when the needed capability is not present in the compact candidate directory. Search does not activate a skill.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "A concise capability description, not the full user request.",
+						"minLength":   2,
+						"maxLength":   300,
+					},
+					"limit": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum candidate count. Defaults to 5 and is capped at 10.",
+						"minimum":     1,
+						"maximum":     MaxNativeSkillSearchLimit,
+						"default":     DefaultNativeSkillSearchLimit,
+					},
+				},
+				"required":             []string{"query"},
+				"additionalProperties": false,
+			},
+		},
+	}
+}
+
 func metaTools(includeToolCaller bool) []llmadapter.Tool {
 	tools := []llmadapter.Tool{
 		loadSkillMetaTool(nil),

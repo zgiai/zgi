@@ -172,6 +172,7 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 		OrganizationID:    attempt.OrganizationID.String(),
 		AttemptID:         attempt.AttemptID,
 		RequestID:         attempt.RequestID,
+		InvocationSource:  normalizeInvocationSource(attempt.InvocationSource),
 		QuotaSubjectType:  attempt.QuotaSubjectType,
 		QuotaSubjectID:    attempt.QuotaSubjectID,
 		EstimatedCredits:  subjectEntry.ReservedAmount,

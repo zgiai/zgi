@@ -54,6 +54,7 @@ type BillingContext struct {
 	WorkspaceID          string
 	AppID                *uuid.UUID // App ID (agent or dataset)
 	AppType              *string    // App type: 'agent' or 'dataset'
+	InvocationSource     InvocationSource
 	SessionID            string
 	ConversationID       string
 	WorkflowID           string
@@ -97,6 +98,7 @@ type BillingContext struct {
 	SettledAt            time.Time
 	ResponseTime         int64 // milliseconds
 	Status               string
+	ErrorCode            string
 	ErrorMessage         string
 	IPAddress            string
 	UserAgent            string
@@ -591,7 +593,7 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 		quote, quoteErr := NewPricingEngine(b.db).QuoteTokens(ctx, pricingModelRefFromBillingContext(bc), bc.PromptTokens, bc.CompletionTokens)
 		err = wrapPricingNotConfiguredError(quoteErr)
 		if err != nil {
-			return fmt.Errorf("failed to calculate credits: %w", err)
+			return wrapPricingCalculationError(err)
 		}
 		creditsToDeduct = quote.TotalCredits
 	}

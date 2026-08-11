@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -68,6 +69,33 @@ func IsCapabilityUnsupported(err error) bool {
 	return strings.Contains(msg, "not implemented") ||
 		strings.Contains(msg, "not supported") ||
 		strings.Contains(msg, "unsupported")
+}
+
+// IsDeterministicRejection reports typed request failures that retries cannot
+// repair. Keep this sentinel-based: provider messages are untrusted and must
+// not suppress operational failures merely because they contain similar text.
+func IsDeterministicRejection(err error) bool {
+	return errors.Is(err, ErrInvalidRequest) ||
+		errors.Is(err, ErrContentPolicyViolation) ||
+		errors.Is(err, ErrCapabilityUnsupported)
+}
+
+// NormalizeTransportError gives provider transport failures a stable type at
+// the boundary where their origin is known. Callers must not classify an
+// arbitrary context deadline as a provider timeout: database, billing, and
+// request-processing deadlines use the same context sentinel.
+func NormalizeTransportError(err error) error {
+	if err == nil || errors.Is(err, ErrTimeout) {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", ErrTimeout, err)
+	}
+	var timeoutErr interface{ Timeout() bool }
+	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
+		return fmt.Errorf("%w: %w", ErrTimeout, err)
+	}
+	return err
 }
 
 // AdapterError adapter error

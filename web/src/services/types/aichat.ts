@@ -235,6 +235,7 @@ export interface AIChatExistingSkill {
 
 export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;
+  invocation_id?: string;
   runtime_id?: string;
   answer_id?: string;
   action_id?: string;
@@ -358,6 +359,7 @@ export interface AIChatMessageFile {
 export interface AIChatGeneratedFile {
   artifact_id?: string;
   artifact_type: 'file';
+  invocation_id?: string;
   skill_id: string;
   tool_name: string;
   file_id: string;
@@ -632,6 +634,7 @@ export interface AIChatMessageRetractEventData extends AIChatPresentationPositio
   message_id: string;
   content?: string;
   length?: number;
+  presentation_disposition?: 'process' | 'discard';
   segment_id?: string;
   segment_content?: string;
   content_phase?: AIChatPresentationContentPhase;
@@ -684,6 +687,7 @@ export interface AIChatSkillCallStartEventData {
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
+  invocation_id?: string;
   runtime_id?: string;
   skill_id: string;
   tool_name: string;
@@ -696,6 +700,7 @@ export interface AIChatSkillCallEndEventData {
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
+  invocation_id?: string;
   runtime_id?: string;
   action_id?: string;
   action_type?: string;
@@ -720,6 +725,7 @@ export interface AIChatSkillCallErrorEventData {
   conversation_id: string;
   message_id: string;
   kind?: AIChatSkillInvocationKind;
+  invocation_id?: string;
   runtime_id?: string;
   action_id?: string;
   action_type?: string;
@@ -768,6 +774,7 @@ export interface AIChatSkillArtifactFile {
 export interface AIChatSkillArtifactCreatedEventData extends Partial<AIChatGeneratedFile> {
   conversation_id: string;
   message_id: string;
+  invocation_id?: string;
   skill_id: string;
   tool_name: string;
   file?: AIChatSkillArtifactFile;
@@ -1027,7 +1034,18 @@ export interface AIChatAgentProgressEventData {
   conversation_id: string;
   message_id: string;
   content?: string;
-  phase?: 'planning' | 'tool_planning' | 'client_action' | 'client_action_result';
+  phase?:
+    | 'planning'
+    | 'tool_planning'
+    | 'model_processing'
+    | 'client_action'
+    | 'client_action_result';
+  progress_id?: string;
+  stage?: 'initial' | 'extended' | 'long_running';
+  activity?: 'awaiting_response' | 'reasoning' | 'preparing_action' | 'reviewing_tool_result';
+  source?: 'runtime' | 'provider_signal';
+  round?: number;
+  elapsed_ms?: number;
   meta_tool_name?: string;
   skill_id?: string;
   tool_name?: string;

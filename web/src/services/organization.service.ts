@@ -427,10 +427,11 @@ class OrganizationService extends BaseService {
   }
 
   // Reject join request
-  async rejectJoinRequest(organizationId: string, requestId: string) {
+  async rejectJoinRequest(organizationId: string, requestId: string, data: { reason?: string }) {
     const response = await this.request<ApiResponseData<{ success: boolean }>>(
       'post',
-      `/organizations/${organizationId}/join-requests/${requestId}/reject`
+      `/organizations/${organizationId}/join-requests/${requestId}/reject`,
+      data
     );
     return response.data;
   }

@@ -2197,8 +2197,13 @@ assert.match(
 );
 assert.match(
   contentParseProviderSettingsHandlerSource,
-  /admin := rg\.Group\("\/provider-settings"\)[\s\S]*admin\.Use\(middleware\.EnterpriseAdminOrOwnerRequired\(\)\)[\s\S]*admin\.GET\("", h\.List\)[\s\S]*admin\.PUT\("\/:provider_key", h\.Upsert\)/,
-  'content-parse provider settings read/write should stay behind organization owner/admin middleware'
+  /rg\.GET\("\/provider-settings", h\.List\)[\s\S]*writes := rg\.Group\("\/provider-settings"\)[\s\S]*writes\.Use\(parserSettingsWriteRequired\(\)\)[\s\S]*writes\.PUT\("\/:provider_key", h\.Upsert\)[\s\S]*writes\.POST\("\/:provider_key\/check", h\.Check\)/,
+  'content-parse provider settings should keep writes behind their scoped authorization middleware'
+);
+assert.match(
+  contentParseProviderSettingsHandlerSource,
+  /middleware\.IsOrganizationAdminOrOwner\(c\) \|\| isPersonalWorkbenchParserSettingsRequest\(c\)[\s\S]*accountContext\.CurrentWorkspaceID == nil[\s\S]*CurrentOrganizationID\) == organizationID\.String\(\)/,
+  'content-parse provider settings should allow personal-workbench writes only for the active organization'
 );
 assert.match(
   llmRouterSource,

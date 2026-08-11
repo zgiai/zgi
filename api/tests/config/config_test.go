@@ -452,8 +452,8 @@ func TestLoadOpenTelemetryConfig(t *testing.T) {
 	if !cfg.OpenTelemetry.LLMLangfuseAttributes {
 		t.Fatal("cfg.OpenTelemetry.LLMLangfuseAttributes = false, want true")
 	}
-	if cfg.OpenTelemetry.LLMCaptureContent != "summary" {
-		t.Fatalf("cfg.OpenTelemetry.LLMCaptureContent = %q, want summary", cfg.OpenTelemetry.LLMCaptureContent)
+	if cfg.OpenTelemetry.LLMCaptureContent != "none" {
+		t.Fatalf("cfg.OpenTelemetry.LLMCaptureContent = %q, want none", cfg.OpenTelemetry.LLMCaptureContent)
 	}
 	if cfg.OpenTelemetry.LLMCaptureMaxChars != 65536 {
 		t.Fatalf("cfg.OpenTelemetry.LLMCaptureMaxChars = %d, want 65536", cfg.OpenTelemetry.LLMCaptureMaxChars)

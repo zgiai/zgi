@@ -9,14 +9,14 @@ func TestPlanningOutputTokenLimit(t *testing.T) {
 		want    int
 	}{
 		{
-			name: "uses reserved output for large context models",
+			name: "uses model output limit instead of initial reserve",
 			control: map[string]interface{}{
 				"reserved_output_tokens":  8192,
 				"model_max_output_tokens": 131072,
 				"safe_context_limit":      235929,
 				"estimated_prompt_tokens": 4096,
 			},
-			want: 8192,
+			want: 131072,
 		},
 		{
 			name: "clamps reserved output to model limit",
@@ -56,5 +56,11 @@ func TestPlanningOutputTokenLimit(t *testing.T) {
 				t.Fatalf("planningOutputTokenLimit() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDefaultOutputReserveUsesLargerPlanningBudgetForLargeContexts(t *testing.T) {
+	if got, want := defaultOutputReserve(1_000_000), 16384; got != want {
+		t.Fatalf("defaultOutputReserve() = %d, want %d", got, want)
 	}
 }

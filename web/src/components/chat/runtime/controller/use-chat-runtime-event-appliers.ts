@@ -88,7 +88,6 @@ interface UseAIChatEventAppliersArgs {
   migrateLatestSelectionTarget: (from: string | null, to: string) => void;
   clearRecoveryRetry: (conversationId: string) => void;
   refreshConversationSilently: (conversationId: string) => void;
-  refreshMessagesSilently: (conversationId: string) => void;
 }
 
 function shouldRefreshConversationAfterMessageEnd(
@@ -114,14 +113,6 @@ function shouldRefreshConversationAfterMessageEnd(
   }
 
   return false;
-}
-
-function shouldRefreshMessagesAfterMessageEnd(
-  current: AIChatControllerStore,
-  payload: AIChatMessageEndEventData
-): boolean {
-  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
-  return !messages.some(message => message.id === payload.message_id);
 }
 
 function clientActionProgressPayload(
@@ -192,7 +183,6 @@ export function useChatRuntimeEventAppliers({
   migrateLatestSelectionTarget,
   clearRecoveryRetry,
   refreshConversationSilently,
-  refreshMessagesSilently,
 }: UseAIChatEventAppliersArgs) {
   const applyMessageStart = useCallback(
     (
@@ -584,7 +574,6 @@ export function useChatRuntimeEventAppliers({
         stateRef.current,
         payload
       );
-      const shouldRefreshMessages = shouldRefreshMessagesAfterMessageEnd(stateRef.current, payload);
       if (streamingMessageRef.current?.messageId === payload.message_id) {
         streamingMessageRef.current = null;
       }
@@ -598,16 +587,12 @@ export function useChatRuntimeEventAppliers({
       if (shouldRefreshConversation) {
         refreshConversationSilently(payload.conversation_id);
       }
-      if (shouldRefreshMessages) {
-        refreshMessagesSilently(payload.conversation_id);
-      }
     },
     [
       backgroundConversationIdRef,
       clearRecoveryRetry,
       recoveryModeByConversationRef,
       refreshConversationSilently,
-      refreshMessagesSilently,
       setControllerState,
       stateRef,
       streamingMessageRef,

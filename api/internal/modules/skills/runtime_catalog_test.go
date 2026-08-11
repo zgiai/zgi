@@ -140,6 +140,13 @@ func TestAgentWorkflowSystemSkillExposeExpectedTools(t *testing.T) {
 		t.Fatal("run_agent_workflow contract missing")
 	}
 	schema := got["schema"].(map[string]interface{})
+	required := schema["required"].([]string)
+	if !sameStrings(required, []string{"binding_id"}) {
+		t.Fatalf("run_agent_workflow required = %#v, want [binding_id]", required)
+	}
+	if example := got["example"].(map[string]interface{}); example["inputs"] != nil {
+		t.Fatalf("zero-input workflow example should omit inputs: %#v", example)
+	}
 	inputs := schema["properties"].(map[string]interface{})["inputs"].(map[string]interface{})
 	if properties := inputs["properties"].(map[string]interface{}); len(properties) != 0 {
 		t.Fatalf("generic workflow inputs properties = %#v, want binding-specific empty schema", properties)
@@ -227,10 +234,10 @@ func TestPPTSlidePlannerSystemSkillMetadata(t *testing.T) {
 		"actual editable PPTX file is produced by the separate `file-generator` skill",
 		"Do not generate PPTX files directly from this skill",
 		"image, chart, diagram, or video placeholder",
-		"Do not pass Markdown, HTML, comments, prose, partial objects, or unquoted text as `presentation`",
-		"starts with `{`, ends with `}`",
-		"balanced braces/brackets",
-		"unexpected EOF",
+		"Do not pass Markdown, HTML, comments, prose, or partial objects as `presentation`",
+		"one complete structured object",
+		"complete `slides` array",
+		"rejects the presentation structure",
 		"body text element over 10 estimated wrapped lines",
 		"text does not fit",
 		"estimated_height * 1.25",
@@ -1475,6 +1482,82 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 				t.Fatalf("example missing: %#v", expected["example"])
 			}
 		})
+	}
+}
+
+func TestFileGeneratorStructuredContractsExposeObjectsWithoutLegacyTitle(t *testing.T) {
+	tests := []struct {
+		toolName string
+		field    string
+		root     string
+	}{
+		{toolName: "generate_docx", field: "document", root: "blocks"},
+		{toolName: "generate_pptx", field: "presentation", root: "slides"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.toolName, func(t *testing.T) {
+			contract, ok := SkillToolArgumentContractFor(SkillFileGenerator, tt.toolName)
+			if !ok {
+				t.Fatalf("SkillToolArgumentContractFor() missing %s", tt.toolName)
+			}
+			properties, ok := contract.Schema["properties"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("contract properties type = %T", contract.Schema["properties"])
+			}
+			if _, exists := properties["title"]; exists {
+				t.Fatalf("contract properties expose unused title: %#v", properties)
+			}
+			structured, ok := properties[tt.field].(map[string]interface{})
+			if !ok || structured["type"] != "object" {
+				t.Fatalf("%s schema = %#v, want object", tt.field, properties[tt.field])
+			}
+			if !hasRequired(structured, tt.root) {
+				t.Fatalf("%s schema does not require %s: %#v", tt.field, tt.root, structured)
+			}
+			assertSchemaAvoidsCompositionKeywords(t, structured)
+			if tt.toolName == "generate_docx" {
+				structuredProperties := structured["properties"].(map[string]interface{})
+				defaultStyle := structuredProperties["default_style"].(map[string]interface{})
+				underline := defaultStyle["properties"].(map[string]interface{})["underline"].(map[string]interface{})
+				if underline["type"] != "string" || len(underline["enum"].([]string)) == 0 {
+					t.Fatalf("DOCX underline schema = %#v, want non-empty string enum", underline)
+				}
+				blocks := structuredProperties["blocks"].(map[string]interface{})
+				block := blocks["items"].(map[string]interface{})
+				rows := block["properties"].(map[string]interface{})["rows"].(map[string]interface{})
+				row := rows["items"].(map[string]interface{})
+				cell := row["items"].(map[string]interface{})
+				if cell["type"] != "object" {
+					t.Fatalf("DOCX table cell schema = %#v, want object", cell)
+				}
+			}
+
+			example, ok := contract.Example[tt.field].(map[string]interface{})
+			if !ok {
+				t.Fatalf("%s example type = %T, want object", tt.field, contract.Example[tt.field])
+			}
+			if _, exists := example[tt.root]; !exists {
+				t.Fatalf("%s example missing %s: %#v", tt.field, tt.root, example)
+			}
+		})
+	}
+}
+
+func assertSchemaAvoidsCompositionKeywords(t *testing.T, value interface{}) {
+	t.Helper()
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, child := range typed {
+			switch key {
+			case "$ref", "oneOf", "anyOf", "allOf":
+				t.Fatalf("schema contains unsupported composition keyword %q", key)
+			}
+			assertSchemaAvoidsCompositionKeywords(t, child)
+		}
+	case []interface{}:
+		for _, child := range typed {
+			assertSchemaAvoidsCompositionKeywords(t, child)
+		}
 	}
 }
 

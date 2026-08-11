@@ -46,11 +46,11 @@ This skill must not call PPTX generation tools, render PPTX files by itself, imp
 4. Read `slide-plan-contract.md` and create a slide-by-slide plan. Every slide must have exact title text, body text, page objective, layout, element list, and media placeholder requirements.
 5. Read `slide-layout-contract.md` and select a concrete layout for each slide.
 6. Read `media-placeholder-contract.md` when the deck needs image, chart, diagram, or video placeholder areas.
-7. Read `pptx-payload-contract.md` and convert the slide plan into one complete strict JSON object that can be passed later as `file-generator/generate_pptx.presentation`.
+7. Read `pptx-payload-contract.md` and convert the slide plan into one complete structured object that can be passed later as `file-generator/generate_pptx.presentation`.
 8. Read `quality-check.md` and self-check every slide before handoff. If any text element may overflow, increase `h`, reduce text, add line breaks, or split the content before preparing the payload.
-9. Before handoff, verify `presentation` starts with `{`, ends with `}`, contains only strict JSON, has balanced braces/brackets, closes the `slides` array, and contains no Markdown fences, comments, prose, trailing commas, or unquoted visible text.
+9. Before handoff, verify `presentation` is one complete structured object with a complete `slides` array, supported fields, and no Markdown or explanatory prose mixed into it.
 10. Return or hand off the strict slide plan and PPTX payload to the `file-generator` skill when file output is required. Do not call `generate_pptx` from this skill.
-11. In the final answer, briefly mention that the PPT plan is ready for file generation and list any important assumptions. Do not paste the full presentation JSON unless the user explicitly asks for it.
+11. In the final answer, briefly mention that the PPT plan is ready for file generation and list any important assumptions. Do not paste the full presentation object unless the user explicitly asks for it.
 
 ## Clarification Workflow
 
@@ -76,7 +76,7 @@ Read references only when needed, but always read `pptx-payload-contract.md` and
 | Create strict per-slide plans with exact text and element requirements | `slide-plan-contract.md` |
 | Choose concrete slide layouts and coordinates | `slide-layout-contract.md` |
 | Reserve image, chart, diagram, or video placeholder areas | `media-placeholder-contract.md` |
-| Convert the slide plan into file-generator `generate_pptx.presentation` JSON | `pptx-payload-contract.md` |
+| Convert the slide plan into the file-generator `generate_pptx.presentation` object | `pptx-payload-contract.md` |
 | Validate text density, overlap, bounds, style consistency, and output readiness | `quality-check.md` |
 
 ## Output Contract
@@ -85,29 +85,25 @@ Before handing off to `file-generator`, internally prepare:
 
 - `deck_brief`: theme, audience, scenario, slide count, style, language, brand rules, and source constraints.
 - `slide_plan`: one object per slide with exact title, objective, layout, elements, text, coordinates, style, and placeholder descriptions.
-- `pptx_payload`: valid strict `file-generator/generate_pptx.presentation` JSON string.
+- `pptx_payload`: valid structured `file-generator/generate_pptx.presentation` object.
 
 The downstream `file-generator/generate_pptx` call must pass:
 
-- `presentation`: strict JSON string with `layout`, `language`, `default_style`, and `slides`.
+- `presentation`: structured object with `layout`, `language`, `default_style`, and `slides`; do not stringify it.
 - `filename`: concise ASCII filename without extension.
-- `title`: optional title hint.
-- `lifecycle`: `persistent` unless the user asks for temporary output.
+- `lifecycle`: `temporary` unless the user or calling workflow explicitly requests persistent output.
 
 ## Constraints
 
 - Do not call `generate_pptx` from this skill. Each slide must have a strict slide plan first, then the payload is handed to `file-generator`.
-- Do not generate PPTX files directly from this skill. Always hand the final strict presentation JSON to the `file-generator` skill.
+- Do not generate PPTX files directly from this skill. Always hand the final structured presentation object to the `file-generator` skill.
 - Do not implement or assume a fallback PPTX renderer in the planning skill. If file generation infrastructure is unavailable, report that file generation must be retried through `file-generator` after the dependency is available.
 - Do not invent facts, metrics, product claims, customer names, or conclusions not provided or clearly implied.
 - Do not use unsupported PPTX features: animations, transitions, speaker notes, comments, slide masters, theme inheritance, real charts, embedded media, external images, or editing existing PPTX files.
 - If image, chart, diagram, or video content is requested, create a visible placeholder using `shape` and `text`; do not claim the media is embedded.
-- Do not pass Markdown, HTML, comments, prose, partial objects, or unquoted text as `presentation`; pass strict valid PPTX JSON only.
-- Do not put raw multi-line text inside JSON string values. Encode line breaks as `\n`.
-- Do not use trailing commas or single quotes in JSON.
-- Do not prepare a truncated or partially closed JSON object. Balance `{}`, `[]`, close `slides`, and keep the final non-space character as `}`.
-- Keep generated PPTX JSON compact. Prefer under 10,000 characters, no more than 8 slides, and no more than 10 elements per slide unless the user explicitly requires more.
-- If downstream file generation reports `unexpected EOF`, rebuild a shorter complete JSON payload from the slide plan before handing off again.
+- Do not pass Markdown, HTML, comments, prose, or partial objects as `presentation`; pass one complete structured PPTX object.
+- Keep the generated PPTX object compact. Prefer under 10,000 serialized characters, no more than 8 slides, and no more than 10 elements per slide unless the user explicitly requires more.
+- If downstream file generation rejects the presentation structure, rebuild a shorter complete object from the slide plan before handing off again.
 - Split dense content into more slides. Do not shrink text until it becomes unreadable.
 - Do not prepare a handoff payload with a body text element over 10 estimated wrapped lines or over `0.75 * h`.
 - Do not prepare a handoff payload with a normal body text element above 4.0 inches estimated height unless the user explicitly requested a dense appendix slide.

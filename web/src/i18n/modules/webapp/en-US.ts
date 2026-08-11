@@ -95,13 +95,19 @@ const messages = {
       model_service_unavailable:
         'The model service is temporarily unavailable. Please try again later.',
       model_invocation_failed: 'The model call failed. Please try again later.',
+      planning_output_truncated:
+        'The agent planning output reached its length limit before completing an action. Shorten the agent instructions or reduce the task scope, then try again.',
       server_unavailable:
         'The AI service is temporarily unavailable, possibly because a model channel or upstream service is down. Try again shortly; if this continues, ask an administrator to check the model and channel status.',
+      agent_output_truncated:
+        'The agent response reached the model output limit before completing this turn. No automatic retry was made.',
     },
     workflowErrorTitles: {
       model_service_timeout: 'The model took too long to respond',
       model_service_unavailable: 'This model is temporarily unavailable',
       model_invocation_failed: 'The model call failed',
+      planning_output_truncated: 'Agent planning output was incomplete',
+      agent_output_truncated: 'Agent response was incomplete',
       server_unavailable: 'Unable to generate a response right now',
     },
     conversationBusy:
@@ -311,6 +317,27 @@ const messages = {
     },
     operationStatus: {
       planning: 'Planning the task…',
+      modelProcessing: {
+        initial: 'Analyzing your request…',
+        extended: 'Working through more complex details…',
+        longRunning: 'Still working on it. Please wait…',
+        continuing: 'Continuing to work on the request…',
+        reasoning: {
+          initial: 'Reasoning through the request…',
+          extended: 'Working through the reasoning in more depth…',
+          longRunning: 'Still reasoning through the request. Please wait…',
+        },
+        preparingAction: {
+          initial: 'Preparing the next action…',
+          extended: 'Organizing what is needed for the next action…',
+          longRunning: 'Still preparing the next action. Please wait…',
+        },
+        reviewingToolResult: {
+          initial: 'Reviewing the operation result…',
+          extended: 'Combining the operation results…',
+          longRunning: 'Still checking the operation results. Please wait…',
+        },
+      },
       toolCompleted: 'The operation is complete. Preparing the result…',
       toolCompletedDetailed: '{count} {asset} operation(s) completed. Preparing the result…',
       assetCreated: 'Created successfully. Confirming the page state…',
@@ -1038,6 +1065,7 @@ const messages = {
       agentic: {
         showProcess: 'Show process',
         hideProcess: 'Hide process',
+        processTitle: 'Process',
         loadingSkill: 'Loading {skill}',
         loadedSkill: '{skill} loaded',
         loadFailed: '{skill} load failed',
@@ -1130,6 +1158,15 @@ const messages = {
       imageVisionRequired: 'Only models with vision capability support image upload.',
       imageModelLocked:
         'You have uploaded an image, so you can only switch to models with vision capability. Remove the uploaded image first if you want to switch to a non-vision model.',
+      visionReplayWarning: {
+        title: 'The selected model cannot understand the images in this message',
+        description:
+          'This message contains {count} image(s). If you continue, the selected model will only receive the text. The images will not be used, so the response may be incomplete or inaccurate.',
+        recommendation:
+          'Go back and switch to a vision-capable model if the images are important to the request.',
+        cancel: 'Go back and switch model',
+        confirm: 'Continue without images',
+      },
       uploadDocumentTooltip: 'Attach up to {count} files, {size} MB each. Supported: {types}.',
       uploadImageTooltip:
         'Attach images with a vision-capable model. Up to {count} files, {size} MB each. Supported: {types}.',

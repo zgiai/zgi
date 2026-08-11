@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -56,6 +57,35 @@ func TestZGIReporterWithoutAdaptersIsNoop(t *testing.T) {
 	}
 }
 
+func TestCaptureErrorSkipsExpectedCancellation(t *testing.T) {
+	previous := DefaultReporter()
+	t.Cleanup(func() { SetDefaultReporter(previous) })
+	recording := &recordingReporter{name: "test"}
+	SetDefaultReporter(NewZGIReporter(recording))
+
+	CaptureError(context.Background(), "llm.provider.stream_failed", context.Canceled)
+	CaptureError(context.Background(), "llm.provider.stream_failed", context.DeadlineExceeded)
+	CaptureError(context.Background(), "llm.billing.settlement_failed", errors.Join(errors.New("billing settlement failed"), context.Canceled))
+
+	if got := len(recording.events); got != 2 {
+		t.Fatalf("reported events = %d, want timeout and settlement failure", got)
+	}
+	if recording.events[0].Err.Error() != context.DeadlineExceeded.Error() {
+		t.Fatalf("reported error = %v, want context deadline exceeded", recording.events[0].Err)
+	}
+}
+
+func TestIsExpectedCancellationRequiresEveryCauseToBeCancellation(t *testing.T) {
+	if !IsExpectedCancellation(fmt.Errorf("request closed: %w", context.Canceled)) {
+		t.Fatal("wrapped caller cancellation should remain expected")
+	}
+
+	billingErr := errors.Join(errors.New("billing settlement failed"), context.Canceled)
+	if IsExpectedCancellation(billingErr) {
+		t.Fatal("cancellation must not hide an independent settlement failure")
+	}
+}
+
 func TestZGIReporterDeduplicatesReporterNames(t *testing.T) {
 	first := &recordingReporter{name: "sentry"}
 	duplicate := &recordingReporter{name: "SENTRY"}
@@ -63,6 +93,33 @@ func TestZGIReporterDeduplicatesReporterNames(t *testing.T) {
 
 	if got, want := reporter.ReporterNames(), []string{"sentry"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ReporterNames() = %#v, want %#v", got, want)
+	}
+}
+
+func TestSentryHubForReportClonesRequestHubPerEvent(t *testing.T) {
+	requestHub := sentry.NewHub(nil, sentry.NewScope())
+	ctx := sentry.SetHubOnContext(context.Background(), requestHub)
+	first := sentryHubForReport(ctx)
+	second := sentryHubForReport(ctx)
+
+	if first == requestHub || second == requestHub {
+		t.Fatal("request report reused the request-scoped hub")
+	}
+	if first == second {
+		t.Fatal("concurrent request reports must receive independent hubs")
+	}
+}
+
+func TestSentryHubForReportClonesProcessHubForBackgroundWork(t *testing.T) {
+	processHub := sentry.CurrentHub()
+	first := sentryHubForReport(context.Background())
+	second := sentryHubForReport(context.Background())
+
+	if first == processHub || second == processHub {
+		t.Fatal("background report reused the process-wide hub")
+	}
+	if first == second {
+		t.Fatal("concurrent background reports must receive independent hubs")
 	}
 }
 
@@ -119,7 +176,16 @@ func TestReporterSanitizesErrorsAndURLQueriesBeforeEveryAdapter(t *testing.T) {
 
 func TestSanitizeSentryEventRemovesRequestAndUserPII(t *testing.T) {
 	event := &sentry.Event{
-		Exception: []sentry.Exception{{Value: "provider rejected sk-secretvalue123"}},
+		Exception: []sentry.Exception{{
+			Type:  "observability.sanitizedError",
+			Value: "provider rejected sk-secretvalue123",
+			Stacktrace: &sentry.Stacktrace{Frames: []sentry.Frame{
+				{Module: "github.com/zgiai/zgi/api/internal/modules/llm/gateway", Function: "chatCompletionInternal"},
+				{Module: "github.com/zgiai/zgi/api/internal/observability", Function: "CaptureError"},
+				{Module: "github.com/zgiai/zgi/api/pkg/database", Function: "(*ReporterPlugin).checkError"},
+			}},
+		}},
+		Tags: map[string]string{"zgi.event": "llm.provider.stream_failed"},
 		Extra: map[string]any{
 			"node_inputs": "private",
 			"safe":        "value",
@@ -175,5 +241,32 @@ func TestSanitizeSentryEventRemovesRequestAndUserPII(t *testing.T) {
 	}
 	if got.Exception[0].Value != "provider rejected "+reporterRedactedValue {
 		t.Fatalf("Exception value = %q, want credential redacted", got.Exception[0].Value)
+	}
+	if got.Exception[0].Type != "LLM provider stream failed" {
+		t.Fatalf("Exception type = %q, want readable issue title", got.Exception[0].Type)
+	}
+	if want := []string{"zgi.event", "llm.provider.stream_failed"}; !reflect.DeepEqual(got.Fingerprint, want) {
+		t.Fatalf("Fingerprint = %#v, want %#v", got.Fingerprint, want)
+	}
+	if frames := got.Exception[0].Stacktrace.Frames; len(frames) != 1 || frames[0].Function != "chatCompletionInternal" {
+		t.Fatalf("filtered stack frames = %#v, want business caller only", frames)
+	}
+}
+
+func TestSentryIssueTitleIsReadableAndStable(t *testing.T) {
+	tests := map[string]string{
+		"database.query.slow":           "Slow database query",
+		"http.request.failed":           "HTTP request failed",
+		"http.stream.failed":            "Streamed response failed after start",
+		"llm.stream.failed":             "LLM stream failed after response started",
+		"llm.billing.settlement_failed": "LLM billing settlement failed",
+		"llm.provider.selection_failed": "LLM provider selection failed",
+		"llm.route.not_configured":      "LLM model route not configured",
+		"custom.api.request_failed":     "Custom API request failed",
+	}
+	for eventName, want := range tests {
+		if got := sentryIssueTitle(eventName); got != want {
+			t.Fatalf("sentryIssueTitle(%q) = %q, want %q", eventName, got, want)
+		}
 	}
 }

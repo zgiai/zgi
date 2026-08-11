@@ -3416,14 +3416,6 @@ function isRoutineSkillLoadTimelineItem(item: AIChatAgenticTimelineItem): boolea
   return isRoutineSkillLoadInvocation(item.invocation);
 }
 
-function isInternalReferenceReadSkillEvent(item: AIChatAgenticTimelineItem): boolean {
-  return (
-    item.type === 'skill_event' &&
-    item.invocation.kind === 'reference_read' &&
-    getInvocationTone(item.invocation) !== 'error'
-  );
-}
-
 function governedSkillInvocationCorrelationId(invocation: AIChatSkillInvocation): string | null {
   const modelFeedback = governanceRecord(invocation.governance?.model_feedback);
   return (
@@ -3700,7 +3692,6 @@ function filterTimelineForRendering(
         !isSupersededToolGovernanceSkillEvent(item, terminalGovernedToolCorrelationIds) &&
         !isSupersededByClientActionSkillEvent(item, completedClientActionKeys) &&
         !isAssetObservationClientActionTimelineItem(item) &&
-        !isInternalReferenceReadSkillEvent(item) &&
         !isRoutineSkillLoadTimelineItem(item) &&
         !isRedundantAgentWorkflowToolEvent(item, workflowRunIds, workflowInvocationIds) &&
         !(
@@ -4124,7 +4115,7 @@ export function AIChatAgenticTimeline({
             />
             {isOpen
               ? t('consoleChat.skills.agentic.hideProcess')
-              : t('consoleChat.skills.agentic.showProcess')}
+              : t('consoleChat.skills.agentic.processTitle')}
           </CollapsibleTrigger>
         </Button>
         <span className="text-[11px] text-muted-foreground">

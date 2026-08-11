@@ -83,3 +83,23 @@ func TestEstimateChatRequestDoesNotTreatGenerationControlsAsPromptComponents(t *
 		t.Fatalf("request characters = %d, want controls reflected beyond messages %d", result.Characters, result.Components["messages"].Characters)
 	}
 }
+
+func TestEstimateTextSupportsMultilingualActionProgress(t *testing.T) {
+	estimator := NewEstimator()
+	cases := []string{
+		"我正在整理数据，完成后会给你一份可下载的分析报告。",
+		"أقوم الآن بتحليل البيانات وسأقدم لك تقريرًا قابلاً للتنزيل عند الاكتمال.",
+		"データを整理しています。完了後、ダウンロードできるレポートをお渡しします。",
+		"กำลังวิเคราะห์ข้อมูลและจะส่งรายงานที่ดาวน์โหลดได้เมื่อเสร็จสิ้น 📊",
+		"I’m analyzing the data now and will provide a downloadable report when it is ready. 🚀",
+	}
+	for _, text := range cases {
+		result := estimator.EstimateText(text, "deepseek-chat")
+		if result.Tokens <= 0 {
+			t.Fatalf("EstimateText(%q) = %#v, want positive token count", text, result)
+		}
+		if result.Tokenizer != "fallback:conservative" {
+			t.Fatalf("EstimateText(%q) tokenizer = %q, want conservative fallback", text, result.Tokenizer)
+		}
+	}
+}

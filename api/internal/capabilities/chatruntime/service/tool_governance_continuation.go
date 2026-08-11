@@ -414,7 +414,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		executionContext.RuntimeParameters,
 		frozen.CorrelationID,
 	)
-	if err := timeline.RecordInvocationStart(frozen.SkillID, frozen.ToolName, args); err != nil {
+	if err := timeline.RecordInvocationStart(callID, frozen.SkillID, frozen.ToolName, args); err != nil {
 		return nil, true, finalizedRuntimePersistenceError(err)
 	}
 	invocation, err := s.skillRuntime.CallSkillTool(

@@ -39,6 +39,8 @@ func TestLoadSentryConfigUsesEnvironmentOverride(t *testing.T) {
 				return "https://example@sentry.example.com/1", true
 			case envSentryEnvironment:
 				return "TEST-A", true
+			case envSentryTracesSampleRate:
+				return "0.025", true
 			default:
 				return "", false
 			}
@@ -49,6 +51,9 @@ func TestLoadSentryConfigUsesEnvironmentOverride(t *testing.T) {
 
 	if cfg.Sentry.Environment != "TEST-A" {
 		t.Fatalf("Sentry.Environment = %q, want TEST-A", cfg.Sentry.Environment)
+	}
+	if cfg.Sentry.TraceSampleRate != 0.025 {
+		t.Fatalf("Sentry.TraceSampleRate = %v, want 0.025", cfg.Sentry.TraceSampleRate)
 	}
 }
 
@@ -73,5 +78,8 @@ func TestLoadSentryConfigFallsBackWhenEnvironmentOverrideEmpty(t *testing.T) {
 
 	if cfg.Sentry.Environment != "production" {
 		t.Fatalf("Sentry.Environment = %q, want production", cfg.Sentry.Environment)
+	}
+	if cfg.Sentry.TraceSampleRate != 0.1 {
+		t.Fatalf("Sentry.TraceSampleRate = %v, want default 0.1", cfg.Sentry.TraceSampleRate)
 	}
 }

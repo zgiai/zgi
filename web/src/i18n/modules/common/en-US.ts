@@ -82,6 +82,7 @@ const messages = {
   iconInput: {
     uploadImage: 'Upload Image',
     aiGenerate: 'AI Generate',
+    avatarLibrary: 'Avatar Library',
     textIcon: 'Text Icon',
     supportedFormats: 'Supports jpg, png format, size not exceeding 2M',
     defaultIcon: 'Z',
@@ -100,6 +101,19 @@ const messages = {
       selectFile: 'Select File',
       cancel: 'Cancel',
       crop: 'Crop',
+    },
+    avatarLibraryDialog: {
+      title: 'Choose an app avatar',
+      description: 'Pick a clever ocean companion, or upload your own image instead.',
+      uploadFailed: 'Could not save the avatar. Please try again.',
+      avatars: {
+        littleZ: 'Little Z',
+        dolphin: 'Dolphin',
+        octopus: 'Octopus',
+        jellyfish: 'Jellyfish',
+        whale: 'Whale',
+        mantaRay: 'Manta Ray',
+      },
     },
   },
 

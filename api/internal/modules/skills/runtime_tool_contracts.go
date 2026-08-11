@@ -149,18 +149,22 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillFileGenerator + "/generate_docx": {
 			SkillID:     SkillFileGenerator,
 			ToolName:    "generate_docx",
-			Description: "Generate a styled DOCX temporary artifact from a structured JSON document specification. This does not write to File Management.",
+			Description: "Generate a styled DOCX temporary artifact from a structured document object. This does not write to File Management.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"document":  stringValueSchema("JSON string describing the DOCX document. Include blocks with type heading, paragraph, table, or page_break."),
+					"document":  docxDocumentSchema(),
 					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
-					"title":     stringValueSchema("Optional title hint; visible content must be included in document.blocks."),
 					"lifecycle": enumStringSchema("Temporary artifact lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"document"},
 			),
 			Example: map[string]interface{}{
-				"document": `{"blocks":[{"type":"heading","level":1,"text":"Report","style":{"alignment":"center","font_size":18,"bold":true}},{"type":"paragraph","runs":[{"text":"Total: "},{"text":"113.47","bold":true,"color":"C00000"}]}]}`,
+				"document": map[string]interface{}{
+					"blocks": []map[string]interface{}{
+						{"type": "heading", "level": 1, "text": "Report", "style": map[string]interface{}{"alignment": "center", "font_size": 18, "bold": true}},
+						{"type": "paragraph", "runs": []map[string]interface{}{{"text": "Total: "}, {"text": "113.47", "bold": true, "color": "C00000"}}},
+					},
+				},
 				"filename": "styled-report",
 			},
 		},
@@ -187,19 +191,26 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillFileGenerator + "/generate_pptx": {
 			SkillID:     SkillFileGenerator,
 			ToolName:    "generate_pptx",
-			Description: "Generate an editable static PPTX temporary artifact from a structured JSON presentation specification. This does not write to File Management.",
+			Description: "Generate an editable static PPTX temporary artifact from a structured presentation object. This does not write to File Management.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"presentation": stringValueSchema("JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape. Use non-overlapping boxes for readable content; omitted boxes use simple auto layout."),
+					"presentation": pptxPresentationSchema(),
 					"filename":     stringValueSchema("Optional display filename. Do not include path separators or an extension."),
-					"title":        stringValueSchema("Optional title hint; visible content must be included in presentation.slides."),
 					"lifecycle":    enumStringSchema("Temporary artifact lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"presentation"},
 			),
 			Example: map[string]interface{}{
-				"presentation": `{"layout":"wide","slides":[{"elements":[{"type":"title","text":"Quarterly Report","style":{"align":"center"}},{"type":"text","text":"Total revenue: 113.47","x":0.8,"y":1.4,"w":11.6,"h":0.8,"style":{"font_size":24,"bold":true,"color":"C00000"}}]}]}`,
-				"filename":     "quarterly-report",
+				"presentation": map[string]interface{}{
+					"layout": "wide",
+					"slides": []map[string]interface{}{{
+						"elements": []map[string]interface{}{
+							{"type": "title", "text": "Quarterly Report", "style": map[string]interface{}{"align": "center"}},
+							{"type": "text", "text": "Total revenue: 113.47", "x": 0.8, "y": 1.4, "w": 11.6, "h": 0.8, "style": map[string]interface{}{"font_size": 24, "bold": true, "color": "C00000"}},
+						},
+					}},
+				},
+				"filename": "quarterly-report",
 			},
 		},
 		SkillSensitiveRedaction + "/redact_text": {
@@ -260,7 +271,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 						},
 						nil,
 					),
-					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"chart_type", "data"},
 			),
@@ -424,7 +435,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 					"format":    enumStringSchema("Output format.", []string{"txt", "md", "docx", "pdf"}),
 					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
 					"title":     stringValueSchema("Optional document title used by generated PDF files."),
-					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"content", "format"},
 			),
@@ -440,7 +451,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 					"format":    enumStringSchema("Output format.", []string{"json", "csv", "md", "txt"}),
 					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
 					"title":     stringValueSchema("Optional document title used by generated file formats that support titles."),
-					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to temporary.", []string{"persistent", "temporary"}),
 				},
 				[]string{"content", "format"},
 			),

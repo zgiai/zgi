@@ -22,13 +22,28 @@ func (r *Runner) runSkillPlanningStream(
 	terminalStreamingAllowed bool,
 	suppressNaturalProgress bool,
 ) (planningResult, bool, error) {
+	return r.runModelToolRoundStream(ctx, prepared, planningReq, round, onEvent, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "skill_planning", nil)
+}
+
+func (r *Runner) runModelToolRoundStream(
+	ctx context.Context,
+	prepared *PreparedChat,
+	planningReq *adapter.ChatRequest,
+	round int,
+	onEvent func(Event) error,
+	terminalProtocol bool,
+	terminalStreamingAllowed bool,
+	suppressNaturalProgress bool,
+	phase string,
+	modelProgress *modelProgressTracker,
+) (planningResult, bool, error) {
 	streamReq := cloneChatRequest(planningReq)
 	streamReq.Stream = true
 	startedAt := time.Now()
-	stream, fallbackProgressStreamed, err := r.openSkillPlanningStream(ctx, prepared, streamReq, onEvent)
+	stream, fallbackProgressStreamed, err := r.openSkillPlanningStream(ctx, prepared, streamReq, onEvent, phase == "agent_tool_loop")
 	if err != nil {
 		r.recordModelInvocation(ModelInvocationTrace{
-			Phase:      "skill_planning",
+			Phase:      phase,
 			Round:      round,
 			Streaming:  true,
 			StartedAt:  startedAt,
@@ -52,12 +67,41 @@ func (r *Runner) runSkillPlanningStream(
 	sawChunk := false
 	answerStreamed := false
 	naturalAnswerStreamed := false
+	// A native stream does not declare whether content is a final answer or
+	// tool-turn narration until a tool delta arrives. Stream leading content as
+	// a candidate answer, then retract it if the response becomes a tool turn.
+	nativeToolCallSeen := false
+	nativeCandidateStreamed := false
+	nativeCandidateRetracted := false
+	var nativeStreamedContent strings.Builder
 	toolPlanningProgressStreamed := false
 	finishReason := ""
 	streamDoneReceived := false
 	terminatedBy := ""
-	fallbackTimer := time.NewTimer(r.fallbackDelay())
-	defer fallbackTimer.Stop()
+	var fallbackTimer *time.Timer
+	var fallbackTimerC <-chan time.Time
+	streamedAnswerOnError := func() string {
+		if nativeToolCallSeen {
+			return ""
+		}
+		if nativeCandidateStreamed && !nativeCandidateRetracted {
+			return nativeStreamedContent.String()
+		}
+		return streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder)
+	}
+	discardNativeToolCandidate := func() {
+		if !nativeToolCallSeen || !nativeCandidateStreamed || nativeCandidateRetracted {
+			return
+		}
+		r.emitAnswerRetractWithDisposition(ctx, prepared, nativeStreamedContent.String(), nativeCommentaryDispositionDiscard)
+		nativeCandidateRetracted = true
+		answerStreamed = false
+	}
+	if phase != "agent_tool_loop" {
+		fallbackTimer = time.NewTimer(r.fallbackDelay())
+		fallbackTimerC = fallbackTimer.C
+		defer fallbackTimer.Stop()
+	}
 	idleTimer := time.NewTimer(r.modelIdleTimeout())
 	defer idleTimer.Stop()
 
@@ -65,8 +109,9 @@ func (r *Runner) runSkillPlanningStream(
 		select {
 		case <-idleTimer.C:
 			err := ErrModelIdleTimeout
+			discardNativeToolCandidate()
 			r.recordModelInvocation(ModelInvocationTrace{
-				Phase:      "skill_planning",
+				Phase:      phase,
 				Round:      round,
 				Streaming:  true,
 				StartedAt:  startedAt,
@@ -79,10 +124,10 @@ func (r *Runner) runSkillPlanningStream(
 				"message_id", prepared.Message.ID.String(),
 				"provider", prepared.parts.Provider,
 				"model", streamReq.Model,
-				"phase", "skill_planning_stream",
+				"phase", phase+"_stream",
 			)
-			return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(err, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
-		case <-fallbackTimer.C:
+			return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(err, streamedAnswerOnError())
+		case <-fallbackTimerC:
 			if !answerStreamed && !naturalAnswerStreamed && !toolPlanningProgressStreamed && !fallbackProgressStreamed {
 				fallbackProgressStreamed = r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 			}
@@ -96,8 +141,9 @@ func (r *Runner) runSkillPlanningStream(
 
 			usage = mergeStreamUsageSnapshot(usage, response.Usage)
 			if response.Error != nil {
+				discardNativeToolCandidate()
 				r.recordModelInvocation(ModelInvocationTrace{
-					Phase:      "skill_planning",
+					Phase:      phase,
 					Round:      round,
 					Streaming:  true,
 					StartedAt:  startedAt,
@@ -106,7 +152,7 @@ func (r *Runner) runSkillPlanningStream(
 					Usage:      usage,
 					Error:      response.Error.Error(),
 				})
-				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(response.Error, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
+				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(response.Error, streamedAnswerOnError())
 			}
 			if len(response.Choices) == 0 {
 				if response.Done {
@@ -126,13 +172,27 @@ func (r *Runner) runSkillPlanningStream(
 				}
 				if reasoning := streamChoiceReasoningContent(choice); reasoning != "" {
 					reasoningBuilder.WriteString(reasoning)
+					modelProgress.ObserveReasoningDelta()
 				}
+				hasToolCallDelta := len(choice.Delta.ToolCalls) > 0
 				if text := streamChoiceText(choice); text != "" {
 					contentBuilder.WriteString(text)
-					if !terminalProtocol && !suppressNaturalProgress {
+					if phase == "agent_tool_loop" && !terminalProtocol && !suppressNaturalProgress && !nativeToolCallSeen {
+						modelProgress.Stop()
+						r.emitAnswerChunk(ctx, prepared, text, onEvent)
+						nativeStreamedContent.WriteString(text)
+						nativeCandidateStreamed = true
+						answerStreamed = true
+					} else if !terminalProtocol && !suppressNaturalProgress && phase != "agent_tool_loop" {
 						r.emitAnswerChunk(ctx, prepared, text, onEvent)
 						answerStreamed = true
 						naturalAnswerStreamed = true
+					}
+				}
+				if hasToolCallDelta {
+					modelProgress.ObserveToolCallDelta()
+					if phase == "agent_tool_loop" {
+						nativeToolCallSeen = true
 					}
 				}
 				for _, delta := range choice.Delta.ToolCalls {
@@ -140,7 +200,9 @@ func (r *Runner) runSkillPlanningStream(
 					if state == nil {
 						continue
 					}
-					if (!toolPlanningProgressStreamed || isStreamingBusinessToolCall(state)) && r.emitStreamingToolPlanningProgress(ctx, prepared, state, onEvent) {
+					if phase != "agent_tool_loop" &&
+						(!toolPlanningProgressStreamed || isStreamingBusinessToolCall(state)) &&
+						r.emitStreamingToolPlanningProgress(ctx, prepared, state, onEvent) {
 						toolPlanningProgressStreamed = true
 					}
 					r.emitStreamingIntermediateAnswerDelta(ctx, prepared, round, state, onEvent)
@@ -159,6 +221,23 @@ func (r *Runner) runSkillPlanningStream(
 
 streamDone:
 	if !sawChunk {
+		if phase == "agent_tool_loop" {
+			err := fmt.Errorf("agent tool loop stream ended without a terminal signal: terminated_by=%s", strings.TrimSpace(terminatedBy))
+			r.recordModelInvocation(ModelInvocationTrace{
+				Phase:              phase,
+				Round:              round,
+				Streaming:          true,
+				StartedAt:          startedAt,
+				DurationMS:         time.Since(startedAt).Milliseconds(),
+				Request:            streamReq,
+				Usage:              usage,
+				FinishReason:       finishReason,
+				StreamDoneReceived: streamDoneReceived,
+				TerminatedBy:       terminatedBy,
+				Error:              err.Error(),
+			})
+			return planningResult{usage: usage}, true, err
+		}
 		return planningResult{}, false, nil
 	}
 	toolCalls := make([]adapter.ToolCall, 0, len(toolCallOrder))
@@ -183,6 +262,13 @@ streamDone:
 		}
 		toolCalls = append(toolCalls, call)
 	}
+	if phase == "agent_tool_loop" && !terminalProtocol && !suppressNaturalProgress && len(toolCalls) == 0 {
+		if content := contentBuilder.String(); content != "" && !answerStreamed {
+			modelProgress.Stop()
+			r.emitAnswerChunk(ctx, prepared, content, onEvent)
+			answerStreamed = true
+		}
+	}
 	if !terminalProtocol && len(toolCalls) > 0 && naturalAnswerStreamed {
 		r.emitAnswerRetract(ctx, prepared, contentBuilder.String())
 	}
@@ -197,7 +283,7 @@ streamDone:
 		terminationErr = fmt.Errorf("streamed final answer diverged from completed tool arguments")
 	}
 	trace := ModelInvocationTrace{
-		Phase:              "skill_planning",
+		Phase:              phase,
 		Round:              round,
 		Streaming:          true,
 		StartedAt:          startedAt,
@@ -214,12 +300,16 @@ streamDone:
 	}
 	r.recordModelInvocation(trace)
 	if terminationErr != nil {
+		discardNativeToolCandidate()
 		return planningResult{
 			message:               message,
 			usage:                 usage,
 			answerStreamed:        answerStreamed && (terminalProtocol || len(toolCalls) == 0),
 			naturalAnswerStreamed: naturalAnswerStreamed && len(toolCalls) > 0,
-		}, true, wrapStreamedFinalAnswerError(terminationErr, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
+			provisionalContent:    nativeStreamedContent.String(),
+			provisionalStreamed:   nativeCandidateStreamed,
+			reasoningObserved:     reasoningBuilder.Len() > 0,
+		}, true, wrapStreamedFinalAnswerError(terminationErr, streamedAnswerOnError())
 	}
 
 	return planningResult{
@@ -227,6 +317,9 @@ streamDone:
 		usage:                 usage,
 		answerStreamed:        answerStreamed && (terminalProtocol || len(toolCalls) == 0),
 		naturalAnswerStreamed: naturalAnswerStreamed && len(toolCalls) > 0,
+		provisionalContent:    nativeStreamedContent.String(),
+		provisionalStreamed:   nativeCandidateStreamed,
+		reasoningObserved:     reasoningBuilder.Len() > 0,
 	}, true, nil
 }
 
@@ -293,6 +386,7 @@ func (r *Runner) openSkillPlanningStream(
 	prepared *PreparedChat,
 	streamReq *adapter.ChatRequest,
 	onEvent func(Event) error,
+	suppressFallback bool,
 ) (<-chan adapter.StreamResponse, bool, error) {
 	resultCh := make(chan skillPlanningStreamOpenResult, 1)
 	callCtx, cancel := context.WithCancel(ctx)
@@ -301,8 +395,13 @@ func (r *Runner) openSkillPlanningStream(
 		resultCh <- skillPlanningStreamOpenResult{stream: stream, err: err}
 	}()
 
-	timer := time.NewTimer(r.fallbackDelay())
-	defer timer.Stop()
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	if !suppressFallback {
+		timer = time.NewTimer(r.fallbackDelay())
+		timerC = timer.C
+		defer timer.Stop()
+	}
 	idleTimer := time.NewTimer(r.modelIdleTimeout())
 	defer idleTimer.Stop()
 
@@ -315,7 +414,7 @@ func (r *Runner) openSkillPlanningStream(
 	case <-idleTimer.C:
 		cancel()
 		return nil, false, ErrModelIdleTimeout
-	case <-timer.C:
+	case <-timerC:
 		fallbackProgressStreamed := r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 		select {
 		case result := <-resultCh:
@@ -469,6 +568,9 @@ func (r *Runner) emitStreamingToolPlanningProgress(
 	}
 	metaToolName := strings.TrimSpace(state.call.Function.Name)
 	if metaToolName == "" || strings.EqualFold(metaToolName, skills.MetaToolIntermediateAnswer) || strings.EqualFold(metaToolName, skills.MetaToolFinalAnswer) {
+		return false
+	}
+	if metaToolName == skills.MetaToolActivateSkills || metaToolName == skills.MetaToolSearchSkills {
 		return false
 	}
 

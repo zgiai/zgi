@@ -19,6 +19,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	"github.com/zgiai/zgi/api/internal/observability"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	"github.com/zgiai/zgi/api/routes"
@@ -50,9 +51,10 @@ type runtimeParams struct {
 type routeParams struct {
 	fx.In
 
-	Engine                *gin.Engine
-	ServiceContainer      *container.ServiceContainer
-	WorkflowEngineFactory *graph_engine.EngineFactory
+	Engine                  *gin.Engine
+	ServiceContainer        *container.ServiceContainer
+	WorkflowEngineFactory   *graph_engine.EngineFactory
+	ApplicationErrorCatalog *appcatalog.Catalog
 }
 
 // GRPCServerLifecycle describes the runtime operations required for a gRPC server.
@@ -87,7 +89,7 @@ var runtimeModule = fx.Module("runtime",
 )
 
 func registerRoutes(params routeParams) {
-	routes.RegisterRoutes(params.Engine, params.ServiceContainer, params.WorkflowEngineFactory)
+	routes.RegisterRoutes(params.Engine, params.ServiceContainer, params.WorkflowEngineFactory, params.ApplicationErrorCatalog)
 }
 
 func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {

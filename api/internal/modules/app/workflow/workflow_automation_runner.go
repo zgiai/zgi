@@ -191,7 +191,7 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	})
 	select {
 	case durableErr := <-durableEventErr:
-		execErr = fmt.Errorf("%w: %v", errWorkflowEventPersistenceFailed, durableErr)
+		execErr = fmt.Errorf("%w: %w", errWorkflowEventPersistenceFailed, durableErr)
 	default:
 	}
 	elapsedTime := ElapsedMillisecondsSince(startedAt)

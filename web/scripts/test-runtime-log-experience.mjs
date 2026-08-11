@@ -97,8 +97,8 @@ assert.doesNotMatch(
 );
 assert.match(
   conversationContext,
-  /whitespace-pre-wrap[\s\S]*?<MarkdownViewer preserveSoftBreaks/,
-  'The dedicated conversation tab must render the complete input and Markdown answer.'
+  /whitespace-pre-wrap[\s\S]*?<MarkdownViewer content=\{activeMessage\.answer\}/,
+  'The dedicated conversation tab must preserve the input and render the complete Markdown answer.'
 );
 assert.doesNotMatch(
   conversationContext,

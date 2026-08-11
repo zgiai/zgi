@@ -24,6 +24,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"github.com/zgiai/zgi/api/pkg/database"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -1448,6 +1449,29 @@ func TestActivateUpstreamProbeAcquiresLeaseAtAttempt(t *testing.T) {
 	}
 	if stored.HalfOpenLeaseUntil == nil || time.Until(*stored.HalfOpenLeaseUntil) < 10*time.Minute {
 		t.Fatalf("half-open lease until = %v, want request-length lease", stored.HalfOpenLeaseUntil)
+	}
+}
+
+func TestActivateUpstreamProbeMarksPersistenceFailure(t *testing.T) {
+	db := openGatewayUpstreamGuardDB(t)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("open sql database: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close sql database: %v", err)
+	}
+
+	service := &llmGatewayServiceImpl{upstreamState: upstreamstate.NewService(db, stubCryptoService{})}
+	selection := &ProviderSelection{
+		OrganizationID:       uuid.New(),
+		CredentialID:         uuid.New(),
+		CredentialGeneration: 1,
+		UpstreamProbe:        true,
+	}
+	err = service.activateUpstreamProbe(context.Background(), selection, &BillingContext{})
+	if !database.IsOperationError(err) {
+		t.Fatalf("error = %v, want database operation marker", err)
 	}
 }
 

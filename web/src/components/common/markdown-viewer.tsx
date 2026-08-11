@@ -33,8 +33,6 @@ import { MarkdownMermaid } from '@/components/common/markdown-mermaid';
 interface MarkdownViewerProps {
   content: string;
   className?: string;
-  /** Preserve source soft line breaks instead of letting Markdown collapse them into spaces. */
-  preserveSoftBreaks?: boolean;
   /** Render raw HTML embedded in Markdown. Disable for public or untrusted content. */
   allowRawHtml?: boolean;
   /** Optional highlight terms. Matching occurrences will be highlighted. */
@@ -329,7 +327,6 @@ function cacheIdentityPart(value: string): string {
 const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
   content,
   className,
-  preserveSoftBreaks = false,
   allowRawHtml = true,
   highlights,
   isStreaming = false,
@@ -594,10 +591,7 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
   let mermaidCodeBlockIndex = 0;
 
   return (
-    <div
-      ref={viewerRef}
-      className={cn('md-viewer', preserveSoftBreaks && 'whitespace-pre-wrap', className)}
-    >
+    <div ref={viewerRef} className={cn('md-viewer', className)}>
       <ReactMarkdown
         remarkPlugins={remarkPluginsList}
         rehypePlugins={allowRawHtml ? rehypePluginsList : safeRehypePluginsList}

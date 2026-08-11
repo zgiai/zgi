@@ -47,8 +47,8 @@ export interface SseOptions<TBody = unknown, TOut = unknown>
   query?: Record<string, string | number | boolean | null | undefined>;
   /** Extra headers to send */
   headers?: Record<string, string>;
-  /** Open callback, called when the stream is established */
-  onOpen?: () => void;
+  /** Open callback, called with the validated streaming response before body consumption */
+  onOpen?: (response: Response) => void;
   /** Message callback, invoked for each SSE event message */
   onMessage: (msg: SseMessage<TOut>) => void;
   /** Optional terminal detector used to suppress transport errors after a completed stream */

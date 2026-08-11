@@ -28,6 +28,7 @@ import type {
   AIChatOperationResource,
 } from './types';
 import { sanitizeAIChatContextText } from '../page-context/sanitize';
+import { formatContextMetadata } from './format-context-metadata';
 import {
   ZGI_CONSOLE_SITE_MAP,
   getAccessibleZGIConsoleSiteMap,
@@ -44,7 +45,6 @@ export {
 } from '@/routes/console-navigation';
 
 const MAX_CONTEXT_ITEMS = 8;
-const MAX_METADATA_KEYS = 8;
 const MAX_FIELD_LENGTH = 260;
 const MAX_CAPABILITY_SUMMARY = 8;
 const MAX_OPERATION_RESOURCES = 24;
@@ -225,11 +225,7 @@ function compactOptionalText(
 }
 
 function formatMetadata(item: AIChatContextItem): string {
-  const entries = Object.entries(item.metadata ?? {})
-    .filter(([, value]) => value !== undefined && value !== null && `${value}`.trim() !== '')
-    .slice(0, MAX_METADATA_KEYS);
-  if (entries.length === 0) return '';
-  return entries.map(([key, value]) => `${key}=${compactText(`${value}`, 120)}`).join(', ');
+  return formatContextMetadata(item.metadata);
 }
 
 function uniqueValues(values: string[] | undefined, limit = MAX_OPERATION_RELATIONS_PER_RESOURCE) {

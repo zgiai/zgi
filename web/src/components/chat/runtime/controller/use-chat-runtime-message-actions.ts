@@ -14,6 +14,7 @@ import {
   createDraftAIChatConversation,
   createStreamingAIChatMessage,
   isDraftAIChatConversationId,
+  isPersistedAIChatRuntimeId,
   replaceAIChatConversation,
   upsertAIChatMessage,
 } from '@/components/chat/utils/aichat-message';
@@ -25,6 +26,7 @@ import {
   getErrorMessage,
   isAbortError,
   isRecoverableStreamTransportError,
+  messageFilesForReplay,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 import { useWorkflowContinuationActions } from './use-chat-runtime-message-actions/continuation';
 import type { UseChatRuntimeMessageActionsArgs } from './use-chat-runtime-message-actions/types';
@@ -118,7 +120,11 @@ export function useChatRuntimeMessageActions({
       let recoveryRequested = false;
       const requestStreamRecovery = () => {
         if (recoveryRequested) return true;
-        if (reachedTerminalEvent || abortController.signal.aborted || !streamConversationId) {
+        if (
+          reachedTerminalEvent ||
+          abortController.signal.aborted ||
+          !isPersistedAIChatRuntimeId(streamConversationId)
+        ) {
           return false;
         }
         recoveryRequested = true;
@@ -354,8 +360,50 @@ export function useChatRuntimeMessageActions({
             ...(useMemory ? { use_memory: true } : {}),
           },
           {
-            onOpen: () => {
-              if (abortController.signal.aborted || !streamConversationId) return;
+            onOpen: metadata => {
+              if (abortController.signal.aborted) return;
+              const preparedConversationId = metadata?.conversation_id;
+              const preparedMessageId = metadata?.message_id;
+              if (
+                isPersistedAIChatRuntimeId(preparedConversationId) &&
+                isPersistedAIChatRuntimeId(preparedMessageId)
+              ) {
+                streamConversationId = preparedConversationId;
+                streamAbortByConversationRef.current[preparedConversationId] = abortController;
+                if (
+                  draftConversationId &&
+                  draftConversationId !== preparedConversationId &&
+                  streamAbortByConversationRef.current[draftConversationId] === abortController
+                ) {
+                  delete streamAbortByConversationRef.current[draftConversationId];
+                }
+                if (pendingStreamAbortRef.current === abortController) {
+                  pendingStreamAbortRef.current = null;
+                }
+                if (draftConversationId && draftMessageId) {
+                  if (forceAdvanceLeaf) {
+                    forceAdvanceLeafConversationId = preparedConversationId;
+                    forceAdvanceLeafMessageId = preparedMessageId;
+                  }
+                  applyMessageStart(
+                    {
+                      conversation_id: preparedConversationId,
+                      message_id: preparedMessageId,
+                      title: trimmedQuery,
+                      model: model.model,
+                    },
+                    {
+                      query: trimmedQuery,
+                      model,
+                      files,
+                      previousConversationId: draftConversationId,
+                      forceAdvanceLeaf,
+                      mode: 'active',
+                    }
+                  );
+                }
+              }
+              if (!streamConversationId) return;
               const conversationId = streamConversationId;
               setControllerState(current => ({
                 ...current,
@@ -1100,6 +1148,7 @@ export function useChatRuntimeMessageActions({
       await send({
         query: source.query,
         model,
+        files: messageFilesForReplay(source),
         parentId: source.parent_id,
         useMemory: Boolean(source.metadata?.use_memory),
         forceAdvanceLeaf: source.status === 'error' || source.status === 'stopped',

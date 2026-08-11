@@ -20,7 +20,9 @@ const (
 type planningRequestBudget struct {
 	safeContextLimit       int
 	promptBudget           int
+	initialOutputTokens    int
 	outputTokenLimit       int
+	providerManagedOutput  bool
 	estimateScale          float64
 	preferredRestoredSkill string
 }
@@ -56,7 +58,9 @@ func planningRequestBudgetForRun(req RunRequest) planningRequestBudget {
 	return planningRequestBudget{
 		safeContextLimit:       safeLimit,
 		promptBudget:           promptBudget,
+		initialOutputTokens:    numericValue(control["reserved_output_tokens"]),
 		outputTokenLimit:       req.PlanningOutputTokenLimit,
+		providerManagedOutput:  req.NativeAgentLoop,
 		estimateScale:          reusablePromptEstimateScale(metadata, provider, model),
 		preferredRestoredSkill: strings.TrimSpace(req.PreferredRestoredSkillID),
 	}
@@ -204,7 +208,17 @@ func (r *Runner) applyFinalPlanningRequestBudget(request *adapter.ChatRequest, s
 	if remaining <= 0 {
 		return fmt.Errorf("%w: final planning request leaves no output budget", ErrInvalidInput)
 	}
+	// Native agent requests let the provider/model apply its own output limit unless
+	// the caller explicitly requested one. The reserved output budget still protects
+	// prompt construction above; it is not injected as a provider max_tokens value.
+	if r.requestBudget.providerManagedOutput && diagnostics.originalMaxTokens <= 0 {
+		request.MaxTokens = nil
+		return nil
+	}
 	desiredOutputTokens := diagnostics.originalMaxTokens
+	if desiredOutputTokens <= 0 {
+		desiredOutputTokens = r.requestBudget.initialOutputTokens
+	}
 	if desiredOutputTokens <= 0 {
 		desiredOutputTokens = r.requestBudget.outputTokenLimit
 	}

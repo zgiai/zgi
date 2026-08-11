@@ -10,6 +10,7 @@ import (
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/middleware"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	external "github.com/zgiai/zgi/api/routes/external"
 	v1 "github.com/zgiai/zgi/api/routes/v1"
@@ -17,7 +18,7 @@ import (
 )
 
 // RegisterRoutes registers all routes
-func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory) {
+func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory, applicationErrorCatalog *appcatalog.Catalog) {
 	// Fail fast in CLOUD mode if LLM client cannot be initialized.
 	if err := serviceContainer.EnsureLLMClient(); err != nil {
 		logger.Fatal("BOOT_LLMCLIENT_INIT_FAILED: %v", err)
@@ -79,8 +80,9 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 	// Uses API Key authentication (sk-xxx)
 	// Note: RegisterGatewayRoutes internally creates /v1 group
 	gatewayDeps := v1.GatewayRouteDeps{
-		DB:         serviceContainer.GetDB(),
-		APIKeyRepo: serviceContainer.GetLLMAPIKeyRepository(),
+		DB:                      serviceContainer.GetDB(),
+		APIKeyRepo:              serviceContainer.GetLLMAPIKeyRepository(),
+		ApplicationErrorCatalog: applicationErrorCatalog,
 	}
 	platformChannels, err := serviceContainer.GetPlatformChannels()
 	if err != nil {

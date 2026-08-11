@@ -2247,18 +2247,19 @@ func skillInvocationsToInterfaceSlice(invocations []map[string]interface{}) []in
 
 func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]interface{} {
 	invocation := map[string]interface{}{
-		"kind":        trace.Kind,
-		"skill_id":    trace.SkillID,
-		"tool_name":   trace.ToolName,
-		"title":       trace.Title,
-		"status":      trace.Status,
-		"duration_ms": trace.DurationMS,
-		"arguments":   trace.Arguments,
-		"result":      trace.Result,
-		"message":     trace.Message,
-		"error":       trace.Error,
-		"error_code":  trace.ErrorCode,
-		"runtime_id":  traceRuntimeID(trace, index),
+		"kind":          trace.Kind,
+		"invocation_id": trace.InvocationID,
+		"skill_id":      trace.SkillID,
+		"tool_name":     trace.ToolName,
+		"title":         trace.Title,
+		"status":        trace.Status,
+		"duration_ms":   trace.DurationMS,
+		"arguments":     trace.Arguments,
+		"result":        trace.Result,
+		"message":       trace.Message,
+		"error":         trace.Error,
+		"error_code":    trace.ErrorCode,
+		"runtime_id":    traceRuntimeID(trace, index),
 	}
 	if trace.Governance != nil {
 		invocation["governance"] = trace.Governance
@@ -2517,6 +2518,19 @@ func upsertSkillInvocation(current []map[string]interface{}, incoming map[string
 	if len(incoming) == 0 {
 		return current
 	}
+	incomingInvocationID := strings.TrimSpace(stringFromAny(incoming["invocation_id"]))
+	if incomingInvocationID != "" {
+		for index, invocation := range current {
+			if strings.TrimSpace(stringFromAny(invocation["invocation_id"])) != incomingInvocationID {
+				continue
+			}
+			if shouldKeepExistingInvocation(invocation, incoming) {
+				return current
+			}
+			current[index] = mergeInvocation(invocation, incoming)
+			return current
+		}
+	}
 	if runtimeID := strings.TrimSpace(stringFromAny(incoming["runtime_id"])); runtimeID != "" {
 		for index, invocation := range current {
 			if strings.TrimSpace(stringFromAny(invocation["runtime_id"])) == runtimeID {
@@ -2530,6 +2544,9 @@ func upsertSkillInvocation(current []map[string]interface{}, incoming map[string
 	}
 	if semanticID := skillInvocationSemanticIdentity(incoming); semanticID != "" {
 		for index, invocation := range current {
+			if existingInvocationID := strings.TrimSpace(stringFromAny(invocation["invocation_id"])); incomingInvocationID != "" && existingInvocationID != "" {
+				continue
+			}
 			if skillInvocationSemanticIdentity(invocation) != semanticID {
 				continue
 			}
@@ -2541,6 +2558,9 @@ func upsertSkillInvocation(current []map[string]interface{}, incoming map[string
 		}
 	}
 	for index, invocation := range current {
+		if existingInvocationID := strings.TrimSpace(stringFromAny(invocation["invocation_id"])); incomingInvocationID != "" && existingInvocationID != "" {
+			continue
+		}
 		if sameInvocationIdentity(invocation, incoming) && isOpenInvocation(invocation) {
 			if shouldKeepExistingInvocation(invocation, incoming) {
 				return current

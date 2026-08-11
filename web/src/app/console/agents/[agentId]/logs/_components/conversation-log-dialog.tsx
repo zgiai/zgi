@@ -88,7 +88,7 @@ export function ConversationLogDialog({
                       <div className="max-w-[92%] rounded-2xl border bg-background px-4 py-3 text-sm shadow-sm">
                         {message.answer ? (
                           <div className="prose prose-sm max-w-none dark:prose-invert">
-                            <MarkdownViewer preserveSoftBreaks content={message.answer} />
+                            <MarkdownViewer content={message.answer} />
                           </div>
                         ) : (
                           <div className="text-muted-foreground">{t('appLogs.noAnswerYet')}</div>

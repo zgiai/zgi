@@ -205,6 +205,7 @@ func (f *fakeImageLLMClient) AppCreateImage(_ context.Context, appCtx *llmclient
 type fakeImageChatService struct {
 	chatruntime.Service
 	conversation            *runtimemodel.Conversation
+	getConversationErr      error
 	createConversationCalls int
 	atomicCreateCalls       int
 	completedMessageCalls   int
@@ -250,6 +251,9 @@ func (f *fakeImageChatService) CreateCompletedMessage(_ context.Context, _ chatr
 }
 
 func (f *fakeImageChatService) GetConversationByCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID) (*runtimemodel.Conversation, error) {
+	if f.getConversationErr != nil {
+		return nil, f.getConversationErr
+	}
 	return f.conversation, nil
 }
 
@@ -304,7 +308,7 @@ func (f *fakeImageAssetService) DeleteGeneratedImage(_ context.Context, fileID s
 	return nil
 }
 
-func TestGenerateUsesAppCreateImageWithWorkspaceBillingContext(t *testing.T) {
+func TestGenerateUsesAppCreateImageWithOrganizationBillingContext(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
 	workspaceID := uuid.New()
@@ -319,7 +323,7 @@ func TestGenerateUsesAppCreateImageWithWorkspaceBillingContext(t *testing.T) {
 		&fakeImageAssetService{},
 	)
 
-	_, err := svc.Generate(context.Background(), Scope{
+	_, err := svc.Generate(t.Context(), Scope{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
 		WorkspaceID:    &workspaceID,
@@ -353,8 +357,8 @@ func TestGenerateUsesAppCreateImageWithWorkspaceBillingContext(t *testing.T) {
 	if llm.lastAppCtx.WorkspaceID != workspaceID.String() {
 		t.Fatalf("WorkspaceID = %q, want %q", llm.lastAppCtx.WorkspaceID, workspaceID)
 	}
-	if llm.lastAppCtx.BillingSubjectType != llmclient.BillingSubjectTypeWorkspace {
-		t.Fatalf("BillingSubjectType = %q, want %q", llm.lastAppCtx.BillingSubjectType, llmclient.BillingSubjectTypeWorkspace)
+	if llm.lastAppCtx.BillingSubjectType != llmclient.BillingSubjectTypeOrganization {
+		t.Fatalf("BillingSubjectType = %q, want %q", llm.lastAppCtx.BillingSubjectType, llmclient.BillingSubjectTypeOrganization)
 	}
 	if llm.lastAppCtx.AccountID != accountID.String() {
 		t.Fatalf("AccountID = %q, want %q", llm.lastAppCtx.AccountID, accountID)
@@ -379,34 +383,79 @@ func TestGenerateUsesAppCreateImageWithWorkspaceBillingContext(t *testing.T) {
 	}
 }
 
-func TestGenerateFailsWithoutWorkspaceBillingContext(t *testing.T) {
+func TestGenerateSucceedsWithoutWorkspaceBillingContext(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
 	llm := &fakeImageLLMClient{}
+	chat := &fakeImageChatService{}
 	svc := NewService(
 		registry.NewRegistry(),
 		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "qwen", Name: "qwen-image"}}},
 		fakeRouteLister{},
 		llm,
-		&fakeImageChatService{},
+		chat,
 		&fakeImageAssetService{},
 	)
 
-	_, err := svc.Generate(context.Background(), Scope{
-		OrganizationID: uuid.New(),
-		AccountID:      uuid.New(),
+	_, err := svc.Generate(t.Context(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
 	}, GenerateRequest{
 		Prompt:   "draw a flower",
 		Provider: "qwen",
 		Model:    "qwen-image",
 		Options:  GenerateOptions{Size: "1664x928"},
 	})
-	if !errors.Is(err, ErrBillingContextRequired) {
-		t.Fatalf("Generate error = %v, want %v", err, ErrBillingContextRequired)
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
 	}
 	if llm.createImageCalls != 0 {
 		t.Fatalf("CreateImage calls = %d, want 0", llm.createImageCalls)
 	}
-	if llm.appCreateImageCalls != 0 {
-		t.Fatalf("AppCreateImage calls = %d, want 0", llm.appCreateImageCalls)
+	if llm.appCreateImageCalls != 1 {
+		t.Fatalf("AppCreateImage calls = %d, want 1", llm.appCreateImageCalls)
+	}
+	if llm.lastAppCtx == nil {
+		t.Fatal("AppCreateImage app context is nil")
+	}
+	if llm.lastAppCtx.OrganizationID != organizationID.String() {
+		t.Fatalf("OrganizationID = %q, want %q", llm.lastAppCtx.OrganizationID, organizationID)
+	}
+	if llm.lastAppCtx.WorkspaceID != "" {
+		t.Fatalf("WorkspaceID = %q, want empty", llm.lastAppCtx.WorkspaceID)
+	}
+	if llm.lastAppCtx.BillingSubjectType != llmclient.BillingSubjectTypeOrganization {
+		t.Fatalf("BillingSubjectType = %q, want %q", llm.lastAppCtx.BillingSubjectType, llmclient.BillingSubjectTypeOrganization)
+	}
+	if llm.lastAppCtx.AccountID != accountID.String() {
+		t.Fatalf("AccountID = %q, want %q", llm.lastAppCtx.AccountID, accountID)
+	}
+	if chat.atomicCreateCalls != 1 {
+		t.Fatalf("CreateConversationWithCompletedMessage calls = %d, want 1", chat.atomicCreateCalls)
+	}
+}
+
+func TestBuildAppContextRequiresOrganizationAccountAndConversation(t *testing.T) {
+	validScope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New()}
+	validConversationID := uuid.New()
+
+	tests := []struct {
+		name           string
+		scope          Scope
+		conversationID uuid.UUID
+	}{
+		{name: "missing organization", scope: Scope{AccountID: validScope.AccountID}, conversationID: validConversationID},
+		{name: "missing account", scope: Scope{OrganizationID: validScope.OrganizationID}, conversationID: validConversationID},
+		{name: "missing conversation", scope: validScope, conversationID: uuid.Nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := buildAppContext(tt.scope, tt.conversationID)
+			if !errors.Is(err, ErrBillingContextRequired) {
+				t.Fatalf("buildAppContext() error = %v, want %v", err, ErrBillingContextRequired)
+			}
+		})
 	}
 }
 
@@ -441,7 +490,7 @@ func TestGenerateDoesNotCreateConversationWhenUpstreamFails(t *testing.T) {
 	}
 }
 
-func TestGenerateRejectsExistingConversationOutsideCurrentWorkspaceBeforeSideEffects(t *testing.T) {
+func TestGenerateAllowsExistingConversationAcrossWorkspaceContexts(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
 	currentWorkspaceID := uuid.New()
@@ -451,7 +500,7 @@ func TestGenerateRejectsExistingConversationOutsideCurrentWorkspaceBeforeSideEff
 		conversationWorkspaceID *uuid.UUID
 	}{
 		{name: "another workspace", conversationWorkspaceID: uuidPtr(uuid.New())},
-		{name: "legacy conversation without workspace", conversationWorkspaceID: nil},
+		{name: "conversation without workspace", conversationWorkspaceID: nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			llm := &fakeImageLLMClient{}
@@ -473,7 +522,7 @@ func TestGenerateRejectsExistingConversationOutsideCurrentWorkspaceBeforeSideEff
 				assets,
 			)
 
-			_, err := svc.Generate(context.Background(), Scope{
+			_, err := svc.Generate(t.Context(), Scope{
 				OrganizationID: organizationID,
 				AccountID:      accountID,
 				WorkspaceID:    &currentWorkspaceID,
@@ -484,13 +533,47 @@ func TestGenerateRejectsExistingConversationOutsideCurrentWorkspaceBeforeSideEff
 				Options:        GenerateOptions{Size: "1664x928"},
 				ConversationID: chat.conversation.ID.String(),
 			})
-			if !errors.Is(err, ErrConversationNotAccessible) {
-				t.Fatalf("Generate error = %v, want %v", err, ErrConversationNotAccessible)
+			if err != nil {
+				t.Fatalf("Generate returned error: %v", err)
 			}
-			if llm.appCreateImageCalls != 0 || assets.saveCalls != 0 || chat.completedMessageCalls != 0 || chat.atomicCreateCalls != 0 {
-				t.Fatalf("side effects = llm:%d save:%d completed:%d atomic:%d, want all 0", llm.appCreateImageCalls, assets.saveCalls, chat.completedMessageCalls, chat.atomicCreateCalls)
+			if llm.appCreateImageCalls != 1 || assets.saveCalls != 1 || chat.completedMessageCalls != 1 || chat.atomicCreateCalls != 0 {
+				t.Fatalf("side effects = llm:%d save:%d completed:%d atomic:%d, want 1,1,1,0", llm.appCreateImageCalls, assets.saveCalls, chat.completedMessageCalls, chat.atomicCreateCalls)
+			}
+			if llm.lastAppCtx == nil || llm.lastAppCtx.BillingSubjectType != llmclient.BillingSubjectTypeOrganization {
+				t.Fatalf("billing app context = %#v, want organization subject", llm.lastAppCtx)
 			}
 		})
+	}
+}
+
+func TestGenerateRejectsConversationOutsideCallerScopeBeforeSideEffects(t *testing.T) {
+	llm := &fakeImageLLMClient{}
+	assets := &fakeImageAssetService{}
+	chat := &fakeImageChatService{getConversationErr: errors.New("conversation outside caller scope")}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "qwen", Name: "qwen-image"}}},
+		fakeRouteLister{},
+		llm,
+		chat,
+		assets,
+	)
+
+	_, err := svc.Generate(t.Context(), Scope{
+		OrganizationID: uuid.New(),
+		AccountID:      uuid.New(),
+	}, GenerateRequest{
+		Prompt:         "draw a flower",
+		Provider:       "qwen",
+		Model:          "qwen-image",
+		Options:        GenerateOptions{Size: "1664x928"},
+		ConversationID: uuid.NewString(),
+	})
+	if !errors.Is(err, ErrConversationNotAccessible) {
+		t.Fatalf("Generate error = %v, want %v", err, ErrConversationNotAccessible)
+	}
+	if llm.appCreateImageCalls != 0 || assets.saveCalls != 0 || chat.completedMessageCalls != 0 || chat.atomicCreateCalls != 0 {
+		t.Fatalf("side effects = llm:%d save:%d completed:%d atomic:%d, want all 0", llm.appCreateImageCalls, assets.saveCalls, chat.completedMessageCalls, chat.atomicCreateCalls)
 	}
 }
 

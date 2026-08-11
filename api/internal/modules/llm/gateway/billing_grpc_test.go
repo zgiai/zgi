@@ -2,12 +2,30 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+type failingSettleQuotaClient struct{}
+
+func (failingSettleQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
+	return nil, errors.New("unexpected pre-deduct")
+}
+
+func (failingSettleQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
+	return nil, errors.New("quota service unavailable")
+}
+
+func (failingSettleQuotaClient) CheckCreditBalance(context.Context, string, int64) (bool, int64, error) {
+	return false, 0, errors.New("unexpected balance check")
+}
+
+func (failingSettleQuotaClient) Close() error { return nil }
 
 func openRemoteBillingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -49,5 +67,93 @@ func TestRemoteBillingMarkAttemptSettleFailedWritesPartialUsageBill(t *testing.T
 	}
 	if bill.ErrorCode == nil || *bill.ErrorCode != "SETTLE_FAILED" {
 		t.Fatalf("usage bill error code = %v, want SETTLE_FAILED", bill.ErrorCode)
+	}
+}
+
+func TestBillingAttemptRecoveryPreservesInvocationSource(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	service := &BillingService{db: db}
+	bc := testUsageBillContext(time.Now().Add(-time.Second), time.Now())
+	bc.InvocationSource = InvocationSourceAPI
+	bc.EstimatedCredits = 11
+
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return service.upsertAttemptInit(context.Background(), tx, bc)
+	}); err != nil {
+		t.Fatalf("upsert billing attempt: %v", err)
+	}
+
+	var attempt BillingAttempt
+	if err := db.Where("attempt_id = ?", bc.AttemptID).First(&attempt).Error; err != nil {
+		t.Fatalf("load billing attempt: %v", err)
+	}
+	if attempt.InvocationSource != InvocationSourceAPI {
+		t.Fatalf("persisted invocation source = %q, want %q", attempt.InvocationSource, InvocationSourceAPI)
+	}
+
+	recovered, err := service.buildLocalRecoveryBillingContext(context.Background(), bc.AttemptID)
+	if err != nil {
+		t.Fatalf("build recovery billing context: %v", err)
+	}
+	if recovered.InvocationSource != InvocationSourceAPI {
+		t.Fatalf("recovered invocation source = %q, want %q", recovered.InvocationSource, InvocationSourceAPI)
+	}
+}
+
+func TestRemoteBillingRecoveryPreservesInvocationSourceInPartialUsageBill(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	organizationID := uuid.New()
+	attemptID := uuid.NewString()
+	deductionID := uuid.NewString()
+	invocationResult := "success"
+	now := time.Now().UTC()
+	attempt := BillingAttempt{
+		AttemptID:        attemptID,
+		RequestID:        uuid.NewString(),
+		OrganizationID:   organizationID,
+		Lane:             billingAttemptLaneRemote,
+		InvocationSource: InvocationSourceAPI,
+		QuotaSubjectType: quotaSubjectTypeOrganization,
+		QuotaSubjectID:   organizationID.String(),
+		Status:           billingAttemptStatusSettlePending,
+		InvocationResult: &invocationResult,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	entries := []BillingAttemptEntry{
+		{
+			AttemptID: attemptID, EntryType: billingEntryTypeSubject,
+			LedgerType: quotaSubjectTypeOrganization + "_quota", LedgerRefID: organizationID.String(),
+			ReservedAmount: 7, ActualAmount: 7, Status: billingEntryStatusPending,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			AttemptID: attemptID, EntryType: billingEntryTypeFund,
+			LedgerType: billingLedgerTypeOrgFunds, LedgerRefID: organizationID.String(),
+			ReservedAmount: 7, ActualAmount: 7, Status: billingEntryStatusPending,
+			IdempotencyKey: &deductionID, CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := db.Create(&attempt).Error; err != nil {
+		t.Fatalf("create billing attempt: %v", err)
+	}
+	if err := db.Create(&entries).Error; err != nil {
+		t.Fatalf("create billing attempt entries: %v", err)
+	}
+
+	remote := &RemoteBilling{
+		localService: &BillingService{db: db},
+		grpcClient:   failingSettleQuotaClient{},
+	}
+	if err := remote.reconcileAttempt(context.Background(), attemptID); err == nil {
+		t.Fatal("expected failed quota settlement")
+	}
+
+	var bill UsageBill
+	if err := db.Where("attempt_id = ?", attemptID).First(&bill).Error; err != nil {
+		t.Fatalf("load partial usage bill: %v", err)
+	}
+	if bill.InvocationSource != InvocationSourceAPI {
+		t.Fatalf("partial usage bill invocation source = %q, want %q", bill.InvocationSource, InvocationSourceAPI)
 	}
 }

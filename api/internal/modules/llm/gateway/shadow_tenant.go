@@ -81,5 +81,9 @@ func (s *llmGatewayServiceImpl) resolveShadowContext(
 	ctx context.Context,
 	organizationID uuid.UUID,
 ) (shadowOrganizationID uuid.UUID, ownerID uuid.UUID, err error) {
-	return s.getShadowTenantInfo(ctx, organizationID)
+	shadowOrganizationID, ownerID, err = s.getShadowTenantInfo(ctx, organizationID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, &shadowContextError{cause: err}
+	}
+	return shadowOrganizationID, ownerID, nil
 }

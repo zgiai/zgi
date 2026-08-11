@@ -83,7 +83,9 @@ func loadChatRuntimeConfig(cfg *Config, source *envSource) {
 	if timeout <= 0 {
 		timeout = 300
 	}
-	cfg.ChatRuntime = ChatRuntimeConfig{ModelIdleTimeoutSeconds: timeout}
+	cfg.ChatRuntime = ChatRuntimeConfig{
+		ModelIdleTimeoutSeconds: timeout,
+	}
 }
 
 func loadInfrastructureConfig(cfg *Config, source *envSource) error {
@@ -114,8 +116,34 @@ func loadExecutionAndSecurityConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("auth", loadAuthConfig),
 		optionalConfigLoader("observability", loadObservabilityConfig),
 		optionalConfigLoader("opentelemetry", loadOpenTelemetryConfig),
+		optionalConfigLoader("llm invocation content", loadLLMInvocationContentConfig),
 		optionalConfigLoader("sentry", loadSentryConfig),
 	)
+}
+
+func loadLLMInvocationContentConfig(cfg *Config, source *envSource) {
+	maxBytes := mustInt(source.int(65536, envLLMInvocationContentMaxBytes))
+	if maxBytes < 1024 {
+		maxBytes = 1024
+	}
+	retentionDays := mustInt(source.int(14, envLLMInvocationContentRetentionDays))
+	if retentionDays < 1 || retentionDays > 30 {
+		retentionDays = 14
+	}
+	queueSize := mustInt(source.int(1000, envLLMInvocationContentQueueSize))
+	if queueSize < 1 {
+		queueSize = 1000
+	}
+	batchSize := mustInt(source.int(50, envLLMInvocationContentBatchSize))
+	if batchSize < 1 || batchSize > queueSize {
+		batchSize = min(50, queueSize)
+	}
+	cfg.LLMInvocationContent = LLMInvocationContentConfig{
+		MaxBytes:      maxBytes,
+		RetentionDays: retentionDays,
+		QueueSize:     queueSize,
+		BatchSize:     batchSize,
+	}
 }
 
 func loadDomainConfig(cfg *Config, source *envSource) error {
@@ -900,7 +928,7 @@ func loadOpenTelemetryConfig(cfg *Config, source *envSource) {
 		InstrumentRedis:       mustBool(source.bool(false, envOTELInstrumentRedis)),
 		InstrumentGRPC:        mustBool(source.bool(false, envOTELInstrumentGRPC)),
 		LLMLangfuseAttributes: mustBool(source.bool(true, envOTELLLMLangfuseAttributes)),
-		LLMCaptureContent:     source.string("summary", envOTELLLMCaptureContent),
+		LLMCaptureContent:     source.string("none", envOTELLLMCaptureContent),
 		LLMCaptureMaxChars:    mustInt(source.int(65536, envOTELLLMCaptureMaxChars)),
 	}
 }
@@ -1002,9 +1030,10 @@ func loadSentryConfig(cfg *Config, source *envSource) {
 	}
 
 	cfg.Sentry = SentryConfig{
-		DSN:         source.string("", envSentryDSN),
-		Environment: environment,
-		Release:     source.string("1.0.0", envAppVersion),
+		DSN:             source.string("", envSentryDSN),
+		Environment:     environment,
+		Release:         source.string("1.0.0", envAppVersion),
+		TraceSampleRate: mustFloat64(source.float64(0.1, envSentryTracesSampleRate)),
 	}
 }
 

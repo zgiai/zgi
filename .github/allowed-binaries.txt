@@ -8,4 +8,10 @@ web/public/logo.png
 web/public/logo1.png
 web/public/logo_dark.png
 web/public/favicon.ico
+web/public/images/app-avatars/dolphin.webp
+web/public/images/app-avatars/jellyfish.webp
+web/public/images/app-avatars/little-z.webp
+web/public/images/app-avatars/manta-ray.webp
+web/public/images/app-avatars/octopus.webp
+web/public/images/app-avatars/whale.webp
 web/src/app/favicon.ico

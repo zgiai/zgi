@@ -513,6 +513,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
 
   const { start, stop, isStarting } = useRunWebAppWorkflowStream(versionUuid, {
     enabled: true,
+    agentId: config.config.agent_id,
     onStarted: payload => {
       const runId = getWorkflowRunIdFromPayload(payload);
       const isQuestionAnswerResume = questionAnswerResumeRef.current;

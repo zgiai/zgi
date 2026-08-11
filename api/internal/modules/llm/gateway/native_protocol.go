@@ -151,8 +151,24 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	traceName string,
 	bodyFormat nativeUsageBodyFormat,
 	call func(context.Context, adapter.LLMProviderAdapter) (*adapter.RawResponse, error),
-) (*adapter.RawResponse, error) {
+) (response *adapter.RawResponse, retErr error) {
 	startTime := time.Now()
+	traceCtx := ctx
+	var traceBillingCtx *BillingContext
+	defer func() {
+		s.traceNativeLLMOperation(
+			traceCtx,
+			traceName,
+			nativeTraceOperation(traceName),
+			body,
+			nativeRawResponseOutput(response),
+			nativeRawResponseUsage(response),
+			startTime,
+			time.Time{},
+			traceBillingCtx,
+			retErr,
+		)
+	}()
 	if err := s.checkModelAuthorization(apiKey, nil, model); err != nil {
 		return nil, err
 	}
@@ -168,10 +184,11 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	}
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", model, 3)
 	if err != nil {
+		reportLLMSelectionFailure(ctx, err, model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 	if len(providerSelections) == 0 {
-		return nil, NewNoProviderAvailableError(model, shadowOrganizationID.String())
+		return nil, reportedNoProviderAvailableError(ctx, model, organizationID.String(), shadowOrganizationID.String())
 	}
 
 	requestID := uuid.New().String()
@@ -179,7 +196,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	for attemptIdx, providerSelection := range providerSelections {
 		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 		if err != nil {
-			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
+			lastErr = wrapPricingCalculationError(err)
 			continue
 		}
 
@@ -206,12 +223,15 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
+		traceCtx = ctx
+		traceBillingCtx = billingCtx
 
 		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(providerSelection, organizationID))
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
 			}
+			reportLLMAdapterFailureForSelection(ctx, err, providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
 			lastErr = fmt.Errorf("failed to create adapter: %w", err)
 			s.logProviderError(ctx, attemptIdx, providerSelection, err, "adapter_creation_failed")
 			continue
@@ -221,21 +241,24 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			lastErr = err
 			continue
 		}
-		response, err := call(ctx, providerAdapter)
+		response, err = call(ctx, providerAdapter)
 		responseTime := time.Since(startTime).Milliseconds()
 		if err != nil {
 			if adapter.IsCapabilityUnsupported(err) {
 				if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 					return nil, rollbackErr
 				}
-			} else if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, err); settleErr != nil {
-				return nil, settleErr
+			} else {
+				reportLLMProviderFailureForSelection(ctx, err, "llm.provider.request_failed", providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
+				if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, err); settleErr != nil {
+					return nil, settleErr
+				}
 			}
 			lastErr = err
 			if attemptIdx < len(providerSelections)-1 {
 				continue
 			}
-			return nil, fmt.Errorf("all providers failed: %w", lastErr)
+			return nil, NewReportedProviderFailureError(lastErr)
 		}
 
 		if _, err := s.ensureNativeResponseUsageForSelection(providerSelection, billingCtx, response, model, bodyFormat); err != nil {
@@ -296,8 +319,28 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	traceName string,
 	usageFormat nativeUsageBodyFormat,
 	call func(context.Context, adapter.LLMProviderAdapter) (<-chan adapter.RawStreamEvent, error),
-) (<-chan adapter.RawStreamEvent, error) {
+) (output <-chan adapter.RawStreamEvent, retErr error) {
 	startTime := time.Now()
+	traceCtx := ctx
+	var traceBillingCtx *BillingContext
+	traceHandedOff := false
+	defer func() {
+		if traceHandedOff {
+			return
+		}
+		s.traceNativeLLMOperation(
+			traceCtx,
+			traceName,
+			nativeTraceOperation(traceName),
+			body,
+			nil,
+			nil,
+			startTime,
+			time.Time{},
+			traceBillingCtx,
+			retErr,
+		)
+	}()
 	if err := s.checkModelAuthorization(apiKey, nil, model); err != nil {
 		return nil, err
 	}
@@ -313,10 +356,11 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	}
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", model, 3)
 	if err != nil {
+		reportLLMSelectionFailure(ctx, err, model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 	if len(providerSelections) == 0 {
-		return nil, NewNoProviderAvailableError(model, shadowOrganizationID.String())
+		return nil, reportedNoProviderAvailableError(ctx, model, organizationID.String(), shadowOrganizationID.String())
 	}
 
 	requestID := uuid.New().String()
@@ -324,7 +368,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	for attemptIdx, providerSelection := range providerSelections {
 		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 		if err != nil {
-			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
+			lastErr = wrapPricingCalculationError(err)
 			continue
 		}
 
@@ -351,12 +395,15 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		billingCtx.CompletionTokens = completionTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
+		traceCtx = ctx
+		traceBillingCtx = billingCtx
 
 		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(providerSelection, organizationID))
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
 			}
+			reportLLMAdapterFailureForSelection(ctx, err, providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
 			lastErr = fmt.Errorf("failed to create adapter: %w", err)
 			s.logProviderError(ctx, attemptIdx, providerSelection, err, "adapter_creation_failed")
 			continue
@@ -368,9 +415,11 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		}
 		streamChan, err := call(ctx, providerAdapter)
 		if err != nil {
+			setBillingFailure(billingCtx, err)
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
 			}
+			reportLLMProviderFailureForSelection(ctx, err, "llm.provider.stream_failed", providerSelection, billingCtx, attemptIdx, attemptIdx == len(providerSelections)-1)
 			s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 			lastErr = err
 			if attemptIdx < len(providerSelections)-1 {
@@ -380,7 +429,8 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		}
 
 		outputChan := make(chan adapter.RawStreamEvent)
-		go s.handleNativeStreamBilling(context.WithoutCancel(ctx), streamChan, outputChan, billingCtx, providerSelection, channelID, startTime, model, usageFormat)
+		go s.handleNativeStreamBilling(context.WithoutCancel(ctx), streamChan, outputChan, billingCtx, providerSelection, channelID, attemptIdx, startTime, model, body, traceName, usageFormat)
+		traceHandedOff = true
 		return outputChan, nil
 	}
 
@@ -412,8 +462,11 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	billingCtx *BillingContext,
 	providerSelection *ProviderSelection,
 	channelID *uuid.UUID,
+	attemptIdx int,
 	startTime time.Time,
 	model string,
+	requestBody json.RawMessage,
+	traceName string,
 	usageFormat nativeUsageBodyFormat,
 ) {
 	defer close(outputChan)
@@ -440,6 +493,9 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 			lastSettlement = event.Settlement
 		}
 		if event.Error != nil {
+			// Adapter events arrive before Gateway billing/finalization errors are
+			// introduced, making this the safe boundary for timeout classification.
+			event.Error = adapter.NormalizeTransportError(event.Error)
 			lastError = event.Error
 			break
 		}
@@ -455,11 +511,15 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	}
 
 	responseTime := time.Since(startTime).Milliseconds()
+	traceOutput := collectedText.String()
 	if lastError != nil {
-		if err := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, 0, lastError); err != nil {
+		reportLLMProviderFailureForSelection(ctx, lastError, "llm.provider.stream_failed", providerSelection, billingCtx, attemptIdx, true)
+		if err := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, lastError); err != nil {
+			s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)
 			outputChan <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
 			return
 		}
+		s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, lastError)
 		outputChan <- adapter.RawStreamEvent{Error: lastError, Done: true, Usage: lastUsage}
 		return
 	}
@@ -476,9 +536,11 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	}
 
 	if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, lastUsage, lastSettlement, responseTime); err != nil {
+		s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)
 		outputChan <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
 		return
 	}
+	s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, nil)
 	if pendingTerminal != nil {
 		if estimatedUsage {
 			if updated, ok := injectUsageIntoNativeTerminalEvent(*pendingTerminal, model, lastUsage, usageFormat); ok {

@@ -24,6 +24,7 @@
     <a href="#zgi를-선택하는-이유">ZGI를 선택하는 이유</a> &middot;
     <a href="#구축부터-운영까지">작동 방식</a> &middot;
     <a href="#핵심-기능">핵심 기능</a> &middot;
+    <a href="#제품-둘러보기">제품 둘러보기</a> &middot;
     <a href="#빠른-시작">빠른 시작</a> &middot;
     <a href="#개발">개발</a> &middot;
     <a href="#문서">문서</a> &middot;
@@ -32,7 +33,7 @@
   </sub>
 </p>
 
-![ZGI 비주얼 워크플로 편집기](docs/assets/zgi-workflow-editor-api-enrichment.png)
+![ZGI Agent Studio에서 계약 검토 에이전트 설정](docs/assets/product-tour/zgi-agent-studio-en.webp)
 
 ## ZGI를 선택하는 이유
 
@@ -65,6 +66,40 @@ WebApp, 앱 센터, API 또는 내부 호출로 배포
 | **모델 게이트웨이** | 공급자, 채널, 자격 증명, 기본 모델, 라우팅 정책, 할당량, 가격 메타데이터를 한곳에서 관리합니다. |
 | **배포와 거버넌스** | WebApp, 앱 센터, API 키 또는 내부 호출을 통해 에이전트를 제공하고 워크스페이스 권한, 런타임 로그, 재사용 가능한 배치 테스트로 관리합니다. |
 | **셀프 호스팅 런타임** | 콘솔, API, 샌드박스, Runner, PostgreSQL, Redis를 로컬 또는 자체 인프라에서 실행합니다. |
+
+## 제품 둘러보기
+
+다음 화면에서는 Agent Studio에 이어 워크플로 구성, 비즈니스 데이터 활용, 실행, 모델 거버넌스, 기업 지식으로 확장되는 흐름을 보여 줍니다.
+
+### 실행 가능한 워크플로 구성
+
+비주얼 캔버스에서 문서 추출, 지식 검색, 모델, 도구, 승인, 출력을 연결합니다.
+
+![ZGI 비주얼 워크플로 편집기](docs/assets/zgi-workflow-editor-api-enrichment.png)
+
+### 자연어로 비즈니스 데이터 분석
+
+관리 대상 테이블을 선택하고 자연어 질문에서 추적 가능한 KPI, 위험 요인, 권장 조치를 도출합니다.
+
+![ZGI에서 갱신 위험을 자연어로 분석](docs/assets/product-tour/zgi-data-analysis-en.webp)
+
+### 실행 결과 확인
+
+실행 상태, 소요 시간, 단계, 구조화된 결과를 확인해 워크플로가 무엇을 수행하고 반환했는지 추적합니다.
+
+![ZGI 워크플로 실행 결과와 구조화된 위험 분석](docs/assets/product-tour/zgi-run-results-en.webp)
+
+### 모델과 채널 거버넌스
+
+공급자, 채널, 라우팅 정책, 가용성을 한곳에서 관리합니다.
+
+![ZGI Model Gateway 공급자와 채널 관리](docs/assets/product-tour/zgi-model-gateway-en.webp)
+
+### 사내 파일을 에이전트의 지식 기반으로 활용
+
+파일을 업로드하고 처리한 뒤 승인된 지식 베이스에 연결하여 에이전트와 워크플로에서 사용합니다.
+
+![ZGI 파일 관리와 지식 베이스 연결](docs/assets/product-tour/zgi-files-knowledge-en.webp)
 
 ## 빠른 시작
 

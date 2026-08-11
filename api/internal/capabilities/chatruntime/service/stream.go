@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -33,10 +34,14 @@ const (
 	aichatErrorCodeModelServiceTimeout     = "model_service_timeout"
 	aichatErrorCodeModelServiceUnavailable = "model_service_unavailable"
 	aichatErrorCodeModelInvocationFailed   = "model_invocation_failed"
+	aichatErrorCodePlanningOutputTruncated = "planning_output_truncated"
+	aichatErrorCodeAgentOutputTruncated    = "agent_output_truncated"
 	aichatErrorCodeFinalAnswerUnavailable  = "agent_final_answer_unavailable"
 	aichatModelServiceTimeoutMessage       = "The model did not respond before the task timed out."
 	aichatModelServiceUnavailableMessage   = "The model service is temporarily unavailable."
 	aichatModelInvocationFailedMessage     = "The model could not complete the requested response."
+	aichatPlanningOutputTruncatedMessage   = "The agent planning output reached its limit before completing a valid action. Shorten the agent instructions or reduce the task scope, then try again."
+	aichatAgentOutputTruncatedMessage      = "The agent response reached the model output limit before completing this turn. No automatic retry was made."
 	aichatFinalAnswerUnavailableMessage    = "The model could not generate a usable final response after retrying."
 )
 
@@ -166,6 +171,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 	appendDirectAnswerGroundingMessage(prepared)
 
 	finalCallStartedAt := time.Now()
+	modelProgress := s.startPreparedModelProgress(runCtx, prepared, 0, prepared.LLMRequest.Messages, eventCallback)
+	defer modelProgress.Stop()
 	stream, err := s.openChatStream(runCtx, prepared)
 	if err != nil {
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
@@ -185,7 +192,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, newFinalizedStreamError(err)
 	}
 	modelChunkCallback := modelStreamChunkCallback(eventCallback, onChunk)
-	answer, callUsage, err := s.collectStreamAnswerWithEvents(runCtx, prepared, stream, eventCallback, modelChunkCallback)
+	answer, callUsage, err := s.collectStreamAnswerWithEventsAndProgress(runCtx, prepared, stream, eventCallback, modelChunkCallback, modelProgress)
 	usage := mergeUsage(preflightUsage, callUsage)
 	if err != nil {
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
@@ -524,14 +531,7 @@ func preparedModelUseCase(prepared *PreparedChat) string {
 	if mode == "" && prepared != nil && prepared.Message != nil {
 		mode = normalizeExecutionMode(stringMetadataValue(prepared.Message.Metadata["execution_mode"]))
 	}
-	switch mode {
-	case executionModeAgentLoop:
-		return "agent"
-	case executionModeLegacyToolChat, executionModeDirectChat:
-		return "text-chat"
-	default:
-		return ""
-	}
+	return executionModeModelUseCase(mode)
 }
 
 func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onChunk func(string) error) (string, *adapter.Usage, error) {
@@ -539,6 +539,10 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 }
 
 func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onEvent func(StreamEvent) error, onChunk func(string) error) (string, *adapter.Usage, error) {
+	return s.collectStreamAnswerWithEventsAndProgress(ctx, prepared, stream, onEvent, onChunk, nil)
+}
+
+func (s *service) collectStreamAnswerWithEventsAndProgress(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onEvent func(StreamEvent) error, onChunk func(string) error, modelProgress *modelprogress.Tracker) (string, *adapter.Usage, error) {
 	var builder strings.Builder
 	var usage *adapter.Usage
 	serviceChunkIndex := 0
@@ -609,6 +613,7 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			}
 			reasoning := streamChunkReasoningContent(chunk)
 			if reasoning != "" {
+				modelProgress.ObserveReasoningDelta()
 				appendPreparedReasoningContent(prepared, reasoning)
 				s.flushStreamMessageEventBuffer(ctx, prepared.Message.ID, eventBuffer, onEvent)
 				event, err := s.appendStreamReasoningEvent(ctx, prepared, reasoning)
@@ -618,9 +623,16 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 				s.deliverStreamEvent(ctx, prepared.Message.ID, event, onEvent)
 			}
 			text := streamChunkText(chunk)
+			for _, choice := range chunk.Choices {
+				if len(choice.Delta.ToolCalls) > 0 {
+					modelProgress.ObserveToolCallDelta()
+					break
+				}
+			}
 			if text == "" {
 				continue
 			}
+			modelProgress.Stop()
 			builder.WriteString(text)
 			event, err := eventBuffer.add(ctx, text)
 			if err != nil {
@@ -1038,6 +1050,9 @@ func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
 }
 
 func publicAichatRuntimeErrorCodeAndMessage(err error) (string, string, bool) {
+	if errors.Is(err, skillloop.ErrAgentOutputTruncated) {
+		return aichatErrorCodeAgentOutputTruncated, aichatAgentOutputTruncatedMessage, true
+	}
 	if errors.Is(err, ErrModelIdleTimeout) ||
 		errors.Is(err, skillloop.ErrModelIdleTimeout) ||
 		errors.Is(err, adapter.ErrTimeout) {
@@ -1052,8 +1067,15 @@ func publicAichatRuntimeErrorCodeAndMessage(err error) (string, string, bool) {
 		return aichatErrorCodeFinalAnswerUnavailable, aichatFinalAnswerUnavailableMessage, true
 	}
 	var terminationErr *skillloop.PlanningTerminationError
-	if errors.As(err, &terminationErr) ||
-		errors.Is(err, adapter.ErrRateLimited) ||
+	if errors.As(err, &terminationErr) {
+		switch strings.ToLower(strings.TrimSpace(terminationErr.Reason)) {
+		case "length", "max_tokens":
+			return aichatErrorCodePlanningOutputTruncated, aichatPlanningOutputTruncatedMessage, true
+		default:
+			return aichatErrorCodeModelInvocationFailed, aichatModelInvocationFailedMessage, true
+		}
+	}
+	if errors.Is(err, adapter.ErrRateLimited) ||
 		errors.Is(err, adapter.ErrContentPolicyViolation) {
 		return aichatErrorCodeModelInvocationFailed, aichatModelInvocationFailedMessage, true
 	}

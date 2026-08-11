@@ -1,11 +1,19 @@
 package agents
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 )
+
+func TestExternalAgentInvocationContextPreservesAPISource(t *testing.T) {
+	ctx := externalAgentInvocationContext(context.Background())
+	if got, _ := ctx.Value("invoke_from").(string); got != "external-api" {
+		t.Fatalf("invoke_from = %q, want external-api", got)
+	}
+}
 
 func TestPublishedAgentConfigRequiresExternalUserOnlyWhenMemoryEnabledWithSlots(t *testing.T) {
 	tests := []struct {

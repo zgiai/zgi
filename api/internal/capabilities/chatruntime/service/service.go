@@ -10,6 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -61,9 +62,17 @@ const (
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
 
-	executionModeAgentLoop      = "agent_loop"
-	executionModeLegacyToolChat = "legacy_tool_chat"
-	executionModeDirectChat     = "direct_chat"
+	executionModeAgentLoop       = "agent_loop"
+	executionModeNativeAgentLoop = "native_agent_loop"
+	executionModeNativeToolLoop  = "native_tool_loop"
+	executionModeLegacyToolChat  = "legacy_tool_chat"
+	executionModeDirectChat      = "direct_chat"
+
+	executionRouteNativeAgent                = "native_agent"
+	executionRouteNativeSkillsAvailable      = "native_skills_available"
+	executionRouteNoUsableSkills             = "no_usable_skills"
+	executionRouteFunctionCallingUnavailable = "function_calling_unavailable"
+	executionRoutePersistedMode              = "persisted_mode"
 
 	userMemoryContextBudgetChars  = 4000
 	agentMemoryContextBudgetChars = 4000
@@ -90,6 +99,26 @@ type Scope struct {
 	WorkspaceID       *uuid.UUID
 	AgentMemoryUserID *uuid.UUID
 	SkipAccessCheck   bool
+}
+
+func isNativeExecutionMode(mode string) bool {
+	switch normalizeExecutionMode(mode) {
+	case executionModeNativeAgentLoop, executionModeNativeToolLoop:
+		return true
+	default:
+		return false
+	}
+}
+
+func executionModeModelUseCase(mode string) string {
+	switch normalizeExecutionMode(mode) {
+	case executionModeAgentLoop, executionModeNativeAgentLoop:
+		return "agent"
+	case executionModeNativeToolLoop, executionModeLegacyToolChat, executionModeDirectChat:
+		return "text-chat"
+	default:
+		return ""
+	}
 }
 
 type Caller struct {
@@ -290,22 +319,23 @@ func (f AIChatIntegrationPreferenceResolverFunc) ResolveAIChatIntegrationPrefere
 }
 
 type service struct {
-	repos              *repository.Repositories
-	llmClient          llmclient.LLMClient
-	streams            *streamRegistry
-	events             *streamEventStore
-	titleGen           titlegen.Service
-	modelSpecResolver  ModelSpecResolver
-	tokenEstimator     *tokenestimate.Estimator
-	fileService        FileLookupService
-	contentExtractor   ContentExtractionService
-	workspacePerms     WorkspacePermissionService
-	skillRuntime       *skills.Runtime
-	memoryService      UserMemoryService
-	agentMemoryService AgentMemoryContextService
-	integrationPrefs   AIChatIntegrationPreferenceResolver
-	customSkillStorage customSkillStorage
-	modelIdleTimeout   time.Duration
+	repos                 *repository.Repositories
+	llmClient             llmclient.LLMClient
+	streams               *streamRegistry
+	events                *streamEventStore
+	titleGen              titlegen.Service
+	modelSpecResolver     ModelSpecResolver
+	tokenEstimator        *tokenestimate.Estimator
+	fileService           FileLookupService
+	contentExtractor      ContentExtractionService
+	workspacePerms        WorkspacePermissionService
+	skillRuntime          *skills.Runtime
+	memoryService         UserMemoryService
+	agentMemoryService    AgentMemoryContextService
+	integrationPrefs      AIChatIntegrationPreferenceResolver
+	customSkillStorage    customSkillStorage
+	modelIdleTimeout      time.Duration
+	modelProgressSchedule modelprogress.Schedule
 }
 
 func NewService(repos *repository.Repositories, llmClient llmclient.LLMClient) Service {
@@ -492,6 +522,7 @@ type chatRequestParts struct {
 	ModelSupportsVision          bool
 	ModelSupportsAgent           bool
 	ExecutionMode                string
+	ExecutionRouteReason         string
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool
 	FunctionCallingAssumed       bool

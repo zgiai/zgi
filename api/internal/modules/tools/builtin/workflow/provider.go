@@ -1246,7 +1246,7 @@ func normalizeTimeoutSeconds(value int) int {
 
 func workflowToolParameters(kind string) []tools.ToolParameter {
 	bindingID := stringParam("binding_id", "Binding ID", "Workflow binding ID from injected available_workflows, or from list_agent_workflows if the injected list is missing or ambiguous.", true)
-	inputs := jsonParam("inputs", "Inputs", "Workflow input object. For task workflows, pass only the start variables declared by input_schema and required_inputs; use an empty object when none are declared. For conversational workflows, pass the user's current request in inputs.query.", true)
+	inputs := jsonParam("inputs", "Inputs", "Optional workflow input object. For task workflows, pass only the start variables declared by input_schema and required_inputs; omit this field when none are declared. For conversational workflows, pass the user's current request in inputs.query.", false)
 	workflowRunID := stringParam("workflow_run_id", "Workflow run ID", "Workflow run ID returned by run_agent_workflow.", true)
 	switch kind {
 	case ToolListAgentWorkflows:

@@ -13,13 +13,118 @@ import (
 )
 
 type fakeStatisticsService struct {
-	modelUsageErr error
-	modelUsageReq *dto.ModelUsageRequest
+	modelUsageErr    error
+	modelUsageReq    *dto.ModelUsageRequest
+	invocationLogErr error
+	invocationLogReq *dto.InvocationLogRequest
+	invocationLogOrg string
+	purgeOrg         string
+	purgeAccount     string
 }
 
 func (f *fakeStatisticsService) GetModelUsage(_ context.Context, _ string, req *dto.ModelUsageRequest) (*dto.ModelUsageResponse, error) {
 	f.modelUsageReq = req
 	return &dto.ModelUsageResponse{}, f.modelUsageErr
+}
+
+func (f *fakeStatisticsService) GetInvocationLog(_ context.Context, organizationID string, req *dto.InvocationLogRequest) (*dto.InvocationLogResponse, error) {
+	f.invocationLogOrg = organizationID
+	f.invocationLogReq = req
+	return &dto.InvocationLogResponse{}, f.invocationLogErr
+}
+
+func (f *fakeStatisticsService) GetInvocationContentSettings(context.Context, string) (*dto.InvocationContentSettings, error) {
+	return &dto.InvocationContentSettings{}, nil
+}
+
+func (f *fakeStatisticsService) UpdateInvocationContentSettings(context.Context, string, *dto.UpdateInvocationContentSettingsRequest) (*dto.InvocationContentSettings, error) {
+	return &dto.InvocationContentSettings{}, nil
+}
+
+func (f *fakeStatisticsService) PurgeInvocationContent(_ context.Context, organizationID, accountID string) (*dto.InvocationContentPurgeResult, error) {
+	f.purgeOrg = organizationID
+	f.purgeAccount = accountID
+	return &dto.InvocationContentPurgeResult{DeletedCount: 2}, nil
+}
+
+func (f *fakeStatisticsService) GetInvocationContent(context.Context, string, string, string) (*dto.InvocationContentDetail, error) {
+	return &dto.InvocationContentDetail{}, nil
+}
+
+func TestGetInvocationLog_BindsBusinessFilters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	organizationID := uuid.NewString()
+	fakeSvc := &fakeStatisticsService{}
+	h := NewStatisticsHandler(fakeSvc)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("organization_id", organizationID)
+	c.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/console/api/llm/statistics/invocations?start_time=1710000000&end_time=1710086400&invocation_source=product&app_type=workflow&model_name=gpt-test&limit=50&include_summary=false",
+		nil,
+	)
+
+	h.GetInvocationLog(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if fakeSvc.invocationLogOrg != organizationID || fakeSvc.invocationLogReq == nil {
+		t.Fatalf("unexpected service call: org=%q req=%#v", fakeSvc.invocationLogOrg, fakeSvc.invocationLogReq)
+	}
+	req := fakeSvc.invocationLogReq
+	if req.InvocationSource == nil || *req.InvocationSource != "product" || req.AppType == nil || *req.AppType != "workflow" || req.ModelName == nil || *req.ModelName != "gpt-test" || req.Limit != 50 {
+		t.Fatalf("unexpected filters: %#v", req)
+	}
+	if req.IncludeSummary == nil || *req.IncludeSummary {
+		t.Fatalf("include_summary = %#v, want false", req.IncludeSummary)
+	}
+}
+
+func TestPurgeInvocationContentUsesAuthenticatedTenantAndAdministrator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fakeSvc := &fakeStatisticsService{}
+	h := NewStatisticsHandler(fakeSvc)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("organization_id", "org-1")
+	c.Set("account_id", "account-1")
+	c.Request = httptest.NewRequest(http.MethodDelete, "/console/api/llm/statistics/invocation-content", nil)
+
+	h.PurgeInvocationContent(c)
+
+	if w.Code != http.StatusOK || fakeSvc.purgeOrg != "org-1" || fakeSvc.purgeAccount != "account-1" {
+		t.Fatalf("status=%d org=%q account=%q body=%s", w.Code, fakeSvc.purgeOrg, fakeSvc.purgeAccount, w.Body.String())
+	}
+}
+
+func TestGetInvocationLog_RejectsInvalidSourceAndLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, query := range []string{
+		"start_time=1710000000&end_time=1710086400&invocation_source=external",
+		"start_time=1710000000&end_time=1710086400&limit=101",
+	} {
+		t.Run(query, func(t *testing.T) {
+			fakeSvc := &fakeStatisticsService{}
+			h := NewStatisticsHandler(fakeSvc)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Set("organization_id", uuid.NewString())
+			c.Request = httptest.NewRequest(http.MethodGet, "/console/api/llm/statistics/invocations?"+query, nil)
+
+			h.GetInvocationLog(c)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected status 400, got %d body=%s", w.Code, w.Body.String())
+			}
+			if fakeSvc.invocationLogReq != nil {
+				t.Fatal("service should not receive invalid invocation filters")
+			}
+		})
+	}
 }
 
 func (f *fakeStatisticsService) GetWorkspaceQuota(context.Context, string, *dto.WorkspaceQuotaRequest) (*dto.WorkspaceQuotaResponse, error) {

@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
@@ -839,12 +840,17 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 			select {
 			case durableErr := <-durableEventErr:
 				logger.ErrorContext(runtimeCtx, "workflow execution stopped after durable event persistence failed", "workflow_run_id", workflowRunLogID, durableErr)
-				return sendTerminalFailure(fmt.Errorf("%w: %v", errWorkflowEventPersistenceFailed, durableErr))
+				return sendTerminalFailure(fmt.Errorf("%w: %w", errWorkflowEventPersistenceFailed, durableErr))
 			default:
 			}
-			if cause := context.Cause(execCtx); errors.Is(cause, workflowpause.ErrExecutionOwnershipLost) {
+			cause := workflowshared.ResolveContextError(execCtx, execCtx.Err())
+			if errors.Is(cause, workflowpause.ErrExecutionOwnershipLost) {
 				logger.WarnContext(runtimeCtx, "workflow execution stopped after ownership loss", "workflow_run_id", workflowRunLogID, cause)
 				return false
+			}
+			if !workflowshared.IsContextCancellation(execCtx, cause) {
+				logger.ErrorContext(runtimeCtx, "workflow execution stopped after context failure", "workflow_run_id", workflowRunLogID, cause)
+				return sendTerminalFailure(cause)
 			}
 			logger.Info("workflow execution context stopped", map[string]interface{}{
 				"task_id":         taskID,

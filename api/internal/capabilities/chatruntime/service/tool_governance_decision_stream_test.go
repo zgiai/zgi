@@ -378,7 +378,7 @@ func TestRunToolGovernanceDecisionStreamApproveEveryInvocationExecutesFrozenCall
 			map[string]interface{}{"id": "file-1", "type": "file", "name": "report.pdf"},
 		},
 	}
-	approvalEvent["frozen_invocation"] = toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+	frozenInvocation := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
 		CorrelationID: "corr-approve",
 		Manifest: toolgovernance.Manifest{
 			ToolID:                  "file.delete",
@@ -401,6 +401,7 @@ func TestRunToolGovernanceDecisionStreamApproveEveryInvocationExecutesFrozenCall
 		Now: now,
 		TTL: 7 * 24 * time.Hour,
 	})
+	approvalEvent["frozen_invocation"] = frozenInvocation
 
 	conversation := &runtimemodel.Conversation{
 		ID:             conversationID,
@@ -533,7 +534,7 @@ func TestRunToolGovernanceDecisionStreamApproveEveryInvocationExecutesFrozenCall
 	if continuation["status"] != "completed" || continuation["approval_status"] != "approved" {
 		t.Fatalf("tool_governance_continuation = %#v, want completed approved", continuation)
 	}
-	assertToolGovernanceApprovedStreamEvents(t, events)
+	assertToolGovernanceApprovedStreamEvents(t, events, firstNonEmptyString(frozenInvocation.IdempotencyKey, frozenInvocation.ID))
 }
 
 func TestToolGovernanceContinuationUsesAuthoritativeConnectionEvent(t *testing.T) {
@@ -1483,7 +1484,7 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 			map[string]interface{}{"id": "file-1", "type": "file", "name": "report.pdf"},
 		},
 	}
-	approvalEvent["frozen_invocation"] = toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+	frozenInvocation := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
 		CorrelationID: "corr-approve",
 		Manifest: toolgovernance.Manifest{
 			ToolID:    "file.delete",
@@ -1505,6 +1506,7 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 		Now: now,
 		TTL: 7 * 24 * time.Hour,
 	})
+	approvalEvent["frozen_invocation"] = frozenInvocation
 
 	conversation := &runtimemodel.Conversation{
 		ID:             conversationID,
@@ -1628,7 +1630,7 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 		t.Fatalf("metadata skill_invocations = %#v, want failed file-manager/delete_file tool call", message.Metadata["skill_invocations"])
 	}
 
-	assertToolGovernanceApprovedFailureStreamEvents(t, events)
+	assertToolGovernanceApprovedFailureStreamEvents(t, events, firstNonEmptyString(frozenInvocation.IdempotencyKey, frozenInvocation.ID))
 }
 
 func TestSubmitToolGovernanceDecisionApproveRememberForSessionPersistsConversationGrant(t *testing.T) {
@@ -1870,12 +1872,14 @@ func assertRecoveredContinuationEvents(t *testing.T, events []StreamEvent) {
 	}
 }
 
-func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent) {
+func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent, expectedInvocationID string) {
 	t.Helper()
 	seen := map[string]bool{}
 	var approvedDecision bool
 	var finalMessage bool
 	var recordOnlyObservation bool
+	var startInvocationID string
+	var endInvocationID string
 	for _, event := range events {
 		seen[event.EventType] = true
 		if event.EventType == streamEventToolGovernanceDecision && event.Payload["approval_status"] == "approved" {
@@ -1885,9 +1889,13 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 			t.Fatalf("events = %#v, want approved decision only; execution result belongs to skill_call_end", events)
 		}
 		if event.EventType == streamEventSkillCallEnd && event.Payload["tool_name"] == "delete_file" {
+			endInvocationID = stringFromAny(event.Payload["invocation_id"])
 			if event.Payload["status"] != "success" {
 				t.Fatalf("delete_file event status = %#v, want success", event.Payload["status"])
 			}
+		}
+		if event.EventType == streamEventSkillCallStart && event.Payload["tool_name"] == "delete_file" {
+			startInvocationID = stringFromAny(event.Payload["invocation_id"])
 		}
 		if event.EventType == streamEventClientActionRequired && event.Payload["action_type"] == "asset_observation" {
 			recordOnlyObservation = event.Payload["continuation_policy"] == "record_only" && event.Payload["blocking"] == false
@@ -1918,13 +1926,18 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 	if !recordOnlyObservation {
 		t.Fatalf("events = %#v, want a non-blocking record-only asset observation", events)
 	}
+	if startInvocationID != expectedInvocationID || endInvocationID != expectedInvocationID {
+		t.Fatalf("delete_file invocation IDs = start %q end %q, want %q", startInvocationID, endInvocationID, expectedInvocationID)
+	}
 }
 
-func assertToolGovernanceApprovedFailureStreamEvents(t *testing.T, events []StreamEvent) {
+func assertToolGovernanceApprovedFailureStreamEvents(t *testing.T, events []StreamEvent, expectedInvocationID string) {
 	t.Helper()
 	seen := map[string]bool{}
 	var approvedDecision bool
 	var toolError bool
+	var startInvocationID string
+	var errorInvocationID string
 	for _, event := range events {
 		seen[event.EventType] = true
 		if event.EventType == streamEventError {
@@ -1938,9 +1951,13 @@ func assertToolGovernanceApprovedFailureStreamEvents(t *testing.T, events []Stre
 		}
 		if event.EventType == streamEventSkillCallError && event.Payload["tool_name"] == "delete_file" {
 			toolError = true
+			errorInvocationID = stringFromAny(event.Payload["invocation_id"])
 			if message := stringFromAny(event.Payload["message"]); !strings.Contains(message, "file file-1 not found") {
 				t.Fatalf("skill_call_error message = %q, want file not found", message)
 			}
+		}
+		if event.EventType == streamEventSkillCallStart && event.Payload["tool_name"] == "delete_file" {
+			startInvocationID = stringFromAny(event.Payload["invocation_id"])
 		}
 		if event.EventType == streamEventMessageEnd {
 			if event.Payload["status"] != runtimemodel.MessageStatusCompleted {
@@ -1965,6 +1982,9 @@ func assertToolGovernanceApprovedFailureStreamEvents(t *testing.T, events []Stre
 	}
 	if !toolError {
 		t.Fatalf("events = %#v, want delete_file skill_call_error", events)
+	}
+	if startInvocationID != expectedInvocationID || errorInvocationID != expectedInvocationID {
+		t.Fatalf("delete_file invocation IDs = start %q error %q, want %q", startInvocationID, errorInvocationID, expectedInvocationID)
 	}
 }
 
