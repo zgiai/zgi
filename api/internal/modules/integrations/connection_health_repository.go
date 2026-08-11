@@ -179,6 +179,11 @@ func normalizeConnectionHealthObservation(observation ConnectionHealthObservatio
 	}
 	observation.GrantedScopes = normalizeScopes(observation.GrantedScopes)
 	observation.MissingScopes = normalizeScopes(observation.MissingScopes)
+	observation.ActionID = strings.ToLower(strings.TrimSpace(observation.ActionID))
+	if !integrationIdentifierPattern.MatchString(observation.ActionID) {
+		observation.ActionID = ""
+	}
+	observation.ScopeEvidence = normalizedAuthScopeEvidence(observation.ScopeEvidence)
 	return observation
 }
 
@@ -206,6 +211,9 @@ func connectionHealthEventFromObservation(connection IntegrationConnection, obse
 		GrantedScopes:      append([]string(nil), observation.GrantedScopes...),
 		MissingScopes:      append([]string(nil), observation.MissingScopes...),
 		ObservedAt:         observation.ObservedAt,
+	}
+	if observation.ActionID != "" {
+		event.ActionID = &observation.ActionID
 	}
 	if observation.ReasonCode != "" {
 		event.ReasonCode = &observation.ReasonCode
@@ -308,6 +316,34 @@ func applyConnectionHealthObservation(connection *IntegrationConnection, observa
 		}
 	}
 
+	// Connector-declared scope groups are contracts, not provider-reported
+	// grants. Persist action-level runtime evidence so one successful probe can
+	// never make unrelated provider operations appear authorized.
+	if observation.Source == ConnectionHealthSourceRuntime && observation.ActionID != "" &&
+		observation.ScopeEvidence == AuthScopeEvidenceConnectorDeclared {
+		switch observation.Classification {
+		case ConnectionHealthClassificationSuccess:
+			connection.VerifiedActionIDs = mergeNormalizedStrings(connection.VerifiedActionIDs, []string{observation.ActionID})
+			connection.DeniedActionIDs = removeNormalizedStrings(connection.DeniedActionIDs, []string{observation.ActionID})
+		case ConnectionHealthClassificationScopeDrift:
+			connection.DeniedActionIDs = mergeNormalizedStrings(connection.DeniedActionIDs, []string{observation.ActionID})
+			connection.VerifiedActionIDs = removeNormalizedStrings(connection.VerifiedActionIDs, []string{observation.ActionID})
+		}
+		if len(connection.DeniedActionIDs) > 0 {
+			connection.HealthStatus = ConnectionHealthDegraded
+			connection.AttentionCode = stringPointer(ConnectionAttentionScopeUpdateRequired)
+			if observation.ScopeEvidence == AuthScopeEvidenceConnectorDeclared {
+				connection.ScopeStatus = ConnectionScopeUnknown
+			}
+		} else if len(connection.MissingRequiredScopes) == 0 && observation.Classification == ConnectionHealthClassificationSuccess {
+			connection.HealthStatus = ConnectionHealthHealthy
+			connection.AttentionCode = nil
+			if observation.ScopeEvidence == AuthScopeEvidenceConnectorDeclared {
+				connection.ScopeStatus = ConnectionScopeUnknown
+			}
+		}
+	}
+
 	if observation.ScopeSnapshotObserved {
 		connection.GrantedScopes = append([]string(nil), observation.GrantedScopes...)
 		connection.ScopeCheckedAt = cloneTimePointer(&observation.ObservedAt)
@@ -333,6 +369,8 @@ func connectionHealthSummaryUpdates(connection IntegrationConnection) map[string
 		"attention_code":          connection.AttentionCode,
 		"granted_scopes":          healthScopesJSON(connection.GrantedScopes),
 		"missing_required_scopes": healthScopesJSON(connection.MissingRequiredScopes),
+		"verified_action_ids":     healthScopesJSON(connection.VerifiedActionIDs),
+		"denied_action_ids":       healthScopesJSON(connection.DeniedActionIDs),
 		"last_health_checked_at":  connection.LastHealthCheckedAt,
 		"last_healthy_at":         connection.LastHealthyAt,
 		"last_runtime_success_at": connection.LastRuntimeSuccessAt,

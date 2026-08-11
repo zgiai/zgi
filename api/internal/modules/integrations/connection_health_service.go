@@ -47,6 +47,7 @@ func (service *DefaultConnectionHealthService) PublishConnectionHealthSignal(ctx
 		ConnectionID:       signal.ConnectionID,
 		IntegrationID:      signal.IntegrationID,
 		DriverID:           signal.DriverID,
+		ActionID:           signal.ActionID,
 		Source:             ConnectionHealthSourceRuntime,
 		CheckKind:          ConnectionHealthCheckPassive,
 		Classification:     classification,
@@ -59,6 +60,7 @@ func (service *DefaultConnectionHealthService) PublishConnectionHealthSignal(ctx
 		RetryAfterAt:       cloneTimePointer(signal.RetryAfterAt),
 		LatencyMS:          signal.DurationMS,
 		ObservedAt:         signal.ObservedAt,
+		ScopeEvidence:      signal.ScopeEvidence,
 	})
 	return err
 }
@@ -143,7 +145,9 @@ func recordConnectionTestHealth(ctx context.Context, recorder ConnectionHealthOb
 			observation.ProviderRequestID = requestID
 		}
 		observation.GrantedScopes = append([]string(nil), profile.GrantedScopes...)
-		observation.ScopeSnapshotObserved = profile.GrantedScopes != nil
+		observation.ScopeEvidence = profile.ScopeEvidence
+		observation.ScopeSnapshotObserved = profile.GrantedScopes != nil &&
+			normalizedAuthScopeEvidence(profile.ScopeEvidence) != AuthScopeEvidenceConnectorDeclared
 	}
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()

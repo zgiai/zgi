@@ -392,7 +392,8 @@ func TestNormalizeAuthMethodInfersGenericStrategyMetadata(t *testing.T) {
 				t.Fatalf("normalizeAuthMethod() error = %v", err)
 			}
 			if got.IdentityKind != testCase.wantID || got.AcquisitionStrategy != testCase.wantAcquire ||
-				got.LifecycleStrategy != testCase.wantLife || got.RequestAuthStrategy != testCase.wantRequest {
+				got.LifecycleStrategy != testCase.wantLife || got.RequestAuthStrategy != testCase.wantRequest ||
+				got.ScopeEvidence != AuthScopeEvidenceProviderReported {
 				t.Fatalf("normalizeAuthMethod() = %#v", got)
 			}
 			if testCase.method.Type == AuthMethodTypeNone && got.Available {
@@ -419,6 +420,7 @@ func TestNormalizeAuthMethodRejectsUnsafeStrategyMetadata(t *testing.T) {
 		{name: "unknown acquisition", mutate: func(method *AuthMethodDefinition) { method.AcquisitionStrategy = "paste_magic" }, want: "invalid auth strategy"},
 		{name: "unknown lifecycle", mutate: func(method *AuthMethodDefinition) { method.LifecycleStrategy = "forever" }, want: "invalid auth strategy"},
 		{name: "unknown request auth", mutate: func(method *AuthMethodDefinition) { method.RequestAuthStrategy = "headerish" }, want: "invalid auth strategy"},
+		{name: "unknown scope evidence", mutate: func(method *AuthMethodDefinition) { method.ScopeEvidence = "guessed" }, want: "invalid scope evidence"},
 		{name: "browser redirect on non oauth", mutate: func(method *AuthMethodDefinition) {
 			method.AcquisitionStrategy = AuthAcquisitionStrategyBrowserRedirect
 		}, want: "OAuth-only"},

@@ -244,6 +244,8 @@ func (repository *memoryConnectionRepository) UpdateOAuthCredentials(_ context.C
 	stored.EncryptedCredentials = cloneStringPointer(connection.EncryptedCredentials)
 	stored.CredentialVersion = connection.CredentialVersion
 	stored.GrantedScopes = append([]string(nil), connection.GrantedScopes...)
+	stored.VerifiedActionIDs = append([]string(nil), connection.VerifiedActionIDs...)
+	stored.DeniedActionIDs = append([]string(nil), connection.DeniedActionIDs...)
 	stored.TokenExpiresAt = cloneTimePointer(connection.TokenExpiresAt)
 	stored.RefreshTokenExpiresAt = cloneTimePointer(connection.RefreshTokenExpiresAt)
 	stored.NextTokenRefreshAt = cloneTimePointer(connection.NextTokenRefreshAt)
@@ -321,6 +323,8 @@ func cloneConnectionForTest(connection *IntegrationConnection) *IntegrationConne
 	copyValue.EncryptedCredentials = cloneStringPointer(connection.EncryptedCredentials)
 	copyValue.Config = cloneAnyMap(connection.Config)
 	copyValue.GrantedScopes = append([]string(nil), connection.GrantedScopes...)
+	copyValue.VerifiedActionIDs = append([]string(nil), connection.VerifiedActionIDs...)
+	copyValue.DeniedActionIDs = append([]string(nil), connection.DeniedActionIDs...)
 	copyValue.AccountID = cloneStringPointer(connection.AccountID)
 	copyValue.DisplayName = cloneStringPointer(connection.DisplayName)
 	copyValue.LastTestedAt = cloneTimePointer(connection.LastTestedAt)

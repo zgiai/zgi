@@ -18,6 +18,7 @@ type ConnectionCapabilityPermission struct {
 	Availability      CapabilityAvailability   `json:"availability"`
 	CanUpgrade        bool                     `json:"can_upgrade"`
 	ScopeSatisfied    bool                     `json:"scope_satisfied"`
+	ScopeVerified     bool                     `json:"scope_verified"`
 	RequiredScopes    []string                 `json:"required_scopes,omitempty"`
 	RequiredAnyScopes []string                 `json:"required_any_scopes,omitempty"`
 	PreferredScopes   []string                 `json:"preferred_scopes,omitempty"`
@@ -27,9 +28,10 @@ type ConnectionCapabilityPermission struct {
 type CapabilityAvailability string
 
 const (
-	CapabilityAvailabilityReady                CapabilityAvailability = "ready"
-	CapabilityAvailabilityScopeUpgradeRequired CapabilityAvailability = "scope_upgrade_required"
-	CapabilityAvailabilityPermissionMissing    CapabilityAvailability = "permission_missing"
+	CapabilityAvailabilityReady                       CapabilityAvailability = "ready"
+	CapabilityAvailabilityRuntimeVerificationRequired CapabilityAvailability = "runtime_verification_required"
+	CapabilityAvailabilityScopeUpgradeRequired        CapabilityAvailability = "scope_upgrade_required"
+	CapabilityAvailabilityPermissionMissing           CapabilityAvailability = "permission_missing"
 )
 
 type ConnectionProviderPermission struct {
@@ -45,8 +47,9 @@ type ConnectionProviderPermission struct {
 }
 
 // ConnectionPermissionSummary is a secret-free, presentation-only view of a
-// connection's provider authorization. Runtime authorization continues to use
-// IntegrationConnection.GrantedScopes and the action contract directly.
+// connection's provider authorization. Runtime authorization uses provider-
+// reported scopes when available and exact per-Action evidence for connectors
+// whose providers do not expose a trustworthy scope introspection endpoint.
 type ConnectionPermissionSummary struct {
 	AdaptedCapabilities    []ConnectionCapabilityPermission `json:"adapted_capabilities"`
 	IdentityPermissions    []ConnectionProviderPermission   `json:"identity_permissions"`
@@ -55,6 +58,7 @@ type ConnectionPermissionSummary struct {
 	UnknownPermissions     []ConnectionProviderPermission   `json:"unknown_permissions"`
 	MissingPermissions     []ConnectionProviderPermission   `json:"missing_permissions"`
 	ProviderScopesReported bool                             `json:"provider_scopes_reported"`
+	ScopeEvidence          AuthScopeEvidence                `json:"scope_evidence"`
 	HasBroadPermissions    bool                             `json:"has_broad_permissions"`
 }
 
@@ -76,7 +80,10 @@ func BuildConnectionPermissionSummary(connection *IntegrationConnection, definit
 	}
 
 	granted := normalizedScopeSet(connection.GrantedScopes)
-	summary.ProviderScopesReported = len(granted) > 0
+	summary.ScopeEvidence = connectionAuthMethodScopeEvidence(connection, definition)
+	summary.ProviderScopesReported = len(granted) > 0 && summary.ScopeEvidence == AuthScopeEvidenceProviderReported
+	verifiedActions := normalizedScopeSet(connection.VerifiedActionIDs)
+	deniedActions := normalizedScopeSet(connection.DeniedActionIDs)
 	scopeDefinitions := make(map[string]ProviderScopeDefinition, len(definition.Scopes))
 	for _, scope := range definition.Scopes {
 		scopeDefinitions[scope.ID] = scope
@@ -92,9 +99,23 @@ func BuildConnectionPermissionSummary(connection *IntegrationConnection, definit
 			continue
 		}
 		missing := missingConnectionActionScopes(connection, action, granted)
+		_, actionDenied := deniedActions[action.ID]
+		_, actionVerified := verifiedActions[action.ID]
+		if summary.ScopeEvidence == AuthScopeEvidenceConnectorDeclared {
+			missing = nil
+			if actionDenied {
+				missing = normalizeScopeRequirement(append(append([]string(nil), action.RequiredScopes...), action.RequiredAnyScopes...))
+				if len(missing) == 0 {
+					missing = []string{action.ID}
+				}
+			}
+		}
+		requiresProviderScope := len(action.RequiredScopes) > 0 || len(action.RequiredAnyScopes) > 0
 		canUpgrade := len(missing) > 0 && connectionAuthMethodCanUpgradeScopes(connection, definition)
 		availability := CapabilityAvailabilityReady
-		if len(missing) > 0 {
+		if summary.ScopeEvidence == AuthScopeEvidenceConnectorDeclared && !actionVerified && !actionDenied {
+			availability = CapabilityAvailabilityRuntimeVerificationRequired
+		} else if len(missing) > 0 {
 			availability = CapabilityAvailabilityPermissionMissing
 			if canUpgrade {
 				availability = CapabilityAvailabilityScopeUpgradeRequired
@@ -111,6 +132,7 @@ func BuildConnectionPermissionSummary(connection *IntegrationConnection, definit
 			Availability:      availability,
 			CanUpgrade:        canUpgrade,
 			ScopeSatisfied:    len(missing) == 0,
+			ScopeVerified:     len(missing) == 0 && (actionVerified || (!requiresProviderScope || summary.ProviderScopesReported)),
 			RequiredScopes:    append([]string(nil), action.RequiredScopes...),
 			RequiredAnyScopes: append([]string(nil), action.RequiredAnyScopes...),
 			PreferredScopes:   append([]string(nil), action.PreferredScopes...),
@@ -124,7 +146,7 @@ func BuildConnectionPermissionSummary(connection *IntegrationConnection, definit
 		if known && definition.Category == ProviderScopeCategoryInternal {
 			continue
 		}
-		if permission.Broad {
+		if permission.Broad && summary.ScopeEvidence == AuthScopeEvidenceProviderReported {
 			summary.HasBroadPermissions = true
 		}
 		switch permission.Category {
@@ -165,6 +187,40 @@ func BuildConnectionPermissionSummary(connection *IntegrationConnection, definit
 	sortProviderPermissions(summary.UnknownPermissions)
 	sortProviderPermissions(summary.MissingPermissions)
 	return summary
+}
+
+func normalizedAuthScopeEvidence(value AuthScopeEvidence) AuthScopeEvidence {
+	value = AuthScopeEvidence(strings.ToLower(strings.TrimSpace(string(value))))
+	if value == AuthScopeEvidenceConnectorDeclared {
+		return value
+	}
+	return AuthScopeEvidenceProviderReported
+}
+
+func connectionAuthMethodScopeEvidence(connection *IntegrationConnection, definition ProviderDefinition) AuthScopeEvidence {
+	if connection == nil {
+		return AuthScopeEvidenceProviderReported
+	}
+	for _, method := range definition.AuthMethods {
+		if strings.EqualFold(strings.TrimSpace(method.ID), strings.TrimSpace(connection.AuthMethodID)) {
+			return normalizedAuthScopeEvidence(method.ScopeEvidence)
+		}
+	}
+	return AuthScopeEvidenceProviderReported
+}
+
+// AuthMethodScopeEvidence returns whether an authentication method's stored
+// scope list was reported by the provider or only declared by the connector.
+// Runtime authorization must never treat connector-declared groups as proof
+// that every provider endpoint has granted access.
+func AuthMethodScopeEvidence(definition ProviderDefinition, authMethodID string) AuthScopeEvidence {
+	authMethodID = strings.TrimSpace(authMethodID)
+	for _, method := range definition.AuthMethods {
+		if strings.EqualFold(strings.TrimSpace(method.ID), authMethodID) {
+			return normalizedAuthScopeEvidence(method.ScopeEvidence)
+		}
+	}
+	return AuthScopeEvidenceProviderReported
 }
 
 func connectionAuthMethodCanUpgradeScopes(connection *IntegrationConnection, definition ProviderDefinition) bool {

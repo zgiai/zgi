@@ -10,6 +10,10 @@ import (
 )
 
 func TestIntegrationActionCapabilityAvailability(t *testing.T) {
+	definition := integrations.ProviderDefinition{AuthMethods: []integrations.AuthMethodDefinition{{
+		ID:            "oauth",
+		ScopeEvidence: integrations.AuthScopeEvidenceProviderReported,
+	}}}
 	action := integrations.ActionDefinition{
 		ID:                     "records.list",
 		Effect:                 toolgovernance.EffectRead,
@@ -58,6 +62,32 @@ func TestIntegrationActionCapabilityAvailability(t *testing.T) {
 				GrantedScopes: []string{"profile:read"},
 			}},
 			want: integrationCapabilityNeedsScope,
+		},
+		{
+			name:     "exact runtime permission denial needs attention",
+			decision: allowed,
+			connections: []integrations.ConnectionView{{
+				Status:          integrations.ConnectionStatusActive,
+				AuthStatus:      integrations.ConnectionAuthValid,
+				AuthType:        integrations.ConnectionAuthTypeOAuth2,
+				AuthMethodID:    "oauth",
+				GrantedScopes:   []string{"records:read", "records:history"},
+				DeniedActionIDs: []string{"records.list"},
+			}},
+			want: integrationCapabilityNeedsScope,
+		},
+		{
+			name:     "connector declared scopes are not treated as provider proof",
+			decision: allowed,
+			connections: []integrations.ConnectionView{{
+				Status:        integrations.ConnectionStatusActive,
+				AuthStatus:    integrations.ConnectionAuthValid,
+				AuthType:      integrations.ConnectionAuthTypeOAuth2,
+				AuthMethodID:  "oauth",
+				GrantedScopes: []string{"connector:declared"},
+			}},
+			want:      integrationCapabilityAvailable,
+			wantCount: 1,
 		},
 		{
 			name:     "unhealthy connection is not reported as a permission gap",
@@ -147,7 +177,15 @@ func TestIntegrationActionCapabilityAvailability(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
+			testDefinition := definition
+			if testCase.name == "connector declared scopes are not treated as provider proof" {
+				testDefinition.AuthMethods = []integrations.AuthMethodDefinition{{
+					ID:            "oauth",
+					ScopeEvidence: integrations.AuthScopeEvidenceConnectorDeclared,
+				}}
+			}
 			got, count, err := integrationActionCapabilityAvailability(
+				testDefinition,
 				action,
 				testCase.decision,
 				testCase.connections,

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -394,6 +395,7 @@ func normalizeAuthMethod(integrationID string, method AuthMethodDefinition) (Aut
 	method.AcquisitionStrategy = AuthAcquisitionStrategy(strings.ToLower(strings.TrimSpace(string(method.AcquisitionStrategy))))
 	method.LifecycleStrategy = AuthLifecycleStrategy(strings.ToLower(strings.TrimSpace(string(method.LifecycleStrategy))))
 	method.RequestAuthStrategy = RequestAuthStrategy(strings.ToLower(strings.TrimSpace(string(method.RequestAuthStrategy))))
+	method.ScopeEvidence = AuthScopeEvidence(strings.ToLower(strings.TrimSpace(string(method.ScopeEvidence))))
 	method.Label = strings.TrimSpace(method.Label)
 	method.Description = strings.TrimSpace(method.Description)
 	if !integrationIdentifierPattern.MatchString(method.ID) || !validAuthMethodType(method.Type) || method.Label == "" {
@@ -411,6 +413,12 @@ func normalizeAuthMethod(integrationID string, method AuthMethodDefinition) (Aut
 		return AuthMethodDefinition{}, fmt.Errorf("integration %s auth method %s localized description: %w", integrationID, method.ID, err)
 	}
 	applyAuthStrategyDefaults(&method)
+	if method.ScopeEvidence == "" {
+		method.ScopeEvidence = AuthScopeEvidenceProviderReported
+	}
+	if !validAuthScopeEvidence(method.ScopeEvidence) {
+		return AuthMethodDefinition{}, fmt.Errorf("integration %s auth method %s has invalid scope evidence metadata", integrationID, method.ID)
+	}
 	if err := validateAuthStrategies(integrationID, method); err != nil {
 		return AuthMethodDefinition{}, err
 	}
@@ -591,7 +599,7 @@ func normalizeAuthSetupGuide(integrationID string, method AuthMethodDefinition) 
 			}
 		case AuthSetupStepActionCopyCallbackURL:
 			if method.Type != AuthMethodTypeOAuth2 {
-				return nil, fmt.Errorf("integration %s non-OAuth method %s cannot declare a callback setup step", integrationID, method.ID)
+				return nil, fmt.Errorf("integration %s non-browser method %s cannot declare a callback setup step", integrationID, method.ID)
 			}
 		default:
 			return nil, fmt.Errorf("integration %s auth method %s setup step %s action is invalid", integrationID, method.ID, step.ID)
@@ -1241,7 +1249,7 @@ func (r *Registry) Catalog() []ProviderCatalogItem {
 }
 
 func (r *Registry) SearchActionSummaries(request ActionSearchRequest) []ActionSummary {
-	query := strings.ToLower(strings.TrimSpace(request.Query))
+	query := strings.TrimSpace(request.Query)
 	integrationID := strings.ToLower(strings.TrimSpace(request.IntegrationID))
 	limit := request.Limit
 	if limit <= 0 {
@@ -1251,7 +1259,30 @@ func (r *Registry) SearchActionSummaries(request ActionSearchRequest) []ActionSu
 		limit = 100
 	}
 	definitions := r.ProviderDefinitions()
-	out := make([]ActionSummary, 0, min(limit, 20))
+	if query == "" {
+		out := make([]ActionSummary, 0, min(limit, 20))
+		for _, definition := range definitions {
+			if integrationID != "" && definition.ID != integrationID {
+				continue
+			}
+			for _, action := range definition.Actions {
+				if request.Caller != "" && !actionSupportsCaller(action, request.Caller) {
+					continue
+				}
+				out = append(out, actionSummary(definition, action))
+				if len(out) >= limit {
+					return out
+				}
+			}
+		}
+		return out
+	}
+
+	type searchCandidate struct {
+		summary ActionSummary
+		score   int
+	}
+	candidates := make([]searchCandidate, 0, 20)
 	for _, definition := range definitions {
 		if integrationID != "" && definition.ID != integrationID {
 			continue
@@ -1260,33 +1291,153 @@ func (r *Registry) SearchActionSummaries(request ActionSearchRequest) []ActionSu
 			if request.Caller != "" && !actionSupportsCaller(action, request.Caller) {
 				continue
 			}
-			if query != "" {
-				searchValues := []string{
-					definition.ID, definition.Name, strings.Join(definition.Tags, " "), strings.Join(definition.Categories, " "),
-					action.ID, action.ToolName, action.Name, action.Description,
-					strings.Join(action.RequiredScopes, " "),
-					strings.Join(action.RequiredAnyScopes, " "),
-					strings.Join(action.PreferredScopes, " "),
-				}
-				searchValues = append(searchValues, localizedTextSearchValues(definition.NameI18n)...)
-				searchValues = append(searchValues, localizedTextSearchValues(definition.DescriptionI18n)...)
-				searchValues = append(searchValues, localizedLabelMapSearchValues(definition.TagLabelsI18n)...)
-				searchValues = append(searchValues, localizedLabelMapSearchValues(definition.CategoryLabelsI18n)...)
-				searchValues = append(searchValues, localizedTextSearchValues(action.NameI18n)...)
-				searchValues = append(searchValues, localizedTextSearchValues(action.DescriptionI18n)...)
-				searchValues = append(searchValues, localizedLabelMapSearchValues(action.ScopeLabelsI18n)...)
-				haystack := strings.ToLower(strings.Join(searchValues, " "))
-				if !strings.Contains(haystack, query) {
-					continue
-				}
+			score := actionSearchScore(query, definition, action)
+			if score <= 0 {
+				continue
 			}
-			out = append(out, actionSummary(definition, action))
-			if len(out) >= limit {
-				return out
-			}
+			candidates = append(candidates, searchCandidate{summary: actionSummary(definition, action), score: score})
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		if candidates[i].summary.IntegrationID != candidates[j].summary.IntegrationID {
+			return candidates[i].summary.IntegrationID < candidates[j].summary.IntegrationID
+		}
+		return candidates[i].summary.ID < candidates[j].summary.ID
+	})
+	out := make([]ActionSummary, 0, min(limit, len(candidates)))
+	for _, candidate := range candidates {
+		out = append(out, candidate.summary)
+		if len(out) >= limit {
+			break
 		}
 	}
 	return out
+}
+
+func actionSearchScore(query string, definition ProviderDefinition, action ActionDefinition) int {
+	type weightedValue struct {
+		value string
+		base  int
+	}
+	values := []weightedValue{
+		{value: action.ID, base: 1200},
+		{value: action.ToolName, base: 1150},
+		{value: action.Name, base: 1000},
+		{value: action.Description, base: 500},
+		{value: strings.Join(action.RequiredScopes, " "), base: 350},
+		{value: strings.Join(action.RequiredAnyScopes, " "), base: 350},
+		{value: strings.Join(action.PreferredScopes, " "), base: 350},
+		{value: definition.ID, base: 250},
+		{value: definition.Name, base: 250},
+		{value: strings.Join(definition.Tags, " "), base: 200},
+		{value: strings.Join(definition.Categories, " "), base: 200},
+	}
+	for _, value := range localizedTextSearchValues(action.NameI18n) {
+		values = append(values, weightedValue{value: value, base: 1000})
+	}
+	for _, value := range localizedTextSearchValues(action.DescriptionI18n) {
+		values = append(values, weightedValue{value: value, base: 500})
+	}
+	for _, value := range localizedLabelMapSearchValues(action.ScopeLabelsI18n) {
+		values = append(values, weightedValue{value: value, base: 350})
+	}
+	for _, value := range localizedTextSearchValues(definition.NameI18n) {
+		values = append(values, weightedValue{value: value, base: 250})
+	}
+	for _, value := range localizedTextSearchValues(definition.DescriptionI18n) {
+		values = append(values, weightedValue{value: value, base: 150})
+	}
+	for _, value := range localizedLabelMapSearchValues(definition.TagLabelsI18n) {
+		values = append(values, weightedValue{value: value, base: 200})
+	}
+	for _, value := range localizedLabelMapSearchValues(definition.CategoryLabelsI18n) {
+		values = append(values, weightedValue{value: value, base: 200})
+	}
+
+	best := 0
+	for _, candidate := range values {
+		if score := actionSearchValueScore(query, candidate.value, candidate.base); score > best {
+			best = score
+		}
+	}
+	return best
+}
+
+func actionSearchValueScore(query, value string, base int) int {
+	normalizedQuery := normalizeActionSearchText(query)
+	normalizedValue := normalizeActionSearchText(value)
+	if normalizedQuery == "" || normalizedValue == "" {
+		return 0
+	}
+	compactQuery := strings.ReplaceAll(normalizedQuery, " ", "")
+	compactValue := strings.ReplaceAll(normalizedValue, " ", "")
+	distancePenalty := min(max(0, len([]rune(compactValue))-len([]rune(compactQuery))), 80)
+	switch {
+	case normalizedValue == normalizedQuery:
+		return base + 100
+	case compactValue == compactQuery:
+		return base + 90
+	case strings.Contains(normalizedValue, normalizedQuery):
+		return base + 80 - distancePenalty
+	case strings.Contains(compactValue, compactQuery):
+		return base + 70 - distancePenalty
+	case actionSearchTermsMatch(normalizedQuery, normalizedValue):
+		return base + 60 - distancePenalty
+	case base >= 900 && len([]rune(compactQuery)) >= 2 && actionSearchRuneSubsequence(compactQuery, compactValue):
+		return base + 50 - distancePenalty
+	default:
+		return 0
+	}
+}
+
+func normalizeActionSearchText(value string) string {
+	var builder strings.Builder
+	lastSpace := true
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			builder.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			builder.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+func actionSearchTermsMatch(query, value string) bool {
+	terms := strings.Fields(query)
+	if len(terms) < 2 {
+		return false
+	}
+	for _, term := range terms {
+		if !strings.Contains(value, term) {
+			return false
+		}
+	}
+	return true
+}
+
+func actionSearchRuneSubsequence(query, value string) bool {
+	queryRunes := []rune(query)
+	if len(queryRunes) == 0 {
+		return false
+	}
+	index := 0
+	for _, r := range []rune(value) {
+		if r == queryRunes[index] {
+			index++
+			if index == len(queryRunes) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *Registry) Registrations() []Registration {

@@ -478,6 +478,7 @@ func (handler *integrationHandler) providerCapabilities(c *gin.Context) {
 			)
 		}
 		availability, compatibleCount, err := integrationActionCapabilityAvailability(
+			definition,
 			action,
 			decision,
 			visible,
@@ -511,6 +512,7 @@ func (handler *integrationHandler) providerCapabilities(c *gin.Context) {
 }
 
 func integrationActionCapabilityAvailability(
+	definition integrations.ProviderDefinition,
 	action integrations.ActionDefinition,
 	decision integrations.ActionPolicyDecision,
 	connections []integrations.ConnectionView,
@@ -537,8 +539,13 @@ func integrationActionCapabilityAvailability(
 			!integrations.ActionSupportsAuthMethod(action, connection.AuthMethodID) {
 			continue
 		}
+		if integrationConnectionActionEvidenceContains(connection.DeniedActionIDs, action.ID) {
+			hasScopeGap = true
+			continue
+		}
 		scopeRequirement := integrations.ActionScopeRequirement(action)
 		if (len(scopeRequirement.AllOf) > 0 || len(scopeRequirement.AnyOf) > 0) &&
+			integrations.AuthMethodScopeEvidence(definition, connection.AuthMethodID) != integrations.AuthScopeEvidenceConnectorDeclared &&
 			(connection.AuthType == integrations.ConnectionAuthTypeOAuth2 || len(connection.GrantedScopes) > 0) {
 			if err := integrations.AuthorizeConnectionScopes(
 				connection.GrantedScopes,
@@ -569,6 +576,16 @@ func integrationActionCapabilityAvailability(
 		return integrationCapabilityNeedsScope, 0, nil
 	}
 	return integrationCapabilityNeedsConnection, 0, nil
+}
+
+func integrationConnectionActionEvidenceContains(actionIDs []string, actionID string) bool {
+	actionID = strings.ToLower(strings.TrimSpace(actionID))
+	for _, candidate := range actionIDs {
+		if strings.ToLower(strings.TrimSpace(candidate)) == actionID {
+			return true
+		}
+	}
+	return false
 }
 
 func (handler *integrationHandler) listAvailableConnections(c *gin.Context) {

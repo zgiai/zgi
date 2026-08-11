@@ -105,6 +105,8 @@ type IntegrationConnection struct {
 	ScopeStatus             ConnectionScopeStatus      `gorm:"size:32;not null;default:unknown" json:"scope_status"`
 	AttentionCode           *string                    `gorm:"size:64" json:"attention_code,omitempty"`
 	MissingRequiredScopes   []string                   `gorm:"type:jsonb;serializer:json;not null;default:'[]'" json:"missing_required_scopes"`
+	VerifiedActionIDs       []string                   `gorm:"type:jsonb;serializer:json;not null;default:'[]'" json:"verified_action_ids"`
+	DeniedActionIDs         []string                   `gorm:"type:jsonb;serializer:json;not null;default:'[]'" json:"denied_action_ids"`
 	LastHealthCheckedAt     *time.Time                 `json:"last_health_checked_at,omitempty"`
 	LastHealthyAt           *time.Time                 `json:"last_healthy_at,omitempty"`
 	LastRuntimeSuccessAt    *time.Time                 `json:"last_runtime_success_at,omitempty"`
@@ -174,6 +176,12 @@ func (connection *IntegrationConnection) BeforeCreate(_ *gorm.DB) error {
 	if connection.MissingRequiredScopes == nil {
 		connection.MissingRequiredScopes = []string{}
 	}
+	if connection.VerifiedActionIDs == nil {
+		connection.VerifiedActionIDs = []string{}
+	}
+	if connection.DeniedActionIDs == nil {
+		connection.DeniedActionIDs = []string{}
+	}
 	return nil
 }
 
@@ -214,6 +222,8 @@ type ConnectionView struct {
 	ScopeStatus           ConnectionScopeStatus        `json:"scope_status"`
 	AttentionCode         *string                      `json:"attention_code,omitempty"`
 	MissingRequiredScopes []string                     `json:"missing_required_scopes"`
+	VerifiedActionIDs     []string                     `json:"verified_action_ids"`
+	DeniedActionIDs       []string                     `json:"denied_action_ids"`
 	LastHealthCheckedAt   *time.Time                   `json:"last_health_checked_at,omitempty"`
 	LastHealthyAt         *time.Time                   `json:"last_healthy_at,omitempty"`
 	LastRuntimeSuccessAt  *time.Time                   `json:"last_runtime_success_at,omitempty"`
@@ -261,6 +271,8 @@ func newConnectionView(connection *IntegrationConnection) ConnectionView {
 		ScopeStatus:           connection.ScopeStatus,
 		AttentionCode:         cloneStringPointer(connection.AttentionCode),
 		MissingRequiredScopes: cloneStringSlice(connection.MissingRequiredScopes),
+		VerifiedActionIDs:     cloneStringSlice(connection.VerifiedActionIDs),
+		DeniedActionIDs:       cloneStringSlice(connection.DeniedActionIDs),
 		LastHealthCheckedAt:   cloneTimePointer(connection.LastHealthCheckedAt),
 		LastHealthyAt:         cloneTimePointer(connection.LastHealthyAt),
 		LastRuntimeSuccessAt:  cloneTimePointer(connection.LastRuntimeSuccessAt),

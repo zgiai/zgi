@@ -243,14 +243,14 @@ func actionSummarySchema() map[string]interface{} {
 		"connection_selection":    map[string]interface{}{"type": "string", "enum": []string{"preferred"}},
 		"availability": map[string]interface{}{
 			"type": "string",
-			"enum": []string{"ready", "scope_upgrade_required", "disabled_by_policy", "data_egress_blocked"},
+			"enum": []string{"ready", "runtime_verification_required", "provider_permission_check_required", "scope_upgrade_required", "disabled_by_policy", "data_egress_blocked"},
 		},
 		"can_execute":         map[string]interface{}{"type": "boolean"},
 		"enabled":             map[string]interface{}{"type": "boolean"},
 		"data_egress_allowed": map[string]interface{}{"type": "boolean"},
 		"recovery_action": map[string]interface{}{
 			"type": "string",
-			"enum": []string{"upgrade_oauth_scope", "enable_action_in_connection_center", "allow_data_egress_in_connection_center"},
+			"enum": []string{"review_provider_permission_and_retry", "upgrade_oauth_scope", "enable_action_in_connection_center", "allow_data_egress_in_connection_center"},
 		},
 		"requires_approval": map[string]interface{}{"type": "boolean"},
 		"supports_batch":    map[string]interface{}{"type": "boolean"},

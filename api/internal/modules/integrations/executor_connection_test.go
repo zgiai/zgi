@@ -194,6 +194,56 @@ func TestExecutorRequiredScopesFailBeforeQuotaAuditAndProvider(t *testing.T) {
 	}
 }
 
+func TestExecutorDoesNotTreatConnectorDeclaredScopeGroupsAsProviderGrantSnapshot(t *testing.T) {
+	action := testAction(ActionWebSearch, "search_web")
+	action.RequiredScopes = []string{"contacts:read"}
+	action.SupportedAuthMethodIDs = []string{"tenant_app"}
+	adapter := &testAdapter{driverID: "test-driver", execute: func(context.Context, ActionRequest) (*ActionResult, error) {
+		return &ActionResult{Output: map[string]interface{}{"ok": true}, AttemptCount: 1}, nil
+	}}
+	registration := localizedTestRegistration(IntegrationWebSearch, adapter, []ActionDefinition{action})
+	registration.Definition.AuthMethods = []AuthMethodDefinition{{
+		ID:                  "tenant_app",
+		Type:                AuthMethodTypeCustomCredential,
+		CredentialSource:    ConnectionCredentialSourceOrganization,
+		IdentityKind:        AuthIdentityKindApplication,
+		AcquisitionStrategy: AuthAcquisitionStrategyManualForm,
+		LifecycleStrategy:   AuthLifecycleStrategyExchangeOnDemand,
+		RequestAuthStrategy: RequestAuthStrategyProviderCustom,
+		ScopeEvidence:       AuthScopeEvidenceConnectorDeclared,
+		Label:               "Tenant application",
+		LabelI18n: LocalizedText{
+			LocaleEnglishUS:         "Tenant application",
+			LocaleSimplifiedChinese: "企业内部应用",
+		},
+		Available: true,
+		Fields: []CredentialFieldDefinition{{
+			Key: "token", Label: "Token", LabelI18n: LocalizedText{
+				LocaleEnglishUS: "Token", LocaleSimplifiedChinese: "访问令牌",
+			}, Input: CredentialFieldInputPassword, Required: true, Secret: true,
+		}},
+	}}
+	registry := NewRegistry()
+	if err := registry.Register(registration); err != nil {
+		t.Fatal(err)
+	}
+	connection := &ResolvedConnection{
+		ID: testConnectionID, OrganizationID: testOrganizationID, IntegrationID: IntegrationWebSearch,
+		DriverID: "test-driver", AuthType: ConnectionAuthTypeCustomCredential, AuthMethodID: "tenant_app",
+		GrantedScopes: []string{"different:declared_group"}, Credentials: map[string]string{"token": "secret"},
+	}
+	executor := NewExecutor(registry, &testAudit{}, &testQuota{}, nil, []byte("audit-key"), 0).
+		WithConnectionResolver(executorConnectionResolverFunc(func(context.Context, ConnectionResolveRequest) (*ResolvedConnection, error) {
+			return connection, nil
+		})).
+		WithConnectionAccessAuthorizer(allowExecutorConnectionAccess())
+
+	result, err := executor.Execute(context.Background(), validActionRequest("current events"))
+	if err != nil || result == nil || adapter.calls != 1 {
+		t.Fatalf("Execute() result=%#v error=%v adapter calls=%d", result, err, adapter.calls)
+	}
+}
+
 func TestExecutorRequiresAllScopesAndOneAlternative(t *testing.T) {
 	action := testAction(ActionWebSearch, "search_web")
 	action.RequiredScopes = []string{"repo:read"}

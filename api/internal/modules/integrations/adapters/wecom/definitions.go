@@ -43,7 +43,8 @@ func authMethod() integrations.AuthMethodDefinition {
 	return integrations.AuthMethodDefinition{
 		ID: AuthMethodID, Type: integrations.AuthMethodTypeCustomCredential, CredentialSource: integrations.ConnectionCredentialSourceOrganization, IdentityKind: integrations.AuthIdentityKindApplication,
 		AcquisitionStrategy: integrations.AuthAcquisitionStrategyManualForm, LifecycleStrategy: integrations.AuthLifecycleStrategyExchangeOnDemand, RequestAuthStrategy: integrations.RequestAuthStrategyProviderCustom,
-		Label: "Connect an organization WeCom custom application", LabelI18n: loc("Connect an organization WeCom custom application", "连接组织企业微信自建应用"),
+		ScopeEvidence: integrations.AuthScopeEvidenceConnectorDeclared,
+		Label:         "Connect an organization WeCom custom application", LabelI18n: loc("Connect an organization WeCom custom application", "连接组织企业微信自建应用"),
 		Description:     "Enter the Corp ID, Agent ID, and application Secret from the WeCom administration console. The Secret is encrypted and never returned to the browser.",
 		DescriptionI18n: loc("Enter the Corp ID, Agent ID, and application Secret from the WeCom administration console. The Secret is encrypted and never returned to the browser.", "填写企业微信管理后台的企业 ID、应用 AgentID 和应用 Secret；Secret 会加密保存且不会返回浏览器。"), Available: true,
 		Fields: []integrations.CredentialFieldDefinition{

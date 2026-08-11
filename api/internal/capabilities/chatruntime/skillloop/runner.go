@@ -185,6 +185,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureCounts := map[string]int{}
 	failedToolCallAttemptCounts := map[string]int{}
 	emptyFinalAnswerRetryCount := 0
+	externalActionCompletionRetryCount := 0
+	externalActionSucceeded := false
 	skillToolCallCounts := map[string]int{}
 	successfulToolCalls := []SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
@@ -305,6 +307,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
+				if !req.TerminalOnly &&
+					terminalStateGuardRequiresExternalExecutionRetry(guard) &&
+					!externalActionSucceeded &&
+					externalActionCompletionRetryCount < 1 {
+					externalActionCompletionRetryCount++
+					messages = append(messages,
+						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
+						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage()},
+					)
+					continue
+				}
 				terminalStateGuardNotify(req, guard)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
@@ -335,6 +348,16 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			guard := terminalStateGuardEvaluate(roundRuntimeState, submission.answer)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
+				if terminalStateGuardRequiresExternalExecutionRetry(guard) &&
+					!externalActionSucceeded &&
+					externalActionCompletionRetryCount < 1 {
+					externalActionCompletionRetryCount++
+					messages = append(messages,
+						adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
+						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage()},
+					)
+					continue
+				}
 				terminalStateGuardNotify(req, guard)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
@@ -549,6 +572,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						Arguments: copyStringAnyMap(result.trace.Arguments),
 						Result:    copyStringAnyMap(result.toolResult),
 					})
+					if strings.EqualFold(strings.TrimSpace(result.trace.SkillID), "external-apps") &&
+						strings.EqualFold(strings.TrimSpace(result.trace.ToolName), "execute_action") {
+						externalActionSucceeded = true
+					}
 				}
 			}
 			if result.pendingApproval != nil {

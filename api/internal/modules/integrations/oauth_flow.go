@@ -1024,6 +1024,8 @@ func (service *OAuthFlowService) prepareOAuthConnection(
 	connection.HealthStatus = ConnectionHealthHealthy
 	connection.AttentionCode = nil
 	connection.MissingRequiredScopes = []string{}
+	connection.VerifiedActionIDs = []string{}
+	connection.DeniedActionIDs = []string{}
 	connection.LastErrorCode = nil
 	connection.LastHealthyAt = &now
 	connection.LastTestedAt = &now

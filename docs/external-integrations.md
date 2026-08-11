@@ -430,14 +430,31 @@ Connections. The summary separates:
 - **missing permissions**, which require a credential replacement or OAuth
   scope upgrade.
 
-Raw provider scopes remain the source for fail-closed runtime authorization and
-are not replaced by this presentation summary. Unknown future scopes are shown
+Provider-reported raw scopes remain the source for fail-closed runtime
+authorization and are not replaced by this presentation summary. Unknown future scopes are shown
 by their safe provider identifier instead of being collapsed into an ambiguous
 "other permission" label. Broad provider grants are highlighted, while ZGI
 still limits execution to adapted Actions that pass usage rules, organization
 policy, approval, and runtime scope checks. Providers that do not return a
 scope list are reported as such; no permissions are inferred from an empty
 scope response.
+
+Authentication methods also declare the source of their scope evidence.
+OAuth providers that return an exact scope set use `provider_reported`.
+Connectors such as DingTalk, WeCom, standard mail, and X app-only access, whose
+authentication APIs do not return a complete grant list, use
+`connector_declared`: the displayed access groups map
+adapted Actions to their expected provider permissions, but are not presented
+as provider-verified grants. Those Actions remain callable and are verified by
+the provider on each real request. A successful connection probe verifies only
+the endpoints named by that probe; it must not imply that unrelated attendance,
+message, role, or contact Actions were tested.
+For these connectors, ZGI stores evidence by exact Action: a successful real
+request verifies only that Action, while a provider error that unambiguously
+means a missing application permission marks only that Action as denied. A
+generic HTTP 403 remains diagnostic evidence and never contaminates unrelated
+Actions because it may represent a resource ACL rather than a missing provider
+grant.
 
 Personal authentication methods create account-owned Connections. A user can
 manage, test, disable, and remove only their own personal Connections from the

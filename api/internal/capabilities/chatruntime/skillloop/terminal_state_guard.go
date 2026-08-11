@@ -35,6 +35,13 @@ func terminalStateGuardEvaluate(evidence map[string]interface{}, candidateAnswer
 			Blockers: []string{blocker},
 		}
 	}
+	if terminalStateGuardExternalExecutionRequired(evidence, candidateAnswer) {
+		return terminalStateGuardDecision{
+			Path:     terminalStateGuardBlocked,
+			Reason:   "a ready external action guide was read for the current execution request but the action was not executed",
+			Blockers: []string{"missing_protocol:external_action_execution"},
+		}
+	}
 	if terminalStateGuardLatestExternalActionFailed(evidence) {
 		return terminalStateGuardDecision{
 			Path:        terminalStateGuardAccepted,
@@ -47,6 +54,178 @@ func terminalStateGuardEvaluate(evidence map[string]interface{}, candidateAnswer
 		Reason:      "main model submitted a terminal answer with no active runtime protocol blocker",
 		FinalAnswer: candidateAnswer,
 	}
+}
+
+func terminalStateGuardExternalExecutionRequired(evidence map[string]interface{}, candidateAnswer string) bool {
+	request := strings.TrimSpace(firstNonEmptyString(
+		evidenceStringFromAny(evidence["latest_user_request"]),
+		evidenceStringFromAny(evidence["user_request"]),
+	))
+	if request == "" || terminalStateGuardCapabilityDiscoveryRequest(request) ||
+		terminalStateGuardExternalInputClarification(evidence, candidateAnswer) {
+		return false
+	}
+	sequence := 0
+	earliestGuideSequence := -1
+	latestGuideSequence := -1
+	latestGuideKey := ""
+	earliestGuideSequenceByKey := map[string]int{}
+	latestExecutionSequenceByKey := map[string]int{}
+	latestExecutionSequence := -1
+	latestUnkeyedExecutionSequence := -1
+	for _, record := range terminalStateGuardExternalInvocations(evidence) {
+		sequence++
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["skill_id"])), "external-apps") {
+			continue
+		}
+		toolName := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(record["tool_name"])))
+		if toolName == "execute_action" {
+			latestExecutionSequence = sequence
+			if key := terminalStateGuardExternalActionKey(record); key != "" {
+				latestExecutionSequenceByKey[key] = sequence
+			} else {
+				// Approval continuations and public timeline projections may retain
+				// the execution outcome while intentionally removing internal
+				// routing identifiers. Treat that execution as completion evidence
+				// instead of asking the model to repeat a possibly non-idempotent
+				// write operation.
+				latestUnkeyedExecutionSequence = sequence
+			}
+			continue
+		}
+		if toolName != "get_action_guide" || terminalStateGuardFailureStatus(terminalStateGuardExternalActionStatus(record)) {
+			continue
+		}
+		result := evidenceMapFromAny(record["result"])
+		availability := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(result["availability"])))
+		if availability == "" || availability == "ready" || availability == "available" {
+			if earliestGuideSequence < 0 {
+				earliestGuideSequence = sequence
+			}
+			latestGuideSequence = sequence
+			latestGuideKey = terminalStateGuardExternalActionKey(record)
+			if latestGuideKey != "" {
+				if _, exists := earliestGuideSequenceByKey[latestGuideKey]; !exists {
+					earliestGuideSequenceByKey[latestGuideKey] = sequence
+				}
+			}
+		}
+	}
+	if latestGuideSequence < 0 {
+		return false
+	}
+	if latestGuideKey != "" {
+		matchingExecution := latestExecutionSequenceByKey[latestGuideKey]
+		if firstGuide := earliestGuideSequenceByKey[latestGuideKey]; firstGuide > 0 && matchingExecution > firstGuide {
+			return false
+		}
+		if latestUnkeyedExecutionSequence > earliestGuideSequence {
+			return false
+		}
+		return true
+	}
+	return latestExecutionSequence < latestGuideSequence
+}
+
+func terminalStateGuardExternalInvocations(evidence map[string]interface{}) []map[string]interface{} {
+	// The top-level runtime snapshot is the authoritative ordered timeline for
+	// the current turn. The nested execution ledger is a compatibility fallback
+	// and may duplicate or lag the top-level records; mixing both can make an old
+	// guide appear newer than a completed write and provoke an unsafe retry.
+	if records := evidenceMapsFromAny(evidence["skill_invocations"]); len(records) > 0 {
+		return records
+	}
+	if execution := evidenceMapFromAny(evidence["execution_ledger"]); len(execution) > 0 {
+		return evidenceMapsFromAny(execution["skill_invocations"])
+	}
+	return nil
+}
+
+func terminalStateGuardExternalActionKey(record map[string]interface{}) string {
+	for _, source := range []map[string]interface{}{
+		evidenceMapFromAny(record["arguments"]),
+		evidenceMapFromAny(record["result"]),
+		evidenceMapFromAny(record["result_summary"]),
+	} {
+		integrationID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(source["integration_id"])))
+		actionID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(source["action_id"])))
+		if integrationID != "" && actionID != "" {
+			return integrationID + ":" + actionID
+		}
+	}
+	return ""
+}
+
+func terminalStateGuardCapabilityDiscoveryRequest(request string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(request))
+	markers := []string{
+		"有哪些功能", "有什么功能", "支持哪些", "支持什么", "能做什么", "可用功能", "可用操作", "应用能力",
+		"如何使用", "怎么使用", "怎么用", "使用方法", "需要哪些参数", "参数说明", "功能说明", "功能介绍", "使用指南",
+		"what can", "which actions", "available actions", "available capabilities", "supported actions", "supported capabilities",
+		"how to use", "which arguments", "required arguments", "action guide",
+	}
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalStateGuardExternalInputClarification(evidence map[string]interface{}, answer string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(answer))
+	if !terminalStateGuardLatestGuideRequiresArguments(evidence) {
+		return false
+	}
+	markers := []string{
+		"请提供", "请补充", "请指定", "请确认要", "需要你提供", "需要您提供", "缺少必填",
+		"please provide", "please specify", "which specific", "required input", "missing required",
+	}
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	if strings.ContainsAny(normalized, "?？") {
+		for _, marker := range []string{"哪", "什么", "谁", "多少", "何时", "哪个", "which", "what", "who", "when", "how many"} {
+			if strings.Contains(normalized, marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func terminalStateGuardLatestGuideRequiresArguments(evidence map[string]interface{}) bool {
+	var latest map[string]interface{}
+	for _, record := range terminalStateGuardExternalInvocations(evidence) {
+		if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["skill_id"])), "external-apps") &&
+			strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["tool_name"])), "get_action_guide") &&
+			!terminalStateGuardFailureStatus(terminalStateGuardExternalActionStatus(record)) {
+			latest = evidenceMapFromAny(record["result"])
+		}
+	}
+	if len(latest) == 0 {
+		return false
+	}
+	if required := evidenceSliceFromAny(latest["required_arguments"]); len(required) > 0 {
+		return true
+	}
+	inputSchema := evidenceMapFromAny(latest["input_schema"])
+	return len(evidenceSliceFromAny(inputSchema["required"])) > 0
+}
+
+func terminalStateGuardRequiresExternalExecutionRetry(decision terminalStateGuardDecision) bool {
+	for _, blocker := range decision.Blockers {
+		if blocker == "missing_protocol:external_action_execution" {
+			return true
+		}
+	}
+	return false
+}
+
+func terminalStateGuardExternalExecutionRetryMessage() string {
+	return "The current user asked to perform an external-app operation. You already read a ready action guide but attempted to finish without calling external-apps/execute_action, so nothing has happened yet. Re-evaluate only the latest user request, do not reuse an action from an earlier turn, and call execute_action with the exact integration_id and action_id from the current guide. If a required business argument is genuinely missing, ask one concise clarification instead. Do not claim that the function is unavailable when the current catalog contains it."
 }
 
 func terminalStateGuardLatestExternalActionFailed(evidence map[string]interface{}) bool {

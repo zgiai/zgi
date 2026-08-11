@@ -62,6 +62,7 @@ func TestAppBearerConnectionValidationReturnsApplicationProfile(t *testing.T) {
 	}
 	if profile.AccountID != "app-only" || profile.DisplayName != "X public data" ||
 		profile.ProviderRequestID != "profile-request" ||
+		profile.ScopeEvidence != integrations.AuthScopeEvidenceConnectorDeclared ||
 		!sameStrings(profile.GrantedScopes, []string{ScopeUsersRead, ScopePostsRead}) {
 		t.Fatalf("profile = %#v", profile)
 	}

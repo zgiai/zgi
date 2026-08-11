@@ -136,6 +136,53 @@ func TestPassiveAccessDeniedWithExplicitMissingScopesStillDegradesConnection(t *
 	}
 }
 
+func TestConnectorRuntimeEvidenceIsRecordedPerAction(t *testing.T) {
+	connection := &IntegrationConnection{
+		HealthStatus: ConnectionHealthHealthy,
+		AuthStatus:   ConnectionAuthValid,
+		ScopeStatus:  ConnectionScopeUnknown,
+	}
+	now := time.Now().UTC()
+	applyConnectionHealthObservation(connection, ConnectionHealthObservation{
+		Source:         ConnectionHealthSourceRuntime,
+		CheckKind:      ConnectionHealthCheckPassive,
+		Classification: ConnectionHealthClassificationScopeDrift,
+		ActionID:       "dingtalk.contact.search",
+		ScopeEvidence:  AuthScopeEvidenceConnectorDeclared,
+		ObservedAt:     now,
+	}, &ConnectionHealthEvent{})
+	if len(connection.DeniedActionIDs) != 1 || connection.DeniedActionIDs[0] != "dingtalk.contact.search" ||
+		len(connection.VerifiedActionIDs) != 0 || connection.HealthStatus != ConnectionHealthDegraded {
+		t.Fatalf("denied action evidence = %#v", connection)
+	}
+
+	applyConnectionHealthObservation(connection, ConnectionHealthObservation{
+		Source:         ConnectionHealthSourceRuntime,
+		CheckKind:      ConnectionHealthCheckPassive,
+		Classification: ConnectionHealthClassificationSuccess,
+		ActionID:       "dingtalk.department.list",
+		ScopeEvidence:  AuthScopeEvidenceConnectorDeclared,
+		ObservedAt:     now.Add(time.Second),
+	}, &ConnectionHealthEvent{})
+	if len(connection.VerifiedActionIDs) != 1 || connection.VerifiedActionIDs[0] != "dingtalk.department.list" ||
+		len(connection.DeniedActionIDs) != 1 || connection.HealthStatus != ConnectionHealthDegraded {
+		t.Fatalf("unrelated success cleared exact denial: %#v", connection)
+	}
+
+	applyConnectionHealthObservation(connection, ConnectionHealthObservation{
+		Source:         ConnectionHealthSourceRuntime,
+		CheckKind:      ConnectionHealthCheckPassive,
+		Classification: ConnectionHealthClassificationSuccess,
+		ActionID:       "dingtalk.contact.search",
+		ScopeEvidence:  AuthScopeEvidenceConnectorDeclared,
+		ObservedAt:     now.Add(2 * time.Second),
+	}, &ConnectionHealthEvent{})
+	if len(connection.DeniedActionIDs) != 0 || len(connection.VerifiedActionIDs) != 2 ||
+		connection.HealthStatus != ConnectionHealthHealthy || connection.AttentionCode != nil {
+		t.Fatalf("successful exact action did not recover evidence: %#v", connection)
+	}
+}
+
 func TestLateRuntimeSuccessIsStaleAfterNewerAuthFailure(t *testing.T) {
 	newer := time.Now().UTC()
 	older := newer.Add(-time.Minute)
@@ -188,6 +235,8 @@ func TestConnectionHealthServicePersistsSafeRuntimeProviderDiagnostics(t *testin
 		ConnectionID:       uuid.New(),
 		IntegrationID:      "feishu",
 		DriverID:           "feishu",
+		ActionID:           "feishu.contact.search",
+		ScopeEvidence:      AuthScopeEvidenceConnectorDeclared,
 		CredentialVersion:  1,
 		ExecutionID:        uuid.New(),
 		ProviderRequestID:  "feishu-log-123",
@@ -202,6 +251,8 @@ func TestConnectionHealthServicePersistsSafeRuntimeProviderDiagnostics(t *testin
 	}
 	got := repository.observation
 	if got.ProviderErrorCode != "99991672" ||
+		got.ActionID != "feishu.contact.search" ||
+		got.ScopeEvidence != AuthScopeEvidenceConnectorDeclared ||
 		got.ProviderRequestID != "feishu-log-123" ||
 		got.ProviderHTTPStatus == nil ||
 		*got.ProviderHTTPStatus != status ||
@@ -295,8 +346,10 @@ func TestConnectionHealthSummarySerializesScopeArraysAsJSONB(t *testing.T) {
 	updates := connectionHealthSummaryUpdates(IntegrationConnection{
 		GrantedScopes:         []string{"repo:read"},
 		MissingRequiredScopes: []string{"issues:read"},
+		VerifiedActionIDs:     []string{"repository.list"},
+		DeniedActionIDs:       []string{"repository.delete"},
 	})
-	for _, key := range []string{"granted_scopes", "missing_required_scopes"} {
+	for _, key := range []string{"granted_scopes", "missing_required_scopes", "verified_action_ids", "denied_action_ids"} {
 		value, ok := updates[key].(datatypes.JSON)
 		if !ok || len(value) == 0 || value[0] != '[' {
 			t.Fatalf("%s update = %#v, want JSON array", key, updates[key])

@@ -1023,13 +1023,17 @@ const messages: IntegrationMessages = {
     title: '连接权限范围',
     description: '区分 ZGI 已适配能力、服务商原始授权和连接维护权限。',
     availableCapabilities: '当前可用能力',
+    configuredCapabilities: '已适配能力',
     providerScopeCount: '服务商授权',
+    providerRequirementGroups: '适配权限组',
     needsAttention: '需要处理',
     capabilitiesTitle: '已适配能力与授权状态',
     capabilitiesDescription: '连接健康不代表所有操作均已授权；缺少权限的操作可以按需追加授权。',
     availableOfTotal: '可用 {available}/{total}',
+    configuredOfTotal: '已适配 {configured}/{total}',
     noCapabilities: '当前认证方式没有可用的适配操作。',
     missingAccess: '缺少权限',
+    runtimeVerificationRequired: '调用时验证',
     upgradeAction: '追加授权',
     broad: '范围较大',
     providerNative: '服务商原始权限',
@@ -1037,7 +1041,12 @@ const messages: IntegrationMessages = {
       '当前凭据包含范围较大的服务商权限。ZGI 仍只会执行上方已适配且通过使用规则的操作。',
     missingWarning: '当前连接缺少 {count} 项必要权限，请重新授权或更换凭据。',
     providerDetailsTitle: '服务商返回的权限详情',
+    connectorDeclaredDetailsTitle: '连接器声明的权限组',
     providerDetailsCount: '共 {count} 项，默认收起以保持页面清晰。',
+    connectorDeclaredDetailsCount:
+      '共 {count} 组，用于匹配已适配能力，并非服务商返回的完整授权清单。',
+    connectorDeclaredNotice:
+      '服务商没有返回可逐项核验的完整权限清单。上方 {configured} 项表示 ZGI 已完成适配并可尝试调用，具体权限会在每次实际调用时由服务商验证；其中 {verified} 项无需额外服务商权限或已有可验证证据。',
     providerScopesNotReported: '服务商未返回完整权限清单',
     providerScopesNotReportedDescription:
       '此认证方式没有返回可展示的 Scope 清单；ZGI 会在实际调用时继续进行权限校验。',
@@ -1045,6 +1054,7 @@ const messages: IntegrationMessages = {
       identity: '身份验证',
       lifecycle: '连接维护',
       provider: '服务商原始授权',
+      connectorRequired: '连接器所需权限组',
     },
     access: {
       unknown: '未分类',

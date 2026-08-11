@@ -119,6 +119,32 @@ func TestProviderPublishesStrictBoundedSchemas(t *testing.T) {
 	}
 }
 
+func TestAnnotateSuccessfulResultSemanticsMarksOnlyEmptyReads(t *testing.T) {
+	readOutput := map[string]interface{}{}
+	annotateSuccessfulResultSemantics(readOutput, integrations.ActionDefinition{
+		Effect: toolgovernance.EffectRead,
+	}, &integrations.ActionResult{ResultCount: 0})
+	if readOutput["empty_result"] != true || readOutput["result_semantics"] != "provider_succeeded_no_matching_items" {
+		t.Fatalf("empty read semantics = %#v", readOutput)
+	}
+
+	writeOutput := map[string]interface{}{}
+	annotateSuccessfulResultSemantics(writeOutput, integrations.ActionDefinition{
+		Effect: toolgovernance.EffectExternalSend,
+	}, &integrations.ActionResult{ResultCount: 0})
+	if len(writeOutput) != 0 {
+		t.Fatalf("empty write was incorrectly described as an empty read: %#v", writeOutput)
+	}
+
+	nonEmptyOutput := map[string]interface{}{}
+	annotateSuccessfulResultSemantics(nonEmptyOutput, integrations.ActionDefinition{
+		Effect: toolgovernance.EffectRead,
+	}, &integrations.ActionResult{ResultCount: 1})
+	if len(nonEmptyOutput) != 0 {
+		t.Fatalf("non-empty read received empty semantics: %#v", nonEmptyOutput)
+	}
+}
+
 func TestMetaToolsRejectNonAIChatCallers(t *testing.T) {
 	fixture := newMetaToolFixture(t)
 	tool, err := fixture.provider.GetTool(ToolListConnections)
@@ -569,6 +595,42 @@ func TestSearchAndGuideReportScopeUpgradeBeforeExecution(t *testing.T) {
 	if guideMessages[0].Data["availability"] != actionAvailabilityScopeGap ||
 		guideMessages[0].Data["can_execute"] != false {
 		t.Fatalf("guide availability = %#v", guideMessages[0].Data)
+	}
+}
+
+func TestActionSummaryReportsConnectorRuntimeEvidenceWithoutBlockingRecovery(t *testing.T) {
+	action := integrations.ActionSummary{
+		IntegrationID: "dingtalk",
+		ID:            "dingtalk.contact.search",
+		Name:          "Search contacts",
+		Effect:        toolgovernance.EffectRead,
+		RiskLevel:     toolgovernance.RiskLevelLow,
+		RequiredScopes: []string{
+			"dingtalk:contacts:read",
+		},
+		DefaultPolicy: integrations.DefaultActionPolicy{
+			Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true,
+		},
+	}
+	connection := &integrations.IntegrationConnection{}
+
+	unknown := actionSummaryOutput(action, connection, integrations.AuthScopeEvidenceConnectorDeclared)
+	if unknown["availability"] != actionAvailabilityRuntimeVerification || unknown["can_execute"] != true {
+		t.Fatalf("unknown connector evidence = %#v", unknown)
+	}
+
+	connection.DeniedActionIDs = []string{action.ID}
+	denied := actionSummaryOutput(action, connection, integrations.AuthScopeEvidenceConnectorDeclared)
+	if denied["availability"] != actionAvailabilityPermissionCheck || denied["can_execute"] != true ||
+		denied["recovery_action"] != "review_provider_permission_and_retry" {
+		t.Fatalf("denied connector evidence = %#v", denied)
+	}
+
+	connection.DeniedActionIDs = nil
+	connection.VerifiedActionIDs = []string{action.ID}
+	verified := actionSummaryOutput(action, connection, integrations.AuthScopeEvidenceConnectorDeclared)
+	if verified["availability"] != actionAvailabilityReady || verified["can_execute"] != true {
+		t.Fatalf("verified connector evidence = %#v", verified)
 	}
 }
 

@@ -37,6 +37,46 @@ func TestProviderDefinitionRegistersFailClosedMessageAction(t *testing.T) {
 	t.Fatal("message action not found")
 }
 
+func TestRegistrySearchMatchesNaturalChineseDingTalkActionQueries(t *testing.T) {
+	adapter, err := New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := integrations.NewRegistry()
+	if err := registry.Register(integrations.Registration{
+		Definition: ProviderDefinition(), Adapter: adapter, ConnectionTester: adapter,
+		CredentialValidator: adapter, HealthProbe: adapter,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		query  string
+		action string
+	}{
+		{query: "列出角色", action: ActionRoleList},
+		{query: "查询通知状态", action: ActionMessageStatusGet},
+		{query: "搜索成员", action: ActionContactSearch},
+		{query: "列出部门", action: ActionDepartmentList},
+		{query: "list roles", action: ActionRoleList},
+	}
+	for _, test := range tests {
+		t.Run(test.query, func(t *testing.T) {
+			found := registry.SearchActionSummaries(integrations.ActionSearchRequest{
+				Query: test.query, IntegrationID: IntegrationID, Caller: tools.ToolInvokeFromAIChat, Limit: 5,
+			})
+			if len(found) == 0 || found[0].ID != test.action {
+				t.Fatalf("SearchActionSummaries(%q) = %#v, want first action %q", test.query, found, test.action)
+			}
+		})
+	}
+	if found := registry.SearchActionSummaries(integrations.ActionSearchRequest{
+		Query: "武汉天气", IntegrationID: IntegrationID, Caller: tools.ToolInvokeFromAIChat, Limit: 5,
+	}); len(found) != 0 {
+		t.Fatalf("unrelated query returned DingTalk actions: %#v", found)
+	}
+}
+
 func TestAdapterConnectionContactSendAndDeliveryFlow(t *testing.T) {
 	var tokenCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +126,9 @@ func TestAdapterConnectionContactSendAndDeliveryFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.DisplayName == "" || len(profile.GrantedScopes) != 3 {
+	if profile.DisplayName == "" || len(profile.GrantedScopes) != 0 ||
+		profile.ScopeEvidence != integrations.AuthScopeEvidenceConnectorDeclared ||
+		len(profile.VerifiedActionIDs) != 1 || profile.VerifiedActionIDs[0] != ActionDepartmentList {
 		t.Fatalf("profile = %#v", profile)
 	}
 	search, err := adapter.Execute(context.Background(), integrations.ActionRequest{IntegrationID: IntegrationID, ActionID: ActionContactSearch, Connection: connection, Input: map[string]interface{}{"query": "张三", "max_results": 10}})
@@ -161,6 +203,40 @@ func TestContactSearchSupportsOfficialIDListResponse(t *testing.T) {
 	}
 }
 
+func TestListDepartmentsExplainsSuccessfulEmptyChildList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1.0/oauth2/accessToken":
+			_, _ = w.Write([]byte(`{"accessToken":"token-1","expireIn":7200}`))
+		case "/topapi/v2/department/listsub":
+			assertLegacyToken(t, r)
+			_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok","result":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID,
+		ActionID:      ActionDepartmentList,
+		Connection:    testConnection("connection-1"),
+		Input:         map[string]interface{}{"department_id": 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ResultCount != 0 || result.Output["empty_reason"] != "no_child_departments" {
+		t.Fatalf("empty department result = %#v", result.Output)
+	}
+	assertDingTalkOutputContract(t, ActionDepartmentList, result.Output)
+}
+
 func TestReferencesAreConnectionBoundAndRawUserIDsAreRejected(t *testing.T) {
 	recipientRef := encodeRecipientRef("connection-1", "user-1")
 	if _, err := decodeRecipientRef(recipientRef, "connection-2"); err == nil {
@@ -204,6 +280,40 @@ func TestValidateConnectionPreservesSafeDingTalkDiagnostics(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "provider detail") {
 		t.Fatalf("provider message must not leak: %v", err)
+	}
+}
+
+func TestContactSearchMapsExplicitAccessTokenPermissionDenialToInsufficientScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1.0/oauth2/accessToken":
+			_, _ = w.Write([]byte(`{"accessToken":"token-1","expireIn":7200}`))
+		case "/v1.0/contact/users/search":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":"Forbidden.AccessDenied.AccessTokenPermissionDenied","message":"permission denied","requestid":"req-scope-1"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID,
+		ActionID:      ActionContactSearch,
+		Connection:    testConnection("connection-1"),
+		Input:         map[string]interface{}{"query": "杨阳", "max_results": 10},
+	})
+	if integrations.ErrorCode(err) != integrations.ErrorCodeInsufficientScope {
+		t.Fatalf("error = %v", err)
+	}
+	diagnostics := integrations.ProviderDiagnosticsFromError(err)
+	if diagnostics.ErrorCode != "Forbidden.AccessDenied.AccessTokenPermissionDenied" ||
+		diagnostics.RequestID != "req-scope-1" || diagnostics.HTTPStatus != http.StatusForbidden {
+		t.Fatalf("diagnostics = %#v", diagnostics)
 	}
 }
 

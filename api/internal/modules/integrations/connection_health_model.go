@@ -45,6 +45,7 @@ type ConnectionHealthEvent struct {
 	ConnectionID       uuid.UUID                      `gorm:"type:uuid;not null;index:idx_connection_health_events_connection_observed,priority:1" json:"connection_id"`
 	IntegrationID      string                         `gorm:"size:64;not null" json:"integration_id"`
 	DriverID           string                         `gorm:"size:64;not null" json:"driver_id"`
+	ActionID           *string                        `gorm:"size:128" json:"action_id,omitempty"`
 	Source             ConnectionHealthSource         `gorm:"size:32;not null" json:"source"`
 	CheckKind          ConnectionHealthCheckKind      `gorm:"size:32;not null" json:"check_kind"`
 	Classification     ConnectionHealthClassification `gorm:"size:64;not null" json:"classification"`
@@ -79,6 +80,7 @@ type ConnectionHealthObservation struct {
 	ConnectionID           uuid.UUID
 	IntegrationID          string
 	DriverID               string
+	ActionID               string
 	Source                 ConnectionHealthSource
 	CheckKind              ConnectionHealthCheckKind
 	Classification         ConnectionHealthClassification
@@ -95,6 +97,7 @@ type ConnectionHealthObservation struct {
 	GrantedScopes          []string
 	ScopeSnapshotObserved  bool
 	MissingScopes          []string
+	ScopeEvidence          AuthScopeEvidence
 	ErrorFingerprint       string
 	ObservedAt             time.Time
 	FailureThreshold       int
@@ -110,6 +113,7 @@ type ConnectionHealthSignal struct {
 	IntegrationID      string
 	DriverID           string
 	ActionID           string
+	ScopeEvidence      AuthScopeEvidence
 	CredentialVersion  int
 	ExecutionID        uuid.UUID
 	ProviderRequestID  string

@@ -180,6 +180,14 @@ func (repository *GormConnectionRepository) Update(ctx context.Context, connecti
 	if err != nil {
 		return fmt.Errorf("encode integration connection missing scopes: %w", err)
 	}
+	verifiedActionsJSON, err := json.Marshal(connection.VerifiedActionIDs)
+	if err != nil {
+		return fmt.Errorf("encode integration connection verified actions: %w", err)
+	}
+	deniedActionsJSON, err := json.Marshal(connection.DeniedActionIDs)
+	if err != nil {
+		return fmt.Errorf("encode integration connection denied actions: %w", err)
+	}
 	updates := map[string]any{
 		"name":                     connection.Name,
 		"credential_source":        connection.CredentialSource,
@@ -202,6 +210,8 @@ func (repository *GormConnectionRepository) Update(ctx context.Context, connecti
 		"scope_status":             connection.ScopeStatus,
 		"attention_code":           connection.AttentionCode,
 		"missing_required_scopes":  datatypes.JSON(missingScopesJSON),
+		"verified_action_ids":      datatypes.JSON(verifiedActionsJSON),
+		"denied_action_ids":        datatypes.JSON(deniedActionsJSON),
 		"last_health_checked_at":   connection.LastHealthCheckedAt,
 		"last_healthy_at":          connection.LastHealthyAt,
 		"last_runtime_success_at":  connection.LastRuntimeSuccessAt,
@@ -270,10 +280,20 @@ func (repository *GormConnectionRepository) UpdateOAuthCredentials(ctx context.C
 	if err != nil {
 		return fmt.Errorf("encode integration connection scopes: %w", err)
 	}
+	verifiedActionsJSON, err := json.Marshal(connection.VerifiedActionIDs)
+	if err != nil {
+		return fmt.Errorf("encode integration connection verified actions: %w", err)
+	}
+	deniedActionsJSON, err := json.Marshal(connection.DeniedActionIDs)
+	if err != nil {
+		return fmt.Errorf("encode integration connection denied actions: %w", err)
+	}
 	updates := map[string]any{
 		"encrypted_credentials":    connection.EncryptedCredentials,
 		"credential_version":       connection.CredentialVersion,
 		"granted_scopes":           datatypes.JSON(scopesJSON),
+		"verified_action_ids":      datatypes.JSON(verifiedActionsJSON),
+		"denied_action_ids":        datatypes.JSON(deniedActionsJSON),
 		"token_expires_at":         connection.TokenExpiresAt,
 		"refresh_token_expires_at": connection.RefreshTokenExpiresAt,
 		"next_token_refresh_at":    connection.NextTokenRefreshAt,

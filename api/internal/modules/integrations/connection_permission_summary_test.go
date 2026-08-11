@@ -6,11 +6,74 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/dingtalk"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/exa"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/github"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/gmail"
 )
+
+func TestConnectionPermissionSummaryDoesNotClaimConnectorDeclaredScopesWereProviderReported(t *testing.T) {
+	connection := &integrations.IntegrationConnection{
+		IntegrationID: dingtalk.IntegrationID,
+		AuthType:      integrations.ConnectionAuthTypeCustomCredential,
+		AuthMethodID:  dingtalk.AuthMethodID,
+		GrantedScopes: []string{dingtalk.ScopeContacts, dingtalk.ScopeAttendance, dingtalk.ScopeSend},
+		ScopeStatus:   integrations.ConnectionScopeVerified,
+	}
+	summary := integrations.BuildConnectionPermissionSummary(connection, dingtalk.ProviderDefinition())
+	if summary.ScopeEvidence != integrations.AuthScopeEvidenceConnectorDeclared {
+		t.Fatalf("scope evidence = %q", summary.ScopeEvidence)
+	}
+	if summary.ProviderScopesReported {
+		t.Fatal("connector-declared DingTalk scope groups were presented as provider-reported")
+	}
+	if len(summary.AdaptedCapabilities) != 12 {
+		t.Fatalf("adapted capabilities = %d, want 12", len(summary.AdaptedCapabilities))
+	}
+	for _, capability := range summary.AdaptedCapabilities {
+		if !capability.ScopeSatisfied {
+			t.Fatalf("declared capability %s should remain executable", capability.ActionID)
+		}
+		if capability.ScopeVerified {
+			t.Fatalf("declared capability %s was presented as provider-verified", capability.ActionID)
+		}
+		if capability.Availability != integrations.CapabilityAvailabilityRuntimeVerificationRequired {
+			t.Fatalf("declared capability %s availability = %q, want runtime verification", capability.ActionID, capability.Availability)
+		}
+	}
+}
+
+func TestConnectionPermissionSummaryUsesExactConnectorActionEvidence(t *testing.T) {
+	connection := &integrations.IntegrationConnection{
+		IntegrationID:     dingtalk.IntegrationID,
+		AuthType:          integrations.ConnectionAuthTypeCustomCredential,
+		AuthMethodID:      dingtalk.AuthMethodID,
+		VerifiedActionIDs: []string{dingtalk.ActionDepartmentList},
+		DeniedActionIDs:   []string{dingtalk.ActionContactSearch},
+	}
+	summary := integrations.BuildConnectionPermissionSummary(connection, dingtalk.ProviderDefinition())
+	var departments, contacts *integrations.ConnectionCapabilityPermission
+	for index := range summary.AdaptedCapabilities {
+		capability := &summary.AdaptedCapabilities[index]
+		switch capability.ActionID {
+		case dingtalk.ActionDepartmentList:
+			departments = capability
+		case dingtalk.ActionContactSearch:
+			contacts = capability
+		}
+	}
+	if departments == nil || !departments.ScopeSatisfied || !departments.ScopeVerified {
+		t.Fatalf("department capability = %#v", departments)
+	}
+	if departments.Availability != integrations.CapabilityAvailabilityReady {
+		t.Fatalf("department availability = %q, want ready", departments.Availability)
+	}
+	if contacts == nil || contacts.ScopeSatisfied || contacts.ScopeVerified ||
+		contacts.Availability != integrations.CapabilityAvailabilityPermissionMissing {
+		t.Fatalf("contact capability = %#v", contacts)
+	}
+}
 
 func TestConnectionPermissionSummarySeparatesGitHubCapabilitiesAndProviderScopes(t *testing.T) {
 	connection := &integrations.IntegrationConnection{

@@ -72,6 +72,17 @@ const (
 	RequestAuthStrategyNone            RequestAuthStrategy = "none"
 )
 
+// AuthScopeEvidence describes where a connection's stored scope snapshot
+// comes from. Provider-reported snapshots may be used to present exact grant
+// coverage. Connector-declared scopes describe the adapter contract only;
+// the provider still verifies each operation at runtime.
+type AuthScopeEvidence string
+
+const (
+	AuthScopeEvidenceProviderReported  AuthScopeEvidence = "provider_reported"
+	AuthScopeEvidenceConnectorDeclared AuthScopeEvidence = "connector_declared"
+)
+
 type CredentialFieldInput string
 
 const (
@@ -181,6 +192,7 @@ type AuthMethodDefinition struct {
 	AcquisitionStrategy AuthAcquisitionStrategy     `json:"acquisition_strategy"`
 	LifecycleStrategy   AuthLifecycleStrategy       `json:"lifecycle_strategy"`
 	RequestAuthStrategy RequestAuthStrategy         `json:"request_auth_strategy"`
+	ScopeEvidence       AuthScopeEvidence           `json:"scope_evidence"`
 	Label               string                      `json:"label"`
 	LabelI18n           LocalizedText               `json:"label_i18n,omitempty"`
 	Description         string                      `json:"description,omitempty"`
@@ -234,6 +246,15 @@ func validCredentialFieldInput(value CredentialFieldInput) bool {
 func validAuthIdentityKind(value AuthIdentityKind) bool {
 	switch AuthIdentityKind(strings.ToLower(strings.TrimSpace(string(value)))) {
 	case AuthIdentityKindUser, AuthIdentityKindApplication, AuthIdentityKindChannel, AuthIdentityKindService:
+		return true
+	default:
+		return false
+	}
+}
+
+func validAuthScopeEvidence(value AuthScopeEvidence) bool {
+	switch AuthScopeEvidence(strings.ToLower(strings.TrimSpace(string(value)))) {
+	case AuthScopeEvidenceProviderReported, AuthScopeEvidenceConnectorDeclared:
 		return true
 	default:
 		return false

@@ -5753,6 +5753,52 @@ func runnerTestSkillToolCall(callID string, skillID string, toolName string, arg
 	}
 }
 
+func TestRunnerRetriesWhenReadyExternalGuideWasNotExecuted(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The DingTalk role function is unavailable."}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Please provide the role search criteria required by the selected action."}}}},
+	}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "query DingTalk notification status"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			return map[string]interface{}{
+				"latest_user_request": "query DingTalk notification status",
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+					"result": map[string]interface{}{
+						"integration_id": "dingtalk", "action_id": "dingtalk.message.delivery.get", "availability": "ready",
+						"required_arguments": []interface{}{map[string]interface{}{"name": "message_ref", "type": "string"}},
+					},
+				}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Please provide the role search criteria required by the selected action." {
+		t.Fatalf("answer = %q", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 2 ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "external-apps/execute_action") {
+		t.Fatal("second request did not contain the external-action completion correction")
+	}
+}
+
 type runnerTestLLMClient struct {
 	appChatResponses      []*adapter.ChatResponse
 	appChatErrors         []error

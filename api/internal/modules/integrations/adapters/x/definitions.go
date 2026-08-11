@@ -114,6 +114,7 @@ func xAppBearerMethod() integrations.AuthMethodDefinition {
 		AcquisitionStrategy: integrations.AuthAcquisitionStrategyManualForm,
 		LifecycleStrategy:   integrations.AuthLifecycleStrategyStatic,
 		RequestAuthStrategy: integrations.RequestAuthStrategyBearerHeader,
+		ScopeEvidence:       integrations.AuthScopeEvidenceConnectorDeclared,
 		Label:               "X app Bearer Token",
 		LabelI18n: integrations.LocalizedText{
 			integrations.LocaleEnglishUS:         "X app Bearer Token",

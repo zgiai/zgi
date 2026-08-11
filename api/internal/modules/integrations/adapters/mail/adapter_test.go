@@ -87,6 +87,9 @@ func TestNativeMailOutputsMatchActionContractsAfterRuntimeNormalization(t *testi
 func TestPresetAuthMethodsExposeOnlyAddressAndAuthorizationCode(t *testing.T) {
 	definition := ProviderDefinitions()[0]
 	for _, method := range definition.AuthMethods {
+		if method.ScopeEvidence != integrations.AuthScopeEvidenceConnectorDeclared {
+			t.Fatalf("mail auth method %s scope evidence = %q", method.ID, method.ScopeEvidence)
+		}
 		if method.ID == AccountCustomAuthMethodID || method.ID == OrganizationCustomAuthMethodID {
 			if len(method.Fields) != 8 {
 				t.Fatalf("custom method %s field count = %d, want 8", method.ID, len(method.Fields))

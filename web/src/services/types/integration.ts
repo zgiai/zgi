@@ -146,6 +146,7 @@ export interface IntegrationAuthDefinition {
   acquisition_strategy?: IntegrationAuthAcquisitionStrategy;
   lifecycle_strategy?: IntegrationAuthLifecycleStrategy;
   request_auth_strategy?: IntegrationRequestAuthStrategy;
+  scope_evidence?: 'provider_reported' | 'connector_declared';
 }
 
 /**
@@ -453,9 +454,14 @@ export interface IntegrationConnectionCapabilityPermission {
   description_i18n?: IntegrationLocalizedText;
   effect: string;
   risk_level: string;
-  availability?: 'ready' | 'scope_upgrade_required' | 'permission_missing';
+  availability?:
+    | 'ready'
+    | 'runtime_verification_required'
+    | 'scope_upgrade_required'
+    | 'permission_missing';
   can_upgrade?: boolean;
   scope_satisfied: boolean;
+  scope_verified?: boolean;
   required_scopes?: string[];
   required_any_scopes?: string[];
   preferred_scopes?: string[];
@@ -482,6 +488,7 @@ export interface IntegrationConnectionPermissionSummary {
   unknown_permissions: IntegrationConnectionProviderPermission[] | null;
   missing_permissions: IntegrationConnectionProviderPermission[] | null;
   provider_scopes_reported: boolean;
+  scope_evidence?: 'provider_reported' | 'connector_declared';
   has_broad_permissions: boolean;
 }
 
@@ -513,6 +520,8 @@ export interface IntegrationConnection {
   account_id?: string | null;
   display_name?: string | null;
   granted_scopes?: string[] | null;
+  verified_action_ids?: string[] | null;
+  denied_action_ids?: string[] | null;
   permission_summary?: IntegrationConnectionPermissionSummary | null;
   credential_version?: number;
   revision?: number;
@@ -649,6 +658,7 @@ export interface IntegrationConnectionHealthEvent {
   connection_id: string;
   integration_id: string;
   driver_id: string;
+  action_id?: string | null;
   source: IntegrationConnectionHealthSource;
   check_kind: IntegrationConnectionHealthCheckKind;
   classification: IntegrationConnectionHealthClassification;

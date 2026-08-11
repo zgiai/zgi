@@ -135,9 +135,11 @@ func (adapter *Adapter) ValidateConnection(ctx context.Context, connection *inte
 		return nil, err
 	}
 	return &integrations.ConnectionProfile{
-		AccountID:     creds.AppKey + ":" + creds.AgentID,
-		DisplayName:   "DingTalk application " + creds.AgentID,
-		GrantedScopes: []string{ScopeContacts, ScopeAttendance, ScopeSend},
+		AccountID:         creds.AppKey + ":" + creds.AgentID,
+		DisplayName:       "DingTalk application " + creds.AgentID,
+		GrantedScopes:     []string{},
+		ScopeEvidence:     integrations.AuthScopeEvidenceConnectorDeclared,
+		VerifiedActionIDs: []string{ActionDepartmentList},
 	}, nil
 }
 
@@ -176,7 +178,14 @@ func (adapter *Adapter) listDepartments(ctx context.Context, creds credentials, 
 	for _, department := range response.Result {
 		items = append(items, map[string]interface{}{"department_ref": encodeDepartmentRef(creds.ConnectionID, int64(department.DeptID)), "id": department.DeptID, "name": bounded(department.Name, 255), "parent_id": department.ParentID})
 	}
-	return map[string]interface{}{"provider": IntegrationID, "departments": items}, len(items), nil
+	output := map[string]interface{}{"provider": IntegrationID, "departments": items}
+	if len(items) == 0 {
+		// The provider endpoint lists children of the requested department. An
+		// empty result is a successful observation and must not be presented as
+		// an authorization failure.
+		output["empty_reason"] = "no_child_departments"
+	}
+	return output, len(items), nil
 }
 
 func (adapter *Adapter) searchContacts(ctx context.Context, creds credentials, input map[string]interface{}) (map[string]interface{}, int, error) {
@@ -571,6 +580,9 @@ func mapAPIError(status int, envelope apiErrorEnvelope) error {
 	case http.StatusUnauthorized:
 		return providerError(integrations.ErrorCodeAuthInvalid, "DingTalk authentication failed")
 	case http.StatusForbidden:
+		if isExplicitDingTalkScopeDenial(envelope.Code) {
+			return providerError(integrations.ErrorCodeInsufficientScope, "DingTalk application has not granted this operation")
+		}
 		return providerError(integrations.ErrorCodeAccessDenied, "DingTalk application does not have the required permission")
 	case http.StatusTooManyRequests:
 		return providerError(integrations.ErrorCodeRateLimited, "DingTalk rate limit was reached")
@@ -578,11 +590,22 @@ func mapAPIError(status int, envelope apiErrorEnvelope) error {
 	if status >= 500 {
 		return providerError(integrations.ErrorCodeUpstream, "DingTalk service is unavailable")
 	}
+	if isExplicitDingTalkScopeDenial(envelope.Code) {
+		return providerError(integrations.ErrorCodeInsufficientScope, "DingTalk application has not granted this operation")
+	}
 	if strings.Contains(strings.ToLower(envelope.Code), "permission") {
 		return providerError(integrations.ErrorCodeAccessDenied, "DingTalk application does not have the required permission")
 	}
 	return providerError(integrations.ErrorCodeProviderRejected, "DingTalk rejected the operation")
 }
+
+func isExplicitDingTalkScopeDenial(code string) bool {
+	normalized := strings.NewReplacer(".", "", "_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(code)))
+	return strings.Contains(normalized, "accesstokenpermissiondenied") ||
+		(strings.Contains(normalized, "scope") &&
+			(strings.Contains(normalized, "missing") || strings.Contains(normalized, "denied")))
+}
+
 func mapLegacyError(status int, envelope legacyEnvelope) error {
 	diagnostics := integrations.ProviderDiagnostics{
 		ErrorCode:  strconv.Itoa(envelope.ErrCode),

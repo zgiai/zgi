@@ -1094,14 +1094,18 @@ const messages = {
     description:
       'Separates ZGI-adapted capabilities, provider grants, and connection-maintenance access.',
     availableCapabilities: 'Available capabilities',
+    configuredCapabilities: 'Adapted capabilities',
     providerScopeCount: 'Provider grants',
+    providerRequirementGroups: 'Required access groups',
     needsAttention: 'Needs attention',
     capabilitiesTitle: 'Adapted capabilities and authorization',
     capabilitiesDescription:
       'A healthy connection does not mean every action is authorized. Grant additional access only when needed.',
     availableOfTotal: '{available}/{total} available',
+    configuredOfTotal: '{configured}/{total} adapted',
     noCapabilities: 'No adapted action is available for this authentication method.',
     missingAccess: 'Missing access',
+    runtimeVerificationRequired: 'Verified when used',
     upgradeAction: 'Grant access',
     broad: 'Broad access',
     providerNative: 'Provider-native',
@@ -1110,7 +1114,12 @@ const messages = {
     missingWarning:
       'This connection is missing {count} required permissions. Reauthorize it or replace the credential.',
     providerDetailsTitle: 'Provider-reported permission details',
+    connectorDeclaredDetailsTitle: 'Connector-declared access groups',
     providerDetailsCount: '{count} permissions. Collapsed by default to keep this view clear.',
+    connectorDeclaredDetailsCount:
+      '{count} access groups map the adapted actions; they are not a complete provider-reported grant list.',
+    connectorDeclaredNotice:
+      'The provider does not return a complete permission list that can be verified item by item. The {configured} actions above are adapted and may be attempted; the provider validates access on each real call. {verified} actions need no additional provider permission or already have verifiable evidence.',
     providerScopesNotReported: 'The provider did not report a complete permission list',
     providerScopesNotReportedDescription:
       'This authentication method did not return a displayable scope list. ZGI still verifies access when an action runs.',
@@ -1118,6 +1127,7 @@ const messages = {
       identity: 'Identity',
       lifecycle: 'Connection maintenance',
       provider: 'Provider-native access',
+      connectorRequired: 'Connector-required access groups',
     },
     access: {
       unknown: 'Unclassified',

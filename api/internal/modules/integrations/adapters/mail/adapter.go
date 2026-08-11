@@ -118,7 +118,10 @@ func (adapter *Adapter) ValidateConnection(ctx context.Context, connection *inte
 	if settings.ReadSupported {
 		scopes = append(scopes, ScopeRead)
 	}
-	return &integrations.ConnectionProfile{AccountID: settings.Email, DisplayName: settings.Email, GrantedScopes: scopes}, nil
+	return &integrations.ConnectionProfile{
+		AccountID: settings.Email, DisplayName: settings.Email, GrantedScopes: scopes,
+		ScopeEvidence: integrations.AuthScopeEvidenceConnectorDeclared,
+	}, nil
 }
 func (adapter *Adapter) ProbeConnection(ctx context.Context, connection *integrations.ResolvedConnection) (*integrations.HealthProbeReport, error) {
 	profile, err := adapter.ValidateConnection(ctx, connection)

@@ -139,6 +139,41 @@ func TestConnectionServiceCreatesEncryptedOrganizationConnectionAndTestsIt(t *te
 	}
 }
 
+func TestConnectionServiceDoesNotMarkConnectorDeclaredScopeGroupsVerified(t *testing.T) {
+	repository := newMemoryConnectionRepository()
+	tester := &recordingConnectionTester{profile: &ConnectionProfile{
+		AccountID: "provider-app", DisplayName: "Provider application",
+		GrantedScopes:     []string{},
+		ScopeEvidence:     AuthScopeEvidenceConnectorDeclared,
+		VerifiedActionIDs: []string{"contacts.list"},
+	}}
+	service, _ := newConnectionServiceForTest(t, repository, tester)
+	organizationID := uuid.New()
+	view, err := service.Create(context.Background(), CreateConnectionInput{
+		OrganizationID: organizationID, IntegrationID: IntegrationWebSearch, DriverID: DriverExa,
+		Name: "Declared scopes", CredentialSource: ConnectionCredentialSourceOrganization,
+		AuthType: ConnectionAuthTypeAPIKey, Credentials: map[string]string{"api_key": "valid-key"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tested, _, err := service.Test(context.Background(), organizationID, view.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tested.ScopeStatus != ConnectionScopeUnknown {
+		t.Fatalf("scope status = %q, want unknown", tested.ScopeStatus)
+	}
+	if len(tested.VerifiedActionIDs) != 1 || tested.VerifiedActionIDs[0] != "contacts.list" {
+		t.Fatalf("verified actions = %#v", tested.VerifiedActionIDs)
+	}
+	if stored := repository.stored(view.ID); stored.ScopeStatus != ConnectionScopeUnknown || stored.ScopeCheckedAt != nil ||
+		len(stored.VerifiedActionIDs) != 1 || stored.VerifiedActionIDs[0] != "contacts.list" {
+		t.Fatalf("stored declared-scope state = %#v", stored)
+	}
+}
+
 func TestConnectionServiceSuccessfulTestPreservesConfiguredExpiryWhenProviderOmitsIt(t *testing.T) {
 	repository := newMemoryConnectionRepository()
 	tester := &recordingConnectionTester{profile: &ConnectionProfile{}}

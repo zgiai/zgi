@@ -120,6 +120,7 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 	if err != nil {
 		return nil, err
 	}
+	providerDefinition, _ := e.registry.ProviderDefinition(resolved.IntegrationID)
 	if !actionSupportsCaller(resolved.Definition, req.InvokeFrom) {
 		return nil, invalidInput("integration action is not available to this caller", nil)
 	}
@@ -238,8 +239,10 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 		if connection.ID != "" {
 			req.ConnectionID = connection.ID
 		}
+		scopeEvidence := AuthMethodScopeEvidence(providerDefinition, connection.AuthMethodID)
 		scopeRequirement := ActionScopeRequirement(resolved.Definition)
 		if (len(scopeRequirement.AllOf) > 0 || len(scopeRequirement.AnyOf) > 0) &&
+			scopeEvidence != AuthScopeEvidenceConnectorDeclared &&
 			(connection.AuthType == ConnectionAuthTypeOAuth2 || len(connection.GrantedScopes) > 0) {
 			if err := AuthorizeConnectionScopes(connection.GrantedScopes, scopeRequirement); err != nil {
 				return nil, err
@@ -432,6 +435,7 @@ func (e *Executor) publishConnectionHealthSignalBestEffort(ctx context.Context, 
 		IntegrationID:      resolved.IntegrationID,
 		DriverID:           resolved.Adapter.DriverID(),
 		ActionID:           resolved.Definition.ID,
+		ScopeEvidence:      executorAuthScopeEvidence(e.registry, resolved.IntegrationID, req.Connection.AuthMethodID),
 		CredentialVersion:  req.Connection.CredentialVersion,
 		ExecutionID:        executionID,
 		ProviderRequestID:  diagnostics.RequestID,
@@ -445,6 +449,17 @@ func (e *Executor) publishConnectionHealthSignalBestEffort(ctx context.Context, 
 	if err != nil {
 		logger.WarnContext(ctx, "failed to publish integration connection health signal", "execution_id", executionID.String(), "connection_id", connectionID.String())
 	}
+}
+
+func executorAuthScopeEvidence(registry *Registry, integrationID, authMethodID string) AuthScopeEvidence {
+	if registry == nil {
+		return AuthScopeEvidenceProviderReported
+	}
+	definition, ok := registry.ProviderDefinition(integrationID)
+	if !ok {
+		return AuthScopeEvidenceProviderReported
+	}
+	return AuthMethodScopeEvidence(definition, authMethodID)
 }
 
 func (e *Executor) reconcilePendingCompletionsBestEffort(ctx context.Context) {

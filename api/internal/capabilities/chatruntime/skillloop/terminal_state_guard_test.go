@@ -137,3 +137,261 @@ func TestTerminalStateGuardTreatsReceiptFailureAsFailureEvenWithProviderPayload(
 		t.Fatalf("terminalStateGuardEvaluate().FinalAnswer = %q", decision.FinalAnswer)
 	}
 }
+
+func TestTerminalStateGuardBlocksExternalExecutionIntentAfterGuideWithoutExecution(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "列出钉钉角色",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind": "tool_call", "skill_id": "external-apps", "tool_name": "search_actions", "status": "success",
+			},
+			map[string]interface{}{
+				"kind": "tool_call", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{"integration_id": "dingtalk", "action_id": "dingtalk.role.list", "availability": "ready"},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "当前环境没有找到钉钉角色列表的业务函数。")
+	if decision.Path != terminalStateGuardBlocked {
+		t.Fatalf("guide without execution was not blocked: %#v", decision)
+	}
+	if len(decision.Blockers) != 1 || decision.Blockers[0] != "missing_protocol:external_action_execution" {
+		t.Fatalf("blockers = %#v", decision.Blockers)
+	}
+}
+
+func TestTerminalStateGuardAllowsExternalActionClarificationAfterGuide(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询钉钉通知状态",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind": "tool_call", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "dingtalk", "action_id": "dingtalk.message.delivery.get", "availability": "ready",
+					"required_arguments": []interface{}{map[string]interface{}{"name": "message_ref", "type": "string"}},
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "请提供要查询的消息引用，以便我读取通知状态。")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("required-input clarification was blocked: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardRejectsClarificationForArgumentFreeExternalAction(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "list DingTalk roles",
+		"skill_invocations": []interface{}{map[string]interface{}{
+			"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+			"result": map[string]interface{}{
+				"integration_id": "dingtalk", "action_id": "dingtalk.role.list", "availability": "ready",
+				"required_arguments": []interface{}{},
+			},
+		}},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "Please provide more information before I list the roles.")
+	if decision.Path != terminalStateGuardBlocked {
+		t.Fatalf("argument-free action escaped through a clarification: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardAllowsCapabilityDiscoveryWithoutExecution(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "钉钉支持哪些功能？",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind": "tool_call", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "钉钉支持成员、部门、角色和通知操作。")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("capability discovery was blocked: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardDoesNotTreatDifferentExternalActionAsCompletion(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "list DingTalk roles",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{"integration_id": "dingtalk", "action_id": "dingtalk.role.list", "availability": "ready"},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{"integration_id": "dingtalk", "action_id": "dingtalk.department.list"},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "The requested function is unavailable.")
+	if decision.Path != terminalStateGuardBlocked {
+		t.Fatalf("different action execution satisfied the guide: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardAcceptsMatchingExternalActionAfterGuide(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "list DingTalk roles",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{"integration_id": "dingtalk", "action_id": "dingtalk.role.list", "availability": "ready"},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{"integration_id": "dingtalk", "action_id": "dingtalk.role.list"},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "No roles were returned.")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("matching action execution was blocked: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardBlocksNaturalExecutionRequestAfterGuideWithoutExecution(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "帮我看下钉钉里的角色列表",
+		"skill_invocations": []interface{}{map[string]interface{}{
+			"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+			"result": map[string]interface{}{
+				"integration_id": "dingtalk", "action_id": "dingtalk.role.list", "availability": "ready",
+			},
+		}},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "当前没有可用的角色列表能力。")
+	if decision.Path != terminalStateGuardBlocked {
+		t.Fatalf("natural execution request escaped without execution: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardAllowsActionGuideQuestionWithoutExecution(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "钉钉列出角色这个功能需要哪些参数？",
+		"skill_invocations": []interface{}{map[string]interface{}{
+			"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+			"result": map[string]interface{}{
+				"integration_id": "dingtalk", "action_id": "dingtalk.role.list", "availability": "ready",
+			},
+		}},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "这个操作不需要业务参数，可以直接执行。")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("action guide question was incorrectly treated as execution intent: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardDoesNotRepeatSuccessfulRedactedExternalWrite(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "给杨志航发送一条钉钉通知",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "dingtalk", "action_id": "dingtalk.message.send", "availability": "ready",
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"result_summary": map[string]interface{}{"status": "completed"},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "通知已发送。")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("redacted successful write was incorrectly scheduled for repetition: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardDoesNotLetStaleNestedGuideOverrideCompletedWrite(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "给杨志航发送一条钉钉通知",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "dingtalk", "action_id": "dingtalk.message.send", "availability": "ready",
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "dingtalk", "action_id": "dingtalk.message.send",
+				},
+			},
+		},
+		"execution_ledger": map[string]interface{}{
+			"skill_invocations": []interface{}{map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "dingtalk", "action_id": "dingtalk.message.send", "availability": "ready",
+				},
+			}},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "通知已发送。")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("stale nested guide caused a completed write to repeat: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardDoesNotRepeatWriteAfterRedundantLaterGuide(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "给杨志航发送一条钉钉通知",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "dingtalk", "action_id": "dingtalk.message.send", "availability": "ready",
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "dingtalk", "action_id": "dingtalk.message.send",
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "dingtalk", "action_id": "dingtalk.message.send", "availability": "ready",
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "通知已发送。")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("redundant guide caused an already completed write to repeat: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardAllowsNaturalRequiredArgumentQuestion(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询钉钉通知状态",
+		"skill_invocations": []interface{}{map[string]interface{}{
+			"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+			"result": map[string]interface{}{
+				"integration_id": "dingtalk", "action_id": "dingtalk.message.delivery.get", "availability": "ready",
+				"input_schema": map[string]interface{}{"required": []interface{}{"message_ref"}},
+			},
+		}},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "你要查询哪一条通知？")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("natural required-argument question was blocked: %#v", decision)
+	}
+}

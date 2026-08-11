@@ -16,15 +16,17 @@ import (
 )
 
 const (
-	maxActionGuideBytes         = 64 * 1024
-	maxExecuteActionOutputBytes = 256 * 1024
-	maxArgumentDisplayBytes     = 64 * 1024
-	maxArgumentDisplayDepth     = 6
-	maxArgumentDisplayFields    = 64
-	hiddenReferenceSentinel     = "__zgi_hidden_reference__"
-	resultCodeOutputTruncated   = "integration_result_truncated"
-	actionAvailabilityReady     = "ready"
-	actionAvailabilityScopeGap  = "scope_upgrade_required"
+	maxActionGuideBytes                   = 64 * 1024
+	maxExecuteActionOutputBytes           = 256 * 1024
+	maxArgumentDisplayBytes               = 64 * 1024
+	maxArgumentDisplayDepth               = 6
+	maxArgumentDisplayFields              = 64
+	hiddenReferenceSentinel               = "__zgi_hidden_reference__"
+	resultCodeOutputTruncated             = "integration_result_truncated"
+	actionAvailabilityReady               = "ready"
+	actionAvailabilityRuntimeVerification = "runtime_verification_required"
+	actionAvailabilityPermissionCheck     = "provider_permission_check_required"
+	actionAvailabilityScopeGap            = "scope_upgrade_required"
 )
 
 type Tool struct {
@@ -154,7 +156,7 @@ func (t *Tool) EnrichGovernanceArgumentsWithError(
 	if resolveErr != nil {
 		return out, resolveErr
 	}
-	if scopeErr := authorizeSelectedConnectionScopes(selected.record, action); scopeErr != nil {
+	if scopeErr := t.authorizeSelectedConnectionScopes(selected.record, action); scopeErr != nil {
 		return out, scopeErr
 	}
 	// Freeze the canonical UUID for governance, approval and execution. The
@@ -223,7 +225,7 @@ func (t *Tool) searchActions(ctx context.Context, userID string, parameters map[
 			if resolveErr != nil {
 				continue
 			}
-			item := actionSummaryOutput(action, preferred.record)
+			item := actionSummaryOutput(action, preferred.record, t.connectionAuthScopeEvidence(preferred.record))
 			if detail, detailOK := t.registry.ActionDetail(integrationID, action.ID); detailOK {
 				if policyErr := t.applyActionPolicyStatus(ctx, userID, integrationID, detail, item); policyErr != nil {
 					return nil, policyErr
@@ -267,7 +269,7 @@ func (t *Tool) getActionGuide(ctx context.Context, userID string, parameters map
 		return nil, err
 	}
 	definition, _ := t.registry.ProviderDefinition(integrationID)
-	output := actionSummaryOutput(actionSummary(definition, action), preferred.record)
+	output := actionSummaryOutput(actionSummary(definition, action), preferred.record, t.connectionAuthScopeEvidence(preferred.record))
 	if policyErr := t.applyActionPolicyStatus(ctx, userID, integrationID, action, output); policyErr != nil {
 		return nil, policyErr
 	}
@@ -378,6 +380,7 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 		"action_schema_hash": action.SchemaHash, "schema_revision": action.SchemaRevision, "catalog_revision": action.CatalogRevision,
 		"result_count": max(result.ResultCount, 0), "attempt_count": max(result.AttemptCount, 0), "result": safeResult,
 	}
+	annotateSuccessfulResultSemantics(output, action, result)
 	if result.Replayed {
 		output["operation_status"] = "already_completed"
 	} else if action.SuccessDeduplication != nil {
@@ -408,6 +411,17 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 		output["result_truncated"] = true
 	}
 	return output, nil
+}
+
+func annotateSuccessfulResultSemantics(output map[string]interface{}, action integrations.ActionDefinition, result *integrations.ActionResult) {
+	if output == nil || result == nil || action.Effect != toolgovernance.EffectRead || result.ResultCount != 0 {
+		return
+	}
+	// A successful read with zero items is provider evidence, not an auth or
+	// connection failure. Publish that distinction at the common facade so all
+	// list/search/get adapters receive the same model-facing semantics.
+	output["empty_result"] = true
+	output["result_semantics"] = "provider_succeeded_no_matching_items"
 }
 
 func (t *Tool) executeActionBatch(
@@ -1249,15 +1263,31 @@ func validateActionRevisions(parameters map[string]interface{}, action integrati
 	return nil
 }
 
-func actionSummaryOutput(action integrations.ActionSummary, connection *integrations.IntegrationConnection) map[string]interface{} {
+func actionSummaryOutput(
+	action integrations.ActionSummary,
+	connection *integrations.IntegrationConnection,
+	scopeEvidence integrations.AuthScopeEvidence,
+) map[string]interface{} {
 	availability := actionAvailabilityReady
 	canExecute := true
 	recoveryAction := ""
+	if scopeEvidence == integrations.AuthScopeEvidenceConnectorDeclared && connection != nil {
+		switch {
+		case connectionHasActionEvidence(connection.DeniedActionIDs, action.ID):
+			// Keep retry possible because the provider permission may have been
+			// corrected since the last call, but never advertise stale evidence
+			// as ready to the model.
+			availability = actionAvailabilityPermissionCheck
+			recoveryAction = "review_provider_permission_and_retry"
+		case !connectionHasActionEvidence(connection.VerifiedActionIDs, action.ID):
+			availability = actionAvailabilityRuntimeVerification
+		}
+	}
 	if authorizeSelectedConnectionScopes(connection, integrations.ActionDefinition{
 		RequiredScopes:    action.RequiredScopes,
 		RequiredAnyScopes: action.RequiredAnyScopes,
 		PreferredScopes:   action.PreferredScopes,
-	}) != nil {
+	}, scopeEvidence) != nil {
 		availability = actionAvailabilityScopeGap
 		canExecute = false
 		recoveryAction = "upgrade_oauth_scope"
@@ -1294,6 +1324,19 @@ func actionSummaryOutput(action integrations.ActionSummary, connection *integrat
 		output["external_destination"] = boundedString(destination, 255)
 	}
 	return output
+}
+
+func connectionHasActionEvidence(values []string, actionID string) bool {
+	actionID = strings.ToLower(strings.TrimSpace(actionID))
+	if actionID == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.ToLower(strings.TrimSpace(value)) == actionID {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *Tool) applyActionPolicyStatus(
@@ -1353,7 +1396,7 @@ func (t *Tool) preparationHintsOutput(
 		preparation, ok := t.registry.ActionDetail(connection.IntegrationID, hint.ActionID)
 		if !ok || preparation.Effect != toolgovernance.EffectRead || !supportsCaller(preparation, t.runtime.InvokeFrom) ||
 			!integrations.ActionSupportsAuthMethod(preparation, connection.AuthMethodID) ||
-			authorizeSelectedConnectionScopes(connection, preparation) != nil {
+			t.authorizeSelectedConnectionScopes(connection, preparation) != nil {
 			continue
 		}
 		if _, resolveErr := t.resolveExplicitFromAvailable(
@@ -1481,9 +1524,31 @@ func schemaNeedsActionGuideAtDepth(schema map[string]interface{}, depth int) boo
 	return false
 }
 
-func authorizeSelectedConnectionScopes(connection *integrations.IntegrationConnection, action integrations.ActionDefinition) error {
+func (t *Tool) connectionAuthScopeEvidence(connection *integrations.IntegrationConnection) integrations.AuthScopeEvidence {
+	if t == nil || t.registry == nil || connection == nil {
+		return integrations.AuthScopeEvidenceProviderReported
+	}
+	definition, ok := t.registry.ProviderDefinition(connection.IntegrationID)
+	if !ok {
+		return integrations.AuthScopeEvidenceProviderReported
+	}
+	return integrations.AuthMethodScopeEvidence(definition, connection.AuthMethodID)
+}
+
+func (t *Tool) authorizeSelectedConnectionScopes(connection *integrations.IntegrationConnection, action integrations.ActionDefinition) error {
+	return authorizeSelectedConnectionScopes(connection, action, t.connectionAuthScopeEvidence(connection))
+}
+
+func authorizeSelectedConnectionScopes(
+	connection *integrations.IntegrationConnection,
+	action integrations.ActionDefinition,
+	scopeEvidence integrations.AuthScopeEvidence,
+) error {
 	requirement := integrations.ActionScopeRequirement(action)
 	if connection == nil || (len(requirement.AllOf) == 0 && len(requirement.AnyOf) == 0) {
+		return nil
+	}
+	if scopeEvidence == integrations.AuthScopeEvidenceConnectorDeclared {
 		return nil
 	}
 	if connection.AuthType != integrations.ConnectionAuthTypeOAuth2 && len(connection.GrantedScopes) == 0 {

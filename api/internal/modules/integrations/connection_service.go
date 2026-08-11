@@ -47,6 +47,8 @@ type ConnectionProfile struct {
 	AccountID         string
 	DisplayName       string
 	GrantedScopes     []string
+	ScopeEvidence     AuthScopeEvidence
+	VerifiedActionIDs []string
 	ExpiresAt         *time.Time
 	ProviderRequestID string
 	CostUSD           *float64
@@ -123,6 +125,12 @@ func (service *DefaultConnectionService) connectionView(connection *IntegrationC
 	if catalog, ok := service.catalog.(ConnectionPermissionCatalog); ok {
 		if definition, exists := catalog.ProviderDefinition(connection.IntegrationID); exists {
 			view.PermissionSummary = BuildConnectionPermissionSummary(connection, definition)
+			if connectionAuthMethodScopeEvidence(connection, definition) == AuthScopeEvidenceConnectorDeclared &&
+				view.ScopeStatus == ConnectionScopeVerified {
+				// Older rows may have been marked verified before scope evidence was
+				// modeled. Do not expose that stale claim to clients.
+				view.ScopeStatus = ConnectionScopeUnknown
+			}
 		}
 	}
 	return view
@@ -349,6 +357,8 @@ func (service *DefaultConnectionService) Update(ctx context.Context, input Updat
 		connection.ScopeStatus = ConnectionScopeUnknown
 		connection.AttentionCode = nil
 		connection.MissingRequiredScopes = []string{}
+		connection.VerifiedActionIDs = []string{}
+		connection.DeniedActionIDs = []string{}
 		connection.ConsecutiveFailures = 0
 		connection.LastHealthCheckedAt = nil
 		connection.HealthRevision++
@@ -435,17 +445,29 @@ func (service *DefaultConnectionService) Test(ctx context.Context, organizationI
 			connection.AccountID = optionalBoundedString(profile.AccountID, 255)
 			connection.DisplayName = optionalBoundedString(profile.DisplayName, 255)
 			connection.GrantedScopes = normalizeScopes(profile.GrantedScopes)
+			verifiedActions := normalizeScopes(profile.VerifiedActionIDs)
+			connection.VerifiedActionIDs = mergeNormalizedStrings(connection.VerifiedActionIDs, verifiedActions)
+			connection.DeniedActionIDs = removeNormalizedStrings(connection.DeniedActionIDs, verifiedActions)
 			if profile.GrantedScopes != nil {
-				connection.ScopeStatus = ConnectionScopeVerified
+				if normalizedAuthScopeEvidence(profile.ScopeEvidence) == AuthScopeEvidenceConnectorDeclared {
+					connection.ScopeStatus = ConnectionScopeUnknown
+					connection.ScopeCheckedAt = nil
+				} else {
+					connection.ScopeStatus = ConnectionScopeVerified
+					connection.ScopeCheckedAt = &now
+					connection.MissingRequiredScopes = []string{}
+				}
 				connection.HealthStatus = ConnectionHealthHealthy
 				connection.AttentionCode = nil
-				connection.ScopeCheckedAt = &now
-				connection.MissingRequiredScopes = []string{}
 			}
 			if profile.ExpiresAt != nil {
 				connection.ExpiresAt = cloneTimePointer(profile.ExpiresAt)
 				connection.TokenExpiresAt = cloneTimePointer(profile.ExpiresAt)
 			}
+		}
+		if len(connection.DeniedActionIDs) > 0 {
+			connection.HealthStatus = ConnectionHealthDegraded
+			connection.AttentionCode = stringPointer(ConnectionAttentionScopeUpdateRequired)
 		}
 	}
 	connection.HealthRevision++
@@ -938,6 +960,24 @@ func normalizeScopes(scopes []string) []string {
 		normalized = append(normalized, scope)
 	}
 	return normalized
+}
+
+func mergeNormalizedStrings(current, added []string) []string {
+	return normalizeScopes(append(append([]string(nil), current...), added...))
+}
+
+func removeNormalizedStrings(current, removed []string) []string {
+	removedSet := make(map[string]struct{}, len(removed))
+	for _, value := range normalizeScopes(removed) {
+		removedSet[value] = struct{}{}
+	}
+	result := make([]string, 0, len(current))
+	for _, value := range normalizeScopes(current) {
+		if _, exists := removedSet[value]; !exists {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func mapConnectionLookupError(err error) error {

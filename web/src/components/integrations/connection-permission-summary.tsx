@@ -139,7 +139,14 @@ export function IntegrationConnectionPermissionSummary({
     }));
 
   const capabilities = summary?.adapted_capabilities ?? [];
+  const connectorDeclaredScopes = summary?.scope_evidence === 'connector_declared';
+  const scopeVerified = (capability: (typeof capabilities)[number]) =>
+    capability.scope_verified ?? !connectorDeclaredScopes;
   const availableCapabilities = capabilities.filter(item => item.scope_satisfied);
+  const runtimeVerifiedCapabilities = availableCapabilities.filter(scopeVerified);
+  const runtimeVerificationCapabilities = availableCapabilities.filter(
+    item => !scopeVerified(item)
+  );
   const blockedCapabilities = capabilities.filter(item => !item.scope_satisfied);
   const providerPermissions = summary
     ? [
@@ -163,15 +170,27 @@ export function IntegrationConnectionPermissionSummary({
       <div className="grid gap-2 sm:grid-cols-3">
         <div className="rounded-lg border bg-muted/20 p-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <CheckCircle2 className="size-4 text-success" />
-            {t('permissionSummary.availableCapabilities')}
+            {connectorDeclaredScopes ? (
+              <ShieldCheck className="size-4 text-primary" />
+            ) : (
+              <CheckCircle2 className="size-4 text-success" />
+            )}
+            {t(
+              connectorDeclaredScopes
+                ? 'permissionSummary.configuredCapabilities'
+                : 'permissionSummary.availableCapabilities'
+            )}
           </div>
           <p className="mt-1.5 text-lg font-semibold">{availableCapabilities.length}</p>
         </div>
         <div className="rounded-lg border bg-muted/20 p-3">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <KeyRound className="size-4" />
-            {t('permissionSummary.providerScopeCount')}
+            {t(
+              connectorDeclaredScopes
+                ? 'permissionSummary.providerRequirementGroups'
+                : 'permissionSummary.providerScopeCount'
+            )}
           </div>
           <p className="mt-1.5 text-lg font-semibold">{providerPermissions.length}</p>
         </div>
@@ -194,11 +213,24 @@ export function IntegrationConnectionPermissionSummary({
               {t('permissionSummary.capabilitiesDescription')}
             </p>
           </div>
-          <Badge variant={blockedCapabilities.length > 0 ? 'warning' : 'success'}>
-            {t('permissionSummary.availableOfTotal', {
-              available: availableCapabilities.length,
-              total: capabilities.length,
-            })}
+          <Badge
+            variant={
+              connectorDeclaredScopes
+                ? 'subtle'
+                : blockedCapabilities.length > 0
+                  ? 'warning'
+                  : 'success'
+            }
+          >
+            {connectorDeclaredScopes
+              ? t('permissionSummary.configuredOfTotal', {
+                  configured: availableCapabilities.length,
+                  total: capabilities.length,
+                })
+              : t('permissionSummary.availableOfTotal', {
+                  available: availableCapabilities.length,
+                  total: capabilities.length,
+                })}
           </Badge>
         </div>
         {capabilities.length > 0 ? (
@@ -219,9 +251,11 @@ export function IntegrationConnectionPermissionSummary({
                 >
                   <span
                     className={
-                      capability.scope_satisfied
-                        ? 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-success/10 text-success'
-                        : 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning'
+                      !capability.scope_satisfied
+                        ? 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning'
+                        : scopeVerified(capability)
+                          ? 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-success/10 text-success'
+                          : 'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary'
                     }
                   >
                     {capability.scope_satisfied ? (
@@ -242,6 +276,10 @@ export function IntegrationConnectionPermissionSummary({
                       <Badge variant="subtle">{metadata.risk(capability.risk_level)}</Badge>
                       {!capability.scope_satisfied ? (
                         <Badge variant="warning">{t('permissionSummary.missingAccess')}</Badge>
+                      ) : !scopeVerified(capability) ? (
+                        <Badge variant="subtle">
+                          {t('permissionSummary.runtimeVerificationRequired')}
+                        </Badge>
                       ) : null}
                     </div>
                     {!capability.scope_satisfied && capability.can_upgrade && onUpgradeAction ? (
@@ -270,6 +308,18 @@ export function IntegrationConnectionPermissionSummary({
           </p>
         )}
       </div>
+
+      {connectorDeclaredScopes && runtimeVerificationCapabilities.length > 0 ? (
+        <Alert className="border-primary/25 bg-primary/5 text-foreground">
+          <ShieldCheck className="size-4 text-primary" />
+          <AlertDescription>
+            {t('permissionSummary.connectorDeclaredNotice', {
+              configured: availableCapabilities.length,
+              verified: runtimeVerifiedCapabilities.length,
+            })}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {summary?.has_broad_permissions ? (
         <Alert className="border-warning/40 bg-warning/5 text-warning">
@@ -301,14 +351,22 @@ export function IntegrationConnectionPermissionSummary({
                 <ShieldCheck className="size-4 shrink-0 text-muted-foreground" />
                 <span>
                   <span className="block text-sm font-medium">
-                    {t('permissionSummary.providerDetailsTitle')}
+                    {t(
+                      connectorDeclaredScopes
+                        ? 'permissionSummary.connectorDeclaredDetailsTitle'
+                        : 'permissionSummary.providerDetailsTitle'
+                    )}
                   </span>
                   <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-                    {providerScopesReported
-                      ? t('permissionSummary.providerDetailsCount', {
+                    {connectorDeclaredScopes
+                      ? t('permissionSummary.connectorDeclaredDetailsCount', {
                           count: providerPermissions.length,
                         })
-                      : t('permissionSummary.providerScopesNotReported')}
+                      : providerScopesReported
+                        ? t('permissionSummary.providerDetailsCount', {
+                            count: providerPermissions.length,
+                          })
+                        : t('permissionSummary.providerScopesNotReported')}
                   </span>
                 </span>
               </span>
@@ -334,7 +392,11 @@ export function IntegrationConnectionPermissionSummary({
                     permissions={lifecyclePermissions}
                   />
                   <PermissionGroup
-                    title={t('permissionSummary.groups.provider')}
+                    title={t(
+                      connectorDeclaredScopes
+                        ? 'permissionSummary.groups.connectorRequired'
+                        : 'permissionSummary.groups.provider'
+                    )}
                     icon={<KeyRound className="size-3.5" />}
                     permissions={
                       summary

@@ -101,6 +101,7 @@ func (adapter *Adapter) ValidateConnection(ctx context.Context, connection *inte
 			AccountID:         "app-only",
 			DisplayName:       "X public data",
 			GrantedScopes:     []string{ScopeUsersRead, ScopePostsRead},
+			ScopeEvidence:     integrations.AuthScopeEvidenceConnectorDeclared,
 			ProviderRequestID: meta.RequestID,
 		}, nil
 	}
