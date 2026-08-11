@@ -126,13 +126,27 @@ type toolSpec struct {
 func toolSpecs() []toolSpec {
 	return []toolSpec{
 		newToolSpec(ToolListConnections, "List selected app connections", "列出已选择的应用连接", "List the app connections explicitly selected for this chat that the current account may access.", "列出当前聊天已明确选择且当前账户有权访问的应用连接。", listConnectionsInputSchema(), listConnectionsOutputSchema(), "integration.catalog.list_connections", "read", "low", false, ""),
-		newToolSpec(ToolSearchActions, "Search connected-app actions", "搜索已连接应用的操作", "Search actions exposed by the app connections explicitly selected for this chat.", "搜索当前聊天已明确选择的应用连接所提供的操作。", searchActionsInputSchema(), searchActionsOutputSchema(), "integration.catalog.search_actions", "read", "low", false, ""),
-		newToolSpec(ToolGetActionGuide, "Get an action guide", "获取操作指南", "Read the current schema and governance summary for one available connected-app action before executing it.", "执行前读取某个可用应用操作的当前参数结构与治理摘要。", actionGuideInputSchema(), actionGuideOutputSchema(), "integration.catalog.get_action_guide", "read", "low", false, ""),
+		withLLMDescription(
+			newToolSpec(ToolSearchActions, "Search connected-app actions", "搜索已连接应用的操作", "Search actions exposed by the app connections explicitly selected for this chat.", "搜索当前聊天已明确选择的应用连接所提供的操作。", searchActionsInputSchema(), searchActionsOutputSchema(), "integration.catalog.search_actions", "read", "low", false, ""),
+			"Search Actions available through the app connections selected for this chat. Pass only concise capability keywords and an optional integration_id; omit limit because the server owns pagination. Use required_arguments, optional_arguments, guide_recommended, and preparation_hints from the result instead of guessing fields.",
+		),
+		withLLMDescription(
+			newToolSpec(ToolGetActionGuide, "Get an action guide", "获取操作指南", "Read the current schema and governance summary for one available connected-app action before executing it.", "执行前读取某个可用应用操作的当前参数结构与治理摘要。", actionGuideInputSchema(), actionGuideOutputSchema(), "integration.catalog.get_action_guide", "read", "low", false, ""),
+			"Read the current Action schema, preparation hints, availability, and execution_contract immediately before executing an Action when guide_recommended is true. Follow execution_contract exactly and never invent argument fields.",
+		),
 		// The static classification is intentionally conservative. The shared
 		// GovernanceManifestResolver replaces it with the selected action's
 		// provider-authoritative classification before a decision is made.
-		newToolSpec(ToolExecuteAction, "Execute a connected-app action", "执行已连接应用的操作", "Execute one action through its selected connection after dynamic governance and authorization checks.", "通过选定连接执行一项操作，并在执行前完成动态治理与授权检查。", executeActionInputSchema(), executeActionOutputSchema(), "integration.execute_dynamic", "invoke", "high", true, "external-provider"),
+		withLLMDescription(
+			newToolSpec(ToolExecuteAction, "Execute a connected-app action", "执行已连接应用的操作", "Execute one action through its selected connection after dynamic governance and authorization checks.", "通过选定连接执行一项操作，并在执行前完成动态治理与授权检查。", executeActionInputSchema(), executeActionOutputSchema(), "integration.execute_dynamic", "invoke", "high", true, "external-provider"),
+			"Execute exactly one selected Action. Always pass arguments as a native JSON object, never as an encoded or quoted JSON string. Correct: arguments={\"keyword\":\"Yang\"}. Incorrect: arguments=\"{\\\"keyword\\\":\\\"Yang\\\"}\". Use only fields from the latest Action guide and omit all connection identifiers and selectors because the server resolves the preferred connection.",
+		),
 	}
+}
+
+func withLLMDescription(spec toolSpec, description string) toolSpec {
+	spec.entity.Description.LLM = strings.TrimSpace(description)
+	return spec
 }
 
 func newToolSpec(name, enLabel, zhLabel, enDescription, zhDescription string, input, output map[string]interface{}, toolID, effect, risk string, dataEgress bool, destination string) toolSpec {

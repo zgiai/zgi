@@ -49,6 +49,10 @@ func TestProviderPublishesStrictBoundedSchemas(t *testing.T) {
 	if !ok || connectionSchema["readOnly"] != true {
 		t.Fatalf("connection_id schema = %#v, want server-owned readOnly field", properties["connection_id"])
 	}
+	selectorSchema, ok := properties["connection_selector"].(map[string]interface{})
+	if !ok || selectorSchema["readOnly"] != true {
+		t.Fatalf("connection_selector schema = %#v, want server-owned readOnly field", properties["connection_selector"])
+	}
 	for _, field := range []string{
 		"integration_name", "integration_name_i18n", "action_name", "action_name_i18n",
 		"argument_labels_i18n", "argument_value_labels_i18n",
@@ -66,12 +70,36 @@ func TestProviderPublishesStrictBoundedSchemas(t *testing.T) {
 	for _, forbidden := range []string{
 		"integration_name", "integration_name_i18n", "action_name", "action_name_i18n",
 		"argument_labels_i18n", "argument_value_labels_i18n",
-		"connection_id", "connection_name", "connection_display_name", "connection_selection",
+		"connection_id", "connection_selector", "connection_name", "connection_display_name", "connection_selection",
 		"action_schema_hash", "action_schema_revision", "catalog_revision", "operation_batch", "batch_summary",
 	} {
 		if strings.Contains(string(modelSchemaJSON), forbidden) {
 			t.Fatalf("model-visible execute schema contains %q: %s", forbidden, modelSchemaJSON)
 		}
+	}
+	modelProperties, _ := modelSchema["properties"].(map[string]interface{})
+	argumentSchema, _ := modelProperties["arguments"].(map[string]interface{})
+	argumentDescription := fmt.Sprint(argumentSchema["description"])
+	if argumentSchema["type"] != "object" ||
+		!strings.Contains(argumentDescription, "native JSON object") ||
+		!strings.Contains(argumentDescription, "Incorrect:") {
+		t.Fatalf("model-visible arguments schema does not strongly require a native object: %#v", argumentSchema)
+	}
+	examples, _ := modelSchema["examples"].([]interface{})
+	if len(examples) == 0 {
+		t.Fatalf("model-visible execute schema has no correct call example: %#v", modelSchema)
+	}
+	if !strings.Contains(execute.GetEntity().Description.LLM, "native JSON object") || !strings.Contains(execute.GetEntity().Description.LLM, "Incorrect") {
+		t.Fatalf("execute_action LLM description lacks the native-object contract: %q", execute.GetEntity().Description.LLM)
+	}
+	search, err := fixture.provider.GetTool(ToolSearchActions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchModelSchema := tools.ModelVisibleJSONSchema(search.GetEntity().InputSchema)
+	searchModelProperties, _ := searchModelSchema["properties"].(map[string]interface{})
+	if _, visible := searchModelProperties["limit"]; visible {
+		t.Fatalf("model-visible search_actions schema exposes server-owned limit: %#v", searchModelSchema)
 	}
 	invalid := map[string]interface{}{
 		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
@@ -481,6 +509,18 @@ func TestSearchAndGuideExposeOnlyActionAuthorizedConnections(t *testing.T) {
 		!reflect.DeepEqual(guide["preferred_scopes"], []interface{}{"repo:write"}) {
 		t.Fatalf("guide alternative scope contract = %#v", guide)
 	}
+	if guide["guide_recommended"] != true {
+		t.Fatalf("guide recommendation = %#v, want true for a required-argument write action", guide["guide_recommended"])
+	}
+	executionContract, ok := guide["execution_contract"].(map[string]interface{})
+	if !ok || executionContract["tool_name"] != ToolExecuteAction ||
+		executionContract["arguments_encoding"] != "native_json_object" ||
+		executionContract["arguments_must_not_be_string"] != true ||
+		executionContract["connection_resolved_by_server"] != true ||
+		!reflect.DeepEqual(executionContract["required_argument_names"], []interface{}{"title"}) ||
+		!reflect.DeepEqual(executionContract["optional_argument_names"], []interface{}{"state"}) {
+		t.Fatalf("guide execution contract = %#v", executionContract)
+	}
 	assertScopeLabelsOutput(t, guide["scope_labels_i18n"])
 	assertNoConnectionUUIDs(t, guide, fixture.connectionOne.ID, fixture.connectionTwo.ID)
 	if err := tools.ValidateJSONSchemaValue(guideTool.GetEntity().OutputSchema, guide); err != nil {
@@ -539,21 +579,34 @@ func TestSearchAndGuideExposeEffectiveDisabledPolicyBeforeExecution(t *testing.T
 	}
 }
 
-func TestCompactActionInputContractRecommendsGuideOnlyForNonTrivialSchemas(t *testing.T) {
+func TestActionGuideRecommendationCoversRequiredAndNonTrivialSchemas(t *testing.T) {
 	simple := compactActionInputContract(strictObject(map[string]interface{}{
 		"query":     map[string]interface{}{"type": "string", "minLength": 1},
 		"page_size": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 50},
 	}, "query"))
-	if simple["guide_recommended"] != false {
-		t.Fatalf("simple guide recommendation = %#v, want false", simple)
+	simpleAction := integrations.ActionDefinition{Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow}
+	if actionGuideRecommended(simpleAction, simple, false) != true {
+		t.Fatalf("required-argument guide recommendation = %#v, want true", simple)
 	}
 
 	constrained := compactActionInputContract(strictObject(map[string]interface{}{
 		"recipient_type": map[string]interface{}{"type": "string", "enum": []interface{}{"self", "open_id"}},
 		"payload":        strictObject(map[string]interface{}{"text": map[string]interface{}{"type": "string"}}, "text"),
 	}, "recipient_type", "payload"))
-	if constrained["guide_recommended"] != true {
+	if actionGuideRecommended(simpleAction, constrained, false) != true {
 		t.Fatalf("constrained guide recommendation = %#v, want true", constrained)
+	}
+
+	zeroArgument := compactActionInputContract(strictObject(map[string]interface{}{}))
+	if actionGuideRecommended(simpleAction, zeroArgument, false) {
+		t.Fatalf("zero-argument low-risk read unexpectedly recommends a guide: %#v", zeroArgument)
+	}
+	writeAction := integrations.ActionDefinition{Effect: toolgovernance.EffectExternalSend, RiskLevel: toolgovernance.RiskLevelHigh}
+	if !actionGuideRecommended(writeAction, zeroArgument, false) {
+		t.Fatal("zero-argument high-risk write must recommend a guide")
+	}
+	if !actionGuideRecommended(simpleAction, zeroArgument, true) {
+		t.Fatal("preparation metadata must recommend a guide")
 	}
 }
 
@@ -1430,6 +1483,71 @@ func TestSkillRuntimeFreezesRealActionIdentityAndCatalogRevisions(t *testing.T) 
 	assertExecuteActionArgumentMetadata(t, frozen.Arguments)
 	if len(fixture.executor.requests) != 0 {
 		t.Fatalf("executor ran before approval: %#v", fixture.executor.requests)
+	}
+}
+
+func TestSkillRuntimeNormalizesEncodedActionArgumentsBeforeGovernance(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(fixture.provider); err != nil {
+		t.Fatalf("RegisterProvider() error = %v", err)
+	}
+	manifestResolver := integrations.NewGovernanceManifestResolver(fixture.registry, allowActionPolicyResolver{})
+	runtime := skills.NewRuntime(tools.NewToolEngine(manager), manager).WithToolGovernanceGateway(
+		skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()).WithManifestResolver(manifestResolver),
+	)
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{skills.SkillExternalApps})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	invocation, err := runtime.CallSkillTool(context.Background(), resolved, skills.SkillExternalApps, ToolExecuteAction, map[string]interface{}{
+		"integration_id": fixture.integrationID,
+		"action_id":      fixture.actionID,
+		"arguments":      `{"title":"hello"}`,
+	}, skills.ExecutionContext{
+		OrganizationID: fixture.organizationID.String(), UserID: fixture.accountID.String(), ConversationID: uuid.NewString(),
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+		RuntimeParameters: map[string]interface{}{
+			"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+			"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+			"tool_governance_permission_tier":     "basic",
+		},
+	}, "encoded_action_arguments")
+	if err != nil {
+		t.Fatalf("CallSkillTool() error = %v", err)
+	}
+	if invocation == nil || invocation.Trace.Governance == nil || invocation.Trace.Governance.FrozenInvocation == nil {
+		t.Fatalf("governance invocation = %#v", invocation)
+	}
+	frozenArguments, ok := invocation.Trace.Governance.FrozenInvocation.Arguments["arguments"].(map[string]interface{})
+	if !ok || frozenArguments["title"] != "hello" {
+		t.Fatalf("frozen action arguments = %#v", invocation.Trace.Governance.FrozenInvocation.Arguments["arguments"])
+	}
+	if len(fixture.executor.requests) != 0 {
+		t.Fatalf("executor ran before approval: %#v", fixture.executor.requests)
+	}
+}
+
+func TestExecuteActionNormalizesEncodedArgumentsAtProviderBoundary(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	})
+	_, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID,
+		"action_id":      fixture.actionID,
+		"arguments":      `{"title":"hello"}`,
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if len(fixture.executor.requests) != 1 || fixture.executor.requests[0].Input["title"] != "hello" {
+		t.Fatalf("executor requests = %#v", fixture.executor.requests)
 	}
 }
 

@@ -529,6 +529,35 @@ arguments, and retry once. Repeating the same invalid call is stopped; the final
 answer must not claim that the provider lacks an Action that was merely called
 with invalid arguments.
 
+The Connected Apps model contract deliberately exposes only fields the model is
+expected to choose. Result limits, connection identifiers, and connection
+selectors remain accepted by the internal compatibility schema but are marked
+server-owned and removed from the model-visible schema. The server resolves the
+preferred Connection selected for the current chat and then performs the normal
+grant, scope, policy, health, and approval checks.
+
+Every `execute_action` call must use native JSON values. In particular,
+`arguments` is an object, not a JSON document encoded inside a string:
+
+```json
+{
+  "integration_id": "dingtalk",
+  "action_id": "dingtalk.contact.search",
+  "arguments": { "keyword": "Yang" }
+}
+```
+
+Action guides include a server-generated `execution_contract` containing the
+required and optional argument names, the required native-object encoding, and
+the fact that Connection selection is server-owned. `guide_recommended` is true
+for Actions with required arguments, preparation hints, complex schemas,
+deduplication semantics, non-read effects, elevated risk, or mandatory approval.
+The hidden runtime instructions require the model to refresh and follow that
+guide immediately before such an Action. These measures reduce malformed calls
+without changing Tool Runtime, AIChat orchestration, the Integration Executor,
+or approval semantics; the server-side JSON Schema remains the authoritative
+enforcement boundary.
+
 Provider validation errors contain only provider-neutral structural facts. The
 Connected Apps surface may recommend `get_action_guide` and `execute_action`,
 while a direct non-integration Skill tool retries the current

@@ -30,8 +30,8 @@ func connectionIDSchema() map[string]interface{} {
 
 func connectionSelectorSchema() map[string]interface{} {
 	return map[string]interface{}{
-		"type": "string", "enum": []string{"preferred"},
-		"description": "Resolve the preferred connection selected for this integration in the current chat. This is also the default when both connection fields are omitted.",
+		"type": "string", "enum": []string{"preferred"}, "readOnly": true,
+		"description": "Server-owned preferred connection selector retained for compatibility. The model must omit this field.",
 	}
 }
 
@@ -91,7 +91,8 @@ func searchActionsInputSchema() map[string]interface{} {
 		},
 		"integration_id": identifierSchema("Optional integration ID to restrict the search."),
 		"limit": map[string]interface{}{
-			"type": "integer", "minimum": 1, "maximum": 20, "default": 10,
+			"type": "integer", "minimum": 1, "maximum": 20, "default": 10, "readOnly": true,
+			"description": "Server-owned result limit. The model must omit this field.",
 		},
 	})
 }
@@ -125,7 +126,8 @@ func executeActionInputSchema() map[string]interface{} {
 			"type": "string", "enum": []string{"preferred", "explicit"}, "readOnly": true,
 		},
 		"arguments": map[string]interface{}{
-			"type": "object", "description": "Arguments that satisfy the input_schema returned by get_action_guide.",
+			"type":                 "object",
+			"description":          "MUST be a native JSON object satisfying the latest input_schema from get_action_guide. Correct: \"arguments\": {\"keyword\": \"Yang\"}. Incorrect: \"arguments\": \"{\\\"keyword\\\":\\\"Yang\\\"}\". Never serialize, quote, or wrap this object as a JSON string. Use {} only when the selected Action accepts no arguments.",
 			"additionalProperties": true,
 		},
 		"batch_items": map[string]interface{}{
@@ -168,6 +170,13 @@ func executeActionInputSchema() map[string]interface{} {
 			"type": "string", "maxLength": 128, "readOnly": true,
 		},
 	}, "integration_id", "action_id")
+	schema["examples"] = []interface{}{
+		map[string]interface{}{
+			"integration_id": "dingtalk",
+			"action_id":      "dingtalk.contact.search",
+			"arguments":      map[string]interface{}{"keyword": "Yang"},
+		},
+	}
 	// An explicit UUID and a server-side selector are mutually exclusive. Both
 	// may be omitted because the server then applies the preferred selector.
 	schema["allOf"] = []interface{}{
@@ -299,9 +308,23 @@ func actionGuideOutputSchema() map[string]interface{} {
 	copyProperties["input_schema"] = map[string]interface{}{"type": "object"}
 	copyProperties["output_schema"] = map[string]interface{}{"type": "object"}
 	copyProperties["schema_revision"] = map[string]interface{}{"type": "string", "maxLength": 128}
+	copyProperties["execution_contract"] = strictObject(map[string]interface{}{
+		"tool_name": map[string]interface{}{"type": "string", "enum": []string{ToolExecuteAction}},
+		"arguments_encoding": map[string]interface{}{
+			"type": "string", "enum": []string{"native_json_object"},
+		},
+		"arguments_must_not_be_string":  map[string]interface{}{"type": "boolean"},
+		"connection_resolved_by_server": map[string]interface{}{"type": "boolean"},
+		"required_argument_names": map[string]interface{}{
+			"type": "array", "maxItems": 64, "items": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 64},
+		},
+		"optional_argument_names": map[string]interface{}{
+			"type": "array", "maxItems": 64, "items": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 64},
+		},
+	}, "tool_name", "arguments_encoding", "arguments_must_not_be_string", "connection_resolved_by_server", "required_argument_names", "optional_argument_names")
 	return strictObject(copyProperties,
 		"integration_id", "action_id", "name", "description", "effect", "risk_level", "data_egress",
-		"required_scopes", "schema_hash", "schema_revision", "catalog_revision", "connection_name", "connection_selection", "supports_batch", "input_schema", "output_schema",
+		"required_scopes", "schema_hash", "schema_revision", "catalog_revision", "connection_name", "connection_selection", "supports_batch", "input_schema", "output_schema", "execution_contract",
 	)
 }
 

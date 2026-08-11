@@ -7,22 +7,19 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/dingtalk"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/exa"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/github"
 	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/gmail"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/mail"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/wecom"
 	xadapter "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/x"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func TestBuiltInProviderActionContracts(t *testing.T) {
-	providers := map[string][]integrations.ActionDefinition{
-		integrations.IntegrationWebSearch: exa.Actions(),
-		feishu.IntegrationID:              feishu.Actions(),
-		github.IntegrationID:              github.Actions(),
-		gmail.IntegrationID:               gmail.Actions(),
-		xadapter.IntegrationID:            xadapter.Actions(),
-	}
+	providers := builtInActionProviders()
 	for integrationID, actions := range providers {
 		integrationID, actions := integrationID, actions
 		t.Run(integrationID, func(t *testing.T) {
@@ -73,13 +70,7 @@ func TestBuiltInProviderActionContracts(t *testing.T) {
 }
 
 func TestBuiltInProviderPreparationChains(t *testing.T) {
-	providers := map[string][]integrations.ActionDefinition{
-		integrations.IntegrationWebSearch: exa.Actions(),
-		feishu.IntegrationID:              feishu.Actions(),
-		github.IntegrationID:              github.Actions(),
-		gmail.IntegrationID:               gmail.Actions(),
-		xadapter.IntegrationID:            xadapter.Actions(),
-	}
+	providers := builtInActionProviders()
 	testCases := []struct {
 		integrationID string
 		targetAction  string
@@ -114,6 +105,84 @@ func TestBuiltInProviderPreparationChains(t *testing.T) {
 			}
 			t.Fatalf("action %q has no preparation hint %q mapping %q from %q: %#v", testCase.targetAction, testCase.prepareAction, testCase.targetArg, testCase.resultPath, action.PreparationHints)
 		})
+	}
+}
+
+func TestBuiltInActionSchemasAreModelCallable(t *testing.T) {
+	for integrationID, actions := range builtInActionProviders() {
+		integrationID, actions := integrationID, actions
+		t.Run(integrationID, func(t *testing.T) {
+			for _, action := range actions {
+				schema := tools.ModelVisibleJSONSchema(action.InputSchema)
+				if schema["type"] != "object" {
+					t.Errorf("action %q input type = %#v, want object", action.ID, schema["type"])
+				}
+				if schema["additionalProperties"] != false {
+					t.Errorf("action %q must reject unknown model arguments", action.ID)
+				}
+				properties, ok := schema["properties"].(map[string]interface{})
+				if !ok {
+					t.Errorf("action %q has no properties object", action.ID)
+					continue
+				}
+				for name, raw := range properties {
+					property, ok := raw.(map[string]interface{})
+					if !ok || !modelPropertyHasDeclaredShape(property) {
+						t.Errorf("action %q property %q has no explicit model-visible type or branch: %#v", action.ID, name, raw)
+					}
+				}
+				for _, name := range requiredSchemaNames(schema["required"]) {
+					if _, exists := properties[name]; !exists {
+						t.Errorf("action %q requires undeclared property %q", action.ID, name)
+					}
+				}
+			}
+		})
+	}
+}
+
+func builtInActionProviders() map[string][]integrations.ActionDefinition {
+	providers := map[string][]integrations.ActionDefinition{
+		integrations.IntegrationWebSearch: exa.Actions(),
+		dingtalk.IntegrationID:            dingtalk.ProviderDefinition().Actions,
+		feishu.IntegrationID:              feishu.Actions(),
+		github.IntegrationID:              github.Actions(),
+		gmail.IntegrationID:               gmail.Actions(),
+		wecom.IntegrationID:               wecom.ProviderDefinition().Actions,
+		xadapter.IntegrationID:            xadapter.Actions(),
+	}
+	for _, definition := range mail.ProviderDefinitions() {
+		providers[definition.ID] = definition.Actions
+	}
+	return providers
+}
+
+func modelPropertyHasDeclaredShape(schema map[string]interface{}) bool {
+	if _, ok := schema["type"]; ok {
+		return true
+	}
+	for _, keyword := range []string{"oneOf", "anyOf", "allOf", "$ref", "const", "enum"} {
+		if _, ok := schema[keyword]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func requiredSchemaNames(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, raw := range typed {
+			if name, ok := raw.(string); ok {
+				out = append(out, name)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }
 

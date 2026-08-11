@@ -82,6 +82,13 @@ func (t *Tool) Invoke(ctx context.Context, userID string, parameters map[string]
 			return nil, integrations.NewError(integrations.ErrorCodeAccessDenied, "Agent integration binding authorization is unavailable", nil)
 		}
 	}
+	if t.name == ToolExecuteAction {
+		normalized, err := normalizeExecuteActionParameters(parameters)
+		if err != nil {
+			return nil, err
+		}
+		parameters = normalized
+	}
 	if err := tools.ValidateJSONSchemaValue(t.entity.InputSchema, parameters); err != nil {
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "meta tool arguments do not match the declared schema", err)
 	}
@@ -137,6 +144,11 @@ func (t *Tool) EnrichGovernanceArgumentsWithError(
 	if t == nil || t.name != ToolExecuteAction || t.registry == nil {
 		return out, nil
 	}
+	normalized, err := normalizeExecuteActionParameters(out)
+	if err != nil {
+		return out, err
+	}
+	out = normalized
 	delete(out, "operation_batch")
 	delete(out, "batch_summary")
 	// Display metadata and connection labels are server-owned. Clear all
@@ -230,12 +242,14 @@ func (t *Tool) searchActions(ctx context.Context, userID string, parameters map[
 				if policyErr := t.applyActionPolicyStatus(ctx, userID, integrationID, detail, item); policyErr != nil {
 					return nil, policyErr
 				}
-				for key, value := range compactActionInputContract(detail.InputSchema) {
+				contract := compactActionInputContract(detail.InputSchema)
+				hints := t.preparationHintsOutput(ctx, userID, detail, preferred.record)
+				contract["guide_recommended"] = actionGuideRecommended(detail, contract, len(hints) > 0)
+				for key, value := range contract {
 					item[key] = value
 				}
-				if hints := t.preparationHintsOutput(ctx, userID, detail, preferred.record); len(hints) > 0 {
+				if len(hints) > 0 {
 					item["preparation_hints"] = hints
-					item["guide_recommended"] = true
 				}
 			}
 			items = append(items, item)
@@ -276,7 +290,14 @@ func (t *Tool) getActionGuide(ctx context.Context, userID string, parameters map
 	output["input_schema"] = cloneMap(action.InputSchema)
 	output["output_schema"] = cloneMap(action.OutputSchema)
 	output["schema_revision"] = action.SchemaRevision
-	if hints := t.preparationHintsOutput(ctx, userID, action, preferred.record); len(hints) > 0 {
+	contract := compactActionInputContract(action.InputSchema)
+	hints := t.preparationHintsOutput(ctx, userID, action, preferred.record)
+	contract["guide_recommended"] = actionGuideRecommended(action, contract, len(hints) > 0)
+	for key, value := range contract {
+		output[key] = value
+	}
+	output["execution_contract"] = actionExecutionContract(contract)
+	if len(hints) > 0 {
 		output["preparation_hints"] = hints
 	}
 	encoded, marshalErr := json.Marshal(output)
@@ -1432,9 +1453,6 @@ func (t *Tool) preparationHintsOutput(
 func compactActionInputContract(schema map[string]interface{}) map[string]interface{} {
 	safe := tools.SafeJSONSchemaForFeedback(schema)
 	properties, _ := safe["properties"].(map[string]interface{})
-	if len(properties) == 0 {
-		return nil
-	}
 	requiredSet := make(map[string]struct{})
 	switch required := safe["required"].(type) {
 	case []interface{}:
@@ -1469,6 +1487,42 @@ func compactActionInputContract(schema map[string]interface{}) map[string]interf
 		"optional_arguments": optionalArguments,
 		"guide_recommended":  schemaNeedsActionGuide(safe),
 	}
+}
+
+func actionExecutionContract(contract map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"tool_name":                     ToolExecuteAction,
+		"arguments_encoding":            "native_json_object",
+		"arguments_must_not_be_string":  true,
+		"connection_resolved_by_server": true,
+		"required_argument_names":       compactArgumentNames(contract["required_arguments"]),
+		"optional_argument_names":       compactArgumentNames(contract["optional_arguments"]),
+	}
+}
+
+func compactArgumentNames(value interface{}) []interface{} {
+	items, _ := value.([]interface{})
+	out := make([]interface{}, 0, len(items))
+	for _, raw := range items {
+		item, _ := raw.(map[string]interface{})
+		if name := strings.TrimSpace(stringValue(item["name"])); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func actionGuideRecommended(action integrations.ActionDefinition, contract map[string]interface{}, hasPreparationHints bool) bool {
+	if recommended, _ := contract["guide_recommended"].(bool); recommended {
+		return true
+	}
+	if len(compactArgumentNames(contract["required_arguments"])) > 0 || hasPreparationHints || action.SuccessDeduplication != nil {
+		return true
+	}
+	if action.Effect != toolgovernance.EffectRead || action.RiskLevel != toolgovernance.RiskLevelLow {
+		return true
+	}
+	return action.DefaultPolicy != nil && action.DefaultPolicy.ApprovalPolicy == toolgovernance.ApprovalPolicyAlwaysAsk
 }
 
 func compactSchemaType(value interface{}) interface{} {
