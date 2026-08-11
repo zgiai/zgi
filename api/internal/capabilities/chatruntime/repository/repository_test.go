@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -348,6 +349,98 @@ func TestUpdateAfterMessageDoesNotPromoteLeafAfterBranchSwitch(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestListBranchPageReadsBeyondOneHundredWithoutSemanticTruncation(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:context-branch-page?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&runtimemodel.Message{}); err != nil {
+		t.Fatal(err)
+	}
+	conversationID := uuid.New()
+	ids := make([]uuid.UUID, 205)
+	var parentID *uuid.UUID
+	for index := range ids {
+		ids[index] = uuid.New()
+		message := &runtimemodel.Message{ID: ids[index], ConversationID: conversationID, ParentID: parentID, Query: "query", Answer: "answer", Status: runtimemodel.MessageStatusCompleted, ModelName: "test-model", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}}
+		if err := db.Create(message).Error; err != nil {
+			t.Fatal(err)
+		}
+		id := ids[index]
+		parentID = &id
+	}
+
+	repo := NewMessageRepository(db)
+	leaf := ids[len(ids)-1]
+	total := 0
+	pages := 0
+	for {
+		page, err := repo.ListBranchPage(context.Background(), conversationID, leaf, nil, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		total += len(page.Messages)
+		if page.ReachedRoot {
+			break
+		}
+		if page.NextLeafID == nil {
+			t.Fatal("missing continuation")
+		}
+		leaf = *page.NextLeafID
+	}
+	if total != len(ids) || pages != 3 {
+		t.Fatalf("read total=%d pages=%d, want total=%d pages=3", total, pages, len(ids))
+	}
+
+	boundary := ids[99]
+	page, err := repo.ListBranchPage(context.Background(), conversationID, ids[104], &boundary, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.ReachedBoundary || len(page.Messages) != 5 {
+		t.Fatalf("boundary page reached=%v messages=%d, want true/5", page.ReachedBoundary, len(page.Messages))
+	}
+}
+
+func TestListBranchPageRejectsCrossConversationParentAndCycle(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:context-branch-invalid?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&runtimemodel.Message{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewMessageRepository(db)
+	conversationID := uuid.New()
+	otherConversationID := uuid.New()
+	foreignParentID := uuid.New()
+	childID := uuid.New()
+	messages := []*runtimemodel.Message{
+		{ID: foreignParentID, ConversationID: otherConversationID, Query: "foreign", Status: runtimemodel.MessageStatusCompleted, ModelName: "test", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}},
+		{ID: childID, ConversationID: conversationID, ParentID: &foreignParentID, Query: "child", Status: runtimemodel.MessageStatusCompleted, ModelName: "test", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}},
+	}
+	if err := db.Create(messages).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ListBranchPage(context.Background(), conversationID, childID, nil, 100); err == nil {
+		t.Fatal("expected cross-conversation parent error")
+	}
+
+	firstID := uuid.New()
+	secondID := uuid.New()
+	cycle := []*runtimemodel.Message{
+		{ID: firstID, ConversationID: conversationID, ParentID: &secondID, Query: "first", Status: runtimemodel.MessageStatusCompleted, ModelName: "test", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}},
+		{ID: secondID, ConversationID: conversationID, ParentID: &firstID, Query: "second", Status: runtimemodel.MessageStatusCompleted, ModelName: "test", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}},
+	}
+	if err := db.Create(cycle).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ListBranchPage(context.Background(), conversationID, firstID, nil, 100); err == nil {
+		t.Fatal("expected cycle error")
 	}
 }
 

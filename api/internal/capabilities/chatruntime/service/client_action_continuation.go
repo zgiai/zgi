@@ -376,7 +376,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	}
 	s.refreshPageContextAfterClientAction(ctx, prepared, continuation.Event, req)
 	prepared.PreferredRestoredSkillID = preferredRestoredSkillAfterClientAction(parts, continuation.Event, req, message.Metadata)
-	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
+	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
 		return nil, err
 	}

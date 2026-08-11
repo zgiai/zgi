@@ -17,6 +17,7 @@ import (
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"go.uber.org/zap"
@@ -461,9 +462,20 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
 	}
-	contextResult, err := s.buildUpstreamMessages(ctx, prepared.Scope, prepared.ParentID, prepared.parts)
+	contextResult, err := s.buildUpstreamMessages(ctx, prepared.Scope, prepared.ParentID, prepared.parts, prepared.Conversation.ID)
 	if err != nil {
 		return err
+	}
+	if err := validateContextBudgetForCompaction(contextResult); err != nil {
+		return err
+	}
+	if contextRequiresCompaction(contextResult) {
+		contextResult, err = s.compactContextForRun(ctx, prepared, contextResult, onEvent)
+		if err != nil {
+			return err
+		}
+	} else {
+		s.inheritContextSnapshotForRun(prepared, contextResult)
 	}
 	prepared.parts.ContextControl = contextResult.Metadata
 	prepared.LLMRequest = newLLMChatRequest(prepared.parts, contextResult.Messages)
@@ -1014,6 +1026,9 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 			payload["params"] = params
 		}
 	}
+	if apperror.IsCode(err, AppCodeContextCompactionUnavailable) {
+		payload["retryable"] = true
+	}
 	return payload
 }
 
@@ -1048,6 +1063,9 @@ func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
 }
 
 func publicAichatRuntimeErrorCodeAndMessage(err error) (string, string, bool) {
+	if apperror.IsCode(err, AppCodeContextCompactionUnavailable) {
+		return AppCodeContextCompactionUnavailable.String(), contextCompactionUnavailablePublicMessage, true
+	}
 	if errors.Is(err, skillloop.ErrAgentOutputTruncated) {
 		return aichatErrorCodeAgentOutputTruncated, aichatAgentOutputTruncatedMessage, true
 	}

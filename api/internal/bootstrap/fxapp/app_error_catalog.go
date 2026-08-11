@@ -1,6 +1,7 @@
 package fxapp
 
 import (
+	chatruntimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 )
@@ -11,6 +12,7 @@ import (
 func provideApplicationErrorCatalog() (*appcatalog.Catalog, error) {
 	definitions := appcatalog.DefaultDefinitions()
 	definitions = append(definitions, llmerrors.CatalogDefinitions()...)
+	definitions = append(definitions, chatruntimeservice.CatalogDefinitions()...)
 	return appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
 }
 

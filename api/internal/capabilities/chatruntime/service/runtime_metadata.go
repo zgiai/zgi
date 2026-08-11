@@ -1059,7 +1059,7 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 }
 
 func clientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
-	metadata := copyStringAnyMap(source)
+	metadata := RedactPrivateContextMetadata(source)
 	if len(metadata) == 0 {
 		return metadata
 	}
@@ -1072,6 +1072,27 @@ func clientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 		return metadata
 	}
 	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(filtered)
+	return metadata
+}
+
+// RedactPrivateContextMetadata removes server-only context compaction state
+// before message metadata crosses an HTTP or SSE boundary.
+func RedactPrivateContextMetadata(source map[string]interface{}) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	if len(metadata) == 0 {
+		return metadata
+	}
+	control := copyStringAnyMap(mapFromOperationContext(metadata["context_control"]))
+	if len(control) == 0 {
+		return metadata
+	}
+	compaction := copyStringAnyMap(mapFromOperationContext(control["compaction"]))
+	status := strings.TrimSpace(stringFromAny(compaction["status"]))
+	delete(control, "compaction")
+	if status == contextCompactionStatusCompacting || status == contextCompactionStatusSucceeded || status == contextCompactionStatusFailedBlocked {
+		control["compaction"] = map[string]interface{}{"status": status}
+	}
+	metadata["context_control"] = control
 	return metadata
 }
 

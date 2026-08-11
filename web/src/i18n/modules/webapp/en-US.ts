@@ -310,6 +310,16 @@ const messages = {
     waitingQuestionMessage: 'The assistant is waiting for your response to continue.',
     waitingClientActionMessage:
       'The assistant is waiting for the page action to finish and will continue automatically.',
+    contextCompaction: {
+      running: 'Organizing conversation context. Your response will continue automatically…',
+      completed: 'Conversation context organized',
+    },
+    contextCompactionBlocked: {
+      title: 'This conversation is paused to protect its context',
+      description:
+        'We cannot safely prepare this conversation history right now. All of your messages are still saved. Please try again later; once the service recovers, you can continue from here.',
+      retry: 'Try again later',
+    },
     userInputHistory: {
       pendingTitle: 'More information needed',
       questionCount: '{count} question(s)',

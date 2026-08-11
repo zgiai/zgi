@@ -2200,7 +2200,7 @@ func (r toolGovernanceStreamSkillConfigRepo) ListByOrganization(context.Context,
 type toolGovernanceStreamModelSpecResolver struct{}
 
 func (toolGovernanceStreamModelSpecResolver) Resolve(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
-	return ModelSpec{SupportsToolCall: true}, true, nil
+	return ModelSpec{ContextWindow: 128000, MaxOutputTokens: 8192, SupportsToolCall: true}, true, nil
 }
 
 type toolGovernanceStreamFileService struct {

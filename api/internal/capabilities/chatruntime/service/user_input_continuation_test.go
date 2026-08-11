@@ -421,7 +421,7 @@ func TestPrepareUserInputContinuationKeepsAIChatMetadataSkills(t *testing.T) {
 type userInputContinuationModelSpecResolver struct{}
 
 func (userInputContinuationModelSpecResolver) Resolve(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
-	return ModelSpec{SupportsToolCall: true}, true, nil
+	return ModelSpec{ContextWindow: 128000, MaxOutputTokens: 8192, SupportsToolCall: true}, true, nil
 }
 
 func waitingUserInputTestMessage(messageID, conversationID uuid.UUID, requestID string) *runtimemodel.Message {

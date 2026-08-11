@@ -24,7 +24,6 @@ import (
 const (
 	defaultConversationTitle = "New chat"
 	systemPromptVersion      = "aichat.v1"
-	maxContextMessages       = 20
 	maxConversationTitleLen  = 50
 	defaultSearchLimit       = 20
 	maxSearchLimit           = 50
@@ -480,6 +479,7 @@ type chatRequestParts struct {
 	ProviderPtr                  *string
 	Parameters                   map[string]interface{}
 	ContextControl               map[string]interface{}
+	ContextSnapshotSummary       string
 	Attachments                  *attachmentBundle
 	RecentAssetCandidates        []ResourceCandidate
 	RecentGeneratedArtifacts     []map[string]interface{}

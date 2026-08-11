@@ -75,6 +75,7 @@ export type AIChatAgenticTimelineItem =
       type: 'progress_text';
       content: string;
       phase?: AIChatAgentProgressEventData['phase'];
+      progress_id?: string;
       transient?: boolean;
       meta_tool_name?: string;
       skill_id?: string;

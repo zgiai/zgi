@@ -1187,6 +1187,7 @@ func messageMetadataResponse(metadata map[string]interface{}) map[string]interfa
 	if len(metadata) == 0 {
 		return metadata
 	}
+	metadata = runtimeservice.RedactPrivateContextMetadata(metadata)
 	out := make(map[string]interface{}, len(metadata))
 	redactedModelInvocations := false
 	modelInvocationCount := 0

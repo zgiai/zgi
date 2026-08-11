@@ -636,7 +636,7 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 	if err := s.applySkillConfig(ctx, scope, continuation.Caller, &continuation.RunConfig, parts); err != nil {
 		return nil, err
 	}
-	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
+	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
 		return nil, err
 	}

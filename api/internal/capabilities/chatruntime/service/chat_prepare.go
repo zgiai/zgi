@@ -359,7 +359,7 @@ func (s *service) resolveParentMessage(ctx context.Context, scope Scope, convers
 	return &parentID, nil
 }
 
-func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parentID *uuid.UUID, parts *chatRequestParts) (*contextBudgetResult, error) {
+func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parentID *uuid.UUID, parts *chatRequestParts, conversationIDs ...uuid.UUID) (*contextBudgetResult, error) {
 	systemPrompt := strings.TrimSpace(parts.SystemPrompt)
 	if systemPrompt == "" {
 		rendered, err := renderAIChatSystemPrompt(parts.Surface)
@@ -386,7 +386,30 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			parts.ModelSupportsVision = spec.SupportsVision()
 		}
 		if ok && spec.ContextWindow > 0 {
-			branch, err := s.loadContextBranch(ctx, parentID, maxContextCandidateMessages)
+			var branch []*runtimemodel.Message
+			var contextState *loadedContextState
+			if len(conversationIDs) > 0 && conversationIDs[0] != uuid.Nil {
+				contextState, err = s.loadContextState(ctx, scope, conversationIDs[0], parentID)
+				if err != nil {
+					return nil, err
+				}
+				branch = contextState.RawMessages
+				if contextState.Snapshot != nil {
+					parts.ContextSnapshotSummary = contextState.Snapshot.Summary
+				}
+			} else if parentID != nil && *parentID != uuid.Nil {
+				parent, parentErr := s.repos.Message.GetScoped(ctx, *parentID, scope.OrganizationID, scope.AccountID)
+				if parentErr != nil {
+					return nil, parentErr
+				}
+				contextState, err = s.loadContextState(ctx, scope, parent.ConversationID, parentID)
+				if err == nil {
+					branch = contextState.RawMessages
+					if contextState.Snapshot != nil {
+						parts.ContextSnapshotSummary = contextState.Snapshot.Summary
+					}
+				}
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -397,19 +420,39 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			if err != nil {
 				return nil, err
 			}
+			if contextState != nil {
+				result.Snapshot = contextState.Snapshot
+				result.SnapshotRef = contextState.SnapshotRef
+				result.RawMessages = contextState.RawMessages
+			}
 			result.Metadata = mergeUserMemoryMetadata(result.Metadata, memoryMetadata)
 			result.Metadata = mergeUserMemoryMetadata(result.Metadata, agentMemoryMetadata)
 			return result, nil
 		}
+	}
+	if len(conversationIDs) > 0 && conversationIDs[0] != uuid.Nil {
+		return nil, fmt.Errorf("%w: model context_window is unavailable", ErrInvalidInput)
 	}
 	currentContent, contextMetadata := s.buildFallbackCurrentUserContent(parts)
 	messages := []adapter.Message{{Role: "system", Content: systemPrompt}}
 	contextMetadata = mergeUserMemoryMetadata(contextMetadata, memoryMetadata)
 	contextMetadata = mergeUserMemoryMetadata(contextMetadata, agentMemoryMetadata)
 	if parentID != nil && *parentID != uuid.Nil {
-		branch, err := s.repos.Message.ListBranch(ctx, *parentID, maxContextMessages)
+		parent, err := s.repos.Message.GetScoped(ctx, *parentID, scope.OrganizationID, scope.AccountID)
 		if err != nil {
 			return nil, err
+		}
+		state, err := s.loadContextState(ctx, scope, parent.ConversationID, parentID)
+		if err != nil {
+			return nil, err
+		}
+		branch := state.RawMessages
+		snapshotSummary := ""
+		if state.Snapshot != nil {
+			snapshotSummary = state.Snapshot.Summary
+		}
+		if snapshotMessage := contextSnapshotPromptMessage(snapshotSummary); snapshotMessage != nil {
+			messages = append(messages, *snapshotMessage)
 		}
 		if !shouldIsolateHistoryForCurrentTurn(parts) {
 			for _, item := range branch {
@@ -686,13 +729,6 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	}
 	parts.SkillMode = skillModeAuto
 	return nil
-}
-
-func (s *service) loadContextBranch(ctx context.Context, parentID *uuid.UUID, maxDepth int) ([]*runtimemodel.Message, error) {
-	if parentID == nil || *parentID == uuid.Nil {
-		return []*runtimemodel.Message{}, nil
-	}
-	return s.repos.Message.ListBranch(ctx, *parentID, maxDepth)
 }
 
 func renderAIChatSystemPrompt(surface string) (string, error) {

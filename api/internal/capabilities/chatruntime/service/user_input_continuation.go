@@ -430,7 +430,7 @@ func (s *service) prepareUserInputContinuationChat(
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
-	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
+	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
 		return nil, err
 	}

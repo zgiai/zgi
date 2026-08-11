@@ -2,12 +2,47 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
+
+func TestContextCompactionPressureThreshold(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		pressure float64
+		want     bool
+	}{
+		{name: "below threshold", pressure: 0.799, want: false},
+		{name: "at threshold", pressure: 0.80, want: true},
+		{name: "above threshold", pressure: 0.95, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := &contextBudgetResult{HistoryTokens: 1, HistoryPressure: test.pressure}
+			if got := contextRequiresCompaction(result); got != test.want {
+				t.Fatalf("contextRequiresCompaction() = %v, want %v", got, test.want)
+			}
+		})
+	}
+	if contextRequiresCompaction(&contextBudgetResult{HistoryTokens: 0, HistoryPressure: 1}) {
+		t.Fatal("empty history must not trigger compaction")
+	}
+}
+
+func TestValidateContextBudgetRejectsFixedRequestOverflow(t *testing.T) {
+	err := validateContextBudgetForCompaction(&contextBudgetResult{
+		Budget:              &budgetComputation{PromptBudget: 1000},
+		FixedRequestTokens:  1001,
+		HistoryTokens:       0,
+		HistoryBudgetTokens: -1,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("error = %v, want ErrInvalidInput", err)
+	}
+}
 
 func TestRecentExecutionContextIncludesRedactedFileReaderResult(t *testing.T) {
 	const rawContent = "RAW_FILE_CONTENT_SHOULD_NOT_APPEAR"

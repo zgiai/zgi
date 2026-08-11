@@ -1,8 +1,22 @@
 .DS_Store
 .env
 .env.local
+**/.env*
+!**/.env*.example
 .idea/
 .vscode/
+node_modules/
+.next/
+dist/
+build/
+coverage/
+*.log
+*.tmp
+*.swp
+*.test
+*.out
+*.exe
+vendor/
 tmp/
 .tmp/
 docker/docker-compose.yaml
@@ -18,3 +32,4 @@ scripts/rag_evaluation/__pycache__/
 scripts/rag_evaluation/input/
 scripts/rag_evaluation/middle/
 scripts/rag_evaluation/result/
+scripts/rag_evaluation/graph_evaluation/output/
