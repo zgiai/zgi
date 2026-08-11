@@ -80,3 +80,41 @@ func TestVideoPricingTokenCountReadsVideoTokenFields(t *testing.T) {
 		t.Fatalf("videoPricingTokenCount() = %d, want 12345", got)
 	}
 }
+
+func TestVideoResponseFailureErrorPreservesUpstreamErrorMessage(t *testing.T) {
+	resp := &adapter.VideoResponse{
+		Status: "failed",
+		Raw: map[string]interface{}{
+			"error": map[string]interface{}{
+				"code":    "InvalidParameter",
+				"message": "Error while downloading image, error: expected the width to be at least 300px",
+			},
+		},
+	}
+
+	err := videoResponseFailureError(resp, "upstream video task failed")
+	if err == nil {
+		t.Fatal("videoResponseFailureError() error = nil")
+	}
+	const want = "upstream error: Error while downloading image, error: expected the width to be at least 300px"
+	if err.Error() != want {
+		t.Fatalf("videoResponseFailureError() = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestVideoCreateResponseRequiresTaskIDEvenWhenHTTP200BodyHasError(t *testing.T) {
+	resp := &adapter.VideoResponse{
+		Raw: map[string]interface{}{
+			"error": map[string]interface{}{
+				"message": "Error while downloading image",
+			},
+		},
+	}
+
+	if videoResponseHasTaskID(resp) {
+		t.Fatal("videoResponseHasTaskID() = true, want false for response without task id")
+	}
+	if videoResponseFailureError(resp, "upstream video task id is empty").Error() != "upstream error: Error while downloading image" {
+		t.Fatalf("videoResponseFailureError() did not preserve HTTP 200 error body message")
+	}
+}

@@ -30,6 +30,8 @@ export interface ConfirmDialogProps {
   onConfirm: () => void;
   /** Loading state for confirm action */
   loading?: boolean;
+  /** Disabled state for confirm action */
+  confirmDisabled?: boolean;
   /** Controlled open state (optional) */
   open?: boolean;
   /** Controlled open change handler (optional) */
@@ -54,6 +56,7 @@ export function ConfirmDialog({
   cancelText = 'Cancel',
   onConfirm,
   loading = false,
+  confirmDisabled = false,
   open: openProp,
   onOpenChange: onOpenChangeProp,
   variant = 'default',
@@ -124,7 +127,7 @@ export function ConfirmDialog({
           <Button
             variant={variant === 'warning' ? 'destructive' : isDanger ? 'outline' : 'default'}
             onClick={handleConfirm}
-            disabled={loading}
+            disabled={loading || confirmDisabled}
             size="xl"
             className={cn(
               'px-6 font-semibold',

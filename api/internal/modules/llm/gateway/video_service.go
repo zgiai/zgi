@@ -105,15 +105,15 @@ func (s *llmGatewayServiceImpl) CreateVideoWithAppContext(
 			resp.BillingRequestID = billingCtx.RequestID
 			resp.BillingAttemptID = billingCtx.AttemptID
 		}
-		if isFailedVideoStatus(resp.Status) || !videoResponseHasTaskOrURL(resp) {
+		if isFailedVideoStatus(resp.Status) || !videoResponseHasTaskID(resp) {
 			if billingCtx != nil {
 				if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 					return nil, rollbackErr
 				}
 			}
-			lastErr = fmt.Errorf("upstream video task id is empty")
+			lastErr = videoResponseFailureError(resp, "upstream video task id is empty")
 			if isFailedVideoStatus(resp.Status) {
-				lastErr = fmt.Errorf("upstream video task failed")
+				lastErr = videoResponseFailureError(resp, "upstream video task failed")
 			}
 			continue
 		}
@@ -472,6 +472,80 @@ func videoResponseHasTaskOrURL(resp *adapter.VideoResponse) bool {
 	}
 	return false
 }
+
+func videoResponseHasTaskID(resp *adapter.VideoResponse) bool {
+	if resp == nil {
+		return false
+	}
+	return strings.TrimSpace(resp.TaskID) != "" || strings.TrimSpace(resp.ID) != ""
+}
+
+func videoResponseFailureError(resp *adapter.VideoResponse, fallback string) error {
+	if message := videoGatewayResponseErrorMessage(resp); message != "" {
+		return fmt.Errorf("upstream error: %s", message)
+	}
+	return fmt.Errorf("%s", fallback)
+}
+
+func videoGatewayResponseErrorMessage(resp *adapter.VideoResponse) string {
+	if resp == nil {
+		return ""
+	}
+	if message := videoGatewayErrorMessageFromAny(resp.Error); message != "" {
+		return message
+	}
+	if resp.Raw != nil {
+		if message := videoGatewayErrorMessageFromAny(resp.Raw["error"]); message != "" {
+			return message
+		}
+		if message := videoGatewayErrorMessageFromAny(resp.Raw["error_message"]); message != "" {
+			return message
+		}
+		if message := videoGatewayErrorMessageFromAny(resp.Raw["message"]); message != "" {
+			return message
+		}
+	}
+	return ""
+}
+
+func videoGatewayErrorMessageFromAny(value interface{}) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]interface{}:
+		for _, key := range []string{"message", "error_message", "msg"} {
+			if message := videoGatewayErrorMessageFromAny(typed[key]); message != "" {
+				return message
+			}
+		}
+		if message := videoGatewayErrorMessageFromAny(typed["error"]); message != "" {
+			return message
+		}
+		if code := videoGatewayErrorMessageFromAny(typed["code"]); code != "" {
+			return code
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if message := videoGatewayErrorMessageFromAny(item); message != "" {
+				return message
+			}
+		}
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return ""
+		}
+		var mapped map[string]interface{}
+		if err := json.Unmarshal(raw, &mapped); err != nil {
+			return ""
+		}
+		return videoGatewayErrorMessageFromAny(mapped)
+	}
+	return ""
+}
+
 func annotateVideoResponse(resp *adapter.VideoResponse, selection *ProviderSelection) {
 	if resp == nil || selection == nil {
 		return

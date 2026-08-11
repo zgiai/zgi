@@ -19,16 +19,17 @@ type VideoModel struct {
 }
 
 type GenerateRequest struct {
-	Prompt         string          `json:"prompt"`
-	Provider       string          `json:"provider"`
-	Model          string          `json:"model"`
-	Options        GenerateOptions `json:"options"`
-	CallbackURL    string          `json:"callback_url,omitempty"`
-	ReferenceURL   string          `json:"reference_url,omitempty"`
-	ReferenceURLs  []string        `json:"reference_urls,omitempty"`
-	ReferenceTypes []string        `json:"reference_types,omitempty"`
-	FirstFrameURL  string          `json:"first_frame_url,omitempty"`
-	LastFrameURL   string          `json:"last_frame_url,omitempty"`
+	Prompt          string          `json:"prompt"`
+	Provider        string          `json:"provider"`
+	Model           string          `json:"model"`
+	ClientRequestID string          `json:"client_request_id,omitempty"`
+	Options         GenerateOptions `json:"options"`
+	CallbackURL     string          `json:"callback_url,omitempty"`
+	ReferenceURL    string          `json:"reference_url,omitempty"`
+	ReferenceURLs   []string        `json:"reference_urls,omitempty"`
+	ReferenceTypes  []string        `json:"reference_types,omitempty"`
+	FirstFrameURL   string          `json:"first_frame_url,omitempty"`
+	LastFrameURL    string          `json:"last_frame_url,omitempty"`
 }
 
 type GenerateOptions struct {

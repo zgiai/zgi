@@ -16,6 +16,7 @@ func upCreateVideoRuntimeTasks(schema *mschema.Builder) error {
 			account_id uuid NOT NULL,
 			workspace_id uuid NULL,
 			task_id varchar(160) NOT NULL,
+			client_request_id varchar(120) NOT NULL DEFAULT '',
 			upstream_task_id varchar(255) NOT NULL DEFAULT '',
 			provider varchar(100) NOT NULL,
 			model varchar(255) NOT NULL,
@@ -34,13 +35,17 @@ func upCreateVideoRuntimeTasks(schema *mschema.Builder) error {
 			actual_credits bigint NOT NULL DEFAULT 0,
 			request_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
 			response_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-			created_at timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			completed_at timestamp without time zone NULL
+			created_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			completed_at timestamp with time zone NULL
 		);
 
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_video_runtime_tasks_task_id
 		ON public.video_runtime_tasks (task_id);
+
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_video_runtime_tasks_client_request
+		ON public.video_runtime_tasks (organization_id, account_id, client_request_id)
+		WHERE client_request_id <> '';
 
 		CREATE INDEX IF NOT EXISTS idx_video_runtime_tasks_scope_created
 		ON public.video_runtime_tasks (organization_id, account_id, created_at DESC);

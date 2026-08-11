@@ -164,6 +164,8 @@ export function VideoWorkbench() {
   const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(null);
   const [pollingTaskId, setPollingTaskId] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const submitLockRef = React.useRef(false);
+  const submitClientRequestIdRef = React.useRef<string | null>(null);
   const { task: selectedTaskDetail } = useVideoRuntimeTask(selectedTaskId);
   const { task: pollingTaskDetail } = useVideoRuntimeTask(
     pollingTaskId && pollingTaskId !== selectedTaskId ? pollingTaskId : null
@@ -208,16 +210,17 @@ export function VideoWorkbench() {
     [selectedModelItem]
   );
   const hasReferenceMaterials = supportedReferenceKinds.length > 0;
-  const allowedReferenceKinds = React.useMemo(
-    () => getAllowedReferenceKinds(selectedModelItem, settings.referenceMode),
-    [selectedModelItem, settings.referenceMode]
-  );
-  const maxReferenceFiles = getMaxReferenceFiles(selectedModelItem, settings.referenceMode);
-  const allowedReferenceKey = allowedReferenceKinds.join(',');
   const generationOptions = React.useMemo(
     () => getVideoGenerationOptions(selectedModelItem),
     [selectedModelItem]
   );
+  const effectiveReferenceMode = getEffectiveReferenceMode(settings.referenceMode, generationOptions);
+  const allowedReferenceKinds = React.useMemo(
+    () => getAllowedReferenceKinds(selectedModelItem, effectiveReferenceMode),
+    [effectiveReferenceMode, selectedModelItem]
+  );
+  const maxReferenceFiles = getMaxReferenceFiles(selectedModelItem, effectiveReferenceMode);
+  const allowedReferenceKey = allowedReferenceKinds.join(',');
   const generationOptionsKey = React.useMemo(
     () => JSON.stringify(generationOptions),
     [generationOptions]
@@ -274,30 +277,49 @@ export function VideoWorkbench() {
   }, [models, selectedModel.model, selectedModel.provider]);
 
   const handleGenerate = React.useCallback(async () => {
-    if (!selectedModel.provider || !selectedModel.model || !prompt.trim()) return;
+    if (submitLockRef.current) return;
+    if (!selectedModel.provider || !selectedModel.model || !prompt.trim()) {
+      toast.error(t('chat.videoWorkbench.submitFailed'));
+      return;
+    }
+    submitLockRef.current = true;
+    const clientRequestId = submitClientRequestIdRef.current ?? createVideoClientRequestId();
+    submitClientRequestIdRef.current = clientRequestId;
     setIsSubmitting(true);
     try {
-      const referenceUrls =
+      const uploadedReferences =
         referenceFiles.length > 0
           ? await Promise.all(
               referenceFiles.map(referenceFile =>
                 uploadVideoReferenceFile(
                   referenceFile.file,
                   t('chat.videoWorkbench.referenceUploadNoUrl')
-                )
+                ).then(url => ({ url, kind: referenceFile.kind }))
               )
             )
           : [];
-      const isFrameReferenceMode = settings.referenceMode === VIDEO_FRAME_REFERENCE_MODE;
-      const referenceTypes = referenceFiles.map(referenceFile => referenceFile.kind);
+      const isFrameReferenceMode = effectiveReferenceMode === VIDEO_FRAME_REFERENCE_MODE;
+      const frameImageReferences = isFrameReferenceMode
+        ? uploadedReferences.filter(reference => reference.kind === 'image')
+        : [];
+      const extraReferences = isFrameReferenceMode ? [] : uploadedReferences;
+      const referenceUrls = extraReferences.map(reference => reference.url);
+      const referenceTypes = extraReferences.map(reference => reference.kind);
       const response = await generateMutation.mutateAsync({
         provider: selectedModel.provider,
         model: selectedModel.model,
+        client_request_id: clientRequestId,
         prompt: prompt.trim(),
         ...(isFrameReferenceMode
           ? {
-              ...(referenceUrls[0] ? { first_frame_url: referenceUrls[0] } : {}),
-              ...(referenceUrls[1] ? { last_frame_url: referenceUrls[1] } : {}),
+              ...(frameImageReferences[0]?.url
+                ? { first_frame_url: frameImageReferences[0].url }
+                : {}),
+              ...(frameImageReferences[1]?.url
+                ? { last_frame_url: frameImageReferences[1].url }
+                : {}),
+              ...(referenceUrls.length > 0 ? { reference_urls: referenceUrls } : {}),
+              ...(referenceTypes.length > 0 ? { reference_types: referenceTypes } : {}),
             }
           : {
               ...(referenceUrls[0] ? { reference_url: referenceUrls[0] } : {}),
@@ -330,10 +352,13 @@ export function VideoWorkbench() {
       const message = err instanceof Error ? err.message : t('chat.videoWorkbench.submitFailed');
       toast.error(message);
     } finally {
+      submitClientRequestIdRef.current = null;
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
   }, [
     generateMutation,
+    effectiveReferenceMode,
     generationOptions.audioModes.length,
     prompt,
     referenceFiles,
@@ -421,6 +446,13 @@ export function VideoWorkbench() {
       />
     </div>
   );
+}
+
+function createVideoClientRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function GenerationRecordsSidebar({
@@ -794,11 +826,28 @@ function ComposerPanel({
   hasModels: boolean;
   modelError: string | null;
   isGenerating: boolean;
-  onGenerate: () => void;
+  onGenerate: () => Promise<void> | void;
 }) {
   const t = useT('webapp');
-  const submitDisabled = !prompt.trim() || !selectedModel.model || isGenerating;
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [isConfirmSubmitting, setIsConfirmSubmitting] = React.useState(false);
+  const confirmSubmitRef = React.useRef(false);
+  const effectiveGenerating = isGenerating || isConfirmSubmitting;
+  const submitDisabled =
+    !prompt.trim() || !selectedModel.provider || !selectedModel.model || effectiveGenerating;
+
+  const handleConfirmGenerate = React.useCallback(async () => {
+    if (submitDisabled || confirmSubmitRef.current) return;
+    confirmSubmitRef.current = true;
+    setConfirmOpen(false);
+    setIsConfirmSubmitting(true);
+    try {
+      await onGenerate();
+    } finally {
+      confirmSubmitRef.current = false;
+      setIsConfirmSubmitting(false);
+    }
+  }, [onGenerate, submitDisabled]);
 
   return (
     <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
@@ -914,12 +963,14 @@ function ComposerPanel({
             disabled={submitDisabled}
             onClick={() => setConfirmOpen(true)}
           >
-            {isGenerating ? (
+            {effectiveGenerating ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Video className="h-4 w-4" />
             )}
-            {isGenerating ? t('chat.videoWorkbench.submitting') : t('chat.videoWorkbench.generate')}
+            {effectiveGenerating
+              ? t('chat.videoWorkbench.submitting')
+              : t('chat.videoWorkbench.generate')}
           </Button>
         </div>
       </div>
@@ -930,9 +981,9 @@ function ComposerPanel({
         title={t('chat.videoWorkbench.confirmTitle')}
         description={
           <div className="space-y-4">
-            <p className="font-normal leading-6 text-muted-foreground">
+            <div className="font-normal leading-6 text-muted-foreground">
               {t('chat.videoWorkbench.confirmDescription')}
-            </p>
+            </div>
             <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/25 p-3 text-xs">
               <ConfirmationSpec
                 label={t('chat.videoWorkbench.modelLabel')}
@@ -973,8 +1024,8 @@ function ComposerPanel({
         }
         confirmText={t('chat.videoWorkbench.confirmAction')}
         cancelText={t('chat.videoWorkbench.cancelAction')}
-        onConfirm={onGenerate}
-        loading={isGenerating}
+        onConfirm={handleConfirmGenerate}
+        loading={effectiveGenerating}
         confirmDisabled={submitDisabled}
         contentClassName="max-w-md rounded-2xl"
         titleClassName="text-lg font-semibold"
@@ -1365,12 +1416,17 @@ function ReferencePreview({ item }: { item: SelectedReferenceFile }) {
 
   if (item.kind === 'video') {
     return (
-      <video
-        src={item.previewUrl}
-        className="h-full w-full bg-black object-cover"
-        muted
-        preload="metadata"
-      />
+      <>
+        <video
+          src={item.previewUrl}
+          className="h-full w-full bg-black object-cover"
+          muted
+          preload="metadata"
+        />
+        <span className="absolute bottom-1 right-1 rounded bg-background/90 p-1 text-muted-foreground shadow-sm">
+          <Film className="h-3.5 w-3.5" />
+        </span>
+      </>
     );
   }
 
@@ -1439,6 +1495,12 @@ function normalizeVideoSettings(
   )
     ? settings
     : next;
+}
+
+function getEffectiveReferenceMode(settingsMode: string, options: VideoGenerationOptions): string {
+  return options.referenceModes.includes(settingsMode)
+    ? settingsMode
+    : (options.referenceModes[0] ?? DEFAULT_VIDEO_SETTINGS.referenceMode);
 }
 
 function pickSupportedOption(value: string, options: string[], preferred: string): string {
@@ -1554,11 +1616,28 @@ function getMaxReferenceFiles(model: ModelItem | undefined, referenceMode: strin
 
 function getVideoReferenceKinds(model?: ModelItem): ReferenceKind[] {
   const references = getModelVideoReferences(model);
+  const videoConfig = getModelVideoConfig(model);
   const configuredKinds = uniqueReferenceKinds([
     ...getReferenceKindsFromReferences(references),
     ...getReferenceKindsFromModalities(model?.input_modalities),
+    ...getReferenceKindsFromVideoConfig(videoConfig),
   ]);
   return configuredKinds;
+}
+
+function getReferenceKindsFromVideoConfig(videoConfig: Record<string, unknown> | null): ReferenceKind[] {
+  if (!videoConfig) return [];
+
+  const audioInput = [
+    getNestedValue(videoConfig, ['audio', 'input']),
+    getNestedValue(videoConfig, ['audio', 'reference']),
+    getNestedValue(videoConfig, ['audio', 'references']),
+    videoConfig.audio_input,
+    videoConfig.input_audio,
+    videoConfig.audio_reference,
+  ];
+
+  return audioInput.some(isTruthy) ? ['audio'] : [];
 }
 
 function getReferenceKindsFromReferences(

@@ -21,6 +21,7 @@ export interface VideoRuntimeGenerateRequest {
   prompt: string;
   provider: string;
   model: string;
+  client_request_id?: string;
   options: VideoRuntimeGenerateOptions;
   callback_url?: string;
   reference_url?: string;

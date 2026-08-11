@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -11,6 +12,16 @@ func TestEstimateVideoTaskCreditsUsesDefaultPerSecondPoints(t *testing.T) {
 	const want int64 = 572000
 	if got != want {
 		t.Fatalf("estimateVideoTaskCredits() = %d, want %d", got, want)
+	}
+}
+
+func TestVideoErrorMessageExtractsEmbeddedOpenAIErrorMessage(t *testing.T) {
+	err := errors.New(`request failed after 3 retries: server error 500: {"error":{"message":"Error while downloading image, error: expected the width to be at least 300px, but received a 153x161px image instead","type":"BadRequest","code":"InvalidParameter"}}`)
+
+	got := videoErrorMessage(err)
+	const want = "Error while downloading image, error: expected the width to be at least 300px, but received a 153x161px image instead"
+	if got != want {
+		t.Fatalf("videoErrorMessage() = %q, want %q", got, want)
 	}
 }
 

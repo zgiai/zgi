@@ -60,7 +60,7 @@ func (s *service) pollVideoRuntimeTasks(ctx context.Context) error {
 	if s == nil || s.tasks == nil || s.llmClient == nil {
 		return nil
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	staleBefore := now.Add(-defaultVideoRuntimeTaskPollStaleIn)
 	submitExpiredBefore := now.Add(-defaultVideoRuntimeSubmitTimeout)
 	tasks, err := s.tasks.listActiveForPolling(ctx, staleBefore, submitExpiredBefore, defaultVideoRuntimeTaskPollBatch)
@@ -79,7 +79,7 @@ func (s *service) pollVideoRuntimeTask(ctx context.Context, record *videoTaskRec
 	if record == nil {
 		return nil
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	if time.Since(record.CreatedAt) > defaultVideoRuntimeTaskMaxAge {
 		record.Status = "failed"
 		record.ErrorMessage = "video task exceeded max polling age"

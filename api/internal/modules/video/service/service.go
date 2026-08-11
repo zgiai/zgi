@@ -19,13 +19,14 @@ import (
 )
 
 const (
-	maxVideoPromptRunes = 4000
-	maxVideoSearchRunes = 200
-	videoRuntimeAppType = "video-runtime"
-	defaultRatio        = "16:9"
-	defaultResolution   = "720p"
-	defaultDuration     = 5
-	videoCreateTimeout  = 2 * time.Minute
+	maxVideoPromptRunes          = 4000
+	maxVideoSearchRunes          = 200
+	maxVideoClientRequestIDRunes = 120
+	videoRuntimeAppType          = "video-runtime"
+	defaultRatio                 = "16:9"
+	defaultResolution            = "720p"
+	defaultDuration              = 5
+	videoCreateTimeout           = 2 * time.Minute
 
 	videoPredeductPointsPerSecond int64 = 143
 	internalCreditsPerPoint       int64 = 1000
@@ -95,6 +96,16 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	}
 	operationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), videoCreateTimeout)
 	defer cancel()
+	clientRequestID := normalizeClientRequestID(req.ClientRequestID)
+	if clientRequestID != "" {
+		existing, err := s.tasks.findByClientRequestID(operationCtx, scope, clientRequestID)
+		if err == nil {
+			return &GenerateResult{Task: taskFromRecord(*existing)}, nil
+		}
+		if !errors.Is(err, ErrTaskNotFound) {
+			return nil, err
+		}
+	}
 
 	model, err := s.findAvailableModel(operationCtx, scope.OrganizationID, req.Provider, req.Model)
 	if err != nil {
@@ -116,13 +127,14 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	}
 	referenceURLs := videoReferenceURLs(req)
 	videoReq := buildVideoRequest(model.Provider, model.Name, prompt, req, options, scope.AccountID.String(), referenceURLs)
-	now := time.Now()
+	now := time.Now().UTC()
 	record := &videoTaskRecord{
 		ID:               appID,
 		OrganizationID:   scope.OrganizationID,
 		AccountID:        scope.AccountID,
 		WorkspaceID:      scope.WorkspaceID,
 		TaskID:           localVideoTaskID(),
+		ClientRequestID:  clientRequestID,
 		Provider:         strings.TrimSpace(model.Provider),
 		Model:            strings.TrimSpace(model.Name),
 		ModelLabel:       modelLabel,
@@ -142,6 +154,11 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		ActualCredits:    0,
 	}
 	if err := s.tasks.create(operationCtx, record); err != nil {
+		if clientRequestID != "" {
+			if existing, findErr := s.tasks.findByClientRequestID(operationCtx, scope, clientRequestID); findErr == nil {
+				return &GenerateResult{Task: taskFromRecord(*existing)}, nil
+			}
+		}
 		return nil, err
 	}
 
@@ -162,16 +179,27 @@ func estimateVideoTaskCredits(options GenerateOptions) int64 {
 	return int64(duration) * int64(count) * videoPredeductPointsPerSecond * internalCreditsPerPoint
 }
 
+func normalizeClientRequestID(value string) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= maxVideoClientRequestIDRunes {
+		return value
+	}
+	return string(runes[:maxVideoClientRequestIDRunes])
+}
+
 func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclient.AppContext, videoReq *adapter.VideoRequest) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), videoCreateTimeout)
 		defer cancel()
 
 		resp, err := s.llmClient.AppCreateVideo(ctx, appCtx, videoReq)
-		now := time.Now()
+		now := time.Now().UTC()
 		if err != nil {
 			record.Status = "failed"
-			record.ErrorMessage = fmt.Errorf("%w: %v", ErrUpstreamFailed, err).Error()
+			record.ErrorMessage = videoErrorMessage(err)
+			record.EstimatedCredits = 0
+			record.ActualCredits = 0
 			record.UpdatedAt = now
 			record.CompletedAt = &now
 			_ = s.tasks.save(context.Background(), &record)
@@ -180,6 +208,8 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 		if resp == nil {
 			record.Status = "failed"
 			record.ErrorMessage = ErrUpstreamFailed.Error()
+			record.EstimatedCredits = 0
+			record.ActualCredits = 0
 			record.UpdatedAt = now
 			record.CompletedAt = &now
 			_ = s.tasks.save(context.Background(), &record)
@@ -196,9 +226,14 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 		upstreamID := upstreamTaskID(resp)
 		videoURL := firstVideoURL(resp)
 		status := normalizeTaskStatus(resp.Status)
-		if upstreamID == "" && videoURL == "" && status != "failed" {
+		if upstreamID == "" && status != "failed" {
 			record.Status = "failed"
-			record.ErrorMessage = fmt.Errorf("%w: upstream task id is empty", ErrUpstreamFailed).Error()
+			record.ErrorMessage = ErrUpstreamFailed.Error() + ": upstream task id is empty"
+			if message := videoResponseErrorMessage(resp); message != "" {
+				record.ErrorMessage = message
+			}
+			record.EstimatedCredits = 0
+			record.ActualCredits = 0
 			record.ResponsePayload = jsonData(videoResponsePayload(resp))
 			record.UpdatedAt = now
 			record.CompletedAt = &now
@@ -220,6 +255,8 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 			if message := videoResponseErrorMessage(resp); message != "" {
 				record.ErrorMessage = message
 			}
+			record.EstimatedCredits = 0
+			record.ActualCredits = 0
 		}
 		record.ResponsePayload = jsonData(videoResponsePayload(resp))
 		record.UpdatedAt = now
@@ -324,9 +361,13 @@ func (s *service) markVideoRuntimeTaskFailedFromError(ctx context.Context, recor
 	if !errors.Is(err, ErrUpstreamFailed) {
 		message = fmt.Errorf("%w: %v", ErrUpstreamFailed, err).Error()
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	record.Status = "failed"
 	record.ErrorMessage = message
+	if extracted := videoErrorMessage(err); extracted != "" {
+		record.ErrorMessage = extracted
+	}
+	record.EstimatedCredits = 0
 	record.ActualCredits = 0
 	record.UpdatedAt = now
 	record.CompletedAt = &now
@@ -377,20 +418,22 @@ func (s *service) refreshTask(ctx context.Context, scope Scope, record *videoTas
 		if message := videoResponseErrorMessage(resp); message != "" {
 			record.ErrorMessage = message
 		}
+		record.EstimatedCredits = 0
+		record.ActualCredits = 0
 	}
 	if videoURL := firstVideoURL(resp); videoURL != "" {
 		record.VideoURL = videoURL
 	}
-	if resp.EstimatedCredits > 0 {
+	if record.Status != "failed" && resp.EstimatedCredits > 0 {
 		record.EstimatedCredits = resp.EstimatedCredits
 	}
-	if resp.ActualCredits > 0 {
+	if record.Status != "failed" && resp.ActualCredits > 0 {
 		record.ActualCredits = resp.ActualCredits
 	}
 	record.ResponsePayload = jsonData(videoResponsePayload(resp))
-	record.UpdatedAt = time.Now()
+	record.UpdatedAt = time.Now().UTC()
 	if isTerminalVideoStatus(record.Status) && record.CompletedAt == nil {
-		now := time.Now()
+		now := time.Now().UTC()
 		record.CompletedAt = &now
 	}
 	return s.tasks.save(ctx, record)
@@ -577,7 +620,7 @@ func localVideoTaskID() string {
 	if len(id) > 8 {
 		id = id[:8]
 	}
-	return "video-" + time.Now().Format("20060102150405") + "-" + id
+	return "video-" + time.Now().UTC().Format("20060102150405") + "-" + id
 }
 func normalizeTaskStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
@@ -681,6 +724,46 @@ func videoResponseErrorMessage(resp *adapter.VideoResponse) string {
 			return message
 		}
 		if message := errorMessageFromAny(resp.Raw["error_message"]); message != "" {
+			return message
+		}
+	}
+	return ""
+}
+
+func videoErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	var adapterErr *adapter.AdapterError
+	if errors.As(err, &adapterErr) {
+		if message := embeddedJSONErrorMessage(adapterErr.Message); message != "" {
+			return message
+		}
+		if message := strings.TrimSpace(adapterErr.Message); message != "" {
+			return message
+		}
+	}
+	if message := embeddedJSONErrorMessage(err.Error()); message != "" {
+		return message
+	}
+	if errors.Is(err, ErrUpstreamFailed) {
+		return err.Error()
+	}
+	return fmt.Errorf("%w: %v", ErrUpstreamFailed, err).Error()
+}
+
+func embeddedJSONErrorMessage(value string) string {
+	value = strings.TrimSpace(value)
+	for index, char := range value {
+		if char != '{' {
+			continue
+		}
+		var data any
+		decoder := json.NewDecoder(strings.NewReader(value[index:]))
+		if err := decoder.Decode(&data); err != nil {
+			continue
+		}
+		if message := errorMessageFromAny(data); message != "" {
 			return message
 		}
 	}

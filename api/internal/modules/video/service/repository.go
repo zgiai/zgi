@@ -16,6 +16,7 @@ type videoTaskRecord struct {
 	AccountID        uuid.UUID      `gorm:"column:account_id;type:uuid;not null"`
 	WorkspaceID      *uuid.UUID     `gorm:"column:workspace_id;type:uuid"`
 	TaskID           string         `gorm:"column:task_id"`
+	ClientRequestID  string         `gorm:"column:client_request_id"`
 	UpstreamTaskID   string         `gorm:"column:upstream_task_id"`
 	Provider         string         `gorm:"column:provider"`
 	Model            string         `gorm:"column:model"`
@@ -121,6 +122,22 @@ func escapeLikePattern(value string) string {
 func (r *taskRepository) findByTaskID(ctx context.Context, scope Scope, taskID string) (*videoTaskRecord, error) {
 	query := r.db.WithContext(ctx).
 		Where("organization_id = ? AND account_id = ? AND task_id = ?", scope.OrganizationID, scope.AccountID, taskID)
+	if scope.WorkspaceID != nil && *scope.WorkspaceID != uuid.Nil {
+		query = query.Where("workspace_id = ?", *scope.WorkspaceID)
+	}
+	var record videoTaskRecord
+	if err := query.Take(&record).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrTaskNotFound
+		}
+		return nil, err
+	}
+	return &record, nil
+}
+
+func (r *taskRepository) findByClientRequestID(ctx context.Context, scope Scope, clientRequestID string) (*videoTaskRecord, error) {
+	query := r.db.WithContext(ctx).
+		Where("organization_id = ? AND account_id = ? AND client_request_id = ?", scope.OrganizationID, scope.AccountID, clientRequestID)
 	if scope.WorkspaceID != nil && *scope.WorkspaceID != uuid.Nil {
 		query = query.Where("workspace_id = ?", *scope.WorkspaceID)
 	}
