@@ -649,6 +649,29 @@ var ModelGatewaySchema = File{
     CONSTRAINT ck_llm_usage_bills_total_points CHECK ((total_points = (official_points + private_points))),
     CONSTRAINT ck_llm_usage_bills_total_tokens CHECK ((total_tokens = (prompt_tokens + completion_tokens)))
 );`,
+		`CREATE TABLE public.llm_invocation_contents (
+    request_id character varying(100) NOT NULL PRIMARY KEY,
+    organization_id uuid NOT NULL,
+    input_text text DEFAULT ''::text NOT NULL,
+    output_text text DEFAULT ''::text NOT NULL,
+    input_json text DEFAULT ''::text NOT NULL,
+    output_json text DEFAULT ''::text NOT NULL,
+    content_status character varying(24) DEFAULT 'available'::character varying NOT NULL,
+    input_truncated boolean DEFAULT false NOT NULL,
+    output_truncated boolean DEFAULT false NOT NULL,
+    redaction_version character varying(16) DEFAULT 'v1'::character varying NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);`,
+		`CREATE TABLE public.llm_invocation_content_views (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL PRIMARY KEY,
+    organization_id uuid NOT NULL,
+    request_id character varying(100) NOT NULL,
+    account_id uuid NOT NULL,
+    action character varying(24) DEFAULT 'view'::character varying NOT NULL,
+    viewed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);`,
 		`CREATE TABLE public.llm_workspace_quotas (
     workspace_id character varying(255) NOT NULL,
     organization_id uuid NOT NULL,

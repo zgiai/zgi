@@ -132,6 +132,7 @@ type llmGatewayServiceImpl struct {
 	officialCreditChecker paymentservice.OfficialCreditChecker
 	policyPrompt          llmPolicyPromptInjector
 	upstreamState         *upstreamstate.Service
+	invocationContent     *invocationContentRecorder
 }
 
 func (s *llmGatewayServiceImpl) isModelRoutable(ctx context.Context, organizationID uuid.UUID, modelName string) (bool, error) {
@@ -228,6 +229,7 @@ func NewLLMGatewayServiceWithCrypto(
 		billing = remoteBilling
 		logger.Info("llm gateway remote billing enabled", "grpc_addr", grpcAddr)
 	}
+	startInvocationContentCleanup(db)
 
 	return &llmGatewayServiceImpl{
 		db:                    db,
@@ -244,6 +246,7 @@ func NewLLMGatewayServiceWithCrypto(
 		officialCreditChecker: paymentservice.NewConsoleOfficialCreditChecker(),
 		policyPrompt:          newLLMPolicyPromptInjector(cfg.LLMPolicyPrompt),
 		upstreamState:         upstreamStateService,
+		invocationContent:     newInvocationContentRecorder(db, cfg.LLMInvocationContent),
 	}, nil
 }
 
@@ -496,6 +499,9 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 
 		// Check for errors
 		if response.Error != nil {
+			// This channel is owned by the selected provider adapter, so a raw
+			// deadline here is known to be a post-connect provider timeout.
+			response.Error = adapter.NormalizeTransportError(response.Error)
 			lastError = response.Error
 			outputChan <- response
 			break
@@ -529,7 +535,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		}
 		s.recordUpstreamProviderError(ctx, nil, billingCtx, lastError)
 		billingCtx.Status = billingContextStatusError
-		billingCtx.ErrorMessage = lastError.Error()
+		setBillingFailure(billingCtx, lastError)
 		billingCtx.PromptTokens = 0
 		billingCtx.CompletionTokens = 0
 		billingCtx.TotalTokens = 0
@@ -576,7 +582,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			if !useSystemProvider {
 				billingCtx.Status = billingContextStatusPartial
 			}
-			billingCtx.ErrorMessage = missingUsageErr.Error()
+			setBillingFailure(billingCtx, missingUsageErr)
 			billingCtx.PromptTokens = 0
 			billingCtx.CompletionTokens = 0
 			billingCtx.TotalTokens = 0

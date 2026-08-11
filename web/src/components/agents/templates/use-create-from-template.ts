@@ -10,7 +10,24 @@ import { useT } from '@/i18n';
 import { withBasePath } from '@/lib/config';
 import type { WorkflowImportResult } from '@/services/types/workflow';
 import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
+import { uploadAppAvatarPreset } from '@/components/common/icon-input/avatar-preset-upload';
+import { getRandomAppAvatar } from '@/components/common/icon-input/avatar-presets';
 import type { AgentTemplate, AgentTemplateLocale } from './types';
+
+interface TemplateYamlDocument {
+  app?: {
+    icon?: string;
+    icon_type?: string;
+  };
+  workflow?: {
+    graph?: {
+      nodes?: Array<{
+        id?: string;
+        data?: Record<string, unknown>;
+      }>;
+    };
+  };
+}
 
 function resolveTemplateLocale(locale: string): AgentTemplateLocale {
   return locale.startsWith('zh') ? 'zh-Hans' : 'en-US';
@@ -21,28 +38,19 @@ function resolveTemplateYamlPath(template: AgentTemplate, locale: string): strin
   return template.localizedYamlPaths?.[templateLocale] ?? template.yamlPath;
 }
 
-function normalizeTemplatePromptYaml(yamlText: string): string {
-  const parsed = parse(yamlText) as {
-    workflow?: {
-      graph?: {
-        nodes?: Array<{
-          id?: string;
-          data?: Record<string, unknown>;
-        }>;
-      };
-    };
-  };
-
+function hydrateTemplateYaml(parsed: TemplateYamlDocument, avatarImageId: string): string {
   const nodes = parsed?.workflow?.graph?.nodes;
-  if (!Array.isArray(nodes) || nodes.length === 0) {
-    return yamlText;
+  if (Array.isArray(nodes)) {
+    for (const node of nodes) {
+      if (!node?.data || node.data.type !== 'llm') continue;
+      node.data.prompt_source = 'inline';
+      delete node.data.prompt_reference;
+    }
   }
 
-  for (const node of nodes) {
-    if (!node?.data || node.data.type !== 'llm') continue;
-    node.data.prompt_source = 'inline';
-    delete node.data.prompt_reference;
-  }
+  parsed.app ??= {};
+  parsed.app.icon = avatarImageId;
+  parsed.app.icon_type = 'image';
 
   return stringify(parsed);
 }
@@ -73,13 +81,25 @@ export function useCreateAgentFromTemplate() {
         throw error;
       }
 
-      let hydratedYaml: string;
+      let parsedYaml: TemplateYamlDocument;
       try {
-        hydratedYaml = normalizeTemplatePromptYaml(fileContent);
+        parsedYaml = parse(fileContent) as TemplateYamlDocument;
       } catch (error) {
         toast.error(t('agents.templates.templateUnavailable'));
         throw error;
       }
+
+      let avatarImageId: string;
+      try {
+        const uploadedAvatar = await uploadAppAvatarPreset(getRandomAppAvatar());
+        if (!uploadedAvatar.imageId) throw new Error('Avatar upload did not return a file ID');
+        avatarImageId = uploadedAvatar.imageId;
+      } catch (error) {
+        toast.error(t('common.iconInput.avatarLibraryDialog.uploadFailed'));
+        throw error;
+      }
+
+      const hydratedYaml = hydrateTemplateYaml(parsedYaml, avatarImageId);
 
       const file = new File([hydratedYaml], `${template.id}.yml`, { type: 'application/x-yaml' });
       const response = await importWorkflow({ file, workspaceId });

@@ -455,7 +455,11 @@ const (
 	// envOTELLLMCaptureContent controls LLM content/model-parameter capture: none, summary, or full. Default: none.
 	envOTELLLMCaptureContent = "OTEL_LLM_CAPTURE_CONTENT"
 	// envOTELLLMCaptureMaxChars caps serialized LLM input/output attributes. Default: 65536.
-	envOTELLLMCaptureMaxChars = "OTEL_LLM_CAPTURE_MAX_CHARS"
+	envOTELLLMCaptureMaxChars            = "OTEL_LLM_CAPTURE_MAX_CHARS"
+	envLLMInvocationContentMaxBytes      = "LLM_INVOCATION_CONTENT_MAX_BYTES"
+	envLLMInvocationContentRetentionDays = "LLM_INVOCATION_CONTENT_RETENTION_DAYS"
+	envLLMInvocationContentQueueSize     = "LLM_INVOCATION_CONTENT_QUEUE_SIZE"
+	envLLMInvocationContentBatchSize     = "LLM_INVOCATION_CONTENT_BATCH_SIZE"
 	// envLangfuseEnabled switches the OpenTelemetry exporter to Langfuse direct ingest when keys are present.
 	envLangfuseEnabled = "LANGFUSE_ENABLED"
 	// envLangfusePublicKey sets the Langfuse project public key.

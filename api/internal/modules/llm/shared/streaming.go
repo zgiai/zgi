@@ -78,7 +78,14 @@ func NewRawEventStreamWriter(c *gin.Context) (*RawEventStreamWriter, error) {
 
 // WriteError writes a stream error event and flushes it immediately.
 func (w *StreamWriter) WriteError(err error) {
-	w.context.SSEvent("error", err.Error())
+	w.WriteErrorMessage(err.Error())
+}
+
+// WriteErrorMessage writes a caller-projected public stream error and flushes
+// it immediately. Protocol boundaries use this after removing diagnostic
+// causes that must remain in logs and traces.
+func (w *StreamWriter) WriteErrorMessage(message string) {
+	w.context.SSEvent("error", message)
 	w.flusher.Flush()
 }
 

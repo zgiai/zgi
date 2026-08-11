@@ -147,6 +147,47 @@ const messages = {
       unknownHint: '{count} historical calls predate reliable source attribution.',
       historicalExplanation:
         'Historical calls were created before source attribution was introduced. Model, token, cost, and duration data remain available, but API versus in-product origin cannot be reconstructed reliably.',
+      contentSettings: {
+        title: 'Input/output content audit',
+        compactLabel: 'Content audit',
+        statusEnabled: 'On',
+        statusDisabled: 'Off',
+        description:
+          'When enabled, new calls are redacted and stored asynchronously, up to {size} KB per field for {days} days.',
+        metadataUnaffected:
+          'Disabling stops new snapshots; existing content keeps its current expiry. Clearing never removes calls, tokens, cost, or basic error logs.',
+        enabled: 'Input/output content audit enabled',
+        disabled: 'Input/output content audit disabled',
+        updateFailed: 'Failed to update content audit settings',
+        retentionLabel: 'Content retention',
+        retentionDays: '{days} days',
+        retentionUpdated: 'Content retention updated',
+        storedCount: '{count} content snapshots stored',
+        purgeAction: 'Clean up stored content',
+        purgeTitle: 'Clean up input/output content?',
+        purgeDescription:
+          'Each action removes up to 10,000 input/output snapshots for this organization; repeat when more remain. Calls, tokens, cost, and errors remain available. The administrator action is audited.',
+        purgeConfirm: 'Clean up content',
+        purged: 'Cleared {count} content snapshots',
+        purgedPartial: 'Cleared {count} snapshots; more remain and can be cleared again',
+        purgeFailed: 'Failed to clear input/output content',
+      },
+      errorCodes: {
+        requestInvalid: 'The request is invalid. Check the input and model parameters.',
+        modelNotFound: 'The selected model is unavailable. Choose another model.',
+        providerAuthFailed:
+          'The provider rejected its credentials. Ask an administrator to check the channel configuration.',
+        providerRateLimited: 'The model service is busy or rate limited. Try again shortly.',
+        providerTimeout: 'The model service timed out. Try again or choose another model.',
+        providerUnavailable:
+          'The model service is temporarily unavailable. Try again later or choose another model.',
+        noProviderAvailable:
+          'No model provider is available. Check the model and channel configuration.',
+        invocationFailed:
+          'The model call did not complete. Retry it, or investigate using the invocation ID.',
+        billingFailed:
+          'Call settlement did not complete. Check billing services using the invocation ID.',
+      },
       details: {
         action: 'View details',
         title: 'Invocation details',
@@ -175,9 +216,22 @@ const messages = {
         content: 'Input and output',
         input: 'Input',
         output: 'Output',
+        userQuestion: 'User question',
+        aiAnswer: 'AI answer',
+        sensitiveTitle: 'This is sensitive content',
+        sensitiveDescription:
+          'Viewing creates an audit record. Secrets are redacted and long content may be truncated.',
+        loadContent: 'View input and output',
+        contentRestricted: 'Only administrators can view input and output',
+        contentRestrictedDescription: 'Invocation metadata, tokens, and cost remain available.',
+        contentTruncated: 'Some content exceeded the storage limit and was truncated.',
+        contentExpiresAt: 'This content will expire at {time}.',
+        advancedContent: 'Advanced view: raw JSON',
+        rawInput: 'Raw input JSON',
+        rawOutput: 'Raw output JSON',
         contentUnavailableTitle: 'No content snapshot is available for this call',
         contentUnavailableDescription:
-          'This list currently comes from lightweight billing records, and earlier versions did not store input or output by default. New calls will appear here after content capture is enabled; historical content cannot be backfilled.',
+          'Content capture may have been disabled when this call ran, or the snapshot may have expired, been cleared, or been dropped under queue pressure. Enabling capture only applies to new calls.',
       },
       sources: {
         all: 'All calls',
@@ -196,12 +250,25 @@ const messages = {
         failed: 'Failed',
         partial: 'Partial',
       },
+      contentStatus: {
+        available: 'Snapshot available',
+        unavailable: 'Not captured',
+      },
+      pagination: {
+        summary: 'Showing {start}–{end} of {total}',
+        pageSizeLabel: 'Calls per page',
+        pageSize: '{size} / page',
+        pageSummary: 'Page {page} of {total}',
+        previous: 'Previous',
+        next: 'Next',
+      },
       table: {
         time: 'Time / Invocation ID',
         source: 'Source',
         model: 'Model / Provider',
         business: 'Business area',
         status: 'Status',
+        content: 'Content',
         tokens: 'Tokens',
         duration: 'Duration',
         cost: 'Cost',

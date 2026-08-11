@@ -108,7 +108,10 @@ func (b *BillingService) buildUsageBill(
 	}
 
 	if errorCode == nil {
-		errorCode = normalizedTextPtr("")
+		errorCode = normalizedTextPtr(bc.ErrorCode)
+		if errorCode == nil && status != usageBillStatusSuccess {
+			errorCode = normalizedTextPtr("llm.invocation.failed")
+		}
 	}
 	if errorMessage == nil {
 		errorMessage = normalizedTextPtr(bc.ErrorMessage)

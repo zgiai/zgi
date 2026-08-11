@@ -27,7 +27,17 @@ import { RadioCardGroup, RadioCard } from '@/components/ui/radio-card';
 import { useT } from '@/i18n';
 import { useRouter } from 'next/navigation';
 import { IconInput } from '@/components/common/icon-input';
-import { createTextIconValue, type IconValue } from '@/components/common/icon-input/types';
+import { uploadAppAvatarPreset } from '@/components/common/icon-input/avatar-preset-upload';
+import {
+  APP_AVATAR_PRESETS,
+  getRandomAppAvatar,
+  type AppAvatarPreset,
+} from '@/components/common/icon-input/avatar-presets';
+import {
+  createImageIconValue,
+  createTextIconValue,
+  type IconValue,
+} from '@/components/common/icon-input/types';
 import { getNameValidationErrors } from '@/utils/validation';
 import { cn } from '@/lib/utils';
 import {
@@ -43,6 +53,7 @@ import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { getAgentDetailBaseHref } from '@/utils/agent-detail-routes';
+import { toast } from 'sonner';
 
 interface CreateAgentDialogProps {
   open: boolean;
@@ -105,7 +116,12 @@ export function CreateAgentDialog({
   );
   const canCreateAnyType = selectableAgentTypes.some(type => isAgentTypeAllowed(type));
 
-  const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue('', ICON_BG));
+  const defaultAvatarPresetRef = useRef<AppAvatarPreset>(APP_AVATAR_PRESETS[0]);
+  const wasOpenRef = useRef(false);
+  const [iconValue, setIconValue] = useState<IconValue>(
+    createImageIconValue(defaultAvatarPresetRef.current.src)
+  );
+  const [isPreparingAvatar, setIsPreparingAvatar] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const dialogTitle = isWorkflowCreationContext ? t('createWorkflow') : t('create');
   const useHorizontalCreateLayout = isWorkflowCreationContext && !hideTypeSelector;
@@ -166,8 +182,8 @@ export function CreateAgentDialog({
     defaultValues: {
       name: '',
       description: '',
-      icon: '',
-      icon_type: 'text',
+      icon: defaultAvatarPresetRef.current.src,
+      icon_type: 'image',
       agent_type: resolvedDefaultAgentType,
     },
   });
@@ -185,15 +201,16 @@ export function CreateAgentDialog({
     form.reset({
       name: '',
       description: '',
-      icon: '',
-      icon_type: 'text',
+      icon: defaultAvatarPresetRef.current.src,
+      icon_type: 'image',
       agent_type: resolvedDefaultAgentType,
     });
-    setIconValue(createTextIconValue('', ICON_BG));
+    setIconValue(createImageIconValue(defaultAvatarPresetRef.current.src));
+    setIsPreparingAvatar(false);
     setShowAdvanced(false);
   };
 
-  const onSubmit = (data: CreateFormDataLocal) => {
+  const onSubmit = async (data: CreateFormDataLocal) => {
     if (!isAgentTypeAllowed(data.agent_type)) {
       form.setError('agent_type', {
         type: 'manual',
@@ -212,21 +229,40 @@ export function CreateAgentDialog({
       return;
     }
 
+    let resolvedIconValue = iconValue;
+    if (resolvedIconValue.type === 'image' && !resolvedIconValue.imageId) {
+      const pendingIconUrl = resolvedIconValue.iconUrl;
+      const defaultPreset = APP_AVATAR_PRESETS.find(preset => preset.src === pendingIconUrl);
+      if (defaultPreset) {
+        try {
+          setIsPreparingAvatar(true);
+          resolvedIconValue = await uploadAppAvatarPreset(defaultPreset);
+          setIconValue(resolvedIconValue);
+        } catch (error) {
+          console.error('Default avatar upload failed:', error);
+          toast.error(tRoot('common.iconInput.avatarLibraryDialog.uploadFailed'));
+          setIsPreparingAvatar(false);
+          return;
+        }
+      }
+    }
+
     const payload: CreateAgentRequest = {
       name: data.name,
       description: data.description || '',
       icon:
-        iconValue.type === 'text'
+        resolvedIconValue.type === 'text'
           ? JSON.stringify({
-              icon: iconValue.icon || data.name.slice(0, 2).toUpperCase() || ICON_TEXT,
-              icon_background: iconValue.iconBackground,
+              icon: resolvedIconValue.icon || data.name.slice(0, 2).toUpperCase() || ICON_TEXT,
+              icon_background: resolvedIconValue.iconBackground,
             })
-          : iconValue.imageId || iconValue.iconUrl || '',
-      icon_type: iconValue.type,
+          : resolvedIconValue.imageId || resolvedIconValue.iconUrl || '',
+      icon_type: resolvedIconValue.type,
       agent_type: data.agent_type,
       workspace_id: workspaceId,
     };
 
+    setIsPreparingAvatar(false);
     createMutation.mutate(payload, {
       onSuccess: (res: ApiResponseData<AgentCreateResponse>) => {
         const newId = res.data?.id;
@@ -245,6 +281,17 @@ export function CreateAgentDialog({
     }
     onOpenChange(nextOpen);
   };
+
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      const defaultAvatar = getRandomAppAvatar();
+      defaultAvatarPresetRef.current = defaultAvatar;
+      setIconValue(createImageIconValue(defaultAvatar.src));
+      form.setValue('icon', defaultAvatar.src);
+      form.setValue('icon_type', 'image');
+    }
+    wasOpenRef.current = open;
+  }, [form, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -428,19 +475,8 @@ export function CreateAgentDialog({
                           <FormLabel>{t('form.icon')}</FormLabel>
                           <FormControl>
                             <IconInput
-                              value={
-                                iconValue ||
-                                createTextIconValue(
-                                  (form.watch('name') as string)?.slice(0, 2).toUpperCase() ||
-                                    ICON_TEXT,
-                                  ICON_BG
-                                )
-                              }
-                              defaultValue={createTextIconValue(
-                                (form.watch('name') as string)?.slice(0, 2).toUpperCase() ||
-                                  ICON_TEXT,
-                                ICON_BG
-                              )}
+                              showAvatarPresets
+                              value={iconValue}
                               onChange={newIconValue => {
                                 setIconValue(newIconValue);
                                 if (newIconValue.type === 'text') {
@@ -468,9 +504,11 @@ export function CreateAgentDialog({
                 <Button
                   type="submit"
                   className="px-8"
-                  disabled={createMutation.isPending || !canCreateAnyType}
+                  disabled={isPreparingAvatar || createMutation.isPending || !canCreateAnyType}
                 >
-                  {createMutation.isPending ? t('form.creating') : t('form.create')}
+                  {isPreparingAvatar || createMutation.isPending
+                    ? t('form.creating')
+                    : t('form.create')}
                 </Button>
               </div>
             </DialogBody>

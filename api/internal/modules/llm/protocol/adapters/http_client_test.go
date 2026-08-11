@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,69 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/llm/internal/urlguard"
 )
+
+func TestHTTPClientClassifiesOnlyTransportDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{
+		client:     &http.Client{Timeout: 5 * time.Millisecond},
+		maxRetries: 0,
+	}
+	_, err := client.DoRequestDetailed(context.Background(), http.MethodGet, server.URL, nil, nil)
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("DoRequestDetailed() error = %v, want ErrTimeout", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("DoRequestDetailed() error = %v, want original deadline cause", err)
+	}
+
+	internalDeadline := context.DeadlineExceeded
+	if errors.Is(internalDeadline, ErrTimeout) {
+		t.Fatal("unclassified internal deadline unexpectedly matches ErrTimeout")
+	}
+}
+
+func TestNormalizeTransportErrorClassifiesStructuredNetworkTimeout(t *testing.T) {
+	transportTimeout := &net.DNSError{
+		Err:       "TLS handshake timeout",
+		Name:      "provider.example.test",
+		IsTimeout: true,
+	}
+
+	normalized := NormalizeTransportError(transportTimeout)
+	if !errors.Is(normalized, ErrTimeout) {
+		t.Fatalf("NormalizeTransportError() = %v, want ErrTimeout", normalized)
+	}
+	if !errors.Is(normalized, transportTimeout) {
+		t.Fatalf("NormalizeTransportError() = %v, want original network cause", normalized)
+	}
+
+	nonTimeout := &net.DNSError{Err: "no such host", Name: "provider.example.test"}
+	if normalized := NormalizeTransportError(nonTimeout); errors.Is(normalized, ErrTimeout) {
+		t.Fatalf("non-timeout error = %v, must not match ErrTimeout", normalized)
+	}
+}
+
+func TestHTTPClientClassifiesUpstreamGatewayTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+		_, _ = w.Write([]byte(`{"error":"private upstream detail"}`))
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{
+		client:     &http.Client{},
+		maxRetries: 0,
+	}
+	_, err := client.DoRequestDetailed(context.Background(), http.MethodGet, server.URL, nil, nil)
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("DoRequestDetailed() error = %v, want ErrTimeout", err)
+	}
+}
 
 type fakeURLResolver map[string][]net.IPAddr
 

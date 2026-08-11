@@ -43,6 +43,20 @@ go run cmd/migrate/main.go up
 - Prefer typed request/response structs over unstructured maps.
 - Use context-aware APIs for request-scoped work.
 
+## Application Errors
+
+- Treat `pkg/apperror` as the transport-neutral error contract. Domain and service code may create or wrap an AppError; HTTP, SSE, OpenAI-compatible, persistence, and observability layers must project it at their boundary.
+- Declare each stable code once at package scope with `apperror.MustCode("domain.subject.reason")`. Reuse cataloged codes; do not create numeric ranges, translate meaning from digits, or use a user-facing sentence as an identity.
+- Use `apperror.Wrap` when a cause exists so `errors.Is` and `errors.As` keep working. Add a stable `WithOperation` value for diagnosis, and only scalar, non-sensitive `WithParams` values needed to render or classify the error.
+- Never return `err.Error()` to a client. It is diagnostic text and may contain an upstream cause. Public messages and locale selection belong to the error catalog and protocol adapter.
+- Adding a product error is incomplete until its catalog definition, safe parameter schema, supported locale messages, legacy mapping (when required), and focused tests are present. `pkg/apperror` validates the code grammar but is not itself the complete product code list.
+- Put shared definitions in `pkg/apperror/catalog/defaults.go`; keep domain-specific definitions beside their owning domain and combine them into one injected, immutable `catalog.Catalog` during bootstrap. Do not create runtime-mutable registries.
+- Treat every catalog message and declared placeholder as public data. Provide both `en-US` and `zh-Hans`, normalize a request locale once with `catalog.ParseLocale`, and never declare a sensitive value as a public placeholder.
+- Namespace legacy aliases by their owner (for example `llm.gateway:40101`). Leave overloaded legacy values unmapped until the calling domain can choose the meaning explicitly; never guess from the numeric range or error text.
+- Preserve existing response contracts while migrating. Do not replace a legacy handler response until the relevant adapter has explicit HTTP/status/code/message compatibility tests.
+- At HTTP, SSE, or provider-protocol boundaries, use `pkg/apperror/transport.Projector` to obtain a safe public presentation; keep the original error for logs and tracing.
+- During incremental migration, use `ProjectLegacyMessage` only as a message overlay. Preserve the handler's existing HTTP status, numeric/code value, protocol type, headers, and JSON/SSE shape until a separately reviewed contract change is approved.
+
 ## Database and Storage
 
 - PostgreSQL is the production database target.

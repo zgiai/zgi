@@ -98,6 +98,7 @@ type BillingContext struct {
 	SettledAt            time.Time
 	ResponseTime         int64 // milliseconds
 	Status               string
+	ErrorCode            string
 	ErrorMessage         string
 	IPAddress            string
 	UserAgent            string

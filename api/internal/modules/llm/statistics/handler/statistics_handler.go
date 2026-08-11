@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/service"
@@ -10,6 +12,81 @@ import (
 // StatisticsHandler handles HTTP requests for statistics operations
 type StatisticsHandler struct {
 	statisticsService service.StatisticsService
+}
+
+func (h *StatisticsHandler) GetInvocationContentSettings(c *gin.Context) {
+	organizationID, exists := c.Get("organization_id")
+	if !exists {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	result, err := h.statisticsService.GetInvocationContentSettings(c.Request.Context(), organizationID.(string))
+	if err != nil {
+		handleStatisticsError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *StatisticsHandler) UpdateInvocationContentSettings(c *gin.Context) {
+	organizationID, exists := c.Get("organization_id")
+	if !exists {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.UpdateInvocationContentSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.statisticsService.UpdateInvocationContentSettings(c.Request.Context(), organizationID.(string), &req)
+	if err != nil {
+		handleStatisticsError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *StatisticsHandler) PurgeInvocationContent(c *gin.Context) {
+	organizationID, exists := c.Get("organization_id")
+	if !exists {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	result, err := h.statisticsService.PurgeInvocationContent(c.Request.Context(), organizationID.(string), accountID)
+	if err != nil {
+		handleStatisticsError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *StatisticsHandler) GetInvocationContent(c *gin.Context) {
+	organizationID, exists := c.Get("organization_id")
+	if !exists {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	result, err := h.statisticsService.GetInvocationContent(c.Request.Context(), organizationID.(string), accountID, c.Param("invocation_id"))
+	if err != nil {
+		if errors.Is(err, service.ErrInvocationContentNotFound) {
+			response.Fail(c, response.ErrNotFound)
+			return
+		}
+		handleStatisticsError(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 // NewStatisticsHandler creates a new statistics handler

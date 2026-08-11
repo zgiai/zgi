@@ -13,8 +13,12 @@ var baseModule = fx.Module("base",
 	fx.Provide(
 		provideConfig,
 		provideLogger,
+		provideApplicationErrorCatalog,
 	),
-	fx.Invoke(registerLoggerLifecycle),
+	fx.Invoke(
+		registerLoggerLifecycle,
+		requireApplicationErrorCatalog,
+	),
 )
 
 func provideConfig() (*config.Config, error) {

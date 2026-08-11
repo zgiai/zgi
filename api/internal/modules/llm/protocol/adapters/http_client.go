@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -232,7 +233,7 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 			backoff := time.Duration(attempt) * time.Second
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, NormalizeTransportError(ctx.Err())
 			case <-time.After(backoff):
 			}
 		}
@@ -315,6 +316,10 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 	}
 
 	if lastErr != nil {
+		if lastStatusCode == http.StatusGatewayTimeout && !errors.Is(lastErr, ErrTimeout) {
+			lastErr = fmt.Errorf("%w: %w", ErrTimeout, lastErr)
+		}
+		lastErr = NormalizeTransportError(lastErr)
 		return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries: %w", c.maxRetries, lastErr)
 	}
 	return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries", c.maxRetries)
@@ -376,7 +381,7 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 	// This prevents "context deadline exceeded" errors during long streaming responses
 	resp, err := c.streamClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute request: %w", err)
+		return nil, fmt.Errorf("failed to execute request: %w", NormalizeTransportError(err))
 	}
 
 	if resp.StatusCode != http.StatusOK {

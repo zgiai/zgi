@@ -8,6 +8,8 @@ import (
 	gatewayhandler "github.com/zgiai/zgi/api/internal/modules/llm/gateway/handler"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	_ "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider" // Register adapters
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/gorm"
@@ -15,9 +17,10 @@ import (
 
 // GatewayRouteDeps contains dependencies required by gateway routes.
 type GatewayRouteDeps struct {
-	DB              *gorm.DB
-	APIKeyRepo      apikeyrepo.APIKeyRepository
-	ChannelProvider platformchannel.ChannelProvider
+	DB                      *gorm.DB
+	APIKeyRepo              apikeyrepo.APIKeyRepository
+	ChannelProvider         platformchannel.ChannelProvider
+	ApplicationErrorCatalog *appcatalog.Catalog
 }
 
 // RegisterGatewayRoutes registers OpenAI-compatible AI API routes at /v1/*
@@ -28,6 +31,10 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	}
 	if deps.APIKeyRepo == nil {
 		panic("gateway routes require api key repository")
+	}
+	errorProjector, err := apptransport.NewProjector(deps.ApplicationErrorCatalog)
+	if err != nil {
+		panic("gateway routes require application error catalog")
 	}
 
 	// Initialize gateway service
@@ -57,7 +64,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	}
 
 	// Initialize handler
-	llmHandler := gatewayhandler.NewLLMHandler(gatewayService)
+	llmHandler := gatewayhandler.NewLLMHandler(gatewayService, errorProjector)
 
 	// Create middleware
 	authMiddleware := gatewayhandler.LLMAPIKeyAuthMiddleware(deps.APIKeyRepo)

@@ -24,12 +24,18 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	createInvocationContentAvailabilityTable(t, db)
 
 	started := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
 	insertInvocationBill(t, db, "org-1", "req-retried", "api", "failed", started, 0, 0)
 	insertInvocationBill(t, db, "org-1", "req-retried", "api", "success", started.Add(time.Second), 30, 12)
 	insertInvocationBill(t, db, "org-1", "req-product", "product", "success", started.Add(2*time.Second), 20, 8)
 	insertInvocationBill(t, db, "org-2", "req-other-org", "api", "success", started.Add(3*time.Second), 999, 999)
+	if err := db.Table("llm_invocation_contents").Create(map[string]any{
+		"request_id": "req-product", "organization_id": "org-1", "expires_at": time.Now().UTC().Add(24 * time.Hour),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Table(usageBillTable).Where("request_id = ?", "req-product").Updates(map[string]any{
 		"app_type": "agent", "model_name": "agent-model",
 	}).Error; err != nil {
@@ -52,14 +58,21 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if len(result.Items) != 2 {
 		t.Fatalf("items = %d, want 2", len(result.Items))
 	}
+	var product *dto.InvocationLogItem
 	var retried *dto.InvocationLogItem
 	for index := range result.Items {
+		if result.Items[index].InvocationID == "req-product" {
+			product = &result.Items[index]
+		}
 		if result.Items[index].InvocationID == "req-retried" {
 			retried = &result.Items[index]
 		}
 	}
 	if retried == nil || retried.AttemptCount != 2 || retried.Status != "success" || retried.TotalTokens != 30 {
 		t.Fatalf("unexpected retried invocation: %#v", retried)
+	}
+	if product == nil || !product.ContentAvailable || product.ContentExpiresAt == nil || retried.ContentAvailable {
+		t.Fatalf("unexpected content availability: product=%#v retried=%#v", product, retried)
 	}
 
 	productSource := "product"
@@ -82,12 +95,17 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if err != nil || len(firstPage.Items) != 1 || firstPage.NextCursor == nil {
 		t.Fatalf("unexpected first page: result=%#v err=%v", firstPage, err)
 	}
+	includeSummary := false
 	secondPage, err := repo.GetInvocationLog(context.Background(), "org-1", &dto.InvocationLogRequest{
 		StartTime: started.Add(-time.Hour).Unix(), EndTime: started.Add(time.Hour).Unix(), Limit: 1,
 		CursorTime: &firstPage.NextCursor.Time, CursorID: &firstPage.NextCursor.ID,
+		IncludeSummary: &includeSummary,
 	})
 	if err != nil || len(secondPage.Items) != 1 || secondPage.Items[0].InvocationID == firstPage.Items[0].InvocationID {
 		t.Fatalf("unexpected second page: result=%#v err=%v", secondPage, err)
+	}
+	if secondPage.Summary.InvocationCount != 0 || secondPage.Summary.TotalTokens != 0 {
+		t.Fatalf("summary should be omitted on cursor page: %#v", secondPage.Summary)
 	}
 }
 
@@ -105,6 +123,7 @@ func TestGetInvocationLogCursorPreservesSubMillisecondPrecision(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	createInvocationContentAvailabilityTable(t, db)
 
 	base := time.Date(2026, 8, 8, 9, 0, 0, 123_000_000, time.UTC)
 	insertInvocationBill(t, db, "org-1", "req-a", "api", "success", base.Add(100*time.Nanosecond), 1, 1)
@@ -153,6 +172,7 @@ func TestGetInvocationLogKeepsRetryAttemptsInsideSelectedTimeRange(t *testing.T)
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	createInvocationContentAvailabilityTable(t, db)
 
 	boundary := time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC)
 	insertInvocationBill(t, db, "org-1", "req-boundary", "product", "failed", boundary.Add(-time.Second), 100, 40)
@@ -191,6 +211,7 @@ func TestGetInvocationLogIncludesFractionalPartOfEndSecond(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	createInvocationContentAvailabilityTable(t, db)
 
 	endSecond := time.Date(2026, 8, 9, 23, 59, 59, 0, time.UTC)
 	insertInvocationBill(t, db, "org-1", "req-last-millisecond", "api", "success", endSecond.Add(999*time.Millisecond), 12, 3)
@@ -208,6 +229,36 @@ func TestGetInvocationLogIncludesFractionalPartOfEndSecond(t *testing.T) {
 	}
 }
 
+func TestGetInvocationLogKeepsBaseLogAvailableWithoutOptionalContentTable(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_usage_bills (
+		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
+		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
+		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now().UTC().Add(-time.Minute)
+	insertInvocationBill(t, db, "org-1", "req-no-content-table", "api", "success", started, 12, 3)
+
+	repo := &statisticsRepositoryImpl{db: db}
+	result, err := repo.GetInvocationLog(context.Background(), "org-1", &dto.InvocationLogRequest{
+		StartTime: started.Add(-time.Hour).Unix(), EndTime: started.Add(time.Hour).Unix(), Limit: 20,
+	})
+	if err != nil {
+		t.Fatalf("optional content table must not break base log: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].InvocationID != "req-no-content-table" || result.Items[0].ContentAvailable {
+		t.Fatalf("unexpected base log result: %#v", result)
+	}
+}
+
 func insertInvocationBill(t *testing.T, db *gorm.DB, orgID, requestID, source, status string, started time.Time, tokens, points int64) {
 	t.Helper()
 	if err := db.Table(usageBillTable).Create(map[string]any{
@@ -217,6 +268,15 @@ func insertInvocationBill(t *testing.T, db *gorm.DB, orgID, requestID, source, s
 		"total_tokens": tokens, "total_points": points, "response_time_ms": 100,
 		"request_created_at": started, "settled_at": started.Add(100 * time.Millisecond),
 	}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createInvocationContentAvailabilityTable(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.Exec(`CREATE TABLE llm_invocation_contents (
+		request_id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, expires_at DATETIME NOT NULL
+	)`).Error; err != nil {
 		t.Fatal(err)
 	}
 }
