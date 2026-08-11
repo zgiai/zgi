@@ -2286,9 +2286,13 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 
 				if targetProps, ok := nodePropsMap[targetName]; ok && !seenNeighbors[targetName] {
 					seenNeighbors[targetName] = true
+					sourceProps := nodePropsMap[edge.Head]
+					relationshipTargetProps := nodePropsMap[edge.Tail]
 					neighbors = append(neighbors, graph.Neighbor{
-						RelationshipType: relType,
-						Node:             targetProps,
+						RelationshipType:   relType,
+						Node:               targetProps,
+						RelationshipSource: sourceProps,
+						RelationshipTarget: relationshipTargetProps,
 					})
 				}
 			}
@@ -2364,47 +2368,25 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 	matchedEntities := make([]string, 0)
 
 	for _, res := range contextResults {
-		// COMPREHENSIVE FALLBACK: Check all common identifier properties
-		subject := ""
-		for _, prop := range []string{"name", "title", "id", "fileName", "canonical_name", "content"} {
-			if n, ok := res.Entity[prop].(string); ok && n != "" {
-				subject = n
-				break
-			}
-		}
+		subject := graphNodeDisplayName(res.Entity)
 
 		if subject != "" {
 			matchedEntities = append(matchedEntities, subject)
 		}
 
 		for _, neighbor := range res.Neighbors {
-			object := ""
-			for _, prop := range []string{"name", "title", "id", "fileName", "canonical_name", "content"} {
-				if n, ok := neighbor.Node[prop].(string); ok && n != "" {
-					object = n
-					break
-				}
-			}
-
-			if object != "" && subject != "" {
-				left, right := subject, object
-				if right < left {
-					left, right = right, left
-				}
-				key := left + "\x00" + neighbor.RelationshipType + "\x00" + right
+			triple, ok := directedGraphTriple(res.Entity, neighbor)
+			if ok {
+				key := triple.Subject + "\x00" + triple.Predicate + "\x00" + triple.Object
 				if _, exists := seenTriples[key]; exists || len(triples) >= maxGraphExecutionTriples {
 					continue
 				}
 				seenTriples[key] = struct{}{}
-				triples = append(triples, dto.TripleResponse{
-					Subject:   subject,
-					Predicate: neighbor.RelationshipType,
-					Object:    object,
-				})
+				triples = append(triples, triple)
 			} else {
 				logger.DebugContext(graphLogCtx, "skipped graph triple with incomplete fields",
-					zap.Bool("has_subject", subject != ""),
-					zap.Bool("has_object", object != ""),
+					zap.Bool("has_subject", graphNodeDisplayName(neighbor.RelationshipSource) != ""),
+					zap.Bool("has_object", graphNodeDisplayName(neighbor.RelationshipTarget) != ""),
 					zap.String("predicate", neighbor.RelationshipType),
 				)
 			}
@@ -2647,6 +2629,25 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 	return results, execution, nil
 }
 
+func graphNodeDisplayName(node map[string]interface{}) string {
+	for _, prop := range []string{"name", "title", "id", "fileName", "canonical_name", "content"} {
+		if value, ok := node[prop].(string); ok && value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func directedGraphTriple(current map[string]interface{}, neighbor graph.Neighbor) (dto.TripleResponse, bool) {
+	source, target := neighbor.DirectedEndpoints(current)
+	triple := dto.TripleResponse{
+		Subject:   graphNodeDisplayName(source),
+		Predicate: neighbor.RelationshipType,
+		Object:    graphNodeDisplayName(target),
+	}
+	return triple, triple.Subject != "" && triple.Predicate != "" && triple.Object != ""
+}
+
 // extractGraphContext converts EntitySearchResult slice to a full GraphContext
 // Including both the seed entities and their multi-hop neighbors
 func extractGraphContext(results []graph.EntitySearchResult) *graphflow_retrieval.GraphContext {
@@ -2680,12 +2681,15 @@ func extractGraphContext(results []graph.EntitySearchResult) *graphflow_retrieva
 
 			// Add relationship if new
 			if rootName != "" {
-				relKey := fmt.Sprintf("%s-%s-%s", rootName, nb.RelationshipType, neighborName)
-				if !seenRelations[relKey] {
+				headNode, tailNode := nb.DirectedEndpoints(res.Entity)
+				headName := graphNodeDisplayName(headNode)
+				tailName := graphNodeDisplayName(tailNode)
+				relKey := fmt.Sprintf("%s-%s-%s", headName, nb.RelationshipType, tailName)
+				if headName != "" && tailName != "" && !seenRelations[relKey] {
 					seenRelations[relKey] = true
 					ctx.Relationships = append(ctx.Relationships, graphflow_retrieval.GraphRelation{
-						HeadEntity:   rootName,
-						TailEntity:   neighborName,
+						HeadEntity:   headName,
+						TailEntity:   tailName,
 						RelationType: nb.RelationshipType,
 						Weight:       1,
 					})

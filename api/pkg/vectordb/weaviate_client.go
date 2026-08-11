@@ -851,9 +851,10 @@ func (c *WeaviateClient) CreateClass(ctx context.Context, className string, prop
 		// Read response body for detailed error information
 		body, _ := io.ReadAll(resp.Body)
 
-		// Class might already exist, which is fine
-		if resp.StatusCode == http.StatusUnprocessableEntity {
-			logger.Info("Class creation failed (might already exist)", map[string]interface{}{
+		// Concurrent first writes can race while creating the same class. Some
+		// Weaviate versions report that harmless conflict as 500 instead of 422.
+		if resp.StatusCode == http.StatusUnprocessableEntity || weaviateClassAlreadyExists(body) {
+			logger.Info("Class already exists", map[string]interface{}{
 				"class":    className,
 				"response": string(body),
 			})
@@ -868,6 +869,10 @@ func (c *WeaviateClient) CreateClass(ctx context.Context, className string, prop
 	})
 
 	return nil
+}
+
+func weaviateClassAlreadyExists(body []byte) bool {
+	return strings.Contains(strings.ToLower(string(body)), "already exists")
 }
 
 // HealthCheck checks if Weaviate is accessible

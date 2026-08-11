@@ -139,7 +139,35 @@ const scenarios = [
   {
     name: 'graph detail expansion',
     file: 'src/components/datasets/knowledge-graph/detail-panel.tsx',
-    snippets: ['active_source_count', 'onExpandNeighbors'],
+    snippets: [
+      'active_source_count',
+      'onExpandNeighbors',
+      "src.doc.id.replace(/^doc:/, '')",
+      '/documents/${encodeURIComponent(documentId)}',
+      "tDatasets('documents.fileRefs.openFile')",
+      'sourceDocumentReturnTo',
+      'restoreSourceDocumentsPosition',
+    ],
+  },
+  {
+    name: 'graph source document return state',
+    file: 'src/app/console/dataset/[datasetId]/graph/page.tsx',
+    snippets: [
+      "const GRAPH_SELECTED_ENTITY_PARAM = 'selected_entity'",
+      "const GRAPH_EXPLORATION_ROOT_PARAM = 'exploration_root'",
+      "const GRAPH_DETAIL_SECTION_PARAM = 'detail_section'",
+      'sourceDocumentReturnTo={sourceDocumentReturnTo}',
+    ],
+  },
+  {
+    name: 'dataset document return target forwarding',
+    file: 'src/app/console/dataset/[datasetId]/documents/[documentId]/page.tsx',
+    snippets: [
+      'safeDatasetReturnTo',
+      "searchParams.get('returnTo')",
+      'returnTo=${encodeURIComponent(returnTo)}',
+      'router.push(returnTo)',
+    ],
   },
 ];
 
@@ -155,6 +183,16 @@ for (const scenario of scenarios) {
       throw new Error(`Unexpected ${scenario.name} snippet in ${scenario.file}: ${snippet}`);
     }
   }
+}
+
+const hitTestingSource = read('src/components/datasets/hit-testing/index.tsx');
+if (
+  !/const vectorRequestData = \{[\s\S]*?record_history: recordHistory,[\s\S]*?\};/.test(
+    hitTestingSource
+  ) ||
+  !/const graphRequestData = \{[\s\S]*?record_history: false,[\s\S]*?\};/.test(hitTestingSource)
+) {
+  throw new Error('Combined retrieval must record history only for the hybrid request.');
 }
 
 console.log('Knowledge graph recovery baseline checks passed.');

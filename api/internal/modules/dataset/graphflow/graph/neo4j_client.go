@@ -302,8 +302,41 @@ type EntitySearchResult struct {
 
 // Neighbor represents a connected node
 type Neighbor struct {
-	RelationshipType string                 `json:"relationship_type"`
-	Node             map[string]interface{} `json:"node"`
+	RelationshipType   string                 `json:"relationship_type"`
+	Node               map[string]interface{} `json:"node"`
+	RelationshipSource map[string]interface{} `json:"relationship_source,omitempty"`
+	RelationshipTarget map[string]interface{} `json:"relationship_target,omitempty"`
+}
+
+// DirectedEndpoints returns the stored relationship direction. Older callers
+// may construct Neighbor without endpoint metadata, so retain traversal order
+// as a compatibility fallback.
+func (n Neighbor) DirectedEndpoints(current map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
+	if len(n.RelationshipSource) > 0 && len(n.RelationshipTarget) > 0 {
+		return n.RelationshipSource, n.RelationshipTarget
+	}
+	return current, n.Node
+}
+
+func neighborFromRecord(value interface{}) (Neighbor, bool) {
+	nbMap, ok := value.(map[string]interface{})
+	if !ok {
+		return Neighbor{}, false
+	}
+	rType, typeOK := nbMap["type"].(string)
+	targetNode, nodeOK := nbMap["node"].(neo4j.Node)
+	if !typeOK || !nodeOK {
+		return Neighbor{}, false
+	}
+
+	neighbor := Neighbor{RelationshipType: rType, Node: targetNode.Props}
+	if sourceNode, ok := nbMap["source"].(neo4j.Node); ok {
+		neighbor.RelationshipSource = sourceNode.Props
+	}
+	if relationshipTarget, ok := nbMap["target"].(neo4j.Node); ok {
+		neighbor.RelationshipTarget = relationshipTarget.Props
+	}
+	return neighbor, true
 }
 
 // GetEntityContext finds entities and their 1-hop neighbors within a specific KB
@@ -340,7 +373,7 @@ func (c *Neo4jClient) GetEntityContext(ctx context.Context, kbID string, names [
 		OPTIONAL MATCH (n)-[r]-(m)
 		WHERE r.active_weight > 0 AND m.kb_id = $kb_id AND coalesce(m.active_source_count, 0) > 0
 		WITH n, r, m ORDER BY r.weight DESC LIMIT 50
-		RETURN n, collect({type: type(r), node: m}) as neighbors
+		RETURN n, collect({type: type(r), node: m, source: startNode(r), target: endNode(r)}) as neighbors
 	`
 
 	result, err := session.Run(ctx, cypher, map[string]interface{}{
@@ -365,16 +398,8 @@ func (c *Neo4jClient) GetEntityContext(ctx context.Context, kbID string, names [
 		var neighbors []Neighbor
 		if neighborsList, ok := neighborsVal.([]interface{}); ok {
 			for _, nb := range neighborsList {
-				if nbMap, ok := nb.(map[string]interface{}); ok {
-					rType, typeOk := nbMap["type"].(string)
-					targetNode, nodeOk := nbMap["node"].(neo4j.Node)
-
-					if typeOk && nodeOk {
-						neighbors = append(neighbors, Neighbor{
-							RelationshipType: rType,
-							Node:             targetNode.Props,
-						})
-					}
+				if neighbor, ok := neighborFromRecord(nb); ok {
+					neighbors = append(neighbors, neighbor)
 				}
 			}
 		}
@@ -465,19 +490,11 @@ func (c *Neo4jClient) GetEntityContextMultiHop(ctx context.Context, kbID string,
 		var neighbors []Neighbor
 		if neighborsList, ok := neighborsVal.([]interface{}); ok {
 			for _, nb := range neighborsList {
-				if nbMap, ok := nb.(map[string]interface{}); ok {
-					rType, _ := nbMap["type"].(string)
-					targetNode, nodeOk := nbMap["node"].(neo4j.Node)
-
-					if nodeOk {
-						neighbors = append(neighbors, Neighbor{
-							RelationshipType: rType,
-							Node:             targetNode.Props,
-						})
-						// Also collect neighbor names to ensure segments are found
-						if name, ok := targetNode.Props["name"].(string); ok && name != "" {
-							allEntityNames[strings.ToLower(name)] = true
-						}
+				if neighbor, ok := neighborFromRecord(nb); ok {
+					neighbors = append(neighbors, neighbor)
+					// Also collect neighbor names to ensure segments are found
+					if name, ok := neighbor.Node["name"].(string); ok && name != "" {
+						allEntityNames[strings.ToLower(name)] = true
 					}
 				}
 			}
@@ -539,7 +556,7 @@ func buildEntityContextMultiHopQuery(maxHops int) string {
 		WITH m, r, p
 		ORDER BY coalesce(m.name, ''), type(r), coalesce(p.name, ''), p.id
 		LIMIT 500
-		RETURN m, collect(DISTINCT {type: type(r), node: p, labels: labels(p)})[..50] as neighbors
+		RETURN m, collect(DISTINCT {type: type(r), node: p, labels: labels(p), source: startNode(r), target: endNode(r)})[..50] as neighbors
 		ORDER BY coalesce(m.name, ''), m.id
 	`, maxHops)
 }
@@ -725,7 +742,7 @@ func (c *Neo4jClient) GetEntityContextByVector(ctx context.Context, kbID string,
 		// Fetch local connectivity for the final context
 		OPTIONAL MATCH (m)-[r]-(p:Entity)
 		WHERE p.kb_id = $kb_id AND coalesce(p.active_source_count, 0) > 0 AND coalesce(r.active_weight, 0) > 0
-		RETURN m, final_score as score, inherited_score, topic_boost, collect(DISTINCT {type: type(r), node: p})[..50] as neighbors
+		RETURN m, final_score as score, inherited_score, topic_boost, collect(DISTINCT {type: type(r), node: p, source: startNode(r), target: endNode(r)})[..50] as neighbors
 		ORDER BY score DESC, coalesce(m.name, ''), m.id
 		LIMIT 200
 	`, candidatePool, maxHops, hopDecay)
@@ -765,18 +782,10 @@ func (c *Neo4jClient) GetEntityContextByVector(ctx context.Context, kbID string,
 		var neighbors []Neighbor
 		if neighborsList, ok := neighborsVal.([]interface{}); ok {
 			for _, nb := range neighborsList {
-				if nbMap, ok := nb.(map[string]interface{}); ok {
-					rType, _ := nbMap["type"].(string)
-					targetNode, nodeOk := nbMap["node"].(neo4j.Node)
-
-					if nodeOk {
-						neighbors = append(neighbors, Neighbor{
-							RelationshipType: rType,
-							Node:             targetNode.Props,
-						})
-						if name, ok := targetNode.Props["name"].(string); ok && name != "" {
-							allEntityNames[strings.ToLower(name)] = true
-						}
+				if neighbor, ok := neighborFromRecord(nb); ok {
+					neighbors = append(neighbors, neighbor)
+					if name, ok := neighbor.Node["name"].(string); ok && name != "" {
+						allEntityNames[strings.ToLower(name)] = true
 					}
 				}
 			}

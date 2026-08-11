@@ -278,8 +278,8 @@ func (c *Neo4jClient) expandNode(ctx context.Context, kbID string, nodeID int64,
 		LIMIT 500
 
 		WITH m, degree, collect(DISTINCT {
-			head: m.name,
-			tail: p.name,
+			head: startNode(r).name,
+			tail: endNode(r).name,
 			type: type(r)
 		}) as edges
 

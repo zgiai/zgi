@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	graph "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/graph"
 	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/retrieval"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -599,5 +600,35 @@ func TestGraphSearchUsesDatasetOrganizationIDForEntityExtraction(t *testing.T) {
 
 	if mockClient.lastOrganizationID != dataset.OrganizationID {
 		t.Fatalf("graphSearch used organizationID %q, want %q", mockClient.lastOrganizationID, dataset.OrganizationID)
+	}
+}
+
+func TestGraphExecutionUsesStoredRelationshipDirection(t *testing.T) {
+	current := map[string]interface{}{"name": "Snuggly Cat"}
+	neighbor := graph.Neighbor{
+		RelationshipType:   "OWNS",
+		Node:               map[string]interface{}{"name": "Fred Ruckel"},
+		RelationshipSource: map[string]interface{}{"name": "Fred Ruckel"},
+		RelationshipTarget: map[string]interface{}{"name": "Snuggly Cat"},
+	}
+
+	triple, ok := directedGraphTriple(current, neighbor)
+	if !ok {
+		t.Fatal("directedGraphTriple rejected a complete relationship")
+	}
+	if triple.Subject != "Fred Ruckel" || triple.Predicate != "OWNS" || triple.Object != "Snuggly Cat" {
+		t.Fatalf("triple = %#v, want Fred Ruckel OWNS Snuggly Cat", triple)
+	}
+
+	context := extractGraphContext([]graph.EntitySearchResult{{
+		Entity:    current,
+		Neighbors: []graph.Neighbor{neighbor},
+	}})
+	if len(context.Relationships) != 1 {
+		t.Fatalf("relationships = %d, want 1", len(context.Relationships))
+	}
+	relationship := context.Relationships[0]
+	if relationship.HeadEntity != "Fred Ruckel" || relationship.RelationType != "OWNS" || relationship.TailEntity != "Snuggly Cat" {
+		t.Fatalf("relationship = %#v, want Fred Ruckel OWNS Snuggly Cat", relationship)
 	}
 }

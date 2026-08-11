@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
+import Link from 'next/link';
 import { Network, Info, FileText, ChevronRight, Expand, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +12,9 @@ import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
 
 interface DetailPanelProps {
+  datasetId: string;
+  sourceDocumentReturnTo: string;
+  restoreSourceDocumentsPosition?: boolean;
   selectedNode: GraphNode | null;
   graphData: DatasetGraph | null;
   categoryColorMap: Record<string, { fill: string; stroke: string; text: string }>;
@@ -23,6 +27,9 @@ interface DetailPanelProps {
 }
 
 export const DetailPanel: React.FC<DetailPanelProps> = ({
+  datasetId,
+  sourceDocumentReturnTo,
+  restoreSourceDocumentsPosition = false,
   selectedNode,
   graphData,
   categoryColorMap,
@@ -34,6 +41,25 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
   className,
 }) => {
   const t = useT('datasets.knowledgeGraph');
+  const tDatasets = useT('datasets');
+  const sourceDocumentsRef = useRef<HTMLDivElement>(null);
+  const restoredSourcePositionRef = useRef(false);
+
+  useEffect(() => {
+    if (
+      !restoreSourceDocumentsPosition ||
+      restoredSourcePositionRef.current ||
+      !selectedNode?.data?.sources?.length
+    ) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      sourceDocumentsRef.current?.scrollIntoView({ block: 'nearest' });
+      restoredSourcePositionRef.current = true;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [restoreSourceDocumentsPosition, selectedNode]);
 
   // Compute related entities (neighbors) and their relationships
   const relatedEntities = useMemo(() => {
@@ -177,35 +203,46 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
 
           {/* Source Documents */}
           {selectedNode.data?.sources && selectedNode.data.sources.length > 0 && (
-            <div className="space-y-3">
+            <div ref={sourceDocumentsRef} className="space-y-3">
               <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                 {t('activeSourceDocuments', { count: selectedNode.data.sources.length })}
               </h4>
               <div className="space-y-2">
-                {selectedNode.data.sources.map((src: GraphNodeSource) => (
-                  <div
-                    key={src.doc.id}
-                    className="p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-start gap-2">
-                      <FileText className="w-4 h-4 mt-1 shrink-0 text-muted-foreground group-hover:text-primary" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium line-clamp-1 truncate">{src.doc.title}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-primary"
-                              style={{ width: `${src.weight}%` }}
-                            />
+                {selectedNode.data.sources.map((src: GraphNodeSource) => {
+                  const documentId = src.doc.id.replace(/^doc:/, '');
+                  const href = `/console/dataset/${encodeURIComponent(datasetId)}/documents/${encodeURIComponent(documentId)}?returnTo=${encodeURIComponent(sourceDocumentReturnTo)}`;
+
+                  return (
+                    <Link
+                      key={src.doc.id}
+                      href={href}
+                      className="group block rounded-lg border border-border bg-muted/20 p-3 transition-colors hover:border-primary/30 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                      aria-label={`${tDatasets('documents.fileRefs.openFile')}: ${src.doc.title}`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors group-hover:text-primary">
+                          <FileText className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium line-clamp-1 truncate">
+                            {src.doc.title}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-primary"
+                                style={{ width: `${src.weight}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] text-muted-foreground shrink-0">
+                              {src.weight}%
+                            </span>
                           </div>
-                          <span className="text-[10px] text-muted-foreground shrink-0">
-                            {src.weight}%
-                          </span>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                ))}
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           )}

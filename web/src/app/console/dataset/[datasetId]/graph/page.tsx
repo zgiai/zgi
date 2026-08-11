@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import {
   useDatasetGraph,
   useDatasetGraphStatus,
@@ -39,6 +39,17 @@ const EXPLORATION_NODE_LIMIT = 150;
 const EXPANSION_NODE_LIMIT = 50;
 const VISIBLE_NODE_LIMIT = 200;
 const VISIBLE_EDGE_LIMIT = 600;
+const GRAPH_SELECTED_ENTITY_PARAM = 'selected_entity';
+const GRAPH_EXPLORATION_ROOT_PARAM = 'exploration_root';
+const GRAPH_OVERVIEW_LIMIT_PARAM = 'overview_limit';
+const GRAPH_DETAIL_SECTION_PARAM = 'detail_section';
+const GRAPH_SOURCE_DOCUMENTS_SECTION = 'source_documents';
+
+const restoredOverviewLimit = (value: string | null) => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return DEFAULT_OVERVIEW_NODE_LIMIT;
+  return Math.max(MIN_OVERVIEW_NODE_LIMIT, Math.min(VISIBLE_NODE_LIMIT, parsed));
+};
 
 const graphEdgeKey = (edge: DatasetGraph['edges'][number]) =>
   `${edge.source}\u0000${edge.target}\u0000${edge.label}`;
@@ -89,6 +100,11 @@ const mergeGraphData = (
 
 export default function DatasetGraphPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
+  const searchParams = useSearchParams();
+  const restoredSelectedEntityId = searchParams.get(GRAPH_SELECTED_ENTITY_PARAM) || undefined;
+  const restoredExplorationRootId = searchParams.get(GRAPH_EXPLORATION_ROOT_PARAM) || undefined;
+  const restoreSourceDocumentsPosition =
+    searchParams.get(GRAPH_DETAIL_SECTION_PARAM) === GRAPH_SOURCE_DOCUMENTS_SECTION;
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canViewGraph = hasAnyPermission([
     ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.graphView,
@@ -101,14 +117,19 @@ export default function DatasetGraphPage() {
   });
   const t = useT('datasets');
   const [selectedNode, setSelectedNode] = React.useState<GraphNode | null>(null);
-  const [overviewNodeLimit, setOverviewNodeLimit] = React.useState(DEFAULT_OVERVIEW_NODE_LIMIT);
+  const [overviewNodeLimit, setOverviewNodeLimit] = React.useState(() =>
+    restoredOverviewLimit(searchParams.get(GRAPH_OVERVIEW_LIMIT_PARAM))
+  );
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isSearchOpen, setIsSearchOpen] = React.useState(false);
-  const [explorationRootId, setExplorationRootId] = React.useState<string | undefined>();
+  const [explorationRootId, setExplorationRootId] = React.useState<string | undefined>(
+    restoredExplorationRootId
+  );
   const [expansionNodeId, setExpansionNodeId] = React.useState<string | undefined>();
   const [visibleGraph, setVisibleGraph] = React.useState<DatasetGraph | null>(null);
   const [expandedNodeIds, setExpandedNodeIds] = React.useState<Set<string>>(() => new Set());
   const initializedRootRef = React.useRef<string | null>(null);
+  const restoredSelectionAppliedRef = React.useRef(false);
   const { data: graphStatusData, isLoading: isStatusLoading } = useDatasetGraphStatus(
     datasetId,
     canViewGraph,
@@ -208,6 +229,17 @@ export default function DatasetGraphPage() {
     return searchGraph.nodes.slice(0, 20);
   }, [searchGraph?.nodes, trimmedSearchQuery]);
 
+  const sourceDocumentReturnTo = React.useMemo(() => {
+    const params = new URLSearchParams();
+    if (selectedNode?.id) params.set(GRAPH_SELECTED_ENTITY_PARAM, selectedNode.id);
+    if (explorationRootId) params.set(GRAPH_EXPLORATION_ROOT_PARAM, explorationRootId);
+    if (overviewNodeLimit !== DEFAULT_OVERVIEW_NODE_LIMIT) {
+      params.set(GRAPH_OVERVIEW_LIMIT_PARAM, String(overviewNodeLimit));
+    }
+    params.set(GRAPH_DETAIL_SECTION_PARAM, GRAPH_SOURCE_DOCUMENTS_SECTION);
+    return `/console/dataset/${encodeURIComponent(datasetId)}/graph?${params.toString()}`;
+  }, [datasetId, explorationRootId, overviewNodeLimit, selectedNode?.id]);
+
   React.useEffect(() => {
     if (explorationRootId || !overviewGraph) return;
     setVisibleGraph(overviewGraph);
@@ -231,6 +263,17 @@ export default function DatasetGraphPage() {
       current => explorationGraph.nodes.find(node => node.id === explorationRootId) || current
     );
   }, [explorationGraph, explorationRootId]);
+
+  React.useEffect(() => {
+    if (restoredSelectionAppliedRef.current || !restoredSelectedEntityId || !graph) return;
+    const node = graph.nodes.find(candidate => candidate.id === restoredSelectedEntityId);
+    if (!node) return;
+
+    restoredSelectionAppliedRef.current = true;
+    setSelectedNode(node);
+    const frame = window.requestAnimationFrame(() => graphRef.current?.focusNode(node.id));
+    return () => window.cancelAnimationFrame(frame);
+  }, [graph, restoredSelectedEntityId]);
 
   React.useEffect(() => {
     if (!expansionNodeId || !expansionGraph) return;
@@ -614,6 +657,9 @@ export default function DatasetGraphPage() {
         {/* Right Side: Detail Panel */}
         <div className="w-80 shrink-0 flex flex-col gap-6">
           <DetailPanel
+            datasetId={datasetId}
+            sourceDocumentReturnTo={sourceDocumentReturnTo}
+            restoreSourceDocumentsPosition={restoreSourceDocumentsPosition}
             selectedNode={selectedNode}
             graphData={graph || null}
             categoryColorMap={categoryColorMap}

@@ -170,11 +170,12 @@ func (r *GraphRetrieval) retrieveFromNeo4j(ctx context.Context, kbID uuid.UUID, 
 			}
 
 			// Add relationship
-			headName, _ := sr.Entity["name"].(string)
-			tailName, _ := neighbor.Node["name"].(string)
+			headNode, tailNode := neighbor.DirectedEndpoints(sr.Entity)
+			headName, _ := headNode["name"].(string)
+			tailName, _ := tailNode["name"].(string)
 			relKey := fmt.Sprintf("%s-%s-%s", headName, neighbor.RelationshipType, tailName)
 
-			if !seenRelations[relKey] {
+			if headName != "" && tailName != "" && !seenRelations[relKey] {
 				seenRelations[relKey] = true
 				result.Relationships = append(result.Relationships, GraphRelation{
 					HeadEntity:   headName,
@@ -245,11 +246,12 @@ func (r *GraphRetrieval) retrieveFromNeo4jSimple(ctx context.Context, kbID uuid.
 				result.Entities = append(result.Entities, neighborEntity)
 			}
 
-			headName, _ := sr.Entity["name"].(string)
-			tailName, _ := neighbor.Node["name"].(string)
+			headNode, tailNode := neighbor.DirectedEndpoints(sr.Entity)
+			headName, _ := headNode["name"].(string)
+			tailName, _ := tailNode["name"].(string)
 			relKey := fmt.Sprintf("%s-%s-%s", headName, neighbor.RelationshipType, tailName)
 
-			if !seenRelations[relKey] {
+			if headName != "" && tailName != "" && !seenRelations[relKey] {
 				seenRelations[relKey] = true
 				result.Relationships = append(result.Relationships, GraphRelation{
 					HeadEntity:   headName,

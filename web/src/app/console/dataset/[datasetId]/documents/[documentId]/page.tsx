@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -14,12 +14,22 @@ import {
 } from '@/components/common/permission-gate-state';
 import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
+function safeDatasetReturnTo(value: string | null, datasetId: string) {
+  if (!value || value.startsWith('//') || value.includes('://')) return null;
+  const datasetPrefix = `/console/dataset/${encodeURIComponent(datasetId)}/`;
+  return value.startsWith(datasetPrefix) ? value : null;
+}
+
 export default function DocumentDetailRedirectPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const t = useT();
   const datasetId = params.datasetId as string;
   const documentId = params.documentId as string;
+  const returnTo =
+    safeDatasetReturnTo(searchParams.get('returnTo'), datasetId) ||
+    `/console/dataset/${datasetId}/documents`;
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canViewDocuments = hasAnyPermission([
     ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.documentView,
@@ -42,10 +52,9 @@ export default function DocumentDetailRedirectPage() {
 
   useEffect(() => {
     if (sourceFileId) {
-      const returnTo = `/console/dataset/${datasetId}/documents`;
       router.replace(`/console/files/${sourceFileId}?returnTo=${encodeURIComponent(returnTo)}`);
     }
-  }, [datasetId, router, sourceFileId]);
+  }, [returnTo, router, sourceFileId]);
 
   if (isPermissionsLoading) {
     return <PermissionLoadingState />;
@@ -76,10 +85,7 @@ export default function DocumentDetailRedirectPage() {
             {t('datasets.documents.fileRefs.redirectDescription')}
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => router.push(`/console/dataset/${datasetId}/documents`)}
-        >
+        <Button variant="outline" onClick={() => router.push(returnTo)}>
           <ArrowLeft className="h-4 w-4" />
           {t('datasets.backToDocuments')}
         </Button>

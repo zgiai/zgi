@@ -258,7 +258,9 @@ export default function HitTestingPage() {
             ...retrievalModel,
             search_method: 'graph_search' as const,
           },
-          record_history: recordHistory,
+          // A combined test is one user action. The hybrid request owns its
+          // history entry; the parallel graph request only supplies results.
+          record_history: false,
         };
 
         const retrievals: Array<Promise<boolean>> = [

@@ -17,10 +17,36 @@ func TestBuildEntityContextMultiHopQueryBindsTraversalPath(t *testing.T) {
 		"nodes(path)",
 		"relationships(path)",
 		"ORDER BY coalesce(m.name, ''), m.id",
+		"source: startNode(r)",
+		"target: endNode(r)",
 		"[..50] as neighbors",
 	} {
 		if !strings.Contains(query, snippet) {
 			t.Fatalf("multi-hop query missing %q:\n%s", snippet, query)
+		}
+	}
+}
+
+func TestNeighborDirectedEndpointsPreserveStoredDirection(t *testing.T) {
+	current := map[string]interface{}{"name": "Snuggly Cat"}
+	neighbor := Neighbor{
+		RelationshipType:   "OWNS",
+		Node:               map[string]interface{}{"name": "Fred Ruckel"},
+		RelationshipSource: map[string]interface{}{"name": "Fred Ruckel"},
+		RelationshipTarget: map[string]interface{}{"name": "Snuggly Cat"},
+	}
+
+	source, target := neighbor.DirectedEndpoints(current)
+	if source["name"] != "Fred Ruckel" || target["name"] != "Snuggly Cat" {
+		t.Fatalf("endpoints = %v -> %v, want Fred Ruckel -> Snuggly Cat", source["name"], target["name"])
+	}
+}
+
+func TestBuildNeighborQueryReturnsStoredRelationshipDirection(t *testing.T) {
+	query, _ := BuildNeighborQuery([]string{"Snuggly Cat"}, "kb-1", 10)
+	for _, snippet := range []string{"source: startNode(r)", "target: endNode(r)"} {
+		if !strings.Contains(query, snippet) {
+			t.Fatalf("neighbor query missing %q:\n%s", snippet, query)
 		}
 	}
 }
