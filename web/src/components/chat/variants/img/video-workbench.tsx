@@ -1194,21 +1194,45 @@ function TaskReferenceMaterialPreview({ material }: { material: TaskReferenceMat
   const t = useT('webapp');
   const kindLabel = t(REFERENCE_KIND_LABEL_KEYS[material.kind]);
   const label = material.label || kindLabel;
+  const [previewUrl, setPreviewUrl] = React.useState(material.url);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setPreviewUrl(material.url);
+    const fileId = fileIDFromPreviewURL(material.url);
+    if (!fileId) return;
+
+    fileManageService
+      .getOriginalPreviewUrl(fileId)
+      .then(response => {
+        const freshUrl = response.data?.url?.trim();
+        if (!cancelled && freshUrl) {
+          setPreviewUrl(freshUrl);
+        }
+      })
+      .catch(() => {
+        // Keep the stored URL as a fallback; the preview may still be valid.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [material.url]);
 
   return (
     <a
-      href={material.url}
+      href={previewUrl}
       target="_blank"
       rel="noreferrer"
       className="group relative flex size-[90px] shrink-0 overflow-hidden rounded-md border border-border bg-muted/20 text-xs text-foreground transition hover:border-border-strong"
       title={label}
     >
       {material.kind === 'image' ? (
-        <img src={material.url} alt={label} className="h-full w-full object-cover" />
+        <img src={previewUrl} alt={label} className="h-full w-full object-cover" />
       ) : material.kind === 'video' ? (
         <>
           <video
-            src={material.url}
+            src={previewUrl}
             className="h-full w-full bg-black object-cover"
             muted
             preload="metadata"
@@ -1227,6 +1251,19 @@ function TaskReferenceMaterialPreview({ material }: { material: TaskReferenceMat
       </span>
     </a>
   );
+}
+
+function fileIDFromPreviewURL(rawUrl: string): string {
+  const value = rawUrl.trim();
+  if (!value) return '';
+  try {
+    const url = new URL(value, window.location.origin);
+    const match = url.pathname.match(/\/files\/([^/]+)\/file-preview$/);
+    return match ? decodeURIComponent(match[1]) : '';
+  } catch {
+    const match = value.match(/\/files\/([^/?#]+)\/file-preview(?:[?#]|$)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
 }
 
 function getTaskReferenceMaterials(

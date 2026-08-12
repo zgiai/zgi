@@ -1,11 +1,28 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
+
+type fakeVideoArtifactSaver struct {
+	storedURL string
+	err       error
+	calls     int
+	gotURL    string
+}
+
+func (f *fakeVideoArtifactSaver) SaveRemoteVideo(_ context.Context, _ Scope, videoURL string) (string, error) {
+	f.calls++
+	f.gotURL = videoURL
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.storedURL, nil
+}
 
 func TestEstimateVideoTaskCreditsUsesDefaultPerSecondPoints(t *testing.T) {
 	got := estimateVideoTaskCredits(GenerateOptions{Duration: 4, Count: 1})
@@ -117,5 +134,54 @@ func TestVideoErrorMessageExtractsUpstreamErrorText(t *testing.T) {
 	const want = "Error while downloading image"
 	if got != want {
 		t.Fatalf("videoErrorMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestStoreVideoArtifactTransfersSucceededURL(t *testing.T) {
+	saver := &fakeVideoArtifactSaver{storedURL: "https://files.example.com/console/api/files/tools/stored.mp4?expires_at=0"}
+	svc := &service{artifactSaver: saver}
+	payload := map[string]any{}
+
+	got := svc.storeVideoArtifact(context.Background(), Scope{}, "https://upstream.example.com/video.mp4", payload)
+
+	if got != saver.storedURL {
+		t.Fatalf("storeVideoArtifact() = %q, want stored URL %q", got, saver.storedURL)
+	}
+	if saver.calls != 1 || saver.gotURL != "https://upstream.example.com/video.mp4" {
+		t.Fatalf("artifact saver calls = %d url = %q, want one call with upstream URL", saver.calls, saver.gotURL)
+	}
+	if payload["video_transfer_status"] != "succeeded" || payload["stored_video_url"] != saver.storedURL {
+		t.Fatalf("payload transfer metadata = %#v, want succeeded stored URL", payload)
+	}
+}
+
+func TestStoreVideoArtifactKeepsUpstreamURLWhenTransferFails(t *testing.T) {
+	saver := &fakeVideoArtifactSaver{err: errors.New("download failed")}
+	svc := &service{artifactSaver: saver}
+	payload := map[string]any{}
+	const upstreamURL = "https://upstream.example.com/video.mp4"
+
+	got := svc.storeVideoArtifact(context.Background(), Scope{}, upstreamURL, payload)
+
+	if got != upstreamURL {
+		t.Fatalf("storeVideoArtifact() = %q, want upstream URL %q", got, upstreamURL)
+	}
+	if payload["video_transfer_status"] != "failed" || payload["video_transfer_error"] != "download failed" {
+		t.Fatalf("payload transfer metadata = %#v, want failed with error", payload)
+	}
+}
+
+func TestStoreVideoArtifactSkipsStoredURL(t *testing.T) {
+	saver := &fakeVideoArtifactSaver{storedURL: "https://should-not-be-used.example.com/video.mp4"}
+	svc := &service{artifactSaver: saver}
+	const storedURL = "https://files.example.com/console/api/files/tools/stored.mp4?expires_at=0"
+
+	got := svc.storeVideoArtifact(context.Background(), Scope{}, storedURL, map[string]any{})
+
+	if got != storedURL {
+		t.Fatalf("storeVideoArtifact() = %q, want original stored URL %q", got, storedURL)
+	}
+	if saver.calls != 0 {
+		t.Fatalf("artifact saver calls = %d, want 0", saver.calls)
 	}
 }

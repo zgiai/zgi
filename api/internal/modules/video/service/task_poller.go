@@ -26,7 +26,7 @@ func NewTaskPoller(db *gorm.DB, llmClient interface{}) *TaskPoller {
 	if db == nil || videoClient == nil {
 		return nil
 	}
-	return &TaskPoller{svc: &service{llmClient: videoClient, tasks: newTaskRepository(db)}}
+	return &TaskPoller{svc: &service{llmClient: videoClient, tasks: newTaskRepository(db), artifactSaver: defaultVideoArtifactSaver{}}}
 }
 
 func (p *TaskPoller) Start(ctx context.Context) {

@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	llmnode "github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/llm"
+	workflowtoolfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
@@ -37,6 +40,10 @@ type LLMVideoClient interface {
 	AppGetVideoTask(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.VideoTaskRequest) (*adapter.VideoResponse, error)
 }
 
+type VideoArtifactSaver interface {
+	SaveRemoteVideo(ctx context.Context, scope Scope, videoURL string) (string, error)
+}
+
 type Service interface {
 	ListModels(ctx context.Context, scope Scope) ([]VideoModel, error)
 	Generate(ctx context.Context, scope Scope, req GenerateRequest) (*GenerateResult, error)
@@ -49,6 +56,7 @@ type service struct {
 	availableModels llmmodelsvc.AvailableModelsService
 	llmClient       LLMVideoClient
 	tasks           *taskRepository
+	artifactSaver   VideoArtifactSaver
 }
 
 func NewService(db *gorm.DB, availableModels llmmodelsvc.AvailableModelsService, llmClient interface{}) Service {
@@ -57,7 +65,32 @@ func NewService(db *gorm.DB, availableModels llmmodelsvc.AvailableModelsService,
 		availableModels: availableModels,
 		llmClient:       videoClient,
 		tasks:           newTaskRepository(db),
+		artifactSaver:   defaultVideoArtifactSaver{},
 	}
+}
+
+type defaultVideoArtifactSaver struct{}
+
+func (defaultVideoArtifactSaver) SaveRemoteVideo(_ context.Context, scope Scope, videoURL string) (string, error) {
+	videoURL = strings.TrimSpace(videoURL)
+	if videoURL == "" {
+		return "", errors.New("video url is empty")
+	}
+	saver := llmnode.NewFileSaverImplGlobalWithLifecycleAndURLMode(
+		scope.AccountID.String(),
+		scope.OrganizationID.String(),
+		workflowtoolfile.ToolFileLifecyclePersistent,
+		nil,
+		workflowtoolfile.ToolFileURLModePermanent,
+	)
+	stored, err := saver.SaveRemoteURL(videoURL, workflowfile.FileTypeVideo)
+	if err != nil {
+		return "", err
+	}
+	if stored == nil || stored.URL == nil || strings.TrimSpace(*stored.URL) == "" {
+		return "", errors.New("stored video url is empty")
+	}
+	return strings.TrimSpace(*stored.URL), nil
 }
 
 func (s *service) ListModels(ctx context.Context, scope Scope) ([]VideoModel, error) {
@@ -248,6 +281,15 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 			}
 		}
 
+		payload := videoResponsePayload(resp)
+		if status == "succeeded" && videoURL != "" {
+			scope := Scope{
+				OrganizationID: record.OrganizationID,
+				AccountID:      record.AccountID,
+				WorkspaceID:    record.WorkspaceID,
+			}
+			videoURL = s.storeVideoArtifact(ctx, scope, videoURL, payload)
+		}
 		record.UpstreamTaskID = upstreamID
 		record.Status = status
 		record.VideoURL = videoURL
@@ -258,7 +300,7 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 			record.EstimatedCredits = 0
 			record.ActualCredits = 0
 		}
-		record.ResponsePayload = jsonData(videoResponsePayload(resp))
+		record.ResponsePayload = jsonData(payload)
 		record.UpdatedAt = now
 		if isTerminalVideoStatus(record.Status) {
 			record.CompletedAt = &now
@@ -421,7 +463,11 @@ func (s *service) refreshTask(ctx context.Context, scope Scope, record *videoTas
 		record.EstimatedCredits = 0
 		record.ActualCredits = 0
 	}
+	payload := videoResponsePayload(resp)
 	if videoURL := firstVideoURL(resp); videoURL != "" {
+		if record.Status == "succeeded" {
+			videoURL = s.storeVideoArtifact(ctx, scope, videoURL, payload)
+		}
 		record.VideoURL = videoURL
 	}
 	if record.Status != "failed" && resp.EstimatedCredits > 0 {
@@ -430,7 +476,7 @@ func (s *service) refreshTask(ctx context.Context, scope Scope, record *videoTas
 	if record.Status != "failed" && resp.ActualCredits > 0 {
 		record.ActualCredits = resp.ActualCredits
 	}
-	record.ResponsePayload = jsonData(videoResponsePayload(resp))
+	record.ResponsePayload = jsonData(payload)
 	record.UpdatedAt = time.Now().UTC()
 	if isTerminalVideoStatus(record.Status) && record.CompletedAt == nil {
 		now := time.Now().UTC()
@@ -661,6 +707,33 @@ func firstVideoURL(resp *adapter.VideoResponse) string {
 		}
 	}
 	return ""
+}
+
+func (s *service) storeVideoArtifact(ctx context.Context, scope Scope, videoURL string, payload map[string]any) string {
+	videoURL = strings.TrimSpace(videoURL)
+	if videoURL == "" || s == nil || s.artifactSaver == nil || isStoredVideoArtifactURL(videoURL) {
+		return videoURL
+	}
+	storedURL, err := s.artifactSaver.SaveRemoteVideo(ctx, scope, videoURL)
+	if err != nil {
+		if payload != nil {
+			payload["video_transfer_status"] = "failed"
+			payload["video_transfer_error"] = err.Error()
+			payload["video_source_url"] = videoURL
+		}
+		return videoURL
+	}
+	if payload != nil {
+		payload["video_transfer_status"] = "succeeded"
+		payload["video_source_url"] = videoURL
+		payload["stored_video_url"] = storedURL
+	}
+	return storedURL
+}
+
+func isStoredVideoArtifactURL(videoURL string) bool {
+	value := strings.ToLower(strings.TrimSpace(videoURL))
+	return strings.Contains(value, "/console/api/files/tools/")
 }
 
 func upstreamTaskID(resp *adapter.VideoResponse) string {
