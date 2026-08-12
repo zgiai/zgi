@@ -119,19 +119,75 @@ func TestWeaviateDeleteVectorTreatsNotFoundAsSuccess(t *testing.T) {
 	}
 }
 
-func TestWeaviateCreateClassTreatsAlreadyExistsServerErrorAsSuccess(t *testing.T) {
+func TestWeaviateStoreVectorRetriesAutoSchemaConflict(t *testing.T) {
+	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/schema" {
-			t.Fatalf("request = %s %s, want POST /v1/schema", r.Method, r.URL.Path)
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/objects" {
+			t.Fatalf("request = %s %s, want POST /v1/objects", r.Method, r.URL.Path)
 		}
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":[{"message":"invalid object: auto-schema: create collection: class name Vector_index_1_Node already exists"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	err := client.StoreVector(context.Background(), "node-1", "Vector_index_1_Node", map[string]interface{}{"text": "hello"}, []float64{0.1})
+	if err != nil {
+		t.Fatalf("StoreVector returned error after a transient auto-schema conflict: %v", err)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("requests = %d, want 2", requests.Load())
+	}
+}
+
+func TestWeaviateStoreVectorDoesNotRetryOtherServerErrors(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":[{"message":"invalid object: auto-schema: create collection: class name Vector_index_1_Node already exists"}]}`))
+		_, _ = w.Write([]byte(`{"error":[{"message":"storage unavailable"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	err := client.StoreVector(context.Background(), "node-1", "Vector_index_1_Node", map[string]interface{}{"text": "hello"}, []float64{0.1})
+	if err == nil || !strings.Contains(err.Error(), "storage unavailable") {
+		t.Fatalf("StoreVector error = %v, want storage failure", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests = %d, want 1", requests.Load())
+	}
+}
+
+func TestWeaviateCreateClassTreatsAlreadyExistsServerErrorAsSuccess(t *testing.T) {
+	var schemaReads atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/schema":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":[{"message":"invalid object: auto-schema: create collection: class name Vector_index_1_Node already exists"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/schema/Vector_index_1_Node":
+			if schemaReads.Add(1) == 1 {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
 	}))
 	defer server.Close()
 
 	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
 	if err := client.CreateClass(context.Background(), "Vector_index_1_Node", nil); err != nil {
 		t.Fatalf("CreateClass returned error for an existing class: %v", err)
+	}
+	if schemaReads.Load() != 2 {
+		t.Fatalf("schema reads = %d, want 2", schemaReads.Load())
 	}
 }
 
