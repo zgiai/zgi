@@ -542,17 +542,19 @@ func doubaoArkVideoTaskURL(baseURL string) string {
 }
 
 func decodeDoubaoArkVideoResponse(body []byte) (*adapter.VideoResponse, error) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+	if upstreamErr := doubaoArkVideoResponseError(raw); upstreamErr != nil {
+		return nil, upstreamErr
+	}
+
 	var response adapter.VideoResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
-	var raw map[string]interface{}
-	if err := json.Unmarshal(body, &raw); err == nil {
-		if upstreamErr := doubaoArkVideoResponseError(raw); upstreamErr != nil {
-			return nil, upstreamErr
-		}
-		response.Raw = raw
-	}
+	response.Raw = raw
 	if response.Usage == nil {
 		response.Usage = openAIUsageFromRaw(body)
 	}

@@ -557,6 +557,44 @@ func TestDoubaoAdapterCreateVideo_ReturnsBodyError(t *testing.T) {
 		t.Fatalf("CreateVideo() error = %v, want upstream body error", err)
 	}
 }
+
+func TestDoubaoAdapterCreateVideo_ReturnsInvalidImageMessageBeforeTaskIDFallback(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"error": {
+				"code": "InvalidParameter",
+				"message": "Error while downloading image, error: expected the width to be at least 300px, but received a 153x161px image instead",
+				"param": "image_url",
+				"type": "BadRequest"
+			}
+		}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateVideo(context.Background(), &adapter.VideoRequest{
+		Model:  "doubao-seedance-2-0-mini-260615",
+		Prompt: "a bear by the sea",
+	})
+	const want = "Error while downloading image, error: expected the width to be at least 300px, but received a 153x161px image instead"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("CreateVideo() error = %v, want upstream invalid image message", err)
+	}
+	if strings.Contains(err.Error(), "task id") {
+		t.Fatalf("CreateVideo() error = %v, should not fall back to task id error", err)
+	}
+}
+
 func TestDoubaoAdapterGetVideoTask_UsesArkVideoTaskDetail(t *testing.T) {
 	t.Helper()
 
