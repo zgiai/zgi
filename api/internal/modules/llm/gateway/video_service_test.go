@@ -118,3 +118,24 @@ func TestVideoCreateResponseRequiresTaskIDEvenWhenHTTP200BodyHasError(t *testing
 		t.Fatalf("videoResponseFailureError() did not preserve HTTP 200 error body message")
 	}
 }
+
+func TestVideoCreateResponseMissingTaskIDUsesWrappedUpstreamError(t *testing.T) {
+	resp := &adapter.VideoResponse{
+		Raw: map[string]interface{}{
+			"code":    float64(0),
+			"message": "success",
+			"data": map[string]interface{}{
+				"error": map[string]interface{}{
+					"code":    "InvalidParameter",
+					"message": "Error while downloading image, error: expected the width to be at least 300px",
+				},
+			},
+		},
+	}
+
+	err := videoResponseFailureError(resp, "upstream video task id is empty")
+	const want = "upstream error: Error while downloading image, error: expected the width to be at least 300px"
+	if err == nil || err.Error() != want {
+		t.Fatalf("videoResponseFailureError() = %v, want %q", err, want)
+	}
+}

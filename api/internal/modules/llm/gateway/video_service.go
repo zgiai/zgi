@@ -498,14 +498,64 @@ func videoGatewayResponseErrorMessage(resp *adapter.VideoResponse) string {
 		if message := videoGatewayErrorMessageFromAny(resp.Raw["error"]); message != "" {
 			return message
 		}
+		if message := videoGatewayNestedErrorMessage(resp.Raw); message != "" {
+			return message
+		}
 		if message := videoGatewayErrorMessageFromAny(resp.Raw["error_message"]); message != "" {
 			return message
 		}
 		if message := videoGatewayErrorMessageFromAny(resp.Raw["message"]); message != "" {
+			if isVideoGatewaySuccessMessage(message) {
+				return ""
+			}
 			return message
 		}
 	}
 	return ""
+}
+
+func videoGatewayNestedErrorMessage(value interface{}) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case map[string]interface{}:
+		for _, key := range []string{"error", "errors", "error_message", "errorMessage"} {
+			if message := videoGatewayErrorMessageFromAny(typed[key]); message != "" {
+				return message
+			}
+		}
+		for _, item := range typed {
+			if message := videoGatewayNestedErrorMessage(item); message != "" {
+				return message
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if message := videoGatewayNestedErrorMessage(item); message != "" {
+				return message
+			}
+		}
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return ""
+		}
+		var mapped map[string]interface{}
+		if err := json.Unmarshal(raw, &mapped); err != nil {
+			return ""
+		}
+		return videoGatewayNestedErrorMessage(mapped)
+	}
+	return ""
+}
+
+func isVideoGatewaySuccessMessage(message string) bool {
+	switch strings.ToLower(strings.TrimSpace(message)) {
+	case "success", "ok", "succeeded":
+		return true
+	default:
+		return false
+	}
 }
 
 func videoGatewayErrorMessageFromAny(value interface{}) string {

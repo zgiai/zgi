@@ -723,6 +723,9 @@ func videoResponseErrorMessage(resp *adapter.VideoResponse) string {
 		if message := errorMessageFromAny(resp.Raw["error"]); message != "" {
 			return message
 		}
+		if message := nestedErrorMessage(resp.Raw); message != "" {
+			return message
+		}
 		if message := errorMessageFromAny(resp.Raw["error_message"]); message != "" {
 			return message
 		}
@@ -746,10 +749,26 @@ func videoErrorMessage(err error) string {
 	if message := embeddedJSONErrorMessage(err.Error()); message != "" {
 		return message
 	}
+	if message := upstreamErrorMessage(err.Error()); message != "" {
+		return message
+	}
 	if errors.Is(err, ErrUpstreamFailed) {
 		return err.Error()
 	}
 	return fmt.Errorf("%w: %v", ErrUpstreamFailed, err).Error()
+}
+
+func upstreamErrorMessage(value string) string {
+	const marker = "upstream error:"
+	index := strings.LastIndex(strings.ToLower(value), marker)
+	if index < 0 {
+		return ""
+	}
+	message := strings.TrimSpace(value[index+len(marker):])
+	if message == "" {
+		return ""
+	}
+	return message
 }
 
 func embeddedJSONErrorMessage(value string) string {
@@ -766,6 +785,41 @@ func embeddedJSONErrorMessage(value string) string {
 		if message := errorMessageFromAny(data); message != "" {
 			return message
 		}
+	}
+	return ""
+}
+
+func nestedErrorMessage(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case map[string]any:
+		for _, key := range []string{"error", "errors", "error_message", "errorMessage"} {
+			if message := errorMessageFromAny(typed[key]); message != "" {
+				return message
+			}
+		}
+		for _, item := range typed {
+			if message := nestedErrorMessage(item); message != "" {
+				return message
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if message := nestedErrorMessage(item); message != "" {
+				return message
+			}
+		}
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return ""
+		}
+		var mapped map[string]any
+		if err := json.Unmarshal(raw, &mapped); err != nil {
+			return ""
+		}
+		return nestedErrorMessage(mapped)
 	}
 	return ""
 }

@@ -88,3 +88,34 @@ func TestVideoResponseErrorMessageExtractsNestedErrorMessage(t *testing.T) {
 		t.Fatalf("videoResponseErrorMessage() = %q, want %q", got, want)
 	}
 }
+
+func TestVideoResponseErrorMessageExtractsWrappedDataErrorMessage(t *testing.T) {
+	resp := &adapter.VideoResponse{
+		Raw: map[string]any{
+			"code":    float64(0),
+			"message": "success",
+			"data": map[string]any{
+				"error": map[string]any{
+					"code":    "InvalidParameter",
+					"message": "Error while downloading image, error: expected the width to be at least 300px",
+				},
+			},
+		},
+	}
+
+	got := videoResponseErrorMessage(resp)
+	const want = "Error while downloading image, error: expected the width to be at least 300px"
+	if got != want {
+		t.Fatalf("videoResponseErrorMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestVideoErrorMessageExtractsUpstreamErrorText(t *testing.T) {
+	err := errors.New("failed to parse response: upstream error: Error while downloading image")
+
+	got := videoErrorMessage(err)
+	const want = "Error while downloading image"
+	if got != want {
+		t.Fatalf("videoErrorMessage() = %q, want %q", got, want)
+	}
+}

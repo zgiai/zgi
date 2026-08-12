@@ -80,6 +80,13 @@ const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
 type ReferenceKind = 'image' | 'video' | 'audio';
 type NormalizedVideoStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
+interface TaskReferenceMaterial {
+  id: string;
+  url: string;
+  kind: ReferenceKind;
+  label?: string;
+}
+
 const VIDEO_STATUS_LABEL_KEYS = {
   pending: 'chat.videoWorkbench.status.pending',
   running: 'chat.videoWorkbench.status.running',
@@ -1047,6 +1054,15 @@ function TaskDetailSheet({
 }) {
   const t = useT('webapp');
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
+  const referenceMaterials = React.useMemo(
+    () =>
+      getTaskReferenceMaterials(
+        task,
+        t('chat.videoWorkbench.firstFrame'),
+        t('chat.videoWorkbench.lastFrame')
+      ),
+    [task, t]
+  );
 
   return (
     <Sheet open={!!task} onOpenChange={onOpenChange}>
@@ -1109,6 +1125,16 @@ function TaskDetailSheet({
                   </p>
                 </DetailSection>
 
+                {referenceMaterials.length > 0 ? (
+                  <DetailSection title={t('chat.videoWorkbench.referenceMaterial')}>
+                    <div className="flex flex-wrap gap-2">
+                      {referenceMaterials.map(material => (
+                        <TaskReferenceMaterialPreview key={material.id} material={material} />
+                      ))}
+                    </div>
+                  </DetailSection>
+                ) : null}
+
                 <div className="grid grid-cols-2 gap-3">
                   <DetailMetric
                     icon={<Coins className="h-4 w-4" />}
@@ -1162,6 +1188,81 @@ function TaskDetailSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+function TaskReferenceMaterialPreview({ material }: { material: TaskReferenceMaterial }) {
+  const t = useT('webapp');
+  const kindLabel = t(REFERENCE_KIND_LABEL_KEYS[material.kind]);
+  const label = material.label || kindLabel;
+
+  return (
+    <a
+      href={material.url}
+      target="_blank"
+      rel="noreferrer"
+      className="group relative flex size-[90px] shrink-0 overflow-hidden rounded-md border border-border bg-muted/20 text-xs text-foreground transition hover:border-border-strong"
+      title={label}
+    >
+      {material.kind === 'image' ? (
+        <img src={material.url} alt={label} className="h-full w-full object-cover" />
+      ) : material.kind === 'video' ? (
+        <>
+          <video
+            src={material.url}
+            className="h-full w-full bg-black object-cover"
+            muted
+            preload="metadata"
+          />
+          <span className="absolute bottom-1 right-1 rounded bg-background/90 p-1 text-muted-foreground shadow-sm">
+            <Film className="h-3.5 w-3.5" />
+          </span>
+        </>
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-muted/30">
+          <Volume2 className="h-6 w-6 text-muted-foreground" />
+        </div>
+      )}
+      <span className="absolute bottom-1 left-1 max-w-[76px] truncate rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
+        {label}
+      </span>
+    </a>
+  );
+}
+
+function getTaskReferenceMaterials(
+  task: VideoRuntimeTask | null,
+  firstFrameLabel: string,
+  lastFrameLabel: string
+): TaskReferenceMaterial[] {
+  const payload = task?.request_payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+
+  const materials: TaskReferenceMaterial[] = [];
+  const seen = new Set<string>();
+  const pushMaterial = (url: unknown, kind: ReferenceKind, label?: string) => {
+    if (typeof url !== 'string') return;
+    const trimmed = url.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    materials.push({
+      id: `${kind}-${materials.length}-${trimmed}`,
+      url: trimmed,
+      kind,
+      label,
+    });
+  };
+
+  pushMaterial(payload.first_frame_url, 'image', firstFrameLabel);
+  pushMaterial(payload.last_frame_url, 'image', lastFrameLabel);
+  pushMaterial(payload.video_url, 'video');
+  pushMaterial(payload.audio_url, 'audio');
+  pushMaterial(payload.image_url, 'image');
+
+  if (Array.isArray(payload.image_urls)) {
+    payload.image_urls.forEach(url => pushMaterial(url, 'image'));
+  }
+
+  return materials;
 }
 
 function taskHasVideoInput(task: VideoRuntimeTask) {
