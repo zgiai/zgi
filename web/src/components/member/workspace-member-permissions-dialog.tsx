@@ -40,8 +40,9 @@ import type { PermissionModule } from '@/constants/permissions';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { pickLocale } from '@/utils/tool-helpers';
 import {
+  getWorkspaceRoleDisplayDescription,
+  getWorkspaceRoleDisplayName,
   isAssignableWorkspaceAdminRole,
   isSelectableWorkspacePermissionTemplate,
 } from '@/utils/workspace-role-templates';
@@ -110,12 +111,8 @@ export function WorkspaceMemberPermissionsDialog({
     () => roleTemplates.filter(isSelectableWorkspacePermissionTemplate),
     [roleTemplates]
   );
-  const getRoleDisplayName = (role: Role) =>
-    role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
-  const getRoleDescription = (role: Role) =>
-    role.description_i18n
-      ? pickLocale(role.description_i18n, locale, role.description || '')
-      : role.description || '';
+  const getRoleDisplayName = (role: Role) => getWorkspaceRoleDisplayName(role, locale);
+  const getRoleDescription = (role: Role) => getWorkspaceRoleDisplayDescription(role, locale);
   const isOwner = member?.role === 'owner' || member?.permission_source === 'owner';
   const isAdmin = member?.role === 'admin';
   const canChangeRole = Boolean(member) && !isOwner && Boolean(onApplyTemplate);

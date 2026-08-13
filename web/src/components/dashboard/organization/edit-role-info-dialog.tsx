@@ -26,6 +26,11 @@ interface EditRoleInfoDialogProps {
   isLoading?: boolean;
 }
 
+const ROLE_NAME_MAX_LENGTH = 30;
+const ROLE_DESCRIPTION_MAX_LENGTH = 200;
+
+const getCharacterCount = (value: string) => Array.from(value).length;
+
 export function EditRoleInfoDialog({
   open,
   title,
@@ -40,6 +45,7 @@ export function EditRoleInfoDialog({
   const [description, setDescription] = useState(initialDescription);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState('');
+  const [descriptionError, setDescriptionError] = useState('');
 
   // Update local state when initial values change
   useEffect(() => {
@@ -47,24 +53,33 @@ export function EditRoleInfoDialog({
       setName(initialName);
       setDescription(initialDescription);
       setNameError('');
+      setDescriptionError('');
     }
   }, [open, initialName, initialDescription]);
 
   const handleSave = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setNameError(t('organization.validation.nameRequired'));
+      setNameError(t('organization.permissions.errors.nameRequired'));
       return;
     }
 
-    if (trimmedName.length > 30) {
-      setNameError(t('organization.validation.nameTooLong', { max: 30 }));
+    if (getCharacterCount(trimmedName) > ROLE_NAME_MAX_LENGTH) {
+      setNameError(t('organization.permissions.errors.nameTooLong'));
       return;
     }
 
+    const trimmedDescription = description.trim();
+    if (getCharacterCount(trimmedDescription) > ROLE_DESCRIPTION_MAX_LENGTH) {
+      setDescriptionError(t('organization.permissions.errors.descriptionTooLong'));
+      return;
+    }
+
+    setNameError('');
+    setDescriptionError('');
     setSaving(true);
     try {
-      await onSave(trimmedName, description.trim());
+      await onSave(trimmedName, trimmedDescription);
       onOpenChange(false);
     } finally {
       setSaving(false);
@@ -91,12 +106,19 @@ export function EditRoleInfoDialog({
                 if (nameError) setNameError('');
               }}
               placeholder={t('organization.permissions.config.roleNamePlaceholder')}
-              maxLength={30}
               errorText={nameError}
               disabled={isLoading || saving}
               className="h-12 rounded-xl border focus:border-brand-main focus:ring-brand-main/10 transition-all font-medium"
             />
-            <p className="text-right text-xs text-muted-foreground">{name.length}/30</p>
+            <p
+              className={`text-right text-xs ${
+                getCharacterCount(name) > ROLE_NAME_MAX_LENGTH
+                  ? 'text-destructive'
+                  : 'text-muted-foreground'
+              }`}
+            >
+              {getCharacterCount(name)}/{ROLE_NAME_MAX_LENGTH}
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -109,15 +131,25 @@ export function EditRoleInfoDialog({
             <Textarea
               id="edit-role-description"
               value={description}
-              onChange={e => setDescription(e.target.value)}
+              onChange={e => {
+                setDescription(e.target.value);
+                if (descriptionError) setDescriptionError('');
+              }}
               placeholder={t('organization.permissions.config.roleDescriptionPlaceholder')}
               rows={4}
-              maxLength={200}
+              aria-invalid={!!descriptionError}
               disabled={isLoading || saving}
               className="rounded-xl border focus:border-brand-main focus:ring-brand-main/10 transition-all resize-none font-medium p-4"
             />
-            <p className="text-right text-xs text-muted-foreground">
-              {description.length}/200
+            {descriptionError && <p className="text-sm text-destructive">{descriptionError}</p>}
+            <p
+              className={`text-right text-xs ${
+                getCharacterCount(description) > ROLE_DESCRIPTION_MAX_LENGTH
+                  ? 'text-destructive'
+                  : 'text-muted-foreground'
+              }`}
+            >
+              {getCharacterCount(description)}/{ROLE_DESCRIPTION_MAX_LENGTH}
             </p>
           </div>
         </DialogBody>

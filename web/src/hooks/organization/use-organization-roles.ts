@@ -7,6 +7,7 @@ import type { Role } from '@/services/types/organization';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { getWorkspaceRoleErrorTranslationKey } from '@/utils/workspace-role-errors';
 import { useOrganizations } from './use-organizations';
 
 import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
@@ -35,7 +36,7 @@ export function useOrganizationRoles(options: UseOrganizationRolesOptions = {}) 
     queryKey: ORGANIZATION_KEYS.roles(currentOrganization?.id || '', { includeOwner }),
     queryFn: async () => {
       if (!currentOrganization?.id) {
-        throw new Error('No organization selected');
+        throw new Error(t('organization.permissions.errors.noOrganization'));
       }
       return await organizationService.getRoles(currentOrganization.id, { includeOwner });
     },
@@ -45,17 +46,24 @@ export function useOrganizationRoles(options: UseOrganizationRolesOptions = {}) 
     refetchOnWindowFocus: false,
   });
 
+  const errorMessage = error
+    ? (() => {
+        const translationKey = getWorkspaceRoleErrorTranslationKey(error);
+        return translationKey ? t(translationKey) : getErrorMessage(error);
+      })()
+    : null;
+
   // Show error toast if query fails
   useEffect(() => {
-    if (!error) return;
-    toast.error(getErrorMessage(error) || t('organization.permissions.loadError'));
-  }, [error, t]);
+    if (!errorMessage) return;
+    toast.error(errorMessage || t('organization.permissions.loadError'));
+  }, [errorMessage, t]);
 
   return {
     roles: responseData?.roles ?? [],
     isLoading,
     isFetching,
-    error: error ? getErrorMessage(error) : null,
+    error: errorMessage,
     refetch,
   };
 }

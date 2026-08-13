@@ -450,8 +450,9 @@ func TestUpdateMemberCustomRoleDemotesWorkspaceAdminToTemplateMember(t *testing.
 	ownerID := "owner-1"
 	adminID := "admin-1"
 	now := time.Now()
-	mock.ExpectQuery(`SELECT \* FROM "roles" WHERE id = \$1 AND group_id = \$2 AND status = \$3 ORDER BY "roles"\."id" LIMIT \$4`).
-		WithArgs(roleID, orgID, model.WorkspaceCustomRoleStatusActive, 1).
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT \* FROM "roles" WHERE id = \$1 AND group_id = \$2 ORDER BY "roles"\."id" LIMIT \$3 FOR SHARE`).
+		WithArgs(roleID, orgID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "group_id", "name", "description", "status", "permissions", "created_by", "created_at", "updated_at",
 		}).AddRow(
@@ -465,6 +466,7 @@ func TestUpdateMemberCustomRoleDemotesWorkspaceAdminToTemplateMember(t *testing.
 			now,
 			now,
 		))
+	mock.ExpectCommit()
 
 	svc := &WorkspaceManagementServiceImpl{
 		db:            db,
@@ -505,6 +507,61 @@ func TestUpdateMemberCustomRoleDemotesWorkspaceAdminToTemplateMember(t *testing.
 	require.Equal(t, model.WorkspaceMemberPermissionSourceRoleTemplate, join.PermissionSource)
 	require.Equal(t, stringPtr(roleID), join.PermissionTemplateRoleID)
 	require.Equal(t, []string{string(model.WorkspacePermissionAgentCreate)}, join.Permissions)
+}
+
+func TestUpdateMemberCustomRoleRejectsDeletedTemplateUnderSharedLock(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newWorkspaceManagementMockDB(t)
+	orgID := "org-1"
+	workspaceID := "ws-1"
+	roleID := "role-deleted"
+	ownerID := "owner-1"
+	memberID := "member-1"
+	now := time.Now()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT \* FROM "roles" WHERE id = \$1 AND group_id = \$2 ORDER BY "roles"\."id" LIMIT \$3 FOR SHARE`).
+		WithArgs(roleID, orgID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "group_id", "name", "status", "permissions", "created_by", "created_at", "updated_at",
+		}).AddRow(
+			roleID, orgID, "Deleted", model.WorkspaceCustomRoleStatusDeleted, []byte(`[]`), ownerID, now, now,
+		))
+	mock.ExpectRollback()
+
+	svc := &WorkspaceManagementServiceImpl{
+		db:            db,
+		workspaceRepo: &workspaceManagementWorkspaceRepo{organizationID: orgID},
+		workspaceMemberRepo: &workspaceMemberDirectPermissionRepo{
+			joins: map[string]*model.WorkspaceMember{
+				workspaceID + "/" + ownerID: {
+					ID:          "join-owner",
+					WorkspaceID: workspaceID,
+					AccountID:   ownerID,
+					Role:        model.WorkspaceRoleOwner,
+				},
+				workspaceID + "/" + memberID: {
+					ID:          "join-member",
+					WorkspaceID: workspaceID,
+					AccountID:   memberID,
+					Role:        model.WorkspaceRoleNormal,
+				},
+			},
+		},
+	}
+
+	err := svc.UpdateMemberCustomRoleWithPermissionCheck(
+		context.Background(),
+		&model.Workspace{ID: workspaceID},
+		&auth_model.Account{ID: memberID},
+		roleID,
+		&auth_model.Account{ID: ownerID},
+	)
+
+	require.ErrorIs(t, err, ErrWorkspaceRoleTemplateDeleted)
+	require.Nil(t, svc.workspaceMemberRepo.(*workspaceMemberDirectPermissionRepo).updated)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestCheckMemberPermissionRejectsPermissionManageFromDirectSnapshot(t *testing.T) {
@@ -855,6 +912,10 @@ func (r *workspaceMemberDirectPermissionRepo) Update(ctx context.Context, join *
 	return nil
 }
 
+func (r *workspaceMemberDirectPermissionRepo) WithTx(*gorm.DB) repository.WorkspaceMemberRepository {
+	return r
+}
+
 type workspaceManagementWorkspaceRepo struct {
 	repository.WorkspaceRepository
 	workspace      *model.Workspace
@@ -876,6 +937,10 @@ func (r *workspaceManagementWorkspaceRepo) GetWorkspaceOrganizationID(context.Co
 		return "", nil
 	}
 	return *r.workspace.OrganizationID, nil
+}
+
+func (r *workspaceManagementWorkspaceRepo) WithTx(*gorm.DB) repository.WorkspaceRepository {
+	return r
 }
 
 func stringPtr(value string) *string {
