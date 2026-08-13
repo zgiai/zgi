@@ -1079,6 +1079,10 @@ func (p *chatTracePricingEngine) QuoteImage(context.Context, PricingModelRef, *a
 	return PricingQuote{}, nil
 }
 
+func (p *chatTracePricingEngine) QuoteMetered(context.Context, PricingModelRef, MeteredUsage) (PricingQuote, error) {
+	return PricingQuote{}, nil
+}
+
 func newBlockingErrorExporter() *blockingErrorExporter {
 	return &blockingErrorExporter{
 		started: make(chan struct{}),

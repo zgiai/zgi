@@ -55,17 +55,17 @@ func (a *DoubaoAdapter) GenerateSpeech(
 	ctx context.Context,
 	request *adapter.SpeechRequest,
 	dst io.Writer,
-) error {
+) (*adapter.SettlementResult, error) {
 	if request == nil ||
 		strings.TrimSpace(request.Model) == "" ||
 		strings.TrimSpace(request.Input) == "" ||
 		strings.TrimSpace(request.Voice) == "" ||
 		request.ResponseFormat != doubaoSpeechResponseFormatMP3 ||
 		dst == nil {
-		return fmt.Errorf("%w: model, input, voice, mp3 format, and destination are required", adapter.ErrInvalidRequest)
+		return nil, fmt.Errorf("%w: model, input, voice, mp3 format, and destination are required", adapter.ErrInvalidRequest)
 	}
 	if strings.TrimSpace(a.config.APIKey) == "" {
-		return fmt.Errorf("%w: doubao api key is required", adapter.ErrInvalidConfig)
+		return nil, fmt.Errorf("%w: doubao api key is required", adapter.ErrInvalidConfig)
 	}
 
 	response, err := a.httpClient.DoStreamRequest(
@@ -83,7 +83,7 @@ func (a *DoubaoAdapter) GenerateSpeech(
 		}},
 	)
 	if err != nil {
-		return normalizeDoubaoAudioHTTPError(err)
+		return nil, normalizeDoubaoAudioHTTPError(err)
 	}
 	defer response.Body.Close()
 
@@ -96,13 +96,13 @@ func (a *DoubaoAdapter) GenerateSpeech(
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return fmt.Errorf("%w: decode doubao speech frame: %v", adapter.ErrUpstreamError, err)
+			return nil, fmt.Errorf("%w: decode doubao speech frame: %v", adapter.ErrUpstreamError, err)
 		}
 		if frame.Code == nil {
-			return fmt.Errorf("%w: doubao speech frame contained no code", adapter.ErrUpstreamError)
+			return nil, fmt.Errorf("%w: doubao speech frame contained no code", adapter.ErrUpstreamError)
 		}
 		if *frame.Code != 0 && *frame.Code != doubaoSpeechFinishCode {
-			return adapter.NewAdapterError(
+			return nil, adapter.NewAdapterError(
 				fmt.Sprintf("%d", *frame.Code),
 				strings.TrimSpace(frame.Message),
 				response.StatusCode,
@@ -112,10 +112,10 @@ func (a *DoubaoAdapter) GenerateSpeech(
 		if frame.Data != "" {
 			chunk, err := base64.StdEncoding.DecodeString(frame.Data)
 			if err != nil {
-				return fmt.Errorf("%w: decode doubao speech audio: %v", adapter.ErrUpstreamError, err)
+				return nil, fmt.Errorf("%w: decode doubao speech audio: %v", adapter.ErrUpstreamError, err)
 			}
 			if _, err := io.Copy(dst, bytes.NewReader(chunk)); err != nil {
-				return fmt.Errorf("write doubao speech audio: %w", err)
+				return nil, fmt.Errorf("write doubao speech audio: %w", err)
 			}
 			audioSeen = true
 		}
@@ -126,12 +126,12 @@ func (a *DoubaoAdapter) GenerateSpeech(
 	}
 
 	if !finished {
-		return fmt.Errorf("%w: doubao speech stream ended before final frame", adapter.ErrUpstreamError)
+		return nil, fmt.Errorf("%w: doubao speech stream ended before final frame", adapter.ErrUpstreamError)
 	}
 	if !audioSeen {
-		return fmt.Errorf("%w: doubao speech response contained no audio", adapter.ErrUpstreamError)
+		return nil, fmt.Errorf("%w: doubao speech response contained no audio", adapter.ErrUpstreamError)
 	}
-	return nil
+	return nil, nil
 }
 
 func resolveDoubaoAudioEndpoint(config *adapter.AdapterConfig, path string) string {

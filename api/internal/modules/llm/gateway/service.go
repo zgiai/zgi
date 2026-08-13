@@ -924,7 +924,12 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,
 		AllowPrivateBaseURL: selection.UseSystemProvider || channelprovider.AllowsPrivateBaseURL(selection.ChannelProvider),
 	}
-
+	if len(selection.ParamOverride) > 0 {
+		config.CustomParams = make(map[string]interface{}, len(selection.ParamOverride))
+		for key, value := range selection.ParamOverride {
+			config.CustomParams[key] = value
+		}
+	}
 	// In V2 architecture, API key is already decrypted and passed through ProviderSelection
 	if selection.APIKey != "" {
 		config.APIKey = selection.APIKey
