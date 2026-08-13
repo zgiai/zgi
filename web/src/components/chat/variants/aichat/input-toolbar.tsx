@@ -46,6 +46,9 @@ import {
   tAttachmentForSurface,
   type AIChatComposerSurface,
 } from '@/components/chat/variants/aichat/input-area-utils';
+import { AIChatVoiceInputControl } from '@/components/chat/variants/aichat/voice/voice-input-control';
+import type { AIChatVoiceInputController } from '@/components/chat/variants/aichat/voice/use-agent-voice-input';
+import { AIChatSpeechAutoPlayControl } from '@/components/chat/variants/aichat/voice/speech-auto-play-control';
 
 interface AIChatInputToolbarProps {
   modelSelectorValue: AIChatModelValue;
@@ -90,6 +93,11 @@ interface AIChatInputToolbarProps {
   onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
   onSend: () => void | Promise<void>;
   onStop: () => void;
+  voiceInput?: AIChatVoiceInputController;
+  speechAutoPlay?: {
+    enabled: boolean;
+    onEnabledChange: (enabled: boolean) => void;
+  };
 }
 
 const TOOL_GOVERNANCE_PERMISSION_TIERS: AIChatToolGovernancePermissionTier[] = [
@@ -189,6 +197,8 @@ export function AIChatInputToolbar({
   onToolGovernancePermissionTierChange,
   onSend,
   onStop,
+  voiceInput,
+  speechAutoPlay,
 }: AIChatInputToolbarProps) {
   const t = useT('webapp');
   const showStopButton = canStop ?? isSending;
@@ -309,6 +319,8 @@ export function AIChatInputToolbar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {speechAutoPlay ? <AIChatSpeechAutoPlayControl {...speechAutoPlay} /> : null}
+        {voiceInput ? <AIChatVoiceInputControl {...voiceInput} /> : null}
         {showMemoryToggle ? (
           <AIChatMemoryModule disabled={isSending} onEnabledChange={onMemoryEnabledChange} />
         ) : null}

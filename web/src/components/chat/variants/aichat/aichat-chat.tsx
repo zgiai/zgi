@@ -131,6 +131,9 @@ import {
   isImageExtension,
   isVisionModel,
 } from '@/components/chat/variants/aichat/input-area-utils';
+import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
+import type { AIChatSpeechSynthesizer } from '@/components/chat/variants/aichat/voice/speech-playback';
+import { useAgentSpeechPlayback } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -179,6 +182,8 @@ interface AIChatShellProps {
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
+  voiceTranscriber?: AIChatVoiceTranscriber;
+  speechSynthesizer?: AIChatSpeechSynthesizer;
 }
 
 const CHAT_THEME_PRIMARY: Record<string, string> = {
@@ -309,6 +314,8 @@ export function AIChatShell({
   runtimeSurface = 'work_chat',
   themeColor,
   enableToolGovernance = false,
+  voiceTranscriber,
+  speechSynthesizer,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
@@ -368,6 +375,23 @@ export function AIChatShell({
   const isSending = useStore(controller.store, state => state.isSending);
   const streamingByMessageId = useStore(controller.store, state => state.streamingByMessageId);
   const error = useStore(controller.store, state => state.error);
+  const speechPlaybackErrorMessages = useMemo(
+    () => ({
+      timeout: t('consoleChat.voice.errors.playbackTimeout'),
+      balance: t('consoleChat.voice.errors.playbackBalance'),
+      quota: t('consoleChat.voice.errors.playbackQuota'),
+      unavailable: t('consoleChat.voice.errors.playbackUnavailable'),
+      failed: t('consoleChat.voice.errors.playbackFailed'),
+    }),
+    [t]
+  );
+  const speechPlayback = useAgentSpeechPlayback({
+    synthesizer: speechSynthesizer,
+    messages: activeMessages,
+    conversationId: activeConversationId,
+    isLoadingMessages,
+    playbackErrorMessages: speechPlaybackErrorMessages,
+  });
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
   const enableAIChatSkillPreference =
@@ -819,6 +843,7 @@ export function AIChatShell({
         toast.error(t('consoleChat.modelRequired'));
         return false;
       }
+      speechPlayback?.stop();
       if (beforeSend) {
         const canSend = await beforeSend();
         if (!canSend) return false;
@@ -861,6 +886,7 @@ export function AIChatShell({
       messages.length,
       modelSelectorValue,
       requireModel,
+      speechPlayback,
       effectiveRuntimeSurface,
       t,
       toolGovernanceOperationContext,
@@ -919,6 +945,7 @@ export function AIChatShell({
 
   const executeRegenerate = useCallback(
     async (message: AIChatMessage) => {
+      speechPlayback?.stop();
       if (beforeSend && !(await beforeSend())) return;
 
       void controller.regenerate(
@@ -938,6 +965,7 @@ export function AIChatShell({
       beforeSend,
       controller,
       modelSelectorValue,
+      speechPlayback,
       effectiveRuntimeSurface,
       toolGovernanceOperationContext,
     ]
@@ -1018,6 +1046,7 @@ export function AIChatShell({
   const executeEdit = useCallback(
     (message: AIChatMessage, query: string) => {
       const canReplaceRoot = canReplaceRootMessage(message);
+      speechPlayback?.stop();
       setEditingMessageId(null);
       setEditingQuery('');
       if (canReplaceRoot) {
@@ -1053,6 +1082,7 @@ export function AIChatShell({
       canReplaceRootMessage,
       controller,
       modelSelectorValue,
+      speechPlayback,
       effectiveRuntimeSurface,
       toolGovernanceOperationContext,
     ]
@@ -1110,11 +1140,12 @@ export function AIChatShell({
 
   const handleSwitchBranch = useCallback(
     (messageId: string) => {
+      speechPlayback?.stop();
       setEditingMessageId(null);
       setEditingQuery('');
       controller.switchBranch(messageId);
     },
-    [controller]
+    [controller, speechPlayback]
   );
 
   const handleWorkflowApprovalSubmit = useCallback(
@@ -1224,6 +1255,7 @@ export function AIChatShell({
   ]);
 
   const handleNewChat = useCallback(() => {
+    speechPlayback?.stop();
     if (isHome) {
       toast.info(t('chat.alreadyInDraft'));
       setMobileSidebarOpen(false);
@@ -1237,7 +1269,7 @@ export function AIChatShell({
     }
     setMobileSidebarOpen(false);
     setEmbeddedAssetAuditOpen(false);
-  }, [controller, isHome, onStartNewConversation, t]);
+  }, [controller, isHome, onStartNewConversation, speechPlayback, t]);
 
   const handleLoadMoreConversations = useCallback(
     (page: number) => controller.refreshList({ page, append: true }),
@@ -1246,6 +1278,7 @@ export function AIChatShell({
 
   const handleSelectConversation = useCallback(
     (id: string) => {
+      speechPlayback?.stop();
       if (onSelectConversation) {
         onSelectConversation(id);
       } else {
@@ -1254,7 +1287,7 @@ export function AIChatShell({
       setMobileSidebarOpen(false);
       setEmbeddedAssetAuditOpen(false);
     },
-    [controller, onSelectConversation]
+    [controller, onSelectConversation, speechPlayback]
   );
 
   const handleDeleteConversation = useCallback(
@@ -1465,6 +1498,7 @@ export function AIChatShell({
             showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
             showPlanningPlaceholder={showPlanningPlaceholder}
             pendingUserMessage={visiblePendingUserMessage}
+            speechPlayback={speechPlayback}
           />
 
           <AIChatHomeView
@@ -1566,6 +1600,15 @@ export function AIChatShell({
             }
             activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
             topAccessory={composerTopAccessory}
+            voiceTranscriber={voiceTranscriber}
+            speechAutoPlay={
+              speechPlayback
+                ? {
+                    enabled: speechPlayback.autoPlay,
+                    onEnabledChange: speechPlayback.setAutoPlay,
+                  }
+                : undefined
+            }
           />
         </main>
       </ToolGovernancePendingApprovalScopeProvider>

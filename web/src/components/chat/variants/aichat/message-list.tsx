@@ -14,6 +14,7 @@ import { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-b
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
 import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
 import { presentationProjectionFromMetadata } from '@/components/chat/controllers/aichat/presentation-order';
+import type { AIChatSpeechPlaybackController } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
 
 interface AIChatMessageListProps {
   messages: AIChatMessage[];
@@ -49,6 +50,7 @@ interface AIChatMessageListProps {
   suppressPendingToolGovernanceApprovals?: boolean;
   showPlanningPlaceholder?: boolean;
   pendingUserMessage?: AIChatPendingUserMessage | null;
+  speechPlayback?: AIChatSpeechPlaybackController;
 }
 
 export interface AIChatPendingUserMessage {
@@ -134,6 +136,7 @@ export function AIChatMessageList({
   suppressPendingToolGovernanceApprovals = false,
   showPlanningPlaceholder = false,
   pendingUserMessage = null,
+  speechPlayback,
 }: AIChatMessageListProps) {
   const t = useT('webapp');
 
@@ -206,6 +209,7 @@ export function AIChatMessageList({
                 showContextualOperationStatus={showContextualOperationStatus}
                 enableToolGovernanceApprovals={enableToolGovernanceApprovals}
                 suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
+                speechPlayback={speechPlayback}
               />
             ))}
             {pendingUserMessage ? <PendingUserMessageBubble message={pendingUserMessage} /> : null}
