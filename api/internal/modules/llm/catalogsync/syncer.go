@@ -254,6 +254,7 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 	}
 
 	for _, model := range resp.GetModels() {
+		configParameters, defaultParameters := decodeCatalogModelConfigPayload(model.GetConfigParametersJson())
 		catalog.Models = append(catalog.Models, modelmeta.PublishedModel{
 			Provider:               model.GetProvider(),
 			Model:                  model.GetModel(),
@@ -284,7 +285,8 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 			IsActive:               model.GetIsActive(),
 			IsSystemEnabled:        model.GetIsSystemEnabled(),
 			SupportedParameters:    json.RawMessage(model.GetSupportedParametersJson()),
-			ConfigParameters:       normalizeConfigParametersPayload(model.GetConfigParametersJson()),
+			ConfigParameters:       configParameters,
+			DefaultParameters:      defaultParameters,
 			Endpoints:              publishedModelEndpoints(model.GetEndpoints()),
 			EndpointsAuthoritative: model.GetEndpoints() != nil,
 			Features:               publishedModelFeatures(model.GetFeatures()),
@@ -443,6 +445,31 @@ func normalizeConfigParametersPayload(raw string) json.RawMessage {
 		return json.RawMessage("[]")
 	}
 	return data
+}
+
+func decodeCatalogModelConfigPayload(raw string) (json.RawMessage, llmmodel.JSONObject) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return json.RawMessage("[]"), llmmodel.JSONObject{}
+	}
+
+	if strings.HasPrefix(trimmed, "{") {
+		var payload struct {
+			ConfigParameters  json.RawMessage     `json:"config_parameters"`
+			DefaultParameters llmmodel.JSONObject `json:"default_parameters"`
+		}
+		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+			configParameters := normalizeConfigParametersPayload(string(payload.ConfigParameters))
+			if len(payload.DefaultParameters) > 0 {
+				return configParameters, payload.DefaultParameters
+			}
+			if len(payload.ConfigParameters) > 0 {
+				return configParameters, llmmodel.JSONObject{}
+			}
+		}
+	}
+
+	return normalizeConfigParametersPayload(trimmed), llmmodel.JSONObject{}
 }
 
 func latestCatalogEvent(first *pb.CatalogPublishEvent, eventCh <-chan *pb.CatalogPublishEvent) *pb.CatalogPublishEvent {
