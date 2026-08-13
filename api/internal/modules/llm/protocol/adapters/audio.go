@@ -12,7 +12,7 @@ const (
 	// MaxMusicLyricsRunes is the ZGI music request lyrics ceiling.
 	MaxMusicLyricsRunes = 3500
 	// MaxGeneratedMusicBytes is the ZGI music delivery ceiling.
-	MaxGeneratedMusicBytes int64 = 16 << 20
+	MaxGeneratedMusicBytes int64 = 64 << 20
 )
 
 var (

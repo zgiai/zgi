@@ -14,6 +14,12 @@ import (
 
 const musicTestRequestID = "11111111-1111-1111-1111-111111111111"
 
+func TestGeneratedMusicProductLimitIs64MiB(t *testing.T) {
+	if got, want := adapter.MaxGeneratedMusicBytes, int64(64<<20); got != want {
+		t.Fatalf("MaxGeneratedMusicBytes = %d, want %d", got, want)
+	}
+}
+
 func TestZGICloudAdapterGenerateMusicRequiresCompleteTrailer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.URL.Path, "/v1/internal/audio/music/generations"; got != want {
