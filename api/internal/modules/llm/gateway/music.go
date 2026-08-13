@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -29,6 +30,24 @@ type MusicRequest struct {
 	Prompt         string            `json:"prompt"`
 	Lyrics         string            `json:"lyrics"`
 	ResponseFormat string            `json:"response_format"`
+}
+
+// musicDestinationWriter remembers downstream write failures so they are not
+// attributed to the selected model provider.
+type musicDestinationWriter struct {
+	dst      io.Writer
+	writeErr error
+}
+
+func (w *musicDestinationWriter) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	if err != nil && w.writeErr == nil {
+		w.writeErr = err
+	}
+	return n, err
 }
 
 // GenerateMusic authorizes and routes one complete MP3 stream through Console.
@@ -67,10 +86,11 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 		maxMusicRouteCandidates,
 	)
 	if err != nil {
+		reportLLMSelectionFailure(ctx, err, request.Model, organizationID.String(), shadowOrganizationID.String())
 		return fmt.Errorf("failed to select music provider: %w", err)
 	}
 	if len(selections) == 0 {
-		return ErrNoProviderAvailable
+		return reportedNoProviderAvailableError(ctx, request.Model, organizationID.String(), shadowOrganizationID.String())
 	}
 	if !selections[0].Model.MusicGeneration {
 		return fmt.Errorf("%w: model %q does not support music generation", adapter.ErrCapabilityUnsupported, request.Model)
@@ -82,6 +102,7 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 		}
 		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(selection, organizationID))
 		if err != nil {
+			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
 			return fmt.Errorf("failed to create music adapter: %w", err)
 		}
 		musicAdapter, ok := providerAdapter.(adapter.MusicCapable)
@@ -96,14 +117,19 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 			ProviderName:          selection.Provider.Provider,
 			IsStreaming:           true,
 		})
-		return musicAdapter.GenerateMusic(callContext, &adapter.MusicRequest{
+		destination := &musicDestinationWriter{dst: dst}
+		err = musicAdapter.GenerateMusic(callContext, &adapter.MusicRequest{
 			RequestID:      request.RequestID,
 			Model:          request.Model,
 			Mode:           request.Mode,
 			Prompt:         request.Prompt,
 			Lyrics:         request.Lyrics,
 			ResponseFormat: request.ResponseFormat,
-		}, dst)
+		}, destination)
+		if err != nil && (destination.writeErr == nil || !errors.Is(err, destination.writeErr)) {
+			reportLLMProviderFailure(ctx, err, "llm.provider.stream_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+		}
+		return err
 	}
 	return fmt.Errorf("%w: no official music adapter is available", adapter.ErrCapabilityUnsupported)
 }
@@ -122,8 +148,7 @@ func (s *llmGatewayServiceImpl) CompensateMusicDelivery(
 	if err != nil || organizationID == uuid.Nil {
 		return fmt.Errorf("%w: organization id is invalid", adapter.ErrInvalidRequest)
 	}
-	requestID = strings.TrimSpace(requestID)
-	if _, err := uuid.Parse(requestID); err != nil {
+	if !isCanonicalMusicRequestID(requestID) {
 		return fmt.Errorf("%w: request id is invalid", adapter.ErrInvalidRequest)
 	}
 	billingOrganizationID, _, err := s.resolveShadowContext(ctx, organizationID)
@@ -164,10 +189,10 @@ func validateMusicGatewayRequest(request *MusicRequest, dst io.Writer) error {
 	if request == nil || dst == nil {
 		return fmt.Errorf("%w: request and destination are required", adapter.ErrInvalidRequest)
 	}
-	if _, err := uuid.Parse(strings.TrimSpace(request.RequestID)); err != nil {
+	if !isCanonicalMusicRequestID(request.RequestID) {
 		return fmt.Errorf("%w: request id is invalid", adapter.ErrInvalidRequest)
 	}
-	if strings.TrimSpace(request.ResponseFormat) != musicResponseFormatMP3 {
+	if request.ResponseFormat != musicResponseFormatMP3 {
 		return fmt.Errorf("%w: response format must be mp3", adapter.ErrInvalidRequest)
 	}
 	prompt := strings.TrimSpace(request.Prompt)
@@ -185,4 +210,9 @@ func validateMusicGatewayRequest(request *MusicRequest, dst io.Writer) error {
 		return fmt.Errorf("%w: unsupported music mode", adapter.ErrInvalidRequest)
 	}
 	return nil
+}
+
+func isCanonicalMusicRequestID(requestID string) bool {
+	parsed, err := uuid.Parse(requestID)
+	return err == nil && parsed != uuid.Nil && requestID == parsed.String()
 }

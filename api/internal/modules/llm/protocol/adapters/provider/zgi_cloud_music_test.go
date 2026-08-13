@@ -137,6 +137,96 @@ func TestZGICloudAdapterRejectsOversizedPromptBeforeHTTP(t *testing.T) {
 	}
 }
 
+func TestZGICloudAdapterRejectsNonCanonicalFormatBeforeHTTP(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		calls++
+	}))
+	defer server.Close()
+
+	cloud, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		ProviderName: zgiCloudAdapterName,
+		BaseURL:      server.URL + "/v1/internal",
+		AuthHook:     func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = cloud.GenerateMusic(t.Context(), &adapter.MusicRequest{
+		RequestID:      musicTestRequestID,
+		Model:          "music-3.0",
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         "warm piano",
+		ResponseFormat: " mp3 ",
+	}, io.Discard)
+	if !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("GenerateMusic() error = %v, want ErrInvalidRequest", err)
+	}
+	if calls != 0 {
+		t.Fatalf("HTTP calls = %d, want 0", calls)
+	}
+}
+
+func TestZGICloudAdapterRejectsOversizedRawPromptBeforeHTTP(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		calls++
+	}))
+	defer server.Close()
+
+	cloud, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		ProviderName: zgiCloudAdapterName,
+		BaseURL:      server.URL + "/v1/internal",
+		AuthHook:     func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = cloud.GenerateMusic(t.Context(), &adapter.MusicRequest{
+		RequestID:      musicTestRequestID,
+		Model:          "music-3.0",
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         strings.Repeat(" ", adapter.MaxMusicPromptRunes) + "music",
+		ResponseFormat: "mp3",
+	}, io.Discard)
+	if !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("GenerateMusic() error = %v, want ErrInvalidRequest", err)
+	}
+	if calls != 0 {
+		t.Fatalf("HTTP calls = %d, want 0", calls)
+	}
+}
+
+func TestZGICloudAdapterRejectsInvalidUTF8BeforeHTTP(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		calls++
+	}))
+	defer server.Close()
+
+	cloud, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		ProviderName: zgiCloudAdapterName,
+		BaseURL:      server.URL + "/v1/internal",
+		AuthHook:     func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = cloud.GenerateMusic(t.Context(), &adapter.MusicRequest{
+		RequestID:      musicTestRequestID,
+		Model:          "music-3.0",
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         string([]byte{0xff}),
+		ResponseFormat: "mp3",
+	}, io.Discard)
+	if !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("GenerateMusic() error = %v, want ErrInvalidRequest", err)
+	}
+	if calls != 0 {
+		t.Fatalf("HTTP calls = %d, want 0", calls)
+	}
+}
+
 func TestCopyMusicResponseRejectsOversizedAudio(t *testing.T) {
 	var dst bytes.Buffer
 	written, err := copyMusicResponse(&dst, bytes.NewBufferString("12345"), 4)

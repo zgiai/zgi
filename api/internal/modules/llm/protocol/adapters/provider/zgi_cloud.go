@@ -587,14 +587,17 @@ func validateZGICloudMusicRequest(request *adapter.MusicRequest, dst io.Writer) 
 	if request == nil ||
 		strings.TrimSpace(request.RequestID) == "" ||
 		strings.TrimSpace(request.Model) == "" ||
-		strings.TrimSpace(request.ResponseFormat) != zgiCloudMP3Format ||
+		request.ResponseFormat != zgiCloudMP3Format ||
 		dst == nil {
 		return fmt.Errorf("%w: request id, model, mp3 format, and destination are required", adapter.ErrInvalidRequest)
 	}
 	prompt := strings.TrimSpace(request.Prompt)
 	lyrics := strings.TrimSpace(request.Lyrics)
-	if utf8.RuneCountInString(prompt) > adapter.MaxMusicPromptRunes ||
-		utf8.RuneCountInString(lyrics) > adapter.MaxMusicLyricsRunes {
+	if !utf8.ValidString(request.Prompt) || !utf8.ValidString(request.Lyrics) {
+		return fmt.Errorf("%w: music prompt and lyrics must be valid UTF-8", adapter.ErrInvalidRequest)
+	}
+	if utf8.RuneCountInString(request.Prompt) > adapter.MaxMusicPromptRunes ||
+		utf8.RuneCountInString(request.Lyrics) > adapter.MaxMusicLyricsRunes {
 		return fmt.Errorf("%w: music prompt or lyrics exceeds the product limit", adapter.ErrInvalidRequest)
 	}
 	switch request.Mode {
