@@ -22,7 +22,7 @@ import (
 
 var (
 	ErrInvalidUseCase         = errors.New("invalid use case")
-	ErrInvalidParams          = errors.New("params must be a JSON object")
+	ErrInvalidParams          = errors.New("invalid default model params")
 	ErrModelUnavailable       = errors.New("model is not available for organization")
 	ErrDefaultModelNotFound   = errors.New("default model not found")
 	ErrOrganizationIDRequired = errors.New("organization id is required")
@@ -160,9 +160,15 @@ func (s *defaultModelService) Upsert(ctx context.Context, organizationID uuid.UU
 		return nil, ErrModelUnavailable
 	}
 	params = normalizeParams(params)
+	if err := validateDefaultModelParams(useCase, params); err != nil {
+		return nil, err
+	}
 
 	resolved, err := s.resolveExplicitUseCase(ctx, organizationID, useCase, provider, modelName)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.validateModelParams(ctx, organizationID, useCase, resolved.Provider, resolved.Model, params); err != nil {
 		return nil, err
 	}
 
@@ -448,6 +454,79 @@ func normalizeParams(params llmsharedtypes.JSONObject) llmsharedtypes.JSONObject
 		return llmsharedtypes.JSONObject{}
 	}
 	return params
+}
+
+func validateDefaultModelParams(useCase llmmodelmodel.UseCase, params llmsharedtypes.JSONObject) error {
+	if useCase != llmmodelmodel.UseCaseTextToSpeech {
+		return nil
+	}
+	voice, ok := params[string(sharedmodel.ModelPropertyKeyDefaultVoice)].(string)
+	if !ok || strings.TrimSpace(voice) == "" {
+		return fmt.Errorf("%w: default_voice is required for text-to-speech", ErrInvalidParams)
+	}
+	return nil
+}
+
+func (s *defaultModelService) validateModelParams(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	useCase llmmodelmodel.UseCase,
+	provider string,
+	modelName string,
+	params llmsharedtypes.JSONObject,
+) error {
+	if useCase != llmmodelmodel.UseCaseTextToSpeech {
+		return nil
+	}
+
+	configParameters, err := s.getModelConfigParameters(ctx, organizationID, provider, modelName)
+	if err != nil {
+		return fmt.Errorf("load text-to-speech voice options: %w", err)
+	}
+	return validateTextToSpeechVoiceOption(params, configParameters)
+}
+
+func (s *defaultModelService) getModelConfigParameters(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	provider string,
+	modelName string,
+) (llmmodelmodel.ConfigParameters, error) {
+	customModel, err := s.customRepo.GetByProviderAndModel(ctx, organizationID, provider, modelName)
+	if err == nil {
+		return llmmodelmodel.NormalizeConfigParameters(customModel.ConfigParameters), nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("load custom model parameters: %w", err)
+	}
+
+	globalModel, err := s.globalRepo.GetByProviderAndName(ctx, provider, modelName)
+	if err != nil {
+		return nil, fmt.Errorf("load global model parameters: %w", err)
+	}
+	return llmmodelmodel.NormalizeConfigParameters(globalModel.ConfigParameters), nil
+}
+
+func validateTextToSpeechVoiceOption(
+	params llmsharedtypes.JSONObject,
+	configParameters llmmodelmodel.ConfigParameters,
+) error {
+	voice, _ := params[string(sharedmodel.ModelPropertyKeyDefaultVoice)].(string)
+	voice = strings.TrimSpace(voice)
+
+	for _, parameter := range configParameters {
+		if parameter.Name != string(sharedmodel.ModelPropertyKeyDefaultVoice) {
+			continue
+		}
+		for _, option := range parameter.Options {
+			if voice == option {
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: default_voice %q is not available for this model", ErrInvalidParams, voice)
+	}
+
+	return fmt.Errorf("%w: model catalog does not provide default_voice options", ErrInvalidParams)
 }
 
 func parseOrganizationID(organizationID string) (uuid.UUID, error) {
