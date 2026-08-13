@@ -1,7 +1,9 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,78 @@ import (
 )
 
 const doubaoSeedreamLiteTestModel = doubaoSeedreamModelPrefix + "-5-0-lite-260128"
+
+func TestDoubaoAdapterGenerateSpeechUsesNativeV3Protocol(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/api/v3/tts/unidirectional"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("X-Api-Key"), "test-key"; got != want {
+			t.Errorf("X-Api-Key = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("X-Api-Resource-Id"), "seed-tts-2.0"; got != want {
+			t.Errorf("X-Api-Resource-Id = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("X-Control-Require-Usage-Tokens-Return"), "*"; got != want {
+			t.Errorf("usage header = %q, want %q", got, want)
+		}
+
+		var payload struct {
+			Request struct {
+				Text        string `json:"text"`
+				Speaker     string `json:"speaker"`
+				AudioParams struct {
+					Format     string `json:"format"`
+					SampleRate int    `json:"sample_rate"`
+				} `json:"audio_params"`
+			} `json:"req_params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if got, want := payload.Request.Text, "你好。"; got != want {
+			t.Errorf("text = %q, want %q", got, want)
+		}
+		if got, want := payload.Request.Speaker, "voice-id"; got != want {
+			t.Errorf("speaker = %q, want %q", got, want)
+		}
+		if got, want := payload.Request.AudioParams.Format, "mp3"; got != want {
+			t.Errorf("format = %q, want %q", got, want)
+		}
+		if got, want := payload.Request.AudioParams.SampleRate, 24000; got != want {
+			t.Errorf("sample rate = %d, want %d", got, want)
+		}
+
+		_, _ = fmt.Fprintf(w, "{\"code\":0,\"data\":%q}\n", base64.StdEncoding.EncodeToString([]byte("MP3-A")))
+		_, _ = fmt.Fprintf(w, "{\"code\":0,\"data\":%q}\n", base64.StdEncoding.EncodeToString([]byte("MP3-B")))
+		_, _ = fmt.Fprintln(w, `{"code":20000000,"message":"OK"}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey: "test-key",
+		CustomParams: map[string]interface{}{
+			"audio_base_url": server.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	var audio bytes.Buffer
+	err = a.GenerateSpeech(t.Context(), &adapter.SpeechRequest{
+		Model:          "seed-tts-2.0",
+		Input:          "你好。",
+		Voice:          "voice-id",
+		ResponseFormat: "mp3",
+	}, &audio)
+	if err != nil {
+		t.Fatalf("GenerateSpeech() error = %v", err)
+	}
+	if got, want := audio.String(), "MP3-AMP3-B"; got != want {
+		t.Fatalf("audio = %q, want %q", got, want)
+	}
+}
 
 func TestDoubaoAdapterChatCompletion_UsesArkChatCompletions(t *testing.T) {
 	t.Helper()
