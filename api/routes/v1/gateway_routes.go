@@ -65,6 +65,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 
 	// Initialize handler
 	llmHandler := gatewayhandler.NewLLMHandler(gatewayService, errorProjector)
+	transcriptionHandler := gatewayhandler.NewTranscriptionHandler(gatewayService)
 
 	// Create middleware
 	authMiddleware := gatewayhandler.LLMAPIKeyAuthMiddleware(deps.APIKeyRepo)
@@ -81,6 +82,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 		v1.POST("/images/generations", llmHandler.CreateImage)
 		v1.POST("/videos/generations", llmHandler.CreateVideo)
 		v1.GET("/videos/generations/*task_id", llmHandler.GetVideoTask)
+		v1.POST("/audio/transcriptions", transcriptionHandler.Transcribe)
 		v1.GET("/models", llmHandler.ListModels)
 		// Anthropic-compatible endpoint, matching New API and Anthropic Messages format.
 		v1.POST("/messages", llmHandler.CreateAnthropicMessage)

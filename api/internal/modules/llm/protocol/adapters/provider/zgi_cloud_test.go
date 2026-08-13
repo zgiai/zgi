@@ -1,10 +1,12 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,91 @@ import (
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
+
+func TestZGICloudAdapterTranscribeStreamsPCMAndUnwrapsResponse(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if r.URL.Path != "/v1/internal/audio/transcriptions" {
+			t.Errorf("path = %q, want /v1/internal/audio/transcriptions", r.URL.Path)
+		}
+		if got := r.Header.Get("Content-Type"); got != "audio/pcm" {
+			t.Errorf("Content-Type = %q, want audio/pcm", got)
+		}
+		if got := r.Header.Get("X-ZGI-Request-ID"); got != "11111111-1111-1111-1111-111111111111" {
+			t.Errorf("X-ZGI-Request-ID = %q", got)
+		}
+		if got := r.Header.Get("X-ZGI-Model-Name"); got != "volc.seedasr.sauc.duration" {
+			t.Errorf("X-ZGI-Model-Name = %q", got)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		if got := string(body); got != "pcm-audio" {
+			t.Errorf("body = %q, want pcm-audio", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"code":0,"message":"success","data":{"request_id":"11111111-1111-1111-1111-111111111111","text":"editable transcript"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:    server.URL + "/v1/internal",
+		AuthHook:   func(*http.Request) {},
+		MaxRetries: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	response, err := a.Transcribe(t.Context(), &adapter.TranscriptionRequest{
+		RequestID: "11111111-1111-1111-1111-111111111111",
+		Model:     "volc.seedasr.sauc.duration",
+		Audio:     bytes.NewReader([]byte("pcm-audio")),
+	})
+	if err != nil {
+		t.Fatalf("Transcribe() error = %v", err)
+	}
+	if response.RequestID != "11111111-1111-1111-1111-111111111111" || response.Text != "editable transcript" {
+		t.Fatalf("response = %#v", response)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want 1", requestCount)
+	}
+}
+
+func TestZGICloudAdapterTranscribeDoesNotRetryProviderFailure(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, `{"code":503,"message":"transcription model is unavailable"}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:    server.URL + "/v1/internal",
+		AuthHook:   func(*http.Request) {},
+		MaxRetries: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	_, err = a.Transcribe(t.Context(), &adapter.TranscriptionRequest{
+		RequestID: "11111111-1111-1111-1111-111111111111",
+		Model:     "volc.seedasr.sauc.duration",
+		Audio:     bytes.NewReader([]byte("pcm-audio")),
+	})
+	if !errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
+		t.Fatalf("Transcribe() error = %v, want ErrPlatformChannelUnavailable", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want one non-retryable attempt", requestCount)
+	}
+}
 
 func TestZGICloudAdapterMapsPlatformChannelUnavailableAcrossProtocols(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

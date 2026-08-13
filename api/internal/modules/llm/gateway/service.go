@@ -85,6 +85,9 @@ type LLMGatewayService interface {
 	// Rerank handles rerank requests
 	Rerank(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.RerankRequest) (*adapter.RerankResponse, error)
 
+	// Transcribe converts a PCM audio stream into final editable text.
+	Transcribe(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *TranscriptionRequest) (*TranscriptionResponse, error)
+
 	// ListAvailableModels lists available models for the API key
 	ListAvailableModels(ctx context.Context, apiKey *apikeymodel.TenantAPIKey) ([]adapter.Model, error)
 

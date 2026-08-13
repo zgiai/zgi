@@ -16,13 +16,16 @@ import (
 )
 
 const (
-	zgiCloudAdapterName = "zgi-cloud"
-	errUnsupportedFmt   = "%w: zgi-cloud adapter does not support %s"
+	zgiCloudAdapterName       = "zgi-cloud"
+	zgiCloudTranscriptionPath = "/audio/transcriptions"
+	errUnsupportedFmt         = "%w: zgi-cloud adapter does not support %s"
 
 	headerSettlementID     = "X-ZGI-Settlement-ID"
 	headerOfficialPoints   = "X-ZGI-Official-Points"
 	headerRemainingBalance = "X-ZGI-Remaining-Balance"
 	headerSettlementStatus = "X-ZGI-Settlement-Status"
+	headerZGIRequestID     = "X-ZGI-Request-ID"
+	headerZGIModelName     = "X-ZGI-Model-Name"
 
 	eventZGISettlement      = "zgi.settlement"
 	eventZGISettlementError = "zgi.settlement_error"
@@ -436,6 +439,89 @@ func (a *ZGICloudAdapter) Rerank(ctx context.Context, request *adapter.RerankReq
 	return &response, nil
 }
 
+// Transcribe streams PCM audio to Console and returns the final editable transcript.
+// The request is sent exactly once because its body cannot be replayed safely.
+func (a *ZGICloudAdapter) Transcribe(ctx context.Context, request *adapter.TranscriptionRequest) (*adapter.TranscriptionResponse, error) {
+	if request == nil || strings.TrimSpace(request.RequestID) == "" || strings.TrimSpace(request.Model) == "" || request.Audio == nil {
+		return nil, fmt.Errorf("%w: request id, model, and audio are required", adapter.ErrInvalidRequest)
+	}
+
+	headers := a.buildHeaders()
+	headers["Content-Type"] = "audio/pcm"
+	headers[headerZGIRequestID] = request.RequestID
+	headers[headerZGIModelName] = request.Model
+
+	httpResp, err := a.httpClient.DoRawRequestDetailed(
+		ctx,
+		http.MethodPost,
+		a.baseURL+zgiCloudTranscriptionPath,
+		headers,
+		request.Audio,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("transcription request failed: %w", err)
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, handleZGICloudTranscriptionError(httpResp.StatusCode, httpResp.Body)
+	}
+
+	var envelope struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			RequestID string `json:"request_id"`
+			Text      string `json:"text"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(httpResp.Body, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse transcription response: %w", err)
+	}
+	if envelope.Code != 0 {
+		return nil, adapter.NewAdapterError("TRANSCRIPTION_FAILED", envelope.Message, http.StatusBadGateway, adapter.ErrUpstreamError)
+	}
+	if envelope.Data.RequestID != request.RequestID {
+		return nil, fmt.Errorf("%w: transcription response request id mismatch", adapter.ErrUpstreamError)
+	}
+
+	return &adapter.TranscriptionResponse{
+		RequestID: envelope.Data.RequestID,
+		Text:      envelope.Data.Text,
+	}, nil
+}
+
+func handleZGICloudTranscriptionError(statusCode int, body []byte) error {
+	var envelope struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return adapter.HandleNonJSONError(statusCode, body)
+	}
+
+	message := strings.TrimSpace(envelope.Message)
+	if message == "" {
+		message = http.StatusText(statusCode)
+	}
+	code := strconv.Itoa(envelope.Code)
+
+	switch statusCode {
+	case http.StatusBadRequest:
+		return adapter.NewAdapterError(code, message, statusCode, adapter.ErrInvalidRequest)
+	case http.StatusPaymentRequired:
+		return adapter.NewAdapterError(code, message, statusCode, adapter.ErrInsufficientBalance)
+	case http.StatusNotFound:
+		return adapter.NewAdapterError(code, message, statusCode, adapter.ErrModelNotFound)
+	case 499:
+		return adapter.NewAdapterError(code, message, statusCode, context.Canceled)
+	case http.StatusServiceUnavailable:
+		return adapter.NewAdapterError(adapter.ErrorCodePlatformChannelUnavailable, message, statusCode, adapter.ErrPlatformChannelUnavailable)
+	case http.StatusGatewayTimeout:
+		return adapter.NewAdapterError(code, message, statusCode, adapter.ErrTimeout)
+	default:
+		return adapter.NewAdapterError(code, message, statusCode, adapter.ErrUpstreamError)
+	}
+}
+
 func (a *ZGICloudAdapter) ListModels(context.Context, string) ([]adapter.Model, error) {
 	return nil, fmt.Errorf(errUnsupportedFmt, adapter.ErrCapabilityUnsupported, "model listing")
 }
@@ -455,7 +541,7 @@ func (a *ZGICloudAdapter) GetProviderInfo() *adapter.ProviderInfo {
 		DisplayName:  "ZGI Cloud",
 		Description:  "Official console transport adapter",
 		BaseURL:      a.baseURL,
-		Capabilities: []string{"chat", "image", "embedding", "rerank"},
+		Capabilities: []string{"chat", "image", "embedding", "rerank", "transcription"},
 		Version:      "v1",
 	}
 }
