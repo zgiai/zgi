@@ -97,6 +97,7 @@ const messages: ModelsMessages = {
       moderation: '内容审核',
       speech2text: '语音转文字',
       tts: '文字转语音',
+      music: '音乐模型',
     },
     usecases: {
       'text-chat': '文本对话',
@@ -106,6 +107,7 @@ const messages: ModelsMessages = {
       rerank: '搜索重排',
       'speech-to-text': '语音识别',
       'text-to-speech': '语音转换',
+      'music-gen': '音乐生成',
       'realtime-audio': '实时语音',
       'video-gen': '视频生成',
       moderation: '内容审核',

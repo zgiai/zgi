@@ -36,6 +36,7 @@
     "test:contextual-page-metadata-budget": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-contextual-page-metadata-budget.mjs",
     "test:contextual-operation-status-surface": "node scripts/test-contextual-operation-status-surface.mjs",
     "test:agent-runtime-user-input-continuation": "node scripts/test-agent-runtime-user-input-continuation.mjs",
+    "test:music-workbench": "node scripts/test-music-workbench.mjs",
     "test:agent-chat-model-precheck": "node scripts/test-agent-chat-model-precheck.mjs",
     "test:aichat-model-precheck-refresh": "node scripts/test-aichat-model-precheck-refresh.mjs",
     "test:aichat-vision-replay-warning": "node scripts/test-aichat-vision-replay-warning.mjs",

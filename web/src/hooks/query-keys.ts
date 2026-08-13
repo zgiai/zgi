@@ -283,6 +283,17 @@ export const MODEL_KEYS = {
   byType: (type: string) => [...MODEL_KEYS.allRoot, 'type', type] as const,
 } as const;
 
+export const MUSIC_KEYS = {
+  all: ['music'] as const,
+  models: (organizationId: string) => [...MUSIC_KEYS.all, 'models', organizationId] as const,
+  lists: (workspaceId: string) => [...MUSIC_KEYS.all, 'list', workspaceId] as const,
+  list: (workspaceId: string, params: unknown) =>
+    [...MUSIC_KEYS.lists(workspaceId), params] as const,
+  details: (workspaceId: string) => [...MUSIC_KEYS.all, 'detail', workspaceId] as const,
+  detail: (workspaceId: string, id: string) =>
+    [...MUSIC_KEYS.details(workspaceId), id] as const,
+} as const;
+
 export const MODEL_META_KEYS = {
   all: ['modelmeta'] as const,
   status: () => [...MODEL_META_KEYS.all, 'status'] as const,

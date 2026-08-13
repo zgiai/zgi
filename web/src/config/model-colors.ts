@@ -12,6 +12,7 @@ import type { ModelUseCase } from '@/services/types/model';
  * - rerank:         slate     (search optimization)
  * - speech-to-text: emerald   (audio input)
  * - text-to-speech: sky       (audio output)
+ * - music-gen:      pink      (music creation)
  * - realtime-audio: amber     (live audio)
  * - video-gen:      rose      (video creation)
  * - moderation:     red       (safety/filtering)
@@ -28,6 +29,7 @@ export const USE_CASE_BASE_COLORS: Record<ModelUseCase, string> = {
   rerank: 'slate',
   'speech-to-text': 'emerald',
   'text-to-speech': 'sky',
+  'music-gen': 'pink',
   'realtime-audio': 'amber',
   'video-gen': 'rose',
   moderation: 'red',
@@ -45,6 +47,7 @@ export const USE_CASE_SELECTED_COLORS: Record<ModelUseCase, string> = {
   rerank: 'bg-slate-600 text-white border-slate-600 hover:bg-slate-700',
   'speech-to-text': 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700',
   'text-to-speech': 'bg-sky-600 text-white border-sky-600 hover:bg-sky-700',
+  'music-gen': 'bg-pink-600 text-white border-pink-600 hover:bg-pink-700',
   'realtime-audio': 'bg-amber-600 text-white border-amber-600 hover:bg-amber-700',
   'video-gen': 'bg-rose-600 text-white border-rose-600 hover:bg-rose-700',
   moderation: 'bg-red-600 text-white border-red-600 hover:bg-red-700',
@@ -69,6 +72,8 @@ export const USE_CASE_UNSELECTED_COLORS: Record<ModelUseCase, string> = {
     'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/50',
   'text-to-speech':
     'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100 dark:bg-sky-950/50 dark:text-sky-400 dark:border-sky-800 dark:hover:bg-sky-900/50',
+  'music-gen':
+    'bg-pink-50 text-pink-700 border-pink-200 hover:bg-pink-100 dark:bg-pink-950/50 dark:text-pink-400 dark:border-pink-800 dark:hover:bg-pink-900/50',
   'realtime-audio':
     'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-900/50',
   'video-gen':
@@ -99,6 +104,8 @@ export const USE_CASE_BADGE_COLORS: Record<ModelUseCase, string> = {
     'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800',
   'text-to-speech':
     'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-900/30 dark:text-sky-400 dark:border-sky-800',
+  'music-gen':
+    'bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-900/30 dark:text-pink-400 dark:border-pink-800',
   'realtime-audio':
     'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800',
   'video-gen':
