@@ -306,6 +306,9 @@ func TestServiceDeleteRemovesSucceededTaskAssetBeforeRecord(t *testing.T) {
 	if assets.deletedStoredObjectID != fileID.String() {
 		t.Fatalf("deleted stored object = %q, want %q", assets.deletedStoredObjectID, fileID.String())
 	}
+	if assets.deletedObjectScope != scope {
+		t.Fatalf("deleted object scope = %#v, want %#v", assets.deletedObjectScope, scope)
+	}
 	if _, err := repo.Get(t.Context(), task.ID); !errors.Is(err, ErrTaskNotFound) {
 		t.Fatalf("deleted task lookup error = %v, want ErrTaskNotFound", err)
 	}

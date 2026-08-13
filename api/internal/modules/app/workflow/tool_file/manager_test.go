@@ -102,7 +102,7 @@ func TestDeleteStoredObjectRemovesConfiguredLocalFileAndKeepsMetadata(t *testing
 		t.Fatal(err)
 	}
 
-	if err := manager.DeleteStoredObject(t.Context(), file.ID); err != nil {
+	if err := manager.DeleteStoredObject(t.Context(), file.ID, file.TenantID, file.UserID); err != nil {
 		t.Fatalf("DeleteStoredObject() error = %v", err)
 	}
 	exists, err := local.Exists(file.FileKey)
@@ -184,7 +184,40 @@ func TestDeleteStoredObjectAllowsRetryAfterObjectIsAlreadyMissing(t *testing.T) 
 		exists:    false,
 	})
 
-	if err := manager.DeleteStoredObject(t.Context(), file.ID); err != nil {
+	if err := manager.DeleteStoredObject(t.Context(), file.ID, file.TenantID, file.UserID); err != nil {
 		t.Fatalf("DeleteStoredObject() retry error = %v, want nil for an already missing object", err)
+	}
+}
+
+func TestDeleteStoredObjectRejectsFileOutsideRequestedScope(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:tool-file-delete-scope?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&ToolFile{}); err != nil {
+		t.Fatal(err)
+	}
+	local := &localDeleteTestStorage{LocalStorage: storage.NewLocalStorage(t.TempDir())}
+	manager := NewToolFileManager(db, local)
+	file, err := manager.CreateFileByRaw(t.Context(), CreateFileByRawParams{
+		UserID:   "account-1",
+		TenantID: "organization-1",
+		FileData: []byte("music"),
+		MimeType: "audio/mpeg",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = manager.DeleteStoredObject(t.Context(), file.ID, file.TenantID, "another-account")
+	if err == nil {
+		t.Fatal("DeleteStoredObject() error = nil, want scope mismatch error")
+	}
+	exists, err := local.Exists(file.FileKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("out-of-scope storage object was deleted")
 	}
 }
