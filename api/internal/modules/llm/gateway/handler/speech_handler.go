@@ -58,12 +58,13 @@ func (h *SpeechHandler) Generate(c *gin.Context) {
 		return
 	}
 	if stream.wrote {
-		_ = c.Error(err)
+		recordStreamServiceError(c, err)
 		c.Abort()
 		return
 	}
 
 	c.Writer.Header().Del("Content-Type")
+	recordServiceError(c, err)
 	writeSpeechProtocolError(c, err)
 }
 

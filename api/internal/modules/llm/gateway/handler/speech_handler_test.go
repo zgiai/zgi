@@ -15,6 +15,7 @@ import (
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/observability"
 )
 
 func TestSpeechHandlerStreamsAndFlushesMP3Chunks(t *testing.T) {
@@ -149,6 +150,26 @@ func TestSpeechHandlerDoesNotAppendJSONAfterPartialAudio(t *testing.T) {
 	}
 	if len(c.Errors) != 1 {
 		t.Fatalf("Generate() recorded errors = %d, want 1", len(c.Errors))
+	}
+	if hint, ok := c.Errors[0].Meta.(observability.FailureReportHint); !ok || hint.EventName != "llm.stream.failed" || hint.Classification.Source != observability.ErrorSourceProvider {
+		t.Fatalf("Generate() report hint = %#v, want provider stream failure", c.Errors[0].Meta)
+	}
+}
+
+func TestSpeechHandlerSuppressesNoProviderStatusFallback(t *testing.T) {
+	handler := NewSpeechHandler(&speechServiceStub{err: gateway.NewNoProviderAvailableError("tts", "org")})
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
+	c.Request = newSpeechRequest(t, gateway.SpeechRequest{Model: "tts", Input: "text", Voice: "voice", ResponseFormat: "mp3"})
+
+	handler.Generate(c)
+
+	if recorder.Code != http.StatusServiceUnavailable || len(c.Errors) != 1 {
+		t.Fatalf("Generate() status/errors = %d/%d, want 503/1", recorder.Code, len(c.Errors))
+	}
+	if hint, ok := c.Errors[0].Meta.(observability.FailureReportHint); !ok || !hint.Suppress {
+		t.Fatalf("Generate() report hint = %#v, want suppressed fallback", c.Errors[0].Meta)
 	}
 }
 
