@@ -63,6 +63,23 @@ func (c *llmClientImpl) GenerateMusic(ctx context.Context, organizationID string
 	}, dst)
 }
 
+// GenerateLyrics calls the model gateway over the same official HTTP route as
+// music generation.
+func (c *llmClientImpl) GenerateLyrics(ctx context.Context, organizationID string, req *adapter.LyricsRequest) (*adapter.LyricsResult, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: lyrics request is required", adapter.ErrInvalidRequest)
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system API key: %w", err)
+	}
+	return c.gateway.GenerateLyrics(ctx, apiKey, &gateway.LyricsRequest{
+		RequestID: req.RequestID,
+		Model:     req.Model,
+		Prompt:    req.Prompt,
+	})
+}
+
 // CompensateMusicDelivery resolves one request without rerunning model selection.
 func (c *llmClientImpl) CompensateMusicDelivery(ctx context.Context, organizationID, requestID string) error {
 	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)

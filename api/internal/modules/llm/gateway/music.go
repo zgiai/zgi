@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	appconfig "github.com/zgiai/zgi/api/config"
@@ -30,6 +31,92 @@ type MusicRequest struct {
 	Prompt         string            `json:"prompt"`
 	Lyrics         string            `json:"lyrics"`
 	ResponseFormat string            `json:"response_format"`
+}
+
+// LyricsRequest carries one complete-song lyrics request over the same model
+// route used by music generation.
+type LyricsRequest struct {
+	RequestID string `json:"-"`
+	Model     string `json:"model"`
+	Prompt    string `json:"prompt"`
+}
+
+// GenerateLyrics authorizes and routes one lyrics request through Console HTTP.
+func (s *llmGatewayServiceImpl) GenerateLyrics(
+	ctx context.Context,
+	apiKey *apikeymodel.TenantAPIKey,
+	request *LyricsRequest,
+) (*adapter.LyricsResult, error) {
+	if err := validateLyricsGatewayRequest(request); err != nil {
+		return nil, err
+	}
+	request.Model = normalizeRequestedModelName(request.Model)
+	if request.Model == "" {
+		return nil, ErrMissingModel
+	}
+	if err := s.checkModelAuthorization(apiKey, nil, request.Model); err != nil {
+		return nil, err
+	}
+
+	organizationID, err := uuid.Parse(apiKey.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid organization ID: %w", err)
+	}
+	shadowOrganizationID, _, err := s.resolveShadowContext(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve billing organization: %w", err)
+	}
+
+	ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, string(llmmodel.UseCaseMusicGen))
+	selections, err := s.selectProvidersWithChannelRouter(
+		ctx,
+		shadowOrganizationID,
+		"",
+		request.Model,
+		maxMusicRouteCandidates,
+	)
+	if err != nil {
+		reportLLMSelectionFailure(ctx, err, request.Model, organizationID.String(), shadowOrganizationID.String())
+		return nil, fmt.Errorf("failed to select lyrics provider: %w", err)
+	}
+	if len(selections) == 0 {
+		return nil, reportedNoProviderAvailableError(ctx, request.Model, organizationID.String(), shadowOrganizationID.String())
+	}
+	if !selections[0].Model.MusicGeneration {
+		return nil, fmt.Errorf("%w: model %q does not support music generation", adapter.ErrCapabilityUnsupported, request.Model)
+	}
+
+	for _, selection := range selections {
+		if selection == nil || !selection.UseSystemProvider {
+			continue
+		}
+		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(selection, organizationID))
+		if err != nil {
+			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+			return nil, fmt.Errorf("failed to create lyrics adapter: %w", err)
+		}
+		lyricsAdapter, ok := providerAdapter.(adapter.LyricsCapable)
+		if !ok {
+			continue
+		}
+		callContext := context.WithValue(ctx, platformProxyContextKey{}, platformProxyMetadata{
+			BillingOrganizationID: shadowOrganizationID.String(),
+			RequestID:             request.RequestID,
+			APIKeyID:              strings.TrimSpace(apiKey.ID),
+			ModelName:             request.Model,
+			ProviderName:          selection.Provider.Provider,
+		})
+		result, err := lyricsAdapter.GenerateLyrics(callContext, &adapter.LyricsRequest{
+			RequestID: request.RequestID,
+			Model:     request.Model,
+			Prompt:    request.Prompt,
+		})
+		if err != nil {
+			reportLLMProviderFailure(ctx, err, "llm.provider.request_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+		}
+		return result, err
+	}
+	return nil, fmt.Errorf("%w: no official lyrics adapter is available", adapter.ErrCapabilityUnsupported)
 }
 
 // musicDestinationWriter remembers downstream write failures so they are not
@@ -215,4 +302,20 @@ func validateMusicGatewayRequest(request *MusicRequest, dst io.Writer) error {
 func isCanonicalMusicRequestID(requestID string) bool {
 	parsed, err := uuid.Parse(requestID)
 	return err == nil && parsed != uuid.Nil && requestID == parsed.String()
+}
+
+func validateLyricsGatewayRequest(request *LyricsRequest) error {
+	if request == nil {
+		return fmt.Errorf("%w: lyrics request is required", adapter.ErrInvalidRequest)
+	}
+	if !isCanonicalMusicRequestID(request.RequestID) {
+		return fmt.Errorf("%w: request id is invalid", adapter.ErrInvalidRequest)
+	}
+	if strings.TrimSpace(request.Model) == "" || strings.TrimSpace(request.Prompt) == "" {
+		return fmt.Errorf("%w: model and prompt are required", adapter.ErrInvalidRequest)
+	}
+	if !utf8.ValidString(request.Prompt) || utf8.RuneCountInString(request.Prompt) > adapter.MaxMusicPromptRunes {
+		return fmt.Errorf("%w: prompt is invalid", adapter.ErrInvalidRequest)
+	}
+	return nil
 }

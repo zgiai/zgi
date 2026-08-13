@@ -22,6 +22,7 @@ const (
 	zgiCloudTranscriptionPath     = "/audio/transcriptions"
 	zgiCloudSpeechPath            = "/audio/speech"
 	zgiCloudMusicPath             = "/audio/music/generations"
+	zgiCloudMusicLyricsPath       = "/audio/music/lyrics"
 	zgiCloudMusicCompensationPath = "/audio/music/delivery-compensations"
 	errUnsupportedFmt             = "%w: zgi-cloud adapter does not support %s"
 	zgiCloudAudioContentType      = "audio/mpeg"
@@ -581,6 +582,48 @@ func (a *ZGICloudAdapter) GenerateMusic(ctx context.Context, request *adapter.Mu
 		return adapter.ErrMusicStreamIncomplete
 	}
 	return nil
+}
+
+// GenerateLyrics requests complete lyrics from Console over the same internal
+// HTTP transport used by music generation.
+func (a *ZGICloudAdapter) GenerateLyrics(ctx context.Context, request *adapter.LyricsRequest) (*adapter.LyricsResult, error) {
+	if request == nil ||
+		strings.TrimSpace(request.RequestID) == "" ||
+		strings.TrimSpace(request.Model) == "" ||
+		strings.TrimSpace(request.Prompt) == "" ||
+		!utf8.ValidString(request.Prompt) ||
+		utf8.RuneCountInString(strings.TrimSpace(request.Prompt)) > adapter.MaxMusicPromptRunes {
+		return nil, fmt.Errorf("%w: request id, model, and prompt are required", adapter.ErrInvalidRequest)
+	}
+
+	headers := a.buildHeaders()
+	headers["Accept"] = "application/json"
+	headers[headerZGIRequestID] = request.RequestID
+	headers[headerZGIModelName] = request.Model
+	httpResp, err := a.httpClient.DoRequestDetailed(
+		ctx,
+		http.MethodPost,
+		a.baseURL+zgiCloudMusicLyricsPath,
+		headers,
+		request,
+	)
+	if err != nil {
+		return nil, handleZGICloudMusicError(err)
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, handleZGICloudAudioHTTPError(httpResp.StatusCode, httpResp.Body)
+	}
+	var envelope struct {
+		Code int                   `json:"code"`
+		Data *adapter.LyricsResult `json:"data"`
+	}
+	if err := json.Unmarshal(httpResp.Body, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse lyrics response: %w", err)
+	}
+	if envelope.Code != 0 || envelope.Data == nil || strings.TrimSpace(envelope.Data.Title) == "" || strings.TrimSpace(envelope.Data.Lyrics) == "" {
+		return nil, fmt.Errorf("%w: console returned invalid lyrics", adapter.ErrUpstreamError)
+	}
+	return envelope.Data, nil
 }
 
 func validateZGICloudMusicRequest(request *adapter.MusicRequest, dst io.Writer) error {

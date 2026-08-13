@@ -15,3 +15,11 @@ func TestClientGenerateMusicRejectsNilRequestBeforeResolvingCredentials(t *testi
 		t.Fatalf("GenerateMusic() error = %v, want ErrInvalidRequest", err)
 	}
 }
+
+func TestClientGenerateLyricsRejectsNilRequestBeforeResolvingCredentials(t *testing.T) {
+	client := &llmClientImpl{}
+	_, err := client.GenerateLyrics(t.Context(), "organization-id", nil)
+	if !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("GenerateLyrics() error = %v, want ErrInvalidRequest", err)
+	}
+}

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -13,6 +14,47 @@ import (
 )
 
 const musicTestRequestID = "11111111-1111-1111-1111-111111111111"
+
+func TestZGICloudAdapterGeneratesLyricsOverHTTP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/v1/internal/audio/music/lyrics"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get(headerZGIRequestID), musicTestRequestID; got != want {
+			t.Fatalf("request id = %q, want %q", got, want)
+		}
+		var request adapter.LyricsRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Model != "music-3.0" || request.Prompt != "一首温暖的民谣" {
+			t.Fatalf("lyrics request = %#v", request)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"title":"雨后的木吉他","style_tags":["Folk","Warm"],"lyrics":"[Verse]\n雨停在黄昏以后"}}`))
+	}))
+	defer server.Close()
+
+	cloud, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		ProviderName: zgiCloudAdapterName,
+		BaseURL:      server.URL + "/v1/internal",
+		AuthHook:     func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := cloud.GenerateLyrics(t.Context(), &adapter.LyricsRequest{
+		RequestID: musicTestRequestID,
+		Model:     "music-3.0",
+		Prompt:    "一首温暖的民谣",
+	})
+	if err != nil {
+		t.Fatalf("GenerateLyrics() error = %v", err)
+	}
+	if result.Title != "雨后的木吉他" || result.Lyrics != "[Verse]\n雨停在黄昏以后" || len(result.StyleTags) != 2 {
+		t.Fatalf("GenerateLyrics() result = %#v", result)
+	}
+}
 
 func TestGeneratedMusicProductLimitIs64MiB(t *testing.T) {
 	if got, want := adapter.MaxGeneratedMusicBytes, int64(64<<20); got != want {

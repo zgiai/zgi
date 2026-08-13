@@ -5,6 +5,7 @@ export type ModelType =
   | 'moderation'
   | 'speech2text'
   | 'tts'
+  | 'music'
   | 'text2video'
   | 'text2img';
 
@@ -16,6 +17,7 @@ export type ModelUseCase =
   | 'rerank'
   | 'speech-to-text'
   | 'text-to-speech'
+  | 'music-gen'
   | 'realtime-audio'
   | 'video-gen'
   | 'moderation'

@@ -273,6 +273,17 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			LLMClient:       serviceContainer.GetLLMClient(),
 			AccountService:  accountService,
 		})
+		RegisterMusicRoutes(v1, MusicRouteDeps{
+			DB:              db,
+			AvailableModels: llmModule.LLMModelModule.AvailableModelsSvc,
+			Generator:       serviceContainer.GetMusicGenerator(),
+			LyricsGenerator: serviceContainer.GetMusicLyricsGenerator(),
+			Compensator:     serviceContainer.GetMusicDeliveryCompensator(),
+			AccountService:  accountService,
+			TaskManager:     serviceContainer.GetTaskManager(),
+			TaskRegistry:    serviceContainer.GetTaskHandlerRegistry(),
+			Scheduler:       serviceContainer.GetScheduler(),
+		})
 	}
 
 	// ---------- Dashboard ----------
