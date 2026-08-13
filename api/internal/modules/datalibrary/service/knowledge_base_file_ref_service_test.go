@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -9,6 +10,7 @@ import (
 	datalibRepo "github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 	datasetModel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	fileModel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	"github.com/zgiai/zgi/api/pkg/vectordb"
 )
 
 func TestKnowledgeBaseFileRefServiceListsAddableCandidates(t *testing.T) {
@@ -373,6 +375,33 @@ func TestKnowledgeBaseFileRefServiceCreatesPendingRefs(t *testing.T) {
 		deps.created.CreatedBy != "account-1" {
 		t.Fatalf("created=%+v", deps.created)
 	}
+	if deps.vectorDB.createCalls != 1 || deps.vectorDB.className != datasetModel.GenCollectionNameByID("dataset-1") {
+		t.Fatalf("vector class calls=%d class=%q", deps.vectorDB.createCalls, deps.vectorDB.className)
+	}
+}
+
+func TestKnowledgeBaseFileRefServiceStopsBeforeCreatingRefsWhenVectorClassRepairFails(t *testing.T) {
+	assetID := uuid.New()
+	deps := &fakeKnowledgeBaseFileRefDeps{
+		dataset: &datasetModel.Dataset{ID: "dataset-1", OrganizationID: "org-1"},
+		assets:  []*datalibModel.DocumentAsset{{ID: assetID, OrganizationID: "org-1"}},
+		vectorDB: &fakeKnowledgeBaseFileVectorDB{
+			err: errors.New("weaviate unavailable"),
+		},
+	}
+	svc := newKnowledgeBaseFileRefTestService(deps)
+
+	_, err := svc.CreateRefs(context.Background(), KnowledgeBaseFileRefCreateRequest{
+		OrganizationID: "org-1",
+		DatasetID:      "dataset-1",
+		AssetIDs:       []uuid.UUID{assetID},
+	})
+	if err == nil {
+		t.Fatal("CreateRefs succeeded without a vector class")
+	}
+	if len(deps.createdRefs) != 0 {
+		t.Fatalf("created refs=%d, want none", len(deps.createdRefs))
+	}
 }
 
 func TestKnowledgeBaseFileRefServiceSharesBatchButNotRunAcrossBulkCreate(t *testing.T) {
@@ -405,6 +434,9 @@ func TestKnowledgeBaseFileRefServiceSharesBatchButNotRunAcrossBulkCreate(t *test
 	}
 	if len(result.Items) != 2 || len(deps.createdRefs) != 2 {
 		t.Fatalf("items=%d created=%d", len(result.Items), len(deps.createdRefs))
+	}
+	if deps.vectorDB.createCalls != 1 {
+		t.Fatalf("vector class create calls=%d, want one per bulk request", deps.vectorDB.createCalls)
 	}
 	first := deps.createdRefs[0]
 	second := deps.createdRefs[1]
@@ -593,6 +625,9 @@ func TestKnowledgeBaseFileRefServiceRetriesRef(t *testing.T) {
 		deps.pendingSyncRunID == uuid.Nil {
 		t.Fatalf("result=%+v pending=%s", result, deps.pendingSyncRunID)
 	}
+	if deps.vectorDB.createCalls != 1 {
+		t.Fatalf("vector class create calls=%d, want one before retry", deps.vectorDB.createCalls)
+	}
 }
 
 func TestKnowledgeBaseFileRefServiceMarksRefSyncFailed(t *testing.T) {
@@ -707,10 +742,27 @@ type fakeKnowledgeBaseFileRefDeps struct {
 	failedSyncRunID      uuid.UUID
 	removedRefID         uuid.UUID
 	lastAssetFilter      datalibRepo.DocumentAssetListFilter
+	vectorDB             *fakeKnowledgeBaseFileVectorDB
 }
 
 func newKnowledgeBaseFileRefTestService(deps *fakeKnowledgeBaseFileRefDeps) KnowledgeBaseFileRefService {
-	return NewKnowledgeBaseFileRefService(deps, deps, deps, fakeKnowledgeBaseFileRefStore{deps: deps}, deps, deps, deps)
+	if deps.vectorDB == nil {
+		deps.vectorDB = &fakeKnowledgeBaseFileVectorDB{}
+	}
+	return NewKnowledgeBaseFileRefService(deps, deps, deps, fakeKnowledgeBaseFileRefStore{deps: deps}, deps, deps, deps, deps.vectorDB)
+}
+
+type fakeKnowledgeBaseFileVectorDB struct {
+	vectordb.VectorDB
+	createCalls int
+	className   string
+	err         error
+}
+
+func (f *fakeKnowledgeBaseFileVectorDB) CreateClass(_ context.Context, className string, _ []map[string]interface{}) error {
+	f.createCalls++
+	f.className = className
+	return f.err
 }
 
 func (f *fakeKnowledgeBaseFileRefDeps) GetAssetByID(ctx context.Context, id uuid.UUID) (*datalibModel.DocumentAsset, error) {

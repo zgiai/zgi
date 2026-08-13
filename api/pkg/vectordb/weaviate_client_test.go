@@ -191,6 +191,39 @@ func TestWeaviateCreateClassTreatsAlreadyExistsServerErrorAsSuccess(t *testing.T
 	}
 }
 
+func TestWeaviateCreateClassRetriesCreationWhenConflictNeverBecomesVisible(t *testing.T) {
+	var schemaReads atomic.Int64
+	var schemaWrites atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/schema/Vector_index_1_Node":
+			schemaReads.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/schema":
+			if schemaWrites.Add(1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":[{"message":"class Vector_index_1_Node already exists"}]}`))
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	if err := client.CreateClass(context.Background(), "Vector_index_1_Node", nil); err != nil {
+		t.Fatalf("CreateClass returned error after retrying an invisible conflict: %v", err)
+	}
+	if schemaWrites.Load() != 2 {
+		t.Fatalf("schema writes = %d, want 2", schemaWrites.Load())
+	}
+	if schemaReads.Load() < weaviateSchemaReadyAttempts+2 {
+		t.Fatalf("schema reads = %d, want readiness checks followed by a new create attempt", schemaReads.Load())
+	}
+}
+
 func TestWeaviateCreateClassKeepsOtherServerErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

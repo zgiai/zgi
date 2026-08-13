@@ -22,6 +22,7 @@ import (
 
 const (
 	weaviateAutoSchemaWriteAttempts = 3
+	weaviateSchemaCreateAttempts    = 3
 	weaviateSchemaReadyAttempts     = 6
 	weaviateRetryBaseDelay          = 50 * time.Millisecond
 )
@@ -850,48 +851,63 @@ func (c *WeaviateClient) CreateClass(ctx context.Context, className string, prop
 		return fmt.Errorf("failed to marshal class schema: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/schema", c.endpoint)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to create class in weaviate: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		// Read response body for detailed error information
-		body, _ := io.ReadAll(resp.Body)
-
-		// Concurrent first writes can race while creating the same class. Some
-		// Weaviate versions report that harmless conflict as 500 instead of 422.
-		if resp.StatusCode == http.StatusUnprocessableEntity || weaviateClassAlreadyExists(body) {
-			logger.Info("Class already exists", map[string]interface{}{
-				"class":    className,
-				"response": string(body),
-			})
-			if err := c.waitForClassReady(ctx, className); err != nil {
-				return fmt.Errorf("wait for existing Weaviate class %s: %w", className, err)
-			}
+	for attempt := 0; attempt < weaviateSchemaCreateAttempts; attempt++ {
+		ready, err := c.isClassReady(ctx, className)
+		if err != nil {
+			return fmt.Errorf("check Weaviate class %s: %w", className, err)
+		}
+		if ready {
 			return nil
 		}
-		return fmt.Errorf("weaviate returned status code: %d, response: %s", resp.StatusCode, string(body))
+
+		requestURL := fmt.Sprintf("%s/v1/schema", c.endpoint)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to create class in weaviate: %w", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+			logger.Info("Class created in Weaviate", map[string]interface{}{
+				"class":       className,
+				"status_code": resp.StatusCode,
+			})
+			return nil
+		}
+
+		// Concurrent creators can receive an already-exists response before the
+		// winning schema write is visible. Confirm it, then retry creation if the
+		// class never appears instead of turning the transient race into a hard
+		// failure.
+		if !weaviateClassAlreadyExists(body) {
+			return fmt.Errorf("weaviate returned status code: %d, response: %s", resp.StatusCode, string(body))
+		}
+		logger.Info("Class creation raced with another request", map[string]interface{}{
+			"class":    className,
+			"response": string(body),
+			"attempt":  attempt + 1,
+		})
+		ready, err = c.waitForClassReady(ctx, className)
+		if err != nil {
+			return fmt.Errorf("wait for existing Weaviate class %s: %w", className, err)
+		}
+		if ready {
+			return nil
+		}
 	}
 
-	logger.Info("Class created in Weaviate", map[string]interface{}{
-		"class":       className,
-		"status_code": resp.StatusCode,
-	})
-
-	return nil
+	return fmt.Errorf("Weaviate class %s did not become visible after %d create attempts", className, weaviateSchemaCreateAttempts)
 }
 
 func weaviateClassAlreadyExists(body []byte) bool {
@@ -915,22 +931,22 @@ func waitForWeaviateRetry(ctx context.Context, attempt int) error {
 	}
 }
 
-func (c *WeaviateClient) waitForClassReady(ctx context.Context, className string) error {
+func (c *WeaviateClient) waitForClassReady(ctx context.Context, className string) (bool, error) {
 	for attempt := 0; attempt < weaviateSchemaReadyAttempts; attempt++ {
 		ready, err := c.isClassReady(ctx, className)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if ready {
-			return nil
+			return true, nil
 		}
 		if attempt+1 < weaviateSchemaReadyAttempts {
 			if err := waitForWeaviateRetry(ctx, attempt); err != nil {
-				return err
+				return false, err
 			}
 		}
 	}
-	return fmt.Errorf("class did not become visible after %d checks", weaviateSchemaReadyAttempts)
+	return false, nil
 }
 
 func (c *WeaviateClient) isClassReady(ctx context.Context, className string) (bool, error) {

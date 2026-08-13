@@ -446,6 +446,7 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 
 	// Convert request to model
 	dataset := &model.Dataset{
+		ID:                     uuid.New().String(),
 		OrganizationID:         group.ID,
 		WorkspaceID:            req.WorkspaceID,
 		Name:                   req.Name,
@@ -606,6 +607,14 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 			}
 		}
 
+		// A dataset and its vector class are one provisioned resource. Creating
+		// the class here keeps the dataset transaction from becoming visible
+		// until its shared vector destination is ready, so document workers never
+		// need to race each other to create it.
+		if err := s.ensureDatasetVectorClass(ctx, dataset.ID); err != nil {
+			return err
+		}
+
 		return nil
 	})
 
@@ -614,6 +623,28 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 	}
 
 	return dataset, nil
+}
+
+func (s *datasetService) ensureDatasetVectorClass(ctx context.Context, datasetID string) error {
+	if s.vectorDB == nil {
+		return fmt.Errorf("vector database is not configured")
+	}
+	className := model.GenCollectionNameByID(datasetID)
+	if err := s.vectorDB.CreateClass(ctx, className, defaultDatasetVectorClassProperties()); err != nil {
+		return fmt.Errorf("provision dataset vector class %s: %w", className, err)
+	}
+	return nil
+}
+
+func defaultDatasetVectorClassProperties() []map[string]interface{} {
+	return []map[string]interface{}{
+		{
+			"name":            "text",
+			"dataType":        []string{"text"},
+			"tokenization":    "gse_ch",
+			"indexSearchable": true,
+		},
+	}
 }
 
 func (s *datasetService) GetDatasetByID(ctx context.Context, id string) (*model.Dataset, error) {

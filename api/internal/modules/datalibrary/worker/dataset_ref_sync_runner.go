@@ -464,9 +464,6 @@ func (r *DatasetRefSyncRunner) createDatasetDocument(ctx context.Context, ref *d
 
 func (r *DatasetRefSyncRunner) copyChunksToDataset(ctx context.Context, dataset *datasetModel.Dataset, document *datasetModel.Document, chunks []*datalibModel.DocumentChunk, embeddings map[uuid.UUID]*datalibModel.DocumentChunkEmbedding) error {
 	className := datasetModel.GenCollectionNameByID(document.DatasetID)
-	if err := r.vectorDB.CreateClass(ctx, className, defaultDatasetRefSyncVectorClassProperties()); err != nil {
-		return fmt.Errorf("ensure vector class: %w", err)
-	}
 
 	childrenByParent := groupChildChunksByParent(chunks)
 	position := 0
@@ -820,17 +817,6 @@ func contentHash(content string) string {
 	h := sha256.New()
 	h.Write([]byte(content))
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func defaultDatasetRefSyncVectorClassProperties() []map[string]interface{} {
-	return []map[string]interface{}{
-		{
-			"name":            "text",
-			"dataType":        []string{"text"},
-			"tokenization":    "gse_ch",
-			"indexSearchable": true,
-		},
-	}
 }
 
 func stringPtr(value string) *string {

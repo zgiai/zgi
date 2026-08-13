@@ -97,12 +97,8 @@ func TestDatasetRefSyncRunnerCopiesReadyAssetToDataset(t *testing.T) {
 	if len(vectorStore.storedIDs) != 1 || len(vectorStore.storedVectors[0]) != 3 {
 		t.Fatalf("stored vectors ids=%v vectors=%v", vectorStore.storedIDs, vectorStore.storedVectors)
 	}
-	if len(vectorStore.createdProperties) != 1 {
-		t.Fatalf("created vector class properties = %#v", vectorStore.createdProperties)
-	}
-	textProperty := vectorStore.createdProperties[0][0]
-	if textProperty["name"] != "text" || textProperty["tokenization"] != "gse_ch" || textProperty["indexSearchable"] != true {
-		t.Fatalf("text vector class property = %#v", textProperty)
+	if len(vectorStore.createdClasses) != 0 {
+		t.Fatalf("document sync must not create shared vector classes: %v", vectorStore.createdClasses)
 	}
 	properties := vectorStore.storedProperties[0]
 	if properties["asset_id"] != assetID.String() ||
