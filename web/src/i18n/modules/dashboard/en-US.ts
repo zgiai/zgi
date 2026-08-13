@@ -350,6 +350,28 @@ const messages = {
         title: 'Default Image Generation Model',
         description: 'Used for prompt-based image generation in console and workflow scenarios.',
       },
+      'speech-to-text': {
+        title: 'Default Speech Recognition Model',
+        description: 'Used to turn Agent voice input into editable text.',
+      },
+      'text-to-speech': {
+        title: 'Default Speech Generation Model',
+        description: 'Used to turn Agent answers into playable speech.',
+        defaultVoice: {
+          label: 'Default voice',
+          selectPlaceholder: 'Select a voice',
+          unavailablePlaceholder: 'No voices available for this model',
+          selectMode: 'Choose from model voices',
+          loadingMode: 'Loading voices',
+          unavailableMode: 'Voices unavailable',
+          unavailableDescription:
+            'This model is missing voice options. Fix the model catalog configuration first.',
+          selectDescription:
+            'These voices are provided by the current model and used for Agent speech playback.',
+          required: 'Select a voice before saving.',
+          unsupported: 'The current voice is not available for this model. Select another voice.',
+        },
+      },
     },
     parserSettings: {
       title: 'Parser Settings',

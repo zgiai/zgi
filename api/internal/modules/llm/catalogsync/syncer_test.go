@@ -182,3 +182,24 @@ func TestPublishedModelPricingMapping(t *testing.T) {
 	require.Len(t, catalog.Models, 1)
 	require.JSONEq(t, resp.Models[0].GetPricingJson(), string(catalog.Models[0].Pricing))
 }
+
+func TestPublishedModelConfigParametersPreserveVoiceCatalog(t *testing.T) {
+	const configParameters = `[{"name":"voice","template_key":"voice","label":{"zh_Hans":"音色","en_US":"Voice"},"type":"string","help":{"zh_Hans":"请选择音色","en_US":"Select a voice"},"required":true,"default":"voice-a","options":["voice-a"],"option_labels":{"voice-a":{"zh_Hans":"音色 A","en_US":"Voice A"}}}]`
+	resp := &pb.GetPublishedCatalogResponse{
+		Version:     14,
+		PublishedAt: 1700000000000,
+		Models: []*pb.CatalogModel{{
+			Provider:             "doubao",
+			Model:                "seed-tts-2.0",
+			ConfigParametersJson: configParameters,
+		}},
+	}
+
+	catalog := catalogFromResponse(resp)
+	require.Len(t, catalog.Models, 1)
+	params, err := llmmodel.NormalizeConfigParametersJSON(catalog.Models[0].ConfigParameters)
+	require.NoError(t, err)
+	require.Len(t, params, 1)
+	require.Equal(t, []string{"voice-a"}, params[0].Options)
+	require.Equal(t, "音色 A", params[0].OptionLabels["voice-a"].ZhHans)
+}

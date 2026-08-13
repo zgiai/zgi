@@ -43,6 +43,55 @@ func New(
 	}
 }
 
+// Transcribe calls the model gateway with an organization-owned system key.
+// The PCM stream is consumed once and is never retried by this client.
+func (c *llmClientImpl) Transcribe(ctx context.Context, organizationID string, req *adapter.TranscriptionRequest) (*adapter.TranscriptionResponse, error) {
+	if req == nil || req.Audio == nil || strings.TrimSpace(req.Model) == "" {
+		return nil, fmt.Errorf("%w: transcription model and audio are required", adapter.ErrInvalidRequest)
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system API key: %w", err)
+	}
+	result, err := c.gateway.Transcribe(ctx, apiKey, &gateway.TranscriptionRequest{
+		Model: req.Model,
+		Audio: req.Audio,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("%w: transcription gateway returned no response", adapter.ErrUpstreamError)
+	}
+	return &adapter.TranscriptionResponse{
+		RequestID: result.RequestID,
+		Text:      result.Text,
+	}, nil
+}
+
+// GenerateSpeech calls the model gateway with an organization-owned system key.
+// The caller owns the destination and cancellation lifecycle.
+func (c *llmClientImpl) GenerateSpeech(ctx context.Context, organizationID string, req *adapter.SpeechRequest, dst io.Writer) error {
+	if req == nil ||
+		strings.TrimSpace(req.Model) == "" ||
+		strings.TrimSpace(req.Input) == "" ||
+		strings.TrimSpace(req.Voice) == "" ||
+		strings.TrimSpace(req.ResponseFormat) != "mp3" ||
+		dst == nil {
+		return fmt.Errorf("%w: speech model, input, voice, mp3 format, and destination are required", adapter.ErrInvalidRequest)
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return fmt.Errorf("failed to get system API key: %w", err)
+	}
+	return c.gateway.GenerateSpeech(ctx, apiKey, &gateway.SpeechRequest{
+		Model:          req.Model,
+		Input:          req.Input,
+		Voice:          req.Voice,
+		ResponseFormat: req.ResponseFormat,
+	}, dst)
+}
+
 // GenerateMusic calls the model gateway with an organization-owned
 // system key. The caller owns the stable request ID and destination lifecycle.
 func (c *llmClientImpl) GenerateMusic(ctx context.Context, organizationID string, req *adapter.MusicRequest, dst io.Writer) error {

@@ -303,6 +303,7 @@ export interface ParameterRuleItem extends ModelConfigParameter {
   label?: LocalizedText;
   help?: LocalizedText;
   options?: string[];
+  option_labels?: Record<string, LocalizedText>;
 }
 
 // Batch toggle models request (with specific models array)

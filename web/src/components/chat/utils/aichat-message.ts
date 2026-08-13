@@ -16,6 +16,17 @@ export function isPersistedAIChatRuntimeId(id: string | null | undefined): id is
   return Boolean(id && AICHAT_RUNTIME_UUID_PATTERN.test(id));
 }
 
+export function isPersistedAIChatConversationPromotion(
+  previousId: string | null | undefined,
+  nextId: string | null | undefined
+): boolean {
+  return (
+    isDraftAIChatConversationId(previousId) &&
+    Boolean(nextId) &&
+    !isDraftAIChatConversationId(nextId)
+  );
+}
+
 export function normalizeAIChatStatus(status: unknown): AIChatMessageStatus {
   if (typeof status !== 'string') return 'error';
   switch (status.trim().toLowerCase()) {
