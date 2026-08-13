@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,7 +19,10 @@ import (
 const (
 	zgiCloudAdapterName       = "zgi-cloud"
 	zgiCloudTranscriptionPath = "/audio/transcriptions"
+	zgiCloudSpeechPath        = "/audio/speech"
 	errUnsupportedFmt         = "%w: zgi-cloud adapter does not support %s"
+	zgiCloudSpeechContentType = "audio/mpeg"
+	zgiCloudSpeechFormat      = "mp3"
 
 	headerSettlementID     = "X-ZGI-Settlement-ID"
 	headerOfficialPoints   = "X-ZGI-Official-Points"
@@ -489,6 +493,57 @@ func (a *ZGICloudAdapter) Transcribe(ctx context.Context, request *adapter.Trans
 	}, nil
 }
 
+// GenerateSpeech streams one MP3 response from Console into dst without retrying.
+func (a *ZGICloudAdapter) GenerateSpeech(ctx context.Context, request *adapter.SpeechRequest, dst io.Writer) error {
+	if request == nil ||
+		strings.TrimSpace(request.RequestID) == "" ||
+		strings.TrimSpace(request.Model) == "" ||
+		strings.TrimSpace(request.Input) == "" ||
+		strings.TrimSpace(request.Voice) == "" ||
+		request.ResponseFormat != zgiCloudSpeechFormat ||
+		dst == nil {
+		return fmt.Errorf("%w: request id, model, input, voice, mp3 format, and destination are required", adapter.ErrInvalidRequest)
+	}
+
+	headers := a.buildHeaders()
+	headers["Accept"] = zgiCloudSpeechContentType
+	headers[headerZGIRequestID] = request.RequestID
+	headers[headerZGIModelName] = request.Model
+
+	resp, err := a.httpClient.DoStreamRequest(
+		ctx,
+		http.MethodPost,
+		a.baseURL+zgiCloudSpeechPath,
+		headers,
+		request,
+	)
+	if err != nil {
+		return handleZGICloudSpeechError(err)
+	}
+	defer resp.Body.Close()
+
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || mediaType != zgiCloudSpeechContentType {
+		return fmt.Errorf("%w: speech response content type is not audio/mpeg", adapter.ErrUpstreamError)
+	}
+	written, err := io.Copy(dst, resp.Body)
+	if err != nil {
+		return fmt.Errorf("speech response stream failed: %w", err)
+	}
+	if written == 0 {
+		return fmt.Errorf("%w: speech provider returned empty audio", adapter.ErrUpstreamError)
+	}
+	return nil
+}
+
+func handleZGICloudSpeechError(err error) error {
+	var statusErr *adapter.HTTPStatusError
+	if errors.As(err, &statusErr) {
+		return handleZGICloudTranscriptionError(statusErr.StatusCode, statusErr.Body)
+	}
+	return fmt.Errorf("speech request failed: %w", err)
+}
+
 func handleZGICloudTranscriptionError(statusCode int, body []byte) error {
 	var envelope struct {
 		Code    int    `json:"code"`
@@ -541,7 +596,7 @@ func (a *ZGICloudAdapter) GetProviderInfo() *adapter.ProviderInfo {
 		DisplayName:  "ZGI Cloud",
 		Description:  "Official console transport adapter",
 		BaseURL:      a.baseURL,
-		Capabilities: []string{"chat", "image", "embedding", "rerank", "transcription"},
+		Capabilities: []string{"chat", "image", "embedding", "rerank", "transcription", "speech_generation"},
 		Version:      "v1",
 	}
 }
