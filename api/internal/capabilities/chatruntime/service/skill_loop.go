@@ -652,12 +652,49 @@ func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(c
 		if bindingVerifier == nil {
 			return false, nil
 		}
-		return bindingVerifier(ctx, skills.AgentBindingCheck{
-			BindingType: "skill",
-			ResourceID:  strings.TrimSpace(skillID),
-			AccessMode:  "execute",
-		})
+		var enabledSkillIDs []string
+		if prepared.parts != nil {
+			enabledSkillIDs = prepared.parts.SkillIDs
+		}
+		for _, bindingSkillID := range agentSkillAuthorizationBindingIDs(skillID, enabledSkillIDs) {
+			matched, verifyErr := bindingVerifier(ctx, skills.AgentBindingCheck{
+				BindingType: "skill",
+				ResourceID:  bindingSkillID,
+				AccessMode:  "execute",
+			})
+			if verifyErr != nil {
+				return false, verifyErr
+			}
+			if matched {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
+}
+
+func agentSkillAuthorizationBindingIDs(skillID string, enabledSkillIDs []string) []string {
+	id := strings.ToLower(strings.TrimSpace(skillID))
+	if id == "" {
+		return nil
+	}
+	out := []string{id}
+	if id != skills.SkillPromptProfessionalizer {
+		return out
+	}
+	seen := map[string]struct{}{id: {}}
+	for _, raw := range enabledSkillIDs {
+		candidate := strings.ToLower(strings.TrimSpace(raw))
+		if !skills.RequiresPromptProfessionalizerDependency(candidate) {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 func planningOutputTokenLimit(prepared *PreparedChat) int {

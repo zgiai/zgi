@@ -7,6 +7,7 @@ import {
   type SkillCapabilityCategory,
   type SkillScenario,
 } from './skill-taxonomy';
+import { normalizeAIChatSkillId } from './skill-identity';
 
 export interface AIChatSkillDisplayInfo {
   skillId: string;
@@ -38,10 +39,6 @@ const AGENT_MANAGEMENT_SKILL_ID = 'agent-management';
 const EXTERNAL_APPS_SKILL_ID = 'external-apps';
 const RETIRED_WEB_SEARCH_SKILL_ID = 'web-search';
 
-function normalizeSkillId(skillId: string): string {
-  return skillId.trim().toLowerCase();
-}
-
 function normalizeIntegrationRequirement(value: unknown): string {
   if (typeof value === 'string') return value.trim().toLowerCase();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
@@ -51,20 +48,22 @@ function normalizeIntegrationRequirement(value: unknown): string {
 
 export function getSkillIntegrationRequirements(skill: AIChatSkillMetadata): string[] {
   const explicit = [
-    ...(skill.integration_requirements ?? []),
-    ...(skill.external_dependencies ?? []),
+    ...(Array.isArray(skill.integration_requirements) ? skill.integration_requirements : []),
+    ...(Array.isArray(skill.external_dependencies) ? skill.external_dependencies : []),
   ]
     .map(normalizeIntegrationRequirement)
     .filter(Boolean);
-  if (skill.provider_type?.toLowerCase() === 'connector' && skill.provider_id?.trim()) {
-    explicit.push(skill.provider_id.trim().toLowerCase());
+  const providerType = normalizeAIChatSkillId(skill.provider_type);
+  const providerId = normalizeAIChatSkillId(skill.provider_id);
+  if (providerType === 'connector' && providerId) {
+    explicit.push(providerId);
   }
 
   return Array.from(new Set(explicit));
 }
 
-export function isHiddenSystemSkill(skillId: string): boolean {
-  const normalized = normalizeSkillId(skillId);
+export function isHiddenSystemSkill(skillId: unknown): boolean {
+  const normalized = normalizeAIChatSkillId(skillId);
   return (
     normalized === USER_MEMORY_SKILL_ID ||
     normalized === CONSOLE_NAVIGATOR_SKILL_ID ||
@@ -82,6 +81,7 @@ export function isHiddenSystemSkill(skillId: string): boolean {
 }
 
 export function isSkillUserSelectable(skill: AIChatSkillMetadata): boolean {
+  if (!normalizeAIChatSkillId(skill.skill_id)) return false;
   if (typeof skill.exposure?.user_selectable === 'boolean') {
     return skill.exposure.user_selectable;
   }
@@ -93,7 +93,7 @@ export function isSkillSelectableForCaller(
   caller: 'aichat' | 'agent'
 ): boolean {
   if (!isSkillUserSelectable(skill)) return false;
-  const callers = skill.supported_callers ?? [];
+  const callers = Array.isArray(skill.supported_callers) ? skill.supported_callers : [];
   return callers.length === 0 || callers.includes(caller);
 }
 
@@ -832,18 +832,17 @@ export function getAIChatSkillDisplayInfo(
   skill: AIChatSkillMetadata,
   locale: Locale | string
 ): AIChatSkillDisplayInfo {
-  const systemDisplay = SYSTEM_SKILL_DISPLAY[normalizeSkillId(skill.skill_id)];
-  const fallback = systemDisplay
-    ? getSystemAIChatSkillDisplayInfo(skill.skill_id, locale)
-    : undefined;
+  const skillId = normalizeAIChatSkillId(skill.skill_id);
+  const systemDisplay = SYSTEM_SKILL_DISPLAY[skillId];
+  const fallback = systemDisplay ? getSystemAIChatSkillDisplayInfo(skillId, locale) : undefined;
   const rawCategory = skill.display?.category ?? fallback?.category;
   const category = normalizeSkillCapabilityCategory(rawCategory);
   const tags = pickLocalizedTags(skill.display?.tags, locale);
   const integrationRequirements = getSkillIntegrationRequirements(skill);
-  const useFriendlySystemDisplay = normalizeSkillId(skill.skill_id) === EXTERNAL_APPS_SKILL_ID;
+  const useFriendlySystemDisplay = skillId === EXTERNAL_APPS_SKILL_ID;
 
   return {
-    skillId: skill.skill_id,
+    skillId,
     label: useFriendlySystemDisplay
       ? (fallback?.label ?? skill.name ?? skill.skill_id)
       : pickLocalizedText(
@@ -882,7 +881,7 @@ function getSystemAIChatSkillDisplayInfo(
   skillId: string,
   locale: Locale | string
 ): AIChatSkillDisplayInfo {
-  const normalizedSkillId = normalizeSkillId(skillId);
+  const normalizedSkillId = normalizeAIChatSkillId(skillId);
   const display = SYSTEM_SKILL_DISPLAY[normalizedSkillId];
   if (!display) {
     const category = normalizeSkillCapabilityCategory(undefined);
@@ -919,7 +918,9 @@ export function buildAIChatSkillDisplayMap(
   locale: Locale | string
 ): AIChatSkillDisplayMap {
   const map = skills.reduce<AIChatSkillDisplayMap>((acc, skill) => {
-    acc[skill.skill_id] = getAIChatSkillDisplayInfo(skill, locale);
+    const skillId = normalizeAIChatSkillId(skill.skill_id);
+    if (!skillId || acc[skillId]) return acc;
+    acc[skillId] = getAIChatSkillDisplayInfo({ ...skill, skill_id: skillId }, locale);
     return acc;
   }, {});
   for (const skillId of Object.keys(SYSTEM_SKILL_DISPLAY)) {
@@ -945,7 +946,7 @@ export function getAIChatSkillToolDisplayName(
   const name = toolName?.trim();
   if (!name) return '';
 
-  const labels = SYSTEM_SKILL_TOOL_LABELS[normalizeSkillId(skillId)]?.[name];
+  const labels = SYSTEM_SKILL_TOOL_LABELS[normalizeAIChatSkillId(skillId)]?.[name];
   if (!labels) return name;
   return pickLocalizedText(labels, locale, name);
 }
@@ -1043,7 +1044,7 @@ export function getAIChatSkillResultDisplay(
   const result = isRecord(invocation.result) ? invocation.result : {};
   const args = isRecord(invocation.arguments) ? invocation.arguments : {};
 
-  if (normalizeSkillId(invocation.skill_id) !== USER_MEMORY_SKILL_ID) {
+  if (normalizeAIChatSkillId(invocation.skill_id) !== USER_MEMORY_SKILL_ID) {
     return null;
   }
 

@@ -182,6 +182,8 @@ func TestOrganizationAllowsSkillID(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive},
 		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive},
+		{ID: skills.SkillImageGenerator, Status: skills.SkillStatusActive},
+		{ID: skills.SkillPromptProfessionalizer, Status: skills.SkillStatusActive},
 	}
 
 	if organizationAllowsSkillID(skills.SkillCalculator, catalog, nil) {
@@ -192,6 +194,29 @@ func TestOrganizationAllowsSkillID(t *testing.T) {
 	}
 	if !organizationAllowsSkillID(skills.SkillAgentKnowledge, catalog, nil) {
 		t.Fatal("organizationAllowsSkillID() = false for runtime-managed skill, want true")
+	}
+	if !organizationAllowsSkillID(skills.SkillPromptProfessionalizer, catalog, []string{skills.SkillImageGenerator}) {
+		t.Fatal("organizationAllowsSkillID() = false for an enabled image-generator dependency, want true")
+	}
+	if organizationAllowsSkillID(skills.SkillPromptProfessionalizer, catalog, []string{skills.SkillCalculator}) {
+		t.Fatal("organizationAllowsSkillID() = true without an enabled dependency owner, want false")
+	}
+}
+
+func TestAgentSkillAuthorizationBindingIDsInheritPromptProfessionalizerBinding(t *testing.T) {
+	got := agentSkillAuthorizationBindingIDs(skills.SkillPromptProfessionalizer, []string{
+		skills.SkillCalculator,
+		skills.SkillImageGenerator,
+		skills.SkillArchitectureDiagram,
+		skills.SkillImageGenerator,
+	})
+	want := []string{
+		skills.SkillPromptProfessionalizer,
+		skills.SkillImageGenerator,
+		skills.SkillArchitectureDiagram,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentSkillAuthorizationBindingIDs() = %#v, want %#v", got, want)
 	}
 }
 

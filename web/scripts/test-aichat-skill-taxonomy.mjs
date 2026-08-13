@@ -31,11 +31,19 @@ const {
 const {
   buildAIChatSkillDisplayMap,
   getAIChatSkillDisplayInfo,
+  getSkillIntegrationRequirements,
   isHiddenSystemSkill,
 } = require('../src/components/chat/variants/aichat/skill-display.ts');
 const {
+  normalizeAIChatSkillIds,
+  normalizeAIChatSkills,
+} = require('../src/components/chat/variants/aichat/skill-identity.ts');
+const {
   AI_CHAT_SKILL_ICON_BY_KEY,
 } = require('../src/components/chat/variants/aichat/skill-icon-registry.ts');
+const {
+  normalizeAgentSkillCandidates,
+} = require('../src/components/agents/agent-runtime/skill-candidates.ts');
 
 assert.equal(SKILL_CAPABILITY_CATEGORIES.length, 10);
 assert.equal(SKILL_SCENARIOS.length, 13);
@@ -44,6 +52,7 @@ assert.equal(normalizeSkillCapabilityCategory(' productivity '), 'office_product
 assert.equal(normalizeSkillCapabilityCategory('visualization'), 'content_creation');
 assert.equal(normalizeSkillCapabilityCategory('document_processing'), 'document_processing');
 assert.equal(normalizeSkillCapabilityCategory('unknown-provider-category'), 'other');
+assert.equal(normalizeSkillCapabilityCategory(null), 'other');
 
 assert.deepEqual(
   resolveSkillScenarios({
@@ -54,6 +63,7 @@ assert.deepEqual(
 );
 assert.deepEqual(resolveSkillScenarios({ category: 'database' }), ['data_insights']);
 assert.deepEqual(resolveSkillScenarios({ category: 'unknown-provider-category' }), ['other']);
+assert.deepEqual(resolveSkillScenarios({ category: null, scenarios: {} }), ['other']);
 
 assert.equal(getSkillCapabilityLabel('document_processing', 'zh-Hans'), '文档处理');
 assert.equal(getSkillCapabilityLabel('document_processing', 'en-US'), 'Document processing');
@@ -103,7 +113,73 @@ const catalogIcons = fs
 
 assert.equal(catalogIcons.length, 31);
 assert.equal(new Set(catalogIcons).size, 31, 'built-in Skills should use distinct icons');
-assert.equal(isHiddenSystemSkill('web-search'), true, 'retired Web Search metadata must stay hidden');
+assert.equal(
+  isHiddenSystemSkill('web-search'),
+  true,
+  'retired Web Search metadata must stay hidden'
+);
+assert.equal(
+  isHiddenSystemSkill(undefined),
+  false,
+  'malformed legacy Skill metadata must not crash display normalization'
+);
+assert.equal(
+  getAIChatSkillDisplayInfo(
+    {
+      ...systemSkillWithApiTaxonomy,
+      skill_id: undefined,
+      name: 'Legacy image generator',
+      display: undefined,
+    },
+    'en-US'
+  ).label,
+  'Legacy image generator',
+  'malformed legacy Skill metadata must keep the Agent page renderable'
+);
+
+const normalizedAgentSkillCandidates = normalizeAgentSkillCandidates([
+  { skill_id: undefined, name: 'Legacy image generator' },
+  { skill_id: null, name: 'Legacy image generator' },
+  { skill_id: '   ', name: 'Legacy image generator' },
+  { skill_id: ' image-generator ', name: ' Image generator ' },
+  { skill_id: 'IMAGE-GENERATOR', name: 'Duplicate image generator' },
+]);
+assert.deepEqual(
+  normalizedAgentSkillCandidates.map(candidate => ({
+    skill_id: candidate.skill_id,
+    name: candidate.name,
+  })),
+  [{ skill_id: 'image-generator', name: 'Image generator' }],
+  'Agent Skill candidates without a usable skill_id must be ignored'
+);
+assert.deepEqual(normalizeAIChatSkillIds([' TIME ', null, undefined, 'time', 42]), ['time']);
+assert.deepEqual(
+  normalizeAIChatSkills([
+    null,
+    { skill_id: undefined, name: 'Legacy image generator' },
+    { skill_id: ' IMAGE-GENERATOR ', name: '' },
+    { skill_id: 'image-generator', name: 'Duplicate image generator' },
+  ]).map(skill => ({ skill_id: skill.skill_id, name: skill.name })),
+  [{ skill_id: 'image-generator', name: 'image-generator' }],
+  'all AIChat Skill catalog consumers must receive canonical, usable identities'
+);
+const normalizedDisplayMap = buildAIChatSkillDisplayMap(
+  [{ ...systemSkillWithApiTaxonomy, skill_id: ' TIME ' }],
+  'en-US'
+);
+assert.equal(normalizedDisplayMap.time.skillId, 'time');
+assert.equal(normalizedDisplayMap[' TIME '], undefined);
+assert.deepEqual(
+  getSkillIntegrationRequirements({
+    ...systemSkillWithApiTaxonomy,
+    integration_requirements: {},
+    external_dependencies: null,
+    provider_type: null,
+    provider_id: undefined,
+  }),
+  [],
+  'malformed optional dependency metadata must not crash the Skill catalog'
+);
 
 const skillSettingsSource = fs.readFileSync(
   path.resolve('src/components/dashboard/organization/aichat-skill-settings-section.tsx'),

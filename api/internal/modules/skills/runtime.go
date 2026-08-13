@@ -135,10 +135,10 @@ func withRequiredPreflightSkills(ids []string) []string {
 	hasPromptProfessionalizer := false
 	needsPromptProfessionalizer := false
 	for _, id := range ids {
-		switch normalizeSkillID(id) {
-		case SkillPromptProfessionalizer:
+		if normalizeSkillID(id) == SkillPromptProfessionalizer {
 			hasPromptProfessionalizer = true
-		case SkillImageGenerator, SkillArchitectureDiagram, SkillChartGenerator:
+		}
+		if RequiresPromptProfessionalizerDependency(id) {
 			needsPromptProfessionalizer = true
 		}
 	}
@@ -148,6 +148,15 @@ func withRequiredPreflightSkills(ids []string) []string {
 	out := append([]string{}, ids...)
 	out = append(out, SkillPromptProfessionalizer)
 	return out
+}
+
+func RequiresPromptProfessionalizerDependency(skillID string) bool {
+	switch normalizeSkillID(skillID) {
+	case SkillImageGenerator, SkillArchitectureDiagram, SkillChartGenerator:
+		return true
+	default:
+		return false
+	}
 }
 
 func RequiresPromptProfessionalizerPreflight(skillID string, toolName string) bool {

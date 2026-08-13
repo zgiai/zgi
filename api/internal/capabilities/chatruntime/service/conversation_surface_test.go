@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 )
 
 func TestCreateConversationForChatStoresSurfaceMetadata(t *testing.T) {
@@ -42,6 +44,48 @@ func TestCreateConversationForChatStoresSurfaceMetadata(t *testing.T) {
 	}
 	if conversationRepo.created == nil || conversationRepo.created.Title != "hello from the sidebar" {
 		t.Fatalf("stored conversation title = %q, want first user input", conversationRepo.created.Title)
+	}
+}
+
+func TestCreateConversationForChatGeneratesAgentTitle(t *testing.T) {
+	workspaceID := uuid.New()
+	agentID := uuid.New()
+	titleRequests := make(chan titlegen.GenerateRequest, 1)
+	conversationRepo := &capturingConversationRepo{}
+	svc := &service{
+		repos: &repository.Repositories{
+			Access:       surfaceAccessRepo{},
+			Conversation: conversationRepo,
+		},
+		titleGen: capturingTitleGenerator{
+			requests: titleRequests,
+		},
+	}
+
+	_, err := svc.createConversationForChat(context.Background(), Scope{
+		OrganizationID: uuid.New(),
+		AccountID:      uuid.New(),
+		WorkspaceID:    &workspaceID,
+	}, Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID}, &chatRequestParts{
+		Query: "给我一个漂亮、可爱、美丽、动人的猫咪的描述",
+	})
+	if err != nil {
+		t.Fatalf("createConversationForChat: %v", err)
+	}
+
+	select {
+	case req := <-titleRequests:
+		if req.AppID != agentID.String() {
+			t.Fatalf("title app id = %q, want agent %q", req.AppID, agentID.String())
+		}
+		if req.AppType != runtimemodel.ConversationCallerAgent {
+			t.Fatalf("title app type = %q, want %q", req.AppType, runtimemodel.ConversationCallerAgent)
+		}
+		if len(req.Messages) != 1 || req.Messages[0].Role != "user" || req.Messages[0].Content == "" {
+			t.Fatalf("title messages = %#v, want first agent user input", req.Messages)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent conversation title generation was not requested")
 	}
 }
 
@@ -246,6 +290,15 @@ type surfaceAccessRepo struct {
 
 func (surfaceAccessRepo) IsOrganizationMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
 	return true, nil
+}
+
+type capturingTitleGenerator struct {
+	requests chan titlegen.GenerateRequest
+}
+
+func (g capturingTitleGenerator) Generate(_ context.Context, req titlegen.GenerateRequest) (*titlegen.GenerateResult, error) {
+	g.requests <- req
+	return &titlegen.GenerateResult{Title: "可爱猫咪描述", Source: titlegen.SourceModel}, nil
 }
 
 type capturingConversationRepo struct {

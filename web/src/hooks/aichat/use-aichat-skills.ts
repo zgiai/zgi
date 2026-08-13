@@ -1,5 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import {
+  normalizeAIChatSkillId,
+  normalizeAIChatSkillIds,
+  normalizeAIChatSkills,
+} from '@/components/chat/variants/aichat/skill-identity';
 import { AGENT_KEYS, AICHAT_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n/translations';
 import { aichatService } from '@/services/aichat.service';
@@ -30,7 +35,7 @@ export function useAIChatSkills(options?: { enabled?: boolean }) {
     queryKey: AICHAT_KEYS.skills(),
     queryFn: async () => {
       const response = await aichatService.listSkills();
-      return response.data ?? [];
+      return normalizeAIChatSkills(response.data);
     },
     enabled: options?.enabled ?? true,
     retry: false,
@@ -42,13 +47,14 @@ export function useAIChatSkills(options?: { enabled?: boolean }) {
  * @description Load one AIChat Skill metadata item for detail displays.
  */
 export function useAIChatSkill(id: string | null | undefined) {
+  const skillId = normalizeAIChatSkillId(id);
   return useQuery({
-    queryKey: AICHAT_KEYS.skill(id ?? ''),
+    queryKey: AICHAT_KEYS.skill(skillId),
     queryFn: async () => {
-      const response = await aichatService.getSkill(id ?? '');
-      return response.data;
+      const response = await aichatService.getSkill(skillId);
+      return normalizeAIChatSkills(response.data ? [response.data] : [])[0] ?? null;
     },
-    enabled: Boolean(id),
+    enabled: Boolean(skillId),
     retry: false,
   });
 }
@@ -62,7 +68,10 @@ export function useAIChatSkillConfig() {
     queryKey: AICHAT_KEYS.skillConfig(),
     queryFn: async () => {
       const response = await aichatService.getSkillConfig();
-      return response.data;
+      return {
+        ...response.data,
+        enabled_skill_ids: normalizeAIChatSkillIds(response.data?.enabled_skill_ids),
+      };
     },
     retry: false,
   });
@@ -78,7 +87,10 @@ export function useUpdateAIChatSkillConfig() {
 
   return useMutation({
     mutationFn: ({ payload }: UpdateAIChatSkillConfigVariables) =>
-      aichatService.updateSkillConfig(payload),
+      aichatService.updateSkillConfig({
+        ...payload,
+        enabled_skill_ids: normalizeAIChatSkillIds(payload.enabled_skill_ids),
+      }),
     onSuccess: async (response, variables) => {
       if (variables.silent) {
         return;
@@ -87,7 +99,7 @@ export function useUpdateAIChatSkillConfig() {
       if (response.data) {
         if (!response.data.applied) return;
         queryClient.setQueryData(AICHAT_KEYS.skillConfig(), {
-          enabled_skill_ids: response.data.enabled_skill_ids,
+          enabled_skill_ids: normalizeAIChatSkillIds(response.data.enabled_skill_ids),
         });
       }
 
@@ -123,7 +135,10 @@ export function useAIChatSkillPreference(options?: { enabled?: boolean }) {
     queryKey: AICHAT_KEYS.skillPreference(),
     queryFn: async () => {
       const response = await aichatService.getSkillPreference();
-      return response.data;
+      return {
+        ...response.data,
+        enabled_skill_ids: normalizeAIChatSkillIds(response.data?.enabled_skill_ids),
+      };
     },
     enabled: options?.enabled ?? true,
     retry: false,
@@ -135,9 +150,15 @@ export function useUpdateAIChatSkillPreference() {
 
   return useMutation({
     mutationFn: ({ payload }: UpdateAIChatSkillPreferenceVariables) =>
-      aichatService.updateSkillPreference(payload),
+      aichatService.updateSkillPreference({
+        ...payload,
+        enabled_skill_ids: normalizeAIChatSkillIds(payload.enabled_skill_ids),
+      }),
     onSuccess: async response => {
-      queryClient.setQueryData(AICHAT_KEYS.skillPreference(), response.data);
+      queryClient.setQueryData(AICHAT_KEYS.skillPreference(), {
+        ...response.data,
+        enabled_skill_ids: normalizeAIChatSkillIds(response.data?.enabled_skill_ids),
+      });
       await queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skills() });
     },
   });

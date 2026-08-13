@@ -296,14 +296,14 @@ func (s *service) createConversationForChat(ctx context.Context, scope Scope, ca
 	if err != nil {
 		return nil, err
 	}
-	if s.titleGen == nil || normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+	if s.titleGen == nil {
 		return conversation, nil
 	}
-	s.generateConversationTitleAsync(ctx, scope, conversation, parts, initialTitle)
+	s.generateConversationTitleAsync(ctx, scope, caller, conversation, parts, initialTitle)
 	return conversation, nil
 }
 
-func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parts *chatRequestParts, initialTitle string) {
+func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, caller Caller, conversation *runtimemodel.Conversation, parts *chatRequestParts, initialTitle string) {
 	if conversation == nil || s.titleGen == nil {
 		return
 	}
@@ -317,6 +317,7 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 	}
 	conversationID := conversation.ID
 	workspaceID := conversation.WorkspaceID
+	appID, appType := conversationTitleAppContext(caller, conversationID)
 	go func() {
 		titleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleGenerationTimeout)
 		defer cancel()
@@ -325,8 +326,8 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 			OrganizationID:    scope.OrganizationID,
 			AccountID:         scope.AccountID,
 			WorkspaceID:       workspaceID,
-			AppID:             conversationID.String(),
-			AppType:           runtimemodel.MessageBillingReasonSourceAIChat,
+			AppID:             appID,
+			AppType:           appType,
 			SessionID:         conversationID.String(),
 			ConversationID:    conversationID.String(),
 			Messages:          []titlegen.Message{{Role: "user", Content: query}},
@@ -336,7 +337,7 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 			PreferredUseCase:  string(llmmodelmodel.UseCaseTextChat),
 		})
 		if err != nil {
-			logger.WarnContext(titleCtx, "failed to generate aichat conversation title", "conversation_id", conversationID.String(), err)
+			logger.WarnContext(titleCtx, "failed to generate chat runtime conversation title", "conversation_id", conversationID.String(), "caller_type", normalizeCallerType(caller.Type), err)
 			return
 		}
 		title := normalizeTitle(result.Title, initialTitle)
@@ -344,9 +345,19 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 			return
 		}
 		if err := s.repos.Conversation.UpdateScoped(titleCtx, conversationID, scope.OrganizationID, scope.AccountID, map[string]interface{}{"title": title}); err != nil {
-			logger.WarnContext(titleCtx, "failed to update generated aichat conversation title", "conversation_id", conversationID.String(), err)
+			logger.WarnContext(titleCtx, "failed to update generated chat runtime conversation title", "conversation_id", conversationID.String(), "caller_type", normalizeCallerType(caller.Type), err)
 		}
 	}()
+}
+
+func conversationTitleAppContext(caller Caller, conversationID uuid.UUID) (string, string) {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+		if caller.ID != nil && *caller.ID != uuid.Nil {
+			return caller.ID.String(), runtimemodel.ConversationCallerAgent
+		}
+		return conversationID.String(), runtimemodel.ConversationCallerAgent
+	}
+	return conversationID.String(), runtimemodel.MessageBillingReasonSourceAIChat
 }
 
 func (s *service) resolveParentMessage(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parentIDRaw string) (*uuid.UUID, error) {

@@ -7,6 +7,7 @@ import { createAgentDraftTransport, useAIChatController } from '@/components/cha
 import { buildOpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import { findAIChatModelProps } from '@/components/chat/variants/aichat/model-props';
 import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
+import { normalizeAIChatSkillIds } from '@/components/chat/variants/aichat/skill-identity';
 import type {
   ModelSelectorModelProps,
   ModelSelectorParameterValue,
@@ -39,7 +40,6 @@ import type {
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
-  AgentSkillBindingCandidate,
   AgentWorkflowBinding,
   AgentWorkflowBindingCandidate,
   AgentPublishedVersionRollbackPreview,
@@ -70,6 +70,7 @@ import {
   normalizeAgentIntegrationBindings,
   normalizeAgentWorkflowBindings,
 } from '../binding-rebase-merge';
+import { agentSkillCandidateToMetadata, normalizeAgentSkillCandidates } from '../skill-candidates';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
 
@@ -176,26 +177,6 @@ function createAgentKnowledgeDatasetFallback(
     is_editor: false,
     can_edit: false,
     load_error: loadError,
-  };
-}
-
-function candidateToSkillMetadata(candidate: AgentSkillBindingCandidate): AIChatSkillMetadata {
-  return {
-    skill_id: candidate.skill_id,
-    source: candidate.source === 'custom' ? 'custom' : 'system',
-    name: candidate.name,
-    description: candidate.description ?? '',
-    when_to_use: candidate.when_to_use ?? '',
-    runtime_type: (candidate.runtime_type || 'prompt') as AIChatSkillMetadata['runtime_type'],
-    enabled: true,
-    display: candidate.display,
-    has_tools: candidate.has_tools,
-    has_references: candidate.has_references,
-    has_scripts: candidate.has_scripts,
-    scripts_supported: candidate.scripts_supported,
-    max_calls_per_turn: 0,
-    timeout_seconds: 0,
-    required_config: candidate.required_config,
   };
 }
 
@@ -446,7 +427,9 @@ export function useAgentRuntimePageModel(agentId: string) {
   ]);
 
   const selectableSkills = useMemo(() => {
-    return (skillCandidatesResponse?.data.data ?? []).map(candidateToSkillMetadata);
+    return normalizeAgentSkillCandidates(skillCandidatesResponse?.data.data).map(
+      agentSkillCandidateToMetadata
+    );
   }, [skillCandidatesResponse?.data.data]);
   const selectedDatasetQueries = useQueries({
     queries: knowledgeDatasetIds.map(datasetId => ({
@@ -494,7 +477,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     [integrationCandidates]
   );
   const normalizedSelectedSkillIds = useMemo(
-    () => Array.from(new Set(selectedSkillIds.map(id => id.trim()).filter(Boolean))),
+    () => normalizeAIChatSkillIds(selectedSkillIds),
     [selectedSkillIds]
   );
   const selectedSkills = useMemo(

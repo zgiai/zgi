@@ -96,6 +96,7 @@ import {
   buildAIChatSkillDisplayMap,
   isSkillSelectableForCaller,
 } from '@/components/chat/variants/aichat/skill-display';
+import { normalizeAIChatSkillIds } from '@/components/chat/variants/aichat/skill-identity';
 import { AIChatSkillPreferenceDialog } from '@/components/chat/variants/aichat/skill-preference-dialog';
 import {
   AIChatConnectedAppsDialog,
@@ -227,8 +228,8 @@ function toolGovernanceDecisionKey(
   return [conversationId, messageId, correlationId].map(value => value?.trim() ?? '').join(':');
 }
 
-function normalizeSkillIds(skillIds: string[]) {
-  return Array.from(new Set(skillIds.filter(Boolean))).sort();
+function normalizeSkillIds(skillIds: unknown) {
+  return normalizeAIChatSkillIds(skillIds).sort();
 }
 
 function areSkillIdsEqual(left: string[], right: string[]) {

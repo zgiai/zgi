@@ -15,6 +15,7 @@ import {
   isSkillUserSelectable,
   type AIChatSkillDisplayInfo,
 } from '@/components/chat/variants/aichat/skill-display';
+import { normalizeAIChatSkillIds } from '@/components/chat/variants/aichat/skill-identity';
 import {
   SKILL_CAPABILITY_CATEGORIES,
   SKILL_SCENARIOS,
@@ -126,19 +127,17 @@ const AUTO_SAVE_LABEL_KEYS = {
   error: 'organization.aichatSkills.autoSave.error',
 } as const satisfies Record<SaveStatus, DashboardSuffix>;
 
-function normalizeSkillIds(ids: string[]): string[] {
-  return Array.from(new Set(ids.map(id => id.trim().toLowerCase()).filter(Boolean))).sort((a, b) =>
-    a.localeCompare(b)
-  );
+function normalizeSkillIds(ids: unknown): string[] {
+  return normalizeAIChatSkillIds(ids).sort((a, b) => a.localeCompare(b));
 }
 
 function getInitialEnabledSkillIds(
   skills: AIChatSkillMetadata[],
   configIds: string[] | undefined
 ): string[] {
-  const manageableIds = new Set(skills.map(skill => skill.skill_id.trim().toLowerCase()));
+  const manageableIds = new Set(skills.map(skill => skill.skill_id));
   const ids = configIds
-    ? configIds.filter(skillId => manageableIds.has(skillId.trim().toLowerCase()))
+    ? normalizeAIChatSkillIds(configIds).filter(skillId => manageableIds.has(skillId))
     : skills.filter(skill => skill.enabled).map(skill => skill.skill_id);
   return normalizeSkillIds(ids);
 }

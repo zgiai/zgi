@@ -292,15 +292,28 @@ func runtimeManagedSkillAvailableForCaller(catalog []skills.SkillDiscoveryMetada
 
 func organizationAllowsSkillID(skillID string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string) bool {
 	id := strings.ToLower(strings.TrimSpace(skillID))
-	metadata, ok := catalogSkillByID(catalog)[id]
+	catalogByID := catalogSkillByID(catalog)
+	metadata, ok := catalogByID[id]
 	if !ok {
 		return false
 	}
 	if !organizationSkillConfigManagesMetadata(metadata) {
 		return true
 	}
-	_, ok = stringSet(organizationEnabled)[id]
-	return ok
+	enabledSet := stringSet(organizationEnabled)
+	if _, ok = enabledSet[id]; ok {
+		return true
+	}
+	if id != skills.SkillPromptProfessionalizer {
+		return false
+	}
+	for enabledID := range enabledSet {
+		dependencyOwner, exists := catalogByID[enabledID]
+		if exists && dependencyOwner.Status != skills.SkillStatusInvalid && skills.RequiresPromptProfessionalizerDependency(enabledID) {
+			return true
+		}
+	}
+	return false
 }
 
 func filterSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMetadata, callerType string) []string {
