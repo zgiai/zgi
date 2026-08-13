@@ -36,7 +36,7 @@ func (s *llmGatewayServiceImpl) GenerateSpeech(
 	if request == nil ||
 		strings.TrimSpace(request.Input) == "" ||
 		strings.TrimSpace(request.Voice) == "" ||
-		strings.TrimSpace(request.ResponseFormat) != speechResponseFormatMP3 ||
+		request.ResponseFormat != speechResponseFormatMP3 ||
 		dst == nil {
 		return fmt.Errorf("%w: input, voice, mp3 format, and destination are required", adapter.ErrInvalidRequest)
 	}

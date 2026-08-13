@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -62,6 +63,8 @@ func TestSpeechHandlerRejectsInvalidBoundaryInput(t *testing.T) {
 		{name: "missing input", contentType: "application/json", body: mustSpeechJSON(t, gateway.SpeechRequest{Model: "seed-tts-2.0", Voice: "voice", ResponseFormat: "mp3"})},
 		{name: "missing voice", contentType: "application/json", body: mustSpeechJSON(t, gateway.SpeechRequest{Model: "seed-tts-2.0", Input: "text", ResponseFormat: "mp3"})},
 		{name: "unsupported format", contentType: "application/json", body: mustSpeechJSON(t, gateway.SpeechRequest{Model: "seed-tts-2.0", Input: "text", Voice: "voice", ResponseFormat: "wav"})},
+		{name: "format with whitespace", contentType: "application/json", body: mustSpeechJSON(t, gateway.SpeechRequest{Model: "seed-tts-2.0", Input: "text", Voice: "voice", ResponseFormat: " mp3 "})},
+		{name: "oversized body", contentType: "application/json", body: mustSpeechJSON(t, gateway.SpeechRequest{Model: "seed-tts-2.0", Input: strings.Repeat("x", speechMaxRequestBodyBytes), Voice: "voice", ResponseFormat: "mp3"})},
 		{name: "unknown field", contentType: "application/json", body: []byte(`{"model":"seed-tts-2.0","input":"text","voice":"voice","response_format":"mp3","speed":2}`)},
 		{name: "trailing JSON", contentType: "application/json", body: append(mustSpeechJSON(t, valid), []byte(` {}`)...)},
 	}

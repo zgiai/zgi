@@ -500,7 +500,7 @@ func (a *ZGICloudAdapter) GenerateSpeech(ctx context.Context, request *adapter.S
 		strings.TrimSpace(request.Model) == "" ||
 		strings.TrimSpace(request.Input) == "" ||
 		strings.TrimSpace(request.Voice) == "" ||
-		strings.TrimSpace(request.ResponseFormat) != zgiCloudSpeechFormat ||
+		request.ResponseFormat != zgiCloudSpeechFormat ||
 		dst == nil {
 		return fmt.Errorf("%w: request id, model, input, voice, mp3 format, and destination are required", adapter.ErrInvalidRequest)
 	}

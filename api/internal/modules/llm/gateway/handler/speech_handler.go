@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	speechJSONContentType   = "application/json"
-	speechMPEGContentType   = "audio/mpeg"
-	speechResponseFormatMP3 = "mp3"
+	speechJSONContentType     = "application/json"
+	speechMPEGContentType     = "audio/mpeg"
+	speechResponseFormatMP3   = "mp3"
+	speechMaxRequestBodyBytes = 64 << 10
 )
 
 type speechService interface {
@@ -41,6 +42,9 @@ func (h *SpeechHandler) Generate(c *gin.Context) {
 		return
 	}
 
+	if c.Request != nil && c.Request.Body != nil {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, speechMaxRequestBodyBytes)
+	}
 	request, ok := decodeSpeechRequest(c.Request)
 	if !ok {
 		writeOpenAIProtocolError(c, invalidRequestProtocolError("Model, input, voice, and mp3 response format are required"))
@@ -84,7 +88,7 @@ func decodeSpeechRequest(request *http.Request) (gateway.SpeechRequest, bool) {
 	if strings.TrimSpace(speechRequest.Model) == "" ||
 		strings.TrimSpace(speechRequest.Input) == "" ||
 		strings.TrimSpace(speechRequest.Voice) == "" ||
-		strings.TrimSpace(speechRequest.ResponseFormat) != speechResponseFormatMP3 {
+		speechRequest.ResponseFormat != speechResponseFormatMP3 {
 		return gateway.SpeechRequest{}, false
 	}
 	return speechRequest, true
