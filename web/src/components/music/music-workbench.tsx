@@ -2,8 +2,13 @@
 
 import * as React from 'react';
 import { toast } from 'sonner';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useMusicModels } from '@/hooks/music/use-music-models';
-import { useMusicTask, useMusicTasks } from '@/hooks/music/use-music-tasks';
+import {
+  useDeleteMusicTask,
+  useMusicTask,
+  useMusicTasks,
+} from '@/hooks/music/use-music-tasks';
 import { useT } from '@/i18n';
 import { API_URL } from '@/lib/config';
 import { musicService } from '@/services/music.service';
@@ -36,6 +41,7 @@ export function MusicWorkbench() {
   const querySearch = React.useDeferredValue(searchInput);
   const [reuseTask, setReuseTask] = React.useState<MusicTask | null>(null);
   const [lyricsTask, setLyricsTask] = React.useState<MusicTask | null>(null);
+  const [deletingTask, setDeletingTask] = React.useState<MusicTask | null>(null);
   const [pendingPlaybackId, setPendingPlaybackId] = React.useState<string | null>(null);
   const [playerTask, setPlayerTask] = React.useState<MusicTask | null>(null);
   const [playerSource, setPlayerSource] = React.useState<string | null>(null);
@@ -68,6 +74,7 @@ export function MusicWorkbench() {
   const list = listQuery.data?.data;
   const detailQuery = useMusicTask(selectedTaskId);
   const selectedTask = detailQuery.data?.data;
+  const deleteTaskMutation = useDeleteMusicTask();
 
   React.useEffect(() => {
     if (models.some(item => item.model === model)) return;
@@ -85,6 +92,7 @@ export function MusicWorkbench() {
     setPlaybackProgress(0);
     playbackSnapshotRef.current = { taskId: null, source: null, playing: false, progress: 0 };
     setDownloadingTaskId(null);
+    setDeletingTask(null);
     setWaveformDataByTaskId({});
   }, [workspaceId]);
 
@@ -199,6 +207,42 @@ export function MusicWorkbench() {
     }
   }
 
+  async function handleDelete() {
+    const task = deletingTask;
+    if (!task || deleteTaskMutation.isPending) return;
+    try {
+      await deleteTaskMutation.mutateAsync(task.id);
+      if (selectedTaskId === task.id) setSelectedTaskId(null);
+      if (reuseTask?.id === task.id) setReuseTask(null);
+      if (lyricsTask?.id === task.id) setLyricsTask(null);
+      if (pendingPlaybackId === task.id) setPendingPlaybackId(null);
+      if (pendingSeek?.taskId === task.id) setPendingSeek(null);
+      if (playerTask?.id === task.id) {
+        setPlayerTask(null);
+        setPlayerSource(null);
+        setPlaybackProgress(0);
+        setIsPlaying(false);
+        playbackSnapshotRef.current = {
+          taskId: null,
+          source: null,
+          playing: false,
+          progress: 0,
+        };
+      }
+      setWaveformDataByTaskId(current => {
+        if (!(task.id in current)) return current;
+        const next = { ...current };
+        delete next[task.id];
+        return next;
+      });
+      if ((list?.items.length ?? 0) === 1 && page > 1) setPage(current => current - 1);
+      setDeletingTask(null);
+      toast.success(t('deleteSuccess'));
+    } catch (error) {
+      toast.error(getErrorMessage(error) || t('deleteFailed'));
+    }
+  }
+
   const handleWaveformChange = React.useCallback((taskId: string, waveform: MusicWaveformData) => {
     setWaveformDataByTaskId(current =>
       current[taskId] === waveform ? current : { ...current, [taskId]: waveform }
@@ -260,7 +304,11 @@ export function MusicWorkbench() {
           onShowLyrics={setLyricsTask}
           onReuse={handleReuse}
           onDownload={task => void handleDownload(task)}
+          onDelete={setDeletingTask}
           downloadingTaskId={downloadingTaskId}
+          deletingTaskId={
+            deleteTaskMutation.isPending ? (deleteTaskMutation.variables ?? null) : null
+          }
           searchInput={searchInput}
           onSearchChange={value => {
             setSearchInput(value);
@@ -289,6 +337,17 @@ export function MusicWorkbench() {
         task={lyricsTask}
         open={Boolean(lyricsTask)}
         onOpenChange={open => !open && setLyricsTask(null)}
+      />
+      <ConfirmDialog
+        open={Boolean(deletingTask)}
+        onOpenChange={open => !open && setDeletingTask(null)}
+        title={t('deleteTitle')}
+        description={t('deleteDescription')}
+        confirmText={t('deleteConfirm')}
+        cancelText={t('cancel')}
+        onConfirm={() => void handleDelete()}
+        loading={deleteTaskMutation.isPending}
+        variant="warning"
       />
     </div>
   );

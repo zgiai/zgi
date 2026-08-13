@@ -47,6 +47,10 @@ export class MusicService extends BaseService {
   getTask(id: string): Promise<ApiResponseData<MusicTask>> {
     return this.request('get', `/tasks/${encodeURIComponent(id)}`);
   }
+
+  deleteTask(id: string): Promise<ApiResponseData<{ deleted: boolean }>> {
+    return this.request('delete', `/tasks/${encodeURIComponent(id)}`);
+  }
 }
 
 export const musicService = new MusicService();

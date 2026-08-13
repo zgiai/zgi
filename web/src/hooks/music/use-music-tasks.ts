@@ -49,3 +49,19 @@ export function useCreateMusicTasks() {
     },
   });
 }
+
+export function useDeleteMusicTask() {
+  const queryClient = useQueryClient();
+  const workspaceId = useCurrentWorkspace()?.id ?? '';
+
+  return useMutation({
+    mutationFn: (id: string) => {
+      if (!workspaceId) throw new Error('Workspace context is required');
+      return musicService.deleteTask(id);
+    },
+    onSuccess: async (_response, id) => {
+      queryClient.removeQueries({ queryKey: MUSIC_KEYS.detail(workspaceId, id) });
+      await queryClient.invalidateQueries({ queryKey: MUSIC_KEYS.lists(workspaceId) });
+    },
+  });
+}
