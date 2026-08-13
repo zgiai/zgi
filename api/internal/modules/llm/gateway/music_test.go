@@ -22,6 +22,41 @@ import (
 
 const musicGatewayTestModel = "music-3.0"
 
+func TestGenerateLyricsUsesOfficialHTTPTransport(t *testing.T) {
+	organizationID := uuid.New()
+	requestID := uuid.NewString()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/v1/internal/audio/music/lyrics"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get(headerZGIBillingOrganizationID), organizationID.String(); got != want {
+			t.Fatalf("billing organization = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get(headerZGIRequestID), requestID; got != want {
+			t.Fatalf("request id = %q, want %q", got, want)
+		}
+		_, _ = w.Write([]byte(`{"code":0,"data":{"title":"雨后的木吉他","style_tags":["Folk"],"lyrics":"[Verse]\n雨停在黄昏以后"}}`))
+	}))
+	defer server.Close()
+	setMusicGatewayTestConfig(t, server.URL)
+
+	service := newMusicGatewayTestService(t, organizationID, true)
+	result, err := service.GenerateLyrics(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, &LyricsRequest{
+		RequestID: requestID,
+		Model:     musicGatewayTestModel,
+		Prompt:    "一首温暖的民谣",
+	})
+	if err != nil {
+		t.Fatalf("GenerateLyrics() error = %v", err)
+	}
+	if result.Title != "雨后的木吉他" || result.Lyrics == "" {
+		t.Fatalf("GenerateLyrics() result = %#v", result)
+	}
+}
+
 var errMusicDestinationWrite = errors.New("music destination write failed")
 
 type failingMusicWriter struct{}

@@ -95,6 +95,9 @@ type LLMGatewayService interface {
 	// GenerateMusic creates one complete MP3 track.
 	GenerateMusic(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *MusicRequest, dst io.Writer) error
 
+	// GenerateLyrics creates complete lyrics for a later music generation call.
+	GenerateLyrics(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *LyricsRequest) (*adapter.LyricsResult, error)
+
 	// CompensateMusicDelivery resolves billing after a generated track cannot be delivered.
 	CompensateMusicDelivery(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, requestID string) error
 

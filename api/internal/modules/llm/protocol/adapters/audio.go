@@ -39,6 +39,11 @@ type MusicCapable interface {
 	GenerateMusic(ctx context.Context, request *MusicRequest, dst io.Writer) error
 }
 
+// LyricsCapable generates complete lyrics for a later music generation call.
+type LyricsCapable interface {
+	GenerateLyrics(ctx context.Context, request *LyricsRequest) (*LyricsResult, error)
+}
+
 // MusicCompensationCapable resolves billing after the trusted caller cannot
 // durably deliver a generated file. It distinguishes refunded and no-charge terminal states.
 type MusicCompensationCapable interface {
@@ -84,4 +89,18 @@ type MusicRequest struct {
 	Prompt         string    `json:"prompt"`
 	Lyrics         string    `json:"lyrics"`
 	ResponseFormat string    `json:"response_format"`
+}
+
+// LyricsRequest carries one provider-authored lyrics request.
+type LyricsRequest struct {
+	RequestID string `json:"-"`
+	Model     string `json:"model"`
+	Prompt    string `json:"prompt"`
+}
+
+// LyricsResult contains complete lyrics and display metadata.
+type LyricsResult struct {
+	Title     string   `json:"title"`
+	StyleTags []string `json:"style_tags"`
+	Lyrics    string   `json:"lyrics"`
 }

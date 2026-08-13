@@ -67,6 +67,7 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
+	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
 	filegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
 	files_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
@@ -819,6 +820,36 @@ func (c *ServiceContainer) StopScheduler() {
 func (c *ServiceContainer) GetLLMClient() llm_client.LLMClient {
 	c.initLLMClient()
 	return c.llmClient
+}
+
+// GetMusicGenerator returns the model generation capability consumed by Music.
+func (c *ServiceContainer) GetMusicGenerator() musicmodule.Generator {
+	c.initLLMClient()
+	generator, ok := c.llmClient.(musicmodule.Generator)
+	if !ok {
+		panic("llm client does not support music generation")
+	}
+	return generator
+}
+
+// GetMusicLyricsGenerator returns the Console-backed structured lyrics capability.
+func (c *ServiceContainer) GetMusicLyricsGenerator() musicmodule.LyricsGenerator {
+	c.initLLMClient()
+	generator, ok := c.llmClient.(musicmodule.LyricsGenerator)
+	if !ok {
+		panic("llm client does not support lyrics generation")
+	}
+	return generator
+}
+
+// GetMusicDeliveryCompensator returns the billing resolution capability consumed by Music.
+func (c *ServiceContainer) GetMusicDeliveryCompensator() musicmodule.DeliveryCompensator {
+	c.initLLMClient()
+	compensator, ok := c.llmClient.(musicmodule.DeliveryCompensator)
+	if !ok {
+		panic("llm client does not support music delivery compensation")
+	}
+	return compensator
 }
 
 // EnsureLLMClient initializes LLM client once and enforces fail-fast in CLOUD mode.

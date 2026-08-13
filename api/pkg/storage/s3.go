@@ -107,6 +107,27 @@ func (s *S3Storage) Load(key string) ([]byte, error) {
 	return io.ReadAll(result.Body)
 }
 
+func (s *S3Storage) PresignedGetURL(key string, options PresignedGetOptions) (string, error) {
+	if options.Expires <= 0 {
+		return "", fmt.Errorf("presigned GET URL expiry must be positive")
+	}
+
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(s.config.BucketName),
+		Key:    aws.String(s.wrapperFolderFilename(key)),
+	}
+	if options.ResponseContentType != "" {
+		input.ResponseContentType = aws.String(options.ResponseContentType)
+	}
+
+	request, _ := s.client.GetObjectRequest(input)
+	url, err := request.Presign(options.Expires)
+	if err != nil {
+		return "", fmt.Errorf("failed to presign S3 object download: %w", err)
+	}
+	return url, nil
+}
+
 func (s *S3Storage) LoadStream(key string) (<-chan []byte, error) {
 	objectKey := s.wrapperFolderFilename(key)
 

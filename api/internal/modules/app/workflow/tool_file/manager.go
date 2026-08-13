@@ -19,7 +19,10 @@ import (
 
 const DefaultTemporaryToolFileTTL = 7 * 24 * time.Hour
 
-var ErrToolFileExpired = errors.New("tool file expired")
+var (
+	ErrToolFileExpired   = errors.New("tool file expired")
+	errToolFileDirectURL = errors.New("failed to create direct file URL")
+)
 
 // ToolFileManager manages tool files in the system
 type ToolFileManager struct {
@@ -203,6 +206,28 @@ func (tm *ToolFileManager) GetFileBinary(ctx context.Context, toolFileID string)
 	}
 
 	return fileData, toolFile.MimeType, nil
+}
+
+// GetPresignedFileURL returns a direct storage URL when the configured backend
+// supports it. The boolean is false for local and other proxy-only backends.
+func (tm *ToolFileManager) GetPresignedFileURL(ctx context.Context, toolFileID string, expires time.Duration) (string, bool, error) {
+	presigner, ok := tm.storage.(storage.PresignedGetURLStorage)
+	if !ok {
+		return "", false, nil
+	}
+
+	toolFile, err := tm.GetToolFileByID(ctx, toolFileID)
+	if err != nil {
+		return "", true, err
+	}
+	url, err := presigner.PresignedGetURL(toolFile.FileKey, storage.PresignedGetOptions{
+		Expires:             expires,
+		ResponseContentType: toolFileResponseContentType(toolFile.MimeType),
+	})
+	if err != nil {
+		return "", true, fmt.Errorf("%w: %v", errToolFileDirectURL, err)
+	}
+	return url, true, nil
 }
 
 // GetFileStream retrieves file stream by tool file ID
