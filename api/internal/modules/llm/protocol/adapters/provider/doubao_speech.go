@@ -135,17 +135,21 @@ func (a *DoubaoAdapter) GenerateSpeech(
 }
 
 func resolveDoubaoAudioEndpoint(config *adapter.AdapterConfig, path string) string {
+	baseURL := doubaoAudioBaseURL(config)
+	if strings.HasSuffix(baseURL, doubaoAudioAPIPrefix) {
+		path = strings.TrimPrefix(path, doubaoAudioAPIPrefix)
+	}
+	return baseURL + path
+}
+
+func doubaoAudioBaseURL(config *adapter.AdapterConfig) string {
 	baseURL := doubaoAudioDefaultBaseURL
 	if config != nil && config.CustomParams != nil {
 		if configured, ok := config.CustomParams[doubaoAudioBaseURLParam].(string); ok && strings.TrimSpace(configured) != "" {
 			baseURL = strings.TrimSpace(configured)
 		}
 	}
-	baseURL = strings.TrimRight(baseURL, "/")
-	if strings.HasSuffix(baseURL, doubaoAudioAPIPrefix) {
-		path = strings.TrimPrefix(path, doubaoAudioAPIPrefix)
-	}
-	return baseURL + path
+	return strings.TrimRight(baseURL, "/")
 }
 
 func doubaoAudioHeaders(config *adapter.AdapterConfig, model string) map[string]string {

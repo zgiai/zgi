@@ -105,7 +105,7 @@ func (a *DoubaoAdapter) GetProviderInfo() *adapter.ProviderInfo {
 		DisplayName:  "Doubao",
 		Description:  "ByteDance Ark Doubao models",
 		BaseURL:      a.baseURL,
-		Capabilities: []string{"chat", "stream", "responses", "embedding", "image", "video"},
+		Capabilities: []string{"chat", "stream", "responses", "embedding", "image", "video", "speech_generation", "transcription"},
 		Version:      "api/v3",
 	}
 }
