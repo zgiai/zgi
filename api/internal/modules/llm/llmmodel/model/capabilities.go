@@ -29,6 +29,7 @@ type ModelEndpoints struct {
 	Moderation       bool `json:"moderation" gorm:"default:false"`
 	Videos           bool `json:"videos" gorm:"default:false"`
 	ImageEdit        bool `json:"image_edit" gorm:"default:false"`
+	MusicGeneration  bool `json:"music_generation" gorm:"default:false"`
 }
 
 // ModelFeatures represents feature capabilities of the model
@@ -331,6 +332,8 @@ func canonicalUseCase(value string) string {
 		return string(UseCaseImageGen)
 	case "video", "video-generation", "videos":
 		return string(UseCaseVideoGen)
+	case "music", "music-generation":
+		return string(UseCaseMusicGen)
 	case "tts", "speech":
 		return string(UseCaseTextToSpeech)
 	case "stt", "transcription":
@@ -350,6 +353,8 @@ func InferUseCasesFromLegacyType(modelType string) []string {
 		return []string{string(UseCaseRerank)}
 	case "image", "image-gen", "image-generation":
 		return []string{string(UseCaseImageGen)}
+	case "music", "music-gen", "music-generation":
+		return []string{string(UseCaseMusicGen)}
 	case "tts", "speech":
 		return []string{string(UseCaseTextToSpeech)}
 	case "stt", "transcription":
@@ -393,6 +398,9 @@ func InferUseCasesFromEndpoints(endpoints ModelEndpoints) []string {
 	if endpoints.Videos {
 		useCases = append(useCases, string(UseCaseVideoGen))
 	}
+	if endpoints.MusicGeneration {
+		useCases = append(useCases, string(UseCaseMusicGen))
+	}
 	return NormalizeUseCases(useCases)
 }
 
@@ -429,6 +437,8 @@ func DefaultEndpointsForUseCases(useCases []string) ModelEndpoints {
 			endpoints.ImageGeneration = true
 		case string(UseCaseVideoGen):
 			endpoints.Videos = true
+		case string(UseCaseMusicGen):
+			endpoints.MusicGeneration = true
 		case string(UseCaseTextToSpeech):
 			endpoints.SpeechGeneration = true
 		case string(UseCaseSpeechToText):

@@ -1396,6 +1396,7 @@ func parsePublishedModelEndpoints(raw map[string]interface{}) *llmmodel.ModelEnd
 		Moderation:       boolValue(raw, "moderation"),
 		Videos:           boolValue(raw, "videos"),
 		ImageEdit:        boolValue(raw, "image_edit"),
+		MusicGeneration:  boolValue(raw, "music_generation"),
 	}
 }
 

@@ -734,6 +734,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 				SpeechGeneration: m.SpeechGeneration,
 				Transcription:    m.Transcription,
 				Translation:      m.Translation,
+				MusicGeneration:  m.MusicGeneration,
 				Moderation:       m.Moderation,
 				Videos:           m.Videos,
 				ImageEdit:        m.ImageEdit,

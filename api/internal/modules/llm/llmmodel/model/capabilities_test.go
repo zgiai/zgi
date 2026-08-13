@@ -15,6 +15,14 @@ func TestWorkflowUsesTextChatWithoutSeparateUseCase(t *testing.T) {
 	assert.NotContains(t, ValidUseCases(), UseCase("workflow"))
 }
 
+func TestMusicGenerationUseCaseMapsToEndpoint(t *testing.T) {
+	endpoints := DefaultEndpointsForUseCases([]string{string(UseCaseMusicGen)})
+
+	require.Contains(t, ValidUseCases(), UseCaseMusicGen)
+	require.True(t, endpoints.MusicGeneration)
+	require.Equal(t, []string{string(UseCaseMusicGen)}, InferUseCasesFromEndpoints(endpoints))
+}
+
 // TestParameterDefinition tests the ParameterDefinition struct
 func TestParameterDefinition(t *testing.T) {
 	t.Run("slider parameter", func(t *testing.T) {

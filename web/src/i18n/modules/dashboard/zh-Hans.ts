@@ -494,6 +494,26 @@ const messages: DashboardMessages = {
         title: '默认生图模型',
         description: '用于根据提示词生成图片，适合控制台和工作流里的生图场景。',
       },
+      'speech-to-text': {
+        title: '默认语音识别模型',
+        description: '用于把智能体中的语音输入转成可编辑文字。',
+      },
+      'text-to-speech': {
+        title: '默认语音生成模型',
+        description: '用于把智能体回答转成可播放语音。',
+        defaultVoice: {
+          label: '默认音色',
+          selectPlaceholder: '选择一个音色',
+          unavailablePlaceholder: '当前模型没有可选音色',
+          selectMode: '从模型音色中选择',
+          loadingMode: '读取音色',
+          unavailableMode: '音色不可用',
+          unavailableDescription: '当前模型缺少音色选项，请先修复模型目录配置。',
+          selectDescription: '音色列表由当前模型提供，保存后用于智能体语音播放。',
+          required: '保存前必须选择一个音色。',
+          unsupported: '当前音色不在模型可用列表中，请重新选择。',
+        },
+      },
     },
     parserSettings: {
       title: '解析器配置',

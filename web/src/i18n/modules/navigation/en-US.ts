@@ -46,6 +46,7 @@ const messages = {
   task: 'Tasks',
   image: 'Image',
   video: 'Video',
+  music: 'Music',
   resources: 'Assets',
   developer: 'Developer',
   tools: 'Capabilities',

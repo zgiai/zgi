@@ -100,6 +100,7 @@ message CatalogModelEndpoints {
     bool moderation = 13;
     bool videos = 14;
     bool image_edit = 15;
+    bool music_generation = 16;
 }
 
 message CatalogModelFeatures {

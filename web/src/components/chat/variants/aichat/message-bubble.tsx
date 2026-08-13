@@ -65,6 +65,7 @@ import {
   presentationProjectionFromMetadata,
   splitAnswerAroundTimeline,
 } from '@/components/chat/controllers/aichat/presentation-order';
+import type { AIChatSpeechPlaybackController } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
 
 interface AIChatMessageBubbleProps {
   message: AIChatMessage;
@@ -94,6 +95,7 @@ interface AIChatMessageBubbleProps {
   showContextualOperationStatus?: boolean;
   enableToolGovernanceApprovals?: boolean;
   suppressPendingToolGovernanceApprovals?: boolean;
+  speechPlayback?: AIChatSpeechPlaybackController;
 }
 
 const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
@@ -1170,6 +1172,7 @@ export function AIChatMessageBubble({
   showContextualOperationStatus = false,
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
+  speechPlayback,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const tGlobal = useT();
@@ -1647,6 +1650,12 @@ export function AIChatMessageBubble({
             canSwitchBranch={canSwitchBranch}
             onRegenerate={() => onRegenerate?.(message)}
             onSwitchBranch={onSwitchBranch}
+            speechPhase={
+              speechPlayback?.state.messageId === message.id ? speechPlayback.state.phase : 'idle'
+            }
+            onToggleSpeech={
+              speechPlayback ? () => speechPlayback.toggle(message.id, answer) : undefined
+            }
           />
         ) : null}
       </div>

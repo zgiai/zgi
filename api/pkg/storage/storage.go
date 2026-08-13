@@ -49,6 +49,18 @@ type Storage interface {
 	List(prefix string) ([]FileInfo, error)
 }
 
+// PresignedGetOptions controls a short-lived direct object download URL.
+type PresignedGetOptions struct {
+	Expires             time.Duration
+	ResponseContentType string
+}
+
+// PresignedGetURLStorage is an optional capability for private object storage.
+// Storage backends that do not implement it continue to use the application proxy.
+type PresignedGetURLStorage interface {
+	PresignedGetURL(key string, options PresignedGetOptions) (string, error)
+}
+
 func GetStorage() Storage {
 	storageType := appconfig.Current().Storage.Type
 

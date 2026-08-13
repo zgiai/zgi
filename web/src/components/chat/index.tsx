@@ -24,6 +24,8 @@ import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-br
 import type { AIChatRuntimeSurface } from '@/services/types/aichat';
 import type { ImageRuntimeModel } from '@/services/types/image-runtime';
 import type { ModelUseCase } from '@/services/types/model';
+import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
+import type { AIChatSpeechSynthesizer } from '@/components/chat/variants/aichat/voice/speech-playback';
 
 interface SingleTestVariantProps {
   mode: 'singleTest';
@@ -166,6 +168,8 @@ interface AIChatVariantProps {
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
+  voiceTranscriber?: AIChatVoiceTranscriber;
+  speechSynthesizer?: AIChatSpeechSynthesizer;
 }
 
 type ChatProps =

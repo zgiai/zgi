@@ -23,12 +23,12 @@ export interface WebAppFeatures {
   suggested_questions_after_answer: {
     enabled: boolean;
   };
-  text_to_speech: {
+  text_to_speech?: {
     enabled: boolean;
-    language: string;
-    voice: string;
+    language?: string;
+    voice?: string;
   };
-  speech_to_text: {
+  speech_to_text?: {
     enabled: boolean;
   };
   retriever_resource: {

@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Image as ImageIcon,
   Video,
+  Music2,
   AppWindow,
   Clock3,
   ChevronDown,
@@ -200,6 +201,11 @@ export function ConsoleSidebar({
             title: t('video'),
             href: '/console/work/video',
             icon: Video,
+          },
+          {
+            title: t('music'),
+            href: '/console/work/music',
+            icon: Music2,
           },
           {
             title: t('app'),
@@ -577,6 +583,11 @@ export function ConsoleMobileSidebar({
             title: t('video'),
             href: '/console/work/video',
             icon: Video,
+          },
+          {
+            title: t('music'),
+            href: '/console/work/music',
+            icon: Music2,
           },
           {
             title: t('app'),
