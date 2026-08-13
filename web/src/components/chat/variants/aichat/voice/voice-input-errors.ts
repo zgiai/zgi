@@ -51,7 +51,9 @@ export function getVoiceInputErrorKey(error: unknown): VoiceInputErrorKey {
     return 'unsupported';
   }
   if (code === 'NO_SPEECH_DETECTED' || code === 'EMPTY_AUDIO') return 'noSpeech';
-  if (code === 'TRANSCRIPTION_TIMEOUT') return 'timeout';
+  if (code === 'TRANSCRIPTION_TIMEOUT' || code === 'ECONNABORTED' || code === 'ETIMEDOUT') {
+    return 'timeout';
+  }
   if (code === 'INSUFFICIENT_BALANCE') return 'balance';
   if (code === 'INSUFFICIENT_QUOTA') return 'quota';
   if (code === 'VOICE_UNAVAILABLE') return 'unavailable';

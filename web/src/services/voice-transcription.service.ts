@@ -10,6 +10,8 @@ interface VoiceTranscriptionClientError extends Error {
   code: 'INVALID_VOICE_TARGET' | 'INVALID_VOICE_AUDIO' | 'INVALID_TRANSCRIPTION_RESPONSE';
 }
 
+const VOICE_TRANSCRIPTION_TIMEOUT_MS = 90_000;
+
 function voiceClientError(
   code: VoiceTranscriptionClientError['code'],
   message: string
@@ -44,6 +46,7 @@ const requestConfig = (signal: AbortSignal) => ({
   retryAttemptsOverride: 0,
   signal,
   skipErrorHandling: true,
+  timeout: VOICE_TRANSCRIPTION_TIMEOUT_MS,
 });
 
 export async function transcribeAgentDraftVoice(

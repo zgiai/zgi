@@ -485,12 +485,7 @@ export default function ModelSettingsPage() {
                         <SelectContent>
                           {defaultVoiceOptions.map(voice => (
                             <SelectItem key={voice.value} value={voice.value}>
-                              <span className="flex min-w-0 flex-col gap-0.5">
-                                <span className="truncate text-sm">{voice.label}</span>
-                                <span className="truncate font-mono text-[11px] text-muted-foreground">
-                                  {voice.value}
-                                </span>
-                              </span>
+                              <span className="truncate text-sm">{voice.label}</span>
                             </SelectItem>
                           ))}
                         </SelectContent>

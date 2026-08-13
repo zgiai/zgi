@@ -167,6 +167,7 @@ assert.deepEqual(draftCalls[0][2], {
   retryAttemptsOverride: 0,
   signal: abortController.signal,
   skipErrorHandling: true,
+  timeout: 90_000,
 });
 
 assert.equal(
@@ -176,8 +177,13 @@ assert.equal(
 assert.equal(webAppCalls.length, 1);
 assert.equal(webAppCalls[0][0], '/console/api/webapps/webapp%20two/runtime/audio/transcriptions');
 assert.strictEqual(webAppCalls[0][1], pcm);
-assert.equal(webAppCalls[0][2].retryAttemptsOverride, 0);
-assert.strictEqual(webAppCalls[0][2].signal, abortController.signal);
+assert.deepEqual(webAppCalls[0][2], {
+  headers: { 'Content-Type': 'audio/pcm' },
+  retryAttemptsOverride: 0,
+  signal: abortController.signal,
+  skipErrorHandling: true,
+  timeout: 90_000,
+});
 
 const originalNavigator = globalThis.navigator;
 const originalWindow = globalThis.window;
@@ -327,6 +333,12 @@ assert.equal(
   'cancelled',
   'Axios cancellation must be treated as an expected user action.'
 );
+assert.equal(
+  voiceErrors.getVoiceInputErrorKey({ code: 'ECONNABORTED' }),
+  'timeout',
+  'Axios timeout must be reported as a transcription timeout.'
+);
+assert.equal(voiceErrors.getVoiceInputErrorKey({ code: 'ETIMEDOUT' }), 'timeout');
 assert.equal(voiceErrors.getVoiceInputErrorKey({ name: 'NotSupportedError' }), 'unsupported');
 assert.equal(voiceErrors.getVoiceInputErrorKey(new Error('provider internals')), 'failed');
 
