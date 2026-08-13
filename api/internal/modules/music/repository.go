@@ -3,12 +3,15 @@ package music
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository interface {
@@ -21,6 +24,7 @@ type Repository interface {
 	Transition(context.Context, uuid.UUID, Status, Status, TaskUpdate) error
 	ListIDsByStatus(context.Context, Status, time.Time, int) ([]uuid.UUID, error)
 	TouchStatus(context.Context, uuid.UUID, Status) error
+	DeleteScopedTerminal(context.Context, Scope, uuid.UUID) error
 }
 
 func (r *GormRepository) ListScoped(ctx context.Context, scope Scope, query ListQuery) ([]*Task, int64, error) {
@@ -217,6 +221,55 @@ func (r *GormRepository) TouchStatus(ctx context.Context, id uuid.UUID, status S
 		return ErrInvalidTransition
 	}
 	return nil
+}
+
+func (r *GormRepository) DeleteScopedTerminal(ctx context.Context, scope Scope, id uuid.UUID) error {
+	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil || id == uuid.Nil {
+		return ErrInvalidRequest
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var task Task
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(
+				"id = ? AND organization_id = ? AND workspace_id = ? AND account_id = ?",
+				id,
+				scope.OrganizationID,
+				scope.WorkspaceID,
+				scope.AccountID,
+			).
+			Take(&task).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTaskNotFound
+			}
+			return err
+		}
+		if !isDeletableStatus(task.Status) {
+			return ErrTaskNotDeletable
+		}
+		if task.Status == StatusSucceeded && task.FileID == nil {
+			return ErrTaskAssetMissing
+		}
+		if err := tx.Delete(&task).Error; err != nil {
+			return err
+		}
+		if task.FileID == nil {
+			return nil
+		}
+		result := tx.Where(
+			"id = ? AND tenant_id = ? AND user_id = ?",
+			task.FileID.String(),
+			scope.OrganizationID.String(),
+			scope.AccountID.String(),
+		).Delete(&tool_file.ToolFile{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("delete music tool file metadata: deleted %d rows, want 1", result.RowsAffected)
+		}
+		return nil
+	})
 }
 
 func isReconciledStatus(status Status) bool {

@@ -165,6 +165,18 @@ func (r *memoryRepository) TouchStatus(_ context.Context, id uuid.UUID, status S
 	return nil
 }
 
+func (r *memoryRepository) DeleteScopedTerminal(_ context.Context, scope Scope, id uuid.UUID) error {
+	task, err := r.GetScoped(context.Background(), scope, id)
+	if err != nil {
+		return err
+	}
+	if task.Status != StatusSucceeded && task.Status != StatusFailed {
+		return ErrTaskNotDeletable
+	}
+	delete(r.tasks, id)
+	return nil
+}
+
 type dispatcherStub struct {
 	generated      uuid.UUID
 	generateCalls  int

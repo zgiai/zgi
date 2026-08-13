@@ -34,6 +34,7 @@ type Dispatcher interface {
 type AssetStore interface {
 	Save(context.Context, *Task, []byte) (string, error)
 	Delete(context.Context, string) error
+	DeleteStoredObject(context.Context, string) error
 	URL(context.Context, string) (string, error)
 }
 
@@ -146,6 +147,31 @@ func (s *Service) List(ctx context.Context, scope Scope, request ListRequest) (*
 		PageSize: query.PageSize,
 		HasMore:  int64(query.Page)*int64(query.PageSize) < total,
 	}, nil
+}
+
+func (s *Service) Delete(ctx context.Context, scope Scope, id uuid.UUID) error {
+	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil || id == uuid.Nil {
+		return ErrInvalidRequest
+	}
+	task, err := s.repo.GetScoped(ctx, scope, id)
+	if err != nil {
+		return err
+	}
+	if !isDeletableStatus(task.Status) {
+		return ErrTaskNotDeletable
+	}
+	if task.Status == StatusSucceeded && task.FileID == nil {
+		return ErrTaskAssetMissing
+	}
+	if task.FileID != nil {
+		if err := s.assets.DeleteStoredObject(ctx, task.FileID.String()); err != nil {
+			return fmt.Errorf("delete music storage object: %w", err)
+		}
+	}
+	if err := s.repo.DeleteScopedTerminal(ctx, scope, id); err != nil {
+		return fmt.Errorf("delete music task metadata: %w", err)
+	}
+	return nil
 }
 
 func normalizeCreateRequest(scope Scope, request CreateRequest) (CreateRequest, error) {

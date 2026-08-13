@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -209,5 +210,82 @@ func TestRepositoryTreatsTaskSearchWildcardsLiterally(t *testing.T) {
 	}
 	if total != 1 || len(items) != 1 || items[0].ID != literal.ID {
 		t.Fatalf("ListScoped() = total %d, items %#v; want only literal wildcard match", total, items)
+	}
+}
+
+func TestRepositoryDeletesTerminalTaskAndToolFileMetadataAtomically(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:music-delete?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&Task{}, &tool_file.ToolFile{}); err != nil {
+		t.Fatal(err)
+	}
+	scope := testScope()
+	fileID := uuid.New()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusSucceeded
+	task.FileID = &fileID
+	file := &tool_file.ToolFile{
+		ID:        fileID.String(),
+		UserID:    scope.AccountID.String(),
+		TenantID:  scope.OrganizationID.String(),
+		FileKey:   "tools/" + scope.OrganizationID.String() + "/music.mp3",
+		MimeType:  "audio/mpeg",
+		Name:      "music.mp3",
+		Lifecycle: string(tool_file.ToolFileLifecyclePersistent),
+	}
+	if err := db.Create(file).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepository(db)
+	if err := repo.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.DeleteScopedTerminal(t.Context(), scope, task.ID); err != nil {
+		t.Fatalf("DeleteScopedTerminal() error = %v", err)
+	}
+	var taskCount, fileCount int64
+	if err := db.Model(&Task{}).Where("id = ?", task.ID).Count(&taskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&tool_file.ToolFile{}).Where("id = ?", file.ID).Count(&fileCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 0 || fileCount != 0 {
+		t.Fatalf("remaining task/file metadata = %d/%d, want 0/0", taskCount, fileCount)
+	}
+}
+
+func TestRepositoryRollsBackTaskDeletionWhenToolFileMetadataIsMissing(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:music-delete-rollback?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&Task{}, &tool_file.ToolFile{}); err != nil {
+		t.Fatal(err)
+	}
+	scope := testScope()
+	fileID := uuid.New()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusSucceeded
+	task.FileID = &fileID
+	repo := NewRepository(db)
+	if err := repo.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.DeleteScopedTerminal(t.Context(), scope, task.ID); err == nil {
+		t.Fatal("DeleteScopedTerminal() error = nil, want missing tool file metadata error")
+	}
+	if _, err := repo.Get(t.Context(), task.ID); err != nil {
+		t.Fatalf("task must remain after transaction rollback: %v", err)
 	}
 }

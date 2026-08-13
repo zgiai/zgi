@@ -158,3 +158,33 @@ func TestDeleteToolFileKeepsMetadataWhenStorageObjectStillExists(t *testing.T) {
 		t.Fatalf("tool file metadata count = %d, want 1", count)
 	}
 }
+
+func TestDeleteStoredObjectAllowsRetryAfterObjectIsAlreadyMissing(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:tool-file-delete-retry?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&ToolFile{}); err != nil {
+		t.Fatal(err)
+	}
+	file := &ToolFile{
+		ID:        "file-1",
+		UserID:    "account-1",
+		TenantID:  "organization-1",
+		FileKey:   "tools/organization-1/file-1.mp3",
+		MimeType:  "audio/mpeg",
+		Name:      "music.mp3",
+		Lifecycle: string(ToolFileLifecyclePersistent),
+	}
+	if err := db.Create(file).Error; err != nil {
+		t.Fatal(err)
+	}
+	manager := NewToolFileManager(db, &deleteTestStorage{
+		deleteErr: errors.New("object not found"),
+		exists:    false,
+	})
+
+	if err := manager.DeleteStoredObject(t.Context(), file.ID); err != nil {
+		t.Fatalf("DeleteStoredObject() retry error = %v, want nil for an already missing object", err)
+	}
+}

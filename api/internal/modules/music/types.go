@@ -34,8 +34,14 @@ var (
 	ErrModelUnavailable  = errors.New("music model is unavailable")
 	ErrTaskNotFound      = errors.New("music task not found")
 	ErrTaskConflict      = errors.New("music request ID is already in use")
+	ErrTaskNotDeletable  = errors.New("music task is not deletable")
+	ErrTaskAssetMissing  = errors.New("music task asset is missing")
 	ErrInvalidTransition = errors.New("invalid music task transition")
 )
+
+func isDeletableStatus(status Status) bool {
+	return status == StatusSucceeded || status == StatusFailed
+}
 
 type Scope struct {
 	OrganizationID uuid.UUID

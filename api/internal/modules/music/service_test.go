@@ -287,6 +287,113 @@ func TestNewServiceRejectsMissingAssetStore(t *testing.T) {
 	NewService(newMemoryRepository(), &dispatcherStub{}, availableMusicModelStub(), nil)
 }
 
+func TestServiceDeleteRemovesSucceededTaskAssetBeforeRecord(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusSucceeded
+	fileID := uuid.New()
+	task.FileID = &fileID
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	if err := service.Delete(t.Context(), scope, task.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if assets.deletedStoredObjectID != fileID.String() {
+		t.Fatalf("deleted stored object = %q, want %q", assets.deletedStoredObjectID, fileID.String())
+	}
+	if _, err := repo.Get(t.Context(), task.ID); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted task lookup error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestServiceDeleteKeepsTaskWhenStoredObjectDeletionFails(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusSucceeded
+	fileID := uuid.New()
+	task.FileID = &fileID
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{deleteStoredObjectErr: errors.New("object storage unavailable")}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	if err := service.Delete(t.Context(), scope, task.ID); err == nil {
+		t.Fatal("Delete() error = nil, want storage deletion error")
+	}
+	if _, err := repo.Get(t.Context(), task.ID); err != nil {
+		t.Fatalf("task must remain after storage deletion failure: %v", err)
+	}
+}
+
+func TestServiceDeleteRejectsActiveTask(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	err := service.Delete(t.Context(), scope, task.ID)
+	if !errors.Is(err, ErrTaskNotDeletable) {
+		t.Fatalf("Delete() error = %v, want ErrTaskNotDeletable", err)
+	}
+	if assets.deletedStoredObjectID != "" {
+		t.Fatalf("active task storage deletion = %q, want no deletion", assets.deletedStoredObjectID)
+	}
+}
+
+func TestServiceDeleteRemovesFailedTaskWithoutStoredObject(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusFailed
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	if err := service.Delete(t.Context(), scope, task.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if assets.deletedStoredObjectID != "" {
+		t.Fatalf("failed task storage deletion = %q, want no deletion", assets.deletedStoredObjectID)
+	}
+	if _, err := repo.Get(t.Context(), task.ID); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted failed task lookup error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestServiceDeleteDoesNotExposeTaskOutsideScope(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusFailed
+	repo := newMemoryRepository(task)
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
+	otherScope := scope
+	otherScope.AccountID = uuid.New()
+
+	err := service.Delete(t.Context(), otherScope, task.ID)
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("Delete() error = %v, want ErrTaskNotFound", err)
+	}
+	if _, err := repo.Get(t.Context(), task.ID); err != nil {
+		t.Fatalf("out-of-scope task must remain: %v", err)
+	}
+}
+
 type availableModelsStub struct {
 	models []*llmmodelsvc.AvailableModel
 	err    error

@@ -23,6 +23,7 @@ const (
 	messageModelUnavailable         = "Music model is unavailable"
 	messageTaskNotFound             = "Music task not found"
 	messageTaskConflict             = "Music request ID is already in use"
+	messageTaskNotDeletable         = "Only completed or failed music tasks can be deleted"
 	messageTaskProcessingFailed     = "Failed to process music task"
 )
 
@@ -42,6 +43,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/tasks", h.Create)
 	group.GET("/tasks", h.List)
 	group.GET("/tasks/:id", h.Get)
+	group.DELETE("/tasks/:id", h.Delete)
 }
 
 func (h *Handler) Create(c *gin.Context) {
@@ -122,6 +124,27 @@ func (h *Handler) List(c *gin.Context) {
 	})
 }
 
+func (h *Handler) Delete(c *gin.Context) {
+	scope, ok := musicScope(c)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(strings.TrimSpace(c.Param("id")))
+	if err != nil {
+		writeMusicError(c, http.StatusBadRequest, "INVALID_TASK_ID", messageInvalidTaskID)
+		return
+	}
+	if err := h.service.Delete(c.Request.Context(), scope, id); err != nil {
+		handleMusicServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"code":    "0",
+		"message": "success",
+		"data":    gin.H{"deleted": true},
+	})
+}
+
 func parseListRequest(c *gin.Context) (ListRequest, error) {
 	request := ListRequest{Search: c.Query("search")}
 	if raw := c.Query("page"); raw != "" {
@@ -163,6 +186,8 @@ func handleMusicServiceError(c *gin.Context, err error) {
 		writeMusicError(c, http.StatusNotFound, "TASK_NOT_FOUND", messageTaskNotFound)
 	case errors.Is(err, ErrTaskConflict):
 		writeMusicError(c, http.StatusConflict, "TASK_CONFLICT", messageTaskConflict)
+	case errors.Is(err, ErrTaskNotDeletable):
+		writeMusicError(c, http.StatusConflict, "TASK_NOT_DELETABLE", messageTaskNotDeletable)
 	default:
 		writeMusicError(c, http.StatusInternalServerError, "MUSIC_TASK_FAILED", messageTaskProcessingFailed)
 	}

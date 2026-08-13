@@ -224,3 +224,37 @@ func TestHandlerRejectsOversizedCreateBody(t *testing.T) {
 		t.Fatalf("message = %q, want %q", got, want)
 	}
 }
+
+func TestHandlerRejectsDeletingActiveTask(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	service := NewService(newMemoryRepository(task), &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		util.SetOrganizationID(c, scope.OrganizationID.String())
+		util.SetWorkspaceID(c, scope.WorkspaceID.String())
+		c.Set("account_id", scope.AccountID.String())
+		c.Next()
+	})
+	NewHandler(service).RegisterRoutes(router.Group(""))
+
+	request := httptest.NewRequest(http.MethodDelete, "/music/tasks/"+task.ID.String(), nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if got, want := recorder.Code, http.StatusConflict; got != want {
+		t.Fatalf("DELETE status = %d, want %d; body=%s", got, want, recorder.Body.String())
+	}
+	var response struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != "TASK_NOT_DELETABLE" {
+		t.Fatalf("DELETE code = %q, want TASK_NOT_DELETABLE", response.Code)
+	}
+}
