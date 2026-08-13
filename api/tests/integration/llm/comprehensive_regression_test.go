@@ -127,6 +127,7 @@ func requireLLMIntegrationSchema(db *gorm.DB) error {
 	}{
 		{table: "llm_models", column: "input_price_configured"},
 		{table: "llm_models", column: "output_price_configured"},
+		{table: "llm_models", column: "music_generation"},
 		{table: "llm_custom_models", column: "input_price_configured"},
 		{table: "llm_custom_models", column: "output_price_configured"},
 		{table: "llm_usage_bills", column: "pricing_source"},

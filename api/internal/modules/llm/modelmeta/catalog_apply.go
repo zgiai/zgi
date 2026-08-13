@@ -729,6 +729,7 @@ func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.Mod
 			resolved.Moderation = resolved.Moderation || endpoints.Moderation
 			resolved.Videos = resolved.Videos || endpoints.Videos
 			resolved.ImageEdit = resolved.ImageEdit || endpoints.ImageEdit
+			resolved.MusicGeneration = resolved.MusicGeneration || endpoints.MusicGeneration
 		}
 	}
 
@@ -748,6 +749,7 @@ func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.Mod
 		"moderation":        resolved.Moderation,
 		"videos":            resolved.Videos,
 		"image_edit":        resolved.ImageEdit,
+		"music_generation":  resolved.MusicGeneration,
 	}
 }
 

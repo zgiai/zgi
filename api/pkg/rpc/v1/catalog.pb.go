@@ -710,6 +710,7 @@ type CatalogModelEndpoints struct {
 	Moderation       bool                   `protobuf:"varint,13,opt,name=moderation,proto3" json:"moderation,omitempty"`
 	Videos           bool                   `protobuf:"varint,14,opt,name=videos,proto3" json:"videos,omitempty"`
 	ImageEdit        bool                   `protobuf:"varint,15,opt,name=image_edit,json=imageEdit,proto3" json:"image_edit,omitempty"`
+	MusicGeneration  bool                   `protobuf:"varint,16,opt,name=music_generation,json=musicGeneration,proto3" json:"music_generation,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -845,6 +846,13 @@ func (x *CatalogModelEndpoints) GetVideos() bool {
 func (x *CatalogModelEndpoints) GetImageEdit() bool {
 	if x != nil {
 		return x.ImageEdit
+	}
+	return false
+}
+
+func (x *CatalogModelEndpoints) GetMusicGeneration() bool {
+	if x != nil {
+		return x.MusicGeneration
 	}
 	return false
 }
@@ -1280,7 +1288,7 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"\fpricing_json\x18# \x01(\tR\vpricingJsonB\x0e\n" +
 	"\f_input_priceB\x0f\n" +
 	"\r_output_priceB\x15\n" +
-	"\x13_cached_input_price\"\x82\x04\n" +
+	"\x13_cached_input_price\"\xad\x04\n" +
 	"\x15CatalogModelEndpoints\x12)\n" +
 	"\x10chat_completions\x18\x01 \x01(\bR\x0fchatCompletions\x12\x1c\n" +
 	"\tresponses\x18\x02 \x01(\bR\tresponses\x12\x1a\n" +
@@ -1305,7 +1313,8 @@ const file_pkg_rpc_v1_catalog_proto_rawDesc = "" +
 	"moderation\x12\x16\n" +
 	"\x06videos\x18\x0e \x01(\bR\x06videos\x12\x1d\n" +
 	"\n" +
-	"image_edit\x18\x0f \x01(\bR\timageEdit\"\x97\x04\n" +
+	"image_edit\x18\x0f \x01(\bR\timageEdit\x12)\n" +
+	"\x10music_generation\x18\x10 \x01(\bR\x0fmusicGeneration\"\x97\x04\n" +
 	"\x14CatalogModelFeatures\x12\x1c\n" +
 	"\tstreaming\x18\x01 \x01(\bR\tstreaming\x12)\n" +
 	"\x10function_calling\x18\x02 \x01(\bR\x0ffunctionCalling\x12+\n" +
