@@ -8,8 +8,26 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/util"
 )
+
+func TestMusicScopeRejectsZeroIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope := testScope()
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	util.SetOrganizationID(context, scope.OrganizationID.String())
+	util.SetWorkspaceID(context, scope.WorkspaceID.String())
+	context.Set("account_id", uuid.Nil.String())
+
+	if _, ok := musicScope(context); ok {
+		t.Fatal("musicScope() ok = true, want false")
+	}
+	if got, want := recorder.Code, http.StatusUnauthorized; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+}
 
 func TestHandlerCreatesTaskAsAcceptedAndReturnsScopedTask(t *testing.T) {
 	gin.SetMode(gin.TestMode)

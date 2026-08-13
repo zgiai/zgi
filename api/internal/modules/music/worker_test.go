@@ -88,6 +88,25 @@ func TestWorkerFailsWithoutCompensationWhenLyricsGenerationFails(t *testing.T) {
 	}
 }
 
+func TestGeneratedLyricsRejectRawValuesOutsideProductLimits(t *testing.T) {
+	for name, generated := range map[string]GeneratedLyrics{
+		"title": {
+			Title:  strings.Repeat(" ", 255) + "title",
+			Lyrics: "lyrics",
+		},
+		"lyrics": {
+			Title:  "title",
+			Lyrics: strings.Repeat(" ", adapter.MaxMusicLyricsRunes) + "lyrics",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if validGeneratedLyrics(generated) {
+				t.Fatalf("validGeneratedLyrics(%s) = true, want false", name)
+			}
+		})
+	}
+}
+
 func TestMusicBufferRejectsDataBeyondLimit(t *testing.T) {
 	buffer := newMusicBuffer(4)
 	written, err := io.Copy(buffer, io.LimitReader(strings.NewReader("12345"), 5))

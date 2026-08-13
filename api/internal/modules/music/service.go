@@ -108,7 +108,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 }
 
 func (s *Service) Get(ctx context.Context, scope Scope, id uuid.UUID) (*TaskView, error) {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || id == uuid.Nil {
+	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil || id == uuid.Nil {
 		return nil, ErrInvalidRequest
 	}
 	task, err := s.repo.GetScoped(ctx, scope, id)

@@ -156,7 +156,7 @@ func validGeneratedLyrics(generated GeneratedLyrics) bool {
 	title := strings.TrimSpace(generated.Title)
 	lyrics := strings.TrimSpace(generated.Lyrics)
 	return title != "" && lyrics != "" && utf8.ValidString(generated.Title) && utf8.ValidString(generated.Lyrics) &&
-		utf8.RuneCountInString(title) <= 255 && utf8.RuneCountInString(lyrics) <= adapter.MaxMusicLyricsRunes
+		utf8.RuneCountInString(generated.Title) <= 255 && utf8.RuneCountInString(generated.Lyrics) <= adapter.MaxMusicLyricsRunes
 }
 
 type musicBuffer struct {

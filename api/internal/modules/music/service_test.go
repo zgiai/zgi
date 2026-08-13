@@ -13,6 +13,17 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
+func TestServiceGetRequiresCompleteScope(t *testing.T) {
+	scope := testScope()
+	scope.AccountID = uuid.Nil
+	service := NewService(newMemoryRepository(), &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
+
+	_, err := service.Get(t.Context(), scope, uuid.New())
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("Get() error = %v, want ErrInvalidRequest", err)
+	}
+}
+
 func TestServiceCreateQueuesValidatedMusicTask(t *testing.T) {
 	repo := newMemoryRepository()
 	dispatcher := &dispatcherStub{}

@@ -145,7 +145,8 @@ func musicScope(c *gin.Context) (Scope, bool) {
 	organizationID, organizationErr := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
 	workspaceID, workspaceErr := uuid.Parse(strings.TrimSpace(util.GetWorkspaceID(c)))
 	accountID, accountErr := uuid.Parse(strings.TrimSpace(util.GetAccountID(c)))
-	if organizationErr != nil || workspaceErr != nil || accountErr != nil {
+	if organizationErr != nil || workspaceErr != nil || accountErr != nil ||
+		organizationID == uuid.Nil || workspaceID == uuid.Nil || accountID == uuid.Nil {
 		writeMusicError(c, http.StatusUnauthorized, "UNAUTHORIZED", messageInvalidAuthContext)
 		return Scope{}, false
 	}

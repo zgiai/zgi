@@ -57,6 +57,32 @@ func TestGenerateLyricsUsesOfficialHTTPTransport(t *testing.T) {
 	}
 }
 
+func TestGenerateLyricsReportsOfficialProviderFailure(t *testing.T) {
+	organizationID := uuid.New()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	setMusicGatewayTestConfig(t, server.URL)
+	recorder := withGatewayObservabilityRecorder(t)
+	service := newMusicGatewayTestService(t, organizationID, true)
+
+	_, err := service.GenerateLyrics(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, &LyricsRequest{
+		RequestID: uuid.NewString(),
+		Model:     musicGatewayTestModel,
+		Prompt:    "warm folk song",
+	})
+	if err == nil {
+		t.Fatal("GenerateLyrics() error = nil, want provider rejection")
+	}
+	if len(recorder.events) != 1 || recorder.events[0].Attributes["use_system_provider"] != true {
+		t.Fatalf("events = %#v, want one system-channel failure", recorder.events)
+	}
+}
+
 var errMusicDestinationWrite = errors.New("music destination write failed")
 
 type failingMusicWriter struct{}

@@ -76,10 +76,11 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 		maxMusicRouteCandidates,
 	)
 	if err != nil {
+		reportLLMSelectionFailure(ctx, err, request.Model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select lyrics provider: %w", err)
 	}
 	if len(selections) == 0 {
-		return nil, ErrNoProviderAvailable
+		return nil, reportedNoProviderAvailableError(ctx, request.Model, organizationID.String(), shadowOrganizationID.String())
 	}
 	if !selections[0].Model.MusicGeneration {
 		return nil, fmt.Errorf("%w: model %q does not support music generation", adapter.ErrCapabilityUnsupported, request.Model)
@@ -91,6 +92,7 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 		}
 		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(selection, organizationID))
 		if err != nil {
+			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
 			return nil, fmt.Errorf("failed to create lyrics adapter: %w", err)
 		}
 		lyricsAdapter, ok := providerAdapter.(adapter.LyricsCapable)
@@ -104,11 +106,15 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 			ModelName:             request.Model,
 			ProviderName:          selection.Provider.Provider,
 		})
-		return lyricsAdapter.GenerateLyrics(callContext, &adapter.LyricsRequest{
+		result, err := lyricsAdapter.GenerateLyrics(callContext, &adapter.LyricsRequest{
 			RequestID: request.RequestID,
 			Model:     request.Model,
 			Prompt:    request.Prompt,
 		})
+		if err != nil {
+			reportLLMProviderFailure(ctx, err, "llm.provider.request_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+		}
+		return result, err
 	}
 	return nil, fmt.Errorf("%w: no official lyrics adapter is available", adapter.ErrCapabilityUnsupported)
 }
