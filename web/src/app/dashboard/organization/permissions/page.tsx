@@ -32,14 +32,17 @@ import { cn } from '@/lib/utils';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLocale } from '@/hooks/use-locale';
-import { pickLocale } from '@/utils/tool-helpers';
 import { RoleMembersDrawer } from '@/components/dashboard/organization/role-members-drawer';
 import { useRoleActions } from '@/hooks/organization/use-role-actions';
 import { EditRoleInfoDialog } from '@/components/dashboard/organization/edit-role-info-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 import type { Role } from '@/services/types/organization';
-import { isSelectableWorkspacePermissionTemplate } from '@/utils/workspace-role-templates';
+import {
+  getWorkspaceRoleDisplayDescription,
+  getWorkspaceRoleDisplayName,
+  isSelectableWorkspacePermissionTemplate,
+} from '@/utils/workspace-role-templates';
 
 export default function PermissionsPage() {
   const t = useT('dashboard.organization.permissions');
@@ -151,13 +154,9 @@ export default function PermissionsPage() {
     }
   };
 
-  const getRoleDisplayName = (role: Role) =>
-    role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
+  const getRoleDisplayName = (role: Role) => getWorkspaceRoleDisplayName(role, locale);
 
-  const getRoleDescription = (role: Role) =>
-    role.description_i18n
-      ? pickLocale(role.description_i18n, locale, role.description || '')
-      : role.description || '';
+  const getRoleDescription = (role: Role) => getWorkspaceRoleDisplayDescription(role, locale);
 
   const permissionTemplateRoles = roles.filter(isSelectableWorkspacePermissionTemplate);
   const replacementRoleOptions = useMemo(

@@ -300,6 +300,12 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			ChatService:     chatService,
 			AccountService:  accountService,
 		})
+		RegisterVideoRuntimeRoutes(v1, VideoRuntimeRouteDeps{
+			DB:              db,
+			AvailableModels: llmModule.LLMModelModule.AvailableModelsSvc,
+			LLMClient:       serviceContainer.GetLLMClient(),
+			AccountService:  accountService,
+		})
 	}
 
 	// ---------- Dashboard ----------

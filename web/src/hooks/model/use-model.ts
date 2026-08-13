@@ -315,9 +315,9 @@ export function useAvailableModels(options?: { use_case?: AvailableModelUseCase 
   const { data, isLoading, isFetching, error, refetch } = useQuery<ApiResponseData<ModelList>>({
     queryKey: key,
     queryFn: async () => modelService.getAvailableModels({ use_case }),
-    // Non-expiring cache
-    staleTime: Number.POSITIVE_INFINITY,
-    gcTime: Number.POSITIVE_INFINITY,
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: false,
     retry: (failureCount, requestError) =>
       isNetworkError(requestError) && failureCount < 1,

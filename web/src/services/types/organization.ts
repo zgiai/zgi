@@ -84,11 +84,13 @@ export interface Role {
     en_US?: string;
     zh_Hans?: string;
   };
+  name_customized?: boolean;
   description?: string;
   description_i18n?: {
     en_US?: string;
     zh_Hans?: string;
   };
+  description_customized?: boolean;
   builtin: boolean;
   editable: boolean;
   deletable?: boolean;

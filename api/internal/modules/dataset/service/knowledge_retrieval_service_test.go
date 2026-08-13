@@ -72,6 +72,35 @@ func TestListAccessibleDatasetsReturnsNoResultsWhenNoWorkspaceAccess(t *testing.
 	}
 }
 
+func TestListAccessibleDatasetCandidatesOrdersSelectedIDsWithValidPostgresINClause(t *testing.T) {
+	db, mock := newKnowledgeMockDB(t)
+	svc := &KnowledgeRetrievalService{db: db}
+
+	expectAccessibleKnowledgeWorkspaces(mock, "workspace-1")
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "datasets" WHERE workspace_id IN \(\$1\)`).
+		WithArgs("workspace-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectQuery(`SELECT \* FROM "datasets" WHERE workspace_id IN \(\$1\) ORDER BY CASE WHEN id IN \(\$2,\$3\) THEN 0 ELSE 1 END, LOWER\(name\) ASC, id ASC LIMIT \$4`).
+		WithArgs("workspace-1", "dataset-1", "dataset-2", 24).
+		WillReturnRows(datasetRows().
+			AddRow("dataset-1", "org-1", "workspace-1", "Selected one", "", "vendor", false, "account-1", time.Now()).
+			AddRow("dataset-2", "org-1", "workspace-1", "Selected two", "", "vendor", false, "account-1", time.Now()))
+
+	response, err := svc.ListAccessibleDatasetCandidates(context.Background(), KnowledgeScope{
+		OrganizationID: "org-1",
+		AccountID:      "account-1",
+	}, "", []string{"dataset-1", "dataset-2"}, true, 1, 24)
+	if err != nil {
+		t.Fatalf("ListAccessibleDatasetCandidates() error = %v", err)
+	}
+	if response.Total != 2 || len(response.KnowledgeBases) != 2 {
+		t.Fatalf("response count mismatch: %#v", response)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestListAccessibleDatasetsDoesNotFallbackFromDirectEmptyPermissionSnapshot(t *testing.T) {
 	db, mock := newKnowledgeMockDB(t)
 	svc := &KnowledgeRetrievalService{db: db}

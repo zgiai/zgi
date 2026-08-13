@@ -18,6 +18,7 @@ var Module = fx.Options(
 	schedulerModule,
 	graphFlowModule,
 	workflowModule,
+	videoRuntimeModule,
 	runtimeModule,
 )
 

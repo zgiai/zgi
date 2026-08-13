@@ -14,6 +14,8 @@ export interface UploadResponse {
   created_by: string;
   created_at: string;
   url?: string;
+  source_url?: string;
+  download_url?: string;
 }
 
 export interface UploadConfig {

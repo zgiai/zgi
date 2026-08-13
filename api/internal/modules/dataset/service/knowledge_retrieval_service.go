@@ -347,7 +347,7 @@ func (s *KnowledgeRetrievalService) ListAccessibleDatasetCandidates(ctx context.
 	}
 	if includeSelected && len(selectedIDs) > 0 {
 		dbQuery = dbQuery.Clauses(clause.OrderBy{Expression: clause.Expr{
-			SQL:                "CASE WHEN id IN ? THEN 0 ELSE 1 END, LOWER(name) ASC, id ASC",
+			SQL:                "CASE WHEN id IN (?) THEN 0 ELSE 1 END, LOWER(name) ASC, id ASC",
 			Vars:               []interface{}{selectedIDs},
 			WithoutParentheses: true,
 		}})

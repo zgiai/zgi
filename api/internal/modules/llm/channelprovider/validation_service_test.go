@@ -695,6 +695,14 @@ func TestValidatorValidateModelsForCreation_ScopesGlobalModelsToChannelProvider(
 					"text-chat",
 				},
 			},
+			"doubao-seedance-2-0-fast-260128": {
+				Model:    "doubao-seedance-2-0-fast-260128",
+				Provider: "doubao",
+				UseCases: llmmodelmodel.StringArray{
+					string(llmmodelmodel.UseCaseVideoGen),
+				},
+				Videos: true,
+			},
 		},
 	}
 	validator := NewValidator(nil, nil)
@@ -729,6 +737,31 @@ func TestValidatorValidateModelsForCreation_ScopesGlobalModelsToChannelProvider(
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+
+	result, err = validator.ValidateModelsForCreation(
+		context.Background(),
+		uuid.Nil,
+		"openai",
+		"key",
+		"https://api.openai.com/v1",
+		[]string{"doubao-seedance-2-0-fast-260128"},
+	)
+	require.Error(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, err.Error(), "doubao-seedance-2-0-fast-260128")
+
+	result, err = validator.ValidateModelsForCreation(
+		context.Background(),
+		uuid.Nil,
+		"openai",
+		"key",
+		"https://api.agicto.cn/v1",
+		[]string{"doubao-seedance-2-0-fast-260128"},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+	require.Equal(t, []string{"doubao-seedance-2-0-fast-260128"}, result.NormalizedModels)
 }
 
 func TestValidatorTestModel_RejectsConflictingTestMethod(t *testing.T) {

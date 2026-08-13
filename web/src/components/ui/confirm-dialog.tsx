@@ -30,7 +30,7 @@ export interface ConfirmDialogProps {
   onConfirm: () => void;
   /** Loading state for confirm action */
   loading?: boolean;
-  /** Keep the confirm action unavailable for a known blocking condition. */
+  /** Disabled state for confirm action */
   confirmDisabled?: boolean;
   /** Close immediately after confirmation. Disable when the caller closes after an async success. */
   closeOnConfirm?: boolean;

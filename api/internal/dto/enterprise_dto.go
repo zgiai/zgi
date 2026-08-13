@@ -407,22 +407,24 @@ type GroupPermissionDefinitionResponse struct {
 
 // WorkspaceRoleSummary represents a role summary in list
 type WorkspaceRoleSummary struct {
-	ID              string                          `json:"id"`
-	Name            string                          `json:"name"`
-	NameI18n        *LocalizedString                `json:"name_i18n,omitempty"`
-	Description     *string                         `json:"description,omitempty"`
-	DescriptionI18n *LocalizedString                `json:"description_i18n,omitempty"`
-	Builtin         bool                            `json:"builtin"`
-	Editable        bool                            `json:"editable"`
-	Deletable       bool                            `json:"deletable"`
-	Applicable      bool                            `json:"applicable"`
-	FixedGovernance bool                            `json:"fixed_governance"`
-	RoleKind        string                          `json:"role_kind"`
-	SystemKey       *string                         `json:"system_key,omitempty"`
-	TemplateOrigin  string                          `json:"template_origin,omitempty"`
-	Status          model.WorkspaceCustomRoleStatus `json:"status"`
-	Permissions     []string                        `json:"permissions"`
-	MemberCount     int64                           `json:"member_count"`
+	ID                    string                          `json:"id"`
+	Name                  string                          `json:"name"`
+	NameI18n              *LocalizedString                `json:"name_i18n,omitempty"`
+	NameCustomized        bool                            `json:"name_customized"`
+	Description           *string                         `json:"description,omitempty"`
+	DescriptionI18n       *LocalizedString                `json:"description_i18n,omitempty"`
+	DescriptionCustomized bool                            `json:"description_customized"`
+	Builtin               bool                            `json:"builtin"`
+	Editable              bool                            `json:"editable"`
+	Deletable             bool                            `json:"deletable"`
+	Applicable            bool                            `json:"applicable"`
+	FixedGovernance       bool                            `json:"fixed_governance"`
+	RoleKind              string                          `json:"role_kind"`
+	SystemKey             *string                         `json:"system_key,omitempty"`
+	TemplateOrigin        string                          `json:"template_origin,omitempty"`
+	Status                model.WorkspaceCustomRoleStatus `json:"status"`
+	Permissions           []string                        `json:"permissions"`
+	MemberCount           int64                           `json:"member_count"`
 }
 
 // WorkspaceRoleListResponse represents role list response
@@ -451,7 +453,7 @@ type OrganizationRoleMembersResponse struct {
 // CreateWorkspaceRoleRequest represents request to create custom role
 type CreateWorkspaceRoleRequest struct {
 	OrganizationID string   `json:"organization_id"`
-	Name           string   `json:"name" binding:"required"`
+	Name           string   `json:"name"`
 	Description    *string  `json:"description,omitempty"`
 	Permissions    []string `json:"permissions"`
 	CreatedBy      string   `json:"-"`
@@ -514,22 +516,24 @@ type ReplaceWorkspaceRoleTemplateResponse struct {
 
 // OrganizationRoleDetailResponse represents role detail
 type OrganizationRoleDetailResponse struct {
-	ID              string                          `json:"id"`
-	OrganizationID  string                          `json:"organization_id"`
-	Name            string                          `json:"name"`
-	NameI18n        *LocalizedString                `json:"name_i18n,omitempty"`
-	Description     *string                         `json:"description,omitempty"`
-	DescriptionI18n *LocalizedString                `json:"description_i18n,omitempty"`
-	Builtin         bool                            `json:"builtin"`
-	Editable        bool                            `json:"editable"`
-	Deletable       bool                            `json:"deletable"`
-	Applicable      bool                            `json:"applicable"`
-	FixedGovernance bool                            `json:"fixed_governance"`
-	RoleKind        string                          `json:"role_kind"`
-	SystemKey       *string                         `json:"system_key,omitempty"`
-	TemplateOrigin  string                          `json:"template_origin,omitempty"`
-	Status          model.WorkspaceCustomRoleStatus `json:"status"`
-	Permissions     []string                        `json:"permissions"`
+	ID                    string                          `json:"id"`
+	OrganizationID        string                          `json:"organization_id"`
+	Name                  string                          `json:"name"`
+	NameI18n              *LocalizedString                `json:"name_i18n,omitempty"`
+	NameCustomized        bool                            `json:"name_customized"`
+	Description           *string                         `json:"description,omitempty"`
+	DescriptionI18n       *LocalizedString                `json:"description_i18n,omitempty"`
+	DescriptionCustomized bool                            `json:"description_customized"`
+	Builtin               bool                            `json:"builtin"`
+	Editable              bool                            `json:"editable"`
+	Deletable             bool                            `json:"deletable"`
+	Applicable            bool                            `json:"applicable"`
+	FixedGovernance       bool                            `json:"fixed_governance"`
+	RoleKind              string                          `json:"role_kind"`
+	SystemKey             *string                         `json:"system_key,omitempty"`
+	TemplateOrigin        string                          `json:"template_origin,omitempty"`
+	Status                model.WorkspaceCustomRoleStatus `json:"status"`
+	Permissions           []string                        `json:"permissions"`
 }
 
 // Deprecated: use OrganizationRoleMemberItem.

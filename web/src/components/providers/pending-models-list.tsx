@@ -145,7 +145,20 @@ export default function PendingModelsList({
                   outputPrice: model.output_price,
                   inputPriceConfigured: model.input_price_configured,
                   outputPriceConfigured: model.output_price_configured,
+                  pricing: model.pricing,
+                  currency: model.currency,
                   useCases: model.use_cases,
+                  labels: {
+                    unspecifiedResolution: t(
+                      `aiProviders.models.pricing.videoUnspecifiedResolution` as AiProvidersKey
+                    ),
+                    withVideoInput: t(
+                      `aiProviders.models.pricing.videoWithInput` as AiProvidersKey
+                    ),
+                    withoutVideoInput: t(
+                      `aiProviders.models.pricing.videoWithoutInput` as AiProvidersKey
+                    ),
+                  },
                   billingDisplay,
                 });
 
@@ -197,8 +210,8 @@ export default function PendingModelsList({
                       </span>
                     </div>
 
-                    <div className="col-start-2 flex flex-wrap items-center gap-x-3 gap-y-1 lg:col-auto">
-                      {priceItems.map(item => {
+                    <div className="col-start-2 flex flex-wrap items-center gap-x-5 gap-y-1.5 lg:col-auto">
+                      {priceItems.map((item, index) => {
                         const unitKey = `aiProviders.models.pricing.${item.unit}` as AiProvidersKey;
                         const labelKey =
                           `aiProviders.models.pricing.${item.label}` as AiProvidersKey;
@@ -209,13 +222,18 @@ export default function PendingModelsList({
                             : `${item.formattedValue}${t(unitKey)}`;
 
                         return (
-                          <span key={item.label} className="text-xs">
-                            <span className="text-muted-foreground">{t(labelKey)} </span>
+                          <span
+                            key={`${item.label}-${item.detail ?? index}`}
+                            className="inline-flex items-baseline gap-x-3 text-xs leading-5"
+                          >
+                            <span className="min-w-36 shrink-0 text-muted-foreground">
+                              {item.detail || t(labelKey)}{' '}
+                            </span>
                             <span
                               className={
                                 item.isConfigured
-                                  ? 'font-medium text-foreground'
-                                  : 'font-medium text-amber-600 dark:text-amber-400'
+                                  ? 'whitespace-nowrap font-medium tabular-nums text-foreground'
+                                  : 'whitespace-nowrap font-medium tabular-nums text-amber-600 dark:text-amber-400'
                               }
                             >
                               {displayText}

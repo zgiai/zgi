@@ -142,6 +142,13 @@ func (s *WorkspaceManagementServiceImpl) defaultWorkspaceRoleTemplateID(ctx cont
 		if roleID != "" {
 			return roleID, nil
 		}
+		roleID, err = s.findFallbackWorkspaceRoleTemplateID(ctx, workspaceID)
+		if err != nil {
+			return "", err
+		}
+		if roleID != "" {
+			return roleID, nil
+		}
 	}
 	return model.DefaultWorkspaceRoleID(role), nil
 }
@@ -171,6 +178,34 @@ func (s *WorkspaceManagementServiceImpl) findDefaultWorkspaceRoleTemplateID(ctx 
 	return role.ID, nil
 }
 
+func (s *WorkspaceManagementServiceImpl) findFallbackWorkspaceRoleTemplateID(ctx context.Context, workspaceID string) (string, error) {
+	if s == nil || s.db == nil || s.workspaceRepo == nil {
+		return "", nil
+	}
+
+	organizationID, err := s.workspaceRepo.GetWorkspaceOrganizationID(ctx, workspaceID)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve workspace organization: %w", err)
+	}
+	if strings.TrimSpace(organizationID) == "" {
+		return "", nil
+	}
+
+	var role model.WorkspaceCustomRole
+	if err := s.db.WithContext(ctx).
+		Where("group_id = ? AND status = ?", organizationID, model.WorkspaceCustomRoleStatusActive).
+		Order("CASE system_key WHEN 'default_basic' THEN 10 WHEN 'default_readonly' THEN 20 WHEN 'default_advanced' THEN 30 ELSE 100 END").
+		Order("created_at ASC").
+		Order("id ASC").
+		First(&role).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get fallback workspace role template: %w", err)
+	}
+	return role.ID, nil
+}
+
 func (s *WorkspaceManagementServiceImpl) getActiveCustomWorkspaceRolePermissions(ctx context.Context, workspaceID, roleID string) ([]string, error) {
 	organizationID, err := s.workspaceRepo.GetWorkspaceOrganizationID(ctx, workspaceID)
 	if err != nil {
@@ -180,14 +215,12 @@ func (s *WorkspaceManagementServiceImpl) getActiveCustomWorkspaceRolePermissions
 		return []string{}, nil
 	}
 
-	var role model.WorkspaceCustomRole
-	if err := s.db.WithContext(ctx).
-		Where("id = ? AND group_id = ? AND status = ?", roleID, organizationID, model.WorkspaceCustomRoleStatusActive).
-		First(&role).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("workspace role not found")
-		}
-		return nil, fmt.Errorf("failed to get workspace role: %w", err)
+	role, err := lockWorkspaceRoleTemplate(ctx, s.db, organizationID, roleID, workspaceRoleLockShare)
+	if err != nil {
+		return nil, err
+	}
+	if role.Status != model.WorkspaceCustomRoleStatusActive {
+		return nil, ErrWorkspaceRoleTemplateNotFound
 	}
 	return model.CanonicalAssignableWorkspacePermissionSnapshotStrings(role.Permissions), nil
 }
@@ -268,6 +301,7 @@ func (s *WorkspaceManagementServiceImpl) CreateWorkspaceMember(ctx context.Conte
 
 	// Step 5: Create member in transaction
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		txService := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
 		// Create workspace member
 		join := &model.WorkspaceMember{
 			WorkspaceID: workspaceID,
@@ -275,10 +309,10 @@ func (s *WorkspaceManagementServiceImpl) CreateWorkspaceMember(ctx context.Conte
 			Role:        model.WorkspaceMemberRole(role),
 			Current:     false,
 		}
-		if err := s.applyWorkspaceMemberPermissionTemplate(ctx, join); err != nil {
+		if err := txService.applyWorkspaceMemberPermissionTemplate(ctx, join); err != nil {
 			return err
 		}
-		if err := s.workspaceMemberRepo.WithTx(tx).Create(ctx, join); err != nil {
+		if err := txService.workspaceMemberRepo.Create(ctx, join); err != nil {
 			return fmt.Errorf("failed to create workspace member: %w", err)
 		}
 
@@ -403,6 +437,7 @@ func (s *WorkspaceManagementServiceImpl) AddMember(ctx context.Context, req *int
 
 	// Create association in transaction
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		txService := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
 		// Create association
 		join := &model.WorkspaceMember{
 			WorkspaceID: req.WorkspaceID,
@@ -410,14 +445,14 @@ func (s *WorkspaceManagementServiceImpl) AddMember(ctx context.Context, req *int
 			Role:        req.Role,
 			RoleID:      req.RoleID,
 		}
-		if err := s.applyWorkspaceMemberPermissionTemplate(ctx, join); err != nil {
+		if err := txService.applyWorkspaceMemberPermissionTemplate(ctx, join); err != nil {
 			return err
 		}
 		if req.Permissions != nil {
 			return usererrors.NewNoPermissionError("direct permissions cannot be assigned while adding workspace member")
 		}
 
-		if err := s.workspaceMemberRepo.WithTx(tx).Create(ctx, join); err != nil {
+		if err := txService.workspaceMemberRepo.Create(ctx, join); err != nil {
 			return fmt.Errorf("failed to create workspace member: %w", err)
 		}
 
@@ -1808,33 +1843,39 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberCustomRoleWithPermissionChe
 		return err
 	}
 
-	targetMemberJoin, err := s.workspaceMemberRepo.GetByWorkspaceAndMember(ctx, workspace.ID, member.ID)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txService := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
+		targetMemberJoin, err := txService.workspaceMemberRepo.GetByWorkspaceAndMember(ctx, workspace.ID, member.ID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return usererrors.NewMemberNotInWorkspaceError("Member not in workspace")
+			}
+			return fmt.Errorf("failed to get workspace account join: %w", err)
+		}
+
+		if targetMemberJoin == nil {
 			return usererrors.NewMemberNotInWorkspaceError("Member not in workspace")
 		}
-		return fmt.Errorf("failed to get workspace account join: %w", err)
-	}
+		if targetMemberJoin.Role == model.WorkspaceRoleOwner {
+			return usererrors.NewNoPermissionError("owner role can only be changed through ownership transfer")
+		}
+		if targetMemberJoin.Role == model.WorkspaceRoleAdmin {
+			targetMemberJoin.Role = model.WorkspaceRoleNormal
+		}
 
-	if targetMemberJoin == nil {
-		return usererrors.NewMemberNotInWorkspaceError("Member not in workspace")
-	}
-	if targetMemberJoin.Role == model.WorkspaceRoleOwner {
-		return usererrors.NewNoPermissionError("owner role can only be changed through ownership transfer")
-	}
-	if targetMemberJoin.Role == model.WorkspaceRoleAdmin {
-		targetMemberJoin.Role = model.WorkspaceRoleNormal
-	}
-
-	targetMemberJoin.RoleID = &roleID
-	targetMemberJoin.PermissionSource = model.WorkspaceMemberPermissionSourceRoleTemplate
-	targetMemberJoin.PermissionTemplateRoleID = &roleID
-	targetMemberJoin.Permissions = nil
-	if err := s.applyWorkspaceMemberPermissionTemplate(ctx, targetMemberJoin); err != nil {
+		targetMemberJoin.RoleID = &roleID
+		targetMemberJoin.PermissionSource = model.WorkspaceMemberPermissionSourceRoleTemplate
+		targetMemberJoin.PermissionTemplateRoleID = &roleID
+		targetMemberJoin.Permissions = nil
+		if err := txService.applyWorkspaceMemberPermissionTemplate(ctx, targetMemberJoin); err != nil {
+			return err
+		}
+		if err := txService.workspaceMemberRepo.Update(ctx, targetMemberJoin); err != nil {
+			return fmt.Errorf("failed to update workspace account join: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return err
-	}
-	if err := s.workspaceMemberRepo.Update(ctx, targetMemberJoin); err != nil {
-		return fmt.Errorf("failed to update workspace account join: %w", err)
 	}
 
 	s.invalidateWorkspaceContext(ctx, workspace.ID, member.ID)

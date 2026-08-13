@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -18,8 +19,25 @@ const (
 	doubaoDefaultBaseURL = "https://ark.cn-beijing.volces.com/api/v3"
 
 	doubaoImageGenerationsPath             = "images/generations"
+	doubaoVideoTasksPath                   = "contents/generations/tasks"
 	doubaoImagePayloadKeyModel             = "model"
 	doubaoImagePayloadKeyPrompt            = "prompt"
+	doubaoVideoPayloadKeyContent           = "content"
+	doubaoVideoPayloadKeyResolution        = "resolution"
+	doubaoVideoPayloadKeyRatio             = "ratio"
+	doubaoVideoPayloadKeyDuration          = "duration"
+	doubaoVideoPayloadKeyGenerateAudio     = "generate_audio"
+	doubaoVideoPayloadKeyCallbackURL       = "callback_url"
+	doubaoVideoPayloadKeyNegativePrompt    = "negative_prompt"
+	doubaoVideoContentTypeText             = "text"
+	doubaoVideoContentTypeImageURL         = "image_url"
+	doubaoVideoContentTypeVideoURL         = "video_url"
+	doubaoVideoContentTypeAudioURL         = "audio_url"
+	doubaoVideoContentRoleFirstFrame       = "first_frame"
+	doubaoVideoContentRoleReferenceImage   = "reference_image"
+	doubaoVideoContentRoleLastFrame        = "last_frame"
+	doubaoVideoContentRoleReferenceVideo   = "reference_video"
+	doubaoVideoContentRoleReferenceAudio   = "reference_audio"
 	doubaoImagePayloadKeySize              = "size"
 	doubaoImagePayloadKeyN                 = "n"
 	doubaoImagePayloadKeyQuality           = "quality"
@@ -87,7 +105,7 @@ func (a *DoubaoAdapter) GetProviderInfo() *adapter.ProviderInfo {
 		DisplayName:  "Doubao",
 		Description:  "ByteDance Ark Doubao models",
 		BaseURL:      a.baseURL,
-		Capabilities: []string{"chat", "stream", "responses", "embedding", "image"},
+		Capabilities: []string{"chat", "stream", "responses", "embedding", "image", "video"},
 		Version:      "api/v3",
 	}
 }
@@ -118,6 +136,14 @@ func (a *DoubaoAdapter) CreateEmbeddings(ctx context.Context, request *adapter.E
 
 func (a *DoubaoAdapter) CreateImage(ctx context.Context, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
 	return createDoubaoArkImage(ctx, a.httpClient, a.runtimeHeaders(a.config.APIKey), a.baseURL, request)
+}
+
+func (a *DoubaoAdapter) CreateVideo(ctx context.Context, request *adapter.VideoRequest) (*adapter.VideoResponse, error) {
+	return createDoubaoArkVideo(ctx, a.httpClient, a.runtimeHeaders(a.config.APIKey), a.baseURL, request)
+}
+
+func (a *DoubaoAdapter) GetVideoTask(ctx context.Context, request *adapter.VideoTaskRequest) (*adapter.VideoResponse, error) {
+	return getDoubaoArkVideoTask(ctx, a.httpClient, a.runtimeHeaders(a.config.APIKey), a.baseURL, request)
 }
 
 func (a *DoubaoAdapter) Rerank(context.Context, *adapter.RerankRequest) (*adapter.RerankResponse, error) {
@@ -223,6 +249,18 @@ func normalizeDoubaoModel(id string) adapter.Model {
 				Modality:         "rerank",
 				InputModalities:  []string{"text"},
 				OutputModalities: []string{"score"},
+			},
+		}
+	case strings.Contains(lowerID, "seedance"):
+		return adapter.Model{
+			ID:           id,
+			Name:         id,
+			Type:         "video",
+			Capabilities: []string{"video"},
+			Architecture: &adapter.ModelArchitecture{
+				Modality:         "video",
+				InputModalities:  []string{"text", "image", "video", "audio"},
+				OutputModalities: []string{"video"},
 			},
 		}
 	case strings.Contains(lowerID, "seedream"), strings.Contains(lowerID, "t2i"), strings.Contains(lowerID, "image"):
@@ -336,6 +374,303 @@ func createDoubaoArkImage(
 	return &response, nil
 }
 
+func createDoubaoArkVideo(
+	ctx context.Context,
+	httpClient *adapter.HTTPClient,
+	headers map[string]string,
+	baseURL string,
+	request *adapter.VideoRequest,
+) (*adapter.VideoResponse, error) {
+	if request == nil {
+		return nil, fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
+	}
+	if strings.TrimSpace(request.Model) == "" {
+		return nil, fmt.Errorf("%w: model is required", adapter.ErrInvalidRequest)
+	}
+	if strings.TrimSpace(request.Prompt) == "" {
+		return nil, fmt.Errorf("%w: prompt is required", adapter.ErrInvalidRequest)
+	}
+
+	respBody, statusCode, err := httpClient.DoRequest(ctx, http.MethodPost, doubaoArkVideoTaskURL(baseURL), headers, buildDoubaoArkVideoPayload(request))
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
+		var openAIErr OpenAIAdapter
+		return nil, openAIErr.handleError(statusCode, respBody)
+	}
+	response, err := decodeDoubaoArkVideoResponse(respBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return response, nil
+}
+
+func getDoubaoArkVideoTask(
+	ctx context.Context,
+	httpClient *adapter.HTTPClient,
+	headers map[string]string,
+	baseURL string,
+	request *adapter.VideoTaskRequest,
+) (*adapter.VideoResponse, error) {
+	if request == nil {
+		return nil, fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
+	}
+	taskID := strings.TrimSpace(request.TaskID)
+	if taskID == "" {
+		return nil, fmt.Errorf("%w: task_id is required", adapter.ErrInvalidRequest)
+	}
+
+	respBody, statusCode, err := httpClient.DoRequest(ctx, http.MethodGet, doubaoArkVideoTaskURL(baseURL)+"/"+url.PathEscape(taskID), headers, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
+		var openAIErr OpenAIAdapter
+		return nil, openAIErr.handleError(statusCode, respBody)
+	}
+	response, err := decodeDoubaoArkVideoResponse(respBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return response, nil
+}
+
+func buildDoubaoArkVideoPayload(request *adapter.VideoRequest) map[string]any {
+	payload := map[string]any{
+		doubaoImagePayloadKeyModel:   strings.TrimSpace(request.Model),
+		doubaoVideoPayloadKeyContent: doubaoArkVideoContent(request),
+	}
+	if strings.TrimSpace(request.Resolution) != "" {
+		payload[doubaoVideoPayloadKeyResolution] = strings.TrimSpace(request.Resolution)
+	}
+	if strings.TrimSpace(request.Ratio) != "" {
+		payload[doubaoVideoPayloadKeyRatio] = strings.TrimSpace(request.Ratio)
+	}
+	if request.Duration != nil {
+		payload[doubaoVideoPayloadKeyDuration] = *request.Duration
+	}
+	if request.GenerateAudio != nil {
+		payload[doubaoVideoPayloadKeyGenerateAudio] = *request.GenerateAudio
+	}
+	if strings.TrimSpace(request.CallbackURL) != "" {
+		payload[doubaoVideoPayloadKeyCallbackURL] = strings.TrimSpace(request.CallbackURL)
+	}
+	if strings.TrimSpace(request.NegativePrompt) != "" {
+		payload[doubaoVideoPayloadKeyNegativePrompt] = strings.TrimSpace(request.NegativePrompt)
+	}
+	for key, value := range request.AdditionalParameters {
+		payload[key] = value
+	}
+	return payload
+}
+
+func doubaoArkVideoContent(request *adapter.VideoRequest) []map[string]any {
+	content := make([]map[string]any, 0, 5+len(request.ImageURLs))
+	if prompt := strings.TrimSpace(request.Prompt); prompt != "" {
+		content = append(content, map[string]any{"type": doubaoVideoContentTypeText, "text": prompt})
+	}
+	if firstFrameURL := strings.TrimSpace(request.FirstFrameURL); firstFrameURL != "" {
+		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeImageURL, firstFrameURL, doubaoVideoContentRoleFirstFrame))
+	}
+	for _, imageURL := range doubaoReferenceImageURLs(request) {
+		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeImageURL, imageURL, doubaoVideoContentRoleReferenceImage))
+	}
+	if lastFrameURL := strings.TrimSpace(request.LastFrameURL); lastFrameURL != "" {
+		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeImageURL, lastFrameURL, doubaoVideoContentRoleLastFrame))
+	}
+	if videoURL := strings.TrimSpace(request.VideoURL); videoURL != "" {
+		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeVideoURL, videoURL, doubaoVideoContentRoleReferenceVideo))
+	}
+	if audioURL := strings.TrimSpace(request.AudioURL); audioURL != "" {
+		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeAudioURL, audioURL, doubaoVideoContentRoleReferenceAudio))
+	}
+	return content
+}
+
+func doubaoReferenceImageURLs(request *adapter.VideoRequest) []string {
+	seen := map[string]struct{}{}
+	skippedFrames := map[string]struct{}{}
+	if firstFrameURL := strings.TrimSpace(request.FirstFrameURL); firstFrameURL != "" {
+		skippedFrames[firstFrameURL] = struct{}{}
+	}
+	if lastFrameURL := strings.TrimSpace(request.LastFrameURL); lastFrameURL != "" {
+		skippedFrames[lastFrameURL] = struct{}{}
+	}
+	urls := make([]string, 0, len(request.ImageURLs)+1)
+	appendURL := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		if _, isFrame := skippedFrames[trimmed]; isFrame {
+			return
+		}
+		if _, exists := seen[trimmed]; exists {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		urls = append(urls, trimmed)
+	}
+	for _, rawURL := range request.ImageURLs {
+		appendURL(rawURL)
+	}
+	appendURL(request.ImageURL)
+	return urls
+}
+
+func doubaoArkVideoURLContent(contentType string, rawURL string, role string) map[string]any {
+	item := map[string]any{
+		"type":      contentType,
+		contentType: map[string]any{"url": rawURL},
+	}
+	if role != "" {
+		item["role"] = role
+	}
+	return item
+}
+
+func doubaoArkVideoTaskURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = doubaoDefaultBaseURL
+	}
+	if strings.HasSuffix(baseURL, "/"+doubaoVideoTasksPath) {
+		return baseURL
+	}
+	return baseURL + "/" + doubaoVideoTasksPath
+}
+
+func decodeDoubaoArkVideoResponse(body []byte) (*adapter.VideoResponse, error) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+	if upstreamErr := doubaoArkVideoResponseError(raw); upstreamErr != nil {
+		return nil, upstreamErr
+	}
+
+	var response adapter.VideoResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+	response.Raw = raw
+	if response.Usage == nil {
+		response.Usage = openAIUsageFromRaw(body)
+	}
+	if response.Created == 0 {
+		response.Created = time.Now().Unix()
+	}
+	if response.TaskID == "" {
+		response.TaskID = firstDoubaoVideoStringByKeys(raw, "task_id", "taskId", "id", "name", "operation", "request_id", "requestId")
+	}
+	if response.Status == "" {
+		response.Status = firstDoubaoVideoStringByKeys(raw, "task_status", "taskStatus", "status", "state")
+	}
+	if response.VideoURL == "" && len(response.Data) > 0 {
+		response.VideoURL = response.Data[0].URL
+	}
+	if response.VideoURL == "" {
+		if videoURL := firstDoubaoVideoStringByKeys(raw, "video_url", "videoUrl", "url", "uri"); videoURL != "" {
+			response.VideoURL = videoURL
+			response.Data = append(response.Data, adapter.VideoItem{URL: videoURL})
+		}
+	}
+	if len(response.Data) == 0 {
+		if b64 := firstDoubaoVideoStringByKeys(raw, "b64_json", "b64Json", "bytesBase64Encoded"); b64 != "" {
+			response.Data = append(response.Data, adapter.VideoItem{B64JSON: b64})
+		}
+	}
+	return &response, nil
+}
+
+func doubaoArkVideoResponseError(raw map[string]interface{}) error {
+	if raw == nil {
+		return nil
+	}
+	if errValue, ok := raw["error"]; ok && errValue != nil {
+		if message := doubaoArkVideoErrorMessage(errValue); message != "" {
+			return fmt.Errorf("upstream error: %s", message)
+		}
+		return fmt.Errorf("upstream error: %v", errValue)
+	}
+	if code, ok := raw["code"]; ok && !isDoubaoArkSuccessCode(code) {
+		message := firstDoubaoVideoStringByOrderedKeys(raw, "message", "msg", "error_message", "errorMessage")
+		if message == "" {
+			message = fmt.Sprint(code)
+		}
+		return fmt.Errorf("upstream error: %s", message)
+	}
+	return nil
+}
+
+func doubaoArkVideoErrorMessage(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]interface{}:
+		message := firstDoubaoVideoStringByOrderedKeys(typed, "message", "msg", "error_message", "errorMessage", "code", "type")
+		return strings.TrimSpace(message)
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
+}
+
+func isDoubaoArkSuccessCode(value interface{}) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case float64:
+		return typed == 0
+	case int:
+		return typed == 0
+	case string:
+		text := strings.TrimSpace(strings.ToLower(typed))
+		return text == "" || text == "0" || text == "success" || text == "ok"
+	default:
+		return false
+	}
+}
+func firstDoubaoVideoStringByOrderedKeys(value interface{}, keys ...string) string {
+	for _, key := range keys {
+		if text := firstDoubaoVideoStringByKeys(value, key); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+func firstDoubaoVideoStringByKeys(value interface{}, keys ...string) string {
+	keySet := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		keySet[key] = struct{}{}
+	}
+	return firstDoubaoVideoStringByKeySet(value, keySet)
+}
+
+func firstDoubaoVideoStringByKeySet(value interface{}, keys map[string]struct{}) string {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, item := range typed {
+			if _, ok := keys[key]; ok {
+				if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+					return strings.TrimSpace(text)
+				}
+			}
+		}
+		for _, item := range typed {
+			if text := firstDoubaoVideoStringByKeySet(item, keys); text != "" {
+				return text
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if text := firstDoubaoVideoStringByKeySet(item, keys); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
 func seedreamGenerationOptions(request *adapter.ImageRequest) (string, int) {
 	mode := strings.TrimSpace(request.GenerationMode)
 	if mode != "" {

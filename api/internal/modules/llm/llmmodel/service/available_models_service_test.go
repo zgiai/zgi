@@ -689,6 +689,8 @@ func TestAvailableModels_ListAvailableCachesResponseAndInvalidatesTenant(t *test
 		UseCases:          types.StringArray{"text-chat"},
 		ChatCompletions:   true,
 		SupportsStreaming: true,
+		InputModalities:   types.JSONArray{"text", "image"},
+		OutputModalities:  types.JSONArray{"text"},
 	}}}
 	configRepo := &availableConfigRepoFake{}
 	customRepo := &availableCustomRepoFake{}
@@ -755,6 +757,8 @@ func TestAvailableModels_ListAvailableJSONCachesEncodedResponse(t *testing.T) {
 		UseCases:          types.StringArray{"text-chat"},
 		ChatCompletions:   true,
 		SupportsStreaming: true,
+		InputModalities:   types.JSONArray{"text", "image"},
+		OutputModalities:  types.JSONArray{"text"},
 	}}}
 	configRepo := &availableConfigRepoFake{}
 	customRepo := &availableCustomRepoFake{}
@@ -786,6 +790,12 @@ func TestAvailableModels_ListAvailableJSONCachesEncodedResponse(t *testing.T) {
 	}
 	if decoded.Code != "0" || decoded.Data.Total != 1 || len(decoded.Data.Items) != 1 {
 		t.Fatalf("decoded response = code %q total %d items %d, want code 0 total 1 items 1", decoded.Code, decoded.Data.Total, len(decoded.Data.Items))
+	}
+	if !reflect.DeepEqual(decoded.Data.Items[0].InputModalities, []string{"text", "image"}) {
+		t.Fatalf("input_modalities = %#v, want text/image", decoded.Data.Items[0].InputModalities)
+	}
+	if !reflect.DeepEqual(decoded.Data.Items[0].OutputModalities, []string{"text"}) {
+		t.Fatalf("output_modalities = %#v, want text", decoded.Data.Items[0].OutputModalities)
 	}
 
 	second, err := jsonSvc.ListAvailableJSON(context.Background(), organizationID, "openai", "text-chat")

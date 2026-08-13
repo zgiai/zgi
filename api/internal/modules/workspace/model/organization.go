@@ -799,19 +799,21 @@ func readonlyWorkspaceMemberPermissionStrings() []string {
 }
 
 type WorkspaceCustomRole struct {
-	ID              string                      `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
-	OrganizationID  string                      `gorm:"column:group_id;type:uuid;not null;index" json:"organization_id"`
-	Name            string                      `gorm:"type:varchar(255);not null" json:"name"`
-	NameI18n        map[string]string           `gorm:"column:name_i18n;type:jsonb;serializer:json;not null;default:'{}'" json:"name_i18n,omitempty"`
-	Description     *string                     `gorm:"type:text" json:"description,omitempty"`
-	DescriptionI18n map[string]string           `gorm:"column:description_i18n;type:jsonb;serializer:json;not null;default:'{}'" json:"description_i18n,omitempty"`
-	Status          WorkspaceCustomRoleStatus   `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
-	Permissions     []string                    `gorm:"type:jsonb;serializer:json;not null;default:'[]'" json:"permissions"`
-	SystemKey       *string                     `gorm:"column:system_key;type:varchar(64)" json:"system_key,omitempty"`
-	TemplateOrigin  WorkspaceRoleTemplateOrigin `gorm:"column:template_origin;type:varchar(32);not null;default:'custom'" json:"template_origin"`
-	CreatedBy       string                      `gorm:"type:uuid;not null" json:"created_by"`
-	CreatedAt       time.Time                   `json:"created_at"`
-	UpdatedAt       time.Time                   `json:"updated_at"`
+	ID                    string                      `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
+	OrganizationID        string                      `gorm:"column:group_id;type:uuid;not null;index" json:"organization_id"`
+	Name                  string                      `gorm:"type:varchar(255);not null" json:"name"`
+	NameI18n              map[string]string           `gorm:"column:name_i18n;type:jsonb;serializer:json;not null;default:'{}'" json:"name_i18n,omitempty"`
+	NameCustomized        bool                        `gorm:"column:name_customized;not null;default:false" json:"name_customized"`
+	Description           *string                     `gorm:"type:text" json:"description,omitempty"`
+	DescriptionI18n       map[string]string           `gorm:"column:description_i18n;type:jsonb;serializer:json;not null;default:'{}'" json:"description_i18n,omitempty"`
+	DescriptionCustomized bool                        `gorm:"column:description_customized;not null;default:false" json:"description_customized"`
+	Status                WorkspaceCustomRoleStatus   `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
+	Permissions           []string                    `gorm:"type:jsonb;serializer:json;not null;default:'[]'" json:"permissions"`
+	SystemKey             *string                     `gorm:"column:system_key;type:varchar(64)" json:"system_key,omitempty"`
+	TemplateOrigin        WorkspaceRoleTemplateOrigin `gorm:"column:template_origin;type:varchar(32);not null;default:'custom'" json:"template_origin"`
+	CreatedBy             string                      `gorm:"type:uuid;not null" json:"created_by"`
+	CreatedAt             time.Time                   `json:"created_at"`
+	UpdatedAt             time.Time                   `json:"updated_at"`
 }
 
 func (WorkspaceCustomRole) TableName() string {

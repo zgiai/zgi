@@ -77,6 +77,7 @@ type PublishedModel struct {
 	IsSystemEnabled        bool
 	SupportedParameters    json.RawMessage
 	ConfigParameters       json.RawMessage
+	DefaultParameters      llmmodel.JSONObject
 	Endpoints              *llmmodel.ModelEndpoints
 	EndpointsAuthoritative bool
 	Features               *llmmodel.ModelFeatures
@@ -653,6 +654,9 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	}
 	if len(model.ConfigParameters) > 0 && hasColumn(db, "llm_models", "config_parameters") {
 		values["config_parameters"] = serializeConfigParameters(model.ConfigParameters)
+	}
+	if len(model.DefaultParameters) > 0 && hasColumn(db, "llm_models", "default_parameters") {
+		values["default_parameters"] = serializeJSONMap(map[string]interface{}(model.DefaultParameters))
 	}
 	applyPublishedLifecycleColumns(db, values, model)
 

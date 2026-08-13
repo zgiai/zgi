@@ -11,6 +11,9 @@ qa-artifacts/
 outputs/
 .local/
 .gstack/
+.codex-local-*.log
+.codex-run-*.ps1
+%SystemDrive%/
 specs/
 /plan/
 scripts/rag_evaluation/.env
