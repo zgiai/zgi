@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -338,6 +339,57 @@ func (a *ZGICloudAdapter) CreateImage(ctx context.Context, request *adapter.Imag
 	}
 	response.Settlement = settlementFromHeaders(httpResp.Header)
 	return &response, nil
+}
+
+func (a *ZGICloudAdapter) CreateVideo(ctx context.Context, request *adapter.VideoRequest) (*adapter.VideoResponse, error) {
+	endpoint := fmt.Sprintf("%s/videos/generations", a.baseURL)
+	httpResp, err := a.httpClient.DoRequestDetailed(ctx, "POST", endpoint, a.buildHeaders(), buildOpenAICompatibleVideoPayload(request))
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, handleOpenAICompatibleError(httpResp.StatusCode, httpResp.Body)
+	}
+
+	response, err := decodeOpenAICompatibleVideoResponse(httpResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	response.Settlement = settlementFromHeaders(httpResp.Header)
+	return response, nil
+}
+
+func (a *ZGICloudAdapter) GetVideoTask(ctx context.Context, request *adapter.VideoTaskRequest) (*adapter.VideoResponse, error) {
+	if request == nil || strings.TrimSpace(request.TaskID) == "" {
+		return nil, fmt.Errorf("%w: task_id is required", adapter.ErrInvalidRequest)
+	}
+	query := url.Values{}
+	if strings.TrimSpace(request.Model) != "" {
+		query.Set("model", strings.TrimSpace(request.Model))
+	}
+	for k, v := range request.AdditionalParameters {
+		if text, ok := v.(string); ok && strings.TrimSpace(text) != "" {
+			query.Set(k, strings.TrimSpace(text))
+		}
+	}
+	endpoint := fmt.Sprintf("%s/videos/generations/%s", a.baseURL, url.PathEscape(strings.TrimSpace(request.TaskID)))
+	if encoded := query.Encode(); encoded != "" {
+		endpoint += "?" + encoded
+	}
+	httpResp, err := a.httpClient.DoRequestDetailed(ctx, "GET", endpoint, a.buildHeaders(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, handleOpenAICompatibleError(httpResp.StatusCode, httpResp.Body)
+	}
+
+	response, err := decodeOpenAICompatibleVideoResponse(httpResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	response.Settlement = settlementFromHeaders(httpResp.Header)
+	return response, nil
 }
 
 func (a *ZGICloudAdapter) Rerank(ctx context.Context, request *adapter.RerankRequest) (*adapter.RerankResponse, error) {

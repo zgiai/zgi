@@ -51,6 +51,12 @@ type ImageCapable interface {
 	CreateImage(ctx context.Context, request *ImageRequest) (*ImageResponse, error)
 }
 
+// VideoCapable defines asynchronous video generation capability.
+type VideoCapable interface {
+	CreateVideo(ctx context.Context, request *VideoRequest) (*VideoResponse, error)
+	GetVideoTask(ctx context.Context, request *VideoTaskRequest) (*VideoResponse, error)
+}
+
 // RerankCapable defines rerank capability.
 type RerankCapable interface {
 	Rerank(ctx context.Context, request *RerankRequest) (*RerankResponse, error)
@@ -521,4 +527,93 @@ type ImageItem struct {
 	URL           string `json:"url,omitempty"`
 	B64JSON       string `json:"b64_json,omitempty"`
 	RevisedPrompt string `json:"revised_prompt,omitempty"`
+}
+
+// VideoRequest represents asynchronous video generation request.
+type VideoRequest struct {
+	Provider       string   `json:"-"`
+	Model          string   `json:"model,omitempty"`
+	Prompt         string   `json:"prompt,omitempty"`
+	ImageURL       string   `json:"image_url,omitempty"`
+	ImageURLs      []string `json:"image_urls,omitempty"`
+	FirstFrameURL  string   `json:"first_frame_url,omitempty"`
+	LastFrameURL   string   `json:"last_frame_url,omitempty"`
+	VideoURL       string   `json:"video_url,omitempty"`
+	AudioURL       string   `json:"audio_url,omitempty"`
+	NegativePrompt string   `json:"negative_prompt,omitempty"`
+	Size           string   `json:"size,omitempty"`
+	Ratio          string   `json:"ratio,omitempty"`
+	Resolution     string   `json:"resolution,omitempty"`
+	Duration       *int     `json:"duration,omitempty"`
+	N              *int     `json:"n,omitempty"`
+	GenerateAudio  *bool    `json:"generate_audio,omitempty"`
+	PromptExtend   *bool    `json:"prompt_extend,omitempty"`
+	Watermark      *bool    `json:"watermark,omitempty"`
+	CallbackURL    string   `json:"callback_url,omitempty"`
+	User           string   `json:"user,omitempty"`
+
+	// AdditionalParameters model-specific parameters
+	AdditionalParameters map[string]interface{} `json:"-"`
+}
+
+// UnmarshalJSON preserves provider-specific video parameters for compatible proxies.
+func (r *VideoRequest) UnmarshalJSON(data []byte) error {
+	type alias VideoRequest
+	var parsed alias
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, key := range []string{
+		"model", "prompt", "image_url", "image_urls", "first_frame_url", "last_frame_url", "video_url",
+		"audio_url", "negative_prompt", "size", "ratio", "resolution", "duration", "n",
+		"generate_audio", "prompt_extend", "watermark", "callback_url", "user",
+	} {
+		delete(raw, key)
+	}
+	*r = VideoRequest(parsed)
+	if len(raw) > 0 {
+		r.AdditionalParameters = raw
+	}
+	return nil
+}
+
+// VideoTaskRequest queries an asynchronous video generation task.
+type VideoTaskRequest struct {
+	Provider             string                 `json:"-"`
+	Model                string                 `json:"model,omitempty"`
+	TaskID               string                 `json:"task_id,omitempty"`
+	AdditionalParameters map[string]interface{} `json:"-"`
+}
+
+// VideoResponse represents asynchronous video generation response.
+type VideoResponse struct {
+	Created  int64       `json:"created,omitempty"`
+	Model    string      `json:"model,omitempty"`
+	TaskID   string      `json:"task_id,omitempty"`
+	ID       string      `json:"id,omitempty"`
+	Status   string      `json:"status,omitempty"`
+	VideoURL string      `json:"video_url,omitempty"`
+	Data     []VideoItem `json:"data,omitempty"`
+	Error    interface{} `json:"error,omitempty"`
+	Usage    *Usage      `json:"usage,omitempty"`
+
+	Settlement       *SettlementResult      `json:"-"`
+	EstimatedCredits int64                  `json:"-"`
+	ActualCredits    int64                  `json:"-"`
+	BillingRequestID string                 `json:"-"`
+	BillingAttemptID string                 `json:"-"`
+	Raw              map[string]interface{} `json:"raw,omitempty"`
+	Provider         string                 `json:"-"`
+	Protocol         string                 `json:"-"`
+	ChannelID        string                 `json:"-"`
+}
+
+// VideoItem represents a generated video artifact.
+type VideoItem struct {
+	URL     string `json:"url,omitempty"`
+	B64JSON string `json:"b64_json,omitempty"`
 }

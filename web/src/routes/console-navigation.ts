@@ -154,6 +154,13 @@ export const ZGI_CONSOLE_SITE_MAP = [
     permissions: NO_PERMISSIONS,
   },
   {
+    href: '/console/work/video',
+    label: 'Videos',
+    purpose: 'video generation workbench',
+    scope: 'organization',
+    permissions: NO_PERMISSIONS,
+  },
+  {
     href: '/console/work/app',
     label: 'Apps',
     purpose: 'web app workbench',

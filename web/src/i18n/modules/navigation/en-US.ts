@@ -45,6 +45,7 @@ const messages = {
   app: 'App',
   task: 'Tasks',
   image: 'Image',
+  video: 'Video',
   resources: 'Assets',
   developer: 'Developer',
   tools: 'Capabilities',

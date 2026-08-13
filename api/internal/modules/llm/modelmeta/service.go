@@ -86,6 +86,10 @@ type ModelMetaResponse struct {
 	TotalPages int             `json:"total_pages"`
 }
 
+type ModelMetaDetailResponse struct {
+	Data ModelMetaData `json:"data"`
+}
+
 // ModelMetaProvider represents a provider from a ModelMeta-compatible API.
 type ModelMetaProvider struct {
 	ID          string                 `json:"id"`
@@ -123,6 +127,8 @@ type ModelMetaData struct {
 	IconSlug         string                 `json:"icon_slug"`
 	Model            string                 `json:"model"`
 	ModelName        string                 `json:"model_name"`
+	NameAlias        string                 `json:"name"`
+	DisplayNameAlias string                 `json:"display_name"`
 	Description      *string                `json:"description"`
 	Tagline          string                 `json:"tagline"`
 	Family           string                 `json:"family"`
@@ -144,6 +150,7 @@ type ModelMetaData struct {
 	Endpoints        map[string]interface{} `json:"endpoints"`
 	Features         map[string]interface{} `json:"features"`
 	Tools            map[string]interface{} `json:"tools"`
+	Capabilities     map[string]interface{} `json:"capabilities"`
 	UseCases         []string               `json:"use_cases"`
 	InputModalities  []string               `json:"input_modalities"`
 	OutputModalities []string               `json:"output_modalities"`
@@ -173,7 +180,7 @@ type SyncResult struct {
 }
 
 // DiffResult represents the comparison result between local and remote models
-// Note: deprecated/deleted models are NOT included here — use ComputeDeprecated instead.
+// Note: deprecated/deleted models are NOT included here - use ComputeDeprecated instead.
 type DiffResult struct {
 	Provider  string      `json:"provider"`
 	CheckedAt time.Time   `json:"checked_at"`
@@ -250,6 +257,9 @@ func (s *Service) SyncProviderModels(ctx context.Context, provider string, model
 		foundSet := make(map[string]bool)
 		for _, model := range allModels {
 			if modelNameSet[model.Model] && !foundSet[model.Model] {
+				if enriched, err := s.fetchModelDetailIfNeeded(provider, &model); err == nil && enriched != nil {
+					model = *enriched
+				}
 				modelsToSync = append(modelsToSync, model)
 				foundSet[model.Model] = true
 			}
@@ -348,7 +358,7 @@ func (s *Service) SyncAllProviders(ctx context.Context) (map[string]*SyncResult,
 }
 
 // ComputeDiff compares local models with remote models and returns new/updated differences.
-// Deprecated/deleted models are excluded — use ComputeDeprecated for those.
+// Deprecated/deleted models are excluded - use ComputeDeprecated for those.
 func (s *Service) ComputeDiff(ctx context.Context, provider string) (*DiffResult, error) {
 	result := &DiffResult{
 		Provider:  provider,
@@ -607,6 +617,240 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 	return deduped, nil
 }
 
+func (s *Service) fetchModelDetailIfNeeded(provider string, base *ModelMetaData) (*ModelMetaData, error) {
+	if base == nil || !modelMetaNeedsDetail(base) {
+		return base, nil
+	}
+	detail, err := s.fetchModelDetail(provider, base.Model)
+	if err != nil {
+		return base, err
+	}
+	merged := mergeModelMetaDetail(*base, *detail)
+	return &merged, nil
+}
+
+func modelMetaNeedsDetail(meta *ModelMetaData) bool {
+	if meta == nil {
+		return false
+	}
+	if len(meta.Capabilities) > 0 || len(meta.ConfigParameters) > 0 {
+		return false
+	}
+	for _, useCase := range meta.UseCases {
+		if strings.EqualFold(strings.TrimSpace(useCase), string(llmmodel.UseCaseVideoGen)) {
+			return true
+		}
+	}
+	return boolValue(meta.Endpoints, "videos")
+}
+
+func (s *Service) fetchModelDetail(provider, modelName string) (*ModelMetaData, error) {
+	var lastErr error
+	for _, requestURL := range s.modelDetailURLs(provider, modelName) {
+		detail, err := s.fetchModelDetailURL(requestURL)
+		if err == nil {
+			return detail, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no model detail URL candidates")
+}
+
+func (s *Service) modelDetailURLs(provider, modelName string) []string {
+	provider = url.PathEscape(strings.TrimSpace(provider))
+	modelName = url.PathEscape(strings.TrimSpace(modelName))
+	base := strings.TrimRight(strings.TrimSpace(s.apiBaseURL), "/")
+	if base == "" {
+		return nil
+	}
+	urls := []string{
+		fmt.Sprintf("%s/models/%s/%s", base, provider, modelName),
+	}
+	root := strings.TrimSuffix(base, "/"+modelMetaAPIVersion)
+	if root != base {
+		urls = append(urls, fmt.Sprintf("%s/api/models/%s/%s", root, provider, modelName))
+	}
+	return urls
+}
+
+func (s *Service) fetchModelDetailURL(requestURL string) (*ModelMetaData, error) {
+	req, err := http.NewRequest("GET", requestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create model detail request: %w", err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("model detail HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read model detail response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("model detail API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var wrapped ModelMetaDetailResponse
+	if err := json.Unmarshal(body, &wrapped); err == nil {
+		normalizeModelMetaAliases(&wrapped.Data)
+		if strings.TrimSpace(wrapped.Data.Model) != "" {
+			return &wrapped.Data, nil
+		}
+	}
+
+	var direct ModelMetaData
+	if err := json.Unmarshal(body, &direct); err != nil {
+		return nil, fmt.Errorf("failed to parse model detail response: %w", err)
+	}
+	normalizeModelMetaAliases(&direct)
+	if strings.TrimSpace(direct.Model) == "" {
+		return nil, fmt.Errorf("model detail response does not contain model")
+	}
+	return &direct, nil
+}
+
+func normalizeModelMetaAliases(meta *ModelMetaData) {
+	if meta == nil {
+		return
+	}
+	if strings.TrimSpace(meta.Model) == "" {
+		meta.Model = strings.TrimSpace(meta.NameAlias)
+	}
+	if strings.TrimSpace(meta.ModelName) == "" {
+		meta.ModelName = strings.TrimSpace(meta.DisplayNameAlias)
+	}
+}
+
+func normalizeModelMetaStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "":
+		return ""
+	case llmmodel.ModelStatusActive, "enabled", "supported":
+		return llmmodel.ModelStatusActive
+	case llmmodel.ModelStatusDeprecated, "retired":
+		return llmmodel.ModelStatusDeprecated
+	default:
+		return strings.TrimSpace(status)
+	}
+}
+
+func mergeModelMetaDetail(base, detail ModelMetaData) ModelMetaData {
+	if strings.TrimSpace(detail.ID) != "" {
+		base.ID = detail.ID
+	}
+	if strings.TrimSpace(detail.Object) != "" {
+		base.Object = detail.Object
+	}
+	if strings.TrimSpace(detail.Provider) != "" {
+		base.Provider = detail.Provider
+	}
+	if strings.TrimSpace(detail.IconSlug) != "" {
+		base.IconSlug = detail.IconSlug
+	}
+	if strings.TrimSpace(detail.Model) != "" {
+		base.Model = detail.Model
+	}
+	if strings.TrimSpace(detail.ModelName) != "" {
+		base.ModelName = detail.ModelName
+	}
+	if detail.Description != nil {
+		base.Description = detail.Description
+	}
+	if strings.TrimSpace(detail.Tagline) != "" {
+		base.Tagline = detail.Tagline
+	}
+	if strings.TrimSpace(detail.Family) != "" {
+		base.Family = detail.Family
+	}
+	if strings.TrimSpace(detail.FamilyName) != "" {
+		base.FamilyName = detail.FamilyName
+	}
+	if detail.FamilyDefault {
+		base.FamilyDefault = true
+	}
+	if status := normalizeModelMetaStatus(detail.Status); status != "" {
+		base.Status = status
+	}
+	if strings.TrimSpace(detail.AccessType) != "" {
+		base.AccessType = detail.AccessType
+	}
+	if detail.ContextWindow > 0 {
+		base.ContextWindow = detail.ContextWindow
+	}
+	if detail.MaxOutputTokens > 0 {
+		base.MaxOutputTokens = detail.MaxOutputTokens
+	}
+	if strings.TrimSpace(detail.Currency) != "" {
+		base.Currency = detail.Currency
+	}
+	if detail.InputPrice != nil {
+		base.InputPrice = detail.InputPrice
+	}
+	if detail.OutputPrice != nil {
+		base.OutputPrice = detail.OutputPrice
+	}
+	if detail.CachedInputPrice != 0 {
+		base.CachedInputPrice = detail.CachedInputPrice
+	}
+	if len(detail.Pricing) > 0 {
+		base.Pricing = detail.Pricing
+	}
+	base.IsFlagship = base.IsFlagship || detail.IsFlagship
+	base.IsRecommended = base.IsRecommended || detail.IsRecommended
+	base.IsFeatured = base.IsFeatured || detail.IsFeatured
+	base.IsNew = base.IsNew || detail.IsNew
+	if len(detail.Endpoints) > 0 {
+		base.Endpoints = detail.Endpoints
+	}
+	if len(detail.Features) > 0 {
+		base.Features = detail.Features
+	}
+	if len(detail.Tools) > 0 {
+		base.Tools = detail.Tools
+	}
+	if len(detail.Capabilities) > 0 {
+		base.Capabilities = detail.Capabilities
+	}
+	if len(detail.UseCases) > 0 {
+		base.UseCases = detail.UseCases
+	}
+	if len(detail.InputModalities) > 0 {
+		base.InputModalities = detail.InputModalities
+	}
+	if len(detail.OutputModalities) > 0 {
+		base.OutputModalities = detail.OutputModalities
+	}
+	if len(detail.Parameters) > 0 {
+		base.Parameters = detail.Parameters
+	}
+	if len(detail.Evaluation) > 0 {
+		base.Evaluation = detail.Evaluation
+	}
+	if len(detail.ConfigParameters) > 0 {
+		base.ConfigParameters = detail.ConfigParameters
+	}
+	if strings.TrimSpace(detail.KnowledgeCutoff) != "" {
+		base.KnowledgeCutoff = detail.KnowledgeCutoff
+	}
+	if strings.TrimSpace(detail.ReleaseDate) != "" {
+		base.ReleaseDate = detail.ReleaseDate
+	}
+	if detail.LastUpdated > 0 {
+		base.LastUpdated = detail.LastUpdated
+	}
+	if detail.CreatedAt > 0 {
+		base.CreatedAt = detail.CreatedAt
+	}
+	if detail.UpdatedAt > 0 {
+		base.UpdatedAt = detail.UpdatedAt
+	}
+	return base
+}
+
 // syncModel syncs a single model to the database
 func (s *Service) syncModel(ctx context.Context, meta *ModelMetaData, result *SyncResult) error {
 	existing, err := s.findExistingModel(ctx, meta.Provider, meta.Model)
@@ -765,7 +1009,29 @@ func useCasesDiffer(local llmmodel.StringArray, remote []string) bool {
 }
 
 func structuredPricingDiffer(local datatypes.JSON, remote json.RawMessage) bool {
-	return !reflect.DeepEqual(normalizedStructuredPricing(local), normalizedStructuredPricing(remote))
+	return jsonPayloadDiffer(local, remote)
+}
+
+func jsonPayloadDiffer(local interface{}, remote interface{}) bool {
+	return !reflect.DeepEqual(normalizedJSONPayload(local), normalizedJSONPayload(remote))
+}
+
+func normalizedJSONPayload(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case nil:
+		return map[string]interface{}{}
+	case []byte:
+		return normalizedStructuredPricing(typed)
+	case json.RawMessage:
+		return normalizedStructuredPricing(typed)
+	case datatypes.JSON:
+		return normalizedStructuredPricing(typed)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	return normalizedStructuredPricing(data)
 }
 
 func normalizedStructuredPricing(raw []byte) interface{} {
@@ -855,6 +1121,16 @@ func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bo
 		return true
 	}
 	if !equalStringSlices(normalizeStringValues([]string(local.OutputModalities)), normalizeStringValues(remote.OutputModalities)) {
+		return true
+	}
+	if jsonPayloadDiffer(local.SupportedParameters, marshalJSONRaw(remote.Parameters)) {
+		return true
+	}
+	if len(remote.ConfigParameters) > 0 && jsonPayloadDiffer(local.ConfigParameters, normalizeConfigParameters(remote.ConfigParameters)) {
+		return true
+	}
+	remoteDefaultParameters := publishedModelDefaultParameters(remote)
+	if len(remoteDefaultParameters) > 0 && jsonPayloadDiffer(local.DefaultParameters, remoteDefaultParameters) {
 		return true
 	}
 	return false
@@ -979,6 +1255,32 @@ func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaD
 			NewValue: normalizeStringValues(remote.OutputModalities),
 		})
 	}
+	remoteSupportedParameters := marshalJSONRaw(remote.Parameters)
+	if jsonPayloadDiffer(local.SupportedParameters, remoteSupportedParameters) {
+		diffs = append(diffs, DiffField{
+			Field:    "supported_parameters",
+			OldValue: normalizedJSONPayload(local.SupportedParameters),
+			NewValue: normalizedJSONPayload(remoteSupportedParameters),
+		})
+	}
+	if len(remote.ConfigParameters) > 0 {
+		remoteConfigParameters := normalizeConfigParameters(remote.ConfigParameters)
+		if jsonPayloadDiffer(local.ConfigParameters, remoteConfigParameters) {
+			diffs = append(diffs, DiffField{
+				Field:    "config_parameters",
+				OldValue: normalizedJSONPayload(local.ConfigParameters),
+				NewValue: normalizedJSONPayload(remoteConfigParameters),
+			})
+		}
+	}
+	remoteDefaultParameters := publishedModelDefaultParameters(remote)
+	if len(remoteDefaultParameters) > 0 && jsonPayloadDiffer(local.DefaultParameters, remoteDefaultParameters) {
+		diffs = append(diffs, DiffField{
+			Field:    "default_parameters",
+			OldValue: normalizedJSONPayload(local.DefaultParameters),
+			NewValue: normalizedJSONPayload(remoteDefaultParameters),
+		})
+	}
 
 	return diffs
 }
@@ -989,7 +1291,11 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 	tools := parsePublishedModelTools(meta.Tools)
 	parameters := parsePublishedModelParameters(meta.Parameters)
 	description := normalizeOptionalString(meta.Description)
-	isActive := meta.Status == llmmodel.ModelStatusActive
+	status := normalizeModelMetaStatus(meta.Status)
+	if status == "" {
+		status = llmmodel.ModelStatusActive
+	}
+	isActive := status == llmmodel.ModelStatusActive
 
 	return PublishedModel{
 		Provider:               meta.Provider,
@@ -998,7 +1304,7 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 		Family:                 meta.Family,
 		FamilyName:             meta.FamilyName,
 		FamilyDefault:          meta.FamilyDefault,
-		Status:                 meta.Status,
+		Status:                 status,
 		Tagline:                meta.Tagline,
 		Description:            description,
 		IsFlagship:             meta.IsFlagship,
@@ -1023,11 +1329,21 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 		IsSystemEnabled:        isActive,
 		SupportedParameters:    marshalJSONRaw(meta.Parameters),
 		ConfigParameters:       meta.ConfigParameters,
+		DefaultParameters:      publishedModelDefaultParameters(meta),
 		Endpoints:              endpoints,
 		EndpointsAuthoritative: isAuthoritativeEndpointPayload(meta.Endpoints),
 		Features:               features,
 		Tools:                  tools,
 		Parameters:             parameters,
+	}
+}
+
+func publishedModelDefaultParameters(meta *ModelMetaData) llmmodel.JSONObject {
+	if meta == nil || len(meta.Capabilities) == 0 {
+		return llmmodel.JSONObject{}
+	}
+	return llmmodel.JSONObject{
+		"capabilities": meta.Capabilities,
 	}
 }
 

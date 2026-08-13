@@ -79,6 +79,8 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 		v1.POST("/embeddings", llmHandler.Embeddings)
 		v1.POST("/responses", llmHandler.CreateResponse)
 		v1.POST("/images/generations", llmHandler.CreateImage)
+		v1.POST("/videos/generations", llmHandler.CreateVideo)
+		v1.GET("/videos/generations/*task_id", llmHandler.GetVideoTask)
 		v1.GET("/models", llmHandler.ListModels)
 		// Anthropic-compatible endpoint, matching New API and Anthropic Messages format.
 		v1.POST("/messages", llmHandler.CreateAnthropicMessage)

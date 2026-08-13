@@ -1,4 +1,4 @@
-import type { NavigationMessages } from './en-US';
+﻿import type { NavigationMessages } from './en-US';
 
 const messages: NavigationMessages = {
   home: '首页',
@@ -47,6 +47,7 @@ const messages: NavigationMessages = {
   app: '应用',
   task: '定时任务',
   image: '绘图',
+  video: '视频',
   resources: '资产',
   developer: '开发者',
   tools: '能力中心',

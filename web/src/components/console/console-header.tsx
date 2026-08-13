@@ -54,6 +54,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
       { match: path => path.startsWith('/console/skills'), title: tNav('skills') },
       { match: path => path.startsWith('/console/work/chat'), title: tNav('chat') },
       { match: path => path.startsWith('/console/work/image'), title: tNav('image') },
+      { match: path => path.startsWith('/console/work/video'), title: tNav('video') },
       { match: path => path.startsWith('/console/work/app'), title: tNav('app') },
       { match: path => path.startsWith('/console/work/task'), title: tNav('task') },
       { match: path => path.startsWith('/console/workspace'), title: tNav('workspaceManagement') },

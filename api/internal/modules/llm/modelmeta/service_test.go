@@ -106,3 +106,40 @@ func hasDiffField(fields []DiffField, name string) bool {
 	}
 	return false
 }
+
+func TestModelMetaDiffDetectsDefaultParameterCapabilitiesChange(t *testing.T) {
+	local := &llmmodel.LLMModel{
+		UseCases:              llmmodel.StringArray{string(llmmodel.UseCaseVideoGen)},
+		InputModalities:       llmmodel.JSONArray{"text", "image"},
+		OutputModalities:      llmmodel.JSONArray{"video"},
+		SupportedParameters:   llmmodel.ParameterDefinitions{},
+		ConfigParameters:      llmmodel.ConfigParameters{},
+		DefaultParameters:     llmmodel.JSONObject{},
+		InputPrice:            decimal.Zero,
+		OutputPrice:           decimal.Zero,
+		CachedInputPrice:      decimal.Zero,
+		InputPriceConfigured:  false,
+		OutputPriceConfigured: false,
+	}
+	remote := &ModelMetaData{
+		UseCases:         []string{string(llmmodel.UseCaseVideoGen)},
+		InputModalities:  []string{"text", "image"},
+		OutputModalities: []string{"video"},
+		Capabilities: map[string]interface{}{
+			"video": map[string]interface{}{
+				"reference_modes": []interface{}{"auto", "first_last_frame"},
+				"references": map[string]interface{}{
+					"image_max_items": float64(2),
+				},
+			},
+		},
+	}
+	svc := &Service{}
+
+	if !svc.hasChanges(local, remote) {
+		t.Fatal("hasChanges = false, want true when capabilities/default_parameters differ")
+	}
+	if fields := svc.computeDiffFields(local, remote); !hasDiffField(fields, "default_parameters") {
+		t.Fatalf("diff fields = %#v, want default_parameters", fields)
+	}
+}

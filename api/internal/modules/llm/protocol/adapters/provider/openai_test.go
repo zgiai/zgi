@@ -23,6 +23,44 @@ func TestHandleOpenAICompatibleErrorMapsPlatformChannelUnavailable(t *testing.T)
 	}
 }
 
+func TestDecodeOpenAICompatibleVideoResponseReturnsUpstreamErrorMessage(t *testing.T) {
+	_, err := decodeOpenAICompatibleVideoResponse([]byte(`{
+		"error": {
+			"code": "InvalidParameter",
+			"message": "Error while downloading image, error: expected the width to be at least 300px, but received a 153x161px image instead",
+			"param": "image_url",
+			"type": "BadRequest"
+		}
+	}`))
+	if err == nil {
+		t.Fatal("decodeOpenAICompatibleVideoResponse() error = nil")
+	}
+	const want = "upstream error: Error while downloading image, error: expected the width to be at least 300px, but received a 153x161px image instead"
+	if err.Error() != want {
+		t.Fatalf("decodeOpenAICompatibleVideoResponse() error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestDecodeOpenAICompatibleVideoResponseReturnsNestedDataErrorMessage(t *testing.T) {
+	_, err := decodeOpenAICompatibleVideoResponse([]byte(`{
+		"code": 0,
+		"message": "success",
+		"data": {
+			"error": {
+				"code": "InvalidParameter",
+				"message": "Error while downloading image"
+			}
+		}
+	}`))
+	if err == nil {
+		t.Fatal("decodeOpenAICompatibleVideoResponse() error = nil")
+	}
+	const want = "upstream error: Error while downloading image"
+	if err.Error() != want {
+		t.Fatalf("decodeOpenAICompatibleVideoResponse() error = %q, want %q", err.Error(), want)
+	}
+}
+
 func TestHandleOpenAICompatibleErrorMapsOpenAICodes(t *testing.T) {
 	tests := []struct {
 		name     string
