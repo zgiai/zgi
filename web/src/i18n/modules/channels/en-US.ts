@@ -196,6 +196,18 @@ const messages = {
             'Connect native DashScope capabilities for Qwen text, vision, image, rerank, and multimodal models.',
           capabilities: 'Text, vision, image, rerank',
         },
+        minimax: {
+          label: 'MiniMax',
+          description:
+            'Connect MiniMax official models for text, vision, image, and music generation.',
+          capabilities: 'Text, vision, image, music',
+        },
+        doubao: {
+          label: 'Volcengine Doubao',
+          description:
+            'Connect native ModelArk capabilities for Doubao text, embedding, image, video, and speech models.',
+          capabilities: 'Text, embeddings, image, video, speech',
+        },
         deepseek: {
           label: 'DeepSeek',
           description:

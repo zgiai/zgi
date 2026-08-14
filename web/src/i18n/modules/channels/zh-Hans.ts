@@ -186,6 +186,16 @@ const messages: ChannelsMessages = {
           description: '接入 DashScope 原生能力，适合通义文本、视觉、图片、重排和多模态模型。',
           capabilities: '文本、视觉、图片、重排',
         },
+        minimax: {
+          label: 'MiniMax',
+          description: '接入 MiniMax 官方模型服务，支持文本、视觉、图片和音乐生成。',
+          capabilities: '文本、视觉、图片、音乐',
+        },
+        doubao: {
+          label: '火山引擎豆包',
+          description: '接入火山方舟原生能力，支持豆包文本、向量、图片、视频和语音模型。',
+          capabilities: '文本、向量、图片、视频、语音',
+        },
         deepseek: {
           label: 'DeepSeek',
           description: '接入 DeepSeek 官方模型服务，适合通用对话、代码和推理模型。',
