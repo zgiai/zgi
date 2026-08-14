@@ -32,6 +32,8 @@ export interface ConfirmDialogProps {
   loading?: boolean;
   /** Disabled state for confirm action */
   confirmDisabled?: boolean;
+  /** Close immediately after confirmation. Disable when the caller closes after an async success. */
+  closeOnConfirm?: boolean;
   /** Controlled open state (optional) */
   open?: boolean;
   /** Controlled open change handler (optional) */
@@ -57,6 +59,7 @@ export function ConfirmDialog({
   onConfirm,
   loading = false,
   confirmDisabled = false,
+  closeOnConfirm = true,
   open: openProp,
   onOpenChange: onOpenChangeProp,
   variant = 'default',
@@ -76,7 +79,7 @@ export function ConfirmDialog({
   // Handle confirm action then close dialog
   const handleConfirm = () => {
     onConfirm();
-    setOpen(false);
+    if (closeOnConfirm) setOpen(false);
   };
 
   return (

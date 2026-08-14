@@ -10,7 +10,23 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/util"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
+
+func newHandlerForTest(t *testing.T, service *Service) *Handler {
+	t.Helper()
+	definitions := append(appcatalog.DefaultDefinitions(), CatalogDefinitions()...)
+	productCatalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
+	if err != nil {
+		t.Fatalf("compose application error catalog: %v", err)
+	}
+	errorProjector, err := apptransport.NewProjector(productCatalog)
+	if err != nil {
+		t.Fatalf("create application error projector: %v", err)
+	}
+	return NewHandler(service, errorProjector)
+}
 
 func TestMusicScopeRejectsZeroIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -34,7 +50,7 @@ func TestHandlerCreatesTaskAsAcceptedAndReturnsScopedTask(t *testing.T) {
 	scope := testScope()
 	repo := newMemoryRepository()
 	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
-	handler := NewHandler(service)
+	handler := newHandlerForTest(t, service)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		util.SetOrganizationID(c, scope.OrganizationID.String())
@@ -88,7 +104,7 @@ func TestHandlerCreatesAndReturnsTaskWithoutWorkspace(t *testing.T) {
 		c.Set("account_id", scope.AccountID.String())
 		c.Next()
 	})
-	NewHandler(service).RegisterRoutes(router.Group(""))
+	newHandlerForTest(t, service).RegisterRoutes(router.Group(""))
 
 	request := httptest.NewRequest(http.MethodPost, "/music/tasks", bytes.NewBufferString(`{
 		"request_id":"33333333-3333-3333-3333-333333333333",
@@ -137,7 +153,7 @@ func TestHandlerListsOwnedTasksWithPaginationAndSearch(t *testing.T) {
 		c.Set("account_id", scope.AccountID.String())
 		c.Next()
 	})
-	NewHandler(service).RegisterRoutes(router.Group(""))
+	newHandlerForTest(t, service).RegisterRoutes(router.Group(""))
 
 	request := httptest.NewRequest(http.MethodGet, "/music/tasks?page=1&page_size=10&search=piano", nil)
 	recorder := httptest.NewRecorder()
@@ -167,7 +183,7 @@ func TestHandlerRejectsInvalidTaskListPagination(t *testing.T) {
 		c.Set("account_id", scope.AccountID.String())
 		c.Next()
 	})
-	NewHandler(service).RegisterRoutes(router.Group(""))
+	newHandlerForTest(t, service).RegisterRoutes(router.Group(""))
 
 	request := httptest.NewRequest(http.MethodGet, "/music/tasks?page=1&page_size=101", nil)
 	recorder := httptest.NewRecorder()
@@ -181,7 +197,7 @@ func TestHandlerRejectsRequestIDReusedWithDifferentPayload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	scope := testScope()
 	service := NewService(newMemoryRepository(), &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
-	handler := NewHandler(service)
+	handler := newHandlerForTest(t, service)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		util.SetOrganizationID(c, scope.OrganizationID.String())
@@ -236,7 +252,7 @@ func TestHandlerRejectsOversizedCreateBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	scope := testScope()
 	service := NewService(newMemoryRepository(), &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
-	handler := NewHandler(service)
+	handler := newHandlerForTest(t, service)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		util.SetOrganizationID(c, scope.OrganizationID.String())
@@ -262,5 +278,44 @@ func TestHandlerRejectsOversizedCreateBody(t *testing.T) {
 	}
 	if got, want := response.Message, "Invalid music generation request"; got != want {
 		t.Fatalf("message = %q, want %q", got, want)
+	}
+}
+
+func TestHandlerRejectsDeletingActiveTask(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	service := NewService(newMemoryRepository(task), &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		util.SetOrganizationID(c, scope.OrganizationID.String())
+		util.SetWorkspaceID(c, scope.WorkspaceID.String())
+		c.Set("account_id", scope.AccountID.String())
+		c.Next()
+	})
+	newHandlerForTest(t, service).RegisterRoutes(router.Group(""))
+
+	request := httptest.NewRequest(http.MethodDelete, "/music/tasks/"+task.ID.String(), nil)
+	request.Header.Set("Accept-Language", "zh-Hans")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if got, want := recorder.Code, http.StatusConflict; got != want {
+		t.Fatalf("DELETE status = %d, want %d; body=%s", got, want, recorder.Body.String())
+	}
+	var response struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := response.Code, "music.task.not_deletable"; got != want {
+		t.Fatalf("DELETE code = %q, want %q", got, want)
+	}
+	if got, want := response.Message, "音乐生成完成或失败后才能删除该任务。"; got != want {
+		t.Fatalf("DELETE message = %q, want %q", got, want)
 	}
 }

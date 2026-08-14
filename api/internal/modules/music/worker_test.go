@@ -345,9 +345,12 @@ func (s *deliveryCompensatorStub) CompensateMusicDelivery(_ context.Context, org
 }
 
 type assetStoreStub struct {
-	fileID  string
-	saved   []byte
-	saveErr error
+	fileID                string
+	saved                 []byte
+	saveErr               error
+	deletedStoredObjectID string
+	deletedObjectScope    Scope
+	deleteStoredObjectErr error
 }
 
 func (s *assetStoreStub) Save(_ context.Context, _ *Task, audio []byte) (string, error) {
@@ -359,6 +362,11 @@ func (s *assetStoreStub) Save(_ context.Context, _ *Task, audio []byte) (string,
 }
 
 func (s *assetStoreStub) Delete(context.Context, string) error { return nil }
+func (s *assetStoreStub) DeleteStoredObject(_ context.Context, fileID string, scope Scope) error {
+	s.deletedStoredObjectID = fileID
+	s.deletedObjectScope = scope
+	return s.deleteStoredObjectErr
+}
 func (s *assetStoreStub) URL(context.Context, string) (string, error) {
 	return "https://files.example/music.mp3", nil
 }

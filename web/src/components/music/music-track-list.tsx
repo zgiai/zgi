@@ -11,6 +11,7 @@ import {
   Play,
   RotateCcw,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -68,7 +69,9 @@ interface MusicTrackListProps {
   onShowLyrics: (task: MusicTask) => void;
   onReuse: (task: MusicTask) => void;
   onDownload: (task: MusicTask) => void;
+  onDelete: (task: MusicTask) => void;
   downloadingTaskId: string | null;
+  deletingTaskId: string | null;
   searchInput: string;
   onSearchChange: (value: string) => void;
   page: number;
@@ -92,7 +95,9 @@ export function MusicTrackList({
   onShowLyrics,
   onReuse,
   onDownload,
+  onDelete,
   downloadingTaskId,
+  deletingTaskId,
   searchInput,
   onSearchChange,
   page,
@@ -139,7 +144,8 @@ export function MusicTrackList({
               const active =
                 task.status === 'queued' ||
                 task.status === 'generating_lyrics' ||
-                task.status === 'generating';
+                task.status === 'generating' ||
+                task.status === 'compensation_pending';
               const playable = task.status === 'succeeded';
               const rowPlaying = playerTaskId === task.id && isPlaying;
               const waveform = waveformDataByTaskId[task.id];
@@ -285,6 +291,18 @@ export function MusicTrackList({
                         >
                           <RotateCcw />
                           {t('reuse')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="rounded-lg py-2 text-destructive focus:text-destructive"
+                          disabled={active || deletingTaskId === task.id}
+                          onSelect={() => onDelete(task)}
+                        >
+                          {deletingTaskId === task.id ? (
+                            <Loader2 className="animate-spin" />
+                          ) : (
+                            <Trash2 />
+                          )}
+                          {t('delete')}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>

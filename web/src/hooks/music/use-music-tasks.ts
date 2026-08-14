@@ -61,3 +61,23 @@ export function useCreateMusicTasks() {
     },
   });
 }
+
+export function useDeleteMusicTask() {
+  const queryClient = useQueryClient();
+  const currentOrganization = useOrganizationStore.use.currentOrganization();
+  const organizationId = currentOrganization?.id ?? '';
+  const workspaceId = useCurrentWorkspace()?.id ?? null;
+
+  return useMutation({
+    mutationFn: (id: string) => {
+      if (!organizationId) throw new Error('Organization context is required');
+      return musicService.deleteTask(id);
+    },
+    onSuccess: async (_response, id) => {
+      queryClient.removeQueries({ queryKey: MUSIC_KEYS.detail(organizationId, workspaceId, id) });
+      await queryClient.invalidateQueries({
+        queryKey: MUSIC_KEYS.lists(organizationId, workspaceId),
+      });
+    },
+  });
+}

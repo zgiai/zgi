@@ -102,6 +102,7 @@ await service.createTask({
 });
 await service.listTasks({ page: 2, page_size: 10, search: 'piano' });
 await service.getTask('task/with unsafe characters');
+await service.deleteTask('task/with unsafe characters');
 
 assert.deepEqual(requests, [
   {
@@ -126,6 +127,13 @@ assert.deepEqual(requests, [
   {
     config: { endpoint: 'main', basePath: '/console/api/music' },
     method: 'get',
+    path: '/tasks/task%2Fwith%20unsafe%20characters',
+    data: undefined,
+    options: undefined,
+  },
+  {
+    config: { endpoint: 'main', basePath: '/console/api/music' },
+    method: 'delete',
     path: '/tasks/task%2Fwith%20unsafe%20characters',
     data: undefined,
     options: undefined,
@@ -384,12 +392,16 @@ assert.doesNotMatch(modelHookSource, /music-2\.6|music-3\.0/);
 const taskHookSource = readFileSync(path.join(root, 'src/hooks/music/use-music-tasks.ts'), 'utf8');
 assert.match(taskHookSource, /useCurrentWorkspace/);
 assert.match(taskHookSource, /workspaceId/);
+assert.match(taskHookSource, /useDeleteMusicTask/);
+assert.match(taskHookSource, /removeQueries/);
+assert.match(taskHookSource, /invalidateQueries/);
 assert.match(taskHookSource, /currentOrganization/);
 assert.doesNotMatch(taskHookSource, /Workspace context is required/);
 
 const taskQueryOptions = [];
 const taskMutationOptions = [];
 const createdTaskRequests = [];
+const deletedTaskIds = [];
 const musicTasksHook = loadTypeScriptModule(
   'src/hooks/music/use-music-tasks.ts',
   new Map([
@@ -446,6 +458,10 @@ const musicTasksHook = loadTypeScriptModule(
             createdTaskRequests.push(request);
             return Promise.resolve({ responses: [] });
           },
+          deleteTask: id => {
+            deletedTaskIds.push(id);
+            return Promise.resolve();
+          },
           getTask: () => Promise.resolve(),
           listTasks: () => Promise.resolve(),
         },
@@ -466,6 +482,7 @@ const musicTasksHook = loadTypeScriptModule(
 musicTasksHook.useMusicTasks({ page: 1, page_size: 20 });
 musicTasksHook.useMusicTask('task-1');
 musicTasksHook.useCreateMusicTasks();
+musicTasksHook.useDeleteMusicTask();
 assert.equal(taskQueryOptions[0].enabled, true, 'personal music task list must load by organization');
 assert.equal(taskQueryOptions[1].enabled, true, 'personal music task detail must load by organization');
 assert.deepEqual(taskQueryOptions[0].queryKey.slice(0, 4), [
@@ -481,6 +498,8 @@ await taskMutationOptions[0].mutationFn({
   prompt: 'personal warm piano',
 });
 assert.equal(createdTaskRequests.length, 1, 'personal music task creation must reach the API');
+await taskMutationOptions[1].mutationFn('personal-task');
+assert.deepEqual(deletedTaskIds, ['personal-task'], 'personal music task deletion must reach the API');
 
 const workbenchSource = readFileSync(
   path.join(root, 'src/components/music/music-workbench.tsx'),
@@ -585,6 +604,9 @@ for (const marker of ['music-results-toolbar', 'music-track-card']) {
   assert.match(trackListSource, new RegExp(`data-ui=["']${marker}["']`));
 }
 assert.match(trackListSource, /DropdownMenu/);
+assert.match(trackListSource, /onDelete/);
+assert.match(trackListSource, /Trash2/);
+assert.match(trackListSource, /disabled=\{active \|\| deletingTaskId === task\.id\}/);
 assert.doesNotMatch(
   trackListSource,
   /onSelect=\{\(\) => onShowLyrics\(task\)\}/,
@@ -625,6 +647,15 @@ assert.match(
   /generationWaitHint:[\s\S]*'Music generation usually takes about 2 minutes\./
 );
 assert.match(workbenchSource, /musicService\.getTask/);
+assert.match(workbenchSource, /useDeleteMusicTask/);
+assert.match(workbenchSource, /deleteTaskMutation\.mutateAsync/);
+assert.match(workbenchSource, /<ConfirmDialog/);
+assert.match(
+  workbenchSource,
+  /<ConfirmDialog[\s\S]*?closeOnConfirm=\{false\}[\s\S]*?loading=\{deleteTaskMutation\.isPending\}/,
+  'the delete dialog must stay open while the deletion request is pending'
+);
+assert.match(workbenchSource, /setPlayerSource\(null\)/);
 assert.match(workbenchSource, /toMusicDownloadURL/);
 assert.match(trackListSource, /TRACK_ACCENTS/);
 assert.equal(
@@ -669,6 +700,20 @@ for (const source of [configSource, envExampleSource, sidebarSource, musicPageSo
 }
 assert.match(sidebarSource, /href:\s*'\/console\/work\/music'/);
 assert.match(musicPageSource, /return <MusicWorkbench \/>/);
+
+for (const source of [musicChineseMessagesSource, musicEnglishMessagesSource]) {
+  for (const key of [
+    'delete:',
+    'deleteTitle:',
+    'deleteDescription:',
+    'deleteConfirm:',
+    'cancel:',
+    'deleteSuccess:',
+    'deleteFailed:',
+  ]) {
+    assert.match(source, new RegExp(key), `music messages must include ${key}`);
+  }
+}
 
 const navigationSource = readFileSync(path.join(root, 'src/routes/console-navigation.ts'), 'utf8');
 assert.match(navigationSource, /\/console\/work\/music/);

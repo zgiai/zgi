@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/apperror"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 const (
@@ -27,14 +29,18 @@ const (
 )
 
 type Handler struct {
-	service *Service
+	service        *Service
+	errorProjector *apptransport.Projector
 }
 
-func NewHandler(service *Service) *Handler {
+func NewHandler(service *Service, errorProjector *apptransport.Projector) *Handler {
 	if service == nil {
 		panic("music handler requires service")
 	}
-	return &Handler{service: service}
+	if errorProjector == nil {
+		panic("music handler requires application error projector")
+	}
+	return &Handler{service: service, errorProjector: errorProjector}
 }
 
 func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
@@ -42,6 +48,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/tasks", h.Create)
 	group.GET("/tasks", h.List)
 	group.GET("/tasks/:id", h.Get)
+	group.DELETE("/tasks/:id", h.Delete)
 }
 
 func (h *Handler) Create(c *gin.Context) {
@@ -68,7 +75,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	task, err := h.service.Create(c.Request.Context(), scope, request)
 	if err != nil {
-		handleMusicServiceError(c, err)
+		h.handleMusicServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{
@@ -90,7 +97,7 @@ func (h *Handler) Get(c *gin.Context) {
 	}
 	view, err := h.service.Get(c.Request.Context(), scope, id)
 	if err != nil {
-		handleMusicServiceError(c, err)
+		h.handleMusicServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -107,18 +114,39 @@ func (h *Handler) List(c *gin.Context) {
 	}
 	request, err := parseListRequest(c)
 	if err != nil {
-		handleMusicServiceError(c, err)
+		h.handleMusicServiceError(c, err)
 		return
 	}
 	result, err := h.service.List(c.Request.Context(), scope, request)
 	if err != nil {
-		handleMusicServiceError(c, err)
+		h.handleMusicServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"code":    "0",
 		"message": "success",
 		"data":    result,
+	})
+}
+
+func (h *Handler) Delete(c *gin.Context) {
+	scope, ok := musicScope(c)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(strings.TrimSpace(c.Param("id")))
+	if err != nil {
+		writeMusicError(c, http.StatusBadRequest, "INVALID_TASK_ID", messageInvalidTaskID)
+		return
+	}
+	if err := h.service.Delete(c.Request.Context(), scope, id); err != nil {
+		h.handleMusicServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"code":    "0",
+		"message": "success",
+		"data":    gin.H{"deleted": true},
 	})
 }
 
@@ -160,7 +188,7 @@ func musicScope(c *gin.Context) (Scope, bool) {
 	return Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, AccountID: accountID}, true
 }
 
-func handleMusicServiceError(c *gin.Context, err error) {
+func (h *Handler) handleMusicServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidRequest):
 		writeMusicError(c, http.StatusBadRequest, "INVALID_REQUEST", messageInvalidGenerationRequest)
@@ -170,9 +198,20 @@ func handleMusicServiceError(c *gin.Context, err error) {
 		writeMusicError(c, http.StatusNotFound, "TASK_NOT_FOUND", messageTaskNotFound)
 	case errors.Is(err, ErrTaskConflict):
 		writeMusicError(c, http.StatusConflict, "TASK_CONFLICT", messageTaskConflict)
+	case apperror.IsCode(err, AppCodeTaskNotDeletable):
+		h.writeApplicationError(c, err)
 	default:
 		writeMusicError(c, http.StatusInternalServerError, "MUSIC_TASK_FAILED", messageTaskProcessingFailed)
 	}
+}
+
+func (h *Handler) writeApplicationError(c *gin.Context, err error) {
+	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+	presentation := h.errorProjector.Project(err, locale).Presentation
+	c.JSON(presentation.HTTPStatus, gin.H{
+		"code":    presentation.Code.String(),
+		"message": presentation.Message,
+	})
 }
 
 func writeMusicError(c *gin.Context, status int, code, message string) {

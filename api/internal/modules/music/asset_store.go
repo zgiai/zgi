@@ -35,6 +35,15 @@ func (*ToolFileAssetStore) Delete(ctx context.Context, fileID string) error {
 	return tool_file.DeleteToolFileGlobal(ctx, fileID)
 }
 
+func (*ToolFileAssetStore) DeleteStoredObject(ctx context.Context, fileID string, scope Scope) error {
+	return tool_file.DeleteStoredObjectGlobal(
+		ctx,
+		fileID,
+		scope.OrganizationID.String(),
+		scope.AccountID.String(),
+	)
+}
+
 func (*ToolFileAssetStore) URL(_ context.Context, fileID string) (string, error) {
 	rawURL, err := tool_file.SignToolFileGlobal(fileID, ".mp3")
 	if err != nil {

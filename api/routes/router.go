@@ -50,7 +50,7 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 
 	// API v1 routes
 	v1Group := r.Group("/console/api")
-	v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory)
+	v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory, applicationErrorCatalog)
 
 	external.RegisterExternalRoutes(r, external.ExternalRouteDeps{
 		DB:                    serviceContainer.GetDB(),
