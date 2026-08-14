@@ -146,6 +146,8 @@ export const DATASET_KEYS = {
   randomQuestions: (datasetId: string, params: unknown) =>
     [...DATASET_KEYS.all, 'random-questions', datasetId, params] as const,
   graph: (datasetId: string) => [...DATASET_KEYS.all, 'graph', datasetId] as const,
+  graphCapability: () => [...DATASET_KEYS.all, 'graph-capability'] as const,
+  graphStatus: (datasetId: string) => [...DATASET_KEYS.graph(datasetId), 'status'] as const,
   // Segment questions
   segmentQuestions: (datasetId: string, documentId: string, segmentId: string) =>
     [...DATASET_KEYS.segments(datasetId, documentId), 'questions', segmentId] as const,
@@ -286,12 +288,14 @@ export const MODEL_KEYS = {
 export const MUSIC_KEYS = {
   all: ['music'] as const,
   models: (organizationId: string) => [...MUSIC_KEYS.all, 'models', organizationId] as const,
-  lists: (workspaceId: string) => [...MUSIC_KEYS.all, 'list', workspaceId] as const,
-  list: (workspaceId: string, params: unknown) =>
-    [...MUSIC_KEYS.lists(workspaceId), params] as const,
-  details: (workspaceId: string) => [...MUSIC_KEYS.all, 'detail', workspaceId] as const,
-  detail: (workspaceId: string, id: string) =>
-    [...MUSIC_KEYS.details(workspaceId), id] as const,
+  lists: (organizationId: string, workspaceId: string | null) =>
+    [...MUSIC_KEYS.all, 'list', organizationId, workspaceId] as const,
+  list: (organizationId: string, workspaceId: string | null, params: unknown) =>
+    [...MUSIC_KEYS.lists(organizationId, workspaceId), params] as const,
+  details: (organizationId: string, workspaceId: string | null) =>
+    [...MUSIC_KEYS.all, 'detail', organizationId, workspaceId] as const,
+  detail: (organizationId: string, workspaceId: string | null, id: string) =>
+    [...MUSIC_KEYS.details(organizationId, workspaceId), id] as const,
 } as const;
 
 export const MODEL_META_KEYS = {

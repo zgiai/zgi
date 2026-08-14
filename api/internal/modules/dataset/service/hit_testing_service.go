@@ -250,7 +250,9 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 
 	// Get retrieval parameters
 	options := s.getRetrievalOptions(ctx, retrievalModel, dataset)
-	options.RetrievalMode = retrievalMode
+	if retrievalMode != "" {
+		options.RetrievalMode = retrievalMode
+	}
 
 	if options.TopK > limit {
 		options.TopK = limit
@@ -326,6 +328,7 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 		ElapsedTime:    float64(elapsed.Microseconds()) / 1000.0,
 		GraphExecution: execution,
 	}
+	normalizeGraphExecution(response.GraphExecution, dataset, options)
 	if err := normalizeHitTestingResponseKnowledgeImageURLs(response, config.Current().App.FilesURL); err != nil {
 		return nil, err
 	}
@@ -354,11 +357,32 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 	return response, nil
 }
 
+func normalizeGraphExecution(execution *dto.GraphExecution, dataset *dataset_model.Dataset, options *RetrievalOptions) {
+	if execution == nil || dataset == nil || options == nil {
+		return
+	}
+	if execution.RequestedMethod == "" {
+		execution.RequestedMethod = options.SearchMethod
+	}
+	if execution.ActualMethod == "" {
+		execution.ActualMethod = options.RetrievalMode
+	}
+	if execution.FallbackPolicy == "" {
+		execution.FallbackPolicy = options.FallbackPolicy
+	}
+	if execution.GraphRevision == 0 {
+		execution.GraphRevision = dataset.GraphRevision
+	}
+	if execution.VisibilityRevision == 0 {
+		execution.VisibilityRevision = dataset.GraphVisibilityRevision
+	}
+}
+
 // getRetrievalOptions Get retrieval options
 func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalModel map[string]interface{}, dataset *dataset_model.Dataset) *RetrievalOptions {
 	options := &RetrievalOptions{
 		TopK:                  10, // Default retrieval limit
-		SearchMethod:          "hybrid_search",
+		SearchMethod:          defaultDatasetSearchMethod(dataset.EnableGraphFlow),
 		ScoreThreshold:        0.35,
 		ScoreThresholdEnabled: true,
 		RerankingEnable:       true,
@@ -374,6 +398,7 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		CoveragePenaltyWeight: 0.3,               // Weight for coverage penalty
 		SemanticWeight:        0.7,               // Final weight for semantic score
 		GraphWeight:           0.3,               // Final weight for graph score
+		FallbackPolicy:        FallbackPolicyNone,
 	}
 
 	// Get retrieval configuration from input parameters or dataset
@@ -411,9 +436,6 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		if preQAExtension, ok := model["pre_qa_extension"].(bool); ok {
 			options.PreQAExtension = preQAExtension
 		}
-		if hd, ok := model["hop_depth"].(float64); ok {
-			options.HopDepth = int(hd)
-		}
 		if ahd, ok := model["anchored_hop_depth"].(float64); ok {
 			options.AnchoredHopDepth = int(ahd)
 		}
@@ -441,13 +463,17 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		if gw, ok := model["graph_weight"].(float64); ok {
 			options.GraphWeight = gw
 		}
+		if policy, ok := model["fallback_policy"].(string); ok {
+			options.FallbackPolicy = policy
+		}
 	}
 
 	options.SearchMethod = normalizeVectorSearchMethod(options.SearchMethod)
+	options.HopDepth = 3
 
-	// Reranking is mandatory for vector/BM25 retrieval. Graph-only results are not
-	// doc-backed chunks and cannot be sent to the reranker.
-	options.RerankingEnable = options.SearchMethod != "graph_search"
+	// Reranking applies to the document-backed portion of combined retrieval.
+	// Graph-only records are separated before reranking.
+	options.RerankingEnable = true
 	if options.RerankingEnable && !isValidRerankingModelConfig(options.RerankingModel) {
 		resolvedModel, err := llmruntime.NewModelResolver(s.defaultModelSvc).ResolveDefault(ctx, dataset.OrganizationID, shared_model.ModelTypeRerank)
 		if err == nil && resolvedModel != nil {
@@ -986,14 +1012,16 @@ func (s *hitTestingService) ExternalRetrieve(ctx context.Context, dataset *datas
 	return response, nil
 }
 
+const maxHitTestingQueryLength = 1000
+
 // HitTestingArgsCheck validates hit testing arguments
 func (s *hitTestingService) HitTestingArgsCheck(args *dto.HitTestingRequest) error {
 	if args.Query == "" {
 		return errors.NewBadRequestError("Query is required")
 	}
 
-	if utf8.RuneCountInString(args.Query) > 250 {
-		return errors.NewBadRequestError("Query cannot exceed 250 characters")
+	if utf8.RuneCountInString(args.Query) > maxHitTestingQueryLength {
+		return errors.NewBadRequestError(fmt.Sprintf("Query cannot exceed %d characters", maxHitTestingQueryLength))
 	}
 
 	return nil

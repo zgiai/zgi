@@ -119,6 +119,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DefaultModelService:        serviceContainer.GetDefaultModelService(),
 		TaskManager:                serviceContainer.GetTaskManager(),
 		GraphFlowService:           serviceContainer.GetGraphFlowService(),
+		GraphLifecycleService:      serviceContainer.GetGraphLifecycleService(),
+		GraphRuntimeHealthService:  serviceContainer.GetGraphRuntimeHealthService(),
 		TaskHandlerRegistry:        serviceContainer.GetTaskHandlerRegistry(),
 		ResourcePermissionService:  serviceContainer.GetResourcePermissionService(),
 		AuthorizationService:       serviceContainer.GetAuthorizationService(),

@@ -39,7 +39,7 @@ func (r *memoryRepository) Get(_ context.Context, id uuid.UUID) (*Task, error) {
 
 func (r *memoryRepository) GetScoped(_ context.Context, scope Scope, id uuid.UUID) (*Task, error) {
 	task, err := r.Get(context.Background(), id)
-	if err != nil || task.OrganizationID != scope.OrganizationID || task.WorkspaceID != scope.WorkspaceID || task.AccountID != scope.AccountID {
+	if err != nil || !taskInScope(task, scope) {
 		return nil, ErrTaskNotFound
 	}
 	return task, nil
@@ -48,7 +48,7 @@ func (r *memoryRepository) GetScoped(_ context.Context, scope Scope, id uuid.UUI
 func (r *memoryRepository) GetByRequest(_ context.Context, scope Scope, requestID uuid.UUID) (*Task, error) {
 	for _, task := range r.tasks {
 		if task.RequestID == requestID && task.OrganizationID == scope.OrganizationID &&
-			task.WorkspaceID == scope.WorkspaceID && task.AccountID == scope.AccountID {
+			sameWorkspace(task.WorkspaceID, scope.WorkspaceID) && task.AccountID == scope.AccountID {
 			copy := *task
 			return &copy, nil
 		}
@@ -78,7 +78,7 @@ func (r *memoryRepository) ListScoped(_ context.Context, scope Scope, query List
 	tasks := make([]*Task, 0)
 	search := strings.ToLower(query.Search)
 	for _, task := range r.tasks {
-		if task.OrganizationID != scope.OrganizationID || task.WorkspaceID != scope.WorkspaceID || task.AccountID != scope.AccountID {
+		if !taskInScope(task, scope) {
 			continue
 		}
 		if search != "" && !strings.Contains(strings.ToLower(task.Prompt), search) {
@@ -97,6 +97,13 @@ func (r *memoryRepository) ListScoped(_ context.Context, scope Scope, query List
 	}
 	end := min(start+query.PageSize, len(tasks))
 	return tasks[start:end], total, nil
+}
+
+func taskInScope(task *Task, scope Scope) bool {
+	if task.OrganizationID != scope.OrganizationID || task.AccountID != scope.AccountID {
+		return false
+	}
+	return scope.WorkspaceID == nil || sameWorkspace(task.WorkspaceID, scope.WorkspaceID)
 }
 
 func (r *memoryRepository) Transition(_ context.Context, id uuid.UUID, from, to Status, update TaskUpdate) error {

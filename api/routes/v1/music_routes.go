@@ -52,7 +52,6 @@ func RegisterMusicRoutes(router *gin.RouterGroup, deps MusicRouteDeps) {
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
-	group.Use(middleware.CurrentWorkspaceRequired())
 	musicmodule.NewHandler(service, errorProjector).RegisterRoutes(group)
 	logger.Info("Music task routes registered", "path", "/console/api/music/tasks")
 }

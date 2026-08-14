@@ -127,7 +127,12 @@ def main(output_platform: str = "") -> int:
     if not input_path.exists():
         raise SystemExit(f"input file does not exist: {input_path}")
 
-    dataset_path, result_json_path, result_csv_path = output_paths_for_input(input_path, output_platform)
+    retrieval_mode = resolve_retrieval_mode(args.retrieval_mode)
+    dataset_path, result_json_path, result_csv_path = output_paths_for_input(
+        input_path,
+        output_platform,
+        retrieval_mode,
+    )
     dataset_rows: list[dict[str, Any]] | None = None
     if dataset_path.exists():
         if args.reuse_dataset:
@@ -176,7 +181,7 @@ def main(output_platform: str = "") -> int:
                 questions,
                 top_k,
                 score_threshold,
-                args.retrieval_mode,
+                retrieval_mode,
                 args.model,
                 args.backend_batch_size,
             )
@@ -192,7 +197,7 @@ def main(output_platform: str = "") -> int:
                     questions,
                     top_k,
                     score_threshold,
-                    args.retrieval_mode,
+                    retrieval_mode,
                     args.model,
                     args.backend_batch_size,
                 )
@@ -229,7 +234,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backend-batch-size", type=int, default=DEFAULT_BACKEND_BATCH_SIZE, help="Questions per backend request. Default: %(default)s")
     parser.add_argument("--ragas-batch-size", type=int, default=int_env_value("RAGAS_BATCH_SIZE", DEFAULT_RAGAS_BATCH_SIZE), help="Rows per Ragas evaluation batch after all backend data is collected. Default: %(default)s")
     parser.add_argument("--ragas-limit", type=int, default=0, help="Limit rows sent to Ragas after filtering successful backend rows. 0 means no limit.")
-    parser.add_argument("--retrieval-mode", default="hybrid", choices=["hybrid", "vector", "graph"], help="Retrieval mode.")
+    parser.add_argument(
+        "--retrieval-mode",
+        default=None,
+        choices=["hybrid", "vector", "graph"],
+        help="Retrieval mode. If omitted while collecting backend data, prompt interactively.",
+    )
     parser.add_argument("--model", default="", help="Optional generation model name for the backend.")
     parser.add_argument("--ragas-provider", default=env_value("RAGAS_PROVIDER", "auto"), choices=["auto", "aliyun", "openai"], help="Ragas judge provider.")
     parser.add_argument("--ragas-api-key", default=ragas_env_value("RAGAS_API_KEY", "ALIYUN_API_KEY", "DASHSCOPE_API_KEY", "OPENAI_API_KEY"), help="Ragas judge API key.")
@@ -329,6 +339,36 @@ def resolve_retrieval_eval_params(args: argparse.Namespace) -> tuple[int, float]
     score_threshold = prompt_score_threshold(default_saved_score_threshold())
     save_retrieval_eval_params(top_k, score_threshold)
     return top_k, score_threshold
+
+
+def resolve_retrieval_mode(retrieval_mode: str | None) -> str:
+    """Return an explicit CLI selection or ask for one before backend collection."""
+    if retrieval_mode:
+        return retrieval_mode
+
+    options = (
+        ("vector", "向量 + BM25"),
+        ("graph", "图谱检索"),
+        ("hybrid", "混合检索（向量 + BM25 + 图谱）"),
+    )
+    print("Select retrieval mode:")
+    for index, (_, label) in enumerate(options, start=1):
+        print(f"  {index}. {label}")
+
+    while True:
+        choice = input("Select retrieval mode number [1]: ").strip()
+        if choice == "":
+            return options[0][0]
+        try:
+            selected = int(choice)
+        except ValueError:
+            print("please enter a number from the list")
+            continue
+        if 1 <= selected <= len(options):
+            mode, label = options[selected - 1]
+            print(f"selected retrieval mode: {label} ({mode})")
+            return mode
+        print(f"please enter a number between 1 and {len(options)}")
 
 
 def default_saved_top_k() -> int:
@@ -441,16 +481,22 @@ def available_input_files(input_dir: Path) -> list[Path]:
     )
 
 
-def output_paths_for_input(input_path: Path, platform: str = "") -> tuple[Path, Path, Path]:
+def output_paths_for_input(
+    input_path: Path,
+    platform: str = "",
+    retrieval_mode: str = "",
+) -> tuple[Path, Path, Path]:
     MIDDLE_DIR.mkdir(parents=True, exist_ok=True)
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
     dataset_prefix = MIDDLE_DIR / input_path.with_suffix("").name
     result_prefix = RESULT_DIR / input_path.with_suffix("").name
     platform_suffix = f".{platform.strip().lower()}" if platform.strip() else ""
+    retrieval_mode_suffix = f".{retrieval_mode.strip().lower()}" if retrieval_mode.strip() else ""
+    output_suffix = platform_suffix + retrieval_mode_suffix
     return (
-        dataset_prefix.with_name(dataset_prefix.name + platform_suffix + ".ragas.dataset.json"),
-        result_prefix.with_name(result_prefix.name + platform_suffix + ".ragas.results.json"),
-        result_prefix.with_name(result_prefix.name + platform_suffix + ".ragas.results.csv"),
+        dataset_prefix.with_name(dataset_prefix.name + output_suffix + ".ragas.dataset.json"),
+        result_prefix.with_name(result_prefix.name + output_suffix + ".ragas.results.json"),
+        result_prefix.with_name(result_prefix.name + output_suffix + ".ragas.results.csv"),
     )
 
 

@@ -28,16 +28,17 @@ type Repository interface {
 }
 
 func (r *GormRepository) ListScoped(ctx context.Context, scope Scope, query ListQuery) ([]*Task, int64, error) {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil ||
-		query.Page <= 0 || query.PageSize <= 0 {
+	if !validScope(scope) || query.Page <= 0 || query.PageSize <= 0 {
 		return nil, 0, ErrInvalidRequest
 	}
 	db := r.db.WithContext(ctx).Model(&Task{}).Where(
-		"organization_id = ? AND workspace_id = ? AND account_id = ?",
+		"organization_id = ? AND account_id = ?",
 		scope.OrganizationID,
-		scope.WorkspaceID,
 		scope.AccountID,
 	)
+	if scope.WorkspaceID != nil {
+		db = db.Where("workspace_id = ?", *scope.WorkspaceID)
+	}
 	if query.Search != "" {
 		db = db.Where(`LOWER(prompt) LIKE LOWER(?) ESCAPE '\'`, "%"+escapeMusicTaskSearch(query.Search)+"%")
 	}
@@ -93,16 +94,20 @@ func (r *GormRepository) Get(ctx context.Context, id uuid.UUID) (*Task, error) {
 }
 
 func (r *GormRepository) GetScoped(ctx context.Context, scope Scope, id uuid.UUID) (*Task, error) {
+	if !validScope(scope) || id == uuid.Nil {
+		return nil, ErrInvalidRequest
+	}
 	var task Task
-	err := r.db.WithContext(ctx).
-		Where(
-			"id = ? AND organization_id = ? AND workspace_id = ? AND account_id = ?",
-			id,
-			scope.OrganizationID,
-			scope.WorkspaceID,
-			scope.AccountID,
-		).
-		Take(&task).Error
+	db := r.db.WithContext(ctx).Where(
+		"id = ? AND organization_id = ? AND account_id = ?",
+		id,
+		scope.OrganizationID,
+		scope.AccountID,
+	)
+	if scope.WorkspaceID != nil {
+		db = db.Where("workspace_id = ?", *scope.WorkspaceID)
+	}
+	err := db.Take(&task).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrTaskNotFound
@@ -113,16 +118,22 @@ func (r *GormRepository) GetScoped(ctx context.Context, scope Scope, id uuid.UUI
 }
 
 func (r *GormRepository) GetByRequest(ctx context.Context, scope Scope, requestID uuid.UUID) (*Task, error) {
+	if !validScope(scope) || requestID == uuid.Nil {
+		return nil, ErrInvalidRequest
+	}
 	var task Task
-	err := r.db.WithContext(ctx).
-		Where(
-			"request_id = ? AND organization_id = ? AND workspace_id = ? AND account_id = ?",
-			requestID,
-			scope.OrganizationID,
-			scope.WorkspaceID,
-			scope.AccountID,
-		).
-		Take(&task).Error
+	db := r.db.WithContext(ctx).Where(
+		"request_id = ? AND organization_id = ? AND account_id = ?",
+		requestID,
+		scope.OrganizationID,
+		scope.AccountID,
+	)
+	if scope.WorkspaceID == nil {
+		db = db.Where("workspace_id IS NULL")
+	} else {
+		db = db.Where("workspace_id = ?", *scope.WorkspaceID)
+	}
+	err := db.Take(&task).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrTaskNotFound
@@ -224,20 +235,21 @@ func (r *GormRepository) TouchStatus(ctx context.Context, id uuid.UUID, status S
 }
 
 func (r *GormRepository) DeleteScopedTerminal(ctx context.Context, scope Scope, id uuid.UUID) error {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil || id == uuid.Nil {
+	if !validScope(scope) || id == uuid.Nil {
 		return ErrInvalidRequest
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var task Task
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(
-				"id = ? AND organization_id = ? AND workspace_id = ? AND account_id = ?",
-				id,
-				scope.OrganizationID,
-				scope.WorkspaceID,
-				scope.AccountID,
-			).
-			Take(&task).Error
+		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+			"id = ? AND organization_id = ? AND account_id = ?",
+			id,
+			scope.OrganizationID,
+			scope.AccountID,
+		)
+		if scope.WorkspaceID != nil {
+			query = query.Where("workspace_id = ?", *scope.WorkspaceID)
+		}
+		err := query.Take(&task).Error
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrTaskNotFound

@@ -1356,6 +1356,8 @@ const organizationRoutes = [
   '/console/work',
   '/console/work/chat',
   '/console/work/image',
+  '/console/work/video',
+  '/console/work/music',
   '/console/work/app',
   '/console/work/app/agent-1',
 ];
@@ -1370,6 +1372,8 @@ const expectedOrganizationConsolePageRoutes = [
   '/console/work/app/:web_app_id',
   '/console/work/chat',
   '/console/work/image',
+  '/console/work/music',
+  '/console/work/video',
 ];
 const expectedWorkspaceConsolePageRoutes = [
   '/console/agents',
@@ -1455,7 +1459,9 @@ assert.deepEqual(
     '/console/work/app/:web_app_id',
     '/console/work/chat',
     '/console/work/image',
+    '/console/work/music',
     '/console/work/task',
+    '/console/work/video',
   ],
   'console work route tree should be explicitly classified by shared access metadata'
 );
@@ -1467,6 +1473,8 @@ assert.deepEqual(
     '/console/work/app/:web_app_id',
     '/console/work/chat',
     '/console/work/image',
+    '/console/work/music',
+    '/console/work/video',
   ],
   'console work product routes should remain organization scoped'
 );
@@ -1484,6 +1492,8 @@ assert.deepEqual(
     '/console/work',
     '/console/work/chat',
     '/console/work/image',
+    '/console/work/video',
+    '/console/work/music',
     '/console/work/app',
   ],
   'console organization-scoped exact route metadata should include the personal workbench and product routes'
@@ -1495,7 +1505,14 @@ assert.deepEqual(
 );
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_WORK_ROUTES],
-  ['/console/work', '/console/work/chat', '/console/work/image', '/console/work/app'],
+  [
+    '/console/work',
+    '/console/work/chat',
+    '/console/work/image',
+    '/console/work/video',
+    '/console/work/music',
+    '/console/work/app',
+  ],
   'work layout organization-scoped exact route metadata should include product routes only'
 );
 assert.deepEqual(

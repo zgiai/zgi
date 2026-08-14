@@ -171,12 +171,19 @@ func parseListRequest(c *gin.Context) (ListRequest, error) {
 
 func musicScope(c *gin.Context) (Scope, bool) {
 	organizationID, organizationErr := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
-	workspaceID, workspaceErr := uuid.Parse(strings.TrimSpace(util.GetWorkspaceID(c)))
 	accountID, accountErr := uuid.Parse(strings.TrimSpace(util.GetAccountID(c)))
-	if organizationErr != nil || workspaceErr != nil || accountErr != nil ||
-		organizationID == uuid.Nil || workspaceID == uuid.Nil || accountID == uuid.Nil {
+	if organizationErr != nil || accountErr != nil || organizationID == uuid.Nil || accountID == uuid.Nil {
 		writeMusicError(c, http.StatusUnauthorized, "UNAUTHORIZED", messageInvalidAuthContext)
 		return Scope{}, false
+	}
+	var workspaceID *uuid.UUID
+	if raw := strings.TrimSpace(util.GetWorkspaceID(c)); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil || parsed == uuid.Nil {
+			writeMusicError(c, http.StatusUnauthorized, "UNAUTHORIZED", messageInvalidAuthContext)
+			return Scope{}, false
+		}
+		workspaceID = &parsed
 	}
 	return Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, AccountID: accountID}, true
 }

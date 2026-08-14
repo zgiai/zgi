@@ -27,6 +27,7 @@ export function RetrievalConfigModal({
   onSave,
   onSaveAsTest,
   isGraphEnabled = false,
+  graphUnavailableReason,
 }: RetrievalConfigModalProps) {
   const t = useT('datasets');
   const [localConfig, setLocalConfig] = useState<RetrievalConfig>(config);
@@ -69,6 +70,7 @@ export function RetrievalConfigModal({
             retrieval={localConfig}
             onChange={updated => handleConfigChange(updated)}
             isGraphEnabled={isGraphEnabled}
+            graphUnavailableReason={graphUnavailableReason}
           />
         </DialogBody>
 

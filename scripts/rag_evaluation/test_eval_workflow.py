@@ -16,10 +16,10 @@ class EvaluationWorkflowTest(unittest.TestCase):
         input_path = Path("/tmp/example.xlsx")
 
         dify_paths = run_ragas_eval.output_paths_for_input(input_path, "dify")
-        zgi_paths = run_ragas_eval.output_paths_for_input(input_path, "zgi")
+        zgi_paths = run_ragas_eval.output_paths_for_input(input_path, "zgi", "graph")
 
         self.assertTrue(dify_paths[0].name.endswith(".dify.ragas.dataset.json"))
-        self.assertTrue(zgi_paths[0].name.endswith(".zgi.ragas.dataset.json"))
+        self.assertTrue(zgi_paths[0].name.endswith(".zgi.graph.ragas.dataset.json"))
         self.assertEqual(dify_paths[0].parent, run_ragas_eval.MIDDLE_DIR)
         self.assertEqual(dify_paths[1].parent, run_ragas_eval.RESULT_DIR)
         self.assertEqual(zgi_paths[2].parent, run_ragas_eval.RESULT_DIR)

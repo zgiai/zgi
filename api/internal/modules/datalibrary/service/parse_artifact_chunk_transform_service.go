@@ -95,12 +95,12 @@ func (s *parseArtifactChunkTransformService) TransformAuto(ctx context.Context, 
 		fileName = input.Artifact.FileName
 	}
 
-	indexType := datasetindexing.ParagraphIndex
-	options := &datasetindexing.ProcessOptions{Mode: "automatic"}
+	indexType := datasetindexing.ParentChildIndex
+	options := defaultParagraphParentChildProcessOptions()
 	routing := map[string]any{
 		"version":         "v1",
 		"matched":         false,
-		"fallback_reason": "default paragraph automatic chunking",
+		"fallback_reason": "default paragraph parent-child sliding-window chunking",
 	}
 
 	if isVisionImageArtifact(input.Artifact, fileName) {
@@ -162,6 +162,25 @@ func (s *parseArtifactChunkTransformService) TransformAuto(ctx context.Context, 
 		ProcessOptions: options,
 		Routing:        routing,
 	}, nil
+}
+
+func defaultParagraphParentChildProcessOptions() *datasetindexing.ProcessOptions {
+	return &datasetindexing.ProcessOptions{
+		Mode: "hierarchical",
+		ProcessRule: map[string]interface{}{
+			"parent_mode": "paragraph",
+			"segmentation": map[string]interface{}{
+				"separator":     "\n",
+				"max_tokens":    datasetindexing.DefaultParagraphParentMaxChars,
+				"chunk_overlap": datasetindexing.DefaultParagraphParentOverlapChars,
+			},
+			"subchunk_segmentation": map[string]interface{}{
+				"separator":     "\n",
+				"max_tokens":    datasetindexing.DefaultParagraphChildMaxChars,
+				"chunk_overlap": datasetindexing.DefaultParagraphChildOverlapChars,
+			},
+		},
+	}
 }
 
 func isVisionImageArtifact(artifact *contracts.ParseArtifact, fileName string) bool {

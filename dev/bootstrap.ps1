@@ -103,25 +103,6 @@ function Replace-EnvValueIfCurrent {
   }
 }
 
-function Remove-EnvKey {
-  param(
-    [string]$TargetPath,
-    [string]$Key
-  )
-
-  if (-not (Test-Path -LiteralPath $TargetPath)) {
-    return
-  }
-
-  $content = Get-Content -LiteralPath $TargetPath -Raw
-  $pattern = "(?m)^$([regex]::Escape($Key))=.*(?:\r?\n)?"
-  if ([regex]::IsMatch($content, $pattern)) {
-    $content = [regex]::Replace($content, $pattern, '', 1)
-    Set-Content -LiteralPath $TargetPath -Value $content -NoNewline
-    Write-Host "[bootstrap] removed $(Get-DisplayPath -TargetPath $TargetPath) $Key"
-  }
-}
-
 function Get-EnvValue {
   param(
     [string]$TargetPath,
@@ -163,21 +144,6 @@ Ensure-EnvValue -TargetPath $apiEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Se
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'SECRET_KEY' -Value (New-Secret32)
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Secret32)
 Replace-EnvValueIfCurrent -TargetPath $apiDockerEnv -Key 'SQL_BASE_INTERNAL_DB' -OldValue 'zgi' -NewValue 'zgi_sql_base'
-Replace-EnvValueIfCurrent -TargetPath $apiEnv -Key 'NEO4J_URI' -OldValue 'bolt://localhost:7687' -NewValue ''
-Replace-EnvValueIfCurrent -TargetPath $apiDockerEnv -Key 'NEO4J_URI' -OldValue 'bolt://neo4j:7687' -NewValue ''
-Replace-EnvValueIfCurrent -TargetPath $dockerEnv -Key 'NEO4J_URI' -OldValue 'bolt://neo4j:7687' -NewValue ''
-Remove-EnvKey -TargetPath $apiEnv -Key 'NEO4J_URI'
-Remove-EnvKey -TargetPath $apiEnv -Key 'NEO4J_USERNAME'
-Remove-EnvKey -TargetPath $apiEnv -Key 'NEO4J_PASSWORD'
-Remove-EnvKey -TargetPath $apiEnv -Key 'NEO4J_DATABASE'
-Remove-EnvKey -TargetPath $apiDockerEnv -Key 'NEO4J_URI'
-Remove-EnvKey -TargetPath $apiDockerEnv -Key 'NEO4J_USERNAME'
-Remove-EnvKey -TargetPath $apiDockerEnv -Key 'NEO4J_PASSWORD'
-Remove-EnvKey -TargetPath $apiDockerEnv -Key 'NEO4J_DATABASE'
-Remove-EnvKey -TargetPath $dockerEnv -Key 'NEO4J_URI'
-Remove-EnvKey -TargetPath $dockerEnv -Key 'NEO4J_USERNAME'
-Remove-EnvKey -TargetPath $dockerEnv -Key 'NEO4J_PASSWORD'
-Remove-EnvKey -TargetPath $dockerEnv -Key 'NEO4J_DATABASE'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_PORT' -Value '2679'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_URL' -Value 'http://localhost:2679'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'POSTGRES_PASSWORD' -Value $postgresPassword

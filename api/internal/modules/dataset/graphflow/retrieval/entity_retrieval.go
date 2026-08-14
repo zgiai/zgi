@@ -82,6 +82,9 @@ func (r *EntityRetrieval) Retrieve(ctx context.Context, tenantID string, kbID uu
 		}
 
 		for _, result := range results {
+			if getFloatFromMap(result, "active_source_count") <= 0 {
+				continue
+			}
 			match := EntityMatch{
 				Score:      getFloatFromMap(result, "_distance"),
 				Properties: result,
@@ -125,6 +128,9 @@ func (r *EntityRetrieval) RetrieveByEmbedding(ctx context.Context, kbID uuid.UUI
 
 	matches := make([]EntityMatch, 0, len(results))
 	for _, result := range results {
+		if getFloatFromMap(result, "active_source_count") <= 0 {
+			continue
+		}
 		match := EntityMatch{
 			Score:      getFloatFromMap(result, "_distance"),
 			Properties: result,

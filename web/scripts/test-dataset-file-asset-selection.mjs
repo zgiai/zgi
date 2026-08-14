@@ -8,9 +8,11 @@ const root = path.resolve(__dirname, '..');
 const read = relativePath => fs.readFileSync(path.join(root, relativePath), 'utf8');
 
 const dialogSource = read('src/components/datasets/document/dataset-file-asset-dialog.tsx');
+const hookSource = read('src/hooks/dataset/use-dataset-file-refs.ts');
 const zhSource = read('src/i18n/modules/datasets/zh-Hans.ts');
 const enSource = read('src/i18n/modules/datasets/en-US.ts');
 const normalizedDialogSource = dialogSource.replace(/\s+/g, ' ');
+const normalizedHookSource = hookSource.replace(/\s+/g, ' ');
 const normalizedZhSource = zhSource.replace(/\s+/g, ' ');
 const normalizedEnSource = enSource.replace(/\s+/g, ' ');
 
@@ -43,7 +45,7 @@ for (const snippet of requiredDialogSnippets) {
 const requiredNormalizedSnippets = [
   'const selectable = candidate.addable || candidate.requires_embedding_generation === true;',
   'checked={allVisibleSelectableSelected}',
-  'disabled={visibleSelectableIds.length === 0}',
+  'disabled={!isCandidateListComplete || visibleSelectableIds.length === 0}',
   'disabled={!selectable}',
   'toggleCandidate(candidate, checked === true)',
   'await createRefsMutation.mutateAsync( autoAddReadyCandidates.map(candidate => candidate.asset_id) );',
@@ -52,6 +54,22 @@ const requiredNormalizedSnippets = [
 for (const snippet of requiredNormalizedSnippets) {
   if (!normalizedDialogSource.includes(snippet)) {
     throw new Error(`Missing normalized dataset file asset selection snippet: ${snippet}`);
+  }
+}
+
+const requiredPaginationSnippets = [
+  'useInfiniteQuery({',
+  'initialPageParam: initialPage',
+  'getNextPageParam: (lastPage, _allPages, lastPageParam) => {',
+  'return currentPage * pageSize < total ? currentPage + 1 : undefined;',
+  'void fetchNextPage();',
+  'query.data?.pages',
+  'isCandidateListComplete:',
+];
+
+for (const snippet of requiredPaginationSnippets) {
+  if (!normalizedHookSource.includes(snippet)) {
+    throw new Error(`Missing dataset file candidate pagination snippet: ${snippet}`);
   }
 }
 

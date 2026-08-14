@@ -28,7 +28,6 @@ func TestPublishedModelCapabilityMapping(t *testing.T) {
 			Moderation:       true,
 			Videos:           true,
 			ImageEdit:        true,
-			MusicGeneration:  true,
 		}, publishedModelEndpoints(&pb.CatalogModelEndpoints{
 			ChatCompletions:  true,
 			Responses:        true,
@@ -45,7 +44,6 @@ func TestPublishedModelCapabilityMapping(t *testing.T) {
 			Moderation:       true,
 			Videos:           true,
 			ImageEdit:        true,
-			MusicGeneration:  true,
 		}))
 	})
 
@@ -183,8 +181,28 @@ func TestPublishedModelPricingMapping(t *testing.T) {
 	require.JSONEq(t, resp.Models[0].GetPricingJson(), string(catalog.Models[0].Pricing))
 }
 
+func TestPublishedModelConfigPayloadCarriesDefaultParameters(t *testing.T) {
+	resp := &pb.GetPublishedCatalogResponse{
+		Version:     14,
+		PublishedAt: 1700000000000,
+		Models: []*pb.CatalogModel{{
+			Provider: "doubao",
+			Model:    "doubao-seedance-2-0-mini-260615",
+			ConfigParametersJson: `{
+				"config_parameters":[{"name":"quality","template_key":"quality","type":"string","default":"standard"}],
+				"default_parameters":{"capabilities":{"video":{"resolutions":["480p","720p"],"duration":{"min_seconds":4,"max_seconds":15,"step_seconds":1}}}}
+			}`,
+		}},
+	}
+
+	catalog := catalogFromResponse(resp)
+	require.Len(t, catalog.Models, 1)
+	require.JSONEq(t, `[{"name":"quality","template_key":"quality","type":"string","required":false,"default":"standard"}]`, string(catalog.Models[0].ConfigParameters))
+	require.Equal(t, []interface{}{"480p", "720p"}, catalog.Models[0].DefaultParameters["capabilities"].(map[string]interface{})["video"].(map[string]interface{})["resolutions"])
+}
+
 func TestPublishedModelConfigParametersPreserveVoiceCatalog(t *testing.T) {
-	const configParameters = `[{"name":"voice","template_key":"voice","label":{"zh_Hans":"音色","en_US":"Voice"},"type":"string","help":{"zh_Hans":"请选择音色","en_US":"Select a voice"},"required":true,"default":"voice-a","options":["voice-a"],"option_labels":{"voice-a":{"zh_Hans":"音色 A","en_US":"Voice A"}}}]`
+	const configParameters = `[{"name":"voice","template_key":"voice","label":{"en_US":"Voice"},"type":"string","help":{"en_US":"Select a voice"},"required":true,"default":"voice-a","options":["voice-a"],"option_labels":{"voice-a":{"en_US":"Voice A"}}}]`
 	resp := &pb.GetPublishedCatalogResponse{
 		Version:     14,
 		PublishedAt: 1700000000000,
@@ -201,5 +219,5 @@ func TestPublishedModelConfigParametersPreserveVoiceCatalog(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, params, 1)
 	require.Equal(t, []string{"voice-a"}, params[0].Options)
-	require.Equal(t, "音色 A", params[0].OptionLabels["voice-a"].ZhHans)
+	require.Equal(t, "Voice A", params[0].OptionLabels["voice-a"].EnUS)
 }

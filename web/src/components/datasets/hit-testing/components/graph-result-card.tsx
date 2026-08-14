@@ -4,7 +4,7 @@ import React from 'react';
 import { useT } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Network } from 'lucide-react';
+import { FileText, Network } from 'lucide-react';
 import type { HitTestingResult } from '@/services';
 
 interface GraphResultCardProps {
@@ -27,12 +27,32 @@ export function GraphResultCard({ result, index }: GraphResultCardProps) {
           <Badge variant="outline">
             {t('hitTesting.score')}: {score.toFixed(4)}
           </Badge>
+          {typeof retrieval_source?.active_source_count === 'number' && (
+            <Badge variant="secondary">
+              {t('hitTesting.activeSources')}: {retrieval_source.active_source_count}
+            </Badge>
+          )}
         </div>
 
         {/* Content */}
         <p className="mb-4 text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
           {segment.content}
         </p>
+
+        {segment.document?.id && segment.document.id !== 'graph_knowledge' && (
+          <div className="mb-4 flex min-w-0 items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs">
+            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="shrink-0 text-muted-foreground">
+              {t('hitTesting.sourceDocument')}:
+            </span>
+            <span
+              className="min-w-0 truncate font-medium text-foreground"
+              title={segment.document.name}
+            >
+              {segment.document.name}
+            </span>
+          </div>
+        )}
 
         {/* Matched Entities Section */}
         <div className="pt-3 border-t">

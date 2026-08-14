@@ -97,6 +97,7 @@ const messages = {
       agent: 'Agent',
       aichat: 'General Chat',
       'image-runtime': 'Image Generation',
+      'video-runtime': 'Video Generation',
       data_library_file: 'Document Vectorization & Q&A',
       prompt_optimizer: 'Prompt Optimization',
       prompt_playground: 'Prompt Playground',
@@ -144,9 +145,9 @@ const messages = {
       loadMore: 'Load more',
       loadingMore: 'Loading...',
       retried: '{count} attempts',
-      unknownHint: '{count} historical calls predate reliable source attribution.',
+      unknownHint: '{count} calls have no reliable source attribution.',
       historicalExplanation:
-        'Historical calls were created before source attribution was introduced. Model, token, cost, and duration data remain available, but API versus in-product origin cannot be reconstructed reliably.',
+        'This call has no reliable source attribution. It may predate attribution or come from a path that did not pass source context completely. Model, token, cost, and duration data remain available.',
       contentSettings: {
         title: 'Input/output content audit',
         compactLabel: 'Content audit',
@@ -197,7 +198,7 @@ const messages = {
         sourceApi: 'Gateway call authenticated with an organization API key',
         sourceProduct:
           'Gateway call made by an in-product agent, workflow, chat, or knowledge base',
-        sourceUnknown: 'Historical call created before source attribution was recorded',
+        sourceUnknown: 'This call has no reliable API or in-product source attribution',
         business: 'Business attribution',
         appId: 'App ID',
         model: 'Model',
@@ -237,7 +238,7 @@ const messages = {
         all: 'All calls',
         api: 'API calls',
         product: 'In-product',
-        unknown: 'Historical',
+        unknown: 'Unattributed',
       },
       metrics: {
         calls: 'Business calls',

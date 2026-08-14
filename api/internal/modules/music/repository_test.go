@@ -38,7 +38,8 @@ func TestRepositoryScopesReadsAndEnforcesStateTransitions(t *testing.T) {
 	if err := repo.Create(t.Context(), &duplicate); err == nil {
 		t.Fatal("Create() duplicate request id error = nil")
 	}
-	wrongScope := Scope{OrganizationID: task.OrganizationID, WorkspaceID: uuid.New(), AccountID: task.AccountID}
+	wrongWorkspaceID := uuid.New()
+	wrongScope := Scope{OrganizationID: task.OrganizationID, WorkspaceID: &wrongWorkspaceID, AccountID: task.AccountID}
 	if _, err := repo.GetScoped(t.Context(), wrongScope, task.ID); !errors.Is(err, ErrTaskNotFound) {
 		t.Fatalf("GetScoped() error = %v, want ErrTaskNotFound", err)
 	}
@@ -73,6 +74,53 @@ func TestRepositoryScopesReadsAndEnforcesStateTransitions(t *testing.T) {
 	}
 	if !touched.UpdatedAt.After(oldAttempt) {
 		t.Fatalf("updated_at = %s, want after %s", touched.UpdatedAt, oldAttempt)
+	}
+}
+
+func TestRepositoryPersonalScopeListsAndGetsOwnedTasksAcrossWorkspaces(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:music-personal-scope?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&Task{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepository(db)
+	personalScope := testScope()
+	personalScope.WorkspaceID = nil
+	personalTask := queuedTask()
+	personalTask.OrganizationID = personalScope.OrganizationID
+	personalTask.WorkspaceID = nil
+	personalTask.AccountID = personalScope.AccountID
+	workspaceTask := queuedTask()
+	workspaceTask.OrganizationID = personalScope.OrganizationID
+	workspaceTask.AccountID = personalScope.AccountID
+	otherAccountTask := queuedTask()
+	otherAccountTask.OrganizationID = personalScope.OrganizationID
+	otherAccountTask.WorkspaceID = nil
+	otherOrganizationTask := queuedTask()
+	otherOrganizationTask.AccountID = personalScope.AccountID
+	otherOrganizationTask.WorkspaceID = nil
+
+	for _, task := range []*Task{personalTask, workspaceTask, otherAccountTask, otherOrganizationTask} {
+		if err := repo.Create(t.Context(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, total, err := repo.ListScoped(t.Context(), personalScope, ListQuery{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListScoped() personal error = %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("ListScoped() personal total = %d, items = %d; want 2 owned tasks", total, len(items))
+	}
+	if _, err := repo.GetScoped(t.Context(), personalScope, workspaceTask.ID); err != nil {
+		t.Fatalf("GetScoped() workspace task from personal scope error = %v", err)
+	}
+	byRequest, err := repo.GetByRequest(t.Context(), personalScope, personalTask.RequestID)
+	if err != nil || byRequest.ID != personalTask.ID {
+		t.Fatalf("GetByRequest() personal = %#v, %v", byRequest, err)
 	}
 }
 
@@ -258,6 +306,35 @@ func TestRepositoryDeletesTerminalTaskAndToolFileMetadataAtomically(t *testing.T
 	}
 	if taskCount != 0 || fileCount != 0 {
 		t.Fatalf("remaining task/file metadata = %d/%d, want 0/0", taskCount, fileCount)
+	}
+}
+
+func TestRepositoryPersonalScopeDeletesOwnedTerminalTaskAcrossWorkspaces(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:music-delete-personal?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&Task{}, &tool_file.ToolFile{}); err != nil {
+		t.Fatal(err)
+	}
+	workspaceScope := testScope()
+	personalScope := workspaceScope
+	personalScope.WorkspaceID = nil
+	task := queuedTask()
+	task.OrganizationID = personalScope.OrganizationID
+	task.WorkspaceID = workspaceScope.WorkspaceID
+	task.AccountID = personalScope.AccountID
+	task.Status = StatusFailed
+	repo := NewRepository(db)
+	if err := repo.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.DeleteScopedTerminal(t.Context(), personalScope, task.ID); err != nil {
+		t.Fatalf("DeleteScopedTerminal() personal error = %v", err)
+	}
+	if _, err := repo.Get(t.Context(), task.ID); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted personal task lookup error = %v, want ErrTaskNotFound", err)
 	}
 }
 
