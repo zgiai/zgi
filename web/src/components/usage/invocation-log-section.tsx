@@ -44,6 +44,7 @@ import {
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
 import { formatNumber } from '@/utils/format';
+import { normalizeModelUsageAppType } from '@/utils/model-usage-app-type';
 
 type SourceFilter = 'all' | Exclude<InvocationSource, 'unknown'>;
 
@@ -60,19 +61,6 @@ interface InvocationLogSectionProps {
 
 const sourceFilters: SourceFilter[] = ['all', 'api', 'product'];
 const invocationPageSizes = [20, 50, 100] as const;
-const knownAppTypes = new Set([
-  'workflow',
-  'dataset',
-  'agent',
-  'aichat',
-  'image-runtime',
-  'data_library_file',
-  'prompt_optimizer',
-  'prompt_playground',
-  'automation_task_draft',
-  'unknown',
-]);
-
 export function InvocationLogSection({
   startTime,
   endTime,
@@ -705,5 +693,5 @@ function formatDuration(value: number): string {
 }
 
 function knownAppType(value: string): ModelUsageAppType {
-  return knownAppTypes.has(value) ? (value as ModelUsageAppType) : 'unknown';
+  return normalizeModelUsageAppType(value);
 }
