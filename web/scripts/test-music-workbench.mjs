@@ -545,6 +545,11 @@ assert.match(workbenchSource, /musicService\.getTask/);
 assert.match(workbenchSource, /useDeleteMusicTask/);
 assert.match(workbenchSource, /deleteTaskMutation\.mutateAsync/);
 assert.match(workbenchSource, /<ConfirmDialog/);
+assert.match(
+  workbenchSource,
+  /<ConfirmDialog[\s\S]*?closeOnConfirm=\{false\}[\s\S]*?loading=\{deleteTaskMutation\.isPending\}/,
+  'the delete dialog must stay open while the deletion request is pending'
+);
 assert.match(workbenchSource, /setPlayerSource\(null\)/);
 assert.match(workbenchSource, /toMusicDownloadURL/);
 assert.match(trackListSource, /TRACK_ACCENTS/);

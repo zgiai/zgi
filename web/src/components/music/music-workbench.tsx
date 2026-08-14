@@ -346,6 +346,7 @@ export function MusicWorkbench() {
         confirmText={t('deleteConfirm')}
         cancelText={t('cancel')}
         onConfirm={() => void handleDelete()}
+        closeOnConfirm={false}
         loading={deleteTaskMutation.isPending}
         variant="warning"
       />
