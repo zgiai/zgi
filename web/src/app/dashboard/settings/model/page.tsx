@@ -2,12 +2,20 @@
 
 import { type ComponentType, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLocale } from 'next-intl';
 import { useT } from '@/i18n';
 import ModelSelectorParameter from '@/components/common/model-selector/model-selector-parameter';
 import type { ModelSelectorParameterValue } from '@/components/common/model-selector/model-selector-parameter';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   AlertTriangle,
@@ -17,7 +25,9 @@ import {
   Image as ImageIcon,
   Loader2,
   MessageSquare,
+  Mic,
   Save,
+  Volume2,
 } from 'lucide-react';
 import {
   EMPTY_DEFAULT_MODEL_VALUE,
@@ -26,8 +36,10 @@ import {
   type DefaultModelSettings,
   type ResolvedDefaultModel,
 } from '@/hooks/model/use-default-models';
+import { useModelParameterRules } from '@/hooks/model/use-model-parameter-rules';
 import type { DefaultModelUseCase } from '@/services/types/model';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { getDefaultVoiceOptions } from './default-voice';
 
 const _DISPLAY_DEFAULT_MODEL_USE_CASES = [
   'text-chat',
@@ -35,6 +47,8 @@ const _DISPLAY_DEFAULT_MODEL_USE_CASES = [
   'rerank',
   'vision',
   'image-gen',
+  'speech-to-text',
+  'text-to-speech',
 ] as const satisfies readonly DefaultModelUseCase[];
 
 type DisplayDefaultModelUseCase = (typeof _DISPLAY_DEFAULT_MODEL_USE_CASES)[number];
@@ -74,6 +88,18 @@ const USE_CASE_CARDS: Array<{
     icon: ImageIcon,
     iconBg: 'bg-fuchsia-500/10',
     iconColor: 'text-fuchsia-500',
+  },
+  {
+    key: 'speech-to-text',
+    icon: Mic,
+    iconBg: 'bg-emerald-500/10',
+    iconColor: 'text-emerald-500',
+  },
+  {
+    key: 'text-to-speech',
+    icon: Volume2,
+    iconBg: 'bg-sky-500/10',
+    iconColor: 'text-sky-500',
   },
 ];
 
@@ -117,6 +143,7 @@ function getSourceBadgeVariant(source: ResolvedDefaultModel['source'] | 'pending
 
 export default function ModelSettingsPage() {
   const t = useT();
+  const locale = useLocale();
   const router = useRouter();
   const {
     settings,
@@ -128,7 +155,9 @@ export default function ModelSettingsPage() {
     updateDefaultModels,
     isUpdating,
   } = useDefaultModels();
-  const [config, setConfig] = useState<DefaultModelSettings>(() => createEmptyDefaultModelSettings());
+  const [config, setConfig] = useState<DefaultModelSettings>(() =>
+    createEmptyDefaultModelSettings()
+  );
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 
@@ -142,6 +171,41 @@ export default function ModelSettingsPage() {
     () => USE_CASE_CARDS.some(({ key }) => !isSameValue(config[key], settings[key])),
     [config, settings]
   );
+  const textToSpeechValue = config['text-to-speech'];
+  const { data: textToSpeechParameterRules, isLoading: isDefaultVoiceOptionsLoading } =
+    useModelParameterRules({
+      provider: textToSpeechValue.provider,
+      model: textToSpeechValue.model,
+      enabled: Boolean(textToSpeechValue.provider && textToSpeechValue.model),
+    });
+  const defaultVoiceOptions = useMemo(
+    () => getDefaultVoiceOptions(textToSpeechParameterRules, locale),
+    [locale, textToSpeechParameterRules]
+  );
+  const defaultVoice =
+    typeof textToSpeechValue.params.default_voice === 'string'
+      ? textToSpeechValue.params.default_voice
+      : '';
+  const defaultVoiceMissing = Boolean(
+    textToSpeechValue.provider && textToSpeechValue.model && !defaultVoice.trim()
+  );
+  const defaultVoiceMetadataMissing = Boolean(
+    textToSpeechValue.provider &&
+      textToSpeechValue.model &&
+      !isDefaultVoiceOptionsLoading &&
+      defaultVoiceOptions.length === 0
+  );
+  const defaultVoiceUnsupported = Boolean(
+    defaultVoice &&
+      defaultVoiceOptions.length > 0 &&
+      !defaultVoiceOptions.some(option => option.value === defaultVoice)
+  );
+  const defaultVoiceInvalid =
+    defaultVoiceMetadataMissing || defaultVoiceMissing || defaultVoiceUnsupported;
+  const textToSpeechIsDirty = !isSameValue(textToSpeechValue, settings['text-to-speech']);
+  const hasValidationError =
+    textToSpeechIsDirty && (isDefaultVoiceOptionsLoading || defaultVoiceInvalid);
+  const selectedDefaultVoice = defaultVoiceOptions.find(option => option.value === defaultVoice);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -213,6 +277,19 @@ export default function ModelSettingsPage() {
     }));
   }, []);
 
+  const handleDefaultVoiceChange = useCallback((value: string) => {
+    setConfig(prev => ({
+      ...prev,
+      'text-to-speech': {
+        ...prev['text-to-speech'],
+        params: {
+          ...prev['text-to-speech'].params,
+          default_voice: value,
+        },
+      },
+    }));
+  }, []);
+
   const handleSave = useCallback(() => {
     updateDefaultModels(config);
   }, [config, updateDefaultModels]);
@@ -247,7 +324,7 @@ export default function ModelSettingsPage() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {isLoading ? (
           <>
-            {[1, 2, 3, 4, 5].map(i => (
+            {Array.from({ length: USE_CASE_CARDS.length }, (_, i) => i).map(i => (
               <Card key={i} className="h-full">
                 <CardHeader className="pb-4">
                   <div className="flex items-center gap-3">
@@ -303,7 +380,10 @@ export default function ModelSettingsPage() {
             const showClearExplicit = resolved.source === 'explicit' && !isPendingDelete;
 
             return (
-              <Card key={key} className="relative flex h-full flex-col overflow-hidden border-border/70 shadow-sm">
+              <Card
+                key={key}
+                className="relative flex h-full flex-col overflow-hidden border-border/70 shadow-sm"
+              >
                 <Badge
                   variant={getSourceBadgeVariant(badgeKey)}
                   className="pointer-events-none absolute right-4 top-4 z-10 h-6 rounded-full px-2 text-[11px] font-medium"
@@ -351,6 +431,83 @@ export default function ModelSettingsPage() {
                     onChange={value => handleChange(key, value)}
                     disabled={isUpdating}
                   />
+                  {key === 'text-to-speech' && currentValue.provider && currentValue.model ? (
+                    <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <Label htmlFor="default-text-to-speech-voice">
+                          {t(
+                            'dashboard.configuration.modelSettings.text-to-speech.defaultVoice.label'
+                          )}
+                        </Label>
+                        <Badge
+                          variant="outline"
+                          className="h-5 shrink-0 gap-1 rounded-full px-2 text-[10px] font-medium text-muted-foreground"
+                        >
+                          {isDefaultVoiceOptionsLoading ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : null}
+                          {t(
+                            `dashboard.configuration.modelSettings.text-to-speech.defaultVoice.${
+                              isDefaultVoiceOptionsLoading
+                                ? 'loadingMode'
+                                : defaultVoiceMetadataMissing
+                                  ? 'unavailableMode'
+                                  : 'selectMode'
+                            }`
+                          )}
+                        </Badge>
+                      </div>
+                      <Select
+                        value={defaultVoice}
+                        onValueChange={handleDefaultVoiceChange}
+                        disabled={
+                          isUpdating || isDefaultVoiceOptionsLoading || defaultVoiceMetadataMissing
+                        }
+                        required
+                      >
+                        <SelectTrigger
+                          id="default-text-to-speech-voice"
+                          aria-invalid={defaultVoiceInvalid}
+                          aria-describedby="default-text-to-speech-voice-help"
+                        >
+                          <span className="truncate">
+                            {selectedDefaultVoice?.label ||
+                              defaultVoice ||
+                              t(
+                                `dashboard.configuration.modelSettings.text-to-speech.defaultVoice.${
+                                  defaultVoiceMetadataMissing
+                                    ? 'unavailablePlaceholder'
+                                    : 'selectPlaceholder'
+                                }`
+                              )}
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {defaultVoiceOptions.map(voice => (
+                            <SelectItem key={voice.value} value={voice.value}>
+                              <span className="truncate text-sm">{voice.label}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p
+                        id="default-text-to-speech-voice-help"
+                        className={`text-xs leading-5 ${defaultVoiceInvalid ? 'text-destructive' : 'text-muted-foreground'}`}
+                      >
+                        {t(
+                          `dashboard.configuration.modelSettings.text-to-speech.defaultVoice.${
+                            defaultVoiceMetadataMissing
+                              ? 'unavailableDescription'
+                              : defaultVoiceMissing
+                                ? 'required'
+                                : defaultVoiceUnsupported
+                                  ? 'unsupported'
+                                  : 'selectDescription'
+                          }`
+                        )}
+                      </p>
+                    </div>
+                  ) : null}
                   <p className="mt-auto text-xs leading-5 text-muted-foreground">
                     {t(`dashboard.configuration.modelSettings.sourceDescriptions.${badgeKey}`)}
                   </p>
@@ -365,10 +522,14 @@ export default function ModelSettingsPage() {
         <div className="flex justify-end pt-2">
           <Button
             onClick={handleSave}
-            disabled={isUpdating || !isDirty}
+            disabled={isUpdating || !isDirty || hasValidationError}
             className="h-10 rounded-2xl px-4 gap-2"
           >
-            {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {isUpdating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
             {t('common.save')}
           </Button>
         </div>

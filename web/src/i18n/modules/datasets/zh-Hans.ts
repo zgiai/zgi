@@ -16,6 +16,75 @@ const messages: DatasetMessages = {
   wordCount: '字数',
   appCount: '应用数',
   graphFlowBadge: '图谱增强',
+  graph: {
+    enableTitle: '启用知识图谱',
+    enableDescription: '使用知识库的嵌入模型构建图谱实体与关系。',
+    enableSaveHint: '保存设置后，知识图谱入口将显示在侧边栏。',
+    statusTitle: '知识图谱状态',
+    statusDescription: '当前状态：{status}。进度：{progress}%。',
+    emptyStatusDescription: '当前状态：知识库为空，等待添加文档。',
+    rebuild: '重建图谱',
+    repair: '修复图谱',
+    rebuildConfirmationTitle: '确认重建知识图谱？',
+    rebuildConfirmationDescription:
+      '系统将重新处理全部有效文档，并重新生成图谱实体和关系。重建期间，图谱浏览和图谱检索可能暂时不可用；知识库中的原始文档不会被修改。',
+    confirmRebuild: '确认重建',
+    repairConfirmationTitle: '确认修复知识图谱？',
+    repairConfirmationDescription:
+      '系统将从失败 run 最早未完成的阶段继续执行，并复用已经完成的实体抽取和对齐结果；除非抽取阶段本身失败，否则不会再次调用模型处理原始文档。',
+    confirmRepair: '确认修复',
+    failedRepairHint:
+      '图谱同步在重试 3 次后仍未成功。请点击“修复图谱”，从失败阶段继续执行并恢复图谱与知识库的一致性。',
+    partialFailureTitle: '知识图谱同步异常，需要修复',
+    partialFailureDescription:
+      '当前图谱仍可查看，但可能与知识库不完全一致。请点击“修复图谱”，从失败阶段继续执行并恢复一致性。',
+    retryDocument: '重试',
+    modelChangeConfirmation: '更改抽取模型会为当前全部文档重建图谱。是否继续？',
+    runtimeUnavailable: '知识图谱运行环境不可用。',
+    disableNotSupported: '已启用的知识图谱不能关闭。',
+    embeddingImmutable: '知识图谱继承知识库嵌入模型，不能单独修改。',
+    overrideNotAllowed: '不支持为知识图谱单独配置嵌入模型。',
+    graph_model_change_confirmation_required: '请确认完整重建图谱后继续。',
+    graph_disable_not_supported: '已启用的知识图谱不能关闭。',
+    buildProgress: {
+      title: '正在构建知识图谱',
+      overall: '总体进度',
+      currentStage: '当前阶段：{stage}',
+      documentSummary: '共 {total} 份文档 · {processing} 份正在处理',
+      runRevision: '图谱版本 {revision}',
+      stages: {
+        extraction: '实体关系抽取',
+        alignment: '实体对齐',
+        graph_sync: '图谱写入',
+        vector_sync: '向量索引',
+      },
+      stageStatuses: {
+        pending: '等待中',
+        processing: '进行中',
+        completed: '已完成',
+        failed: '失败',
+      },
+    },
+    statuses: {
+      disabled: '未启用',
+      unavailable: '不可用',
+      waiting_content: '等待文档内容',
+      queued: '排队中',
+      building: '构建中',
+      partial: '部分就绪',
+      ready: '已就绪',
+      empty: '暂无数据',
+      failed: '失败',
+    },
+    documentStatuses: {
+      waiting: '等待中',
+      queued: '排队中',
+      processing: '处理中',
+      ready: '已就绪',
+      failed: '失败',
+      superseded: '已被替换',
+    },
+  },
 
   empty: {
     noDocuments: '暂无文档',
@@ -57,6 +126,28 @@ const messages: DatasetMessages = {
   knowledgeGraph: {
     noCompletedDocuments: '暂无已完成的文档',
     noCompletedDocumentsDesc: '请等待文档索引完成后再查看知识图谱。',
+    selectEntity: '请选择一个实体以查看其图谱证据。',
+    entityDetails: '实体详情',
+    activeSources: '有效来源：{count}',
+    expandNeighbors: '展开相邻实体',
+    expandingNeighbors: '正在展开...',
+    neighborsExpanded: '相邻实体已展开',
+    backToOverview: '返回全局概览',
+    visibleEntities: '当前展示 {visible} / 共 {total} 个实体',
+    decreaseOverviewEntities: '减少展示 100 个实体',
+    increaseOverviewEntities: '增加展示 100 个实体',
+    overviewHint: '概览优先展示关系紧密的实体；可通过搜索定位完整图谱中的任意实体。',
+    nodeWeightHint: '节点大小代表该实体在选中来源文档下的权重。',
+    sourceDocuments: '来源文档',
+    selectAllSources: '全选',
+    hideLegend: '隐藏',
+    showLegend: '显示图例',
+    visibleLimitReached: '当前视图已达到可读上限，请返回全局概览或搜索其他实体。',
+    searchResultsSummary: '显示 {visible} / 共 {total} 个匹配实体',
+    description: '描述',
+    relatedEntities: '相关实体（{count}）',
+    noRelatedEntities: '暂无相关实体',
+    activeSourceDocuments: '有效来源文档（{count}）',
   },
   noEditPermission: '您没有编辑此知识库的权限',
   noEditPermissionDescription: '请联系知识库所有者或管理员申请编辑权限',
@@ -702,12 +793,14 @@ const messages: DatasetMessages = {
       embeddingModel: {
         title: '嵌入模型',
         placeholder: '选择嵌入模型',
-        lockedTooltip: '知识库创建后，嵌入模型不能修改。',
+        lockedTooltip:
+          '知识库创建后，嵌入模型不能修改。配置的嵌入模型会同时用于向量关键词混合检索和图谱检索。',
       },
 
       graphModel: {
-        title: '图谱模型',
-        placeholder: '选择图谱模型',
+        title: '图谱抽取模型',
+        placeholder: '选择图谱抽取模型',
+        help: '用于从文档中识别实体及实体之间的关系，并构建知识图谱。',
       },
 
       // Embedding configuration
@@ -726,7 +819,7 @@ const messages: DatasetMessages = {
         graphSearch: '图谱搜索',
         semanticSearch: '向量搜索',
         fullTextSearch: '全文搜索',
-        hybridSearch: '混合搜索',
+        hybridSearch: '向量关键词混合检索',
         topK: 'Top K',
         scoreThreshold: '置信阈值',
         reranking: '启用重排序',
@@ -790,10 +883,14 @@ const messages: DatasetMessages = {
       retrievalConfig: '检索配置',
       searchMethod: '搜索方式',
       searchMethodHelp:
-        '向量搜索适合语义相近但关键词不同的问题；全文搜索按关键词精确匹配；混合搜索同时结合语义和关键词，通常更稳妥。',
+        '“向量关键词混合检索＋图谱检索”会同时返回向量语义匹配、关键词匹配和实体关系结果；“向量关键词混合检索”仅检索文档内容，不包含图谱关系结果。',
+      graphHopDepth: '图谱召回跳数深度',
+      graphHopDepthHelp:
+        '控制图谱检索沿实体关系向外扩展的层数，可选 1 到 3 跳。跳数越大覆盖的关联实体越多，但耗时和噪声也可能增加。',
+      graphHopDepthValue: '{depth} 跳',
       semanticSearch: '向量搜索',
       fullTextSearch: '全文搜索',
-      hybridSearch: '混合搜索',
+      hybridSearch: '向量关键词混合检索',
       topK: 'Top K',
       topKHelp:
         '控制每次检索最多返回多少条候选内容。数值调高会召回更多内容，覆盖面更广，但可能带入不相关信息；数值调低结果更聚焦，但可能漏掉有用内容。',
@@ -803,7 +900,7 @@ const messages: DatasetMessages = {
       enableReranking: '启用重排序',
       changeRerankModel: '更改排序模型',
       rerankingHelp:
-        '开启后会用重排序模型对初步召回的内容重新排序，让更相关的内容排在前面。通常能提升答案质量，但会增加一点响应时间和模型调用成本。',
+        '重排序模型会对初步召回的内容重新排序，让更相关的内容排在前面。该能力默认启用且不可关闭，通常能提升答案质量，但会增加一点响应时间和模型调用成本。',
       rerankingDescription: '使用重排序模型来提升检索结果的质量',
       rerankModel: '重排序模型',
       selectRerankModel: '选择重排序模型',
@@ -832,16 +929,16 @@ const messages: DatasetMessages = {
       },
       // Search methods
       methods: {
-        graph_search: '图谱检索',
+        graph_search: '向量关键词混合检索＋图谱检索',
         semantic_search: '向量搜索',
         full_text_search: '全文搜索',
-        hybrid_search: '混合搜索',
+        hybrid_search: '向量关键词混合检索',
       },
       methodsDesc: {
-        graph_search: '基于图谱增强的检索',
+        graph_search: '同时执行向量关键词混合检索和图谱检索',
         semantic_search: '基于向量相似性的检索',
         full_text_search: '基于关键词匹配的检索',
-        hybrid_search: '向量搜索和全文搜索结合的情形',
+        hybrid_search: '结合向量语义匹配与关键词匹配的文档内容检索',
       },
       // History
       testHistory: '测试历史',
@@ -881,7 +978,7 @@ const messages: DatasetMessages = {
       advancedOptions: '高级选项',
       advancedDescription: '高级配置选项',
       advancedWarning: '高级选项可能影响检索性能，请谨慎修改',
-      hybridWeights: '权重',
+      hybridWeights: '向量与关键词权重',
       returnFullDoc: '全文引用',
       returnFullDocDescription: '返回全文档内容而不是切片',
       weightedScore: '权重得分',
@@ -911,12 +1008,12 @@ const messages: DatasetMessages = {
     advancedSettingsLabel: '高级设置',
     embeddingModelLabel: '嵌入模型',
     embeddingModelPlaceholder: '请选择嵌入模型',
-    graphModelLabel: '图谱模型',
-    graphModelPlaceholder: '请选择图谱模型',
+    graphModelLabel: '图谱抽取模型',
+    graphModelPlaceholder: '请选择图谱抽取模型',
     graphModelDescription: '使用大语言模型抽取文档中的实体与关系',
     iconLabel: '知识库图标',
     retrievalConfigLabel: '检索设置',
-    enableGraphFlowLabel: '启用知识图谱 (GraphFlow)',
+    enableGraphFlowLabel: '启用知识图谱',
     enableGraphFlowDescription: '自动抽取文档中的实体关系，增强跨文档检索能力',
     createButton: '创建',
     creatingButton: '创建中...',
@@ -1093,10 +1190,10 @@ const messages: DatasetMessages = {
     descriptionPlaceholder: '请输入知识库描述',
     graphFlowLabel: '启用知识图谱 (GraphFlow)',
     graphFlowEnabledLabel: '知识图谱已启用',
-    graphFlowEnabledDescription: '当前知识库已启用知识图谱，可调整图谱模型。',
-    graphFlowDescription: '开启后可为知识库配置图谱模型，用于抽取实体关系增强检索能力',
+    graphFlowEnabledDescription: '当前知识库已启用知识图谱，可调整图谱抽取模型。',
+    graphFlowDescription: '开启后可为知识库配置图谱抽取模型，用于抽取实体关系并增强检索能力',
     graphFlowLockedDescription:
-      '知识图谱启用后将永久生效，当前知识库只能调整图谱模型，不能关闭图谱',
+      '知识图谱启用后将永久生效，当前知识库只能调整图谱抽取模型，不能关闭图谱',
     documentCount: '文档数量',
     wordCount: '字数统计',
     dataSource: '数据源类型',
@@ -1131,7 +1228,7 @@ const messages: DatasetMessages = {
       required: '请选择嵌入模型',
     },
     graphModel: {
-      required: '启用知识图谱后请选择图谱模型',
+      required: '启用知识图谱后请选择图谱抽取模型',
     },
     workspace: {
       required: '未选择工作空间',
@@ -1164,6 +1261,10 @@ const messages: DatasetMessages = {
     vectorRetrievalFailed: '向量召回失败',
     graphRetrievalFailed: '图谱召回失败',
     hitTestingFailed: '召回测试失败，请重试',
+    graphVisibilitySyncTitle: '图谱数据同步中',
+    graphVisibilitySyncDescription:
+      '文档可用状态已更新，正在同步知识图谱的检索范围。同步完成后即可恢复图谱召回。',
+    graphUnavailableTitle: '图谱召回暂不可用',
     noCompletedDocuments: '暂无已完成的文档',
     noCompletedDocumentsDesc: '请等待文档索引完成后再进行召回测试。',
     foundResults: '召回 {count} 个结果',
@@ -1177,6 +1278,7 @@ const messages: DatasetMessages = {
     details: '详情',
     fileDetails: '文件详情',
     fileName: '名称',
+    sourceDocument: '来源文档',
     viewDocumentDetails: '查看文档详情',
     close: '关闭',
 
@@ -1202,16 +1304,16 @@ const messages: DatasetMessages = {
 
     // Search methods
     methods: {
-      graph_search: '图谱检索',
+      graph_search: '向量关键词混合检索＋图谱检索',
       semantic_search: '向量检索',
       full_text_search: '全文搜索',
-      hybrid_search: '混合检索',
+      hybrid_search: '向量关键词混合检索',
     },
     methodsDesc: {
-      graph_search: '基于图谱增强的检索',
+      graph_search: '同时展示向量关键词混合检索和图谱检索结果',
       semantic_search: '通过语义来检索知识库文本内容',
       full_text_search: '基于关键词匹配的检索',
-      hybrid_search: '通过语义及关键词来检索知识库文本内容',
+      hybrid_search: '通过向量语义匹配及关键词匹配检索知识库文本内容',
     },
 
     // History
@@ -1256,7 +1358,7 @@ const messages: DatasetMessages = {
     advancedOptions: '高级选项',
     advancedDescription: '高级配置选项',
     advancedWarning: '高级选项可能影响检索性能，请谨慎修改',
-    hybridWeights: '混合权重',
+    hybridWeights: '向量与关键词权重',
     returnFullDoc: '全文引用',
     returnFullDocDescription:
       '开启全文引用后，当文档中的切片被检索到时，切片所归属的全文内容将作为文本块被全部引用。注意，开启后将增加大量token消耗，请在必要场景下使用该功能',
@@ -1355,7 +1457,7 @@ const messages: DatasetMessages = {
 
     // Graph retrieval translations
     vectorResults: '向量召回',
-    hybridResults: '混合召回',
+    hybridResults: '向量关键词混合召回',
     bm25Results: 'BM25召回',
     graphResults: '图谱召回',
     score: '分数',
@@ -1363,9 +1465,21 @@ const messages: DatasetMessages = {
     matchedEntities: '匹配实体',
     noMatchedEntities: '未匹配到实体',
     graphExecution: '图谱执行',
+    viewGraphDetails: '查看图谱详情',
+    hideGraphDetails: '收起图谱详情',
+    graphNotEnabled: '请先启用知识图谱，再选择图谱检索。',
+    graphNotReady: '当前图谱修订就绪前，暂时无法使用图谱检索。',
+    relationshipPaths: '关系路径',
+    activeSources: '有效来源',
+    batchRowFailed: '本次查询失败，请检查图谱状态后重试。',
+    elapsedTime: '耗时',
     chunks: '个切片',
+    candidateChunks: '个候选切片',
+    candidateChunksHelp:
+      '候选切片是图谱执行阶段找到的相关切片，最终召回结果还会经过去重、重排序、分数阈值和 Top-K 筛选。',
     entitiesCount: '实体数',
     chunksCount: '切片数',
+    candidateChunksCount: '候选切片数',
 
     // Entity Search
     entitySearch: {

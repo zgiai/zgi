@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -84,6 +85,21 @@ type LLMGatewayService interface {
 
 	// Rerank handles rerank requests
 	Rerank(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.RerankRequest) (*adapter.RerankResponse, error)
+
+	// Transcribe converts a PCM audio stream into final editable text.
+	Transcribe(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *TranscriptionRequest) (*TranscriptionResponse, error)
+
+	// GenerateSpeech converts complete text into a streamed MP3 response.
+	GenerateSpeech(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *SpeechRequest, dst io.Writer) error
+
+	// GenerateMusic creates one complete MP3 track.
+	GenerateMusic(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *MusicRequest, dst io.Writer) error
+
+	// GenerateLyrics creates complete lyrics for a later music generation call.
+	GenerateLyrics(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *LyricsRequest) (*adapter.LyricsResult, error)
+
+	// CompensateMusicDelivery resolves billing after a generated track cannot be delivered.
+	CompensateMusicDelivery(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, requestID string) error
 
 	// ListAvailableModels lists available models for the API key
 	ListAvailableModels(ctx context.Context, apiKey *apikeymodel.TenantAPIKey) ([]adapter.Model, error)

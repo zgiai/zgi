@@ -30,7 +30,7 @@ func RegisterGraphFlowHandlers(registry TaskHandlerRegistry, svc *graphflow.Serv
 	cleanupType := getTaskTypeWithPrefix(taskManager, TypeGraphFlowCleanup)
 
 	// Register extraction handler (with in-task concurrency)
-	if isNew := registry.Register(extractionType, NewExtractionHandler(svc, taskManager, kbLimiter)); isNew {
+	if isNew := registry.Register(extractionType, withDurableTerminalFailure(svc, NewExtractionHandler(svc, taskManager, kbLimiter))); isNew {
 		logger.Info("Registered GraphFlow extraction handler", map[string]interface{}{
 			"task_type": extractionType,
 		})
@@ -41,7 +41,7 @@ func RegisterGraphFlowHandlers(registry TaskHandlerRegistry, svc *graphflow.Serv
 	}
 
 	// Register alignment handler (with KB-level locking)
-	if isNew := registry.Register(alignmentType, NewAlignmentHandler(svc, taskManager, kbLimiter)); isNew {
+	if isNew := registry.Register(alignmentType, withDurableTerminalFailure(svc, NewAlignmentHandler(svc, taskManager, kbLimiter))); isNew {
 		logger.Info("Registered GraphFlow alignment handler", map[string]interface{}{
 			"task_type": alignmentType,
 		})
@@ -52,7 +52,7 @@ func RegisterGraphFlowHandlers(registry TaskHandlerRegistry, svc *graphflow.Serv
 	}
 
 	// Register sync handler (Neo4j)
-	if isNew := registry.Register(syncType, NewSyncHandler(svc, taskManager, kbLimiter)); isNew {
+	if isNew := registry.Register(syncType, withDurableTerminalFailure(svc, NewSyncHandler(svc, taskManager, kbLimiter))); isNew {
 		logger.Info("Registered GraphFlow sync handler", map[string]interface{}{
 			"task_type": syncType,
 		})
@@ -63,7 +63,7 @@ func RegisterGraphFlowHandlers(registry TaskHandlerRegistry, svc *graphflow.Serv
 	}
 
 	// Register vector sync handler (Entity embeddings)
-	if isNew := registry.Register(vectorSyncType, NewVectorSyncHandler(svc, taskManager, kbLimiter)); isNew {
+	if isNew := registry.Register(vectorSyncType, withDurableTerminalFailure(svc, NewVectorSyncHandler(svc, taskManager, kbLimiter))); isNew {
 		logger.Info("Registered GraphFlow vector sync handler", map[string]interface{}{
 			"task_type": vectorSyncType,
 		})
@@ -74,7 +74,7 @@ func RegisterGraphFlowHandlers(registry TaskHandlerRegistry, svc *graphflow.Serv
 	}
 
 	// Register cleanup handler
-	if isNew := registry.Register(cleanupType, NewCleanupHandler(svc, taskManager)); isNew {
+	if isNew := registry.Register(cleanupType, withDurableTerminalFailure(svc, NewCleanupHandler(svc, taskManager))); isNew {
 		logger.Info("Registered GraphFlow cleanup handler", map[string]interface{}{
 			"task_type": cleanupType,
 		})

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -42,6 +41,7 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 				err := fmt.Errorf("alignment worker panicked: %v", r)
 				logger.Error("Alignment panic recovery", err)
 				svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+				panic(r)
 			}
 		}()
 
@@ -67,6 +67,9 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 				"status":  graphFlowTask.Status,
 			})
 			return nil
+		}
+		if err := validateActiveRunTask(ctx, svc, graphFlowTask); err != nil {
+			return fmt.Errorf("alignment task belongs to an inactive run: %v: %w", err, asynq.SkipRetry)
 		}
 
 		// Apply Rate Limiting
@@ -318,7 +321,7 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 						"okTail":    okTail,
 					})
 					// Mark triple mention status as skipped to avoid infinite loop
-					if err := svc.TripleMentionRepo.UpdateStatus(ctx, triple.ID, "skipped", nil, nil); err != nil {
+					if err := svc.TripleMentionRepo.UpdateStatus(ctx, triple.ID, "skipped", nil, nil, nil); err != nil {
 						logger.Error("Failed to update triple status to skipped", err)
 					}
 					continue
@@ -326,7 +329,9 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 
 				// Check relationship
 				existing, _ := svc.RelationshipRepo.FindExisting(ctx, kbID, headID, tailID, triple.RawPredicate)
+				var relationshipID uuid.UUID
 				if existing != nil {
+					relationshipID = existing.ID
 					svc.RelationshipRepo.IncrementWeight(ctx, existing.ID)
 				} else {
 					rel := &model.Relationship{
@@ -342,11 +347,12 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 						logger.Error("Failed to create relationship", err)
 						return fmt.Errorf("failed to create relationship for triple %s: %w", triple.ID, err)
 					}
+					relationshipID = rel.ID
 					relationshipsCreated++
 				}
 
 				// Update triple mention status
-				if err := svc.TripleMentionRepo.UpdateStatus(ctx, triple.ID, "aligned", &headID, &tailID); err != nil {
+				if err := svc.TripleMentionRepo.UpdateStatus(ctx, triple.ID, "aligned", &headID, &tailID, &relationshipID); err != nil {
 					logger.Error("Failed to update triple status", err)
 					return fmt.Errorf("failed to update triple status for %s: %w", triple.ID, err)
 				}
@@ -356,6 +362,21 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 					svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 75)
 				}
 			}
+		}
+
+		if err := svc.EntityRepo.RecalculateSourceCounts(ctx, kbID); err != nil {
+			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to recalculate entity source counts: %v", err))
+			return fmt.Errorf("failed to recalculate entity source counts: %w", err)
+		}
+		if err := svc.RelationshipRepo.RecalculateSourceCounts(ctx, kbID); err != nil {
+			svc.TaskRepo.UpdateTaskFailed(ctx, taskID, fmt.Sprintf("failed to recalculate relationship source counts: %v", err))
+			return fmt.Errorf("failed to recalculate relationship source counts: %w", err)
+		}
+
+		// A ref update may supersede this run while alignment is executing. Do not
+		// publish another stage from an obsolete graph version.
+		if err := validateActiveRunTask(ctx, svc, graphFlowTask); err != nil {
+			return fmt.Errorf("alignment run became inactive: %v: %w", err, asynq.SkipRetry)
 		}
 
 		// 8. Create and enqueue sync tasks (parallel: graph_sync and vector_sync) - Moved before completion
@@ -381,15 +402,17 @@ func NewAlignmentHandler(svc *graphflow.Service, taskManager *queue.TaskManager,
 	}
 }
 
-// enqueueNextSyncTasks creates both sync tasks (graph_sync and vector_sync) and enqueues them in parallel
+// enqueueNextSyncTasks creates both sync tasks, but only starts graph_sync.
+// vector_sync is chained by the graph sync handler after Neo4j nodes exist.
 func enqueueNextSyncTasks(ctx context.Context, svc *graphflow.Service, taskManager *queue.TaskManager, currentTask *model.GraphFlowTask) error {
-	_ = time.Now() // Preserve time import for potential future use
-
 	// Create graph_sync task
 	graphSyncTask := &model.GraphFlowTask{
 		TenantID:           currentTask.TenantID,
 		KBID:               currentTask.KBID,
 		DocumentID:         currentTask.DocumentID,
+		RunID:              currentTask.RunID,
+		RunItemID:          currentTask.RunItemID,
+		SourceRefID:        currentTask.SourceRefID,
 		TaskType:           "graph_sync",
 		ExtractionStrategy: currentTask.ExtractionStrategy,
 		Status:             "pending",
@@ -402,31 +425,14 @@ func enqueueNextSyncTasks(ctx context.Context, svc *graphflow.Service, taskManag
 		return fmt.Errorf("failed to create graph_sync task: %w", err)
 	}
 
-	// Create and enqueue graph_sync task using asynq
-	task, err := NewGraphFlowTask(TypeGraphFlowSync, graphSyncTaskID.String(), taskManager)
-	if err != nil {
-		svc.TaskRepo.UpdateTaskFailed(ctx, graphSyncTaskID, fmt.Sprintf("failed to create task: %v", err))
-		logger.Error("Failed to create graph_sync task", err)
-		return fmt.Errorf("failed to create graph_sync task: %w", err)
-	}
-
-	_, err = taskManager.EnqueueTask(task, asynq.Queue("graphflow"))
-	if err != nil {
-		svc.TaskRepo.UpdateTaskFailed(ctx, graphSyncTaskID, fmt.Sprintf("failed to enqueue: %v", err))
-		logger.Error("Failed to enqueue graph_sync task", err)
-		return fmt.Errorf("failed to enqueue graph_sync task: %w", err)
-	}
-
-	logger.Info("Graph sync task created and enqueued", map[string]interface{}{
-		"task_id":     graphSyncTaskID.String(),
-		"document_id": currentTask.DocumentID.String(),
-	})
-
 	// Create vector_sync task
 	vectorSyncTask := &model.GraphFlowTask{
 		TenantID:           currentTask.TenantID,
 		KBID:               currentTask.KBID,
 		DocumentID:         currentTask.DocumentID,
+		RunID:              currentTask.RunID,
+		RunItemID:          currentTask.RunItemID,
+		SourceRefID:        currentTask.SourceRefID,
 		TaskType:           "vector_sync",
 		ExtractionStrategy: currentTask.ExtractionStrategy,
 		Status:             "pending",
@@ -439,24 +445,25 @@ func enqueueNextSyncTasks(ctx context.Context, svc *graphflow.Service, taskManag
 		return fmt.Errorf("failed to create vector_sync task: %w", err)
 	}
 
-	// Create and enqueue vector_sync task using asynq
-	vectorTask, err := NewGraphFlowTask(TypeGraphFlowVectorSync, vectorSyncTaskID.String(), taskManager)
+	// Enqueue graph_sync only after both task records exist. This avoids a fast
+	// graph_sync completion racing ahead of vector_sync task creation.
+	task, err := NewGraphFlowTask(TypeGraphFlowSync, graphSyncTaskID.String(), taskManager)
 	if err != nil {
-		svc.TaskRepo.UpdateTaskFailed(ctx, vectorSyncTaskID, fmt.Sprintf("failed to create task: %v", err))
-		logger.Error("Failed to create vector_sync task", err)
-		return fmt.Errorf("failed to create vector_sync task: %w", err)
+		svc.TaskRepo.UpdateTaskFailed(ctx, graphSyncTaskID, fmt.Sprintf("failed to create task: %v", err))
+		logger.Error("Failed to create graph_sync task", err)
+		return fmt.Errorf("failed to create graph_sync task: %w", err)
 	}
 
-	_, err = taskManager.EnqueueTask(vectorTask, asynq.Queue("graphflow"))
-	if err != nil {
-		svc.TaskRepo.UpdateTaskFailed(ctx, vectorSyncTaskID, fmt.Sprintf("failed to enqueue: %v", err))
-		logger.Error("Failed to enqueue vector_sync task", err)
-		return fmt.Errorf("failed to enqueue vector_sync task: %w", err)
+	if err = enqueueOrReactivateGraphFlowTask(taskManager, task, graphSyncTaskID.String()); err != nil {
+		svc.TaskRepo.UpdateTaskFailed(ctx, graphSyncTaskID, fmt.Sprintf("failed to enqueue: %v", err))
+		logger.Error("Failed to enqueue graph_sync task", err)
+		return fmt.Errorf("failed to enqueue graph_sync task: %w", err)
 	}
 
-	logger.Info("Vector sync task created and enqueued", map[string]interface{}{
-		"task_id":     vectorSyncTaskID.String(),
-		"document_id": currentTask.DocumentID.String(),
+	logger.Info("Graph sync task enqueued; vector sync task is waiting", map[string]interface{}{
+		"graph_task_id":  graphSyncTaskID.String(),
+		"vector_task_id": vectorSyncTaskID.String(),
+		"document_id":    currentTask.DocumentID.String(),
 	})
 
 	return nil

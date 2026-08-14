@@ -236,18 +236,18 @@ func TestListTenantModels_FilterByProvider_Miss(t *testing.T) {
 func TestGetModelParameters_ReturnsRawConfigParameters(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	organizationID := uuid.New()
-	precision := 2
 	h := NewModelHandler(&fakeModelService{
 		parameters: model.ConfigParameters{
 			{
-				Name:        "temperature",
-				TemplateKey: "temperature",
-				Type:        "float",
-				Required:    false,
-				Default:     json.RawMessage("1"),
-				Min:         json.RawMessage("0"),
-				Max:         json.RawMessage("2"),
-				Precision:   &precision,
+				Name:        "default_voice",
+				TemplateKey: "default_voice",
+				Type:        "string",
+				Required:    true,
+				Default:     json.RawMessage(`"voice-1"`),
+				Options:     []string{"voice-1"},
+				OptionLabels: map[string]model.ConfigParameterLocalizedText{
+					"voice-1": {ZhHans: "音色一", EnUS: "Voice One"},
+				},
 			},
 		},
 	})
@@ -271,10 +271,14 @@ func TestGetModelParameters_ReturnsRawConfigParameters(t *testing.T) {
 	require.Len(t, items, 1)
 
 	item := items[0].(map[string]interface{})
-	assert.Equal(t, "temperature", item["name"])
-	assert.Equal(t, "temperature", item["template_key"])
-	assert.Equal(t, "float", item["type"])
-	assert.Equal(t, float64(2), item["precision"])
+	assert.Equal(t, "default_voice", item["name"])
+	assert.Equal(t, "default_voice", item["template_key"])
+	assert.Equal(t, "string", item["type"])
+	assert.Equal(t, []interface{}{"voice-1"}, item["options"])
+	optionLabels := item["option_labels"].(map[string]interface{})
+	voiceLabel := optionLabels["voice-1"].(map[string]interface{})
+	assert.Equal(t, "音色一", voiceLabel["zh_Hans"])
+	assert.Equal(t, "Voice One", voiceLabel["en_US"])
 	_, hasLabel := item["label"]
 	assert.False(t, hasLabel)
 }

@@ -15,8 +15,11 @@ type Relationship struct {
 	HeadEntityID uuid.UUID `gorm:"type:uuid;not null" json:"head_entity_id"`
 	TailEntityID uuid.UUID `gorm:"type:uuid;not null" json:"tail_entity_id"`
 
-	RelationType string `gorm:"type:varchar(100);not null" json:"relation_type"`
-	Weight       int    `gorm:"default:1" json:"weight"`
+	RelationType       string `gorm:"type:varchar(100);not null" json:"relation_type"`
+	Weight             int    `gorm:"default:1" json:"weight"`
+	ActiveWeight       int    `gorm:"not null;default:0" json:"active_weight"`
+	ContentRevision    int64  `gorm:"not null;default:0" json:"content_revision"`
+	VisibilityRevision int64  `gorm:"not null;default:0" json:"visibility_revision"`
 
 	GraphState   string     `gorm:"type:varchar(20);default:'pending'" json:"graph_state"`
 	LastSyncedAt *time.Time `json:"last_synced_at,omitempty"`

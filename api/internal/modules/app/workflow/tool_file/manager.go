@@ -19,7 +19,10 @@ import (
 
 const DefaultTemporaryToolFileTTL = 7 * 24 * time.Hour
 
-var ErrToolFileExpired = errors.New("tool file expired")
+var (
+	ErrToolFileExpired   = errors.New("tool file expired")
+	errToolFileDirectURL = errors.New("failed to create direct file URL")
+)
 
 // ToolFileManager manages tool files in the system
 type ToolFileManager struct {
@@ -205,6 +208,28 @@ func (tm *ToolFileManager) GetFileBinary(ctx context.Context, toolFileID string)
 	return fileData, toolFile.MimeType, nil
 }
 
+// GetPresignedFileURL returns a direct storage URL when the configured backend
+// supports it. The boolean is false for local and other proxy-only backends.
+func (tm *ToolFileManager) GetPresignedFileURL(ctx context.Context, toolFileID string, expires time.Duration) (string, bool, error) {
+	presigner, ok := tm.storage.(storage.PresignedGetURLStorage)
+	if !ok {
+		return "", false, nil
+	}
+
+	toolFile, err := tm.GetToolFileByID(ctx, toolFileID)
+	if err != nil {
+		return "", true, err
+	}
+	url, err := presigner.PresignedGetURL(toolFile.FileKey, storage.PresignedGetOptions{
+		Expires:             expires,
+		ResponseContentType: toolFileResponseContentType(toolFile.MimeType),
+	})
+	if err != nil {
+		return "", true, fmt.Errorf("%w: %v", errToolFileDirectURL, err)
+	}
+	return url, true, nil
+}
+
 // GetFileStream retrieves file stream by tool file ID
 func (tm *ToolFileManager) GetFileStream(ctx context.Context, toolFileID string) (<-chan []byte, *ToolFile, error) {
 	// Find tool file in database
@@ -267,24 +292,59 @@ func ensureToolFileAvailable(toolFile *ToolFile, now time.Time) error {
 	return nil
 }
 
-// DeleteToolFile deletes a tool file
-func (tm *ToolFileManager) DeleteToolFile(ctx context.Context, toolFileID string) error {
-	// Find tool file first
+func (tm *ToolFileManager) findToolFile(ctx context.Context, toolFileID string) (*ToolFile, error) {
 	var toolFile ToolFile
 	if err := tm.db.WithContext(ctx).Where("id = ?", toolFileID).First(&toolFile).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return fmt.Errorf("tool file not found")
+			return nil, fmt.Errorf("tool file not found")
 		}
-		return fmt.Errorf("failed to find tool file: %w", err)
+		return nil, fmt.Errorf("failed to find tool file: %w", err)
+	}
+	return &toolFile, nil
+}
+
+func (tm *ToolFileManager) deleteStoredObject(toolFile *ToolFile) error {
+	deleteErr := tm.storage.Delete(toolFile.FileKey)
+	exists, existsErr := tm.storage.Exists(toolFile.FileKey)
+	if existsErr != nil {
+		return errors.Join(deleteErr, fmt.Errorf("failed to verify storage object deletion: %w", existsErr))
+	}
+	if exists {
+		if deleteErr != nil {
+			return fmt.Errorf("failed to delete storage object: %w", deleteErr)
+		}
+		return fmt.Errorf("storage object still exists after deletion")
+	}
+	return nil
+}
+
+// DeleteStoredObject removes an owned configured storage object while retaining its metadata.
+func (tm *ToolFileManager) DeleteStoredObject(ctx context.Context, toolFileID, tenantID, userID string) error {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" {
+		return fmt.Errorf("tool file deletion scope is required")
+	}
+	toolFile, err := tm.findToolFile(ctx, toolFileID)
+	if err != nil {
+		return err
+	}
+	if toolFile.TenantID != tenantID || toolFile.UserID != userID {
+		return fmt.Errorf("tool file does not belong to deletion scope")
+	}
+	return tm.deleteStoredObject(toolFile)
+}
+
+// DeleteToolFile deletes a tool file.
+func (tm *ToolFileManager) DeleteToolFile(ctx context.Context, toolFileID string) error {
+	toolFile, err := tm.findToolFile(ctx, toolFileID)
+	if err != nil {
+		return err
 	}
 
-	// Delete from storage
-	if err := tm.storage.Delete(toolFile.FileKey); err != nil {
-		// Continue with database deletion even if storage deletion fails
+	if err := tm.deleteStoredObject(toolFile); err != nil {
+		return err
 	}
 
-	// Delete from database
-	if err := tm.db.WithContext(ctx).Delete(&toolFile).Error; err != nil {
+	if err := tm.db.WithContext(ctx).Delete(toolFile).Error; err != nil {
 		return fmt.Errorf("failed to delete tool file from database: %w", err)
 	}
 
@@ -443,6 +503,14 @@ func DeleteToolFileGlobal(ctx context.Context, toolFileID string) error {
 		return fmt.Errorf("tool file manager not initialized")
 	}
 	return GlobalToolFileManager.DeleteToolFile(ctx, toolFileID)
+}
+
+// DeleteStoredObjectGlobal removes an owned configured storage object while retaining its metadata.
+func DeleteStoredObjectGlobal(ctx context.Context, toolFileID, tenantID, userID string) error {
+	if GlobalToolFileManager == nil {
+		return fmt.Errorf("tool file manager not initialized")
+	}
+	return GlobalToolFileManager.DeleteStoredObject(ctx, toolFileID, tenantID, userID)
 }
 
 func CleanupExpiredTemporaryFilesGlobal(ctx context.Context) (int, error) {

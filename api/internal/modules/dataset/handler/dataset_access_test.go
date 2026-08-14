@@ -3,6 +3,8 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -204,6 +206,31 @@ func TestGetDatasetForRetrievalTestUsesDedicatedRetrievalPermission(t *testing.T
 			organizationService.workspaceID,
 			organizationService.accountID,
 		)
+	}
+}
+
+func TestHitTestingGraphVisibilityConflictReturnsStructuredState(t *testing.T) {
+	c, recorder := newDatasetAccessTestContext("account-1", "org-1")
+	dataset := &dataset_model.Dataset{
+		GraphVisibilityRevision:          8,
+		GraphProjectedVisibilityRevision: 7,
+	}
+
+	respondHitTestingError(c, dataset, errors.New("knowledge graph visibility is not ready"))
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusConflict)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["code"] != "graph_visibility_not_ready" {
+		t.Fatalf("code = %#v, want graph_visibility_not_ready", body["code"])
+	}
+	if body["graph_visibility_revision"] != float64(8) ||
+		body["graph_projected_visibility_revision"] != float64(7) {
+		t.Fatalf("visibility revisions = %#v", body)
 	}
 }
 

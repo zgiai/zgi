@@ -13,6 +13,7 @@ export const ORGANIZATION_SCOPED_CONSOLE_ROUTES = [
   '/console/work/chat',
   '/console/work/image',
   '/console/work/video',
+  '/console/work/music',
   '/console/work/app',
 ] as const;
 
@@ -26,6 +27,7 @@ export const ORGANIZATION_SCOPED_WORK_ROUTES = [
   '/console/work/chat',
   '/console/work/image',
   '/console/work/video',
+  '/console/work/music',
   '/console/work/app',
 ] as const;
 

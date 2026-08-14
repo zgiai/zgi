@@ -49,6 +49,7 @@ const messages: NavigationMessages = {
   task: '定时任务',
   image: '绘图',
   video: '视频',
+  music: '音乐',
   resources: '资产',
   developer: '开发者',
   tools: '能力中心',

@@ -99,6 +99,7 @@ const messages = {
       agent: 'Agent',
       aichat: 'General Chat',
       'image-runtime': 'Image Generation',
+      'video-runtime': 'Video Generation',
       data_library_file: 'Document Vectorization & Q&A',
       prompt_optimizer: 'Prompt Optimization',
       prompt_playground: 'Prompt Playground',
@@ -146,9 +147,9 @@ const messages = {
       loadMore: 'Load more',
       loadingMore: 'Loading...',
       retried: '{count} attempts',
-      unknownHint: '{count} historical calls predate reliable source attribution.',
+      unknownHint: '{count} calls have no reliable source attribution.',
       historicalExplanation:
-        'Historical calls were created before source attribution was introduced. Model, token, cost, and duration data remain available, but API versus in-product origin cannot be reconstructed reliably.',
+        'This call has no reliable source attribution. It may predate attribution or come from a path that did not pass source context completely. Model, token, cost, and duration data remain available.',
       contentSettings: {
         title: 'Input/output content audit',
         compactLabel: 'Content audit',
@@ -199,7 +200,7 @@ const messages = {
         sourceApi: 'Gateway call authenticated with an organization API key',
         sourceProduct:
           'Gateway call made by an in-product agent, workflow, chat, or knowledge base',
-        sourceUnknown: 'Historical call created before source attribution was recorded',
+        sourceUnknown: 'This call has no reliable API or in-product source attribution',
         business: 'Business attribution',
         appId: 'App ID',
         model: 'Model',
@@ -239,7 +240,7 @@ const messages = {
         all: 'All calls',
         api: 'API calls',
         product: 'In-product',
-        unknown: 'Historical',
+        unknown: 'Unattributed',
       },
       metrics: {
         calls: 'Business calls',
@@ -351,6 +352,28 @@ const messages = {
       'image-gen': {
         title: 'Default Image Generation Model',
         description: 'Used for prompt-based image generation in console and workflow scenarios.',
+      },
+      'speech-to-text': {
+        title: 'Default Speech Recognition Model',
+        description: 'Used to turn Agent voice input into editable text.',
+      },
+      'text-to-speech': {
+        title: 'Default Speech Generation Model',
+        description: 'Used to turn Agent answers into playable speech.',
+        defaultVoice: {
+          label: 'Default voice',
+          selectPlaceholder: 'Select a voice',
+          unavailablePlaceholder: 'No voices available for this model',
+          selectMode: 'Choose from model voices',
+          loadingMode: 'Loading voices',
+          unavailableMode: 'Voices unavailable',
+          unavailableDescription:
+            'This model is missing voice options. Fix the model catalog configuration first.',
+          selectDescription:
+            'These voices are provided by the current model and used for Agent speech playback.',
+          required: 'Select a voice before saving.',
+          unsupported: 'The current voice is not available for this model. Select another voice.',
+        },
       },
     },
     parserSettings: {

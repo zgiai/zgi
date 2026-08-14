@@ -256,6 +256,7 @@ const messages: DashboardMessages = {
       agent: '智能体',
       aichat: '通用对话',
       'image-runtime': '绘图',
+      'video-runtime': '视频生成',
       data_library_file: '文档向量生成与问答',
       prompt_optimizer: '提示词优化',
       prompt_playground: '提示词调试台',
@@ -302,9 +303,9 @@ const messages: DashboardMessages = {
       loadMore: '加载更多',
       loadingMore: '加载中...',
       retried: '{count} 次尝试',
-      unknownHint: '其中 {count} 条为升级前的历史调用，暂无可靠来源分类。',
+      unknownHint: '其中 {count} 条调用暂未识别来源。',
       historicalExplanation:
-        '“历史数据”是日志来源分类上线前已产生的调用。它仍保留模型、Token、费用和耗时，但当时没有记录 API 或产品内来源，因此无法准确补齐。',
+        '该调用缺少可靠的来源归属，可能是升级前记录，或调用链未完整传递来源信息。模型、Token、费用和耗时仍可查看。',
       contentSettings: {
         title: '输入输出内容审计',
         compactLabel: '内容审计',
@@ -349,7 +350,7 @@ const messages: DashboardMessages = {
         source: '调用来源',
         sourceApi: '通过组织 API Key 调用 Gateway',
         sourceProduct: '由 ZGI 产品内的智能体、工作流、对话或知识库调用 Gateway',
-        sourceUnknown: '升级前的历史调用，旧记录没有来源字段',
+        sourceUnknown: '当前调用缺少可靠的 API／产品内来源归属',
         business: '业务归属',
         appId: '应用 ID',
         model: '模型',
@@ -388,7 +389,7 @@ const messages: DashboardMessages = {
         all: '全部调用',
         api: 'API 调用',
         product: '产品内调用',
-        unknown: '历史数据',
+        unknown: '来源未识别',
       },
       metrics: {
         calls: '业务调用量',
@@ -495,6 +496,26 @@ const messages: DashboardMessages = {
       'image-gen': {
         title: '默认生图模型',
         description: '用于根据提示词生成图片，适合控制台和工作流里的生图场景。',
+      },
+      'speech-to-text': {
+        title: '默认语音识别模型',
+        description: '用于把智能体中的语音输入转成可编辑文字。',
+      },
+      'text-to-speech': {
+        title: '默认语音生成模型',
+        description: '用于把智能体回答转成可播放语音。',
+        defaultVoice: {
+          label: '默认音色',
+          selectPlaceholder: '选择一个音色',
+          unavailablePlaceholder: '当前模型没有可选音色',
+          selectMode: '从模型音色中选择',
+          loadingMode: '读取音色',
+          unavailableMode: '音色不可用',
+          unavailableDescription: '当前模型缺少音色选项，请先修复模型目录配置。',
+          selectDescription: '音色列表由当前模型提供，保存后用于智能体语音播放。',
+          required: '保存前必须选择一个音色。',
+          unsupported: '当前音色不在模型可用列表中，请重新选择。',
+        },
       },
     },
     parserSettings: {

@@ -5,6 +5,7 @@ export type ModelType =
   | 'moderation'
   | 'speech2text'
   | 'tts'
+  | 'music'
   | 'text2video'
   | 'text2img';
 
@@ -16,6 +17,7 @@ export type ModelUseCase =
   | 'rerank'
   | 'speech-to-text'
   | 'text-to-speech'
+  | 'music-gen'
   | 'realtime-audio'
   | 'video-gen'
   | 'moderation'
@@ -301,6 +303,7 @@ export interface ParameterRuleItem extends ModelConfigParameter {
   label?: LocalizedText;
   help?: LocalizedText;
   options?: string[];
+  option_labels?: Record<string, LocalizedText>;
 }
 
 // Batch toggle models request (with specific models array)

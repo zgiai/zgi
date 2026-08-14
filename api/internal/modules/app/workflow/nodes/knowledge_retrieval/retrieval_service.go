@@ -71,9 +71,11 @@ func buildWorkflowRetrieveOptions(base *dservice.RetrievalOptions) *dservice.Ret
 	}
 
 	opts := *base
-	if opts.SearchMethod == "graph_search" {
-		opts.RetrievalMode = "hybrid"
-		opts.SearchMethod = ""
+	if opts.SearchMethod == "graph_search" || opts.SearchMethod == "graph" {
+		opts.RetrievalMode = "graph"
+		if opts.FallbackPolicy == "" {
+			opts.FallbackPolicy = dservice.FallbackPolicyNone
+		}
 	}
 
 	return &opts
@@ -279,7 +281,7 @@ func (s *defaultRetrievalService) SingleRetrieve(ctx context.Context, params Sin
 			documentIdsFilter = documentIds
 		}
 
-		retrievalModelConfig := dataset.RetrievalConfig
+		retrievalModelConfig := copyWorkflowRetrievalConfig(dataset.RetrievalConfig)
 		if len(retrievalModelConfig) == 0 {
 			retrievalModelConfig = map[string]any{
 				"search_method":    "hybrid_search",
@@ -291,6 +293,12 @@ func (s *defaultRetrievalService) SingleRetrieve(ctx context.Context, params Sin
 				"top_k":                   4,
 				"score_threshold_enabled": false,
 			}
+		}
+		if params.SearchMethod != "" {
+			retrievalModelConfig["search_method"] = params.SearchMethod
+		}
+		if params.FallbackPolicy != "" {
+			retrievalModelConfig["fallback_policy"] = params.FallbackPolicy
 		}
 
 		topK := retrievalModelConfig["top_k"]
@@ -347,6 +355,7 @@ func (s *defaultRetrievalService) SingleRetrieve(ctx context.Context, params Sin
 			RerankingModel:        nil,
 			Weights:               w,
 			DocumentIDsFilter:     documentIdsFilter,
+			FallbackPolicy:        stringMapValue(retrievalModelConfig, "fallback_policy"),
 		}
 
 		workflowOpts := buildWorkflowRetrieveOptions(opts)
@@ -485,7 +494,7 @@ func (s *defaultRetrievalService) MultipleRetrieve(ctx context.Context, params M
 		}
 
 		// Get dataset retrieval configuration
-		retrievalModelConfig := dataset.RetrievalConfig
+		retrievalModelConfig := copyWorkflowRetrievalConfig(dataset.RetrievalConfig)
 		if len(retrievalModelConfig) == 0 {
 			retrievalModelConfig = map[string]any{
 				"search_method":    "hybrid_search",
@@ -498,6 +507,12 @@ func (s *defaultRetrievalService) MultipleRetrieve(ctx context.Context, params M
 				"score_threshold_enabled": params.ScoreThreshold > 0,
 				"score_threshold":         params.ScoreThreshold,
 			}
+		}
+		if params.SearchMethod != "" {
+			retrievalModelConfig["search_method"] = params.SearchMethod
+		}
+		if params.FallbackPolicy != "" {
+			retrievalModelConfig["fallback_policy"] = params.FallbackPolicy
 		}
 
 		// Configure retrieval method
@@ -525,9 +540,12 @@ func (s *defaultRetrievalService) MultipleRetrieve(ctx context.Context, params M
 			RerankingModel:        nil,
 			Weights:               weights,
 			DocumentIDsFilter:     documentIdsFilter,
+			FallbackPolicy:        stringMapValue(retrievalModelConfig, "fallback_policy"),
 		}, embeddingFactory)
 		if err != nil {
-			// Log error but continue processing other datasets
+			if workflowGraphFailureMustPropagate(retrievalMethod, stringMapValue(retrievalModelConfig, "fallback_policy")) {
+				return nil, fmt.Errorf("graph retrieval failed for dataset %s: %w", dataset.ID, err)
+			}
 			continue
 		}
 
@@ -550,6 +568,27 @@ func (s *defaultRetrievalService) MultipleRetrieve(ctx context.Context, params M
 	}
 
 	return allDocs, nil
+}
+
+func copyWorkflowRetrievalConfig(config map[string]any) map[string]any {
+	result := make(map[string]any, len(config))
+	for key, value := range config {
+		result[key] = value
+	}
+	return result
+}
+
+func stringMapValue(config map[string]any, key string) string {
+	value, _ := config[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func workflowGraphFailureMustPropagate(method any, fallbackPolicy string) bool {
+	methodValue, _ := method.(string)
+	if methodValue != "graph" && methodValue != "graph_search" {
+		return false
+	}
+	return fallbackPolicy == "" || fallbackPolicy == dservice.FallbackPolicyNone
 }
 
 // retrieveFromSingleDataset executes retrieval from a single dataset
@@ -587,6 +626,8 @@ func (s *defaultRetrievalService) retrieveFromSingleDataset(
 		RerankingModel:        opts.RerankingModel,
 		Weights:               opts.Weights,
 		DocumentIDsFilter:     opts.DocumentIDsFilter,
+		RetrievalMode:         opts.RetrievalMode,
+		FallbackPolicy:        opts.FallbackPolicy,
 	})
 	results, _, err := retrievalService.Retrieve(ctx, dataset, query, workflowOpts)
 	if err != nil {

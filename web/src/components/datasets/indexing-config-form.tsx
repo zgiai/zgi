@@ -165,6 +165,7 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
           reranking_model_name: defaultRerankModelData?.model || '',
           reranking_provider_name: defaultRerankModelData?.provider || '',
         },
+        hop_depth: 3,
       };
 
       return initialConfig;
@@ -185,6 +186,7 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
         score_threshold: incomingRetrieval.score_threshold ?? retrieval.score_threshold,
         reranking_enable: incomingRetrieval.reranking_enable ?? retrieval.reranking_enable,
         reranking_model: incomingRetrieval.reranking_model ?? retrieval.reranking_model,
+        hop_depth: 3,
       };
 
       // Only update if there are actual changes to prevent infinite loop
@@ -275,18 +277,16 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
     };
 
     const handleRerankModelChange = ({ provider, model }: { provider: string; model: string }) => {
-      setRetrieval(prev => {
-        const nextRetrieval = {
-          ...prev,
-          reranking_enable: true,
-          reranking_model: {
-            reranking_provider_name: provider,
-            reranking_model_name: model,
-          },
-        };
-        onChange({ retrievalConfig: nextRetrieval });
-        return nextRetrieval;
-      });
+      const nextRetrieval = {
+        ...retrieval,
+        reranking_enable: true,
+        reranking_model: {
+          reranking_provider_name: provider,
+          reranking_model_name: model,
+        },
+      };
+      setRetrieval(nextRetrieval);
+      onChange({ retrievalConfig: nextRetrieval });
     };
 
     // In settings mode, render configuration sections directly without chunking mode selection
@@ -310,6 +310,7 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
               <ModelFieldSection
                 icon={ArrowUpDown}
                 title={t('createWizard.processConfig.changeRerankModel')}
+                titleTooltip={t('createWizard.processConfig.rerankingHelp')}
               >
                 <ModelSelector
                   modelType="rerank"

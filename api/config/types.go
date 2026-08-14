@@ -182,6 +182,7 @@ type PluginRunnerConfig struct {
 type TaskQueueConfig struct {
 	RedisDB                 int           `json:"redis_db"`
 	Concurrency             int           `json:"concurrency"`
+	GraphFlowConcurrency    int           `json:"graphflow_concurrency"`
 	Retention               time.Duration `json:"-"`
 	EnvPrefix               string        `json:"env_prefix"`
 	WorkflowTestTaskBackend string        `json:"workflow_test_task_backend"`

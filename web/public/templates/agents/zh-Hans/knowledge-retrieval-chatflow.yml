@@ -115,8 +115,7 @@ workflow:
         query_variable_selector:
         - sys
         - query
-        dataset_ids:
-        - configure-dataset
+        dataset_ids: []
         retrieval_mode: multiple
         multiple_retrieval_config:
           top_k: 6

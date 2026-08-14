@@ -77,6 +77,7 @@ type LLMModel struct {
 	Moderation        bool `gorm:"column:moderation;default:false" json:"-"`
 	Videos            bool `gorm:"column:videos;default:false" json:"-"`     // Video processing capability (ModelMeta aligned)
 	ImageEdit         bool `gorm:"column:image_edit;default:false" json:"-"` // Image editing capability (ModelMeta aligned)
+	MusicGeneration   bool `gorm:"column:music_generation;default:false" json:"-"`
 	Realtime          bool `gorm:"column:realtime;default:false" json:"-"`
 	Batch             bool `gorm:"column:batch;default:false" json:"-"`
 	FineTuning        bool `gorm:"column:fine_tuning;default:false" json:"-"`
@@ -178,6 +179,7 @@ func (m *LLMModel) AfterFind(tx *gorm.DB) error {
 		Moderation:       m.Moderation,
 		Videos:           m.Videos,
 		ImageEdit:        m.ImageEdit,
+		MusicGeneration:  m.MusicGeneration,
 	}
 
 	// Populate Features
@@ -246,6 +248,7 @@ func (m *LLMModel) BeforeSave(tx *gorm.DB) error {
 		m.Moderation = m.Endpoints.Moderation
 		m.Videos = m.Endpoints.Videos
 		m.ImageEdit = m.Endpoints.ImageEdit
+		m.MusicGeneration = m.Endpoints.MusicGeneration
 	}
 
 	// Update from Features if provided

@@ -4,12 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n';
-import { GitCompareArrows, Target, Sparkles } from 'lucide-react';
+import { Target, Sparkles } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent } from '@/components/ui/card';
 import { useDataset } from '@/hooks/dataset/use-datasets';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 // Removed mobile detection
 import { useHitTestingHistory } from '@/hooks/dataset/use-hit-testing-history';
 import {
@@ -34,6 +32,7 @@ import { toast } from 'sonner';
 import { useUpdateDataset } from '@/hooks/dataset/use-datasets';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
 import { DATASET_KEYS } from '@/hooks/query-keys';
+import { useDatasetGraphStatus } from '@/hooks/dataset/use-dataset-graph';
 
 const getExternalResultKey = (
   result: ExternalDatasetHitTestingResponse['records'][number],
@@ -45,6 +44,23 @@ const getExternalResultKey = (
     result.score,
     index,
   ].join(':');
+
+const isGraphVisibilityNotReadyError = (error: unknown) => {
+  const candidate = error as
+    | {
+        message?: string;
+        businessError?: { code?: string };
+        response?: { data?: { code?: string; message?: string } };
+      }
+    | undefined;
+  const code = candidate?.response?.data?.code || candidate?.businessError?.code;
+  const message = candidate?.response?.data?.message || candidate?.message;
+
+  return (
+    code === 'graph_visibility_not_ready' ||
+    message?.toLowerCase().includes('knowledge graph visibility is not ready') === true
+  );
+};
 
 /**
  * HitTestingPage Component
@@ -68,6 +84,7 @@ export default function HitTestingPage() {
   const [graphResults, setGraphResults] = useState<HitTestingResponse | null>(null);
   const [isVectorSearching, setIsVectorSearching] = useState(false);
   const [isGraphSearching, setIsGraphSearching] = useState(false);
+  const [graphVisibilityBlockedByRequest, setGraphVisibilityBlockedByRequest] = useState(false);
   const {
     records,
     isLoading,
@@ -92,36 +109,61 @@ export default function HitTestingPage() {
 
   const dataset = datasetData?.data;
   const isExternalDataSource = !!dataset?.external_knowledge_info?.external_knowledge_id;
-  const supportsGraphFlow = !!dataset?.enable_graph_flow && !isExternalDataSource;
+  const graphConfigured = !!dataset?.enable_graph_flow && !isExternalDataSource;
+  const { data: graphStatusResponse } = useDatasetGraphStatus(datasetId, graphConfigured);
+  const graphStatus = graphStatusResponse?.data;
+  const supportsGraphFlow = graphConfigured && graphStatus?.can_search === true;
+  const graphVisibilityRevisionMismatch =
+    graphConfigured &&
+    graphStatus !== undefined &&
+    graphStatus.graph_visibility_revision !== graphStatus.graph_projected_visibility_revision;
+  const isGraphVisibilitySyncing =
+    graphVisibilityRevisionMismatch || graphVisibilityBlockedByRequest;
+  const graphUnavailableReason = !graphConfigured
+    ? t('hitTesting.graphNotEnabled')
+    : graphStatus?.error_message || t('hitTesting.graphNotReady');
+  const graphPanelNotice = isGraphVisibilitySyncing
+    ? {
+        title: t('hitTesting.graphVisibilitySyncTitle'),
+        description: t('hitTesting.graphVisibilitySyncDescription'),
+      }
+    : graphConfigured && graphStatus && !supportsGraphFlow
+      ? {
+          title: t('hitTesting.graphUnavailableTitle'),
+          description: graphUnavailableReason,
+        }
+      : undefined;
   // Initialize retrieval config (defaults, then hydrate from dataset.retrieval_model_dict once)
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfig>({
-    search_method: 'hybrid_search',
+    search_method: 'graph_search',
     reranking_enable: true,
     top_k: 10,
     score_threshold_enabled: false,
     score_threshold: 0.35,
+    hop_depth: 3,
   });
-  const vectorPanelTitle = t('hitTesting.retrievalResults');
-  // Comparison mode: show both vector and graph results side by side
-  // Persist to localStorage
-  const COMPARISON_MODE_KEY = 'hit-testing-comparison-mode';
-  const [comparisonMode, setComparisonMode] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    const stored = localStorage.getItem(COMPARISON_MODE_KEY);
-    return stored !== null ? stored === 'true' : true;
-  });
+  const vectorPanelTitle = t('hitTesting.hybridResults');
+  const isCombinedGraphSearch = retrievalConfig.search_method === 'graph_search' && graphConfigured;
 
-  // Sync comparison mode to localStorage
   useEffect(() => {
-    localStorage.setItem(COMPARISON_MODE_KEY, String(comparisonMode));
-  }, [comparisonMode]);
+    if (!graphStatus) return;
+    if (graphStatus.graph_visibility_revision !== graphStatus.graph_projected_visibility_revision) {
+      setGraphResults(null);
+    } else {
+      setGraphVisibilityBlockedByRequest(false);
+    }
+  }, [
+    graphStatus,
+    graphStatus?.graph_projected_visibility_revision,
+    graphStatus?.graph_visibility_revision,
+  ]);
 
   useEffect(() => {
     if (!dataset?.retrieval_config) return;
     const server = dataset.retrieval_config;
     const normalizedSearchMethod = normalizeDatasetSearchMethod(
       server.search_method as RetrievalConfig['search_method'],
-      supportsGraphFlow
+      graphConfigured
     );
     const hydrated: RetrievalConfig = {
       search_method: normalizedSearchMethod,
@@ -135,9 +177,10 @@ export default function HitTestingPage() {
       top_k: server.top_k ?? 4,
       score_threshold_enabled: !!server.score_threshold_enabled,
       score_threshold: typeof server.score_threshold === 'number' ? server.score_threshold : 0.5,
+      hop_depth: 3 as const,
     };
     setRetrievalConfig(hydrated);
-  }, [dataset?.retrieval_config, dataset?.id, supportsGraphFlow]);
+  }, [dataset?.retrieval_config, dataset?.id, graphConfigured]);
   const handleLoadMoreHistory = () => {
     if (hasMore) {
       fetchNextPage();
@@ -165,6 +208,11 @@ export default function HitTestingPage() {
       top_k: retrievalConfig.top_k,
       score_threshold_enabled: retrievalConfig.score_threshold_enabled,
       score_threshold: retrievalConfig.score_threshold,
+      fallback_policy:
+        retrievalConfig.search_method === 'graph_search'
+          ? (retrievalConfig.fallback_policy ?? 'none')
+          : retrievalConfig.fallback_policy,
+      hop_depth: 3 as const,
     };
 
     try {
@@ -191,61 +239,76 @@ export default function HitTestingPage() {
         return;
       }
 
-      // Internal dataset: check comparison mode and search method
-      if (comparisonMode && supportsGraphFlow) {
-        // Comparison mode: parallel call both APIs
+      // Combined graph mode always shows hybrid text retrieval and graph retrieval together.
+      if (isCombinedGraphSearch) {
         setIsVectorSearching(true);
-        setIsGraphSearching(true);
+        setIsGraphSearching(supportsGraphFlow);
 
-        const requestData = {
+        const vectorRequestData = {
           query: queryText,
-          retrieval_model: retrievalModel,
+          retrieval_model: {
+            ...retrievalModel,
+            search_method: 'hybrid_search' as const,
+          },
           record_history: recordHistory,
         };
-
-        const [vectorResponse, graphResponse] = await Promise.allSettled([
-          vectorRetrieval.mutateAsync(requestData),
-          graphRetrieval.mutateAsync(requestData),
-        ]);
-        let hasSuccessfulRetrieval = false;
-
-        // Handle vector retrieval result
-        if (vectorResponse.status === 'fulfilled') {
-          setVectorResults(vectorResponse.value.data);
-          hasSuccessfulRetrieval = true;
-        } else {
-          console.error('Vector retrieval failed:', vectorResponse.reason);
-          toast.error(t('hitTesting.vectorRetrievalFailed'));
-        }
-
-        // Handle graph retrieval result
-        if (graphResponse.status === 'fulfilled') {
-          setGraphResults(graphResponse.value.data);
-          hasSuccessfulRetrieval = true;
-        } else {
-          console.error('Graph retrieval failed:', graphResponse.reason);
-          toast.error(t('hitTesting.graphRetrievalFailed'));
-        }
-
-        if (hasSuccessfulRetrieval) {
-          if (recordHistory) {
-            await refreshHistory();
-          }
-        }
-      } else if (retrievalConfig.search_method === 'graph_search' && supportsGraphFlow) {
-        // Graph search mode: only call graph retrieval
-        setIsGraphSearching(true);
-        const result = await graphRetrieval.mutateAsync({
+        const graphRequestData = {
           query: queryText,
-          retrieval_model: retrievalModel,
-          record_history: recordHistory,
-        });
-        setGraphResults(result.data);
-        if (recordHistory) {
+          retrieval_model: {
+            ...retrievalModel,
+            search_method: 'graph_search' as const,
+          },
+          // A combined test is one user action. The hybrid request owns its
+          // history entry; the parallel graph request only supplies results.
+          record_history: false,
+        };
+
+        const retrievals: Array<Promise<boolean>> = [
+          vectorRetrieval
+            .mutateAsync(vectorRequestData)
+            .then(response => {
+              setVectorResults(response.data);
+              return true;
+            })
+            .catch(error => {
+              console.error('Vector retrieval failed:', error);
+              toast.error(t('hitTesting.vectorRetrievalFailed'));
+              return false;
+            })
+            .finally(() => setIsVectorSearching(false)),
+        ];
+
+        if (supportsGraphFlow) {
+          retrievals.push(
+            graphRetrieval
+              .mutateAsync(graphRequestData)
+              .then(response => {
+                setGraphResults(response.data);
+                return true;
+              })
+              .catch(error => {
+                if (isGraphVisibilityNotReadyError(error)) {
+                  setGraphResults(null);
+                  setGraphVisibilityBlockedByRequest(true);
+                  void queryClient.invalidateQueries({
+                    queryKey: DATASET_KEYS.graphStatus(datasetId),
+                  });
+                  return false;
+                }
+                console.error('Graph retrieval failed:', error);
+                toast.error(t('hitTesting.graphRetrievalFailed'));
+                return false;
+              })
+              .finally(() => setIsGraphSearching(false))
+          );
+        }
+
+        const retrievalResults = await Promise.all(retrievals);
+        if (retrievalResults.some(Boolean) && recordHistory) {
           await refreshHistory();
         }
       } else {
-        // Semantic search mode (default): only call vector retrieval
+        // Hybrid text retrieval only.
         setIsVectorSearching(true);
         const result = await vectorRetrieval.mutateAsync({
           query: queryText,
@@ -258,6 +321,14 @@ export default function HitTestingPage() {
         }
       }
     } catch (error) {
+      if (isGraphVisibilityNotReadyError(error)) {
+        setGraphResults(null);
+        setGraphVisibilityBlockedByRequest(true);
+        void queryClient.invalidateQueries({
+          queryKey: DATASET_KEYS.graphStatus(datasetId),
+        });
+        return;
+      }
       console.error('Hit testing failed:', error);
       toast.error(t('hitTesting.hitTestingFailed'));
     } finally {
@@ -281,10 +352,15 @@ export default function HitTestingPage() {
     // Submit retrieval_config to persist retrieval settings to dataset
     const payload = {
       retrieval_config: {
-        search_method: normalizeDatasetSearchMethod(config.search_method, supportsGraphFlow),
+        search_method: normalizeDatasetSearchMethod(config.search_method, graphConfigured),
         top_k: config.top_k,
         score_threshold_enabled: config.score_threshold_enabled,
         score_threshold: config.score_threshold,
+        fallback_policy:
+          config.search_method === 'graph_search'
+            ? (config.fallback_policy ?? 'none')
+            : config.fallback_policy,
+        hop_depth: 3 as const,
         reranking_enable: true,
         reranking_model: config.reranking_model,
       },
@@ -336,24 +412,10 @@ export default function HitTestingPage() {
               {t('hitTestingDescription')}
             </p>
           </div>
-
-          {supportsGraphFlow && (
-            <div className="flex shrink-0 items-center gap-3 rounded-lg border bg-card px-3 py-2 shadow-sm">
-              <GitCompareArrows className="h-4 w-4 text-muted-foreground" />
-              <Label htmlFor="comparison-mode" className="text-sm font-medium text-foreground">
-                {t('hitTesting.comparisonMode')}
-              </Label>
-              <Switch
-                id="comparison-mode"
-                checked={comparisonMode}
-                onCheckedChange={setComparisonMode}
-              />
-            </div>
-          )}
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(420px,520px)_minmax(0,1fr)]">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(380px,440px)_minmax(0,1fr)]">
         <div className="flex min-h-0 flex-col gap-5 border-r bg-muted/10 px-6 py-5">
           {/* Query Input */}
           <div className="min-h-[300px] flex-[1.05]">
@@ -389,8 +451,8 @@ export default function HitTestingPage() {
         <div className="flex min-h-0 min-w-0 flex-col bg-muted/20">
           {/* Results Content */}
           <div className="min-w-0 flex-1 overflow-hidden">
-            {comparisonMode && supportsGraphFlow ? (
-              // Comparison mode: dual panel layout
+            {isCombinedGraphSearch ? (
+              // Combined mode: hybrid and graph results side by side.
               <div className="flex h-full min-w-0">
                 {/* Vector Results Panel */}
                 <div className="flex-1 min-w-0 border-r overflow-hidden">
@@ -418,6 +480,7 @@ export default function HitTestingPage() {
                     type="graph"
                     graphExecution={graphResults?.graph_execution}
                     elapsedTime={graphResults?.elapsed_time}
+                    notice={graphPanelNotice}
                   />
                 </div>
               </div>
@@ -469,18 +532,8 @@ export default function HitTestingPage() {
                   </div>
                 )}
               </div>
-            ) : retrievalConfig.search_method === 'graph_search' && supportsGraphFlow ? (
-              // Graph search mode: show graph results only
-              <ResultsPanel
-                title={t('hitTesting.graphResults')}
-                results={graphResults?.records ?? undefined}
-                isSearching={isGraphSearching}
-                type="graph"
-                graphExecution={graphResults?.graph_execution}
-                elapsedTime={graphResults?.elapsed_time}
-              />
             ) : (
-              // Semantic search mode (default): show vector results only
+              // Hybrid retrieval only.
               <ResultsPanel
                 title={vectorPanelTitle}
                 results={vectorResults?.records ?? undefined}
@@ -501,7 +554,8 @@ export default function HitTestingPage() {
         onConfigChange={setRetrievalConfig}
         onSave={handleConfigSave}
         onSaveAsTest={setRetrievalConfig}
-        isGraphEnabled={supportsGraphFlow}
+        isGraphEnabled={graphConfigured}
+        graphUnavailableReason={graphUnavailableReason}
       />
     </div>
   );

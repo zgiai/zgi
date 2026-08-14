@@ -2,7 +2,13 @@ import { getLocale, getMessages } from 'next-intl/server';
 import type { Metadata } from 'next';
 import { FaviconSync } from '@/components/common/favicon-sync';
 import { I18nClientProvider } from '@/providers/i18n-client-provider';
-import { APP_NAME, FAVICON_URL, withBasePath } from '@/lib/config';
+import {
+  APP_DESCRIPTION,
+  APP_KEYWORDS,
+  APP_NAME,
+  FAVICON_URL,
+  withBasePath,
+} from '@/lib/config';
 import Script from 'next/script';
 import { getPublicRuntimeEnv } from '@/lib/runtime-env';
 
@@ -11,6 +17,8 @@ import '../styles/index.css';
 
 export const metadata: Metadata = {
   title: APP_NAME,
+  ...(APP_DESCRIPTION ? { description: APP_DESCRIPTION } : {}),
+  ...(APP_KEYWORDS.length > 0 ? { keywords: APP_KEYWORDS } : {}),
   ...(FAVICON_URL
     ? {
         icons: {

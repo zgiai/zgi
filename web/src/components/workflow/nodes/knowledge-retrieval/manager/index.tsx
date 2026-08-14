@@ -22,6 +22,7 @@ import {
   useNodeDataUpdate,
   useNodeOutputVariables,
 } from '../../../hooks';
+import { getValidKnowledgeDatasetIds } from '../config';
 
 interface KnowledgeRetrievalManagerProps {
   id: string;
@@ -32,10 +33,11 @@ interface KnowledgeRetrievalManagerProps {
 
 // Helper to merge dataset ids immutably and keep uniqueness
 const toggleId = (ids: string[], id: string, checked: boolean): string[] => {
+  const normalizedIds = getValidKnowledgeDatasetIds(ids);
   if (checked) {
-    return ids.includes(id) ? ids : [...ids, id];
+    return normalizedIds.includes(id) ? normalizedIds : [...normalizedIds, id];
   }
-  return ids.filter(x => x !== id);
+  return normalizedIds.filter(x => x !== id);
 };
 
 const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
@@ -70,6 +72,10 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
   const outputs = useNodeOutputVariables(nodeId);
 
   const flatDatasets = useMemo(() => (pages ?? []).flat(), [pages]);
+  const selectedDatasetIds = useMemo(
+    () => getValidKnowledgeDatasetIds(nodeData?.dataset_ids),
+    [nodeData?.dataset_ids]
+  );
   const hasSearchKeyword = keyword.trim().length > 0;
   const hasDatasets = flatDatasets.length > 0;
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -95,6 +101,19 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
     },
     [updateNodeData]
   );
+
+  useEffect(() => {
+    if (!canEditKnowledgeSelection || !nodeData) return;
+
+    const currentIds = Array.isArray(nodeData.dataset_ids) ? nodeData.dataset_ids : [];
+    const isNormalized =
+      currentIds.length === selectedDatasetIds.length &&
+      currentIds.every((datasetId, index) => datasetId === selectedDatasetIds[index]);
+
+    if (!isNormalized) {
+      updateDatasetIds(selectedDatasetIds);
+    }
+  }, [canEditKnowledgeSelection, nodeData, selectedDatasetIds, updateDatasetIds]);
 
   const updateMultipleConfig = useCallback(
     (patch: Partial<KnowledgeRetrievalNodeData['multiple_retrieval_config']>) => {
@@ -191,10 +210,10 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
                       className="flex items-center gap-3 rounded border p-2 hover:bg-muted/50"
                     >
                       <Checkbox
-                        checked={nodeData?.dataset_ids.includes(ds.id) || false}
+                        checked={selectedDatasetIds.includes(ds.id)}
                         onCheckedChange={checked =>
                           updateDatasetIds(
-                            toggleId(nodeData?.dataset_ids || [], ds.id, Boolean(checked))
+                            toggleId(selectedDatasetIds, ds.id, Boolean(checked))
                           )
                         }
                         disabled={!canEditKnowledgeSelection}

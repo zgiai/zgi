@@ -1,0 +1,113 @@
+package graph
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+)
+
+func TestBuildEntityContextMultiHopQueryBindsTraversalPath(t *testing.T) {
+	query := buildEntityContextMultiHopQuery(2)
+	for _, snippet := range []string{
+		"n.name IN names",
+		"n.canonical_name IN names",
+		"MATCH path = (n)-[*1..2]-(m)",
+		"nodes(path)",
+		"relationships(path)",
+		"ORDER BY coalesce(m.name, ''), m.id",
+		"source: startNode(r)",
+		"target: endNode(r)",
+		"[..50] as neighbors",
+	} {
+		if !strings.Contains(query, snippet) {
+			t.Fatalf("multi-hop query missing %q:\n%s", snippet, query)
+		}
+	}
+}
+
+func TestNeighborDirectedEndpointsPreserveStoredDirection(t *testing.T) {
+	current := map[string]interface{}{"name": "Snuggly Cat"}
+	neighbor := Neighbor{
+		RelationshipType:   "OWNS",
+		Node:               map[string]interface{}{"name": "Fred Ruckel"},
+		RelationshipSource: map[string]interface{}{"name": "Fred Ruckel"},
+		RelationshipTarget: map[string]interface{}{"name": "Snuggly Cat"},
+	}
+
+	source, target := neighbor.DirectedEndpoints(current)
+	if source["name"] != "Fred Ruckel" || target["name"] != "Snuggly Cat" {
+		t.Fatalf("endpoints = %v -> %v, want Fred Ruckel -> Snuggly Cat", source["name"], target["name"])
+	}
+}
+
+func TestBuildNeighborQueryReturnsStoredRelationshipDirection(t *testing.T) {
+	query, _ := BuildNeighborQuery([]string{"Snuggly Cat"}, "kb-1", 10)
+	for _, snippet := range []string{"source: startNode(r)", "target: endNode(r)"} {
+		if !strings.Contains(query, snippet) {
+			t.Fatalf("neighbor query missing %q:\n%s", snippet, query)
+		}
+	}
+}
+
+func TestIsEquivalentSchemaRuleAlreadyExists(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "direct equivalent schema error",
+			err:  &neo4j.Neo4jError{Code: equivalentSchemaRuleAlreadyExistsCode},
+			want: true,
+		},
+		{
+			name: "wrapped equivalent schema error",
+			err:  fmt.Errorf("create vector index: %w", &neo4j.Neo4jError{Code: equivalentSchemaRuleAlreadyExistsCode}),
+			want: true,
+		},
+		{
+			name: "different neo4j error",
+			err:  &neo4j.Neo4jError{Code: "Neo.ClientError.Schema.IndexAlreadyExists"},
+			want: false,
+		},
+		{
+			name: "plain error containing code",
+			err:  fmt.Errorf("%s", equivalentSchemaRuleAlreadyExistsCode),
+			want: false,
+		},
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isEquivalentSchemaRuleAlreadyExists(tt.err); got != tt.want {
+				t.Fatalf("isEquivalentSchemaRuleAlreadyExists() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRelationshipVisibilityProjectionUsesIndexedEndpoints(t *testing.T) {
+	for _, snippet := range []string{
+		"MATCH (head:Entity {kb_id: $dataset_id, id: update.head_id})",
+		"MATCH (tail:Entity {kb_id: $dataset_id, id: update.tail_id})",
+		"MATCH (head)-[r]->(tail)",
+		"WHERE r.id = update.id",
+	} {
+		if !strings.Contains(relationshipVisibilityProjectionQuery, snippet) {
+			t.Fatalf("relationship visibility query missing %q:\n%s", snippet, relationshipVisibilityProjectionQuery)
+		}
+	}
+	if strings.Contains(relationshipVisibilityProjectionQuery, "MATCH (head:Entity {kb_id: $dataset_id})-[r]") {
+		t.Fatalf("relationship visibility query regressed to a KB-wide relationship scan:\n%s", relationshipVisibilityProjectionQuery)
+	}
+	if visibilityProjectionBatchSize > 1000 {
+		t.Fatalf("visibility projection batch size=%d, want at most 1000", visibilityProjectionBatchSize)
+	}
+}

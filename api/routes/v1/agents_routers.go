@@ -100,6 +100,19 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db, integrationActions)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)
+	if defaultModelResolver == nil {
+		panic("agent voice routes require default model resolver")
+	}
+	voiceTranscriber, ok := llmClient.(app.VoiceTranscriber)
+	if !ok {
+		panic("llm client does not support voice transcription")
+	}
+	appHandler.SetVoiceService(app.NewVoiceService(defaultModelResolver, voiceTranscriber))
+	voiceSynthesizer, ok := llmClient.(app.VoiceSynthesizer)
+	if !ok {
+		panic("llm client does not support speech generation")
+	}
+	appHandler.SetSpeechService(app.NewSpeechService(defaultModelResolver, voiceSynthesizer))
 	if modelPrechecker, ok := llmClient.(llmclient.AppModelPrechecker); ok {
 		appHandler.SetModelPrechecker(modelPrechecker)
 	}
@@ -160,6 +173,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.POST("/:agent_id/published-versions/rollback", appHandler.RollbackAgentPublishedVersion)
 	appsGroup.POST("/:agent_id/chat", appHandler.ChatAgent)
 	appsGroup.POST("/:agent_id/runtime/model-precheck", appHandler.PrecheckAgentDraftModel)
+	appsGroup.POST("/:agent_id/runtime/audio/transcriptions", appHandler.TranscribeAgentVoice)
+	appsGroup.POST("/:agent_id/runtime/audio/speech", appHandler.GenerateAgentSpeech)
 	appsGroup.GET("/:agent_id/runtime/conversations", appHandler.ListAgentRuntimeConversations)
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id", appHandler.GetAgentRuntimeConversation)
 	appsGroup.PATCH("/:agent_id/runtime/conversations/:conversation_id", appHandler.UpdateAgentRuntimeConversation)
@@ -191,6 +206,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.GET("/:web_app_id/capability", appHandler.GetWebAppRuntimeCapability)
 	protectedWebApps.POST("/:web_app_id/chat", appHandler.ChatWebAppAgent)
 	protectedWebApps.POST("/:web_app_id/runtime/model-precheck", appHandler.PrecheckPublishedAgentModel)
+	protectedWebApps.POST("/:web_app_id/runtime/audio/transcriptions", appHandler.TranscribeWebAppAgentVoice)
+	protectedWebApps.POST("/:web_app_id/runtime/audio/speech", appHandler.GenerateWebAppAgentSpeech)
 	protectedWebApps.GET("/:web_app_id/files/upload", appHandler.GetWebAppUploadConfig)
 	protectedWebApps.POST("/:web_app_id/files/upload", appHandler.UploadWebAppFile)
 	protectedWebApps.GET("/:web_app_id/runtime/search", appHandler.SearchWebAppAgentRuntimeConversations)

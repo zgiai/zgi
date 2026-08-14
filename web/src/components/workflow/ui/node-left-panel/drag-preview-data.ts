@@ -134,6 +134,8 @@ export function createDragPreviewNodeData({
         retrieval_mode: 'multiple',
         multiple_retrieval_config: {
           top_k: 4,
+          search_method: 'semantic_search',
+          fallback_policy: 'none',
           reranking_enable: false,
         },
       };

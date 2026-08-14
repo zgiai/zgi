@@ -1,12 +1,24 @@
 'use client';
 
-import { Check, ChevronLeft, ChevronRight, Copy, Pencil, RotateCcw, X } from 'lucide-react';
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Loader2,
+  Pause,
+  Pencil,
+  Play,
+  RotateCcw,
+  X,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
+import type { AIChatSpeechPlaybackPhase } from '@/components/chat/variants/aichat/voice/speech-playback';
 
 interface UserMessageToolbarProps {
   query: string;
@@ -32,6 +44,8 @@ interface AssistantMessageToolbarProps {
   canSwitchBranch: boolean;
   onRegenerate?: () => void;
   onSwitchBranch?: (messageId: string) => void;
+  speechPhase?: AIChatSpeechPlaybackPhase;
+  onToggleSpeech?: () => void;
 }
 
 interface CopyActionButtonProps {
@@ -194,8 +208,17 @@ export function AssistantMessageToolbar({
   canSwitchBranch,
   onRegenerate,
   onSwitchBranch,
+  speechPhase = 'idle',
+  onToggleSpeech,
 }: AssistantMessageToolbarProps) {
   const t = useT('webapp');
+  const speechActionLabel = t(
+    speechPhase === 'playing'
+      ? 'consoleChat.voice.pausePlayback'
+      : speechPhase === 'loading'
+        ? 'consoleChat.voice.cancelPlayback'
+        : 'consoleChat.voice.playResponse'
+  );
 
   return (
     <div className="mt-2 flex items-center gap-1">
@@ -228,6 +251,26 @@ export function AssistantMessageToolbar({
         </div>
       ) : null}
       <div className={cn('flex items-center gap-1 transition-opacity', toolbarVisibility)}>
+        {answer && onToggleSpeech ? (
+          <Button
+            variant="ghost"
+            isIcon
+            size="xs"
+            className="size-6 text-muted-foreground"
+            disabled={isDisabled}
+            onClick={onToggleSpeech}
+            title={speechActionLabel}
+            aria-label={speechActionLabel}
+          >
+            {speechPhase === 'loading' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : speechPhase === 'playing' ? (
+              <Pause className="size-3.5" />
+            ) : (
+              <Play className="size-3.5" />
+            )}
+          </Button>
+        ) : null}
         {answer ? (
           <CopyActionButton text={answer} title={t('chat.copy')} />
         ) : null}

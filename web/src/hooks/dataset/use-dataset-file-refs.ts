@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  useInfiniteQuery,
   useMutation,
   useQueries,
   useQuery,
@@ -55,26 +56,39 @@ export function useDatasetFileCandidates(
 ) {
   const [keyword, setKeyword] = useState(params.keyword ?? '');
   const debouncedKeyword = useDebouncedValue(keyword, options.debounceDelay ?? 500);
+  const initialPage = params.page ?? 1;
+  const pageSize = params.limit ?? 20;
 
   const normalizedParams = useMemo(
     () => ({
       filter: params.filter ?? 'addable',
       keyword: debouncedKeyword,
-      page: params.page ?? 1,
-      limit: params.limit ?? 20,
+      limit: pageSize,
     }),
-    [params.filter, params.page, params.limit, debouncedKeyword]
+    [params.filter, pageSize, debouncedKeyword]
   );
 
-  const query = useQuery({
-    queryKey: datasetId
-      ? DATASET_KEYS.fileCandidates(datasetId, normalizedParams)
-      : DATASET_KEYS.fileCandidates('undefined', normalizedParams),
-    queryFn: () => {
+  const query = useInfiniteQuery({
+    queryKey: [
+      ...(datasetId
+        ? DATASET_KEYS.fileCandidates(datasetId, { ...normalizedParams, page: initialPage })
+        : DATASET_KEYS.fileCandidates('undefined', { ...normalizedParams, page: initialPage })),
+      'all-pages',
+    ],
+    initialPageParam: initialPage,
+    queryFn: ({ pageParam }) => {
       if (!datasetId) {
         throw new Error('datasetId is required');
       }
-      return datasetService.getDatasetFileCandidates(datasetId, normalizedParams);
+      return datasetService.getDatasetFileCandidates(datasetId, {
+        ...normalizedParams,
+        page: Number(pageParam),
+      });
+    },
+    getNextPageParam: (lastPage, _allPages, lastPageParam) => {
+      const total = lastPage.data?.total ?? 0;
+      const currentPage = Number(lastPageParam);
+      return currentPage * pageSize < total ? currentPage + 1 : undefined;
     },
     enabled: Boolean(datasetId) && (options.enabled ?? true),
     staleTime: 30 * 1000,
@@ -82,15 +96,28 @@ export function useDatasetFileCandidates(
     retry: false,
   });
 
-  const candidates = useMemo(
-    () => (query.data?.data?.items ?? []) as DatasetFileCandidate[],
-    [query.data?.data?.items]
-  );
+  const candidates = useMemo(() => {
+    const seen = new Set<string>();
+    return (query.data?.pages ?? [])
+      .flatMap(page => (page.data?.items ?? []) as DatasetFileCandidate[])
+      .filter(candidate => {
+        if (seen.has(candidate.asset_id)) return false;
+        seen.add(candidate.asset_id);
+        return true;
+      });
+  }, [query.data?.pages]);
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = query;
+
+  useEffect(() => {
+    if (!hasNextPage || isFetchingNextPage) return;
+    void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   return {
     ...query,
     candidates,
-    total: query.data?.data?.total ?? 0,
+    total: query.data?.pages[0]?.data?.total ?? 0,
+    isCandidateListComplete: !query.isLoading && !hasNextPage && !isFetchingNextPage,
     keyword,
     setKeyword,
   };

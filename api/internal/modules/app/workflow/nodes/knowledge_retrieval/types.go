@@ -46,6 +46,8 @@ type SingleRetrieveParams struct {
 	Tools              []DatasetTool
 	MetadataDocIDs     map[string][]string
 	MetadataCond       any
+	SearchMethod       string
+	FallbackPolicy     string
 }
 
 type DatasetTool struct {
@@ -73,6 +75,8 @@ type MultipleRetrieveParams struct {
 	RerankingEnable    bool
 	MetadataDocIDs     map[string][]string
 	MetadataCond       any
+	SearchMethod       string
+	FallbackPolicy     string
 }
 
 // Predefined prompt templates for metadata filtering.

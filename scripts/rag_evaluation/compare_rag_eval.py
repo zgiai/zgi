@@ -31,7 +31,11 @@ def main() -> int:
         raise SystemExit(f"input file does not exist: {input_path}")
 
     dify_dataset_default, dify_result_default, _ = shared.output_paths_for_input(input_path, "dify")
-    zgi_dataset_default, zgi_result_default, _ = shared.output_paths_for_input(input_path, "zgi")
+    zgi_dataset_default, zgi_result_default, _ = shared.output_paths_for_input(
+        input_path,
+        "zgi",
+        args.zgi_retrieval_mode,
+    )
     dify_result_path = resolve_path(args.dify_results, dify_result_default)
     zgi_result_path = resolve_path(args.zgi_results, zgi_result_default)
 
@@ -98,6 +102,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--zgi-results", default="", help="Override the ZGI Ragas result JSON path.")
     parser.add_argument("--dify-dataset", default="", help="Optional Dify dataset JSON path for operational statistics.")
     parser.add_argument("--zgi-dataset", default="", help="Optional ZGI dataset JSON path for operational statistics.")
+    parser.add_argument(
+        "--zgi-retrieval-mode",
+        default="hybrid",
+        choices=["hybrid", "vector", "graph"],
+        help="Retrieval mode suffix used by the default ZGI dataset and result paths. Default: %(default)s",
+    )
     parser.add_argument("--tie-tolerance", type=float, default=0.01, help="Absolute score difference counted as a tie. Default: %(default)s")
     parser.add_argument("--bootstrap-samples", type=int, default=2000, help="Paired bootstrap samples for the mean-delta CI. Default: %(default)s")
     args = parser.parse_args()

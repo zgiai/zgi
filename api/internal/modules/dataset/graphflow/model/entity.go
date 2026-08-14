@@ -17,19 +17,26 @@ type Entity struct {
 	Type          string `gorm:"type:varchar(100);not null" json:"type"`
 	Description   string `gorm:"type:text" json:"description"`
 
-	SourceCount int      `gorm:"default:1" json:"source_count"`
-	MergedIDs   []string `gorm:"type:jsonb;serializer:json;default:'[]'" json:"merged_ids"`
+	SourceCount       int      `gorm:"default:1" json:"source_count"`
+	ActiveSourceCount int      `gorm:"not null;default:0" json:"active_source_count"`
+	MergedIDs         []string `gorm:"type:jsonb;serializer:json;default:'[]'" json:"merged_ids"`
 
-	EmbeddingID string `gorm:"type:varchar(255)" json:"embedding_id"`
-	GraphNodeID string `gorm:"type:varchar(255)" json:"graph_node_id"`
+	EmbeddingID            string `gorm:"type:varchar(255)" json:"embedding_id"`
+	GraphNodeID            string `gorm:"type:varchar(255)" json:"graph_node_id"`
+	EmbeddingModelProvider string `gorm:"type:varchar(255);not null;default:''" json:"embedding_model_provider"`
+	EmbeddingModel         string `gorm:"type:varchar(255);not null;default:''" json:"embedding_model"`
+	EmbeddingDimension     int    `gorm:"not null;default:0" json:"embedding_dimension"`
+	EmbeddingFingerprint   string `gorm:"type:varchar(512);not null;default:''" json:"embedding_fingerprint"`
+	ContentRevision        int64  `gorm:"not null;default:0" json:"content_revision"`
+	VisibilityRevision     int64  `gorm:"not null;default:0" json:"visibility_revision"`
 
-	VectorState string `gorm:"type:varchar(20);default:'pending'" json:"vector_state"`
-	GraphState  string `gorm:"type:varchar(20);default:'pending'" json:"graph_state"`
+	VectorState  string `gorm:"type:varchar(20);default:'pending'" json:"vector_state"`
+	GraphState   string `gorm:"type:varchar(20);default:'pending'" json:"graph_state"`
 	SyncErrorLog string `gorm:"type:text" json:"sync_error_log"`
 
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
-	
+
 	IsDeleted bool       `gorm:"default:false" json:"is_deleted"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }

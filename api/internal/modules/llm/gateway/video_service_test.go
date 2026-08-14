@@ -1,13 +1,51 @@
 package gateway
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/datatypes"
 )
+
+func TestVideoBillingContextFromTaskPreservesProductAttribution(t *testing.T) {
+	appID := uuid.New()
+	appType := "video-runtime"
+	apiKey := &apikeymodel.TenantAPIKey{ID: uuid.NewString()}
+	selection := &ProviderSelection{
+		Model: llmmodel.LLMModel{ID: uuid.New(), Model: "video-test"},
+	}
+	req := &adapter.VideoTaskRequest{AdditionalParameters: map[string]interface{}{
+		"billing_request_id": "video-request-1",
+		"billing_attempt_id": "video-request-1:0",
+	}}
+
+	billingCtx, err := (&llmGatewayServiceImpl{}).videoBillingContextFromTask(
+		context.Background(),
+		apiKey,
+		&AppContext{AppID: &appID, AppType: &appType},
+		selection,
+		uuid.New(),
+		uuid.New(),
+		req,
+		1000,
+	)
+	if err != nil {
+		t.Fatalf("videoBillingContextFromTask() error = %v", err)
+	}
+	if billingCtx.InvocationSource != InvocationSourceProduct {
+		t.Fatalf("invocation source = %q, want %q", billingCtx.InvocationSource, InvocationSourceProduct)
+	}
+	if billingCtx.AppType == nil || *billingCtx.AppType != appType {
+		t.Fatalf("app type = %#v, want %q", billingCtx.AppType, appType)
+	}
+	if billingCtx.AppID == nil || *billingCtx.AppID != appID {
+		t.Fatalf("app id = %#v, want %s", billingCtx.AppID, appID)
+	}
+}
 
 func TestVideoPriceForSelectionMatchesFlatTokenRates(t *testing.T) {
 	selection := &ProviderSelection{

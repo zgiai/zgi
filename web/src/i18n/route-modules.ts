@@ -47,6 +47,7 @@ const CONSOLE_MODULES: ModuleName[] = [
   'apikeys',
   'settings',
   'integrations',
+  'music',
 ];
 
 const DASHBOARD_MODULES: ModuleName[] = [

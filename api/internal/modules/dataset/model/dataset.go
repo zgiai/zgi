@@ -59,29 +59,41 @@ func (j *JSONMap) Scan(value interface{}) error {
 
 // Dataset represents a dataset entity
 type Dataset struct {
-	ID                     string    `json:"id" gorm:"primaryKey;type:uuid;default:uuid_generate_v4()"`
-	OrganizationID         string    `json:"organization_id" gorm:"type:uuid;not null;index:dataset_organization_idx"`
-	WorkspaceID            string    `json:"workspace_id" gorm:"type:uuid;index:dataset_workspace_idx"`
-	Name                   string    `json:"name" gorm:"type:varchar(255);not null"`
-	Description            *string   `json:"description" gorm:"type:text"`
-	Provider               string    `json:"provider" gorm:"type:varchar(255);not null;default:'vendor'"`
-	Permission             string    `json:"permission" gorm:"type:varchar(255);not null;default:'all_team'"`
-	EnableGraphFlow        bool      `json:"enable_graph_flow" gorm:"default:false"` // GraphFlow switch
-	CreatedBy              string    `json:"created_by" gorm:"type:uuid;not null"`
-	CreatedAt              time.Time `json:"created_at" gorm:"not null;default:CURRENT_TIMESTAMP(0)"`
-	UpdatedBy              *string   `json:"updated_by" gorm:"type:uuid"`
-	UpdatedAt              time.Time `json:"updated_at" gorm:"not null;default:CURRENT_TIMESTAMP(0)"`
-	Owner                  *string   `json:"owner" gorm:"type:uuid"`
-	EmbeddingModel         *string   `json:"embedding_model" gorm:"type:varchar(255)"`
-	EmbeddingModelProvider *string   `json:"embedding_model_provider" gorm:"type:varchar(255)"`
-	EntityModel            *string   `json:"entity_model" gorm:"type:varchar(255)"`
-	EntityModelProvider    *string   `json:"entity_model_provider" gorm:"type:varchar(255)"`
-	CollectionBindingID    *string   `json:"collection_binding_id" gorm:"type:uuid"`
-	RetrievalConfig        JSONMap   `json:"retrieval_config" gorm:"type:jsonb"`
-	IconType               *string   `json:"icon_type" gorm:"type:varchar(255)"`
-	Icon                   *string   `json:"icon" gorm:"type:varchar(255)"`
-	IconBackground         *string   `json:"icon_background" gorm:"type:varchar(255)"`
-	ProcessRule            JSONMap   `json:"process_rule" gorm:"type:jsonb"`
+	ID                               string     `json:"id" gorm:"primaryKey;type:uuid;default:uuid_generate_v4()"`
+	OrganizationID                   string     `json:"organization_id" gorm:"type:uuid;not null;index:dataset_organization_idx"`
+	WorkspaceID                      string     `json:"workspace_id" gorm:"type:uuid;index:dataset_workspace_idx"`
+	Name                             string     `json:"name" gorm:"type:varchar(255);not null"`
+	Description                      *string    `json:"description" gorm:"type:text"`
+	Provider                         string     `json:"provider" gorm:"type:varchar(255);not null;default:'vendor'"`
+	Permission                       string     `json:"permission" gorm:"type:varchar(255);not null;default:'all_team'"`
+	EnableGraphFlow                  bool       `json:"enable_graph_flow" gorm:"default:false"` // GraphFlow switch
+	GraphStatus                      string     `json:"graph_status" gorm:"type:varchar(32);not null;default:'disabled'"`
+	GraphRevision                    int64      `json:"graph_revision" gorm:"not null;default:0"`
+	GraphAvailableRevision           *int64     `json:"graph_available_revision"`
+	GraphProjectedRevision           int64      `json:"graph_projected_revision" gorm:"not null;default:0"`
+	GraphVisibilityRevision          int64      `json:"graph_visibility_revision" gorm:"not null;default:0"`
+	GraphProjectedVisibilityRevision int64      `json:"graph_projected_visibility_revision" gorm:"not null;default:0"`
+	GraphCurrentRunID                *string    `json:"graph_current_run_id" gorm:"type:uuid"`
+	GraphProgress                    int        `json:"graph_progress" gorm:"not null;default:0"`
+	GraphErrorCode                   *string    `json:"graph_error_code" gorm:"type:varchar(128)"`
+	GraphErrorMessage                *string    `json:"graph_error_message" gorm:"type:text"`
+	GraphReadyAt                     *time.Time `json:"graph_ready_at"`
+	GraphUpdatedAt                   *time.Time `json:"graph_updated_at"`
+	CreatedBy                        string     `json:"created_by" gorm:"type:uuid;not null"`
+	CreatedAt                        time.Time  `json:"created_at" gorm:"not null;default:CURRENT_TIMESTAMP(0)"`
+	UpdatedBy                        *string    `json:"updated_by" gorm:"type:uuid"`
+	UpdatedAt                        time.Time  `json:"updated_at" gorm:"not null;default:CURRENT_TIMESTAMP(0)"`
+	Owner                            *string    `json:"owner" gorm:"type:uuid"`
+	EmbeddingModel                   *string    `json:"embedding_model" gorm:"type:varchar(255)"`
+	EmbeddingModelProvider           *string    `json:"embedding_model_provider" gorm:"type:varchar(255)"`
+	EntityModel                      *string    `json:"entity_model" gorm:"type:varchar(255)"`
+	EntityModelProvider              *string    `json:"entity_model_provider" gorm:"type:varchar(255)"`
+	CollectionBindingID              *string    `json:"collection_binding_id" gorm:"type:uuid"`
+	RetrievalConfig                  JSONMap    `json:"retrieval_config" gorm:"type:jsonb"`
+	IconType                         *string    `json:"icon_type" gorm:"type:varchar(255)"`
+	Icon                             *string    `json:"icon" gorm:"type:varchar(255)"`
+	IconBackground                   *string    `json:"icon_background" gorm:"type:varchar(255)"`
+	ProcessRule                      JSONMap    `json:"process_rule" gorm:"type:jsonb"`
 
 	// Calculated fields (populated during queries)
 	AppCount               int `json:"app_count" gorm:"-"`

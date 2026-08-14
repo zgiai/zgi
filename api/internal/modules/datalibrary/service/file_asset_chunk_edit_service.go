@@ -153,6 +153,10 @@ type fileAssetChunkEditDatasetStore interface {
 	GetByID(ctx context.Context, id string) (*datasetModel.Dataset, error)
 }
 
+type fileAssetChunkEditCurrentRefStore interface {
+	ListCurrentByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error)
+}
+
 type FileAssetChunkEditDatasetRefSyncEnqueuer interface {
 	EnqueueDatasetRefSync(ctx context.Context, refID uuid.UUID, assetID uuid.UUID, datasetID string, generationNo int64, syncRunID uuid.UUID) error
 }
@@ -619,22 +623,17 @@ func resolveChunkEditEmbeddingModel(asset *model.DocumentAsset, input FileAssetC
 	return provider, modelName
 }
 
-func (s *fileAssetChunkEditService) enqueueDatasetRefSyncsForAssetEdit(ctx context.Context, asset *model.DocumentAsset, accountID string) error {
-	if s == nil || s.refs == nil || s.documents == nil || s.refSync == nil || asset == nil {
+func (s *fileAssetChunkEditService) enqueueDatasetRefSyncsForAssetEdit(ctx context.Context, asset *model.DocumentAsset, _ string) error {
+	if s == nil || s.refs == nil || s.refSync == nil || asset == nil {
 		return nil
 	}
-	refs, err := s.refs.ListActiveByAsset(ctx, asset.OrganizationID, asset.ID)
+	refs, err := listFileAssetChunkEditRefs(ctx, s.refs, asset.OrganizationID, asset.ID)
 	if err != nil {
 		return err
 	}
 	for _, ref := range refs {
 		if ref == nil {
 			continue
-		}
-		if ref.DatasetDocumentID != nil && *ref.DatasetDocumentID != uuid.Nil {
-			if err := s.documents.DisableDocuments(ctx, ref.DatasetID, []string{ref.DatasetDocumentID.String()}, accountID); err != nil {
-				return err
-			}
 		}
 		syncRunID := uuid.New()
 		if _, err := s.refs.MarkPending(ctx, asset.OrganizationID, ref.ID, syncRunID, nil, nil); err != nil {
@@ -645,6 +644,13 @@ func (s *fileAssetChunkEditService) enqueueDatasetRefSyncsForAssetEdit(ctx conte
 		}
 	}
 	return nil
+}
+
+func listFileAssetChunkEditRefs(ctx context.Context, store fileAssetChunkEditRefStore, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error) {
+	if currentStore, ok := store.(fileAssetChunkEditCurrentRefStore); ok {
+		return currentStore.ListCurrentByAsset(ctx, organizationID, assetID)
+	}
+	return store.ListActiveByAsset(ctx, organizationID, assetID)
 }
 
 func isEditableChunkUpdateAllowed(chunk *model.DocumentChunk, input FileAssetChunkEditInput) bool {

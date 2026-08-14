@@ -15,6 +15,7 @@ import type {
 } from '@/components/common/model-selector';
 import { useAgent, useAgentConfig } from '@/hooks/agent/use-agents';
 import { useAvailableModels } from '@/hooks/model/use-model';
+import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
@@ -274,6 +275,8 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { agent, isLoading: isAgentLoading } = useAgent(agentId, canOpenAgentRuntimeEditor);
   const canBindKnowledge = hasAnyPermission(KNOWLEDGE_BASE_READ_PERMISSION_CODES);
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
+  const { value: voiceDefaultModel } = useDefaultModelByUseCase('speech-to-text');
+  const { value: speechDefaultModel } = useDefaultModelByUseCase('text-to-speech');
   const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(
     agentId,
     canOpenAgentRuntimeEditor
@@ -307,6 +310,11 @@ export function useAgentRuntimePageModel(agentId: string) {
       staleTime: 60_000,
     });
   const config = configResponse?.data;
+  const voiceInputEnabled = Boolean(voiceDefaultModel?.model);
+  const speechEnabled =
+    Boolean(speechDefaultModel?.model) &&
+    typeof speechDefaultModel?.params.default_voice === 'string' &&
+    Boolean(speechDefaultModel.params.default_voice.trim());
   const workflowCandidates = useMemo<AgentWorkflowBindingCandidate[]>(
     () => (workflowCandidatesResponse?.data.data ?? []) as AgentWorkflowBindingCandidate[],
     [workflowCandidatesResponse?.data.data]
@@ -1623,6 +1631,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       openingGuideBrand: agentOpeningGuideBrand,
       homeTitle: currentPayload.home_title || defaultHomeTitle,
       openingStatement: currentPayload.opening_statement,
+      voiceInputEnabled,
+      speechEnabled,
       beforeSend: handlePreviewBeforeSend,
       onOpenMemoryValues: () => setMemoryValuesOpen(true),
       onModelChange: handleModelChange,

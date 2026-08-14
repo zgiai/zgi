@@ -255,8 +255,10 @@ const (
 	// The task queue reuses the primary Redis host, port, and password.
 	// envTaskQueueRedisDB selects the Redis database index used by the task queue. Default: 0.
 	envTaskQueueRedisDB = "TASK_QUEUE_REDIS_DB"
-	// envTaskQueueConcurrency sets how many task queue workers run in parallel. Default: 4.
+	// envTaskQueueConcurrency sets how many task queue workers run in parallel. Default: 8.
 	envTaskQueueConcurrency = "TASK_QUEUE_CONCURRENCY"
+	// envGraphFlowTaskQueueConcurrency sets the dedicated GraphFlow worker concurrency. Range: 1-4. Default: 4.
+	envGraphFlowTaskQueueConcurrency = "GRAPHFLOW_TASK_QUEUE_CONCURRENCY"
 	// envTaskQueueRetention sets how long completed task metadata is retained. Default: 24h.
 	envTaskQueueRetention = "TASK_QUEUE_RETENTION"
 	// envTaskQueueEnvPrefix sets the environment prefix used to isolate task queue keys. Default: empty.
@@ -645,7 +647,7 @@ const (
 	envKnowledgeRateLimitMax = "KNOWLEDGE_RATE_LIMIT_MAX"
 
 	// GraphFlow sync throughput.
-	// envGraphFlowVectorSyncBatchSize sets the GraphFlow vector sync batch size. Default: 50.
+	// envGraphFlowVectorSyncBatchSize sets the GraphFlow vector sync batch size. Default: 10.
 	envGraphFlowVectorSyncBatchSize = "GRAPHFLOW_VECTOR_SYNC_BATCH_SIZE"
 	// envGraphFlowVectorSyncConcurrency sets how many GraphFlow vector sync jobs run in parallel. Default: 10.
 	envGraphFlowVectorSyncConcurrency = "GRAPHFLOW_VECTOR_SYNC_CONCURRENCY"

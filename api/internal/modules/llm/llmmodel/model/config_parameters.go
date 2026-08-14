@@ -9,17 +9,23 @@ import (
 )
 
 type ConfigParameter struct {
-	Name        string          `json:"name"`
-	TemplateKey string          `json:"template_key"`
-	Label       json.RawMessage `json:"label,omitempty"`
-	Type        string          `json:"type"`
-	Help        json.RawMessage `json:"help,omitempty"`
-	Required    bool            `json:"required"`
-	Default     json.RawMessage `json:"default,omitempty"`
-	Min         json.RawMessage `json:"min,omitempty"`
-	Max         json.RawMessage `json:"max,omitempty"`
-	Precision   *int            `json:"precision,omitempty"`
-	Options     []string        `json:"options,omitempty"`
+	Name         string                                  `json:"name"`
+	TemplateKey  string                                  `json:"template_key"`
+	Label        json.RawMessage                         `json:"label,omitempty"`
+	Type         string                                  `json:"type"`
+	Help         json.RawMessage                         `json:"help,omitempty"`
+	Required     bool                                    `json:"required"`
+	Default      json.RawMessage                         `json:"default,omitempty"`
+	Min          json.RawMessage                         `json:"min,omitempty"`
+	Max          json.RawMessage                         `json:"max,omitempty"`
+	Precision    *int                                    `json:"precision,omitempty"`
+	Options      []string                                `json:"options,omitempty"`
+	OptionLabels map[string]ConfigParameterLocalizedText `json:"option_labels,omitempty"`
+}
+
+type ConfigParameterLocalizedText struct {
+	ZhHans string `json:"zh_Hans,omitempty"`
+	EnUS   string `json:"en_US,omitempty"`
 }
 
 type ConfigParameters []ConfigParameter
@@ -144,6 +150,19 @@ func ValidateConfigParameters(params ConfigParameters) error {
 
 		if param.Precision != nil && *param.Precision < 0 {
 			return fmt.Errorf("config_parameters[%d].precision must be non-negative", index)
+		}
+
+		optionSet := make(map[string]struct{}, len(param.Options))
+		for _, option := range param.Options {
+			optionSet[option] = struct{}{}
+		}
+		for option, label := range param.OptionLabels {
+			if _, exists := optionSet[option]; !exists {
+				return fmt.Errorf("config_parameters[%d].option_labels contains unknown option %q", index, option)
+			}
+			if strings.TrimSpace(label.ZhHans) == "" && strings.TrimSpace(label.EnUS) == "" {
+				return fmt.Errorf("config_parameters[%d].option_labels[%q] is empty", index, option)
+			}
 		}
 
 		min, hasMin, err := parseNumericConfigValue(param.Min)

@@ -520,9 +520,16 @@ func loadTaskQueueConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
-	concurrency, err := source.int(4, envTaskQueueConcurrency)
+	concurrency, err := source.int(8, envTaskQueueConcurrency)
 	if err != nil {
 		return err
+	}
+	graphFlowConcurrency, err := source.int(4, envGraphFlowTaskQueueConcurrency)
+	if err != nil {
+		return err
+	}
+	if graphFlowConcurrency < 1 || graphFlowConcurrency > 4 {
+		return fmt.Errorf("%s must be between 1 and 4", envGraphFlowTaskQueueConcurrency)
 	}
 	retention, err := source.duration(24*time.Hour, envTaskQueueRetention)
 	if err != nil {
@@ -532,6 +539,7 @@ func loadTaskQueueConfig(cfg *Config, source *envSource) error {
 	cfg.TaskQueue = TaskQueueConfig{
 		RedisDB:                 redisDB,
 		Concurrency:             concurrency,
+		GraphFlowConcurrency:    graphFlowConcurrency,
 		Retention:               retention,
 		EnvPrefix:               source.string("", envTaskQueueEnvPrefix),
 		WorkflowTestTaskBackend: source.string("local", envWorkflowTestTaskBackend),
@@ -1133,7 +1141,7 @@ func loadKnowledgeConfig(cfg *Config, source *envSource) {
 
 func loadGraphFlowConfig(cfg *Config, source *envSource) {
 	cfg.GraphFlow = GraphFlowConfig{
-		VectorSyncBatchSize:   mustInt(source.int(50, envGraphFlowVectorSyncBatchSize)),
+		VectorSyncBatchSize:   mustInt(source.int(10, envGraphFlowVectorSyncBatchSize)),
 		VectorSyncConcurrency: mustInt(source.int(10, envGraphFlowVectorSyncConcurrency)),
 	}
 }

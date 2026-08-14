@@ -27,6 +27,7 @@ export const AVAILABLE_MODULES = [
   'contentParse',
   'prompts',
   'integrations',
+  'music',
 ] as const;
 
 export type ModuleName = (typeof AVAILABLE_MODULES)[number];
@@ -150,6 +151,10 @@ const moduleRegistry: ModuleRegistry = {
   integrations: {
     'zh-Hans': () => import('./modules/integrations/zh-Hans'),
     'en-US': () => import('./modules/integrations/en-US'),
+  },
+  music: {
+    'zh-Hans': () => import('./modules/music/zh-Hans'),
+    'en-US': () => import('./modules/music/en-US'),
   },
 };
 

@@ -14,6 +14,16 @@ export const NODE_ENV: string = process.env.NODE_ENV || 'development';
 export const APP_NAME: string = process.env.APP_NAME_STATIC || 'ZGI';
 
 /**
+ * Optional application metadata, frozen at build time for server-rendered TDK.
+ */
+export const APP_DESCRIPTION: string = process.env.APP_DESCRIPTION_STATIC?.trim() || '';
+
+export const APP_KEYWORDS: string[] = (process.env.APP_KEYWORDS_STATIC || '')
+  .split(',')
+  .map(keyword => keyword.trim())
+  .filter(Boolean);
+
+/**
  * Brand identity used for brand-specific UI affordances.
  * Keep this separate from display name so non-ZGI deployments can suppress
  * ZGI-only visual marks while still choosing their own app name/logo.

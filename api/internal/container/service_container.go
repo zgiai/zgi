@@ -80,6 +80,7 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
+	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
 	filegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
 	files_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
@@ -269,7 +270,10 @@ type ServiceContainer struct {
 	defaultModelService llmdefaultsvc.DefaultModelService
 
 	// GraphFlow service
-	graphFlowService *graphflow.Service
+	graphFlowService       *graphflow.Service
+	graphLifecycleService  *graphflow.LifecycleService
+	graphVisibilityService *graphflow.VisibilityService
+	graphRuntimeHealth     *system_service.GraphRuntimeHealthService
 
 	// Automation definition service
 	automationDefinitionService automationdefinition.Service
@@ -862,6 +866,36 @@ func (c *ServiceContainer) StopScheduler() {
 func (c *ServiceContainer) GetLLMClient() llm_client.LLMClient {
 	c.initLLMClient()
 	return c.llmClient
+}
+
+// GetMusicGenerator returns the model generation capability consumed by Music.
+func (c *ServiceContainer) GetMusicGenerator() musicmodule.Generator {
+	c.initLLMClient()
+	generator, ok := c.llmClient.(musicmodule.Generator)
+	if !ok {
+		panic("llm client does not support music generation")
+	}
+	return generator
+}
+
+// GetMusicLyricsGenerator returns the Console-backed structured lyrics capability.
+func (c *ServiceContainer) GetMusicLyricsGenerator() musicmodule.LyricsGenerator {
+	c.initLLMClient()
+	generator, ok := c.llmClient.(musicmodule.LyricsGenerator)
+	if !ok {
+		panic("llm client does not support lyrics generation")
+	}
+	return generator
+}
+
+// GetMusicDeliveryCompensator returns the billing resolution capability consumed by Music.
+func (c *ServiceContainer) GetMusicDeliveryCompensator() musicmodule.DeliveryCompensator {
+	c.initLLMClient()
+	compensator, ok := c.llmClient.(musicmodule.DeliveryCompensator)
+	if !ok {
+		panic("llm client does not support music delivery compensation")
+	}
+	return compensator
 }
 
 // EnsureLLMClient initializes LLM client once and enforces fail-fast in CLOUD mode.
@@ -1645,6 +1679,31 @@ func (c *ServiceContainer) GetGraphFlowService() *graphflow.Service {
 		)
 	}
 	return c.graphFlowService
+}
+
+// GetGraphLifecycleService returns the durable GraphFlow lifecycle service.
+func (c *ServiceContainer) GetGraphLifecycleService() *graphflow.LifecycleService {
+	if c.graphLifecycleService == nil {
+		c.graphLifecycleService = graphflow.NewLifecycleService(c.db)
+	}
+	return c.graphLifecycleService
+}
+
+// GetGraphVisibilityService returns the GraphFlow visibility service.
+func (c *ServiceContainer) GetGraphVisibilityService() *graphflow.VisibilityService {
+	if c.graphVisibilityService == nil {
+		c.graphVisibilityService = graphflow.NewVisibilityService(c.db)
+	}
+	return c.graphVisibilityService
+}
+
+// GetGraphRuntimeHealthService returns the sanitized graph runtime health service.
+func (c *ServiceContainer) GetGraphRuntimeHealthService() *system_service.GraphRuntimeHealthService {
+	if c.graphRuntimeHealth == nil {
+		graphService := c.GetGraphFlowService()
+		c.graphRuntimeHealth = system_service.NewGraphRuntimeHealthService(graphService.Neo4jClient)
+	}
+	return c.graphRuntimeHealth
 }
 
 func (c *ServiceContainer) SetAutomationDefinitionService(service automationdefinition.Service) {
