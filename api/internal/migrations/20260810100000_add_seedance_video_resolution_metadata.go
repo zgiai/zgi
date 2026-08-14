@@ -1,6 +1,9 @@
 package migrations
 
-import mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
+import (
+	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
+	"gorm.io/gorm"
+)
 
 const migrationAddSeedanceVideoResolutionMetadataID = "20260810100000_add_seedance_video_resolution_metadata"
 
@@ -13,7 +16,8 @@ func init() {
 }
 
 func upAddSeedanceVideoResolutionMetadata(schema *mschema.Builder) error {
-	return schema.Raw(`
+	return schema.DataFix("add Seedance video resolution metadata", func(db *gorm.DB) error {
+		return db.Exec(`
 		UPDATE public.llm_models
 		SET
 			default_parameters = jsonb_set(
@@ -41,5 +45,6 @@ func upAddSeedanceVideoResolutionMetadata(schema *mschema.Builder) error {
 				'doubao-seedance-2-0-mini-260615'
 			)
 			AND deleted_at IS NULL
-	`)
+		`).Error
+	})
 }
