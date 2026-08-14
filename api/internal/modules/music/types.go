@@ -39,8 +39,20 @@ var (
 
 type Scope struct {
 	OrganizationID uuid.UUID
-	WorkspaceID    uuid.UUID
+	WorkspaceID    *uuid.UUID
 	AccountID      uuid.UUID
+}
+
+func validScope(scope Scope) bool {
+	return scope.OrganizationID != uuid.Nil && scope.AccountID != uuid.Nil &&
+		(scope.WorkspaceID == nil || *scope.WorkspaceID != uuid.Nil)
+}
+
+func sameWorkspace(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 type CreateRequest struct {
@@ -66,7 +78,7 @@ type ListQuery struct {
 type Task struct {
 	ID             uuid.UUID                   `gorm:"type:uuid;primaryKey" json:"id"`
 	OrganizationID uuid.UUID                   `gorm:"type:uuid;not null;index:idx_music_tasks_scope_created,priority:1;uniqueIndex:idx_music_tasks_request,priority:1" json:"-"`
-	WorkspaceID    uuid.UUID                   `gorm:"type:uuid;not null;index:idx_music_tasks_scope_created,priority:2;uniqueIndex:idx_music_tasks_request,priority:2" json:"-"`
+	WorkspaceID    *uuid.UUID                  `gorm:"type:uuid;index:idx_music_tasks_scope_created,priority:2;uniqueIndex:idx_music_tasks_request,priority:2" json:"-"`
 	AccountID      uuid.UUID                   `gorm:"type:uuid;not null;uniqueIndex:idx_music_tasks_request,priority:3" json:"-"`
 	RequestID      uuid.UUID                   `gorm:"type:uuid;not null;uniqueIndex:idx_music_tasks_request,priority:4" json:"-"`
 	Model          string                      `gorm:"type:varchar(255);not null" json:"model"`

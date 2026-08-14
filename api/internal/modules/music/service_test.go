@@ -60,6 +60,26 @@ func TestServiceCreateQueuesValidatedMusicTask(t *testing.T) {
 	}
 }
 
+func TestServiceCreatesPersonalMusicTaskWithoutWorkspace(t *testing.T) {
+	repo := newMemoryRepository()
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
+	scope := testScope()
+	scope.WorkspaceID = nil
+
+	task, err := service.Create(t.Context(), scope, CreateRequest{
+		RequestID: uuid.New(),
+		Model:     "music-3.0",
+		Mode:      adapter.MusicModeInstrumental,
+		Prompt:    "personal warm piano",
+	})
+	if err != nil {
+		t.Fatalf("Create() without workspace error = %v", err)
+	}
+	if task.WorkspaceID != nil {
+		t.Fatalf("created personal task workspace = %s, want nil", task.WorkspaceID.String())
+	}
+}
+
 func TestServiceCreateRejectsUnavailableMusicModelBeforeInsert(t *testing.T) {
 	repo := newMemoryRepository()
 	service := NewService(repo, &dispatcherStub{}, &availableModelsStub{}, &assetStoreStub{})
@@ -306,5 +326,6 @@ func availableMusicModelStub() *availableModelsStub {
 }
 
 func testScope() Scope {
-	return Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), AccountID: uuid.New()}
+	workspaceID := uuid.New()
+	return Scope{OrganizationID: uuid.New(), WorkspaceID: &workspaceID, AccountID: uuid.New()}
 }

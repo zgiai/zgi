@@ -164,7 +164,7 @@ export const ZGI_CONSOLE_SITE_MAP = [
     href: '/console/work/music',
     label: 'Music',
     purpose: 'music generation workbench',
-    scope: 'workspace',
+    scope: 'organization',
     permissions: NO_PERMISSIONS,
   },
   {
