@@ -12,6 +12,7 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 )
 
 const musicResponseFormat = "mp3"
@@ -158,7 +159,11 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id uuid.UUID) error {
 		return err
 	}
 	if !isDeletableStatus(task.Status) {
-		return ErrTaskNotDeletable
+		return apperror.Wrap(
+			ErrTaskNotDeletable,
+			AppCodeTaskNotDeletable,
+			apperror.WithOperation("music.task.delete"),
+		)
 	}
 	if task.Status == StatusSucceeded && task.FileID == nil {
 		return ErrTaskAssetMissing

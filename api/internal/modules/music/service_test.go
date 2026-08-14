@@ -11,6 +11,7 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 )
 
 func TestServiceGetRequiresCompleteScope(t *testing.T) {
@@ -348,6 +349,9 @@ func TestServiceDeleteRejectsActiveTask(t *testing.T) {
 	err := service.Delete(t.Context(), scope, task.ID)
 	if !errors.Is(err, ErrTaskNotDeletable) {
 		t.Fatalf("Delete() error = %v, want ErrTaskNotDeletable", err)
+	}
+	if !apperror.IsCode(err, AppCodeTaskNotDeletable) {
+		t.Fatalf("Delete() error = %v, want code %s", err, AppCodeTaskNotDeletable)
 	}
 	if assets.deletedStoredObjectID != "" {
 		t.Fatalf("active task storage deletion = %q, want no deletion", assets.deletedStoredObjectID)
