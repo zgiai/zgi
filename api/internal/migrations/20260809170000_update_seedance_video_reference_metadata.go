@@ -1,6 +1,9 @@
 package migrations
 
-import mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
+import (
+	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
+	"gorm.io/gorm"
+)
 
 const migrationUpdateSeedanceVideoReferenceMetadataID = "20260809170000_update_seedance_video_reference_metadata"
 
@@ -13,7 +16,8 @@ func init() {
 }
 
 func upUpdateSeedanceVideoReferenceMetadata(schema *mschema.Builder) error {
-	return schema.Raw(`
+	return schema.DataFix("update Seedance video reference metadata", func(db *gorm.DB) error {
+		return db.Exec(`
 		UPDATE public.llm_models
 		SET
 			input_modalities = '["text", "image", "video", "audio"]'::jsonb,
@@ -32,5 +36,6 @@ func upUpdateSeedanceVideoReferenceMetadata(schema *mschema.Builder) error {
 				'doubao-seedance-2-0-mini-260615'
 			)
 			AND deleted_at IS NULL
-	`)
+		`).Error
+	})
 }
