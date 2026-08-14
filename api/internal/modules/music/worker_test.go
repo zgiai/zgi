@@ -15,6 +15,7 @@ import (
 
 func TestWorkerCompletesTaskAfterFullMusicIsStored(t *testing.T) {
 	task := queuedTask()
+	task.WorkspaceID = nil
 	repo := newMemoryRepository(task)
 	generator := &musicGeneratorStub{audio: []byte("complete-mp3")}
 	compensator := &deliveryCompensatorStub{}
@@ -36,6 +37,9 @@ func TestWorkerCompletesTaskAfterFullMusicIsStored(t *testing.T) {
 	}
 	if got.DurationMS != 0 || len(got.WaveformPeaks) != 0 {
 		t.Fatalf("server decoded playback metadata = %#v, want empty", got)
+	}
+	if generator.organizationID != task.OrganizationID.String() {
+		t.Fatalf("billing organization = %q, want %q", generator.organizationID, task.OrganizationID.String())
 	}
 }
 
@@ -193,6 +197,7 @@ func TestWorkerNeverRegeneratesTaskLeftInGeneratingState(t *testing.T) {
 
 func TestWorkerCompensationMarksRefundedDeliveryFailure(t *testing.T) {
 	task := queuedTask()
+	task.WorkspaceID = nil
 	task.Status = StatusCompensationPending
 	task.ErrorCode = ErrorCodeDeliveryFailed
 	repo := newMemoryRepository(task)
@@ -212,6 +217,9 @@ func TestWorkerCompensationMarksRefundedDeliveryFailure(t *testing.T) {
 	}
 	if generator.calls != 0 || compensator.calls != 1 {
 		t.Fatalf("generate calls = %d, compensate calls = %d", generator.calls, compensator.calls)
+	}
+	if compensator.organizationID != task.OrganizationID.String() {
+		t.Fatalf("compensation organization = %q, want %q", compensator.organizationID, task.OrganizationID.String())
 	}
 }
 
@@ -287,14 +295,16 @@ func queuedTask() *Task {
 }
 
 type musicGeneratorStub struct {
-	audio   []byte
-	err     error
-	calls   int
-	request *adapter.MusicRequest
+	audio          []byte
+	err            error
+	calls          int
+	organizationID string
+	request        *adapter.MusicRequest
 }
 
-func (s *musicGeneratorStub) GenerateMusic(_ context.Context, _ string, request *adapter.MusicRequest, dst io.Writer) error {
+func (s *musicGeneratorStub) GenerateMusic(_ context.Context, organizationID string, request *adapter.MusicRequest, dst io.Writer) error {
 	s.calls++
+	s.organizationID = organizationID
 	if request != nil {
 		copy := *request
 		s.request = &copy
@@ -323,12 +333,14 @@ func (s *lyricsGeneratorStub) GenerateLyrics(_ context.Context, _ string, reques
 }
 
 type deliveryCompensatorStub struct {
-	err   error
-	calls int
+	err            error
+	calls          int
+	organizationID string
 }
 
-func (s *deliveryCompensatorStub) CompensateMusicDelivery(context.Context, string, string) error {
+func (s *deliveryCompensatorStub) CompensateMusicDelivery(_ context.Context, organizationID, _ string) error {
 	s.calls++
+	s.organizationID = organizationID
 	return s.err
 }
 

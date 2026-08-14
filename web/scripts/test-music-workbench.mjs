@@ -384,6 +384,103 @@ assert.doesNotMatch(modelHookSource, /music-2\.6|music-3\.0/);
 const taskHookSource = readFileSync(path.join(root, 'src/hooks/music/use-music-tasks.ts'), 'utf8');
 assert.match(taskHookSource, /useCurrentWorkspace/);
 assert.match(taskHookSource, /workspaceId/);
+assert.match(taskHookSource, /currentOrganization/);
+assert.doesNotMatch(taskHookSource, /Workspace context is required/);
+
+const taskQueryOptions = [];
+const taskMutationOptions = [];
+const createdTaskRequests = [];
+const musicTasksHook = loadTypeScriptModule(
+  'src/hooks/music/use-music-tasks.ts',
+  new Map([
+    [
+      '@tanstack/react-query',
+      {
+        useMutation: options => {
+          taskMutationOptions.push(options);
+          return options;
+        },
+        useQuery: options => {
+          taskQueryOptions.push(options);
+          return options;
+        },
+        useQueryClient: () => ({
+          invalidateQueries: () => Promise.resolve(),
+          setQueryData: () => {},
+        }),
+      },
+    ],
+    ['@/components/music/music-task-state', { shouldPollMusicTask: () => false }],
+    [
+      '@/hooks/query-keys',
+      {
+        MUSIC_KEYS: {
+          detail: (organizationId, workspaceId, id) => [
+            'music',
+            'detail',
+            organizationId,
+            workspaceId,
+            id,
+          ],
+          list: (organizationId, workspaceId, params) => [
+            'music',
+            'list',
+            organizationId,
+            workspaceId,
+            params,
+          ],
+          lists: (organizationId, workspaceId) => [
+            'music',
+            'list',
+            organizationId,
+            workspaceId,
+          ],
+        },
+      },
+    ],
+    [
+      '@/services/music.service',
+      {
+        musicService: {
+          createTasks: request => {
+            createdTaskRequests.push(request);
+            return Promise.resolve({ responses: [] });
+          },
+          getTask: () => Promise.resolve(),
+          listTasks: () => Promise.resolve(),
+        },
+      },
+    ],
+    [
+      '@/store/organization-store',
+      {
+        useOrganizationStore: {
+          use: { currentOrganization: () => ({ id: 'organization-1' }) },
+        },
+      },
+    ],
+    ['@/store/workspace-store', { useCurrentWorkspace: () => null }],
+  ])
+);
+
+musicTasksHook.useMusicTasks({ page: 1, page_size: 20 });
+musicTasksHook.useMusicTask('task-1');
+musicTasksHook.useCreateMusicTasks();
+assert.equal(taskQueryOptions[0].enabled, true, 'personal music task list must load by organization');
+assert.equal(taskQueryOptions[1].enabled, true, 'personal music task detail must load by organization');
+assert.deepEqual(taskQueryOptions[0].queryKey.slice(0, 4), [
+  'music',
+  'list',
+  'organization-1',
+  null,
+]);
+await taskMutationOptions[0].mutationFn({
+  request_id: 'personal-request',
+  model: 'music-3.0',
+  mode: 'instrumental',
+  prompt: 'personal warm piano',
+});
+assert.equal(createdTaskRequests.length, 1, 'personal music task creation must reach the API');
 
 const workbenchSource = readFileSync(
   path.join(root, 'src/components/music/music-workbench.tsx'),
@@ -576,5 +673,10 @@ assert.match(musicPageSource, /return <MusicWorkbench \/>/);
 const navigationSource = readFileSync(path.join(root, 'src/routes/console-navigation.ts'), 'utf8');
 assert.match(navigationSource, /\/console\/work\/music/);
 assert.match(navigationSource, /purpose: 'music generation workbench'/);
+assert.match(
+  navigationSource,
+  /href: '\/console\/work\/music'[\s\S]*?purpose: 'music generation workbench'[\s\S]*?scope: 'organization'/,
+  'music workbench must be visible in organization-scoped personal workbench mode'
+);
 
 console.log('Music workbench data contract checks passed.');

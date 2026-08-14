@@ -108,7 +108,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 }
 
 func (s *Service) Get(ctx context.Context, scope Scope, id uuid.UUID) (*TaskView, error) {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil || id == uuid.Nil {
+	if !validScope(scope) || id == uuid.Nil {
 		return nil, ErrInvalidRequest
 	}
 	task, err := s.repo.GetScoped(ctx, scope, id)
@@ -149,7 +149,7 @@ func (s *Service) List(ctx context.Context, scope Scope, request ListRequest) (*
 }
 
 func normalizeCreateRequest(scope Scope, request CreateRequest) (CreateRequest, error) {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil || request.RequestID == uuid.Nil ||
+	if !validScope(scope) || request.RequestID == uuid.Nil ||
 		!utf8.ValidString(request.Prompt) || !utf8.ValidString(request.Lyrics) {
 		return CreateRequest{}, ErrInvalidRequest
 	}
@@ -176,8 +176,7 @@ func normalizeCreateRequest(scope Scope, request CreateRequest) (CreateRequest, 
 }
 
 func normalizeListRequest(scope Scope, request ListRequest) (ListQuery, error) {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil ||
-		!utf8.ValidString(request.Search) {
+	if !validScope(scope) || !utf8.ValidString(request.Search) {
 		return ListQuery{}, ErrInvalidRequest
 	}
 	if request.Page == 0 {
@@ -199,7 +198,8 @@ func normalizeListRequest(scope Scope, request ListRequest) (ListQuery, error) {
 }
 
 func matchExistingTask(task *Task, scope Scope, request CreateRequest) (*Task, error) {
-	if task == nil || task.AccountID != scope.AccountID || task.RequestID != request.RequestID || task.Model != request.Model || task.Mode != request.Mode ||
+	if task == nil || task.OrganizationID != scope.OrganizationID || task.AccountID != scope.AccountID ||
+		!sameWorkspace(task.WorkspaceID, scope.WorkspaceID) || task.RequestID != request.RequestID || task.Model != request.Model || task.Mode != request.Mode ||
 		task.Prompt != request.Prompt || task.Lyrics != request.Lyrics || task.ResponseFormat != musicResponseFormat {
 		return nil, ErrTaskConflict
 	}

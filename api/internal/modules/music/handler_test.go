@@ -77,6 +77,46 @@ func TestHandlerCreatesTaskAsAcceptedAndReturnsScopedTask(t *testing.T) {
 	}
 }
 
+func TestHandlerCreatesAndReturnsTaskWithoutWorkspace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope := testScope()
+	repo := newMemoryRepository()
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		util.SetOrganizationID(c, scope.OrganizationID.String())
+		c.Set("account_id", scope.AccountID.String())
+		c.Next()
+	})
+	NewHandler(service).RegisterRoutes(router.Group(""))
+
+	request := httptest.NewRequest(http.MethodPost, "/music/tasks", bytes.NewBufferString(`{
+		"request_id":"33333333-3333-3333-3333-333333333333",
+		"model":"music-3.0",
+		"mode":"instrumental",
+		"prompt":"personal warm piano"
+	}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if got, want := recorder.Code, http.StatusAccepted; got != want {
+		t.Fatalf("POST without workspace status = %d, want %d; body=%s", got, want, recorder.Body.String())
+	}
+
+	var createBody struct {
+		Data TaskView `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &createBody); err != nil {
+		t.Fatal(err)
+	}
+	getRequest := httptest.NewRequest(http.MethodGet, "/music/tasks/"+createBody.Data.ID.String(), nil)
+	getRecorder := httptest.NewRecorder()
+	router.ServeHTTP(getRecorder, getRequest)
+	if got, want := getRecorder.Code, http.StatusOK; got != want {
+		t.Fatalf("GET without workspace status = %d, want %d; body=%s", got, want, getRecorder.Body.String())
+	}
+}
+
 func TestHandlerListsOwnedTasksWithPaginationAndSearch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	scope := testScope()
