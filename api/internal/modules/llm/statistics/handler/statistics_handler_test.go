@@ -163,6 +163,7 @@ func TestGetModelUsage_AllowsSupportedAppTypes(t *testing.T) {
 		"agent",
 		"aichat",
 		"image-runtime",
+		"video-runtime",
 		"data_library_file",
 		"prompt_optimizer",
 		"prompt_playground",

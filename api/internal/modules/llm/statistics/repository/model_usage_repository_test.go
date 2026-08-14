@@ -42,6 +42,7 @@ func TestQueryModelUsageByAppTypeKeepsKnownTypesAndBucketsUnknownTypes(t *testin
 		"agent",
 		"aichat",
 		"image-runtime",
+		"video-runtime",
 		"data_library_file",
 		"prompt_optimizer",
 		"prompt_playground",
@@ -91,9 +92,9 @@ func TestQueryModelUsageByAppTypeKeepsKnownTypesAndBucketsUnknownTypes(t *testin
 			got["unknown"].TotalPoints,
 		)
 	}
-	if totalAttempts != 14 || totalTokens != 84 || totalPoints != 140 {
+	if totalAttempts != 15 || totalTokens != 90 || totalPoints != 150 {
 		t.Fatalf(
-			"group totals = attempts:%d tokens:%d points:%d, want attempts:14 tokens:84 points:140",
+			"group totals = attempts:%d tokens:%d points:%d, want attempts:15 tokens:90 points:150",
 			totalAttempts,
 			totalTokens,
 			totalPoints,

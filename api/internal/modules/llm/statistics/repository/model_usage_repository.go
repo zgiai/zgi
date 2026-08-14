@@ -276,7 +276,7 @@ func usageBillAppTypeBucketExpr(alias string) string {
 	appType := column(alias, "app_type")
 	return "CASE WHEN " + appType + " IN (" +
 		"'workflow', 'dataset', 'agent', 'aichat', " +
-		"'image-runtime', 'data_library_file', 'prompt_optimizer', " +
+		"'image-runtime', 'video-runtime', 'data_library_file', 'prompt_optimizer', " +
 		"'prompt_playground', 'automation_task_draft', 'unknown'" +
 		") THEN " + appType + " ELSE 'unknown' END"
 }

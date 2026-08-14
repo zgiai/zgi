@@ -666,6 +666,7 @@ func (s *llmGatewayServiceImpl) settleVideoTaskSuccess(
 	}
 
 	billingCtx, err := s.videoBillingContextFromTask(
+		ctx,
 		apiKey,
 		appCtx,
 		selection,
@@ -712,6 +713,7 @@ func (s *llmGatewayServiceImpl) settleVideoTaskFailure(
 	}
 	quote := defaultVideoPredeductQuoteFromTask(selection, req)
 	billingCtx, err := s.videoBillingContextFromTask(
+		ctx,
 		apiKey,
 		appCtx,
 		selection,
@@ -746,6 +748,7 @@ func (s *llmGatewayServiceImpl) settleVideoTaskFailure(
 }
 
 func (s *llmGatewayServiceImpl) videoBillingContextFromTask(
+	ctx context.Context,
 	apiKey *apikeymodel.TenantAPIKey,
 	appCtx *AppContext,
 	selection *ProviderSelection,
@@ -771,6 +774,7 @@ func (s *llmGatewayServiceImpl) videoBillingContextFromTask(
 		requestID,
 		attemptID,
 	)
+	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
 	_ = ownerID
 	return billingCtx, nil
 }
