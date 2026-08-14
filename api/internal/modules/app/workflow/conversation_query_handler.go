@@ -28,10 +28,11 @@ type ConversationQueryHandler struct {
 	workflowRepo        WorkflowRepository
 	agentsRepo          agents.AgentsRepository
 	fileService         interfaces.FileService
+	titleService        *WorkflowService
 }
 
 // NewConversationQueryHandler creates a new ConversationQueryHandler
-func NewConversationQueryHandler(workflowRepo WorkflowRepository, agentsRepo agents.AgentsRepository) *ConversationQueryHandler {
+func NewConversationQueryHandler(workflowRepo WorkflowRepository, agentsRepo agents.AgentsRepository, titleServices ...*WorkflowService) *ConversationQueryHandler {
 	db := database.GetDB()
 
 	conversationRepo := conversation.NewAgentConversationRepository(db)
@@ -44,13 +45,30 @@ func NewConversationQueryHandler(workflowRepo WorkflowRepository, agentsRepo age
 	storageClient := storage.GetStorage()
 	fileService := file_service.NewFileService(fileRepo, storageClient, db, nil, nil)
 
-	return &ConversationQueryHandler{
+	handler := &ConversationQueryHandler{
 		conversationService: conversationService,
 		messageService:      messageService,
 		workflowRepo:        workflowRepo,
 		agentsRepo:          agentsRepo,
 		fileService:         fileService,
 	}
+	if len(titleServices) > 0 {
+		handler.titleService = titleServices[0]
+	}
+	return handler
+}
+
+func (h *ConversationQueryHandler) enqueueConversationTitleBackfill(ctx context.Context, agent *agents.Agent, accountID uuid.UUID, webAppID string, conv *conversation.AgentConversation) {
+	if h == nil || h.titleService == nil || agent == nil || conv == nil || conv.DialogueCount <= 0 || !isDefaultWorkflowConversationName(conv.Name) {
+		return
+	}
+	h.titleService.enqueueWebAppConversationTitleGeneration(ctx, workflowConversationTitleParams{
+		WorkspaceID:    agent.TenantID.String(),
+		AgentID:        agent.ID.String(),
+		AccountID:      accountID,
+		ConversationID: conv.ID,
+		WebAppID:       webAppID,
+	})
 }
 
 func (h *ConversationQueryHandler) requireActiveWebAppAgent(c *gin.Context, webAppID string) (*agents.Agent, bool) {
@@ -148,6 +166,7 @@ func (h *ConversationQueryHandler) GetConversationList(c *gin.Context) {
 	// Build response
 	items := make([]map[string]interface{}, 0, len(conversations))
 	for _, conv := range conversations {
+		h.enqueueConversationTitleBackfill(c.Request.Context(), agent, accountUUID, webAppID, conv)
 		item := map[string]interface{}{
 			"id":             conv.ID.String(),
 			"name":           conv.Name,
@@ -318,6 +337,7 @@ func (h *ConversationQueryHandler) GetConversationDetail(c *gin.Context) {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
+	h.enqueueConversationTitleBackfill(c.Request.Context(), agent, accountUUID, webAppID, conv)
 
 	// Build message list
 	messageItems := make([]map[string]interface{}, 0, len(messages))

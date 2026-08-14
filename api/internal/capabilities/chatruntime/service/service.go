@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"mime/multipart"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -336,6 +337,7 @@ type service struct {
 	customSkillStorage    customSkillStorage
 	modelIdleTimeout      time.Duration
 	modelProgressSchedule modelprogress.Schedule
+	titleGenerationJobs   sync.Map
 }
 
 func NewService(repos *repository.Repositories, llmClient llmclient.LLMClient) Service {

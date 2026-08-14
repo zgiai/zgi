@@ -62,7 +62,7 @@ func TestCreateConversationForChatGeneratesAgentTitle(t *testing.T) {
 		},
 	}
 
-	_, err := svc.createConversationForChat(context.Background(), Scope{
+	conversation, err := svc.createConversationForChat(context.Background(), Scope{
 		OrganizationID: uuid.New(),
 		AccountID:      uuid.New(),
 		WorkspaceID:    &workspaceID,
@@ -71,6 +71,9 @@ func TestCreateConversationForChatGeneratesAgentTitle(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("createConversationForChat: %v", err)
+	}
+	if got := conversationTitleGenerationStatus(conversation.Metadata); got != conversationTitleStatusPending {
+		t.Fatalf("title generation status = %q, want %q", got, conversationTitleStatusPending)
 	}
 
 	select {

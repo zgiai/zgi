@@ -33,7 +33,10 @@ func TestIsDefaultWorkflowConversationName(t *testing.T) {
 	}{
 		{name: "Conversation 2026-05-09 13:04:05", want: true},
 		{name: " Conversation 2026-05-09 13:04:05 ", want: true},
+		{name: "会话 2026-05-09 13:04:05", want: true},
+		{name: " 会话 2026-05-09 13:04:05 ", want: true},
 		{name: "Conversation about refund", want: false},
+		{name: "会话退款进度查询", want: false},
 		{name: "退款进度查询", want: false},
 		{name: "", want: false},
 	}

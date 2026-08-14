@@ -10,9 +10,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
-	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/prompt"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
@@ -299,6 +297,7 @@ func (s *service) createConversationForChat(ctx context.Context, scope Scope, ca
 	if s.titleGen == nil {
 		return conversation, nil
 	}
+	s.markConversationTitleGenerationPending(ctx, scope, conversation)
 	s.generateConversationTitleAsync(ctx, scope, caller, conversation, parts, initialTitle)
 	return conversation, nil
 }
@@ -315,39 +314,12 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 		preferredProvider = parts.Provider
 		preferredModel = parts.ModelName
 	}
-	conversationID := conversation.ID
-	workspaceID := conversation.WorkspaceID
-	appID, appType := conversationTitleAppContext(caller, conversationID)
-	go func() {
-		titleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleGenerationTimeout)
-		defer cancel()
-
-		result, err := s.titleGen.Generate(titleCtx, titlegen.GenerateRequest{
-			OrganizationID:    scope.OrganizationID,
-			AccountID:         scope.AccountID,
-			WorkspaceID:       workspaceID,
-			AppID:             appID,
-			AppType:           appType,
-			SessionID:         conversationID.String(),
-			ConversationID:    conversationID.String(),
-			Messages:          []titlegen.Message{{Role: "user", Content: query}},
-			FallbackTitle:     initialTitle,
-			PreferredProvider: preferredProvider,
-			PreferredModel:    preferredModel,
-			PreferredUseCase:  string(llmmodelmodel.UseCaseTextChat),
-		})
-		if err != nil {
-			logger.WarnContext(titleCtx, "failed to generate chat runtime conversation title", "conversation_id", conversationID.String(), "caller_type", normalizeCallerType(caller.Type), err)
-			return
-		}
-		title := normalizeTitle(result.Title, initialTitle)
-		if title == initialTitle {
-			return
-		}
-		if err := s.repos.Conversation.UpdateScoped(titleCtx, conversationID, scope.OrganizationID, scope.AccountID, map[string]interface{}{"title": title}); err != nil {
-			logger.WarnContext(titleCtx, "failed to update generated chat runtime conversation title", "conversation_id", conversationID.String(), "caller_type", normalizeCallerType(caller.Type), err)
-		}
-	}()
+	s.enqueueConversationTitleGeneration(ctx, scope, caller, conversation, conversationTitleGenerationInput{
+		Messages:          conversationTitleMessagesFromQuery(query),
+		FallbackTitle:     initialTitle,
+		PreferredProvider: preferredProvider,
+		PreferredModel:    preferredModel,
+	})
 }
 
 func conversationTitleAppContext(caller Caller, conversationID uuid.UUID) (string, string) {

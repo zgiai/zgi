@@ -22,6 +22,7 @@ import type {
 import { SENSITIVE_OUTPUT_BLOCKED_TOKEN } from '@/utils/model-output-filter';
 import { resolveAnswerMergeMode } from '@/components/chat/utils/answer-merge';
 import { reconcileConversationMessages } from '@/components/chat/utils/conversation-message-reconcile';
+import { conversationTitleNeedsRefresh } from '@/components/chat/controllers/conversation-title';
 import { toast } from 'sonner';
 
 interface SingleChatControllerState {
@@ -134,7 +135,7 @@ const createControllerStore = () =>
 export class SingleChatController implements ChatController {
   private transport: ConversationTransport;
   public store: StoreApi<SingleChatControllerStore>;
-  private titleRefreshTimers = new Set<ReturnType<typeof setTimeout>>();
+  private titleRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private detailRequestSequence = 0;
 
   readonly mode = 'singleChat' as const;
@@ -162,17 +163,6 @@ export class SingleChatController implements ChatController {
       exact: true,
       refetchType: 'none',
     });
-  }
-
-  private conversationTitleNeedsRefresh(title?: string): boolean {
-    const normalized = (title ?? '').trim();
-    if (!normalized) return true;
-    if (normalized === 'New Conversation') return true;
-    if (normalized.startsWith('New conversation ')) return true;
-    if (/^Conversation \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(normalized)) {
-      return true;
-    }
-    return false;
   }
 
   private applyConversationSnapshot(
@@ -231,7 +221,7 @@ export class SingleChatController implements ChatController {
       ...(reconciledMessages ? { messages: reconciledMessages } : {}),
     });
 
-    return { needsRefresh: this.conversationTitleNeedsRefresh(summary.title) };
+    return { needsRefresh: conversationTitleNeedsRefresh(summary.title, summary.metadata) };
   }
 
   private async refreshConversationSnapshotSilently(
@@ -253,17 +243,20 @@ export class SingleChatController implements ChatController {
   private scheduleConversationTitleRefresh(conversationId: string): void {
     if (!conversationId || conversationId.startsWith('draft-')) return;
 
+    const existingTimer = this.titleRefreshTimers.get(conversationId);
+    if (existingTimer) clearTimeout(existingTimer);
+
     const delays = [750, 2500, 6000, 12000];
     const run = (index: number) => {
       const timer = setTimeout(() => {
-        this.titleRefreshTimers.delete(timer);
+        this.titleRefreshTimers.delete(conversationId);
         void this.refreshConversationSnapshotSilently(conversationId).then(result => {
           if (result.needsRefresh && index + 1 < delays.length) {
             run(index + 1);
           }
         });
       }, delays[index]);
-      this.titleRefreshTimers.add(timer);
+      this.titleRefreshTimers.set(conversationId, timer);
     };
 
     run(0);
@@ -407,6 +400,15 @@ export class SingleChatController implements ChatController {
       }
       this.store.getState().setPagination(result.pagination);
 
+      result.items.forEach(conversation => {
+        if (
+          (conversation.dialogueCount ?? 0) > 0 &&
+          conversationTitleNeedsRefresh(conversation.title, conversation.metadata)
+        ) {
+          this.scheduleConversationTitleRefresh(conversation.conversationId);
+        }
+      });
+
       // Do NOT create draft if list is empty - let UI handle empty state
       if (result.items.length === 0) {
         // Only clear activeId if we don't have a draft selected
@@ -461,10 +463,7 @@ export class SingleChatController implements ChatController {
         retry: false,
       });
 
-      if (
-        requestSequence !== this.detailRequestSequence ||
-        this.store.getState().activeId !== id
-      ) {
+      if (requestSequence !== this.detailRequestSequence || this.store.getState().activeId !== id) {
         return;
       }
 
@@ -472,15 +471,10 @@ export class SingleChatController implements ChatController {
       const messages = reconcileConversationMessages(detail.messages, localMessages);
       const reconciledDetail = { ...detail, messages };
 
-      // Initialize chat store with loaded messages
-      useChatStore.getState().initSingle({
-        id: detail.summary.id,
-        conversationId: detail.summary.conversationId,
-        title: detail.summary.title,
-        messages,
-      });
-
-      this.store.getState().setActiveDetail(reconciledDetail);
+      const snapshot = this.applyConversationSnapshot(reconciledDetail, { replaceMessages: true });
+      if (snapshot.needsRefresh && (detail.summary.dialogueCount ?? 0) > 0) {
+        this.scheduleConversationTitleRefresh(detail.summary.conversationId);
+      }
     } catch (err) {
       if (requestSequence !== this.detailRequestSequence) return;
       // Error toast handled in transport hook

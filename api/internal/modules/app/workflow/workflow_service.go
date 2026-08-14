@@ -48,6 +48,7 @@ type WorkflowService struct {
 	advancedChatHandler        *AdvancedChatWorkflowHandler
 	workflowRunMessageLookup   workflowRunMessageLookup
 	conversationTitleGen       titlegen.Service
+	conversationTitleJobs      sync.Map
 	quotaService               interfaces.QuotaService
 	enterpriseService          interfaces.OrganizationService
 	// runningWorkflows stores cancel functions for running workflows, keyed by workflow run ID

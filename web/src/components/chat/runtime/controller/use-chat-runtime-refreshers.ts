@@ -11,6 +11,7 @@ import { getNextActiveSendingState } from '@/components/chat/controllers/aichat/
 import { mergeAIChatMessages } from '@/components/chat/controllers/aichat/state-reducers';
 import type { AIChatRuntimeTransport } from '@/components/chat/transports/aichat-transport';
 import { replaceAIChatConversation } from '@/components/chat/utils/aichat-message';
+import { conversationTitleNeedsRefresh } from '@/components/chat/controllers/conversation-title';
 import {
   getErrorMessage,
   removeRunningStreamingStateByConversation,
@@ -182,13 +183,21 @@ export function useChatRuntimeRefreshers({
             pagination: response.pagination,
           };
         });
+        incoming.forEach(conversation => {
+          if (
+            conversation.dialogue_count > 0 &&
+            conversationTitleNeedsRefresh(conversation.title, conversation.metadata)
+          ) {
+            scheduleConversationTitleRefresh(conversation.id);
+          }
+        });
       } catch (error) {
         setControllerState(current => ({ ...current, error: getErrorMessage(error) }));
       } finally {
         setControllerState(current => ({ ...current, isLoadingList: false }));
       }
     },
-    [setControllerState, transportRef]
+    [scheduleConversationTitleRefresh, setControllerState, transportRef]
   );
 
   return {
