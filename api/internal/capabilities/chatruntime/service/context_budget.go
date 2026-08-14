@@ -59,6 +59,9 @@ func (s *service) buildTokenBudgetMessages(
 	continuationContext := buildContinuationTaskStateMessage(parts, parentMessages)
 	turnBoundaryContext := currentTurnBoundaryMessage(parts)
 	extraContextMessages := make([]adapter.Message, 0, 3)
+	if memoryContext := agentMemoryContextMessage(parts); memoryContext != nil {
+		extraContextMessages = append(extraContextMessages, *memoryContext)
+	}
 	if recentExecutionContext != nil {
 		extraContextMessages = append(extraContextMessages, *recentExecutionContext)
 	}

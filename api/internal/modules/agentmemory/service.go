@@ -2,7 +2,8 @@ package agentmemory
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -27,8 +27,12 @@ var (
 	ErrInvalidInput = errors.New("invalid agent memory input")
 	ErrNotFound     = errors.New("agent memory not found")
 	ErrUnauthorized = errors.New("agent memory requester is unauthorized")
+	ErrConflict     = errors.New("agent memory revision conflict")
 
 	memoryKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	emailPattern     = regexp.MustCompile(`(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b`)
+	secretPattern    = regexp.MustCompile(`(?i)\b(?:sk-[a-z0-9_\-]{16,}|gh[pousr]_[a-z0-9]{20,}|AIza[a-z0-9_\-]{20,})\b`)
+	phonePattern     = regexp.MustCompile(`(?:^|\D)(?:\+?\d[\s\-]?){11}(?:\D|$)`)
 )
 
 type Service struct {
@@ -50,8 +54,33 @@ type store interface {
 	ListValuesForAgent(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemoryValue, error)
 	ListValuesForUser(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]*AgentMemoryValue, error)
 	GetValueScoped(ctx context.Context, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID) (*AgentMemoryValue, error)
+	GetValueScopedForUpdate(ctx context.Context, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID) (*AgentMemoryValue, error)
 	UpsertValue(ctx context.Context, value *AgentMemoryValue) error
+	CreateValue(ctx context.Context, value *AgentMemoryValue) error
+	UpdateValueCAS(ctx context.Context, value *AgentMemoryValue, expectedRevision int64) error
+	DeleteValueCAS(ctx context.Context, value *AgentMemoryValue, expectedRevision int64) error
+	DeleteValuesForSubject(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) error
+	DeleteUndoForSlot(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, slotKey string) error
+	DeleteUndoForSubject(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) error
+	CreateUndoRecord(ctx context.Context, record *AgentMemoryUndoRecord) error
+	GetUndoRecordForUpdate(ctx context.Context, operationID, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentMemoryUndoRecord, error)
+	DeleteUndoRecord(ctx context.Context, operationID uuid.UUID) error
+	FindUndoExpiry(ctx context.Context, operationID uuid.UUID) (*time.Time, error)
+	LockSubjectState(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentMemorySubjectState, error)
+	UpdateSubjectEpoch(ctx context.Context, state *AgentMemorySubjectState, epoch int64) error
+	CancelPendingJobsForSubject(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) error
+	CreateExtractionJob(ctx context.Context, job *AgentMemoryExtractionJob) error
+	GetExtractionJob(ctx context.Context, id uuid.UUID) (*AgentMemoryExtractionJob, error)
+	GetExtractionJobByIdempotency(ctx context.Context, key string) (*AgentMemoryExtractionJob, error)
+	SupersedeConversationJobs(ctx context.Context, job *AgentMemoryExtractionJob) error
+	EarliestConversationForceAt(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID, conversationID uuid.UUID) (*time.Time, error)
+	ClaimExtractionJob(ctx context.Context, id uuid.UUID, epoch int64) (*AgentMemoryExtractionJob, error)
+	FinishExtractionJob(ctx context.Context, id uuid.UUID, status, errorCode string) error
+	RescheduleExtractionJob(ctx context.Context, id uuid.UUID, errorCode string, scheduledAt time.Time) error
+	ListDueExtractionJobs(ctx context.Context, limit int) ([]*AgentMemoryExtractionJob, error)
+	DeleteTerminalExtractionJobs(ctx context.Context, finishedBefore time.Time, limit int) (int64, error)
 	CreateEvent(ctx context.Context, event *AgentMemoryEvent) error
+	GetEventByOperationID(ctx context.Context, operationID uuid.UUID) (*AgentMemoryEvent, error)
 }
 
 type RuntimeSlot struct {
@@ -67,6 +96,13 @@ type MutationMetadata struct {
 	Source               string
 	SourceConversationID *uuid.UUID
 	SourceMessageID      *uuid.UUID
+	SourceCompletedAt    *time.Time
+	SourceKind           string
+	ExtractorVersion     string
+	OperationID          *uuid.UUID
+	ExpectedRevision     *int64
+	MemoryEpoch          *int64
+	EventResult          string
 }
 
 func (s *Service) ListSlots(ctx context.Context, agentID uuid.UUID) ([]SlotResponse, error) {
@@ -233,7 +269,7 @@ func (s *Service) ListOrganizerValues(ctx context.Context, agentID uuid.UUID, us
 	if err != nil {
 		return nil, fmt.Errorf("list agent memory values: %w", err)
 	}
-	return slotValueResponses(slots, values), nil
+	return s.enrichUndoExpiries(ctx, slotValueResponses(slots, values)), nil
 }
 
 func (s *Service) UpdateOrganizerValue(ctx context.Context, agentID uuid.UUID, userScope string, userID uuid.UUID, req UpdateValueRequest) (*SlotValueResponse, error) {
@@ -245,7 +281,7 @@ func (s *Service) UpdateOrganizerValue(ctx context.Context, agentID uuid.UUID, u
 	if err != nil {
 		return nil, err
 	}
-	return s.updateValueForSlot(ctx, workspaceID, agentID, slot, userScope, userID, req, organizerMetadata())
+	return s.updateValueForSlotCompat(ctx, workspaceID, agentID, slot, userScope, userID, req, organizerMetadata())
 }
 
 func (s *Service) ClearOrganizerValue(ctx context.Context, agentID uuid.UUID, userScope string, userID uuid.UUID, key string) (*SlotValueResponse, error) {
@@ -269,7 +305,23 @@ func (s *Service) UpdateValue(ctx context.Context, workspaceID, agentID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	return s.updateValueForSlot(ctx, workspaceID, agentID, slot, userScope, userID, req, meta)
+	return s.updateValueForSlotCompat(ctx, workspaceID, agentID, slot, userScope, userID, req, meta)
+}
+
+func (s *Service) updateValueForSlotCompat(ctx context.Context, workspaceID, agentID uuid.UUID, slot RuntimeSlot, userScope string, userID uuid.UUID, req UpdateValueRequest, meta MutationMetadata) (*SlotValueResponse, error) {
+	attempts := 1
+	if req.ExpectedRevision == nil {
+		attempts = 3
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		response, err := s.updateValueForSlot(ctx, workspaceID, agentID, slot, userScope, userID, req, meta)
+		if err == nil || !errors.Is(err, ErrConflict) {
+			return response, err
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 func (s *Service) updateValueForSlot(ctx context.Context, workspaceID, agentID uuid.UUID, slot RuntimeSlot, userScope string, userID uuid.UUID, req UpdateValueRequest, meta MutationMetadata) (*SlotValueResponse, error) {
@@ -282,26 +334,89 @@ func (s *Service) updateValueForSlot(ctx context.Context, workspaceID, agentID u
 	if content == "" {
 		return nil, fmt.Errorf("%w: content is required", ErrInvalidInput)
 	}
+	if ContainsSensitiveContent(content) {
+		return nil, fmt.Errorf("%w: sensitive content cannot be saved", ErrInvalidInput)
+	}
+	meta = normalizeMutationMetadata(meta)
 
 	var response *SlotValueResponse
 	if err := s.repo.WithTransaction(ctx, func(tx store) error {
+		if meta.SourceKind == SourceKindAutomatic {
+			if meta.MemoryEpoch == nil {
+				return fmt.Errorf("%w: automatic memory epoch is required", ErrInvalidInput)
+			}
+			state, err := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
+			if err != nil {
+				return err
+			}
+			if state.MemoryEpoch != *meta.MemoryEpoch {
+				return ErrConflict
+			}
+		}
 		if len([]rune(content)) > slot.MaxChars {
 			return fmt.Errorf("%w: content exceeds max_chars for %s", ErrInvalidInput, key)
 		}
-		before, err := tx.GetValueScoped(ctx, workspaceID, agentID, slot.Key, userScope, userID)
+		before, err := tx.GetValueScopedForUpdate(ctx, workspaceID, agentID, slot.Key, userScope, userID)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("get agent memory value: %w", err)
 		}
-		value := &AgentMemoryValue{
-			WorkspaceID: workspaceID,
-			AgentID:     agentID,
-			SlotKey:     slot.Key,
-			UserScope:   userScope,
-			UserID:      userID,
-			Content:     content,
+		if before != nil && meta.OperationID != nil && before.LastOperationID != nil && *before.LastOperationID == *meta.OperationID {
+			resp := runtimeSlotValueResponse(slot, before)
+			response = &resp
+			return nil
 		}
-		if err := tx.UpsertValue(ctx, value); err != nil {
-			return fmt.Errorf("upsert agent memory value: %w", err)
+		if req.ExpectedRevision != nil {
+			currentRevision := int64(0)
+			if before != nil {
+				currentRevision = before.Revision
+			}
+			if *req.ExpectedRevision != currentRevision {
+				return ErrConflict
+			}
+		}
+		if before != nil && meta.SourceKind == SourceKindAutomatic && meta.SourceCompletedAt != nil &&
+			(before.SourceKind == SourceKindExplicit || before.SourceKind == SourceKindManager) && before.UpdatedAt.After(*meta.SourceCompletedAt) {
+			return ErrConflict
+		}
+		nextRevision := int64(1)
+		if before != nil {
+			nextRevision = before.Revision + 1
+		}
+		value := &AgentMemoryValue{
+			ID:                   uuid.New(),
+			WorkspaceID:          workspaceID,
+			AgentID:              agentID,
+			SlotKey:              slot.Key,
+			UserScope:            userScope,
+			UserID:               userID,
+			Content:              content,
+			Revision:             nextRevision,
+			SourceKind:           meta.SourceKind,
+			SourceConversationID: meta.SourceConversationID,
+			SourceMessageID:      meta.SourceMessageID,
+			SourceCompletedAt:    meta.SourceCompletedAt,
+			ExtractorVersion:     meta.ExtractorVersion,
+			LastOperationID:      meta.OperationID,
+		}
+		if before == nil {
+			if err := tx.CreateValue(ctx, value); err != nil {
+				if errors.Is(err, gorm.ErrDuplicatedKey) || isDuplicateKeyError(err) {
+					return ErrConflict
+				}
+				return fmt.Errorf("create agent memory value: %w", err)
+			}
+		} else {
+			value.ID = before.ID
+			value.CreatedAt = before.CreatedAt
+			if err := tx.UpdateValueCAS(ctx, value, before.Revision); err != nil {
+				return fmt.Errorf("update agent memory value: %w", err)
+			}
+		}
+		if meta.SourceKind == SourceKindAutomatic && meta.OperationID != nil {
+			record := undoRecordForAutomaticWrite(*meta.OperationID, value, before)
+			if err := tx.CreateUndoRecord(ctx, record); err != nil {
+				return fmt.Errorf("create agent memory undo record: %w", err)
+			}
 		}
 		after, err := tx.GetValueScoped(ctx, workspaceID, agentID, slot.Key, userScope, userID)
 		if err != nil {
@@ -317,6 +432,14 @@ func (s *Service) updateValueForSlot(ctx context.Context, workspaceID, agentID u
 		return nil, err
 	}
 	return response, nil
+}
+
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "duplicate key") || strings.Contains(message, "unique constraint")
 }
 
 func (s *Service) ClearValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []RuntimeSlot, userScope string, userID uuid.UUID, key string, meta MutationMetadata) (*SlotValueResponse, error) {
@@ -337,36 +460,69 @@ func (s *Service) clearValueForSlot(ctx context.Context, workspaceID, agentID uu
 		return nil, err
 	}
 	var response *SlotValueResponse
+	meta = normalizeMutationMetadata(meta)
+	if meta.SourceKind == SourceKindAutomatic {
+		return nil, fmt.Errorf("%w: automatic extraction cannot clear memory", ErrUnauthorized)
+	}
 	if err := s.repo.WithTransaction(ctx, func(tx store) error {
-		before, err := tx.GetValueScoped(ctx, workspaceID, agentID, slot.Key, userScope, userID)
+		state, err := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
+		if err != nil {
+			return err
+		}
+		before, err := tx.GetValueScopedForUpdate(ctx, workspaceID, agentID, slot.Key, userScope, userID)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("get agent memory value: %w", err)
 		}
-		value := &AgentMemoryValue{
-			WorkspaceID: workspaceID,
-			AgentID:     agentID,
-			SlotKey:     slot.Key,
-			UserScope:   userScope,
-			UserID:      userID,
-			Content:     "",
+		if before == nil {
+			if meta.ExpectedRevision != nil && *meta.ExpectedRevision != 0 {
+				return ErrConflict
+			}
+			if err := tx.DeleteUndoForSlot(ctx, workspaceID, agentID, userScope, userID, slot.Key); err != nil {
+				return fmt.Errorf("delete agent memory undo records: %w", err)
+			}
+			if err := invalidateSubjectJobs(ctx, tx, state); err != nil {
+				return err
+			}
+			resp := runtimeSlotValueResponse(slot, nil)
+			response = &resp
+			return nil
 		}
-		if err := tx.UpsertValue(ctx, value); err != nil {
+		if meta.ExpectedRevision != nil && *meta.ExpectedRevision != before.Revision {
+			return ErrConflict
+		}
+		if err := tx.DeleteValueCAS(ctx, before, before.Revision); err != nil {
 			return fmt.Errorf("clear agent memory value: %w", err)
 		}
-		after, err := tx.GetValueScoped(ctx, workspaceID, agentID, slot.Key, userScope, userID)
-		if err != nil {
-			return fmt.Errorf("get cleared agent memory value: %w", err)
+		if err := tx.DeleteUndoForSlot(ctx, workspaceID, agentID, userScope, userID, slot.Key); err != nil {
+			return fmt.Errorf("delete agent memory undo records: %w", err)
 		}
-		if err := recordValueEvent(ctx, tx, workspaceID, agentID, slot.Key, userScope, userID, EventActionValueClear, meta, before, after); err != nil {
+		if err := invalidateSubjectJobs(ctx, tx, state); err != nil {
 			return err
 		}
-		resp := runtimeSlotValueResponse(slot, after)
+		if err := recordValueEvent(ctx, tx, workspaceID, agentID, slot.Key, userScope, userID, EventActionValueClear, meta, before, nil); err != nil {
+			return err
+		}
+		resp := runtimeSlotValueResponse(slot, nil)
 		response = &resp
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 	return response, nil
+}
+
+func invalidateSubjectJobs(ctx context.Context, tx store, state *AgentMemorySubjectState) error {
+	if state == nil {
+		return ErrInvalidInput
+	}
+	if err := tx.CancelPendingJobsForSubject(ctx, state.WorkspaceID, state.AgentID, state.UserScope, state.UserID); err != nil {
+		return err
+	}
+	now := time.Now()
+	if state.ExtractionCutoffAt == nil || state.ExtractionCutoffAt.Before(now) {
+		state.ExtractionCutoffAt = &now
+	}
+	return tx.UpdateSubjectEpoch(ctx, state, state.MemoryEpoch+1)
 }
 
 func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, keepKeys []string) error {
@@ -388,28 +544,23 @@ func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, k
 	return s.repo.WithTransaction(ctx, func(tx store) error {
 		meta := organizerMetadata()
 		for _, before := range values {
-			if before == nil || strings.TrimSpace(before.Content) == "" {
+			if before == nil {
 				continue
 			}
 			if _, ok := keep[before.SlotKey]; ok {
 				continue
 			}
-			value := &AgentMemoryValue{
-				WorkspaceID: before.WorkspaceID,
-				AgentID:     before.AgentID,
-				SlotKey:     before.SlotKey,
-				UserScope:   before.UserScope,
-				UserID:      before.UserID,
-				Content:     "",
+			locked, err := tx.GetValueScopedForUpdate(ctx, before.WorkspaceID, before.AgentID, before.SlotKey, before.UserScope, before.UserID)
+			if err != nil {
+				return err
 			}
-			if err := tx.UpsertValue(ctx, value); err != nil {
+			if err := tx.DeleteValueCAS(ctx, locked, locked.Revision); err != nil {
 				return fmt.Errorf("clear removed agent memory value: %w", err)
 			}
-			after, err := tx.GetValueScoped(ctx, before.WorkspaceID, before.AgentID, before.SlotKey, before.UserScope, before.UserID)
-			if err != nil {
-				return fmt.Errorf("get cleared removed agent memory value: %w", err)
+			if err := tx.DeleteUndoForSlot(ctx, before.WorkspaceID, before.AgentID, before.UserScope, before.UserID, before.SlotKey); err != nil {
+				return err
 			}
-			if err := recordValueEvent(ctx, tx, before.WorkspaceID, before.AgentID, before.SlotKey, before.UserScope, before.UserID, EventActionValueClear, meta, before, after); err != nil {
+			if err := recordValueEvent(ctx, tx, before.WorkspaceID, before.AgentID, before.SlotKey, before.UserScope, before.UserID, EventActionValueClear, meta, before, nil); err != nil {
 				return err
 			}
 		}
@@ -460,8 +611,8 @@ func (s *Service) configuredSlotByKey(ctx context.Context, workspaceID, agentID 
 			return RuntimeSlot{
 				Key:         slot.Key,
 				Description: slot.Description,
-				MaxChars:    defaultSlotMaxChars,
-				Enabled:     true,
+				MaxChars:    slot.MaxChars,
+				Enabled:     slot.Enabled,
 				SortOrder:   slot.SortOrder,
 			}, nil
 		}
@@ -500,7 +651,13 @@ func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, 
 	if len([]rune(description)) > maxSlotDescriptionChars {
 		return normalizedSlotInput{}, fmt.Errorf("%w: description is too long for %s", ErrInvalidInput, key)
 	}
-	maxChars := defaultSlotMaxChars
+	maxChars := req.MaxChars
+	if maxChars <= 0 {
+		maxChars = defaultSlotMaxChars
+	}
+	if maxChars > defaultSlotMaxChars {
+		return normalizedSlotInput{}, fmt.Errorf("%w: max_chars exceeds %d for %s", ErrInvalidInput, defaultSlotMaxChars, key)
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -540,6 +697,274 @@ func normalizeUserScope(raw string) string {
 	}
 }
 
+// ClearAllValues permanently removes a subject's active values, invalidates all
+// pending jobs, and advances the epoch so an already-running worker cannot recreate them.
+func (s *Service) ClearAllValues(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, meta MutationMetadata) error {
+	var err error
+	userScope, err = s.resolveRuntimeScope(userScope, userID)
+	if err != nil {
+		return err
+	}
+	meta = normalizeMutationMetadata(meta)
+	return s.repo.WithTransaction(ctx, func(tx store) error {
+		state, err := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
+		if err != nil {
+			return fmt.Errorf("lock agent memory subject: %w", err)
+		}
+		if err := tx.DeleteValuesForSubject(ctx, workspaceID, agentID, userScope, userID); err != nil {
+			return err
+		}
+		if err := tx.DeleteUndoForSubject(ctx, workspaceID, agentID, userScope, userID); err != nil {
+			return err
+		}
+		if err := tx.CancelPendingJobsForSubject(ctx, workspaceID, agentID, userScope, userID); err != nil {
+			return err
+		}
+		if err := tx.UpdateSubjectEpoch(ctx, state, state.MemoryEpoch+1); err != nil {
+			return err
+		}
+		return recordEvent(ctx, tx, workspaceID, agentID, "", userScope, &userID, EventActionValuesClear, meta, nil, nil)
+	})
+}
+
+func (s *Service) ExportUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []RuntimeSlot, userScope string, userID uuid.UUID) (*MemoryExportResponse, error) {
+	values, err := s.ReadUserMemory(ctx, workspaceID, agentID, slots, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	values = s.enrichUndoExpiries(ctx, values)
+	return &MemoryExportResponse{
+		AgentID: agentID.String(), UserScope: normalizeUserScope(userScope), UserID: userID.String(),
+		ExportedAt: time.Now().Unix(), Values: values,
+	}, nil
+}
+
+// UndoAutomaticOperation restores exactly the value snapshot associated with an
+// automatic write and only while that write is still the current revision.
+func (s *Service) UndoAutomaticOperation(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID, operationID uuid.UUID, slots []RuntimeSlot) (*UndoResponse, error) {
+	var err error
+	userScope, err = s.resolveRuntimeScope(userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	var response *UndoResponse
+	err = s.repo.WithTransaction(ctx, func(tx store) error {
+		record, err := tx.GetUndoRecordForUpdate(ctx, operationID, workspaceID, agentID, userScope, userID)
+		if err != nil {
+			return mapRepoError(err, "get agent memory undo record")
+		}
+		if !record.ExpiresAt.After(time.Now()) {
+			return fmt.Errorf("%w: undo window expired", ErrConflict)
+		}
+		current, err := tx.GetValueScopedForUpdate(ctx, workspaceID, agentID, record.SlotKey, userScope, userID)
+		if err != nil {
+			return mapRepoError(err, "get current agent memory value")
+		}
+		if current.Revision != record.ResultingRevision || current.LastOperationID == nil || *current.LastOperationID != operationID {
+			return fmt.Errorf("%w: memory changed after automatic operation", ErrConflict)
+		}
+		var restored *AgentMemoryValue
+		if !record.PreviousExists {
+			if err := tx.DeleteValueCAS(ctx, current, current.Revision); err != nil {
+				return err
+			}
+		} else {
+			restored = &AgentMemoryValue{
+				ID: current.ID, WorkspaceID: workspaceID, AgentID: agentID, SlotKey: record.SlotKey,
+				UserScope: userScope, UserID: userID, Content: record.PreviousContent,
+				Revision: current.Revision + 1, SourceKind: record.PreviousSourceKind,
+				SourceConversationID: record.PreviousConversationID, SourceMessageID: record.PreviousMessageID,
+				SourceCompletedAt: record.PreviousSourceCompletedAt, ExtractorVersion: record.PreviousExtractorVersion,
+			}
+			if err := tx.UpdateValueCAS(ctx, restored, current.Revision); err != nil {
+				return err
+			}
+		}
+		if err := tx.DeleteUndoRecord(ctx, operationID); err != nil {
+			return err
+		}
+		meta := organizerMetadata()
+		if err := recordValueEvent(ctx, tx, workspaceID, agentID, record.SlotKey, userScope, userID, EventActionValueUndo, meta, current, restored); err != nil {
+			return err
+		}
+		response = &UndoResponse{OperationID: operationID.String()}
+		if slot, slotErr := runtimeSlotByKey(slots, record.SlotKey); slotErr == nil {
+			value := runtimeSlotValueResponse(slot, restored)
+			response.Value = &value
+		}
+		return nil
+	})
+	return response, err
+}
+
+func (s *Service) ScheduleExtraction(ctx context.Context, req ScheduleExtractionRequest) (*AgentMemoryExtractionJob, error) {
+	workspaceID, err := uuid.Parse(strings.TrimSpace(req.WorkspaceID))
+	if err != nil || workspaceID == uuid.Nil {
+		return nil, ErrInvalidInput
+	}
+	agentID, err := uuid.Parse(strings.TrimSpace(req.AgentID))
+	if err != nil || agentID == uuid.Nil {
+		return nil, ErrInvalidInput
+	}
+	userID, err := uuid.Parse(strings.TrimSpace(req.UserID))
+	if err != nil || userID == uuid.Nil {
+		return nil, ErrInvalidInput
+	}
+	conversationID, err := uuid.Parse(strings.TrimSpace(req.ConversationID))
+	if err != nil || conversationID == uuid.Nil {
+		return nil, ErrInvalidInput
+	}
+	watermarkID, err := uuid.Parse(strings.TrimSpace(req.MessageWatermarkID))
+	if err != nil || watermarkID == uuid.Nil {
+		return nil, ErrInvalidInput
+	}
+	userScope := normalizeUserScope(req.UserScope)
+	extractorVersion := strings.TrimSpace(req.ExtractorVersion)
+	if extractorVersion == "" {
+		extractorVersion = "agent-memory-v2"
+	}
+	keyMaterial := strings.Join([]string{workspaceID.String(), agentID.String(), userScope, userID.String(), conversationID.String(), watermarkID.String(), extractorVersion}, ":")
+	digest := sha256.Sum256([]byte(keyMaterial))
+	idempotencyKey := hex.EncodeToString(digest[:])
+	var job *AgentMemoryExtractionJob
+	err = s.repo.WithTransaction(ctx, func(tx store) error {
+		if existing, existingErr := tx.GetExtractionJobByIdempotency(ctx, idempotencyKey); existingErr == nil {
+			job = existing
+			return nil
+		} else if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
+			return existingErr
+		}
+		state, stateErr := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
+		if stateErr != nil {
+			return stateErr
+		}
+		now := time.Now()
+		forceAt := now.Add(10 * time.Minute)
+		if previousForce, forceErr := tx.EarliestConversationForceAt(ctx, workspaceID, agentID, userScope, userID, conversationID); forceErr == nil && previousForce != nil && previousForce.Before(forceAt) {
+			forceAt = *previousForce
+		} else if forceErr != nil && !errors.Is(forceErr, gorm.ErrRecordNotFound) {
+			return forceErr
+		}
+		scheduledAt := now.Add(time.Minute)
+		if forceAt.Before(scheduledAt) {
+			scheduledAt = forceAt
+		}
+		job = &AgentMemoryExtractionJob{
+			WorkspaceID: workspaceID, AgentID: agentID, UserScope: userScope, UserID: userID,
+			ConversationID: conversationID, MessageWatermarkID: watermarkID, MemoryEpoch: state.MemoryEpoch,
+			ExtractorVersion: extractorVersion, IdempotencyKey: idempotencyKey, Status: ExtractionJobPending,
+			ScheduledAt: scheduledAt, ForceAt: forceAt,
+		}
+		if err := tx.CreateExtractionJob(ctx, job); err != nil {
+			return err
+		}
+		return tx.SupersedeConversationJobs(ctx, job)
+	})
+	return job, err
+}
+
+func (s *Service) ListDueExtractionJobs(ctx context.Context, limit int) ([]*AgentMemoryExtractionJob, error) {
+	return s.repo.ListDueExtractionJobs(ctx, limit)
+}
+
+func (s *Service) ClaimExtractionJob(ctx context.Context, id uuid.UUID) (*AgentMemoryExtractionJob, error) {
+	var claimed *AgentMemoryExtractionJob
+	err := s.repo.WithTransaction(ctx, func(tx store) error {
+		job, err := tx.GetExtractionJob(ctx, id)
+		if err != nil {
+			return err
+		}
+		state, err := tx.LockSubjectState(ctx, job.WorkspaceID, job.AgentID, job.UserScope, job.UserID)
+		if err != nil {
+			return err
+		}
+		if state.MemoryEpoch != job.MemoryEpoch {
+			_ = tx.FinishExtractionJob(ctx, id, ExtractionJobCancelled, "memory_epoch_changed")
+			return ErrConflict
+		}
+		claimed, err = tx.ClaimExtractionJob(ctx, id, job.MemoryEpoch)
+		return err
+	})
+	return claimed, err
+}
+
+func (s *Service) FinishExtractionJob(ctx context.Context, id uuid.UUID, status, errorCode string) error {
+	return s.repo.FinishExtractionJob(ctx, id, status, errorCode)
+}
+
+func (s *Service) RescheduleExtractionJob(ctx context.Context, id uuid.UUID, errorCode string, scheduledAt time.Time) error {
+	return s.repo.RescheduleExtractionJob(ctx, id, errorCode, scheduledAt)
+}
+
+func (s *Service) DeleteTerminalExtractionJobs(ctx context.Context, finishedBefore time.Time, limit int) (int64, error) {
+	return s.repo.DeleteTerminalExtractionJobs(ctx, finishedBefore, limit)
+}
+
+func (s *Service) enrichUndoExpiries(ctx context.Context, values []SlotValueResponse) []SlotValueResponse {
+	for i := range values {
+		operationID, err := uuid.Parse(values[i].LastOperationID)
+		if err != nil || operationID == uuid.Nil {
+			continue
+		}
+		expiresAt, err := s.repo.FindUndoExpiry(ctx, operationID)
+		if err != nil || expiresAt == nil {
+			continue
+		}
+		unix := expiresAt.Unix()
+		values[i].UndoableUntil = &unix
+	}
+	return values
+}
+
+func undoRecordForAutomaticWrite(operationID uuid.UUID, after, before *AgentMemoryValue) *AgentMemoryUndoRecord {
+	record := &AgentMemoryUndoRecord{
+		OperationID: operationID, WorkspaceID: after.WorkspaceID, AgentID: after.AgentID,
+		UserScope: after.UserScope, UserID: after.UserID, SlotKey: after.SlotKey,
+		ResultingRevision: after.Revision, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	if before != nil {
+		record.PreviousExists = true
+		record.PreviousContent = before.Content
+		record.PreviousRevision = before.Revision
+		record.PreviousSourceKind = before.SourceKind
+		record.PreviousConversationID = before.SourceConversationID
+		record.PreviousMessageID = before.SourceMessageID
+		record.PreviousSourceCompletedAt = before.SourceCompletedAt
+		record.PreviousExtractorVersion = before.ExtractorVersion
+	}
+	return record
+}
+
+func ContainsSensitiveContent(content string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(content))
+	if normalized == "" {
+		return false
+	}
+	if emailPattern.MatchString(normalized) || secretPattern.MatchString(normalized) || phonePattern.MatchString(normalized) {
+		return true
+	}
+	digits := 0
+	for _, char := range normalized {
+		if char >= '0' && char <= '9' {
+			digits++
+			if digits >= 12 {
+				return true
+			}
+		} else {
+			digits = 0
+		}
+	}
+	for _, marker := range []string{
+		"password", "passwd", "passcode", "credential", "secret", "api key", "apikey", "access token", "refresh token", "private key", "credit card", "bank card", "card number", "ssn", "email address", "phone number", "home address", "medical record", "health condition", "sexual orientation", "religion", "political affiliation",
+		"密码", "口令", "凭据", "令牌", "秘钥", "银行卡", "信用卡", "身份证", "证件号", "验证码", "支付", "邮箱", "手机号", "电话号码", "家庭住址", "病历", "健康状况", "性取向", "宗教信仰", "政治面貌",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeRuntimeSlots(slots []RuntimeSlot) []RuntimeSlot {
 	normalized := make([]RuntimeSlot, 0, len(slots))
 	seen := map[string]struct{}{}
@@ -556,7 +981,6 @@ func normalizeRuntimeSlots(slots []RuntimeSlot) []RuntimeSlot {
 		if maxChars <= 0 {
 			maxChars = defaultSlotMaxChars
 		}
-		maxChars = defaultSlotMaxChars
 		sortOrder := slot.SortOrder
 		if sortOrder == 0 {
 			sortOrder = i
@@ -606,7 +1030,7 @@ func slotResponse(slot *AgentMemorySlot) SlotResponse {
 		Key:              slot.Key,
 		Name:             slot.Name,
 		Description:      slot.Description,
-		MaxChars:         defaultSlotMaxChars,
+		MaxChars:         slot.MaxChars,
 		Enabled:          slot.Enabled,
 		SortOrder:        slot.SortOrder,
 		CreatedAt:        createdAt.unix,
@@ -657,6 +1081,7 @@ func slotValueResponse(slot *AgentMemorySlot, value *AgentMemoryValue) SlotValue
 		createdAt := timeFields(value.CreatedAt)
 		updatedAt := timeFields(value.UpdatedAt)
 		resp.Content = value.Content
+		applyValueMetadata(&resp, value)
 		resp.CreatedAt = createdAt.unix
 		resp.UpdatedAt = updatedAt.unix
 		resp.CreatedAtUnix = createdAt.unix
@@ -683,6 +1108,7 @@ func runtimeSlotValueResponse(slot RuntimeSlot, value *AgentMemoryValue) SlotVal
 		createdAt := timeFields(value.CreatedAt)
 		updatedAt := timeFields(value.UpdatedAt)
 		resp.Content = value.Content
+		applyValueMetadata(&resp, value)
 		resp.CreatedAt = createdAt.unix
 		resp.UpdatedAt = updatedAt.unix
 		resp.CreatedAtUnix = createdAt.unix
@@ -739,7 +1165,29 @@ func renderMemoryContext(entries []SlotValueResponse, budget int) string {
 }
 
 func organizerMetadata() MutationMetadata {
-	return MutationMetadata{ActorType: EventActorOrganizer, Source: EventSourceAPI}
+	now := time.Now()
+	return MutationMetadata{ActorType: EventActorOrganizer, Source: EventSourceAPI, SourceKind: SourceKindManager, SourceCompletedAt: &now}
+}
+
+func applyValueMetadata(resp *SlotValueResponse, value *AgentMemoryValue) {
+	if resp == nil || value == nil {
+		return
+	}
+	resp.Revision = value.Revision
+	resp.SourceKind = value.SourceKind
+	resp.ExtractorVersion = value.ExtractorVersion
+	if value.SourceConversationID != nil {
+		resp.SourceConversationID = value.SourceConversationID.String()
+	}
+	if value.SourceMessageID != nil {
+		resp.SourceMessageID = value.SourceMessageID.String()
+	}
+	if value.SourceCompletedAt != nil {
+		resp.SourceCompletedAt = value.SourceCompletedAt.Unix()
+	}
+	if value.LastOperationID != nil {
+		resp.LastOperationID = value.LastOperationID.String()
+	}
 }
 
 func modelMetadata(conversationID *string, messageID *string) MutationMetadata {
@@ -764,6 +1212,21 @@ func normalizeMutationMetadata(meta MutationMetadata) MutationMetadata {
 	if meta.Source == "" {
 		meta.Source = EventSourceAPI
 	}
+	if meta.SourceKind == "" {
+		if meta.ActorType == EventActorModel {
+			meta.SourceKind = SourceKindExplicit
+		} else {
+			meta.SourceKind = SourceKindManager
+		}
+	}
+	if meta.SourceCompletedAt == nil {
+		now := time.Now()
+		meta.SourceCompletedAt = &now
+	}
+	if meta.SourceKind == SourceKindAutomatic && meta.OperationID == nil {
+		operationID := uuid.New()
+		meta.OperationID = &operationID
+	}
 	return meta
 }
 
@@ -775,17 +1238,26 @@ func slotUpdateAction(before *AgentMemorySlot, after *AgentMemorySlot) string {
 }
 
 func recordSlotEvent(ctx context.Context, repo store, workspaceID, agentID uuid.UUID, slotKey string, action string, meta MutationMetadata, before *AgentMemorySlot, after *AgentMemorySlot) error {
-	return recordEvent(ctx, repo, workspaceID, agentID, slotKey, "", nil, action, meta, slotSnapshot(before), slotSnapshot(after))
+	return recordEvent(ctx, repo, workspaceID, agentID, slotKey, "", nil, action, meta, nil, nil)
 }
 
 func recordValueEvent(ctx context.Context, repo store, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID, action string, meta MutationMetadata, before *AgentMemoryValue, after *AgentMemoryValue) error {
-	redactContent := action == EventActionValueClear
-	return recordEvent(ctx, repo, workspaceID, agentID, slotKey, userScope, &userID, action, meta, valueSnapshot(before, redactContent), valueSnapshot(after, redactContent))
+	var beforeRevision, afterRevision *int64
+	if before != nil {
+		value := before.Revision
+		beforeRevision = &value
+	}
+	if after != nil {
+		value := after.Revision
+		afterRevision = &value
+	}
+	return recordEvent(ctx, repo, workspaceID, agentID, slotKey, userScope, &userID, action, meta, beforeRevision, afterRevision)
 }
 
-func recordEvent(ctx context.Context, repo store, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID *uuid.UUID, action string, meta MutationMetadata, before datatypes.JSON, after datatypes.JSON) error {
+func recordEvent(ctx context.Context, repo store, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID *uuid.UUID, action string, meta MutationMetadata, beforeRevision, afterRevision *int64) error {
 	meta = normalizeMutationMetadata(meta)
 	event := &AgentMemoryEvent{
+		OperationID:          meta.OperationID,
 		WorkspaceID:          workspaceID,
 		AgentID:              agentID,
 		SlotKey:              slotKey,
@@ -796,63 +1268,17 @@ func recordEvent(ctx context.Context, repo store, workspaceID, agentID uuid.UUID
 		Source:               meta.Source,
 		SourceConversationID: meta.SourceConversationID,
 		SourceMessageID:      meta.SourceMessageID,
-		BeforeSnapshot:       before,
-		AfterSnapshot:        after,
+		BeforeRevision:       beforeRevision,
+		AfterRevision:        afterRevision,
+		Result:               strings.TrimSpace(meta.EventResult),
+	}
+	if event.Result == "" {
+		event.Result = "success"
 	}
 	if err := repo.CreateEvent(ctx, event); err != nil {
 		return fmt.Errorf("record agent memory event: %w", err)
 	}
 	return nil
-}
-
-func slotSnapshot(slot *AgentMemorySlot) datatypes.JSON {
-	if slot == nil {
-		return datatypes.JSON([]byte("null"))
-	}
-	return mustJSON(map[string]interface{}{
-		"id":           slot.ID.String(),
-		"workspace_id": slot.WorkspaceID.String(),
-		"agent_id":     slot.AgentID.String(),
-		"key":          slot.Key,
-		"name":         slot.Name,
-		"description":  slot.Description,
-		"max_chars":    slot.MaxChars,
-		"enabled":      slot.Enabled,
-		"sort_order":   slot.SortOrder,
-		"created_at":   slot.CreatedAt.Unix(),
-		"updated_at":   slot.UpdatedAt.Unix(),
-	})
-}
-
-func valueSnapshot(value *AgentMemoryValue, redactContent bool) datatypes.JSON {
-	if value == nil {
-		return datatypes.JSON([]byte("null"))
-	}
-	snapshot := map[string]interface{}{
-		"id":           value.ID.String(),
-		"workspace_id": value.WorkspaceID.String(),
-		"agent_id":     value.AgentID.String(),
-		"slot_key":     value.SlotKey,
-		"user_scope":   value.UserScope,
-		"user_id":      value.UserID.String(),
-		"created_at":   value.CreatedAt.Unix(),
-		"updated_at":   value.UpdatedAt.Unix(),
-	}
-	if redactContent {
-		snapshot["content_redacted"] = true
-		snapshot["content_length"] = len([]rune(value.Content))
-	} else {
-		snapshot["content"] = value.Content
-	}
-	return mustJSON(snapshot)
-}
-
-func mustJSON(value interface{}) datatypes.JSON {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return datatypes.JSON([]byte("null"))
-	}
-	return data
 }
 
 func mapRepoError(err error, message string) error {

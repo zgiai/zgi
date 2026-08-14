@@ -28,6 +28,7 @@ import {
 } from '@/components/chat/runtime/conversation-route-handoff';
 import { transcribeAgentWebAppVoice } from '@/services/voice-transcription.service';
 import { generateAgentWebAppSpeech } from '@/services/voice-speech.service';
+import { AgentMemoryManager } from './agent-memory-manager';
 
 interface AgentWebappChatProps {
   webAppId: string;
@@ -287,6 +288,9 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       homeDescription={agentConfig?.opening_statement ?? ''}
       voiceTranscriber={voiceInputEnabled ? handleVoiceTranscription : undefined}
       speechSynthesizer={speechEnabled ? handleSpeechSynthesis : undefined}
+      headerRightAction={
+        memoryEnabled && isAuthenticated ? <AgentMemoryManager webAppId={webAppId} /> : undefined
+      }
     />
   );
 }

@@ -13,10 +13,17 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession) []adapter.Tool {
+func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool) []adapter.Tool {
+	runtimeDefinitions := make([]adapter.Tool, 0, len(runtimeTools))
+	for _, runtimeTool := range runtimeTools {
+		if strings.TrimSpace(runtimeTool.Definition.Function.Name) != "" && runtimeTool.Handler != nil {
+			runtimeDefinitions = append(runtimeDefinitions, runtimeTool.Definition)
+		}
+	}
 	if session != nil {
 		current := session.ToolSet()
 		tools := append([]adapter.Tool(nil), current.ProviderTools...)
+		tools = append(tools, runtimeDefinitions...)
 		return append(tools, skills.NativeControlToolsForSession(
 			resolved,
 			current.ActiveSkillIDs,
@@ -25,11 +32,52 @@ func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.Nat
 		)...)
 	}
 	if toolSet == nil {
-		return skills.NativeControlToolsForSkills(resolved, nil)
+		return append(runtimeDefinitions, skills.NativeControlToolsForSkills(resolved, nil)...)
 	}
 	tools := append([]adapter.Tool(nil), toolSet.ProviderTools...)
+	tools = append(tools, runtimeDefinitions...)
 	tools = append(tools, skills.NativeControlToolsForSkills(resolved, toolSet.ActiveSkillIDs)...)
 	return tools
+}
+
+func runtimeToolForCall(runtimeTools []RuntimeTool, call adapter.ToolCall) (RuntimeTool, bool) {
+	name := strings.TrimSpace(call.Function.Name)
+	for _, runtimeTool := range runtimeTools {
+		if runtimeTool.Handler != nil && strings.EqualFold(strings.TrimSpace(runtimeTool.Definition.Function.Name), name) {
+			return runtimeTool, true
+		}
+	}
+	return RuntimeTool{}, false
+}
+
+func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTool RuntimeTool) skillStepResult {
+	result := runtimeTool.Handler(ctx, call)
+	status := strings.TrimSpace(result.Status)
+	if status == "" {
+		status = "success"
+		if result.Error != nil {
+			status = "failed"
+		}
+	}
+	trace := skills.SkillTrace{
+		Kind:      "tool_call",
+		SkillID:   strings.TrimSpace(runtimeTool.SkillID),
+		ToolName:  strings.TrimSpace(runtimeTool.Definition.Function.Name),
+		Status:    status,
+		Arguments: result.Arguments,
+		Result:    result.Result,
+	}
+	if result.Error != nil {
+		trace.Error = status
+	}
+	message := skills.ToolResultMessage(call.ID, result.Result)
+	step := successfulSkillStep(trace, message, false, true)
+	step.toolResult = result.Result
+	if result.Recoverable {
+		step = recoverableSkillStep(trace, message, false, true)
+		step.toolResult = result.Result
+	}
+	return step
 }
 
 func nativeAgentLoopSystemMessage() adapter.Message {

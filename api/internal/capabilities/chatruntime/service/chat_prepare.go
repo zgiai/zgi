@@ -54,6 +54,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
+	applyAgentMemoryToolsPolicy(parts)
 	if err := finalizeExecutionMode(caller, parts); err != nil {
 		return nil, err
 	}
@@ -163,6 +164,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
+	applyAgentMemoryToolsPolicy(parts)
 	if err := finalizeExecutionMode(caller, parts); err != nil {
 		return nil, err
 	}
@@ -370,38 +372,52 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 	if err != nil {
 		return nil, err
 	}
-	systemPrompt = appendAgentMemoryPolicy(systemPrompt, parts)
-	systemPrompt, agentMemoryMetadata, err := s.appendAgentMemoryContext(ctx, scope, parts, systemPrompt)
-	if err != nil {
-		return nil, err
-	}
+	var resolvedSpec ModelSpec
+	var resolvedSpecOK bool
 	if s.modelSpecResolver != nil {
-		spec, ok, err := s.modelSpecResolver.Resolve(ctx, scope.OrganizationID, parts.Provider, parts.ModelName)
+		resolvedSpec, resolvedSpecOK, err = s.modelSpecResolver.Resolve(ctx, scope.OrganizationID, parts.Provider, parts.ModelName)
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			parts.ModelSupportsVision = spec.SupportsVision()
+		if resolvedSpecOK {
+			parts.ModelSupportsVision = resolvedSpec.SupportsVision()
 		}
-		if ok && spec.ContextWindow > 0 {
-			branch, err := s.loadContextBranch(ctx, parentID, maxContextCandidateMessages)
-			if err != nil {
-				return nil, err
-			}
-			applyRecentAssetCandidatesFromBranch(parts, branch)
-			applyRecentGeneratedArtifactsFromBranch(parts, branch)
-			applyRecentOperationPlansFromBranch(parts, branch)
-			result, err := s.buildTokenBudgetMessages(ctx, spec, parts, systemPrompt, branch)
-			if err != nil {
-				return nil, err
-			}
-			result.Metadata = mergeUserMemoryMetadata(result.Metadata, memoryMetadata)
-			result.Metadata = mergeUserMemoryMetadata(result.Metadata, agentMemoryMetadata)
-			return result, nil
+	}
+	inputTokenLimit := 0
+	if resolvedSpecOK {
+		inputTokenLimit = resolvedSpec.MaxInputTokens
+		if inputTokenLimit <= 0 {
+			inputTokenLimit = resolvedSpec.ContextWindow
 		}
+	}
+	systemPrompt, agentMemoryMetadata, err := s.appendAgentMemoryContext(ctx, scope, parts, systemPrompt, inputTokenLimit)
+	if err != nil {
+		return nil, err
+	}
+	if unavailable := agentMemoryUnavailableSystemMessage(parts); unavailable != nil {
+		systemPrompt = strings.TrimSpace(systemPrompt) + "\n\n" + strings.TrimSpace(stringFromAny(unavailable.Content))
+	}
+	if resolvedSpecOK && resolvedSpec.ContextWindow > 0 {
+		branch, err := s.loadContextBranch(ctx, parentID, maxContextCandidateMessages)
+		if err != nil {
+			return nil, err
+		}
+		applyRecentAssetCandidatesFromBranch(parts, branch)
+		applyRecentGeneratedArtifactsFromBranch(parts, branch)
+		applyRecentOperationPlansFromBranch(parts, branch)
+		result, err := s.buildTokenBudgetMessages(ctx, resolvedSpec, parts, systemPrompt, branch)
+		if err != nil {
+			return nil, err
+		}
+		result.Metadata = mergeUserMemoryMetadata(result.Metadata, memoryMetadata)
+		result.Metadata = mergeUserMemoryMetadata(result.Metadata, agentMemoryMetadata)
+		return result, nil
 	}
 	currentContent, contextMetadata := s.buildFallbackCurrentUserContent(parts)
 	messages := []adapter.Message{{Role: "system", Content: systemPrompt}}
+	if memoryContext := agentMemoryContextMessage(parts); memoryContext != nil {
+		messages = append(messages, *memoryContext)
+	}
 	contextMetadata = mergeUserMemoryMetadata(contextMetadata, memoryMetadata)
 	contextMetadata = mergeUserMemoryMetadata(contextMetadata, agentMemoryMetadata)
 	if parentID != nil && *parentID != uuid.Nil {
@@ -472,9 +488,6 @@ func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, calle
 	parts.FunctionCallingAssumed = false
 	parts.ModelCapabilityStatus = "resolved"
 	parts.ModelCapabilityError = ""
-	if strings.TrimSpace(parts.ExecutionMode) != "" && executionModeRequiresFunctionCalling(parts.ExecutionMode) && !spec.SupportsFunctionCalling() {
-		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s does not support function calling", parts.Provider, parts.ModelName)
-	}
 	return nil
 }
 
@@ -536,10 +549,13 @@ func (s *service) applyExistingConversationSurfaceForChat(ctx context.Context, s
 }
 
 func executionModeForModel(caller Caller, parts *chatRequestParts) string {
+	if parts == nil || !parts.ModelSupportsFunctionCalling {
+		return executionModeDirectChat
+	}
 	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
 		return executionModeNativeAgentLoop
 	}
-	if parts == nil || !parts.ModelSupportsFunctionCalling || len(parts.SkillIDs) == 0 {
+	if len(parts.SkillIDs) == 0 && !parts.AgentMemoryToolsEnabled {
 		return executionModeDirectChat
 	}
 	return executionModeNativeToolLoop
@@ -549,7 +565,16 @@ func finalizeExecutionMode(caller Caller, parts *chatRequestParts) error {
 	if parts == nil {
 		return nil
 	}
-	if normalizeExecutionMode(parts.ExecutionMode) != "" {
+	if parts.ExecutionMode == executionModeDirectChat && parts.AgentMemoryToolsEnabled {
+		parts.ExecutionMode = ""
+	}
+	if parts.ExecutionMode == executionModeNativeToolLoop && len(parts.SkillIDs) == 0 && !parts.ProtocolToolsEnabled && !parts.AgentMemoryToolsEnabled {
+		parts.ExecutionMode = ""
+	}
+	if executionModeRequiresFunctionCalling(parts.ExecutionMode) && !parts.ModelSupportsFunctionCalling {
+		parts.ExecutionMode = executionModeDirectChat
+		parts.ExecutionRouteReason = executionRouteFunctionCallingUnavailable
+	} else if normalizeExecutionMode(parts.ExecutionMode) != "" {
 		parts.ExecutionRouteReason = executionRoutePersistedMode
 	} else {
 		parts.ExecutionMode = executionModeForModel(caller, parts)
@@ -557,7 +582,11 @@ func finalizeExecutionMode(caller Caller, parts *chatRequestParts) error {
 		case executionModeNativeAgentLoop:
 			parts.ExecutionRouteReason = executionRouteNativeAgent
 		case executionModeNativeToolLoop:
-			parts.ExecutionRouteReason = executionRouteNativeSkillsAvailable
+			if len(parts.SkillIDs) == 0 && parts.AgentMemoryToolsEnabled {
+				parts.ExecutionRouteReason = executionRouteAgentMemoryAvailable
+			} else {
+				parts.ExecutionRouteReason = executionRouteNativeSkillsAvailable
+			}
 		case executionModeDirectChat:
 			if !parts.ModelSupportsFunctionCalling {
 				parts.ExecutionRouteReason = executionRouteFunctionCallingUnavailable
@@ -565,9 +594,6 @@ func finalizeExecutionMode(caller Caller, parts *chatRequestParts) error {
 				parts.ExecutionRouteReason = executionRouteNoUsableSkills
 			}
 		}
-	}
-	if executionModeRequiresFunctionCalling(parts.ExecutionMode) && !parts.ModelSupportsFunctionCalling {
-		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s does not support function calling", parts.Provider, parts.ModelName)
 	}
 	return nil
 }
@@ -584,6 +610,7 @@ func logExecutionRoute(ctx context.Context, caller Caller, parts *chatRequestPar
 		"model_use_case", executionModeModelUseCase(parts.ExecutionMode),
 		"function_calling_supported", parts.ModelSupportsFunctionCalling,
 		"effective_skill_count", len(parts.SkillIDs),
+		"agent_memory_tools_enabled", parts.AgentMemoryToolsEnabled,
 	)
 }
 
@@ -612,6 +639,16 @@ func applyProtocolToolsPolicy(caller Caller, parts *chatRequestParts) {
 		return
 	}
 	parts.ProtocolToolsEnabled = normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent &&
+		parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling && !parts.FunctionCallingAssumed
+}
+
+func applyAgentMemoryToolsPolicy(parts *chatRequestParts) {
+	if parts == nil {
+		return
+	}
+	parts.AgentMemoryToolsEnabled = parts.AgentMemoryEnabled &&
+		len(enabledAgentMemorySlots(parts.AgentMemorySlots)) > 0 &&
+		globalAgentMemoryInlineToolsEnabled() &&
 		parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling && !parts.FunctionCallingAssumed
 }
 

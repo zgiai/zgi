@@ -312,6 +312,16 @@ func TestAgentMemoryReplaceRequestPreservesInvalidRowsForValidation(t *testing.T
 	}
 }
 
+func TestAgentMemoryRuntimeSlotsPreserveDisplayName(t *testing.T) {
+	slots := agentMemoryRuntimeSlots([]dto.AgentMemorySlotConfig{
+		{Key: "project_context", Name: "项目背景", Description: "Long-running project context", MaxChars: 500, Enabled: true},
+	})
+
+	if len(slots) != 1 || slots[0].Key != "project_context" || slots[0].Name != "项目背景" {
+		t.Fatalf("runtime slots = %#v, want display name preserved", slots)
+	}
+}
+
 func TestAgentMemoryReplaceRequestCanDropHistoricalIDsForRollback(t *testing.T) {
 	req := agentMemoryReplaceRequestFromConfig([]dto.AgentMemorySlotConfig{
 		{ID: "stale-slot-id", Key: "profile", Name: "用户资料", Enabled: true},

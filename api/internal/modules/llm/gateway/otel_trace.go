@@ -54,6 +54,20 @@ type llmTraceUsage struct {
 	TotalTokens      int
 }
 
+type invocationContentPrivacyContextKey struct{}
+
+func applyInvocationContentPrivacy(ctx context.Context, appCtx *AppContext) context.Context {
+	if appCtx == nil || !appCtx.SuppressInvocationContent {
+		return ctx
+	}
+	return context.WithValue(ctx, invocationContentPrivacyContextKey{}, true)
+}
+
+func invocationContentSuppressed(ctx context.Context) bool {
+	suppressed, _ := ctx.Value(invocationContentPrivacyContextKey{}).(bool)
+	return suppressed
+}
+
 func (s *llmGatewayServiceImpl) traceChatCompletion(
 	ctx context.Context,
 	req *adapter.ChatRequest,
@@ -66,7 +80,7 @@ func (s *llmGatewayServiceImpl) traceChatCompletion(
 	if billingCtx == nil {
 		return
 	}
-	if s != nil && s.invocationContent != nil {
+	if s != nil && s.invocationContent != nil && !invocationContentSuppressed(ctx) {
 		s.invocationContent.RecordChat(
 			billingCtx,
 			chatInput(req),
@@ -86,7 +100,7 @@ func (s *llmGatewayServiceImpl) traceChatCompletion(
 		Billing:   billingCtx,
 		Err:       err,
 	}
-	if llmTraceContentEnabled() {
+	if llmTraceContentEnabled() && !invocationContentSuppressed(ctx) {
 		payload.Input = chatInput(req)
 		payload.Output = chatCompletionOutput(resp)
 		payload.ModelParameters = chatModelParameters(req)
@@ -108,7 +122,7 @@ func (s *llmGatewayServiceImpl) traceStreamingChatCompletion(
 	if billingCtx == nil {
 		return
 	}
-	if s != nil && s.invocationContent != nil {
+	if s != nil && s.invocationContent != nil && !invocationContentSuppressed(ctx) {
 		s.invocationContent.RecordChat(
 			billingCtx,
 			chatInput(req),
@@ -133,7 +147,7 @@ func (s *llmGatewayServiceImpl) traceStreamingChatCompletion(
 		},
 		Err: err,
 	}
-	if llmTraceContentEnabled() {
+	if llmTraceContentEnabled() && !invocationContentSuppressed(ctx) {
 		payload.Input = chatInput(req)
 		payload.Output = map[string]interface{}{
 			"role":    "assistant",

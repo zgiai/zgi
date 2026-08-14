@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"net/http"
 	"strconv"
 	"strings"
 )
@@ -322,6 +323,7 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		BindingAuthorizations:            agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
 		UseMemory:                        false,
 		AgentMemoryEnabled:               cfg.AgentMemoryEnabled,
+		AgentMemoryAutoExtractionEnabled: cfg.AgentMemoryAutoExtractionEnabled,
 		AgentMemorySlots:                 agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
 		AgentMemoryUserScope:             agentMemoryUserScope,
 		BillingAppID:                     agentID,
@@ -447,6 +449,7 @@ func agentMemoryRuntimeSlots(slots []dto.AgentMemorySlotConfig) []runtimeservice
 		}
 		out = append(out, runtimeservice.AgentMemorySlotConfig{
 			Key:         slot.Key,
+			Name:        slot.Name,
 			Description: slot.Description,
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,
@@ -652,7 +655,13 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		errors.Is(err, runtimeservice.ErrConversationWaitingAction):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, agentmemory.ErrInvalidInput):
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, agentmemory.ErrConflict):
+		c.JSON(http.StatusConflict, response.Response{Code: agentMemoryValueRevisionConflictCode, Message: agentMemoryRevisionConflictMessage})
+	case errors.Is(err, agentmemory.ErrUnauthorized):
+		response.Fail(c, response.ErrUnauthorized)
+	case errors.Is(err, agentmemory.ErrNotFound):
+		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeservice.ErrUnauthorized):
 		response.Fail(c, response.ErrUnauthorized)
 	case errors.Is(err, runtimeservice.ErrPermissionDenied):

@@ -508,6 +508,7 @@ func (s *service) prepareUserInputContinuationChat(
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
+	applyAgentMemoryToolsPolicy(parts)
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
 	if err != nil {
 		return nil, err

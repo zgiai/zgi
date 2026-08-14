@@ -2558,6 +2558,9 @@ const messages = {
       agentTitle: 'Memory',
       agentDescription:
         'Define what the Agent should remember for each user. Each memory item has a stable ID and an optional display name.',
+      autoExtractionTitle: 'Organize and update memory automatically',
+      autoExtractionDescription:
+        'Once enabled, the Agent identifies user information, preferences, and requests worth keeping from conversations and updates memory automatically, helping future responses feel more relevant. This may add model calls during a conversation or after it becomes idle, increasing token usage.',
       emptySlots: 'No memory items configured yet.',
       addSlot: 'Add memory item',
       addCustomSlot: 'Custom item',

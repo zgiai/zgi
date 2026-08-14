@@ -787,3 +787,20 @@ func runnerTestEventsContainText(events []Event, target string) bool {
 	}
 	return false
 }
+
+func TestNativeAgentToolsForRunIncludesRuntimeToolWithoutSkills(t *testing.T) {
+	runtimeTool := RuntimeTool{
+		Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "mutate_agent_memory"}},
+		Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult {
+			return RuntimeToolResult{Status: "success", Result: map[string]interface{}{"status": "success"}}
+		},
+	}
+	tools := nativeAgentToolsForRun(&skills.ResolvedSkills{}, nil, nil, []RuntimeTool{runtimeTool})
+	if !runnerTestHasTool(tools, "mutate_agent_memory") {
+		t.Fatalf("tools = %#v, want runtime memory tool", tools)
+	}
+	step := handleRuntimeToolCall(context.Background(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Name: "mutate_agent_memory"}}, runtimeTool)
+	if step.trace.Status != "success" || !step.usedTool || step.recoverable {
+		t.Fatalf("runtime step = %#v", step)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
@@ -1966,14 +1967,14 @@ func TestProcessTimelineRecorderSkipsInternalDiagnosticTrace(t *testing.T) {
 
 func TestEmitAgentMemoryMutationEventUsesIndependentMemoryEvent(t *testing.T) {
 	prepared := preparedTimelineTestChat()
+	prepared.parts = &chatRequestParts{
+		AgentMemorySlots: []AgentMemorySlotConfig{{Key: "profile", Name: "用户资料", Enabled: true}},
+	}
 	var got *StreamEvent
-	(&service{}).emitAgentMemoryMutationEvent(context.Background(), prepared, skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentMemory,
-		ToolName: agentMemoryToolUpdate,
-		Status:   "success",
-		Result:   map[string]interface{}{"key": "profile", "content": "Call the user Captain."},
-	}, func(event StreamEvent) error {
+	(&service{}).emitAgentMemoryMutationEvents(context.Background(), prepared, &agentmemory.MutateValuesResponse{Status: "success", Operations: []agentmemory.ValueMutationResult{{
+		Action: agentmemory.MutationActionUpsert, Status: agentmemory.MutationStatusUpdated, Key: "profile",
+		SourceKind: agentmemory.SourceKindExplicit, OperationID: uuid.NewString(), Revision: 2,
+	}}}, func(event StreamEvent) error {
 		got = &event
 		return nil
 	})
@@ -1983,8 +1984,14 @@ func TestEmitAgentMemoryMutationEventUsesIndependentMemoryEvent(t *testing.T) {
 	if got.EventType != streamEventMemoryUpdate {
 		t.Fatalf("event type = %q, want %q", got.EventType, streamEventMemoryUpdate)
 	}
-	if got.Payload["memory_scope"] != "agent" || got.Payload["action"] != "update" || got.Payload["key"] != "profile" || got.Payload["content"] != "Call the user Captain." {
-		t.Fatalf("payload = %#v, want agent memory update payload with full content", got.Payload)
+	if got.Payload["memory_scope"] != "agent" || got.Payload["action"] != "update" || got.Payload["key"] != "profile" || got.Payload["display_name"] != "用户资料" {
+		t.Fatalf("payload = %#v, want agent memory update metadata", got.Payload)
+	}
+	if got.Payload["mutation_status"] != agentmemory.MutationStatusUpdated {
+		t.Fatalf("payload mutation_status = %#v, want updated", got.Payload["mutation_status"])
+	}
+	if _, exists := got.Payload["content"]; exists {
+		t.Fatalf("payload = %#v, memory content must not enter SSE", got.Payload)
 	}
 }
 

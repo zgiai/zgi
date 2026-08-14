@@ -2466,6 +2466,9 @@ const messages: AgentsMessages = {
       agentTitle: '记忆',
       agentDescription:
         '设置智能体需要长期记住的信息类型，智能体会为每位用户分别读取和更新这些内容。',
+      autoExtractionTitle: '自动整理并更新记忆',
+      autoExtractionDescription:
+        '开启后，智能体会从对话中识别值得长期保留的用户信息、偏好和要求，并自动更新记忆，让后续回答更贴合用户。此功能可能在对话过程中或会话空闲后增加模型调用，因此会产生更多 Token 消耗。',
       emptySlots: '还没有配置记忆。',
       addSlot: '添加记忆',
       addDialogTitle: '添加记忆',

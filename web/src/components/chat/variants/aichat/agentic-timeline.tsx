@@ -1078,7 +1078,9 @@ function memoryEventTitle(
 ): string {
   return getAIChatUserMemoryMutationTitle(item.event.action, locale, {
     content: item.event.content_preview || item.event.content,
-    entryId: item.event.entry_id ?? (showMemoryKey ? item.event.key : undefined),
+    entryId:
+      item.event.entry_id ??
+      (showMemoryKey ? item.event.display_name || item.event.key : undefined),
   });
 }
 
@@ -1090,10 +1092,12 @@ function MemoryTimelineRow({
   showMemoryKey: boolean;
 }) {
   const { locale } = useLocale();
+  const t = useT('webapp');
   const [isOpen, setIsOpen] = useState(false);
   const content = memoryEventContent(item);
+  const memoryDisplayName = item.event.display_name || item.event.key;
   const canExpand = Boolean(
-    content || (showMemoryKey && item.event.key) || item.event.category || item.event.memory_type
+    content || (showMemoryKey && memoryDisplayName) || item.event.category || item.event.memory_type
   );
 
   return (
@@ -1108,11 +1112,15 @@ function MemoryTimelineRow({
           <CheckCircle2 className="size-3.5" />
         </span>
         <span className="min-w-0 flex-1 truncate">
-          {memoryEventTitle(item, locale, showMemoryKey)}
+          {!showMemoryKey &&
+          item.event.memory_scope === 'agent' &&
+          item.event.source_kind === 'automatic'
+            ? t('agentChat.memory.autoUpdated')
+            : memoryEventTitle(item, locale, showMemoryKey)}
         </span>
-        {showMemoryKey && item.event.key ? (
-          <span className="max-w-32 shrink-0 truncate rounded border border-emerald-500/20 bg-background/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-            {item.event.key}
+        {showMemoryKey && memoryDisplayName ? (
+          <span className="max-w-32 shrink-0 truncate rounded border border-emerald-500/20 bg-background/70 px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            {memoryDisplayName}
           </span>
         ) : null}
         {canExpand ? (
