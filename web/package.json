@@ -33,6 +33,7 @@
     "test:chat-upload-extension-policy": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-chat-upload-extension-policy.mjs",
     "test:opening-statement-draft-preservation": "node scripts/test-opening-statement-draft-preservation.mjs",
     "test:contextual-assistant-brand-neutrality": "node scripts/test-contextual-assistant-brand-neutrality.mjs",
+    "test:build-metadata-env": "node scripts/test-build-metadata-env.mjs",
     "test:contextual-page-metadata-budget": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-contextual-page-metadata-budget.mjs",
     "test:contextual-operation-status-surface": "node scripts/test-contextual-operation-status-surface.mjs",
     "test:agent-runtime-user-input-continuation": "node scripts/test-agent-runtime-user-input-continuation.mjs",
