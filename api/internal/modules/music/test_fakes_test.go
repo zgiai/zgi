@@ -172,7 +172,10 @@ func (r *memoryRepository) TouchStatus(_ context.Context, id uuid.UUID, status S
 	return nil
 }
 
-func (r *memoryRepository) DeleteScopedTerminal(_ context.Context, scope Scope, id uuid.UUID) error {
+func (r *memoryRepository) DeleteScopedTerminal(ctx context.Context, scope Scope, id uuid.UUID) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	task, err := r.GetScoped(context.Background(), scope, id)
 	if err != nil {
 		return err

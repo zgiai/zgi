@@ -18,9 +18,10 @@ import (
 const musicResponseFormat = "mp3"
 
 const (
-	defaultMusicTaskPageSize = 20
-	maxMusicTaskPageSize     = 100
-	maxMusicTaskSearchRunes  = 200
+	defaultMusicTaskPageSize   = 20
+	maxMusicTaskPageSize       = 100
+	maxMusicTaskSearchRunes    = 200
+	musicDeleteFinalizeTimeout = 5 * time.Second
 )
 
 type AvailableModelLister interface {
@@ -168,12 +169,16 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id uuid.UUID) error {
 	if task.Status == StatusSucceeded && task.FileID == nil {
 		return ErrTaskAssetMissing
 	}
+	metadataCtx := ctx
 	if task.FileID != nil {
 		if err := s.assets.DeleteStoredObject(ctx, task.FileID.String(), scope); err != nil {
 			return fmt.Errorf("delete music storage object: %w", err)
 		}
+		var cancel context.CancelFunc
+		metadataCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), musicDeleteFinalizeTimeout)
+		defer cancel()
 	}
-	if err := s.repo.DeleteScopedTerminal(ctx, scope, id); err != nil {
+	if err := s.repo.DeleteScopedTerminal(metadataCtx, scope, id); err != nil {
 		return fmt.Errorf("delete music task metadata: %w", err)
 	}
 	return nil

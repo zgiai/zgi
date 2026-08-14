@@ -335,6 +335,31 @@ func TestServiceDeleteRemovesSucceededTaskAssetBeforeRecord(t *testing.T) {
 	}
 }
 
+func TestServiceDeleteCompletesMetadataCleanupAfterRequestCancellation(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusSucceeded
+	fileID := uuid.New()
+	task.FileID = &fileID
+	repo := newMemoryRepository(task)
+	requestCtx, cancelRequest := context.WithCancel(t.Context())
+	assets := &cancelAfterStoredObjectDelete{
+		AssetStore: &assetStoreStub{},
+		cancel:     cancelRequest,
+	}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	if err := service.Delete(requestCtx, scope, task.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if _, err := repo.Get(t.Context(), task.ID); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted task lookup error = %v, want ErrTaskNotFound", err)
+	}
+}
+
 func TestServiceDeleteRemovesOwnedTaskFromPersonalScope(t *testing.T) {
 	workspaceScope := testScope()
 	personalScope := workspaceScope
@@ -442,6 +467,19 @@ func TestServiceDeleteDoesNotExposeTaskOutsideScope(t *testing.T) {
 	if _, err := repo.Get(t.Context(), task.ID); err != nil {
 		t.Fatalf("out-of-scope task must remain: %v", err)
 	}
+}
+
+type cancelAfterStoredObjectDelete struct {
+	AssetStore
+	cancel context.CancelFunc
+}
+
+func (s *cancelAfterStoredObjectDelete) DeleteStoredObject(ctx context.Context, fileID string, scope Scope) error {
+	if err := s.AssetStore.DeleteStoredObject(ctx, fileID, scope); err != nil {
+		return err
+	}
+	s.cancel()
+	return nil
 }
 
 type availableModelsStub struct {
