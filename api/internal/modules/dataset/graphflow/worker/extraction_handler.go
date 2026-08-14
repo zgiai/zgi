@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,40 @@ func resolveExtractionOrganizationID(ctx context.Context, repo datasetOrganizati
 	return graphFlowTask.TenantID.String()
 }
 
+var (
+	errEmbeddingDimensionMismatch = errors.New("graph embedding dimension mismatch")
+	errStaleGraphFlowRun          = errors.New("stale graph flow run")
+)
+
+func validateExtractionRunSnapshot(
+	task *model.GraphFlowTask,
+	run *model.GraphFlowRun,
+	dataset *dataset_model.Dataset,
+	actualDimension int,
+) error {
+	if task == nil || run == nil || dataset == nil || task.RunID == nil || *task.RunID != run.ID || task.KBID != run.DatasetID {
+		return errStaleGraphFlowRun
+	}
+	if run.Status == model.GraphFlowRunStatusCancelled || run.Status == model.GraphFlowRunStatusSuperseded || run.Status == model.GraphFlowRunStatusFailed {
+		return errStaleGraphFlowRun
+	}
+	if run.EmbeddingProvider != strings.TrimSpace(pointerString(dataset.EmbeddingModelProvider)) ||
+		run.EmbeddingModel != strings.TrimSpace(pointerString(dataset.EmbeddingModel)) {
+		return errStaleGraphFlowRun
+	}
+	if run.EmbeddingDimension > 0 && actualDimension > 0 && run.EmbeddingDimension != actualDimension {
+		return errEmbeddingDimensionMismatch
+	}
+	return nil
+}
+
+func pointerString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 // NewExtractionHandler creates a handler for extraction tasks.
 // All segments are processed concurrently within this single handler using a goroutine pool.
 func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager, limiter *ratelimit.KBLimiter) func(context.Context, *asynq.Task) error {
@@ -63,6 +98,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				err := fmt.Errorf("extraction worker panicked: %v", r)
 				logger.CriticalContext(ctx, "extraction worker panicked", err)
 				svc.TaskRepo.UpdateTaskFailed(ctx, taskID, err.Error())
+				panic(r)
 			}
 		}()
 
@@ -78,6 +114,30 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		if graphFlowTask == nil {
 			return fmt.Errorf("graphflow task not found: %s: %w", taskID, asynq.SkipRetry)
 		}
+		var sourceRefID *uuid.UUID
+		if graphFlowTask.SourceRefID != nil {
+			value := *graphFlowTask.SourceRefID
+			sourceRefID = &value
+		}
+		batchRun := false
+		if graphFlowTask.RunID != nil {
+			run, runErr := svc.RunRepo.FindByID(ctx, *graphFlowTask.RunID)
+			if runErr != nil {
+				return fmt.Errorf("failed to get graph flow run: %v: %w", runErr, asynq.SkipRetry)
+			}
+			dataset, datasetErr := svc.DatasetRepo.GetByID(ctx, graphFlowTask.KBID.String())
+			if datasetErr != nil {
+				return fmt.Errorf("failed to get graph flow dataset: %v: %w", datasetErr, asynq.SkipRetry)
+			}
+			if snapshotErr := validateExtractionRunSnapshot(graphFlowTask, run, dataset, run.EmbeddingDimension); snapshotErr != nil {
+				return fmt.Errorf("graph flow run snapshot rejected: %v: %w", snapshotErr, asynq.SkipRetry)
+			}
+			batchRun = usesBatchPipeline(run)
+			if sourceRefID == nil && run.SourceRefID != nil {
+				value := *run.SourceRefID
+				sourceRefID = &value
+			}
+		}
 
 		// Check for idempotency - skip if already completed or failed
 		if graphFlowTask.Status == "completed" || graphFlowTask.Status == "failed" {
@@ -85,6 +145,9 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				"task_id": taskID.String(),
 				"status":  graphFlowTask.Status,
 			})
+			if graphFlowTask.Status == "completed" && batchRun {
+				return advanceBatchPipelineAfterItemTask(ctx, svc, taskManager, graphFlowTask)
+			}
 			return nil
 		}
 
@@ -117,7 +180,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		// Check for eventual consistency: if segments are not found yet, trigger retry
 		if len(segments) == 0 {
 			retryCount, _ := asynq.GetRetryCount(ctx)
-			maxRetry := 10 // Increase retry count for eventual consistency
+			maxRetry := GraphFlowTaskMaxRetries
 
 			if retryCount < maxRetry {
 				logger.Warn("No segments found for document, triggering retry", map[string]interface{}{
@@ -128,26 +191,20 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				return fmt.Errorf("no segments found for document %s, waiting for consistency (retry %d/%d)", graphFlowTask.DocumentID, retryCount, maxRetry)
 			}
 
-			logger.Warn("No segments found after retries, proceeding to empty alignment (assuming empty document)", map[string]interface{}{
+			errMsg := fmt.Sprintf("no segments found for document %s after %d retries", graphFlowTask.DocumentID, maxRetry)
+			logger.ErrorContext(ctx, errMsg, map[string]interface{}{
 				"document_id": graphFlowTask.DocumentID.String(),
 			})
-
-			// Mark extraction as completed even if no segments (empty document case)
-			if err := svc.TaskRepo.UpdateTaskCompleted(ctx, taskID); err != nil {
-				logger.ErrorContext(ctx, "failed to update task completed status", err)
+			if err := svc.TaskRepo.UpdateTaskFailed(ctx, taskID, errMsg); err != nil {
+				logger.ErrorContext(ctx, "failed to update task failed status", err)
 			}
-
-			if err := enqueueNextAlignmentTask(ctx, svc, taskManager, graphFlowTask); err != nil {
-				logger.CriticalContext(ctx, "failed to enqueue alignment task", err)
-			}
-
-			return nil
+			return fmt.Errorf("%s: %w", errMsg, asynq.SkipRetry)
 		}
 
 		// Race condition fix: Check if we have all expected segments
 		if payload.ExpectedSegments > 0 && len(segments) < payload.ExpectedSegments {
 			retryCount, _ := asynq.GetRetryCount(ctx)
-			maxRetry := 20 // Allow more retries for segment replication lag
+			maxRetry := GraphFlowTaskMaxRetries
 
 			if retryCount < maxRetry {
 				logger.Warn("Segments mismatch (replication lag), triggering retry", map[string]interface{}{
@@ -169,9 +226,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				logger.ErrorContext(ctx, "failed to update task failed status", err)
 			}
 
-			// We return nil here to consume the task from queue as failed,
-			// instead of returning error which would cause infinite retries (since we exhausted our custom maxRetry)
-			return nil
+			return fmt.Errorf("%s: %w", errMsg, asynq.SkipRetry)
 		}
 
 		// Check if all segments are completed (vectorization finished)
@@ -196,7 +251,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		// If some segments are still indexing, wait for them
 		if indexingSegments > 0 {
 			retryCount, _ := asynq.GetRetryCount(ctx)
-			maxRetry := 10
+			maxRetry := GraphFlowTaskMaxRetries
 
 			if retryCount < maxRetry {
 				logger.Warn("Some segments are still indexing, triggering retry", map[string]interface{}{
@@ -209,11 +264,16 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 				return fmt.Errorf("waiting for %d segments to complete indexing", indexingSegments)
 			}
 
-			logger.Warn("Segments still indexing after max retries, proceeding with completed segments only", map[string]interface{}{
+			errMsg := fmt.Sprintf("%d document segments are still indexing after %d retries", indexingSegments, maxRetry)
+			logger.ErrorContext(ctx, errMsg, map[string]interface{}{
 				"document_id":        graphFlowTask.DocumentID.String(),
 				"indexing_segments":  indexingSegments,
 				"completed_segments": len(completedSegments),
 			})
+			if err := svc.TaskRepo.UpdateTaskFailed(ctx, taskID, errMsg); err != nil {
+				logger.ErrorContext(ctx, "failed to update task failed status", err)
+			}
+			return fmt.Errorf("%s: %w", errMsg, asynq.SkipRetry)
 		}
 
 		// If all segments have errors, mark task as failed
@@ -227,7 +287,7 @@ func NewExtractionHandler(svc *graphflow.Service, taskManager *queue.TaskManager
 		segments = completedSegments
 
 		// 4. Process all completed segments with in-task concurrency
-		return handleConcurrentExtraction(ctx, svc, taskManager, graphFlowTask, segments, taskID)
+		return handleConcurrentExtraction(ctx, svc, taskManager, graphFlowTask, segments, taskID, sourceRefID, batchRun)
 	}
 }
 
@@ -239,10 +299,17 @@ func handleConcurrentExtraction(
 	graphFlowTask *model.GraphFlowTask,
 	segments []*dataset_model.DocumentSegment,
 	taskID uuid.UUID,
+	sourceRefID *uuid.UUID,
+	batchRun bool,
 ) error {
 
 	totalSegments := len(segments)
 	organizationID := resolveExtractionOrganizationID(ctx, svc.DatasetRepo, graphFlowTask)
+	organizationUUID, err := uuid.Parse(organizationID)
+	if err != nil {
+		organizationUUID = graphFlowTask.TenantID
+	}
+	documentID := graphFlowTask.DocumentID
 
 	// FETCH DATASET: Get custom model settings if available
 	dataset, err := svc.DatasetRepo.GetByID(ctx, graphFlowTask.KBID.String())
@@ -377,8 +444,6 @@ func handleConcurrentExtraction(
 
 			normalizeExtractionResult(result, documentTitle)
 
-			logger.Info(fmt.Sprintf("[DEBUG EXTRACTION] Segment %s extracted %d entities, %d relationships", seg.ID, len(result.Entities), len(result.Relationships)), nil)
-
 			if updateErr := svc.DocumentRepo.UpdateSegmentGraphIndexingStatus(ctx, seg.ID, "extracted"); updateErr != nil {
 				logger.ErrorContext(segmentCtx, "failed to update segment graph indexing status to extracted", updateErr)
 			}
@@ -387,13 +452,18 @@ func handleConcurrentExtraction(
 			mu.Lock()
 			for _, entity := range result.Entities {
 				mention := &model.EntityMention{
-					KBID:       graphFlowTask.KBID,
-					TenantID:   graphFlowTask.TenantID,
-					SegmentID:  segmentID,
-					RawName:    entity.Name,
-					RawType:    entity.Type,
-					Confidence: 1.0,
-					Status:     "pending",
+					KBID:                graphFlowTask.KBID,
+					TenantID:            graphFlowTask.TenantID,
+					SegmentID:           segmentID,
+					OrganizationID:      organizationUUID,
+					SourceRefID:         sourceRefID,
+					DocumentID:          &documentID,
+					RunID:               graphFlowTask.RunID,
+					EvidenceFingerprint: extractionEvidenceFingerprint("entity", graphFlowTask.KBID, documentID, segmentID, entity.Name, entity.Type),
+					RawName:             entity.Name,
+					RawType:             entity.Type,
+					Confidence:          1.0,
+					Status:              "pending",
 				}
 				allEntityMentions = append(allEntityMentions, mention)
 
@@ -403,13 +473,18 @@ func handleConcurrentExtraction(
 			}
 			for _, rel := range result.Relationships {
 				triple := &model.TripleMention{
-					KBID:         graphFlowTask.KBID,
-					TenantID:     graphFlowTask.TenantID,
-					SegmentID:    segmentID,
-					RawSubject:   rel.Source,
-					RawPredicate: rel.Type,
-					RawObject:    rel.Target,
-					Status:       "pending",
+					KBID:                graphFlowTask.KBID,
+					TenantID:            graphFlowTask.TenantID,
+					SegmentID:           segmentID,
+					OrganizationID:      organizationUUID,
+					SourceRefID:         sourceRefID,
+					DocumentID:          &documentID,
+					RunID:               graphFlowTask.RunID,
+					EvidenceFingerprint: extractionEvidenceFingerprint("relationship", graphFlowTask.KBID, documentID, segmentID, rel.Source, rel.Type, rel.Target),
+					RawSubject:          rel.Source,
+					RawPredicate:        rel.Type,
+					RawObject:           rel.Target,
+					Status:              "pending",
 				}
 				allTripleMentions = append(allTripleMentions, triple)
 			}
@@ -505,6 +580,23 @@ func handleConcurrentExtraction(
 		}
 	}
 
+	if batchRun {
+		if err := svc.TaskRepo.UpdateTaskCompleted(ctx, taskID); err != nil {
+			logger.ErrorContext(ctx, "failed to update task status to completed", err)
+			return err
+		}
+		if err := advanceBatchPipelineAfterItemTask(ctx, svc, taskManager, graphFlowTask); err != nil {
+			logger.CriticalContext(ctx, "failed to advance batched graph run", err)
+			return fmt.Errorf("failed to advance batched graph run: %w", err)
+		}
+		logger.Info("GraphFlow batch extraction completed", map[string]interface{}{
+			"task_id":         taskID.String(),
+			"entity_mentions": len(allEntityMentions),
+			"triple_mentions": len(allTripleMentions),
+		})
+		return nil
+	}
+
 	// Enqueue alignment task first (Reliability Fix)
 	if err := enqueueNextAlignmentTask(ctx, svc, taskManager, graphFlowTask); err != nil {
 		logger.CriticalContext(ctx, "failed to enqueue alignment task", err)
@@ -545,6 +637,16 @@ func validateExtractionOutcome(totalSegments, failedSegments, entityMentions, tr
 	}
 
 	return nil
+}
+
+func extractionEvidenceFingerprint(kind string, values ...interface{}) string {
+	parts := make([]string, 0, len(values)+1)
+	parts = append(parts, kind)
+	for _, value := range values {
+		parts = append(parts, fmt.Sprint(value))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return fmt.Sprintf("%x", sum)
 }
 
 func normalizeExtractionResult(result *extractor.ExtractionResult, documentTitle string) {
@@ -622,6 +724,7 @@ func enqueueNextAlignmentTask(ctx context.Context, svc *graphflow.Service, taskM
 		TenantID:           currentTask.TenantID,
 		KBID:               currentTask.KBID,
 		DocumentID:         currentTask.DocumentID,
+		RunID:              currentTask.RunID,
 		TaskType:           "alignment",
 		ExtractionStrategy: currentTask.ExtractionStrategy,
 		Status:             "pending",
@@ -641,8 +744,7 @@ func enqueueNextAlignmentTask(ctx context.Context, svc *graphflow.Service, taskM
 		return fmt.Errorf("failed to create alignment task: %w", err)
 	}
 
-	_, err = taskManager.EnqueueTask(task, asynq.Queue("graphflow"))
-	if err != nil {
+	if err = enqueueOrReactivateGraphFlowTask(taskManager, task, newTaskID.String()); err != nil {
 		svc.TaskRepo.UpdateTaskFailed(ctx, newTaskID, fmt.Sprintf("failed to enqueue: %v", err))
 		return fmt.Errorf("failed to enqueue alignment task: %w", err)
 	}

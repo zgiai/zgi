@@ -5,6 +5,36 @@ interface ValidationCtx {
   nodes?: WorkflowNode[];
 }
 
+export type KnowledgeRetrievalSearchMethod =
+  | 'semantic_search'
+  | 'graph_search'
+  | 'hybrid_search'
+  | 'full_text_search'
+  | 'keyword_search';
+
+export const LEGACY_KNOWLEDGE_DATASET_PLACEHOLDER = 'configure-dataset';
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const normalizeKnowledgeDatasetIds = (ids: unknown): string[] => {
+  if (!Array.isArray(ids)) return [];
+
+  return Array.from(
+    new Set(
+      ids
+        .filter((id): id is string => typeof id === 'string')
+        .map(id => id.trim())
+        .filter(id => id.length > 0 && id !== LEGACY_KNOWLEDGE_DATASET_PLACEHOLDER)
+    )
+  );
+};
+
+export const isValidKnowledgeDatasetId = (id: string): boolean => UUID_PATTERN.test(id);
+
+export const getValidKnowledgeDatasetIds = (ids: unknown): string[] =>
+  normalizeKnowledgeDatasetIds(ids).filter(isValidKnowledgeDatasetId);
+
 export interface KnowledgeRetrievalNodeData {
   type: 'knowledge-retrieval';
   title: string;
@@ -14,6 +44,8 @@ export interface KnowledgeRetrievalNodeData {
   retrieval_mode: 'single' | 'multiple';
   multiple_retrieval_config: {
     top_k: number;
+    search_method: KnowledgeRetrievalSearchMethod;
+    fallback_policy: 'none' | 'vector';
     reranking_enable: boolean;
     score_threshold?: number;
     reranking_mode?: 'weighted_score' | 'reranking_model';
@@ -40,6 +72,8 @@ export const DEFAULT_KNOWLEDGE_RETRIEVAL_NODE: KnowledgeRetrievalNodeData = {
   retrieval_mode: 'multiple',
   multiple_retrieval_config: {
     top_k: 4,
+    search_method: 'semantic_search',
+    fallback_policy: 'none',
     reranking_enable: false,
   },
   isInLoop: false,
@@ -52,9 +86,13 @@ export const checkValid = (
 ): ValidationResult => {
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
+  const datasetIds = normalizeKnowledgeDatasetIds(nodeData.dataset_ids);
+  const validDatasetIds = datasetIds.filter(isValidKnowledgeDatasetId);
 
-  if (!Array.isArray(nodeData.dataset_ids) || nodeData.dataset_ids.length === 0) {
+  if (validDatasetIds.length === 0) {
     errors.push({ code: 'knowledgeRetrieval.validation.mustSelectDataset' });
+  } else if (validDatasetIds.length !== datasetIds.length) {
+    errors.push({ code: 'knowledgeRetrieval.validation.invalidDatasetSelection' });
   }
 
   if (
@@ -71,7 +109,7 @@ export const checkValid = (
   ) {
     const [sourceId] = nodeData.query_variable_selector;
     const allowed = new Set<string>(['sys', 'conversation', 'environment']);
-    const hasNode = Array.isArray(ctx?.nodes) ? ctx!.nodes!.some(n => n.id === sourceId) : true;
+    const hasNode = Array.isArray(ctx?.nodes) ? ctx.nodes.some(n => n.id === sourceId) : true;
     if (!allowed.has(sourceId) && !hasNode) {
       warnings.push({ code: 'validation.invalidUpstream' });
     }

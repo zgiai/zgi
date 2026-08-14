@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -98,4 +99,59 @@ func TestResolveExtractionOrganizationIDFallsBackToTaskTenant(t *testing.T) {
 	if orgID != task.TenantID.String() {
 		t.Fatalf("organizationID = %q, want fallback %q", orgID, task.TenantID.String())
 	}
+}
+
+func TestValidateExtractionRunSnapshot(t *testing.T) {
+	runID := uuid.New()
+	task := &model.GraphFlowTask{RunID: &runID, KBID: uuid.New()}
+	run := &model.GraphFlowRun{
+		ID:                   runID,
+		DatasetID:            task.KBID,
+		Status:               model.GraphFlowRunStatusProcessing,
+		EmbeddingProvider:    "provider-a",
+		EmbeddingModel:       "embedding-v1",
+		EmbeddingDimension:   1024,
+		EmbeddingFingerprint: "provider-a/embedding-v1/1024",
+	}
+	dataset := &dataset_model.Dataset{
+		ID:                     task.KBID.String(),
+		EmbeddingModelProvider: stringPointer("provider-a"),
+		EmbeddingModel:         stringPointer("embedding-v1"),
+	}
+
+	if err := validateExtractionRunSnapshot(task, run, dataset, 1024); err != nil {
+		t.Fatalf("valid snapshot failed: %v", err)
+	}
+	if err := validateExtractionRunSnapshot(task, run, dataset, 768); !errors.Is(err, errEmbeddingDimensionMismatch) {
+		t.Fatalf("dimension error=%v", err)
+	}
+	run.Status = model.GraphFlowRunStatusSuperseded
+	if err := validateExtractionRunSnapshot(task, run, dataset, 1024); !errors.Is(err, errStaleGraphFlowRun) {
+		t.Fatalf("stale run error=%v", err)
+	}
+}
+
+func TestExtractionEvidenceFingerprintIsStableAndDocumentScoped(t *testing.T) {
+	datasetID := uuid.New()
+	firstDocumentID := uuid.New()
+	secondDocumentID := uuid.New()
+	segmentID := uuid.New()
+
+	first := extractionEvidenceFingerprint("entity", datasetID, firstDocumentID, segmentID, "Alice", "Person")
+	repeated := extractionEvidenceFingerprint("entity", datasetID, firstDocumentID, segmentID, "Alice", "Person")
+	second := extractionEvidenceFingerprint("entity", datasetID, secondDocumentID, segmentID, "Alice", "Person")
+
+	if first != repeated {
+		t.Fatalf("fingerprint is not stable: %q != %q", first, repeated)
+	}
+	if first == second {
+		t.Fatal("fingerprint must change across document snapshots")
+	}
+	if len(first) != 64 {
+		t.Fatalf("fingerprint length = %d, want 64", len(first))
+	}
+}
+
+func stringPointer(value string) *string {
+	return &value
 }

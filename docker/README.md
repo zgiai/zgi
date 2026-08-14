@@ -9,6 +9,7 @@ The default `docker-compose.yaml` starts the full local stack so first-time user
 - PostgreSQL
 - Redis
 - Weaviate
+- Neo4j
 - Sandbox
 - Runner
 - API
@@ -18,7 +19,7 @@ The helper also supports a lightweight core mode for contributors who only need 
 
 - `./dev/start-docker --core` starts only nginx, API, web, PostgreSQL, and Redis.
 - `./dev/start-docker --runtime` starts the core stack plus Sandbox and Runner.
-- `./dev/start-docker --knowledge` starts the core stack plus Weaviate.
+- `./dev/start-docker --knowledge` starts the core stack plus Weaviate and Neo4j.
 - `./dev/start-docker --full` starts the same full stack as the default.
 
 When started from `docker/`, `sandbox` reuses the shared root Postgres and Redis services:
@@ -46,7 +47,7 @@ To start only the core stack plus runtime services for code execution and plugin
 ./dev/start-docker --runtime
 ```
 
-To start only the core stack plus knowledge services for vector retrieval:
+To start only the core stack plus knowledge services:
 
 ```bash
 ./dev/start-docker --knowledge
@@ -71,6 +72,20 @@ dev\start-docker.cmd
 ```
 
 Those wrappers copy missing env templates, regenerate `docker-compose.yaml`, and then start the stack with `docker compose`.
+
+Before starting a mode that includes the `knowledge` profile, set the same Neo4j username and password in `docker/.env` and `api/.env.docker`:
+
+```dotenv
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=replace-with-your-password
+```
+
+Check the optional knowledge services with:
+
+```bash
+docker compose --env-file docker/.env ps neo4j api
+curl --fail http://localhost:2679/ping
+```
 
 If Docker builds run from China mainland networks, prefer:
 

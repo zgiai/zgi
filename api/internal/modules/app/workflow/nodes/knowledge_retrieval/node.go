@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +28,10 @@ import (
 	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 )
 
-const legacyRateLimitPlan = "default"
+const (
+	legacyRateLimitPlan                 = "default"
+	legacyKnowledgeDatasetIDPlaceholder = "configure-dataset"
+)
 
 func New(
 	id string,
@@ -124,8 +128,30 @@ func parseKnowledgeRetrievalNodeDataFromConfig(config map[string]any) (NodeData,
 	if err := json.Unmarshal(jsonBytes, &nodeData); err != nil {
 		return NodeData{}, "", err
 	}
+	nodeData.DatasetIds = normalizeKnowledgeDatasetIDs(nodeData.DatasetIds)
+	if nodeData.MultipleRetrievalConfig != nil && nodeData.MultipleRetrievalConfig.SearchMethod == "" {
+		nodeData.MultipleRetrievalConfig.SearchMethod = string(dservice.SemanticSearch)
+		nodeData.MultipleRetrievalConfig.FallbackPolicy = dservice.FallbackPolicyNone
+	}
 
 	return nodeData, nodeIDStr, nil
+}
+
+func normalizeKnowledgeDatasetIDs(datasetIDs []string) []string {
+	normalized := make([]string, 0, len(datasetIDs))
+	seen := make(map[string]struct{}, len(datasetIDs))
+	for _, datasetID := range datasetIDs {
+		datasetID = strings.TrimSpace(datasetID)
+		if datasetID == "" || datasetID == legacyKnowledgeDatasetIDPlaceholder {
+			continue
+		}
+		if _, exists := seen[datasetID]; exists {
+			continue
+		}
+		seen[datasetID] = struct{}{}
+		normalized = append(normalized, datasetID)
+	}
+	return normalized
 }
 
 // Run executes the knowledge retrieval node
@@ -333,6 +359,8 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 			MetadataDocIDs:     docIdsGroupByDataSetId,
 			MetadataCond:       cond,
 			DatasetIDs:         availableSetsIds,
+			SearchMethod:       n.NodeData.SingleRetrievalConfig.SearchMethod,
+			FallbackPolicy:     n.NodeData.SingleRetrievalConfig.FallbackPolicy,
 		}
 
 		docs, err = datasetRetrieval.SingleRetrieve(ctx, srp)
@@ -389,6 +417,8 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 			RerankingEnable:    n.NodeData.MultipleRetrievalConfig.RerankingEnable,
 			MetadataDocIDs:     docIdsGroupByDataSetId,
 			MetadataCond:       cond,
+			SearchMethod:       n.NodeData.MultipleRetrievalConfig.SearchMethod,
+			FallbackPolicy:     n.NodeData.MultipleRetrievalConfig.FallbackPolicy,
 		}
 
 		if n.NodeData.MultipleRetrievalConfig.ScoreThreshold != nil {
@@ -487,9 +517,14 @@ func (n *Node) checkAndUpdateKnowledgeRateLimit(ctx context.Context) (bool, erro
 // Definition: datasets that (a) belong to current tenant and in provided IDs, and
 // (b) have at least one available document (completed, enabled, not archived) OR provider = 'external'.
 func (n *Node) fetchAvailableDatasets() ([]*datasetmodel.Dataset, error) {
-	datasetIDs := n.NodeData.DatasetIds
+	datasetIDs := normalizeKnowledgeDatasetIDs(n.NodeData.DatasetIds)
 	if len(datasetIDs) == 0 {
 		return []*datasetmodel.Dataset{}, nil
+	}
+	for _, datasetID := range datasetIDs {
+		if _, err := uuid.Parse(datasetID); err != nil {
+			return nil, fmt.Errorf("knowledge retrieval node has an invalid knowledge base ID %q; select the knowledge base again", datasetID)
+		}
 	}
 
 	db := n.db

@@ -144,8 +144,6 @@ var ForeignKeysSchema = File{
 		`ALTER TABLE ONLY public.kb_entities
     ADD CONSTRAINT fk_entities_kb FOREIGN KEY (kb_id) REFERENCES public.datasets(id) ON DELETE CASCADE;`,
 		`ALTER TABLE ONLY public.graphflow_tasks
-    ADD CONSTRAINT fk_graphflow_tasks_document FOREIGN KEY (document_id) REFERENCES public.documents(id) ON DELETE CASCADE;`,
-		`ALTER TABLE ONLY public.graphflow_tasks
     ADD CONSTRAINT fk_graphflow_tasks_kb FOREIGN KEY (kb_id) REFERENCES public.datasets(id) ON DELETE CASCADE;`,
 		`ALTER TABLE ONLY public.llm_custom_models
     ADD CONSTRAINT fk_llm_custom_models_organization FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE CASCADE;`,

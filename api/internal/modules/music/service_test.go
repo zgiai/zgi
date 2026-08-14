@@ -11,6 +11,7 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 )
 
 func TestServiceGetRequiresCompleteScope(t *testing.T) {
@@ -57,6 +58,26 @@ func TestServiceCreateQueuesValidatedMusicTask(t *testing.T) {
 	}
 	if got := repo.tasks[task.ID].OrganizationID; got != scope.OrganizationID {
 		t.Fatalf("organization id = %s, want %s", got, scope.OrganizationID)
+	}
+}
+
+func TestServiceCreatesPersonalMusicTaskWithoutWorkspace(t *testing.T) {
+	repo := newMemoryRepository()
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
+	scope := testScope()
+	scope.WorkspaceID = nil
+
+	task, err := service.Create(t.Context(), scope, CreateRequest{
+		RequestID: uuid.New(),
+		Model:     "music-3.0",
+		Mode:      adapter.MusicModeInstrumental,
+		Prompt:    "personal warm piano",
+	})
+	if err != nil {
+		t.Fatalf("Create() without workspace error = %v", err)
+	}
+	if task.WorkspaceID != nil {
+		t.Fatalf("created personal task workspace = %s, want nil", task.WorkspaceID.String())
 	}
 }
 
@@ -287,6 +308,180 @@ func TestNewServiceRejectsMissingAssetStore(t *testing.T) {
 	NewService(newMemoryRepository(), &dispatcherStub{}, availableMusicModelStub(), nil)
 }
 
+func TestServiceDeleteRemovesSucceededTaskAssetBeforeRecord(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusSucceeded
+	fileID := uuid.New()
+	task.FileID = &fileID
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	if err := service.Delete(t.Context(), scope, task.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if assets.deletedStoredObjectID != fileID.String() {
+		t.Fatalf("deleted stored object = %q, want %q", assets.deletedStoredObjectID, fileID.String())
+	}
+	if assets.deletedObjectScope != scope {
+		t.Fatalf("deleted object scope = %#v, want %#v", assets.deletedObjectScope, scope)
+	}
+	if _, err := repo.Get(t.Context(), task.ID); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted task lookup error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestServiceDeleteCompletesMetadataCleanupAfterRequestCancellation(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusSucceeded
+	fileID := uuid.New()
+	task.FileID = &fileID
+	repo := newMemoryRepository(task)
+	requestCtx, cancelRequest := context.WithCancel(t.Context())
+	assets := &cancelAfterStoredObjectDelete{
+		AssetStore: &assetStoreStub{},
+		cancel:     cancelRequest,
+	}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	if err := service.Delete(requestCtx, scope, task.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if _, err := repo.Get(t.Context(), task.ID); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted task lookup error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestServiceDeleteRemovesOwnedTaskFromPersonalScope(t *testing.T) {
+	workspaceScope := testScope()
+	personalScope := workspaceScope
+	personalScope.WorkspaceID = nil
+	task := queuedTask()
+	task.OrganizationID = personalScope.OrganizationID
+	task.WorkspaceID = workspaceScope.WorkspaceID
+	task.AccountID = personalScope.AccountID
+	task.Status = StatusSucceeded
+	fileID := uuid.New()
+	task.FileID = &fileID
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	if err := service.Delete(t.Context(), personalScope, task.ID); err != nil {
+		t.Fatalf("Delete() personal error = %v", err)
+	}
+	if assets.deletedStoredObjectID != fileID.String() || assets.deletedObjectScope != personalScope {
+		t.Fatalf("deleted personal asset = %q, scope %#v", assets.deletedStoredObjectID, assets.deletedObjectScope)
+	}
+}
+
+func TestServiceDeleteKeepsTaskWhenStoredObjectDeletionFails(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusSucceeded
+	fileID := uuid.New()
+	task.FileID = &fileID
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{deleteStoredObjectErr: errors.New("object storage unavailable")}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	if err := service.Delete(t.Context(), scope, task.ID); err == nil {
+		t.Fatal("Delete() error = nil, want storage deletion error")
+	}
+	if _, err := repo.Get(t.Context(), task.ID); err != nil {
+		t.Fatalf("task must remain after storage deletion failure: %v", err)
+	}
+}
+
+func TestServiceDeleteRejectsActiveTask(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	err := service.Delete(t.Context(), scope, task.ID)
+	if !errors.Is(err, ErrTaskNotDeletable) {
+		t.Fatalf("Delete() error = %v, want ErrTaskNotDeletable", err)
+	}
+	if !apperror.IsCode(err, AppCodeTaskNotDeletable) {
+		t.Fatalf("Delete() error = %v, want code %s", err, AppCodeTaskNotDeletable)
+	}
+	if assets.deletedStoredObjectID != "" {
+		t.Fatalf("active task storage deletion = %q, want no deletion", assets.deletedStoredObjectID)
+	}
+}
+
+func TestServiceDeleteRemovesFailedTaskWithoutStoredObject(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusFailed
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{}
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), assets)
+
+	if err := service.Delete(t.Context(), scope, task.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if assets.deletedStoredObjectID != "" {
+		t.Fatalf("failed task storage deletion = %q, want no deletion", assets.deletedStoredObjectID)
+	}
+	if _, err := repo.Get(t.Context(), task.ID); !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted failed task lookup error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestServiceDeleteDoesNotExposeTaskOutsideScope(t *testing.T) {
+	scope := testScope()
+	task := queuedTask()
+	task.OrganizationID = scope.OrganizationID
+	task.WorkspaceID = scope.WorkspaceID
+	task.AccountID = scope.AccountID
+	task.Status = StatusFailed
+	repo := newMemoryRepository(task)
+	service := NewService(repo, &dispatcherStub{}, availableMusicModelStub(), &assetStoreStub{})
+	otherScope := scope
+	otherScope.AccountID = uuid.New()
+
+	err := service.Delete(t.Context(), otherScope, task.ID)
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("Delete() error = %v, want ErrTaskNotFound", err)
+	}
+	if _, err := repo.Get(t.Context(), task.ID); err != nil {
+		t.Fatalf("out-of-scope task must remain: %v", err)
+	}
+}
+
+type cancelAfterStoredObjectDelete struct {
+	AssetStore
+	cancel context.CancelFunc
+}
+
+func (s *cancelAfterStoredObjectDelete) DeleteStoredObject(ctx context.Context, fileID string, scope Scope) error {
+	if err := s.AssetStore.DeleteStoredObject(ctx, fileID, scope); err != nil {
+		return err
+	}
+	s.cancel()
+	return nil
+}
+
 type availableModelsStub struct {
 	models []*llmmodelsvc.AvailableModel
 	err    error
@@ -306,5 +501,6 @@ func availableMusicModelStub() *availableModelsStub {
 }
 
 func testScope() Scope {
-	return Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), AccountID: uuid.New()}
+	workspaceID := uuid.New()
+	return Scope{OrganizationID: uuid.New(), WorkspaceID: &workspaceID, AccountID: uuid.New()}
 }

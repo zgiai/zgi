@@ -298,14 +298,20 @@ func (h *KnowledgeBaseFileRefHandler) CreateFileRefs(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
+	var enqueueErr error
 	for _, item := range result.Items {
 		if !item.Success || item.Ref == nil || item.SyncRunID == nil {
 			continue
 		}
 		if err := h.enqueueDatasetRefSync(c.Request.Context(), organizationID, optionalString(util.GetWorkspaceID(c)), item.Ref.ID, item.AssetID, item.Ref.DatasetID, item.GenerationNo, *item.SyncRunID); err != nil {
-			response.FailWithMessage(c, response.ErrSystemError, err.Error())
-			return
+			if enqueueErr == nil {
+				enqueueErr = err
+			}
 		}
+	}
+	if enqueueErr != nil {
+		response.FailWithMessage(c, response.ErrSystemError, enqueueErr.Error())
+		return
 	}
 	response.Success(c, result)
 }

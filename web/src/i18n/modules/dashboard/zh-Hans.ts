@@ -254,6 +254,7 @@ const messages: DashboardMessages = {
       agent: '智能体',
       aichat: '通用对话',
       'image-runtime': '绘图',
+      'video-runtime': '视频生成',
       data_library_file: '文档向量生成与问答',
       prompt_optimizer: '提示词优化',
       prompt_playground: '提示词调试台',
@@ -300,9 +301,9 @@ const messages: DashboardMessages = {
       loadMore: '加载更多',
       loadingMore: '加载中...',
       retried: '{count} 次尝试',
-      unknownHint: '其中 {count} 条为升级前的历史调用，暂无可靠来源分类。',
+      unknownHint: '其中 {count} 条调用暂未识别来源。',
       historicalExplanation:
-        '“历史数据”是日志来源分类上线前已产生的调用。它仍保留模型、Token、费用和耗时，但当时没有记录 API 或产品内来源，因此无法准确补齐。',
+        '该调用缺少可靠的来源归属，可能是升级前记录，或调用链未完整传递来源信息。模型、Token、费用和耗时仍可查看。',
       contentSettings: {
         title: '输入输出内容审计',
         compactLabel: '内容审计',
@@ -347,7 +348,7 @@ const messages: DashboardMessages = {
         source: '调用来源',
         sourceApi: '通过组织 API Key 调用 Gateway',
         sourceProduct: '由 ZGI 产品内的智能体、工作流、对话或知识库调用 Gateway',
-        sourceUnknown: '升级前的历史调用，旧记录没有来源字段',
+        sourceUnknown: '当前调用缺少可靠的 API／产品内来源归属',
         business: '业务归属',
         appId: '应用 ID',
         model: '模型',
@@ -386,7 +387,7 @@ const messages: DashboardMessages = {
         all: '全部调用',
         api: 'API 调用',
         product: '产品内调用',
-        unknown: '历史数据',
+        unknown: '来源未识别',
       },
       metrics: {
         calls: '业务调用量',

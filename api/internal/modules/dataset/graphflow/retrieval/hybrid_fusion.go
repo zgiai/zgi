@@ -130,8 +130,8 @@ func HybridFusionWithConfig(vectorResults []EntityMatch, graphContext *GraphCont
 		// Add graph score if entity is in graph context
 		if graphScore, ok := graphEntityScores[vm.Name]; ok {
 			result.GraphScore = graphScore
-			// Boost connected entities
-			result.VectorScore += cfg.BoostConnected
+			// Apply a bounded connectivity boost so scores retain resolution near 1.
+			result.VectorScore += (1 - result.VectorScore) * cfg.BoostConnected
 		}
 
 		// Add related facts
@@ -356,9 +356,10 @@ func computeFinalScore(vectorScore, graphScore, alpha float64) float64 {
 		return vectorScore * singleSourceDiscount
 	}
 
-	// If both sources concur, apply the weighted fusion AND reward
+	// If both sources concur, apply a bounded reward that preserves ordering and
+	// cannot push a normalized score above 1.
 	baseScore := alpha*vectorScore + (1-alpha)*graphScore
-	return baseScore + crossValidationBonus
+	return baseScore + (1-baseScore)*crossValidationBonus
 }
 
 // RetrievalResult is the final output of hybrid retrieval

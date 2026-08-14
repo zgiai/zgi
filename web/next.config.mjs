@@ -52,6 +52,8 @@ function readBooleanEnv(name) {
 
 const basePath = normalizeBasePath(rawBasePath);
 const staticAppName = (process.env.NEXT_PUBLIC_APP_NAME ?? 'ZGI').trim() || 'ZGI';
+const staticAppDescription = (process.env.NEXT_PUBLIC_APP_DESCRIPTION ?? '').trim();
+const staticAppKeywords = (process.env.NEXT_PUBLIC_APP_KEYWORDS ?? '').trim();
 const staticBrandName = (process.env.NEXT_PUBLIC_BRAND_NAME ?? staticAppName).trim() || staticAppName;
 const defaultBuildCpus = 2;
 const defaultStaticGenerationMaxConcurrency = 2;
@@ -70,6 +72,8 @@ const nextConfig = {
   output: 'standalone',
   env: {
     APP_NAME_STATIC: staticAppName,
+    APP_DESCRIPTION_STATIC: staticAppDescription,
+    APP_KEYWORDS_STATIC: staticAppKeywords,
     APP_BRAND_STATIC: staticBrandName,
   },
 
@@ -82,6 +86,7 @@ const nextConfig = {
     cpus: buildCpus,
     memoryBasedWorkersCount: false,
     staticGenerationMaxConcurrency,
+    turbopackFileSystemCacheForDev: false,
     turbopackMemoryLimit: turbopackMemoryLimitMb * 1024 * 1024,
     webpackMemoryOptimizations,
   },

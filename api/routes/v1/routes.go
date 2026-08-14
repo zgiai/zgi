@@ -10,12 +10,13 @@ import (
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 // RegisterRoutes registers all v1 version routes
-func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory) {
+func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory, applicationErrorCatalog *appcatalog.Catalog) {
 	// Health & setup routes first
 	RegisterHealthRoutes(v1)
 	RegisterSetupRoutes(v1, SetupRouteDeps{
@@ -118,6 +119,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DefaultModelService:        serviceContainer.GetDefaultModelService(),
 		TaskManager:                serviceContainer.GetTaskManager(),
 		GraphFlowService:           serviceContainer.GetGraphFlowService(),
+		GraphLifecycleService:      serviceContainer.GetGraphLifecycleService(),
+		GraphRuntimeHealthService:  serviceContainer.GetGraphRuntimeHealthService(),
 		TaskHandlerRegistry:        serviceContainer.GetTaskHandlerRegistry(),
 		ResourcePermissionService:  serviceContainer.GetResourcePermissionService(),
 		AuthorizationService:       serviceContainer.GetAuthorizationService(),
@@ -274,15 +277,16 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			AccountService:  accountService,
 		})
 		RegisterMusicRoutes(v1, MusicRouteDeps{
-			DB:              db,
-			AvailableModels: llmModule.LLMModelModule.AvailableModelsSvc,
-			Generator:       serviceContainer.GetMusicGenerator(),
-			LyricsGenerator: serviceContainer.GetMusicLyricsGenerator(),
-			Compensator:     serviceContainer.GetMusicDeliveryCompensator(),
-			AccountService:  accountService,
-			TaskManager:     serviceContainer.GetTaskManager(),
-			TaskRegistry:    serviceContainer.GetTaskHandlerRegistry(),
-			Scheduler:       serviceContainer.GetScheduler(),
+			DB:                      db,
+			AvailableModels:         llmModule.LLMModelModule.AvailableModelsSvc,
+			Generator:               serviceContainer.GetMusicGenerator(),
+			LyricsGenerator:         serviceContainer.GetMusicLyricsGenerator(),
+			Compensator:             serviceContainer.GetMusicDeliveryCompensator(),
+			AccountService:          accountService,
+			TaskManager:             serviceContainer.GetTaskManager(),
+			TaskRegistry:            serviceContainer.GetTaskHandlerRegistry(),
+			Scheduler:               serviceContainer.GetScheduler(),
+			ApplicationErrorCatalog: applicationErrorCatalog,
 		})
 	}
 

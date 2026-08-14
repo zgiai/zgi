@@ -99,12 +99,15 @@ func (s *EntitySync) syncEntity(ctx context.Context, entity *model.Entity) (stri
 
 	// Build properties
 	properties := map[string]interface{}{
-		"id":             entity.ID.String(),
-		"name":           entity.Name,
-		"canonical_name": entity.CanonicalName,
-		"kb_id":          entity.KBID.String(),
-		"tenant_id":      entity.TenantID.String(),
-		"source_count":   entity.SourceCount,
+		"id":                  entity.ID.String(),
+		"name":                entity.Name,
+		"canonical_name":      entity.CanonicalName,
+		"kb_id":               entity.KBID.String(),
+		"tenant_id":           entity.TenantID.String(),
+		"source_count":        entity.SourceCount,
+		"active_source_count": entity.ActiveSourceCount,
+		"content_revision":    entity.ContentRevision,
+		"visibility_revision": entity.VisibilityRevision,
 	}
 
 	if entity.Description != "" {

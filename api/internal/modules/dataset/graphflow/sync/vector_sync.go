@@ -21,11 +21,14 @@ type VectorSyncResult struct {
 
 // VectorSync handles synchronization of entity embeddings to vector store
 type VectorSync struct {
-	entityRepo     *repository.EntityRepository
-	llmClient      client.LLMClient
-	vectorDB       vectordb.VectorDB
-	embeddingModel string
-	batchSize      int
+	entityRepo           *repository.EntityRepository
+	llmClient            client.LLMClient
+	vectorDB             vectordb.VectorDB
+	embeddingModel       string
+	embeddingProvider    string
+	embeddingDimension   int
+	embeddingFingerprint string
+	batchSize            int
 }
 
 // NewVectorSync creates a new VectorSync instance
@@ -35,11 +38,10 @@ func NewVectorSync(
 	vectorDB vectordb.VectorDB,
 ) *VectorSync {
 	return &VectorSync{
-		entityRepo:     entityRepo,
-		llmClient:      llmClient,
-		vectorDB:       vectorDB,
-		embeddingModel: "text-embedding-3-large",
-		batchSize:      10,
+		entityRepo: entityRepo,
+		llmClient:  llmClient,
+		vectorDB:   vectorDB,
+		batchSize:  10,
 	}
 }
 
@@ -53,6 +55,9 @@ func (s *VectorSync) SyncPendingVectors(ctx context.Context, tenantID string, kb
 	if s.llmClient == nil {
 		logger.Warn("LLM client not configured, skipping vector sync", nil)
 		return result, nil
+	}
+	if s.embeddingModel == "" || s.embeddingProvider == "" || s.embeddingDimension <= 0 {
+		return nil, fmt.Errorf("knowledge base embedding identity is required")
 	}
 
 	// Get pending entities
@@ -114,16 +119,26 @@ func (s *VectorSync) SyncPendingVectors(ctx context.Context, tenantID string, kb
 			}
 
 			embedding := embeddingResp.Data[j]
+			if len(embedding.Embedding) != s.embeddingDimension {
+				s.entityRepo.UpdateVectorState(ctx, entity.ID, "failed", "", "embedding dimension mismatch")
+				result.EntitiesFailed++
+				result.FailedIDs = append(result.FailedIDs, entity.ID.String())
+				continue
+			}
 
 			// Store in vector DB if available
 			if s.vectorDB != nil {
 				className := fmt.Sprintf("Entity_%s", kbID.String())
 				properties := map[string]interface{}{
-					"id":             entity.ID.String(),
-					"name":           entity.Name,
-					"canonical_name": entity.CanonicalName,
-					"type":           entity.Type,
-					"kb_id":          kbID.String(),
+					"id":                  entity.ID.String(),
+					"name":                entity.Name,
+					"canonical_name":      entity.CanonicalName,
+					"type":                entity.Type,
+					"kb_id":               kbID.String(),
+					"source_count":        entity.SourceCount,
+					"active_source_count": entity.ActiveSourceCount,
+					"content_revision":    entity.ContentRevision,
+					"visibility_revision": entity.VisibilityRevision,
 				}
 
 				// Convert embedding to float64
@@ -146,6 +161,19 @@ func (s *VectorSync) SyncPendingVectors(ctx context.Context, tenantID string, kb
 			embeddingID := fmt.Sprintf("entity_%s", entity.ID.String())
 			if err := s.entityRepo.UpdateVectorState(ctx, entity.ID, "synced", embeddingID, ""); err != nil {
 				logger.Error("Failed to update entity vector state", err)
+				result.EntitiesFailed++
+				continue
+			}
+			if err := s.entityRepo.UpdateEmbeddingIdentityBatch(
+				ctx,
+				[]uuid.UUID{entity.ID},
+				s.embeddingProvider,
+				s.embeddingModel,
+				s.embeddingDimension,
+				s.embeddingFingerprint,
+				entity.ContentRevision,
+			); err != nil {
+				logger.Error("Failed to update entity embedding identity", err)
 				result.EntitiesFailed++
 				continue
 			}
@@ -175,4 +203,14 @@ func (s *VectorSync) SetEmbeddingModel(model string) {
 	if model != "" {
 		s.embeddingModel = model
 	}
+}
+
+func (s *VectorSync) SetEmbeddingIdentity(provider, modelName string, dimension int, fingerprint string) {
+	if provider == "" || modelName == "" || dimension <= 0 {
+		return
+	}
+	s.embeddingProvider = provider
+	s.embeddingModel = modelName
+	s.embeddingDimension = dimension
+	s.embeddingFingerprint = fingerprint
 }

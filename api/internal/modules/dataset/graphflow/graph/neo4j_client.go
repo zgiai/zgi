@@ -2,13 +2,44 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/zgiai/zgi/api/pkg/logger"
-	"go.uber.org/zap"
 )
+
+const equivalentSchemaRuleAlreadyExistsCode = "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists"
+
+const visibilityProjectionBatchSize = 500
+
+const entityVisibilityProjectionQuery = `
+	UNWIND $updates AS update
+	MATCH (n:Entity {kb_id: $dataset_id, id: update.id})
+	SET n.source_count = update.source_count,
+		n.active_source_count = update.active_source_count,
+		n.content_revision = update.content_revision,
+		n.visibility_revision = update.visibility_revision
+`
+
+// Relationship properties cannot be indexed across arbitrary dynamic
+// relationship types in Neo4j. Resolve both endpoint nodes through the
+// (kb_id, id) entity constraint first, then inspect only the relationships
+// between that exact pair instead of scanning every relationship in the KB for
+// every update.
+const relationshipVisibilityProjectionQuery = `
+	UNWIND $updates AS update
+	MATCH (head:Entity {kb_id: $dataset_id, id: update.head_id})
+	MATCH (tail:Entity {kb_id: $dataset_id, id: update.tail_id})
+	MATCH (head)-[r]->(tail)
+	WHERE r.id = update.id
+	SET r.kb_id = $dataset_id,
+		r.weight = update.weight,
+		r.active_weight = update.active_weight,
+		r.content_revision = update.content_revision,
+		r.visibility_revision = update.visibility_revision
+`
 
 // Neo4jClient provides methods to interact with Neo4j
 type Neo4jClient struct {
@@ -43,6 +74,17 @@ func (c *Neo4jClient) Close() error {
 	return nil
 }
 
+// VerifyConnectivity checks whether Neo4j can accept driver operations.
+func (c *Neo4jClient) VerifyConnectivity(ctx context.Context) error {
+	if c == nil || c.driver == nil {
+		return fmt.Errorf("neo4j driver not initialized")
+	}
+	if err := c.driver.VerifyConnectivity(ctx); err != nil {
+		return fmt.Errorf("neo4j connectivity check failed: %w", err)
+	}
+	return nil
+}
+
 // CreateNode creates a node in Neo4j and returns the node ID
 // It always adds the `Entity` base label alongside the provided specific type label
 // This ensures the vector index (on Entity label) works while preserving semantic type
@@ -57,50 +99,23 @@ func (c *Neo4jClient) CreateNode(ctx context.Context, label string, properties m
 	// Always include Entity as base label for vector index compatibility
 	// Format: CREATE (n:Entity:SpecificType $props)
 
-	// Use MERGE to prevent duplicates. We use the 'id' property as the unique key for merging.
-	// Note: Ideally 'id' should have a unique constraint in Neo4j for performance.
-	// Format: MERGE (n:Entity {id: $id}) ON CREATE SET n:$props ON MATCH SET n += $props
-	// However, we need to handle labels dynamically. MERGE with dynamic labels isn't direct.
-	// Strategy: MERGE on id (which is unique globally/per-KB), then set labels and props.
-	// 'id' is passed in properties["id"].
-
 	id, ok := properties["id"].(string)
 	if !ok || id == "" {
 		return "", fmt.Errorf("id property is required for node creation")
 	}
-
-	// Remove labels from properties to avoid overwriting (if any)
-	// Actually we want to set properties.
-
-	// Construct MERGE query
-	// We merge on the unique ID. We assume the base label 'Entity' is always present.
-	cypher := `
-		MERGE (n:Entity {id: $id})
-		ON CREATE SET n = $props
-		ON MATCH SET n += $props
-		WITH n
-		CALL apoc.create.addLabels(n, [$label]) YIELD node
-		RETURN elementId(n) as id
-	`
-
-	// If APOC is not available, we can use a simpler approach if we trust labels don't change much:
-	// But APOC is standard. Fallback without APOC:
-	// "MERGE ... SET n:%s ..." (cannot set dynamic labels easily in pure Cypher without APOC or messy hacks)
-	// Simpler alternative: Just MERGE on ID. The Label might need to be accumulated.
-	// Let's assume for now we just SET the specific label if it's new.
-
-	// Revised Strategy without APOC dependency (safer):
-	// MERGE (n:Entity {id: $id}) SET n:%s, n += $props RETURN elementId(n) as id
-	// This works because SET n:Label is additive.
-
-	extraLabel := ""
-	if label != "" && label != "Entity" {
-		extraLabel = fmt.Sprintf(":`%s`", label) // Quote label to be safe
+	kbID, ok := properties["kb_id"].(string)
+	if !ok || kbID == "" {
+		return "", fmt.Errorf("kb_id property is required for node creation")
 	}
 
-	cypher = fmt.Sprintf(`
-		MERGE (n:Entity {id: $id})
-		SET n%s
+	extraLabel := datasetEntityLabel(kbID)
+	if label != "" && label != "Entity" {
+		extraLabel += ":`" + safeCypherIdentifier(label) + "`"
+	}
+
+	cypher := fmt.Sprintf(`
+		MERGE (n:Entity {kb_id: $kbID, id: $id})
+		SET n:%s
 		SET n += $props
 		RETURN elementId(n) as id
 	`, extraLabel)
@@ -109,6 +124,7 @@ func (c *Neo4jClient) CreateNode(ctx context.Context, label string, properties m
 	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		res, err := tx.Run(ctx, cypher, map[string]interface{}{
 			"id":    id,
+			"kbID":  kbID,
 			"props": properties,
 		})
 		if err != nil {
@@ -206,16 +222,22 @@ func (c *Neo4jClient) CreateRelationship(ctx context.Context, headID, tailID, re
 	defer session.Close(ctx)
 
 	// Match nodes by their stored id property (which is our UUID)
+	kbID, ok := properties["kb_id"].(string)
+	if !ok || kbID == "" {
+		return fmt.Errorf("kb_id property is required for relationship creation")
+	}
 	cypher := fmt.Sprintf(`
-		MATCH (h {id: $headID})
-		MATCH (t {id: $tailID})
-		CREATE (h)-[r:%s $props]->(t)
+		MATCH (h:Entity {kb_id: $kbID, id: $headID})
+		MATCH (t:Entity {kb_id: $kbID, id: $tailID})
+		MERGE (h)-[r:`+"`%s`"+`]->(t)
+		SET r += $props
 		RETURN elementId(r) as id
-	`, relationType)
+	`, safeCypherIdentifier(relationType))
 
 	params := map[string]interface{}{
 		"headID": headID,
 		"tailID": tailID,
+		"kbID":   kbID,
 		"props":  properties,
 	}
 
@@ -280,8 +302,41 @@ type EntitySearchResult struct {
 
 // Neighbor represents a connected node
 type Neighbor struct {
-	RelationshipType string                 `json:"relationship_type"`
-	Node             map[string]interface{} `json:"node"`
+	RelationshipType   string                 `json:"relationship_type"`
+	Node               map[string]interface{} `json:"node"`
+	RelationshipSource map[string]interface{} `json:"relationship_source,omitempty"`
+	RelationshipTarget map[string]interface{} `json:"relationship_target,omitempty"`
+}
+
+// DirectedEndpoints returns the stored relationship direction. Older callers
+// may construct Neighbor without endpoint metadata, so retain traversal order
+// as a compatibility fallback.
+func (n Neighbor) DirectedEndpoints(current map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
+	if len(n.RelationshipSource) > 0 && len(n.RelationshipTarget) > 0 {
+		return n.RelationshipSource, n.RelationshipTarget
+	}
+	return current, n.Node
+}
+
+func neighborFromRecord(value interface{}) (Neighbor, bool) {
+	nbMap, ok := value.(map[string]interface{})
+	if !ok {
+		return Neighbor{}, false
+	}
+	rType, typeOK := nbMap["type"].(string)
+	targetNode, nodeOK := nbMap["node"].(neo4j.Node)
+	if !typeOK || !nodeOK {
+		return Neighbor{}, false
+	}
+
+	neighbor := Neighbor{RelationshipType: rType, Node: targetNode.Props}
+	if sourceNode, ok := nbMap["source"].(neo4j.Node); ok {
+		neighbor.RelationshipSource = sourceNode.Props
+	}
+	if relationshipTarget, ok := nbMap["target"].(neo4j.Node); ok {
+		neighbor.RelationshipTarget = relationshipTarget.Props
+	}
+	return neighbor, true
 }
 
 // GetEntityContext finds entities and their 1-hop neighbors within a specific KB
@@ -313,16 +368,13 @@ func (c *Neo4jClient) GetEntityContext(ctx context.Context, kbID string, names [
 	cypher := `
 		MATCH (n:Entity)
 		WHERE n.kb_id = $kb_id
+		  AND coalesce(n.active_source_count, 0) > 0
 		  AND (n.name IN $names OR n.canonical_name IN $names)
 		OPTIONAL MATCH (n)-[r]-(m)
-		// Ensure connected node is also in the same KB (optional, depending on if nodes are shared)
-		// For strict isolation: WHERE m.kb_id = $kb_id
+		WHERE r.active_weight > 0 AND m.kb_id = $kb_id AND coalesce(m.active_source_count, 0) > 0
 		WITH n, r, m ORDER BY r.weight DESC LIMIT 50
-		RETURN n, collect({type: type(r), node: m}) as neighbors
+		RETURN n, collect({type: type(r), node: m, source: startNode(r), target: endNode(r)}) as neighbors
 	`
-
-	// DEBUG: Print matching query
-	logger.Info(fmt.Sprintf("[RETRIEVAL_DEBUG] Executing 1-Hop Search:\n%s\nParams: kb_id=%s, names=%v", cypher, kbID, searchNames), nil)
 
 	result, err := session.Run(ctx, cypher, map[string]interface{}{
 		"names": searchNames,
@@ -346,16 +398,8 @@ func (c *Neo4jClient) GetEntityContext(ctx context.Context, kbID string, names [
 		var neighbors []Neighbor
 		if neighborsList, ok := neighborsVal.([]interface{}); ok {
 			for _, nb := range neighborsList {
-				if nbMap, ok := nb.(map[string]interface{}); ok {
-					rType, typeOk := nbMap["type"].(string)
-					targetNode, nodeOk := nbMap["node"].(neo4j.Node)
-
-					if typeOk && nodeOk {
-						neighbors = append(neighbors, Neighbor{
-							RelationshipType: rType,
-							Node:             targetNode.Props,
-						})
-					}
+				if neighbor, ok := neighborFromRecord(nb); ok {
+					neighbors = append(neighbors, neighbor)
 				}
 			}
 		}
@@ -364,6 +408,9 @@ func (c *Neo4jClient) GetEntityContext(ctx context.Context, kbID string, names [
 			Entity:    entityProps,
 			Neighbors: neighbors,
 		})
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("failed while reading graph results: %w", err)
 	}
 
 	return results, nil
@@ -380,8 +427,8 @@ func (c *Neo4jClient) GetEntityContextMultiHop(ctx context.Context, kbID string,
 	if maxHops < 1 {
 		maxHops = 2
 	}
-	if maxHops > 5 {
-		maxHops = 5 // Increased limit to 5 as requested for diffusion
+	if maxHops > 2 {
+		maxHops = 2
 	}
 
 	var searchNames []string
@@ -408,31 +455,7 @@ func (c *Neo4jClient) GetEntityContextMultiHop(ctx context.Context, kbID string,
 	// 1. Exclude 'Date'/'Time' type nodes from expansion path (prevent temporal noise)
 	// 2. Filter out Super Hubs (degree > 50) to avoid over-connection
 	// IMPROVED Multi-hop query:
-	cypher := fmt.Sprintf(`
-		// 1. O(1) Index Lookup for exact matched entities
-		MATCH (n:Entity)
-		WHERE n.kb_id = $kb_id AND (n.name IN $names OR n.canonical_name IN $names)
-
-		// 2. Prune Hubs safely (Reduced to 50 to prevent timeout)
-		WITH n WHERE COUNT { (n)--() } <= 200
-
-		// 3. Multi-hop traversal (limit explosion)
-		MATCH (n)-[*1..%d]-(m)
-		WHERE (m.kb_id = $kb_id OR m:Chunk OR m:Document OR m:File)
-		  AND COUNT { (m)--() } <= 200
-
-		// 4. Force limitation BEFORE expanding full edge context
-		WITH DISTINCT m
-		LIMIT 200
-
-		// 5. Fetch local context
-		OPTIONAL MATCH (m)-[r]-(p)
-		WHERE p.kb_id = $kb_id
-		WITH m, r, p LIMIT 500
-		RETURN m, collect(DISTINCT {type: type(r), node: p, labels: labels(p)}) as neighbors
-	`, maxHops)
-
-	logger.Info(fmt.Sprintf("[RETRIEVAL_DEBUG] Executing Permissive Multi-Hop Search:\n%s\nParams: kb_id=%s, names=%v", cypher, kbID, searchNames))
+	cypher := buildEntityContextMultiHopQuery(maxHops)
 
 	result, err := session.Run(ctx, cypher, map[string]interface{}{
 		"names": searchNames,
@@ -460,31 +483,18 @@ func (c *Neo4jClient) GetEntityContextMultiHop(ctx context.Context, kbID string,
 		}
 		entityProps := node.Props
 
-		// Collect metadata
-		var sourceLabels []string
 		if name, ok := entityProps["name"].(string); ok {
 			allEntityNames[strings.ToLower(name)] = true
-		}
-		for _, l := range node.Labels {
-			sourceLabels = append(sourceLabels, l)
 		}
 
 		var neighbors []Neighbor
 		if neighborsList, ok := neighborsVal.([]interface{}); ok {
 			for _, nb := range neighborsList {
-				if nbMap, ok := nb.(map[string]interface{}); ok {
-					rType, _ := nbMap["type"].(string)
-					targetNode, nodeOk := nbMap["node"].(neo4j.Node)
-
-					if nodeOk {
-						neighbors = append(neighbors, Neighbor{
-							RelationshipType: rType,
-							Node:             targetNode.Props,
-						})
-						// Also collect neighbor names to ensure segments are found
-						if name, ok := targetNode.Props["name"].(string); ok && name != "" {
-							allEntityNames[strings.ToLower(name)] = true
-						}
+				if neighbor, ok := neighborFromRecord(nb); ok {
+					neighbors = append(neighbors, neighbor)
+					// Also collect neighbor names to ensure segments are found
+					if name, ok := neighbor.Node["name"].(string); ok && name != "" {
+						allEntityNames[strings.ToLower(name)] = true
 					}
 				}
 			}
@@ -494,37 +504,10 @@ func (c *Neo4jClient) GetEntityContextMultiHop(ctx context.Context, kbID string,
 			Entity:    entityProps,
 			Neighbors: neighbors,
 		})
-
-		// Log only metadata. Entity names can contain document content.
-		for _, nb := range neighbors {
-			neighborName := ""
-			for _, p := range []string{"name", "title", "fileName", "canonical_name", "content"} {
-				if val, ok := nb.Node[p].(string); ok && val != "" {
-					neighborName = val
-					break
-				}
-			}
-
-			sourceDisplayName := ""
-			for _, p := range []string{"name", "title", "fileName", "canonical_name", "content"} {
-				if val, ok := entityProps[p].(string); ok && val != "" {
-					sourceDisplayName = val
-					break
-				}
-			}
-
-			logger.DebugContext(ctx, "graph traversal path found",
-				zap.Strings("source_labels", sourceLabels),
-				zap.String("relationship_type", nb.RelationshipType),
-				zap.Bool("has_source_name", sourceDisplayName != ""),
-				zap.Bool("has_neighbor_name", neighborName != ""),
-			)
-		}
 	}
-
-	logger.DebugContext(ctx, "graph traversal results gathered",
-		zap.Int("results_count", len(results)),
-	)
+	if err := result.Err(); err != nil {
+		return nil, nil, fmt.Errorf("failed while reading graph multi-hop results: %w", err)
+	}
 
 	// Convert map to slice
 	var entityNamesList []string
@@ -535,8 +518,51 @@ func (c *Neo4jClient) GetEntityContextMultiHop(ctx context.Context, kbID string,
 	return results, entityNamesList, nil
 }
 
+func buildEntityContextMultiHopQuery(maxHops int) string {
+	return fmt.Sprintf(`
+		// 1. Use the dataset-scoped name indexes for exact anchors.
+		CALL {
+			WITH $kb_id AS kb_id, $names AS names
+			MATCH (n:Entity)
+			WHERE n.kb_id = kb_id AND n.name IN names
+			RETURN n
+			UNION
+			WITH $kb_id AS kb_id, $names AS names
+			MATCH (n:Entity)
+			WHERE n.kb_id = kb_id AND n.canonical_name IN names
+			RETURN n
+		}
+		WITH DISTINCT n
+		WHERE coalesce(n.active_source_count, 0) > 0
+
+		// 2. Prune Hubs safely (Reduced to 50 to prevent timeout)
+		WITH n WHERE COUNT { (n)--() } <= 200
+
+		// 3. Multi-hop traversal (limit explosion)
+		MATCH path = (n)-[*1..%d]-(m)
+		WHERE m.kb_id = $kb_id
+		  AND all(node IN nodes(path) WHERE coalesce(node.active_source_count, 0) > 0)
+		  AND all(edge IN relationships(path) WHERE coalesce(edge.active_weight, 0) > 0)
+		  AND COUNT { (m)--() } <= 200
+
+		// 4. Force limitation BEFORE expanding full edge context
+		WITH DISTINCT m
+		ORDER BY coalesce(m.name, ''), m.id
+		LIMIT 200
+
+		// 5. Fetch local context
+		OPTIONAL MATCH (m)-[r]-(p)
+		WHERE p.kb_id = $kb_id AND coalesce(p.active_source_count, 0) > 0 AND coalesce(r.active_weight, 0) > 0
+		WITH m, r, p
+		ORDER BY coalesce(m.name, ''), type(r), coalesce(p.name, ''), p.id
+		LIMIT 500
+		RETURN m, collect(DISTINCT {type: type(r), node: p, labels: labels(p), source: startNode(r), target: endNode(r)})[..50] as neighbors
+		ORDER BY coalesce(m.name, ''), m.id
+	`, maxHops)
+}
+
 // CreateVectorIndex creates a vector index on the embedding property of Entity nodes
-func (c *Neo4jClient) CreateVectorIndex(ctx context.Context, dimensions int) error {
+func (c *Neo4jClient) EnsureProjectionSchema(ctx context.Context) error {
 	if c.driver == nil {
 		return fmt.Errorf("neo4j driver not initialized")
 	}
@@ -544,29 +570,95 @@ func (c *Neo4jClient) CreateVectorIndex(ctx context.Context, dimensions int) err
 	session := c.newSession(ctx, neo4j.AccessModeWrite)
 	defer session.Close(ctx)
 
-	// Ensure uniqueness constraint for upsert operations
-	_, err := session.Run(ctx, "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (n:Entity) REQUIRE n.id IS UNIQUE", nil)
-	if err != nil {
-		logger.Warn("Failed to create Neo4j entity uniqueness constraint", err)
+	for _, statement := range []string{
+		"CREATE CONSTRAINT entity_dataset_id_unique IF NOT EXISTS FOR (n:Entity) REQUIRE (n.kb_id, n.id) IS UNIQUE",
+		"CREATE INDEX entity_dataset_name IF NOT EXISTS FOR (n:Entity) ON (n.kb_id, n.name)",
+		"CREATE INDEX entity_dataset_canonical_name IF NOT EXISTS FOR (n:Entity) ON (n.kb_id, n.canonical_name)",
+	} {
+		result, err := session.Run(ctx, statement, nil)
+		if err != nil {
+			if isEquivalentSchemaRuleAlreadyExists(err) {
+				continue
+			}
+			return fmt.Errorf("ensure Neo4j projection schema: %w", err)
+		}
+		if _, err := result.Consume(ctx); err != nil {
+			return fmt.Errorf("confirm Neo4j projection schema: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *Neo4jClient) EnsureDatasetSchema(ctx context.Context, datasetID string, dimensions int) error {
+	if c.driver == nil {
+		return fmt.Errorf("neo4j driver not initialized")
+	}
+	if datasetID == "" || dimensions <= 0 {
+		return fmt.Errorf("dataset ID and embedding dimension are required")
+	}
+	if err := c.EnsureProjectionSchema(ctx); err != nil {
+		return err
 	}
 
-	// Create vector index for entity embeddings
-	// Note: index name is 'entity_embedding_index'
+	session := c.newSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+
+	indexName := datasetVectorIndexName(datasetID)
+	label := datasetEntityLabel(datasetID)
 	cypher := fmt.Sprintf(`
-		CREATE VECTOR INDEX entity_embedding_index IF NOT EXISTS
-		FOR (n:Entity) ON (n.embedding)
+		CREATE VECTOR INDEX `+"`%s`"+` IF NOT EXISTS
+		FOR (n:%s) ON (n.embedding)
 		OPTIONS {indexConfig: {
 			`+"`vector.dimensions`"+`: %d,
 			`+"`vector.similarity_function`"+`: 'cosine'
 		}}
-	`, dimensions)
+	`, indexName, label, dimensions)
 
-	_, err = session.Run(ctx, cypher, nil)
-	if err != nil {
+	result, err := session.Run(ctx, cypher, nil)
+	if err != nil && !isEquivalentSchemaRuleAlreadyExists(err) {
 		return fmt.Errorf("failed to create vector index: %w", err)
+	}
+	if err == nil {
+		if _, err := result.Consume(ctx); err != nil {
+			return fmt.Errorf("confirm vector index creation: %w", err)
+		}
 	}
 
 	return nil
+}
+
+func isEquivalentSchemaRuleAlreadyExists(err error) bool {
+	var neo4jErr *neo4j.Neo4jError
+	return errors.As(err, &neo4jErr) && neo4jErr.Code == equivalentSchemaRuleAlreadyExistsCode
+}
+
+// CreateVectorIndex is retained for source compatibility and requires dataset-scoped setup.
+func (c *Neo4jClient) CreateVectorIndex(ctx context.Context, dimensions int) error {
+	return fmt.Errorf("dataset-scoped vector index is required")
+}
+
+func datasetEntityLabel(datasetID string) string {
+	return "`Dataset_" + safeCypherIdentifier(datasetID) + "`"
+}
+
+func datasetVectorIndexName(datasetID string) string {
+	return "entity_embedding_" + safeCypherIdentifier(datasetID)
+}
+
+func safeCypherIdentifier(value string) string {
+	var builder strings.Builder
+	for _, char := range value {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9', char == '_':
+			builder.WriteRune(char)
+		default:
+			builder.WriteByte('_')
+		}
+	}
+	if builder.Len() == 0 {
+		return "unknown"
+	}
+	return builder.String()
 }
 
 // GetEntityContextByVector performs a hybrid vector-graph retrieval starting from semantic seeds.
@@ -578,6 +670,9 @@ func (c *Neo4jClient) GetEntityContextByVector(ctx context.Context, kbID string,
 
 	if maxHops < 1 {
 		maxHops = 1
+	}
+	if maxHops > 2 {
+		maxHops = 2
 	}
 	if topK < 3 {
 		topK = 3 // Minimum candidates
@@ -598,24 +693,32 @@ func (c *Neo4jClient) GetEntityContextByVector(ctx context.Context, kbID string,
 		candidatePool = 200
 	}
 
-	// 1. Vector Search + Multi-hop Traversal
-	// We use dual-scoring: Intrinsic (Semantic) + Extrinsic (Structural Path Decay)
+	// 1. Vector Search + Multi-hop Traversal. Expanded nodes inherit the vector
+	// seed score with hop decay so this query remains compatible with Neo4j 5.15,
+	// which does not provide vector.similarity.cosine().
 	cypher := fmt.Sprintf(`
-			CALL db.index.vector.queryNodes('entity_embedding_index', %d, $embedding)
+			CALL db.index.vector.queryNodes($index_name, %d, $embedding)
 			YIELD node as seed, score
-			WHERE score >= $min_score AND (seed.kb_id = $kb_id OR seed.kb_id IS NULL)
+			WHERE score >= $min_score AND seed.kb_id = $kb_id AND coalesce(seed.active_source_count, 0) > 0
 
 			// Boundary Check: Relaxed for Vector Search to compensate for NLP extraction misses
 			WITH seed, score
 			WHERE
 				SIZE($anchor_ids) = 0 OR
 				seed.id IN $anchor_ids OR
-				EXISTS { (seed)-[*1..2]-(anchor) WHERE anchor.id IN $anchor_ids } OR
+				EXISTS {
+					MATCH anchor_path = (seed)-[*1..2]-(anchor)
+					WHERE anchor.id IN $anchor_ids
+					  AND all(node IN nodes(anchor_path) WHERE coalesce(node.active_source_count, 0) > 0)
+					  AND all(edge IN relationships(anchor_path) WHERE coalesce(edge.active_weight, 0) > 0)
+				} OR
 				score > 0.75
 
 			// Expand from valid seeds
 			MATCH path = (seed)-[*0..%d]-(m:Entity)
 			WHERE m.kb_id = $kb_id
+			  AND all(node IN nodes(path) WHERE coalesce(node.active_source_count, 0) > 0)
+			  AND all(edge IN relationships(path) WHERE coalesce(edge.active_weight, 0) > 0)
 
 			// Efficiency & Hub Pruning: Always allow seeds (hops=0) but prune bridges (hops > 0)
 			WITH m, score as seed_score, length(path) as hops
@@ -625,35 +728,22 @@ func (c *Neo4jClient) GetEntityContextByVector(ctx context.Context, kbID string,
 			WITH m,hops,max(seed_score * (%f ^ toFloat(hops))) as inherited_score
 			ORDER BY inherited_score DESC LIMIT 200
 
-			// Dual-Scoring: Calculate real content similarity for the current node
-			WITH m,hops,inherited_score,
-			     CASE
-	                  WHEN hops = 0 THEN inherited_score
-					  WHEN m.embedding IS NOT NULL THEN vector.similarity.cosine($embedding, m.embedding)
-			          ELSE 0.0 END AS intrinsic_score
-			WHERE intrinsic_score > 0.5
-
-			WITH m, inherited_score, intrinsic_score,
-				CASE
-				  WHEN hops <= 2 THEN 0.8 * intrinsic_score + 0.2 * inherited_score
-				  ELSE 0.6 * intrinsic_score + 0.4 * inherited_score
-				END as raw_final_score
-
 			// Topic Alignment Boost: Reward nodes matching query intent keywords (e.g. "University")
-			WITH m, inherited_score, intrinsic_score, raw_final_score,
+			WITH m, inherited_score,
 			     CASE
 				   WHEN SIZE($topic_keywords) > 0 AND ANY(k IN $topic_keywords WHERE m.name CONTAINS k OR m.canonical_name CONTAINS k) THEN 1.35
 				   ELSE 1.0
 				 END as topic_boost
 
-			WITH m, inherited_score, intrinsic_score, (raw_final_score * topic_boost) as final_score, topic_boost
+			WITH m, inherited_score, (inherited_score * topic_boost) as final_score, topic_boost
 			ORDER BY final_score DESC
 	    	LIMIT 200
 
 		// Fetch local connectivity for the final context
 		OPTIONAL MATCH (m)-[r]-(p:Entity)
-		WHERE p.kb_id = $kb_id
-		RETURN m, final_score as score, inherited_score, intrinsic_score, topic_boost, collect(DISTINCT {type: type(r), node: p}) as neighbors
+		WHERE p.kb_id = $kb_id AND coalesce(p.active_source_count, 0) > 0 AND coalesce(r.active_weight, 0) > 0
+		RETURN m, final_score as score, inherited_score, topic_boost, collect(DISTINCT {type: type(r), node: p, source: startNode(r), target: endNode(r)})[..50] as neighbors
+		ORDER BY score DESC, coalesce(m.name, ''), m.id
 		LIMIT 200
 	`, candidatePool, maxHops, hopDecay)
 
@@ -663,6 +753,7 @@ func (c *Neo4jClient) GetEntityContextByVector(ctx context.Context, kbID string,
 		"anchor_ids":     anchorEntityIDs,
 		"min_score":      minScore,
 		"topic_keywords": topicKeywords,
+		"index_name":     datasetVectorIndexName(kbID),
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to query vector index: %w", err)
@@ -676,19 +767,13 @@ func (c *Neo4jClient) GetEntityContextByVector(ctx context.Context, kbID string,
 		neighborsVal, _ := record.Get("neighbors")
 		scoreVal, _ := record.Get("score")
 		inheritedScore, _ := record.Get("inherited_score")
-		intrinsicScore, _ := record.Get("intrinsic_score")
 		topicBoost, _ := record.Get("topic_boost")
 
 		node := nodeVal.(neo4j.Node)
 		entityProps := node.Props
 
-		logger.Debug("vector similarity search", map[string]interface{}{
-			"scoreVal":       scoreVal,
-			"inheritedScore": inheritedScore,
-			"intrinsicScore": intrinsicScore,
-			"topicBoost":     topicBoost,
-			"name":           entityProps["name"],
-		})
+		_ = inheritedScore
+		_ = topicBoost
 
 		if name, ok := entityProps["name"].(string); ok && name != "" {
 			allEntityNames[strings.ToLower(name)] = true
@@ -697,18 +782,10 @@ func (c *Neo4jClient) GetEntityContextByVector(ctx context.Context, kbID string,
 		var neighbors []Neighbor
 		if neighborsList, ok := neighborsVal.([]interface{}); ok {
 			for _, nb := range neighborsList {
-				if nbMap, ok := nb.(map[string]interface{}); ok {
-					rType, _ := nbMap["type"].(string)
-					targetNode, nodeOk := nbMap["node"].(neo4j.Node)
-
-					if nodeOk {
-						neighbors = append(neighbors, Neighbor{
-							RelationshipType: rType,
-							Node:             targetNode.Props,
-						})
-						if name, ok := targetNode.Props["name"].(string); ok && name != "" {
-							allEntityNames[strings.ToLower(name)] = true
-						}
+				if neighbor, ok := neighborFromRecord(nb); ok {
+					neighbors = append(neighbors, neighbor)
+					if name, ok := neighbor.Node["name"].(string); ok && name != "" {
+						allEntityNames[strings.ToLower(name)] = true
 					}
 				}
 			}
@@ -724,6 +801,9 @@ func (c *Neo4jClient) GetEntityContextByVector(ctx context.Context, kbID string,
 			Neighbors: neighbors,
 			Score:     score,
 		})
+	}
+	if err := result.Err(); err != nil {
+		return nil, nil, fmt.Errorf("failed while reading vector graph results: %w", err)
 	}
 
 	var entityNamesList []string
@@ -787,6 +867,29 @@ func (c *Neo4jClient) DeleteRelationship(ctx context.Context, elementID string) 
 	return nil
 }
 
+// DeleteDataset removes every graph node scoped to a dataset. DETACH DELETE also
+// removes relationships connected to those nodes and is safe to repeat.
+func (c *Neo4jClient) DeleteDataset(ctx context.Context, datasetID string) error {
+	if c == nil || c.driver == nil {
+		return fmt.Errorf("neo4j driver not initialized")
+	}
+	if strings.TrimSpace(datasetID) == "" {
+		return fmt.Errorf("neo4j dataset id is required")
+	}
+
+	session := c.newSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	_, err := session.Run(ctx, `
+		MATCH (node)
+		WHERE node.kb_id = $dataset_id
+		DETACH DELETE node
+	`, map[string]interface{}{"dataset_id": datasetID})
+	if err != nil {
+		return fmt.Errorf("failed to delete dataset graph: %w", err)
+	}
+	return nil
+}
+
 // CreateNodesBatch creates multiple nodes of the same label in a single transaction
 func (c *Neo4jClient) CreateNodesBatch(ctx context.Context, label string, nodes []map[string]interface{}) error {
 	if c.driver == nil {
@@ -794,6 +897,15 @@ func (c *Neo4jClient) CreateNodesBatch(ctx context.Context, label string, nodes 
 	}
 	if len(nodes) == 0 {
 		return nil
+	}
+	kbID, ok := nodes[0]["kb_id"].(string)
+	if !ok || kbID == "" {
+		return fmt.Errorf("kb_id property is required for node creation")
+	}
+	for _, node := range nodes {
+		if nodeKBID, _ := node["kb_id"].(string); nodeKBID != kbID {
+			return fmt.Errorf("node batch must use one dataset scope")
+		}
 	}
 
 	session := c.newSession(ctx, neo4j.AccessModeWrite)
@@ -803,10 +915,11 @@ func (c *Neo4jClient) CreateNodesBatch(ctx context.Context, label string, nodes 
 	// We add both the specific label and the base 'Entity' label
 	cypher := fmt.Sprintf(`
 UNWIND $nodes AS nodeProps
-MERGE (n:%s:Entity {id: nodeProps.id})
+MERGE (n:Entity {kb_id: nodeProps.kb_id, id: nodeProps.id})
+SET n:%s:`+"`%s`"+`
 SET n += nodeProps
 RETURN n.id
-`, label)
+`, datasetEntityLabel(kbID), safeCypherIdentifier(label))
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		_, err := tx.Run(ctx, cypher, map[string]interface{}{
@@ -887,18 +1000,112 @@ func (c *Neo4jClient) UpdateNodeEmbeddingsBatch(ctx context.Context, updates []m
 
 	cypher := `
 		UNWIND $updates AS update
-		MATCH (n:Entity {id: update.id})
-		SET n.embedding = update.embedding
-		RETURN count(n)
+		MATCH (n:Entity {kb_id: update.dataset_id, id: update.id})
+		SET n.embedding = update.embedding,
+			n.embedding_model_provider = update.embedding_model_provider,
+			n.embedding_model = update.embedding_model,
+			n.embedding_dimension = update.embedding_dimension,
+			n.embedding_fingerprint = update.embedding_fingerprint,
+			n.content_revision = update.content_revision
+		RETURN count(n) AS updated_count
 	`
 
-	_, err := session.Run(ctx, cypher, map[string]interface{}{
+	result, err := session.Run(ctx, cypher, map[string]interface{}{
 		"updates": updates,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update node embeddings batch: %w", err)
 	}
+	record, err := result.Single(ctx)
+	if err != nil {
+		return fmt.Errorf("read node embedding update result: %w", err)
+	}
+	value, ok := record.Get("updated_count")
+	if !ok {
+		return fmt.Errorf("node embedding update result is missing updated_count")
+	}
+	updatedCount, ok := value.(int64)
+	if !ok {
+		return fmt.Errorf("node embedding update returned invalid count type %T", value)
+	}
+	if updatedCount != int64(len(updates)) {
+		return fmt.Errorf("node embedding update matched %d of %d entities", updatedCount, len(updates))
+	}
 
+	return nil
+}
+
+func (c *Neo4jClient) UpdateVisibilityProjection(
+	ctx context.Context,
+	datasetID string,
+	entityUpdates []map[string]interface{},
+	relationshipUpdates []map[string]interface{},
+	progressCallbacks ...func(completed, total int),
+) error {
+	if c.driver == nil {
+		return fmt.Errorf("neo4j driver not initialized")
+	}
+	if err := c.EnsureProjectionSchema(ctx); err != nil {
+		return err
+	}
+	var progress func(completed, total int)
+	if len(progressCallbacks) > 0 {
+		progress = progressCallbacks[0]
+	}
+	total := len(entityUpdates) + len(relationshipUpdates)
+	completed := 0
+	session := c.newSession(ctx, neo4j.AccessModeWrite)
+	defer session.Close(ctx)
+	if err := c.updateVisibilityProjectionBatches(ctx, session, datasetID, entityVisibilityProjectionQuery, entityUpdates, func(count int) {
+		completed += count
+		if progress != nil {
+			progress(completed, total)
+		}
+	}); err != nil {
+		return fmt.Errorf("failed to update neo4j entity visibility: %w", err)
+	}
+	if err := c.updateVisibilityProjectionBatches(ctx, session, datasetID, relationshipVisibilityProjectionQuery, relationshipUpdates, func(count int) {
+		completed += count
+		if progress != nil {
+			progress(completed, total)
+		}
+	}); err != nil {
+		return fmt.Errorf("failed to update neo4j relationship visibility: %w", err)
+	}
+	return nil
+}
+
+func (c *Neo4jClient) updateVisibilityProjectionBatches(
+	ctx context.Context,
+	session neo4j.SessionWithContext,
+	datasetID string,
+	query string,
+	updates []map[string]interface{},
+	onBatchCompleted func(int),
+) error {
+	for start := 0; start < len(updates); start += visibilityProjectionBatchSize {
+		end := start + visibilityProjectionBatchSize
+		if end > len(updates) {
+			end = len(updates)
+		}
+		batch := updates[start:end]
+		if _, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			result, err := tx.Run(ctx, query, map[string]interface{}{
+				"dataset_id": datasetID,
+				"updates":    batch,
+			})
+			if err != nil {
+				return nil, err
+			}
+			_, err = result.Consume(ctx)
+			return nil, err
+		}); err != nil {
+			return err
+		}
+		if onBatchCompleted != nil {
+			onBatchCompleted(len(batch))
+		}
+	}
 	return nil
 }
 
@@ -919,7 +1126,7 @@ func (c *Neo4jClient) FindSimilarEntity(ctx context.Context, kbID string, embedd
 	// We fetch more candidates (k=50) to avoid "starvation" where top global matches
 	// belong to other KBs and are filtered out, hiding the best local match.
 	cypher := `
-		CALL db.index.vector.queryNodes('entity_embedding_index', 50, $embedding)
+		CALL db.index.vector.queryNodes($index_name, 50, $embedding)
 		YIELD node, score
 		WHERE node.kb_id = $kb_id AND score >= $threshold
 		RETURN node.id as entity_id, score
@@ -928,9 +1135,10 @@ func (c *Neo4jClient) FindSimilarEntity(ctx context.Context, kbID string, embedd
 	`
 
 	result, err := session.Run(ctx, cypher, map[string]interface{}{
-		"kb_id":     kbID,
-		"embedding": embedding,
-		"threshold": threshold,
+		"kb_id":      kbID,
+		"embedding":  embedding,
+		"threshold":  threshold,
+		"index_name": datasetVectorIndexName(kbID),
 	})
 	if err != nil {
 		// Index might not exist yet or other error, fallback safely
@@ -969,15 +1177,16 @@ func (c *Neo4jClient) FindSimilarEntityWithFilter(ctx context.Context, kbID, lab
 	candidates := 100 // Wider search
 
 	cypher := fmt.Sprintf(`
-		CALL db.index.vector.queryNodes('entity_embedding_index', %d, $embedding)
+		CALL db.index.vector.queryNodes($index_name, %d, $embedding)
 		YIELD node, score
 		WHERE node.kb_id = $kb_id AND score >= $threshold
 	`, candidates)
 
 	params := map[string]interface{}{
-		"kb_id":     kbID,
-		"embedding": embedding,
-		"threshold": threshold,
+		"kb_id":      kbID,
+		"embedding":  embedding,
+		"threshold":  threshold,
+		"index_name": datasetVectorIndexName(kbID),
 	}
 
 	// 1. Label Filter (Hard Constraint)

@@ -123,6 +123,10 @@ type fileAssetProcessingDocumentStore interface {
 	DisableDocuments(ctx context.Context, datasetID string, documentIDs []string, accountID string) error
 }
 
+type fileAssetProcessingCurrentRefStore interface {
+	ListCurrentByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error)
+}
+
 func (s *fileAssetProcessingStateService) CreateOrReuseStoredAsset(ctx context.Context, input FileAssetCreateInput) (*model.DocumentAsset, bool, error) {
 	if input.OrganizationID == "" {
 		return nil, false, ErrOrganizationIDRequired
@@ -391,11 +395,11 @@ func (s *fileAssetProcessingStateService) updateRunState(ctx context.Context, in
 	return updated, nil
 }
 
-func (s *fileAssetProcessingStateService) invalidateDatasetRefsForAssetEdit(ctx context.Context, asset *model.DocumentAsset, accountID string) error {
-	if s == nil || s.refs == nil || s.documents == nil || asset == nil {
+func (s *fileAssetProcessingStateService) invalidateDatasetRefsForAssetEdit(ctx context.Context, asset *model.DocumentAsset, _ string) error {
+	if s == nil || s.refs == nil || asset == nil {
 		return nil
 	}
-	refs, err := s.refs.ListActiveByAsset(ctx, asset.OrganizationID, asset.ID)
+	refs, err := listFileAssetProcessingRefs(ctx, s.refs, asset.OrganizationID, asset.ID)
 	if err != nil {
 		return err
 	}
@@ -403,17 +407,19 @@ func (s *fileAssetProcessingStateService) invalidateDatasetRefsForAssetEdit(ctx 
 		if ref == nil {
 			continue
 		}
-		if ref.DatasetDocumentID != nil && *ref.DatasetDocumentID != uuid.Nil {
-			if err := s.documents.DisableDocuments(ctx, ref.DatasetID, []string{ref.DatasetDocumentID.String()}, accountID); err != nil {
-				return err
-			}
-		}
 		syncRunID := uuid.New()
 		if _, err := s.refs.MarkPending(ctx, asset.OrganizationID, ref.ID, syncRunID, nil, nil); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func listFileAssetProcessingRefs(ctx context.Context, store fileAssetProcessingRefStore, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error) {
+	if currentStore, ok := store.(fileAssetProcessingCurrentRefStore); ok {
+		return currentStore.ListCurrentByAsset(ctx, organizationID, assetID)
+	}
+	return store.ListActiveByAsset(ctx, organizationID, assetID)
 }
 
 func normalizedProgress(value int, fallback int) int {

@@ -17,6 +17,8 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { ModelSelector } from '@/components/common/model-selector';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
+import { AlertTriangle, Check, Network, Zap } from 'lucide-react';
 import { useNodeData, useNodeDataUpdate } from '../../../../hooks';
 import type { KnowledgeRetrievalNodeData } from '../../../../store/type';
 
@@ -26,6 +28,8 @@ interface RecallSettingsDialogProps {
 }
 
 const DEFAULT_SCORE_THRESHOLD = 0.8;
+type RecallMode = 'vector' | 'graph';
+type MultipleRetrievalConfig = KnowledgeRetrievalNodeData['multiple_retrieval_config'];
 
 const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id, readOnly = false }) => {
   const [open, setOpen] = useState(false);
@@ -33,20 +37,29 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id, readOnl
   const nodeData = useNodeData<KnowledgeRetrievalNodeData>(id);
   const updateNodeData = useNodeDataUpdate<KnowledgeRetrievalNodeData>(id);
 
-  const config = useMemo(
-    () =>
-      nodeData?.multiple_retrieval_config || {
+  const config = useMemo<MultipleRetrievalConfig>(() => {
+    const current = nodeData?.multiple_retrieval_config;
+    if (!current) {
+      return {
         top_k: 2,
+        search_method: 'semantic_search',
+        fallback_policy: 'none',
         reranking_enable: false,
         score_threshold: DEFAULT_SCORE_THRESHOLD,
-      },
-    [nodeData?.multiple_retrieval_config]
-  );
+      };
+    }
+    return {
+      ...current,
+      search_method: current.search_method || 'semantic_search',
+      fallback_policy: current.fallback_policy || 'none',
+    };
+  }, [nodeData?.multiple_retrieval_config]);
 
+  const recallMode: RecallMode = config.search_method === 'graph_search' ? 'graph' : 'vector';
   const topKSafe = Math.max(1, Number(config.top_k ?? 1));
   const thresholdEnabled = typeof config.score_threshold === 'number';
   const thresholdSafe = Math.max(0, Math.min(1, Number(config.score_threshold ?? 0)));
-  const rerankingEnabled = Boolean(config.reranking_enable);
+  const rerankingEnabled = recallMode === 'vector' && Boolean(config.reranking_enable);
   const rerankingModelValue =
     config.reranking_model?.provider && config.reranking_model?.model
       ? {
@@ -68,6 +81,24 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id, readOnl
     [config, nodeData, readOnly, updateNodeData]
   );
 
+  const updateRecallMode = useCallback(
+    (mode: RecallMode) => {
+      if (mode === 'graph') {
+        update({
+          search_method: 'graph_search',
+          fallback_policy: 'none',
+          reranking_enable: false,
+        });
+        return;
+      }
+      update({
+        search_method: 'semantic_search',
+        fallback_policy: 'none',
+      });
+    },
+    [update]
+  );
+
   if (!nodeData) return null;
 
   return (
@@ -86,6 +117,89 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id, readOnl
 
         <DialogBody className="py-6">
           <div className="space-y-6">
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">
+                {t('nodes.knowledgeRetrieval.recall.method')}
+              </Label>
+              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup">
+                {(
+                  [
+                    {
+                      value: 'vector',
+                      icon: Zap,
+                      label: t('nodes.knowledgeRetrieval.recall.vector.label'),
+                      description: t('nodes.knowledgeRetrieval.recall.vector.description'),
+                      defaultLabel: t('nodes.knowledgeRetrieval.recall.defaultLabel'),
+                    },
+                    {
+                      value: 'graph',
+                      icon: Network,
+                      label: t('nodes.knowledgeRetrieval.recall.graph.label'),
+                      description: t('nodes.knowledgeRetrieval.recall.graph.description'),
+                    },
+                  ] as const
+                ).map(option => {
+                  const selected = recallMode === option.value;
+                  const Icon = option.icon;
+                  const inputId = `knowledge-recall-${id}-${option.value}`;
+                  return (
+                    <label
+                      key={option.value}
+                      htmlFor={inputId}
+                      className={cn(
+                        'relative flex min-h-32 cursor-pointer gap-3 rounded-md border p-4 transition-colors',
+                        selected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:bg-muted/50',
+                        readOnly && 'cursor-not-allowed opacity-60'
+                      )}
+                    >
+                      <input
+                        id={inputId}
+                        type="radio"
+                        name={`knowledge-recall-${id}`}
+                        value={option.value}
+                        checked={selected}
+                        disabled={readOnly}
+                        onChange={() => updateRecallMode(option.value)}
+                        className="sr-only"
+                      />
+                      <div
+                        className={cn(
+                          'flex size-9 shrink-0 items-center justify-center rounded-md border',
+                          selected
+                            ? 'border-primary/30 bg-primary/10 text-primary'
+                            : 'bg-background text-muted-foreground'
+                        )}
+                      >
+                        <Icon className="size-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium">{option.label}</span>
+                          {'defaultLabel' in option ? (
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                              {option.defaultLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          {option.description}
+                        </p>
+                      </div>
+                      {selected ? <Check className="size-4 shrink-0 text-primary" /> : null}
+                    </label>
+                  );
+                })}
+              </div>
+              {recallMode === 'graph' ? (
+                <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                  <span>{t('nodes.knowledgeRetrieval.recall.graph.requirement')}</span>
+                </div>
+              ) : null}
+            </div>
+
             <div className="space-y-3">
               <Label htmlFor="knowledge-top-k" className="text-sm font-medium">
                 {t('nodes.knowledgeRetrieval.recall.topK')}
@@ -170,7 +284,7 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id, readOnl
                 </Label>
                 <Switch
                   checked={rerankingEnabled}
-                  disabled={readOnly}
+                  disabled={readOnly || recallMode === 'graph'}
                   onCheckedChange={checked =>
                     update({
                       reranking_enable: checked,

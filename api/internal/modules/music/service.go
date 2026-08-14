@@ -12,14 +12,16 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 )
 
 const musicResponseFormat = "mp3"
 
 const (
-	defaultMusicTaskPageSize = 20
-	maxMusicTaskPageSize     = 100
-	maxMusicTaskSearchRunes  = 200
+	defaultMusicTaskPageSize   = 20
+	maxMusicTaskPageSize       = 100
+	maxMusicTaskSearchRunes    = 200
+	musicDeleteFinalizeTimeout = 5 * time.Second
 )
 
 type AvailableModelLister interface {
@@ -34,6 +36,7 @@ type Dispatcher interface {
 type AssetStore interface {
 	Save(context.Context, *Task, []byte) (string, error)
 	Delete(context.Context, string) error
+	DeleteStoredObject(context.Context, string, Scope) error
 	URL(context.Context, string) (string, error)
 }
 
@@ -108,7 +111,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 }
 
 func (s *Service) Get(ctx context.Context, scope Scope, id uuid.UUID) (*TaskView, error) {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil || id == uuid.Nil {
+	if !validScope(scope) || id == uuid.Nil {
 		return nil, ErrInvalidRequest
 	}
 	task, err := s.repo.GetScoped(ctx, scope, id)
@@ -148,8 +151,41 @@ func (s *Service) List(ctx context.Context, scope Scope, request ListRequest) (*
 	}, nil
 }
 
+func (s *Service) Delete(ctx context.Context, scope Scope, id uuid.UUID) error {
+	if !validScope(scope) || id == uuid.Nil {
+		return ErrInvalidRequest
+	}
+	task, err := s.repo.GetScoped(ctx, scope, id)
+	if err != nil {
+		return err
+	}
+	if !isDeletableStatus(task.Status) {
+		return apperror.Wrap(
+			ErrTaskNotDeletable,
+			AppCodeTaskNotDeletable,
+			apperror.WithOperation("music.task.delete"),
+		)
+	}
+	if task.Status == StatusSucceeded && task.FileID == nil {
+		return ErrTaskAssetMissing
+	}
+	metadataCtx := ctx
+	if task.FileID != nil {
+		if err := s.assets.DeleteStoredObject(ctx, task.FileID.String(), scope); err != nil {
+			return fmt.Errorf("delete music storage object: %w", err)
+		}
+		var cancel context.CancelFunc
+		metadataCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), musicDeleteFinalizeTimeout)
+		defer cancel()
+	}
+	if err := s.repo.DeleteScopedTerminal(metadataCtx, scope, id); err != nil {
+		return fmt.Errorf("delete music task metadata: %w", err)
+	}
+	return nil
+}
+
 func normalizeCreateRequest(scope Scope, request CreateRequest) (CreateRequest, error) {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil || request.RequestID == uuid.Nil ||
+	if !validScope(scope) || request.RequestID == uuid.Nil ||
 		!utf8.ValidString(request.Prompt) || !utf8.ValidString(request.Lyrics) {
 		return CreateRequest{}, ErrInvalidRequest
 	}
@@ -176,8 +212,7 @@ func normalizeCreateRequest(scope Scope, request CreateRequest) (CreateRequest, 
 }
 
 func normalizeListRequest(scope Scope, request ListRequest) (ListQuery, error) {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.AccountID == uuid.Nil ||
-		!utf8.ValidString(request.Search) {
+	if !validScope(scope) || !utf8.ValidString(request.Search) {
 		return ListQuery{}, ErrInvalidRequest
 	}
 	if request.Page == 0 {
@@ -199,7 +234,8 @@ func normalizeListRequest(scope Scope, request ListRequest) (ListQuery, error) {
 }
 
 func matchExistingTask(task *Task, scope Scope, request CreateRequest) (*Task, error) {
-	if task == nil || task.AccountID != scope.AccountID || task.RequestID != request.RequestID || task.Model != request.Model || task.Mode != request.Mode ||
+	if task == nil || task.OrganizationID != scope.OrganizationID || task.AccountID != scope.AccountID ||
+		!sameWorkspace(task.WorkspaceID, scope.WorkspaceID) || task.RequestID != request.RequestID || task.Model != request.Model || task.Mode != request.Mode ||
 		task.Prompt != request.Prompt || task.Lyrics != request.Lyrics || task.ResponseFormat != musicResponseFormat {
 		return nil, ErrTaskConflict
 	}

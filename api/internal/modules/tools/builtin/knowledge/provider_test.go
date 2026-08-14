@@ -115,6 +115,27 @@ func TestRetrieveKnowledgeRequiresDatasetIDs(t *testing.T) {
 	}
 }
 
+func TestRetrieveKnowledgePreservesGraphExecutionPolicy(t *testing.T) {
+	service := &fakeRetrievalService{}
+	tool, err := NewProvider(service).GetTool(ToolRetrieveKnowledge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool = tool.ForkToolRuntime(&tools.ToolRuntime{TenantID: "tenant-1", InvokeFrom: tools.ToolInvokeFromAIChat})
+	_, err = tool.Invoke(context.Background(), "account-1", map[string]interface{}{
+		"query":           "relationship question",
+		"dataset_ids":     []interface{}{"ds-1"},
+		"retrieval_mode":  "graph",
+		"fallback_policy": "none",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.lastRequest.RetrievalMode != "graph" || service.lastRequest.FallbackPolicy != "none" {
+		t.Fatalf("request=%#v", service.lastRequest)
+	}
+}
+
 func TestListAccessibleKnowledgeUsesOrganizationScope(t *testing.T) {
 	service := &fakeRetrievalService{}
 	tool, err := NewProvider(service).GetTool(ToolListAccessibleKnowledge)
@@ -287,7 +308,11 @@ func TestRetrieveAgentKnowledgeUsesBindingActorAccount(t *testing.T) {
 			"knowledge_bound_by_account_id": "binder-1",
 			"knowledge_binding_grant":       true,
 			"knowledge_dataset_ids":         []string{"ds-1"},
-			"knowledge_retrieval_config":    map[string]interface{}{"top_k": float64(8)},
+			"knowledge_retrieval_config": map[string]interface{}{
+				"top_k":           float64(8),
+				"search_method":   "graph",
+				"fallback_policy": "none",
+			},
 		},
 	})
 
@@ -308,6 +333,34 @@ func TestRetrieveAgentKnowledgeUsesBindingActorAccount(t *testing.T) {
 	}
 	if got := service.lastRequest.RetrievalConfig["top_k"]; got != float64(8) {
 		t.Fatalf("RetrievalConfig[top_k] = %#v, want 8", got)
+	}
+	if service.lastRequest.RetrievalMode != "graph" || service.lastRequest.FallbackPolicy != "none" {
+		t.Fatalf("graph execution policy = %q/%q, want graph/none", service.lastRequest.RetrievalMode, service.lastRequest.FallbackPolicy)
+	}
+}
+
+func TestRetrievalMessagesExposeGraphExecutionIdentity(t *testing.T) {
+	messages, err := retrievalMessages(&dataset_service.KnowledgeRetrieveResponse{
+		GraphExecutions: []*dto.GraphExecution{{
+			RequestedMethod:    "graph",
+			ActualMethod:       "graph",
+			FallbackPolicy:     "none",
+			GraphRevision:      7,
+			VisibilityRevision: 11,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, ok := messages[0].Data["retrieval_execution"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("retrieval_execution = %#v", messages[0].Data["retrieval_execution"])
+	}
+	if execution["requested_method"] != "graph" || execution["actual_method"] != "graph" {
+		t.Fatalf("execution methods = %#v", execution)
+	}
+	if execution["graph_revision"] != int64(7) || execution["visibility_revision"] != int64(11) {
+		t.Fatalf("execution revisions = %#v", execution)
 	}
 }
 

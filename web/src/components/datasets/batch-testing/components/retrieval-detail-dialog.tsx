@@ -24,7 +24,7 @@ interface RetrievalDetailDialogProps {
 }
 
 const getRetrievalRecordKey = (
-  record: ResultElement['result']['records'][number],
+  record: NonNullable<ResultElement['result']>['records'][number],
   index: number
 ) => {
   const childChunkKey = record.child_chunks?.map(chunk => chunk.id).join(':') || 'none';
@@ -171,7 +171,7 @@ export function RetrievalDetailDialog({
                                   {t('hitTesting.responseTime')}
                                 </div>
                                 <div className="text-xs font-bold text-neutral-600 bg-neutral-50 px-2 py-0.5 rounded-md">
-                                  {(resultData.result?.elapsed_time / 1000).toFixed(2)}s
+                                  {((resultData.result?.elapsed_time ?? 0) / 1000).toFixed(2)}s
                                 </div>
                               </div>
                             </div>

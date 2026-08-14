@@ -35,6 +35,15 @@ import { useSaveBatchHitTestingRecord } from '@/hooks/dataset/use-batch-hit-test
 import type { BatchTestData, ResultElement } from './type';
 import { withBasePath } from '@/lib/config';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
+import { useDatasetGraphStatus } from '@/hooks/dataset/use-dataset-graph';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import type { SearchMethod } from '@/services/types/dataset';
 interface BatchTestingProps {
   onSearch?: (keyword: string) => void;
 }
@@ -48,6 +57,13 @@ export default function BatchTesting(props: BatchTestingProps) {
   const datasetId = (params?.datasetId as string) || undefined;
   const { data: datasetData } = useDataset(datasetId);
   const dataset = datasetData?.data;
+  const graphConfigured = Boolean(dataset?.enable_graph_flow);
+  const { data: graphStatusResponse } = useDatasetGraphStatus(datasetId ?? '', graphConfigured);
+  const graphStatus = graphStatusResponse?.data;
+  const graphSearchAvailable = graphConfigured && graphStatus?.can_search === true;
+  const graphUnavailableReason = !graphConfigured
+    ? t('hitTesting.graphNotEnabled')
+    : graphStatus?.error_message || t('hitTesting.graphNotReady');
   // Check if dataset supports QA mode (qa_model doc_form)
   const isPreQaExtension = dataset?.doc_form === 'qa_model';
   const [sampleLimit, setSampleLimit] = useState<number>(10);
@@ -61,6 +77,14 @@ export default function BatchTesting(props: BatchTestingProps) {
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const autoStartTriggeredRef = useRef(false);
   const [shouldAutoStart, setShouldAutoStart] = useState(false);
+  const [searchMethod, setSearchMethod] = useState<SearchMethod>('graph_search');
+
+  useEffect(() => {
+    if (!dataset?.retrieval_config?.search_method) return;
+    setSearchMethod(
+      normalizeDatasetSearchMethod(dataset.retrieval_config.search_method, graphSearchAvailable)
+    );
+  }, [dataset?.retrieval_config?.search_method, graphSearchAvailable]);
 
   const { data: randomQuestionsResp, isLoading: isRandomLoading } = useRandomQuestions(
     datasetId,
@@ -181,7 +205,9 @@ export default function BatchTesting(props: BatchTestingProps) {
           // If all filtered questions completed, stop polling and notify
           const allCompleted =
             filteredQuestions.length > 0 &&
-            filteredQuestions.every(q => nextStatus[q.question] === 'completed');
+            filteredQuestions.every(q =>
+              ['completed', 'failed', 'error'].includes(nextStatus[q.question])
+            );
           if (allCompleted) {
             clearInterval(pollInterval);
             pollIntervalRef.current = null;
@@ -239,8 +265,8 @@ export default function BatchTesting(props: BatchTestingProps) {
     try {
       const retrievalConfig = dataset.retrieval_config;
       const normalizedSearchMethod = normalizeDatasetSearchMethod(
-        retrievalConfig.search_method,
-        Boolean(dataset.enable_graph_flow)
+        searchMethod,
+        graphSearchAvailable
       );
       const response = await datasetService.asyncBatchHitTesting(datasetId, {
         dataset_ids: [datasetId],
@@ -252,7 +278,11 @@ export default function BatchTesting(props: BatchTestingProps) {
           top_k: retrievalConfig.top_k,
           score_threshold_enabled: retrievalConfig.score_threshold_enabled,
           score_threshold: retrievalConfig.score_threshold,
+          hop_depth: 3,
+          fallback_policy: normalizedSearchMethod === 'graph_search' ? 'none' : undefined,
         },
+        retrieval_mode: normalizedSearchMethod === 'graph_search' ? 'hybrid' : undefined,
+        fallback_policy: normalizedSearchMethod === 'graph_search' ? 'none' : undefined,
       });
 
       toast.success(t('hitTesting.batchTestStarted'), {
@@ -274,6 +304,8 @@ export default function BatchTesting(props: BatchTestingProps) {
     datasetId,
     dataset?.enable_graph_flow,
     dataset?.retrieval_config,
+    graphSearchAvailable,
+    searchMethod,
     toast,
     startPolling,
     t,
@@ -453,6 +485,25 @@ export default function BatchTesting(props: BatchTestingProps) {
     <div className="flex h-full flex-col">
       {/* Top toolbar */}
       <div className="w-full border-b p-4 flex items-center gap-2 justify-end">
+        <div className="mr-auto flex items-center gap-2">
+          <Select
+            value={searchMethod}
+            onValueChange={value => setSearchMethod(value as SearchMethod)}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="graph_search" disabled={!graphSearchAvailable}>
+                {t('hitTesting.methods.graph_search')}
+              </SelectItem>
+              <SelectItem value="hybrid_search">{t('hitTesting.methods.hybrid_search')}</SelectItem>
+            </SelectContent>
+          </Select>
+          {!graphSearchAvailable && (
+            <span className="max-w-72 text-xs text-muted-foreground">{graphUnavailableReason}</span>
+          )}
+        </div>
         {!taskId && (
           <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
             <Upload className="h-4 w-4 mr-1" /> {t('hitTesting.batchImportQuestions')}

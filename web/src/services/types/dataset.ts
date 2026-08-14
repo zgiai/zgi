@@ -216,7 +216,11 @@ export interface DocumentListParams {
 }
 
 // Retrieval search method type
-export type SearchMethod = 'graph_search' | 'semantic_search' | 'full_text_search' | 'hybrid_search';
+export type SearchMethod =
+  | 'graph_search'
+  | 'semantic_search'
+  | 'full_text_search'
+  | 'hybrid_search';
 
 export enum ProcessStatus {
   WAITING = 'waiting',
@@ -411,6 +415,7 @@ export interface CreateDatasetRequest {
       reranking_provider_name: string;
       reranking_model_name: string;
     };
+    hop_depth?: 1 | 2 | 3;
   };
 }
 
@@ -426,6 +431,7 @@ export interface UpdateDatasetRequest {
   icon_background?: string;
   workspace_id?: string;
   enable_graph_flow?: boolean;
+  confirm_graph_rebuild?: boolean;
   retrieval_config?: {
     search_method?: SearchMethod;
     top_k?: number;
@@ -436,6 +442,7 @@ export interface UpdateDatasetRequest {
       reranking_provider_name: string;
       reranking_model_name: string;
     };
+    hop_depth?: 1 | 2 | 3;
   };
 }
 
@@ -510,6 +517,13 @@ export interface Dataset {
     score_threshold_enabled: boolean;
   };
   enable_graph_flow?: boolean;
+  graph_status?: GraphDatasetStatusValue;
+  graph_revision?: number;
+  graph_available_revision?: number | null;
+  graph_visibility_revision?: number;
+  graph_projected_visibility_revision?: number;
+  graph_progress?: number;
+  graph_embedding?: GraphEmbeddingIdentity;
   extraction_strategy?: string;
   icon: string;
   icon_type: IconType;
@@ -531,6 +545,101 @@ export interface Dataset {
   };
   is_editor: boolean;
   can_edit: boolean;
+}
+
+export type GraphRuntimeState = 'initializing' | 'ready' | 'degraded';
+
+export interface GraphRuntimeCapability {
+  state: GraphRuntimeState;
+  available: boolean;
+  reason_code: string | null;
+  message: string;
+  checked_at: string;
+}
+
+export type GraphDatasetStatusValue =
+  | 'disabled'
+  | 'unavailable'
+  | 'waiting_content'
+  | 'queued'
+  | 'building'
+  | 'partial'
+  | 'ready'
+  | 'empty'
+  | 'failed';
+
+export interface GraphEmbeddingIdentity {
+  mode: 'inherit';
+  model_provider: string;
+  model: string;
+  dimension: number;
+  verified?: boolean;
+}
+
+export interface GraphRunStatus {
+  id: string;
+  mode: 'build' | 'backfill' | 'rebuild' | 'cleanup';
+  status: string;
+  progress: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type GraphBuildStageKey = 'extraction' | 'alignment' | 'graph_sync' | 'vector_sync';
+
+export type GraphBuildStageStatusValue = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface GraphBuildStageStatus {
+  key: GraphBuildStageKey;
+  status: GraphBuildStageStatusValue;
+  progress: number;
+}
+
+export interface GraphDocumentStatus {
+  document_id: string;
+  ref_id: string;
+  status: 'waiting' | 'queued' | 'processing' | 'ready' | 'failed' | 'superseded';
+  retrieval_enabled: boolean;
+  current_run_id?: string;
+  error_code?: string;
+}
+
+export interface GraphDatasetStatus {
+  dataset_id: string;
+  enabled: boolean;
+  status: GraphDatasetStatusValue;
+  progress: number;
+  graph_revision: number;
+  graph_visibility_revision: number;
+  graph_projected_visibility_revision: number;
+  available_revision?: number;
+  current_run?: GraphRunStatus;
+  current_stage?: GraphBuildStageKey;
+  stages: GraphBuildStageStatus[];
+  summary: {
+    documents_total: number;
+    documents_ready: number;
+    documents_processing: number;
+    documents_failed: number;
+  };
+  documents: GraphDocumentStatus[];
+  error_code?: string;
+  error_message?: string;
+  can_search: boolean;
+  can_retry: boolean;
+  can_rebuild: boolean;
+  graph_embedding: GraphEmbeddingIdentity;
+}
+
+export interface GraphOperationResponse {
+  run_id: string;
+  mode: string;
+  status: string;
+  graph_revision: number;
+  document_id?: string;
+  ref_id?: string;
+  sync_run_id?: string;
+  asset_generation_no?: number;
 }
 
 export interface DatasetList {
@@ -804,6 +913,7 @@ export interface HitTestingResult {
     retrieval_sources?: string[];
     matched_terms?: string[];
     matched_entities?: string[];
+    active_source_count?: number;
     vector_score?: number;
     bm25_score?: number;
     vector_rank?: number;
@@ -822,8 +932,18 @@ export interface HitTestingResponse {
   total_segments?: number;
   elapsed_time?: number;
   graph_execution?: {
+    requested_method?: string;
+    actual_method?: string;
+    fallback_policy?: string;
+    fallback_reason?: string;
+    graph_revision?: number;
+    visibility_revision?: number;
     entities: string[];
-    triples: any[];
+    triples: Array<{
+      subject: string;
+      predicate: string;
+      object: string;
+    }>;
     steps: Array<{
       step: number;
       action: string;
@@ -866,6 +986,8 @@ export interface InternalRetrievalConfig {
   top_k: number;
   score_threshold_enabled: boolean;
   score_threshold: number;
+  fallback_policy?: 'none' | 'vector';
+  hop_depth?: 1 | 2 | 3;
 }
 
 // Simplified config for API requests (matches backend expectations)
@@ -940,6 +1062,8 @@ export interface BatchHitTestingRequest {
   dataset_ids: string[];
   queries: string[];
   retrieval_model?: InternalRetrievalConfig;
+  retrieval_mode?: 'graph' | 'hybrid' | 'vector';
+  fallback_policy?: 'none' | 'vector';
 }
 
 export interface BatchHitTestingResponse {
@@ -1034,7 +1158,7 @@ export interface ProcessRuleResponse {
   limits?: {
     indexing_max_segmentation_tokens_length: number;
   };
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface DocumentIndexingStatusResponse {
@@ -1056,7 +1180,7 @@ export interface DocumentIndexingStatusResponse {
 
 export interface ErrorDocsResponse {
   total: number;
-  data: any[];
+  data: unknown[];
 }
 
 /**
@@ -1091,8 +1215,8 @@ export interface ProcessConfiguration {
  */
 export interface DatasetUploadFormData {
   files: UploadedFile[];
-  notionPages?: any[];
-  crawlResults?: any[];
+  notionPages?: unknown[];
+  crawlResults?: unknown[];
   processConfig: ProcessConfiguration | null;
   docLanguage?: string;
   indexType?: string;
@@ -1123,14 +1247,18 @@ export interface GraphNode {
   data: {
     description: string;
     sources: GraphNodeSource[];
+    source_count: number;
+    active_source_count: number;
   };
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface GraphEdge {
   source: string;
   target: string;
   label: string;
+  weight: number;
+  active_weight: number;
 }
 
 export interface GraphCategory {
@@ -1142,4 +1270,21 @@ export interface DatasetGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   categories: GraphCategory[];
+  next_cursor?: string;
+  node_count: number;
+  edge_count: number;
+  total_node_count: number;
+  total_edge_count: number;
+}
+
+export interface GraphQueryParams {
+  keyword?: string;
+  category?: string;
+  document_id?: string;
+  seed_node_id?: string;
+  cursor?: string;
+  overview?: boolean;
+  hop_depth?: number;
+  node_limit?: number;
+  edge_limit?: number;
 }
