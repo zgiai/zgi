@@ -433,15 +433,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 			submission.streamed = submission.streamed || planningResult.answerStreamed
 			guard := terminalStateGuardEvaluate(roundRuntimeState, submission.answer)
-			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
 				guardErr := terminalStateGuardError(guard)
 				result := failedFinalAnswerSkillStep(call.ID, guardErr, "resolve the terminal-state blockers before submitting a final answer")
 				if checkpointErr := r.checkpointTerminalToolBatch(ctx, messages, planningMessage, toolCalls, call.ID, result.toolMessage, "the round ended after submit_final_answer failed terminal-state validation"); checkpointErr != nil {
 					return answerBuilder.String(), usage, checkpointErr
 				}
+			}
+			terminalStateGuardRecord(req, guard)
+			if guard.Path != terminalStateGuardAccepted {
 				terminalStateGuardNotify(req, guard)
-				return answerBuilder.String(), usage, guardErr
+				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
 
 			result := finalAnswerSkillStep(call.ID, submission)

@@ -492,7 +492,8 @@ export function AIChatInputArea({
     !isModelInitializing &&
     !isPreparingSend &&
     !isUploading &&
-    !hasUploadError;
+    !hasUploadError &&
+    !disabled;
   const interactionDisabled = disabled || isSending;
   const activeQuestions = useMemo(
     () => (activeUserInputRequest?.questions ?? []).filter(question => question.question?.trim()),
@@ -947,7 +948,7 @@ export function AIChatInputArea({
   );
 
   const handleSend = useCallback(async () => {
-    if (disabled || !input.trim() || isPreparingSend || isUploading || hasUploadError) return;
+    if (!input.trim() || isPreparingSend || isUploading || hasUploadError) return;
     setIsPreparingSend(true);
     try {
       const sent = await onSend(uploadedFiles, useMemory);
@@ -957,16 +958,7 @@ export function AIChatInputArea({
     } finally {
       setIsPreparingSend(false);
     }
-  }, [
-    disabled,
-    hasUploadError,
-    input,
-    isPreparingSend,
-    isUploading,
-    onSend,
-    uploadedFiles,
-    useMemory,
-  ]);
+  }, [hasUploadError, input, isPreparingSend, isUploading, onSend, uploadedFiles, useMemory]);
 
   const handleWorkflowApprovalSubmit = useCallback(
     async (payload: { inputs: Record<string, unknown>; action: string }) => {

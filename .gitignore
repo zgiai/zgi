@@ -32,4 +32,4 @@ scripts/rag_evaluation/__pycache__/
 scripts/rag_evaluation/input/
 scripts/rag_evaluation/middle/
 scripts/rag_evaluation/result/
-scripts/rag_evaluation/graph_evaluation/output/
+scripts/rag_evaluation/graph_evaluation/

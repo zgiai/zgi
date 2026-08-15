@@ -11,8 +11,8 @@ import (
 // into protocol adapters without introducing a mutable global registry.
 func provideApplicationErrorCatalog() (*appcatalog.Catalog, error) {
 	definitions := appcatalog.DefaultDefinitions()
-	definitions = append(definitions, llmerrors.CatalogDefinitions()...)
 	definitions = append(definitions, chatruntimeservice.CatalogDefinitions()...)
+	definitions = append(definitions, llmerrors.CatalogDefinitions()...)
 	return appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
 }
 

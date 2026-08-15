@@ -1058,6 +1058,23 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 	return metadata
 }
 
+func clientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	if len(metadata) == 0 {
+		return metadata
+	}
+	filtered, changed := filterFinalAnswerInvocations(metadata["skill_invocations"])
+	if !changed {
+		return metadata
+	}
+	if len(filtered) == 0 {
+		delete(metadata, "skill_invocations")
+		return metadata
+	}
+	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(filtered)
+	return metadata
+}
+
 // ClientVisibleMessageMetadata returns the public projection of durable message
 // metadata. Model-replay transcripts and detailed model request/response traces
 // remain available to backend history reconstruction and diagnostics only.
@@ -1087,20 +1104,7 @@ func ClientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 		}
 		metadata["context_control"] = control
 	}
-	filtered, changed := filterFinalAnswerInvocations(metadata["skill_invocations"])
-	if !changed {
-		return metadata
-	}
-	if len(filtered) == 0 {
-		delete(metadata, "skill_invocations")
-		return metadata
-	}
-	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(filtered)
-	return metadata
-}
-
-func clientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
-	return ClientVisibleMessageMetadata(source)
+	return clientVisibleMessageMetadata(metadata)
 }
 
 // RedactPrivateContextMetadata returns a detached metadata copy before it
