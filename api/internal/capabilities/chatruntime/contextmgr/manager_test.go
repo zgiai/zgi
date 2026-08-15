@@ -562,6 +562,89 @@ func TestHardLimitReturnsContextExhaustedAndKeepsCheckpoint(t *testing.T) {
 	}
 }
 
+func TestHardLimitForcesFinalRecoveryAfterProactiveCompactionCircuitBreaker(t *testing.T) {
+	compactor := &recordingCompactor{summary: `<summary>Earlier work is preserved in a compact form.</summary>`}
+	manager := newTestManager(t, Config{
+		AgentRunID:             "run-final-recovery",
+		ConfiguredAgentWindowK: 32,
+		ModelContextWindow:     128_000,
+		MaxOutputTokens:        4_000,
+		SummaryOutputTokens:    4_000,
+		EmergencyBufferTokens:  3_000,
+		HysteresisTokens:       1_000,
+		TailMinTextRounds:      2,
+	}, compactor)
+	manager.state.Compaction.ConsecutiveFailures = maxConsecutiveCompactionFailures
+	request := &adapter.ChatRequest{
+		Model:     "test-model",
+		MaxTokens: intPointerForTest(2_000),
+		Messages: []adapter.Message{
+			{Role: "user", Content: strings.Repeat("old ", 15_000)},
+			{Role: "assistant", Content: strings.Repeat("middle ", 3_000)},
+			{Role: "assistant", Content: strings.Repeat("recent ", 3_000)},
+		},
+	}
+	budget, err := budgetForRequest(manager.config, *request.MaxTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before := manager.estimator.EstimateChatRequest(request).Tokens; before <= budget.HardLimit {
+		t.Fatalf("test request tokens = %d, want above hard limit %d", before, budget.HardLimit)
+	}
+
+	prepared, decision, err := manager.PrepareBeforeModelCall(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != DecisionReactiveCompact || decision.FinalPromptTokens > decision.Budget.HardLimit {
+		t.Fatalf("final recovery decision = %#v", decision)
+	}
+	if len(compactor.calls) != 1 || compactor.calls[0].Type != RequestTypeReactiveCompact {
+		t.Fatalf("compact calls = %#v, want one reactive compact", compactor.calls)
+	}
+	if manager.State().Compaction.ConsecutiveFailures != 0 {
+		t.Fatalf("failure count was not reset: %#v", manager.State().Compaction)
+	}
+	if !strings.Contains(messagesString(prepared.Messages), "Earlier work is preserved") {
+		t.Fatalf("recovered request did not contain the compact summary: %#v", prepared.Messages)
+	}
+}
+
+func TestHardLimitStopsAfterFinalRecoveryFails(t *testing.T) {
+	compactor := &recordingCompactor{failures: []error{errors.New("summary provider unavailable")}}
+	manager := newTestManager(t, Config{
+		AgentRunID:             "run-final-recovery-failed",
+		ConfiguredAgentWindowK: 32,
+		ModelContextWindow:     128_000,
+		MaxOutputTokens:        4_000,
+		SummaryOutputTokens:    4_000,
+		EmergencyBufferTokens:  3_000,
+		HysteresisTokens:       1_000,
+		TailMinTextRounds:      2,
+	}, compactor)
+	manager.state.Compaction.ConsecutiveFailures = maxConsecutiveCompactionFailures
+	request := &adapter.ChatRequest{
+		Model:     "test-model",
+		MaxTokens: intPointerForTest(2_000),
+		Messages: []adapter.Message{
+			{Role: "user", Content: strings.Repeat("old ", 15_000)},
+			{Role: "assistant", Content: strings.Repeat("middle ", 3_000)},
+			{Role: "assistant", Content: strings.Repeat("recent ", 3_000)},
+		},
+	}
+
+	_, decision, err := manager.PrepareBeforeModelCall(context.Background(), request)
+	if !errors.Is(err, ErrContextExhausted) || !strings.Contains(err.Error(), "final recovery compaction failed") {
+		t.Fatalf("error = %v, want failed final recovery context exhaustion", err)
+	}
+	if decision.CompactionFailure != "summary provider unavailable" {
+		t.Fatalf("decision = %#v", decision)
+	}
+	if len(compactor.calls) != 1 || compactor.calls[0].Type != RequestTypeReactiveCompact {
+		t.Fatalf("compact calls = %#v, want one reactive compact", compactor.calls)
+	}
+}
+
 func TestLongAgentRunSurvivesOneHundredToolRoundsAndRepeatedCompaction(t *testing.T) {
 	compactor := &recordingCompactor{summary: `<summary>The earlier API rounds completed successfully. Preserve the current task constraints and continue from the verbatim recent rounds.</summary>`}
 	manager := newTestManager(t, Config{
@@ -764,11 +847,13 @@ func TestRestoreRebudgetsCheckpointAgainstSmallerWorkingWindow(t *testing.T) {
 type recordingCompactor struct {
 	summary  string
 	requests []*adapter.ChatRequest
+	calls    []CompactCall
 	failures []error
 }
 
-func (c *recordingCompactor) Compact(_ context.Context, request *adapter.ChatRequest, _ CompactCall) (string, *adapter.Usage, error) {
+func (c *recordingCompactor) Compact(_ context.Context, request *adapter.ChatRequest, call CompactCall) (string, *adapter.Usage, error) {
 	c.requests = append(c.requests, cloneRequest(request))
+	c.calls = append(c.calls, call)
 	if len(c.failures) > 0 {
 		err := c.failures[0]
 		c.failures = c.failures[1:]

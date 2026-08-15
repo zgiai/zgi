@@ -1349,7 +1349,7 @@ func writeAgentChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, re
 			status = strings.TrimSpace(result.Status)
 		}
 		if result.Metadata != nil {
-			metadata = result.Metadata
+			metadata = runtimeservice.ClientVisibleMessageMetadata(result.Metadata)
 		}
 		eventID = strings.TrimSpace(result.MessageEndEventID)
 	}

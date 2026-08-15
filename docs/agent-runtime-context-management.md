@@ -231,6 +231,8 @@ query
 
 数据库不需要新增工具调用表；`query / metadata / answer` 共同构成一个逻辑 turn 的持久化记录。运行中未完成的尾部工具批次不得进入后续模型请求；异常结束恢复时，只保留已经补齐全部 tool result 的完整 API round。现有 `skill_invocations`、`runtime_timeline` 和默认精简的 `model_invocations` 继续用于展示、审计与诊断，不能作为模型协议 transcript 反向还原的数据源。
 
+`metadata.agent_transcript`、版本号、完整 `model_invocations` 请求/响应以及压缩 snapshot 都是后端私有数据。数据库持久化必须保留原值，但任何 HTTP/SSE 出口都只能发送复制后的公开 metadata：删除 transcript 和完整模型调用载荷，只保留模型调用次数、压缩状态及 `skill_invocations`、工作流、文件、审批等前端展示字段。脱敏不得原地修改持久化 metadata。
+
 依据：Claude Code 对工具结果替换使用稳定 state，先前替换过的结果在后续请求中复用相同替换文本，并把记录写入 transcript 供 resume 重建，见 [CC-05]、[CC-12]。
 
 ### 5.3 每次模型调用前的唯一入口
@@ -628,13 +630,15 @@ created_at / updated_at
 
 - 请求仍低于 `HardLimit`：记录失败，发送经过工具结果治理后的原请求，不阻断 run。
 - 连续失败计数达到 3：本 run 暂停主动语义压缩，避免每轮重复浪费模型调用；轻量工具治理继续执行。
+- 最终请求超过本地 `HardLimit` 时，无论主动压缩熔断器是否打开，都必须强制执行一次 final recovery compact。该次恢复可以只保护一个最近 API round，以获得比普通主动压缩更大的回收空间。
+- final recovery 成功后清零失败计数并继续 run；仍失败才以 `context_exhausted` 结束当前 `agent_run_id`，同时保留 checkpoint。
 - 一次成功压缩后清零计数。
 
 依据：Claude Code 使用 3 次连续失败的 circuit breaker，成功后重置，见 [CC-07]。
 
-### 10.2 上游返回 prompt-too-long
+### 10.2 本地 HardLimit 或上游返回 prompt-too-long
 
-一次模型请求仍可能因 tokenizer 误差或供应商隐藏开销返回超限。此时：
+本地估算已经超过 `HardLimit` 时必须在发送前执行 final recovery compact，不能直接终止而让恢复路径不可达。估算低于 `HardLimit` 的请求仍可能因 tokenizer 误差或供应商隐藏开销被上游判定超限，此时：
 
 1. 标记该次请求未成功，不创建新的 API round。
 2. 对相同 canonical state 执行一次 reactive compaction。
@@ -876,6 +880,8 @@ planningReq, decision, err = contextManager.PrepareBeforeModelCall(
 5. SSE 中途断线但 Agent 仍运行时，不触发压缩状态重建；重连只恢复事件。
 6. 主模型返回 prompt-too-long 后 reactive compact 一次并成功恢复。
 7. 摘要请求自身过长时按最旧 API rounds 降级，不产生非法消息序列。
+8. 连续主动压缩失败 3 次后，超过本地 HardLimit 的请求仍会执行一次 final recovery；成功则继续，失败则保存 checkpoint 并终止当前 run。
+9. HTTP/SSE 返回的 metadata 不包含 `agent_transcript`、完整 `model_invocations` 或压缩 snapshot，且脱敏不修改数据库原值。
 
 ### 15.3 必须观测的指标
 

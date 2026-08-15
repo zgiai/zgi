@@ -177,6 +177,26 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 			decision.ToolProjectionCount += projectedCount
 		}
 	}
+	var finalRecoveryErr error
+	if estimate.Tokens > budget.HardLimit && m.compactor != nil {
+		beforeRecovery := cloneRequest(prepared)
+		recovered, summary, recoveryDecision, recoveryErr := m.semanticCompact(ctx, prepared, decision, true)
+		if recoveryErr != nil {
+			finalRecoveryErr = recoveryErr
+			m.state.Compaction.LastFailure = recoveryErr.Error()
+			decision.CompactionFailure = recoveryErr.Error()
+			prepared = beforeRecovery
+		} else {
+			prepared = recovered
+			decision = recoveryDecision
+			decision.CompactionFailure = ""
+			m.state.Summary = summary
+			m.state.Compaction.ConsecutiveFailures = 0
+			m.state.Compaction.LastFailure = ""
+			m.state.Compaction.LastCompactedAt = time.Now().UTC()
+		}
+		estimate = m.estimator.EstimateChatRequest(prepared)
+	}
 	m.syncTurnTranscriptMessages(prepared.Messages)
 
 	decision.AfterTokens = estimate.Tokens
@@ -192,6 +212,9 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 		m.state.Messages = cloneMessages(prepared.Messages)
 		if checkpointErr := m.saveCheckpoint(ctx); checkpointErr != nil {
 			return nil, decision, checkpointErr
+		}
+		if finalRecoveryErr != nil {
+			return nil, decision, fmt.Errorf("%w: final recovery compaction failed: %v; prompt=%d hard_limit=%d", ErrContextExhausted, finalRecoveryErr, estimate.Tokens, budget.HardLimit)
 		}
 		return nil, decision, fmt.Errorf("%w: final model request exceeds Agent hard context limit: prompt=%d hard_limit=%d", ErrContextExhausted, estimate.Tokens, budget.HardLimit)
 	}
@@ -848,7 +871,11 @@ func (m *Manager) semanticCompact(ctx context.Context, request *adapter.ChatRequ
 	if len(rounds) < 2 {
 		return nil, nil, decision, fmt.Errorf("no complete API-round prefix is available for compaction")
 	}
-	preserveStart := selectPreservedTail(rounds, decision.Budget, m.config.TailMinTextRounds, m.estimator, request.Model)
+	minimumTailRounds := m.config.TailMinTextRounds
+	if reactive {
+		minimumTailRounds = 1
+	}
+	preserveStart := selectPreservedTail(rounds, decision.Budget, minimumTailRounds, m.estimator, request.Model)
 	if preserveStart <= 0 || preserveStart >= len(rounds) {
 		return nil, nil, decision, fmt.Errorf("no safe API-round compaction boundary is available")
 	}

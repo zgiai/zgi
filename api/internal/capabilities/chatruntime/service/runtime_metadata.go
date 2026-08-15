@@ -1058,10 +1058,34 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 	return metadata
 }
 
-func clientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
+// ClientVisibleMessageMetadata returns the public projection of durable message
+// metadata. Model-replay transcripts and detailed model request/response traces
+// remain available to backend history reconstruction and diagnostics only.
+func ClientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
 	metadata := RedactPrivateContextMetadata(source)
 	if len(metadata) == 0 {
 		return metadata
+	}
+	if raw, ok := metadata["model_invocations"]; ok {
+		delete(metadata, "model_invocations")
+		metadata["model_invocations_redacted"] = true
+		if count := len(modelInvocationsFromMetadata(raw)); count > 0 {
+			metadata["model_invocation_count"] = count
+		}
+	}
+	if control := copyStringAnyMap(mapFromOperationContext(metadata["context_control"])); len(control) > 0 {
+		if compaction := mapFromOperationContext(control["compaction"]); len(compaction) > 0 {
+			publicCompaction := map[string]interface{}{}
+			if status := strings.TrimSpace(stringFromAny(compaction["status"])); status != "" {
+				publicCompaction["status"] = status
+			}
+			if len(publicCompaction) == 0 {
+				delete(control, "compaction")
+			} else {
+				control["compaction"] = publicCompaction
+			}
+		}
+		metadata["context_control"] = control
 	}
 	filtered, changed := filterFinalAnswerInvocations(metadata["skill_invocations"])
 	if !changed {
@@ -1073,6 +1097,10 @@ func clientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 	}
 	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(filtered)
 	return metadata
+}
+
+func clientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
+	return ClientVisibleMessageMetadata(source)
 }
 
 // RedactPrivateContextMetadata returns a detached metadata copy before it

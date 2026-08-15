@@ -77,18 +77,35 @@ func TestAgentTranscriptDropsIncompleteFinalToolBatch(t *testing.T) {
 }
 
 func TestClientVisibleMetadataOmitsAgentTranscript(t *testing.T) {
-	metadata := mergeAgentTranscriptMetadata(map[string]interface{}{"public": "value"}, []adapter.Message{
+	metadata := mergeAgentTranscriptMetadata(map[string]interface{}{
+		"public": "value",
+		"model_invocations": []interface{}{
+			map[string]interface{}{"request": map[string]interface{}{"messages": []interface{}{"private prompt"}}},
+		},
+	}, []adapter.Message{
 		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Function: adapter.FunctionCall{Name: "search"}}}},
 		{Role: "tool", ToolCallID: "call-1", Content: `{"secret":"model-only result"}`},
 	}, "")
-	visible := clientVisibleMessageMetadata(metadata)
+	visible := ClientVisibleMessageMetadata(metadata)
 	if visible["public"] != "value" {
 		t.Fatalf("public metadata was lost: %#v", visible)
 	}
 	if _, ok := visible[agentTranscriptMetadataKey]; ok {
 		t.Fatalf("Agent transcript leaked into client metadata: %#v", visible)
 	}
+	if _, ok := visible[agentTranscriptVersionMetadataKey]; ok {
+		t.Fatalf("Agent transcript version leaked into client metadata: %#v", visible)
+	}
+	if _, ok := visible["model_invocations"]; ok {
+		t.Fatalf("model invocation payload leaked into client metadata: %#v", visible)
+	}
+	if visible["model_invocations_redacted"] != true || visible["model_invocation_count"] != 1 {
+		t.Fatalf("model invocation redaction markers = %#v", visible)
+	}
 	if _, ok := metadata[agentTranscriptMetadataKey]; !ok {
 		t.Fatalf("redaction mutated durable metadata: %#v", metadata)
+	}
+	if _, ok := metadata["model_invocations"]; !ok {
+		t.Fatalf("redaction mutated durable model invocation metadata: %#v", metadata)
 	}
 }
