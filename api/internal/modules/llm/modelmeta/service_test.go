@@ -143,3 +143,58 @@ func TestModelMetaDiffDetectsDefaultParameterCapabilitiesChange(t *testing.T) {
 		t.Fatalf("diff fields = %#v, want default_parameters", fields)
 	}
 }
+
+func TestModelMetaTopLevelVideoIsPublishedAsCapability(t *testing.T) {
+	remote := &ModelMetaData{
+		UseCases:         []string{string(llmmodel.UseCaseVideoGen)},
+		InputModalities:  []string{"text", "image", "video", "audio"},
+		OutputModalities: []string{"video", "audio"},
+		Video: map[string]interface{}{
+			"modes":       []interface{}{"first_last_frame", "omni_reference"},
+			"resolutions": []interface{}{"480p", "720p", "1080p", "4k"},
+			"duration": map[string]interface{}{
+				"mode":         "range",
+				"min_seconds":  float64(4),
+				"max_seconds":  float64(15),
+				"step_seconds": float64(1),
+			},
+			"audio": map[string]interface{}{
+				"input":      true,
+				"generation": true,
+			},
+		},
+	}
+
+	published := publishedModelFromMeta(remote)
+	capabilities := published.DefaultParameters["capabilities"].(map[string]interface{})
+	video := capabilities["video"].(map[string]interface{})
+
+	if got := video["resolutions"]; got == nil {
+		t.Fatalf("published video resolutions missing: %#v", published.DefaultParameters)
+	}
+	if got := video["duration"]; got == nil {
+		t.Fatalf("published video duration missing: %#v", published.DefaultParameters)
+	}
+
+	local := &llmmodel.LLMModel{
+		UseCases:              llmmodel.StringArray{string(llmmodel.UseCaseVideoGen)},
+		InputModalities:       llmmodel.JSONArray{"text", "image", "video", "audio"},
+		OutputModalities:      llmmodel.JSONArray{"video", "audio"},
+		SupportedParameters:   llmmodel.ParameterDefinitions{},
+		ConfigParameters:      llmmodel.ConfigParameters{},
+		DefaultParameters:     llmmodel.JSONObject{},
+		InputPrice:            decimal.Zero,
+		OutputPrice:           decimal.Zero,
+		CachedInputPrice:      decimal.Zero,
+		InputPriceConfigured:  false,
+		OutputPriceConfigured: false,
+	}
+	svc := &Service{}
+
+	if !svc.hasChanges(local, remote) {
+		t.Fatal("hasChanges = false, want true when top-level video capabilities differ")
+	}
+	if fields := svc.computeDiffFields(local, remote); !hasDiffField(fields, "default_parameters") {
+		t.Fatalf("diff fields = %#v, want default_parameters", fields)
+	}
+}
