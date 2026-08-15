@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
@@ -399,6 +400,8 @@ type PreparedChat struct {
 	RunConfig                      RunConfig
 	ParentID                       *uuid.UUID
 	parts                          *chatRequestParts
+	contextBudget                  *contextBudgetResult
+	contextManager                 *contextmgr.Manager
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage
@@ -479,7 +482,6 @@ type chatRequestParts struct {
 	ProviderPtr                  *string
 	Parameters                   map[string]interface{}
 	ContextControl               map[string]interface{}
-	ContextSnapshotSummary       string
 	Attachments                  *attachmentBundle
 	RecentAssetCandidates        []ResourceCandidate
 	RecentGeneratedArtifacts     []map[string]interface{}

@@ -384,6 +384,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
 	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(clientActionContinuationMessage(message, continuation.Event, req), parts.ExecutionMode))
 	prepared.LLMRequest = llmRequest
+	prepared.contextBudget = contextResult
 	return prepared, nil
 }
 

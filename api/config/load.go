@@ -73,18 +73,38 @@ func loadCoreRuntimeConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("console", loadConsoleConfig),
 		optionalConfigLoader("platform", loadPlatformConfig),
 		optionalConfigLoader("feature", loadFeatureConfig),
-		optionalConfigLoader("chat runtime", loadChatRuntimeConfig),
+		requiredConfigLoader("chat runtime", loadChatRuntimeConfig),
 	)
 }
 
-func loadChatRuntimeConfig(cfg *Config, source *envSource) {
-	timeout := mustInt(source.int(300, envChatRuntimeModelIdleTimeoutSeconds))
+func loadChatRuntimeConfig(cfg *Config, source *envSource) error {
+	timeout, err := source.int(300, envChatRuntimeModelIdleTimeoutSeconds)
+	if err != nil {
+		return err
+	}
 	if timeout <= 0 {
 		timeout = 300
 	}
-	cfg.ChatRuntime = ChatRuntimeConfig{
-		ModelIdleTimeoutSeconds: timeout,
+	agentContextWindowK, err := source.int(256, envChatRuntimeAgentContextWindowK)
+	if err != nil {
+		return err
 	}
+	if agentContextWindowK <= 0 {
+		return fmt.Errorf("%s must be a positive integer", envChatRuntimeAgentContextWindowK)
+	}
+	if agentContextWindowK > int(^uint(0)>>1)/1000 {
+		return fmt.Errorf("%s is too large", envChatRuntimeAgentContextWindowK)
+	}
+	contextPromptDumpEnabled, err := source.bool(false, envChatRuntimeContextPromptDumpEnabled)
+	if err != nil {
+		return err
+	}
+	cfg.ChatRuntime = ChatRuntimeConfig{
+		ModelIdleTimeoutSeconds:  timeout,
+		AgentContextWindowK:      agentContextWindowK,
+		ContextPromptDumpEnabled: contextPromptDumpEnabled,
+	}
+	return nil
 }
 
 func loadInfrastructureConfig(cfg *Config, source *envSource) error {

@@ -394,9 +394,6 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 					return nil, err
 				}
 				branch = contextState.RawMessages
-				if contextState.Snapshot != nil {
-					parts.ContextSnapshotSummary = contextState.Snapshot.Summary
-				}
 			} else if parentID != nil && *parentID != uuid.Nil {
 				parent, parentErr := s.repos.Message.GetScoped(ctx, *parentID, scope.OrganizationID, scope.AccountID)
 				if parentErr != nil {
@@ -405,9 +402,6 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 				contextState, err = s.loadContextState(ctx, scope, parent.ConversationID, parentID)
 				if err == nil {
 					branch = contextState.RawMessages
-					if contextState.Snapshot != nil {
-						parts.ContextSnapshotSummary = contextState.Snapshot.Summary
-					}
 				}
 			}
 			if err != nil {
@@ -421,8 +415,6 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 				return nil, err
 			}
 			if contextState != nil {
-				result.Snapshot = contextState.Snapshot
-				result.SnapshotRef = contextState.SnapshotRef
 				result.RawMessages = contextState.RawMessages
 			}
 			result.Metadata = mergeUserMemoryMetadata(result.Metadata, memoryMetadata)
@@ -447,45 +439,16 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			return nil, err
 		}
 		branch := state.RawMessages
-		snapshotSummary := ""
-		if state.Snapshot != nil {
-			snapshotSummary = state.Snapshot.Summary
-		}
-		if snapshotMessage := contextSnapshotPromptMessage(snapshotSummary); snapshotMessage != nil {
-			messages = append(messages, *snapshotMessage)
-		}
 		if !shouldIsolateHistoryForCurrentTurn(parts) {
-			for _, item := range branch {
-				if item == nil {
-					continue
-				}
-				userMessage, err := s.historicalUserMessage(ctx, item, parts.ModelSupportsVision)
-				if err != nil {
-					return nil, err
-				}
-				if userMessage != nil {
-					messages = append(messages, *userMessage)
-				}
-				if isUsableAssistantHistoryStatus(item.Status) && strings.TrimSpace(item.Answer) != "" {
-					messages = append(messages, adapter.Message{Role: "assistant", Content: item.Answer})
-				}
+			groups, err := s.historyMessageGroups(ctx, branch, parts.ModelSupportsVision)
+			if err != nil {
+				return nil, err
+			}
+			for _, group := range groups {
+				messages = append(messages, group...)
 			}
 		}
 		applyRecentOperationPlansFromBranch(parts, branch)
-		if recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessageForRequest(parts, branch); recentExecutionContext != nil {
-			messages = append(messages, *recentExecutionContext)
-			if contextMetadata == nil {
-				contextMetadata = map[string]interface{}{}
-			}
-			mergeRecentExecutionContextMetadata(contextMetadata, recentExecutionMetadata)
-		}
-		if continuationContext := buildContinuationTaskStateMessage(parts, branch); continuationContext != nil {
-			messages = append(messages, *continuationContext)
-			if contextMetadata == nil {
-				contextMetadata = map[string]interface{}{}
-			}
-			contextMetadata["continuation_task_state_included"] = true
-		}
 		if turnBoundaryContext := currentTurnBoundaryMessage(parts); turnBoundaryContext != nil {
 			messages = append(messages, *turnBoundaryContext)
 		}

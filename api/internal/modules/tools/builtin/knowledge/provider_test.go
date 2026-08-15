@@ -240,6 +240,37 @@ func TestRetrieveAgentKnowledgeIgnoresDatasetIDs(t *testing.T) {
 	}
 }
 
+func TestRetrievalMessagesExcludeGraphExecutionDetails(t *testing.T) {
+	messages, err := retrievalMessages(&dataset_service.KnowledgeRetrieveResponse{
+		Query:       "MacBook",
+		Status:      dataset_service.KnowledgeRetrieveStatusSuccess,
+		Context:     "relevant context",
+		ResultCount: 1,
+		GraphExecutions: []*dto.GraphExecution{{
+			Entities: []string{"MacBook", "unrelated entity"},
+			Triples: []dto.TripleResponse{{
+				Subject:   "unrelated subject",
+				Predicate: "unrelated predicate",
+				Object:    "unrelated object",
+			}},
+			Thinking:  "internal graph reasoning",
+			DebugInfo: map[string]interface{}{"raw_candidates": []string{"candidate"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("retrievalMessages() error = %v", err)
+	}
+	if len(messages) == 0 {
+		t.Fatal("retrievalMessages() returned no messages")
+	}
+	if _, ok := messages[0].Data["graph_executions"]; ok {
+		t.Fatalf("graph_executions must not be exposed to the model: %#v", messages[0].Data)
+	}
+	if messages[0].Data["context"] != "relevant context" {
+		t.Fatalf("context = %#v, want relevant context", messages[0].Data["context"])
+	}
+}
+
 func TestRetrieveAgentKnowledgeReturnsNoConfigPayload(t *testing.T) {
 	service := &fakeRetrievalService{
 		agentResponse: &dataset_service.KnowledgeRetrieveResponse{

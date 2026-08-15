@@ -185,7 +185,6 @@ func retrievalMessages(response *dataset_service.KnowledgeRetrieveResponse) ([]t
 		"context":             response.Context,
 		"result_count":        response.ResultCount,
 		"retriever_resources": response.Resources,
-		"graph_executions":    response.GraphExecutions,
 	}
 	if response.TopScore != nil {
 		payload["top_score"] = *response.TopScore

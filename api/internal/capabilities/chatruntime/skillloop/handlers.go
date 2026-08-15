@@ -44,6 +44,8 @@ func (r *Runner) handleProgressiveSkillCall(
 		args = normalizedArgs
 	}
 	switch call.Function.Name {
+	case contextArtifactToolName:
+		return r.handleReadContextArtifactCall(ctx, call.ID, args)
 	case skills.MetaToolLoadSkill:
 		return r.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent)
 	case skills.MetaToolReadSkillReference:
@@ -254,7 +256,8 @@ func isSkillMetaToolName(name string) bool {
 		skills.MetaToolUpdatePlan,
 		skills.MetaToolIntermediateAnswer,
 		skills.MetaToolRequestUserInput,
-		skills.MetaToolFinalAnswer:
+		skills.MetaToolFinalAnswer,
+		contextArtifactToolName:
 		return true
 	default:
 		return false

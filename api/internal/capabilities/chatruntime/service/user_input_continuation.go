@@ -451,6 +451,7 @@ func (s *service) prepareUserInputContinuationChat(
 		Continuation:     true,
 		ContinuationType: "user_input",
 		parts:            parts,
+		contextBudget:    contextResult,
 	}, nil
 }
 

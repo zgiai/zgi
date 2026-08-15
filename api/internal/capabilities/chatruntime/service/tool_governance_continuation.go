@@ -232,6 +232,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 		Continuation:                   true,
 		SuppressInitialNaturalProgress: true,
 		parts:                          parts,
+		contextBudget:                  contextResult,
 	}, nil
 }
 

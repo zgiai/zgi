@@ -301,34 +301,6 @@ func TestCurrentTurnAuthoritativeStateMessagePreservesManagedFileHandoff(t *test
 	}
 }
 
-func TestRecentTurnStateSectionIncludesUserVisibleDeliverable(t *testing.T) {
-	branch := []*runtimemodel.Message{{
-		Status: runtimemodel.MessageStatusCompleted,
-		Query:  "读取文件并基于总结创建智能体",
-		Metadata: map[string]interface{}{
-			"turn_state": map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{
-						"kind":       "user_deliverable",
-						"visibility": "user_visible",
-						"key":        "worldview_summary",
-						"content":    "灵澜学院是一所湖畔寄宿制高中。",
-						"source":     "file-reader/read_file",
-					},
-				},
-			},
-		},
-	}}
-
-	section, stats := recentTurnStateSection(branch, 2000)
-	if stats.IncludedTurnStateFacts != 1 {
-		t.Fatalf("included turn_state facts = %d, want 1; section=%s", stats.IncludedTurnStateFacts, section)
-	}
-	if !strings.Contains(section, "灵澜学院") {
-		t.Fatalf("turn_state section = %q, want user-visible summary content", section)
-	}
-}
-
 func TestMergeSkillTraceMetadataRedactsFileReaderResultContent(t *testing.T) {
 	const rawContent = "SKILL_TRACE_SECRET_SHOULD_NOT_PERSIST"
 

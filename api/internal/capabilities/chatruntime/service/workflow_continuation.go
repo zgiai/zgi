@@ -657,6 +657,7 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 		Continuation:     true,
 		ContinuationType: "agent_workflow_task",
 		parts:            parts,
+		contextBudget:    contextResult,
 	}, nil
 }
 

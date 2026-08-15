@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -75,12 +76,17 @@ func (s *service) runPreparedToolLoop(
 	}
 
 	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
+	contextManager, err := s.newAgentContextManager(ctx, prepared)
+	if err != nil {
+		return "", nil, err
+	}
 	runner := &skillloop.Runner{
 		LLMClient:             s.llmClient,
 		SkillRuntime:          s.skillRuntime,
 		AppContext:            newBillingAppContext(prepared),
 		ModelIdleTimeout:      s.modelIdleTimeoutValue(),
 		ModelProgressSchedule: s.modelProgressSchedule,
+		ContextManager:        contextManager,
 		OnEvent: func(event skillloop.Event) error {
 			if event.Type == skillloop.EventUserInputRequested {
 				s.persistUserInputRequestBestEffort(persistCtx, prepared, event.Payload)
@@ -93,6 +99,9 @@ func (s *service) runPreparedToolLoop(
 		},
 		OnArtifact: func(artifact map[string]interface{}) {
 			s.persistGeneratedArtifactBestEffort(ctx, prepared, artifact)
+		},
+		OnModelRequest: func(phase string, round int, request *adapter.ChatRequest, decision *contextmgr.Decision) {
+			s.writeAgentContextPromptDumpBestEffort(ctx, prepared, phase, round, request, decision)
 		},
 		OnModelInvocation: func(trace skillloop.ModelInvocationTrace) {
 			s.persistModelInvocationBestEffort(persistCtx, prepared, trace)
@@ -224,6 +233,7 @@ func (s *service) runPreparedToolLoop(
 	if err == nil && presentationErr != nil {
 		err = presentationErr
 	}
+	s.persistAgentTurnTranscript(persistCtx, prepared, contextManager, answer, err != nil)
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
