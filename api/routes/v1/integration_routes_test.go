@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,8 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/util"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -50,6 +53,47 @@ func TestIntegrationRouteErrorReturnsSafeProviderDiagnostics(t *testing.T) {
 	}
 	if payload.Code != integrations.ErrorCodeProviderRejected || payload.Data.ProviderErrorCode != "60020" || payload.Data.ProviderRequestID != "request-1" || payload.Data.ProviderHTTPStatus != 200 {
 		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestIntegrationRouteErrorProjectsUnknownErrorsWithoutLeakingDiagnostics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	productCatalog, err := appcatalog.NewDefault()
+	if err != nil {
+		t.Fatalf("create application error catalog: %v", err)
+	}
+	projector, err := apptransport.NewProjector(productCatalog)
+	if err != nil {
+		t.Fatalf("create application error projector: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/console/api/integrations/oauth-recovery", nil)
+	ctx.Request.Header.Set("Accept-Language", "zh-CN")
+	ctx.Set(integrationErrorProjectorContextKey, projector)
+
+	integrationRouteError(ctx, errors.New("oauth recovery summary failed: SELECT * FROM integration_oauth_outbox; host=db.internal password=secret"))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Code != integrations.ErrorCodeUpstream {
+		t.Fatalf("code = %q, body = %s", payload.Code, recorder.Body.String())
+	}
+	if payload.Message != "服务暂时出现问题，请稍后重试；如持续发生，请联系管理员。" {
+		t.Fatalf("message = %q", payload.Message)
+	}
+	for _, forbidden := range []string{"SELECT", "integration_oauth_outbox", "db.internal", "password", "secret"} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("response leaked %q: %s", forbidden, recorder.Body.String())
+		}
 	}
 }
 

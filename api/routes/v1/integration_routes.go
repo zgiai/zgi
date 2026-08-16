@@ -18,9 +18,14 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
+
+const integrationErrorProjectorContextKey = "integration_application_error_projector"
 
 type IntegrationRouteDeps struct {
 	DB                      *gorm.DB
@@ -39,6 +44,7 @@ type IntegrationRouteDeps struct {
 	OAuthRecovery           integrations.OAuthRecoveryAdminRepository
 	ProviderInstallFlows    *integrations.ProviderInstallFlowService
 	WeComCallbacks          *wecomintegration.Adapter
+	ApplicationErrorCatalog *appcatalog.Catalog
 	OAuthCallbackURL        string
 	OAuthResultURL          string
 	WeComInstallCallbackURL string
@@ -185,24 +191,30 @@ func connectionGrantResponse(
 }
 
 func RegisterIntegrationRoutes(router *gin.RouterGroup, deps IntegrationRouteDeps) {
-	if deps.DB == nil || deps.Registry == nil || deps.Connections == nil || deps.ConnectionRepo == nil || deps.Grants == nil || deps.Access == nil || deps.Preferences == nil || deps.HealthEvents == nil || deps.Policies == nil || deps.Executions == nil || deps.AccountService == nil || deps.OAuthFlows == nil || deps.OAuthClients == nil || deps.OAuthRecovery == nil || deps.ProviderInstallFlows == nil || deps.WeComCallbacks == nil || strings.TrimSpace(deps.OAuthCallbackURL) == "" || strings.TrimSpace(deps.OAuthResultURL) == "" || strings.TrimSpace(deps.WeComInstallCallbackURL) == "" || strings.TrimSpace(deps.WeComResultURL) == "" {
+	if deps.DB == nil || deps.Registry == nil || deps.Connections == nil || deps.ConnectionRepo == nil || deps.Grants == nil || deps.Access == nil || deps.Preferences == nil || deps.HealthEvents == nil || deps.Policies == nil || deps.Executions == nil || deps.AccountService == nil || deps.OAuthFlows == nil || deps.OAuthClients == nil || deps.OAuthRecovery == nil || deps.ProviderInstallFlows == nil || deps.WeComCallbacks == nil || deps.ApplicationErrorCatalog == nil || strings.TrimSpace(deps.OAuthCallbackURL) == "" || strings.TrimSpace(deps.OAuthResultURL) == "" || strings.TrimSpace(deps.WeComInstallCallbackURL) == "" || strings.TrimSpace(deps.WeComResultURL) == "" {
 		panic("integration routes require complete dependencies")
+	}
+	errorProjector, err := apptransport.NewProjector(deps.ApplicationErrorCatalog)
+	if err != nil {
+		panic("integration routes require application error catalog")
 	}
 	workspaceScopeResolver := &aichatWorkspaceScopeResolver{
 		workspaces: gormAIChatWorkspaceProvider{db: deps.DB},
 		accounts:   deps.AccountService,
 	}
 	handler := &integrationHandler{deps: deps, workspaceScopeResolver: workspaceScopeResolver}
+	errorProjection := integrationErrorProjectorMiddleware(errorProjector)
 	// Provider callbacks cannot require the console JWT because the browser is
 	// returning from a third-party origin. The single-use, server-stored OAuth
 	// state is the authorization boundary for this one public route.
-	router.GET("/integrations/oauth/callback", middleware.SetupRequired(), handler.oauthCallback)
-	router.GET("/integrations/wecom/install/callback", middleware.SetupRequired(), handler.wecomInstallCallback)
-	router.POST("/integrations/wecom/install/callback", middleware.SetupRequired(), handler.wecomEncryptedCallback)
-	router.GET("/integrations/wecom/suite/events", middleware.SetupRequired(), handler.wecomCallbackVerification)
-	router.POST("/integrations/wecom/suite/events", middleware.SetupRequired(), handler.wecomEncryptedCallback)
+	router.GET("/integrations/oauth/callback", middleware.SetupRequired(), errorProjection, handler.oauthCallback)
+	router.GET("/integrations/wecom/install/callback", middleware.SetupRequired(), errorProjection, handler.wecomInstallCallback)
+	router.POST("/integrations/wecom/install/callback", middleware.SetupRequired(), errorProjection, handler.wecomEncryptedCallback)
+	router.GET("/integrations/wecom/suite/events", middleware.SetupRequired(), errorProjection, handler.wecomCallbackVerification)
+	router.POST("/integrations/wecom/suite/events", middleware.SetupRequired(), errorProjection, handler.wecomEncryptedCallback)
 	group := router.Group("/integrations")
 	group.Use(middleware.SetupRequired())
+	group.Use(integrationErrorProjectorMiddleware(errorProjector))
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
 
 	group.GET("/catalog", handler.catalog)
@@ -1568,6 +1580,15 @@ func integrationRouteError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, response.Response{Code: integrations.ErrorCodeConnectionConflict, Message: "integration connection changed; reload and retry"})
 		return
 	}
+	var integrationError *integrations.Error
+	if !errors.As(err, &integrationError) {
+		logger.ErrorContext(c.Request.Context(), "integration route operation failed", err)
+		c.JSON(http.StatusServiceUnavailable, response.Response{
+			Code:    integrations.ErrorCodeUpstream,
+			Message: integrationProjectedErrorMessage(c, err),
+		})
+		return
+	}
 	code := integrations.ErrorCode(err)
 	switch code {
 	case integrations.ErrorCodeInvalidInput, integrations.ErrorCodeConnectionInvalid,
@@ -1604,6 +1625,24 @@ func integrationRouteError(c *gin.Context, err error) {
 		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 	}
+}
+
+func integrationErrorProjectorMiddleware(projector *apptransport.Projector) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(integrationErrorProjectorContextKey, projector)
+		c.Next()
+	}
+}
+
+func integrationProjectedErrorMessage(c *gin.Context, err error) string {
+	projectorValue, exists := c.Get(integrationErrorProjectorContextKey)
+	projector, valid := projectorValue.(*apptransport.Projector)
+	if !exists || !valid || projector == nil {
+		logger.ErrorContext(c.Request.Context(), "integration application error projector is unavailable")
+		return "The service encountered a problem. Try again later. If it continues, contact an administrator."
+	}
+	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+	return projector.Project(err, locale).Presentation.Message
 }
 
 func integrationProviderDiagnostics(err error) interface{} {

@@ -98,6 +98,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			OAuthRecovery:           serviceContainer.GetIntegrationOAuthRecoveryOutbox(),
 			ProviderInstallFlows:    serviceContainer.GetIntegrationProviderInstallFlowService(),
 			WeComCallbacks:          serviceContainer.GetIntegrationWeComAdapter(),
+			ApplicationErrorCatalog: applicationErrorCatalog,
 			OAuthCallbackURL:        currentConfig.ExternalIntegrations.OAuth.CallbackURL,
 			OAuthResultURL:          currentConfig.ExternalIntegrations.OAuth.ResultURL,
 			WeComInstallCallbackURL: currentConfig.ExternalIntegrations.WeCom.InstallCallbackURL,
