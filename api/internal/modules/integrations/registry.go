@@ -55,6 +55,18 @@ func (r *Registry) OAuthProvider(integrationID, driverID string) (OAuth2Provider
 	return registration.OAuth2Provider, true
 }
 
+func (r *Registry) ProviderInstallProvider(integrationID, driverID string) (ProviderInstallProvider, bool) {
+	registration, ok := r.Registration(integrationID)
+	if !ok || registration.ProviderInstaller == nil {
+		return nil, false
+	}
+	if normalizedDriverID := strings.ToLower(strings.TrimSpace(driverID)); normalizedDriverID != "" &&
+		!strings.EqualFold(registration.Definition.DriverID, normalizedDriverID) {
+		return nil, false
+	}
+	return registration.ProviderInstaller, true
+}
+
 func normalizeRegistration(registration Registration) (Registration, error) {
 	legacyDefinition := providerDefinitionEmpty(registration.Definition)
 	integrationID := strings.ToLower(strings.TrimSpace(registration.Definition.ID))
@@ -118,9 +130,15 @@ func normalizeRegistration(registration Registration) (Registration, error) {
 	if registration.OAuth2Provider == nil {
 		registration.OAuth2Provider, _ = registration.Adapter.(OAuth2Provider)
 	}
+	if registration.ProviderInstaller == nil {
+		registration.ProviderInstaller, _ = registration.Adapter.(ProviderInstallProvider)
+	}
 	for _, method := range registration.Definition.AuthMethods {
 		if method.Available && method.Type == AuthMethodTypeOAuth2 && registration.OAuth2Provider == nil {
 			return Registration{}, fmt.Errorf("integration %s available OAuth method %s requires an OAuth provider", integrationID, method.ID)
+		}
+		if method.Available && method.Type == AuthMethodTypeProviderInstall && registration.ProviderInstaller == nil {
+			return Registration{}, fmt.Errorf("integration %s available provider-install method %s requires a provider installer", integrationID, method.ID)
 		}
 	}
 	return registration, nil
@@ -535,7 +553,7 @@ func normalizeAuthMethod(integrationID string, method AuthMethodDefinition) (Aut
 		seenFields[field.Key] = struct{}{}
 		method.Fields[index] = field
 	}
-	if method.Available && method.Type != AuthMethodTypeNone && method.Type != AuthMethodTypeOAuth2 && len(method.Fields) == 0 {
+	if method.Available && method.Type != AuthMethodTypeNone && method.Type != AuthMethodTypeOAuth2 && method.Type != AuthMethodTypeProviderInstall && len(method.Fields) == 0 {
 		return AuthMethodDefinition{}, fmt.Errorf("integration %s auth method %s must declare credential fields", integrationID, method.ID)
 	}
 	return method, nil
@@ -598,7 +616,7 @@ func normalizeAuthSetupGuide(integrationID string, method AuthMethodDefinition) 
 				return nil, fmt.Errorf("integration %s auth method %s setup step %s requires a documentation URL", integrationID, method.ID, step.ID)
 			}
 		case AuthSetupStepActionCopyCallbackURL:
-			if method.Type != AuthMethodTypeOAuth2 {
+			if method.Type != AuthMethodTypeOAuth2 && method.Type != AuthMethodTypeProviderInstall {
 				return nil, fmt.Errorf("integration %s non-browser method %s cannot declare a callback setup step", integrationID, method.ID)
 			}
 		default:
@@ -697,6 +715,19 @@ func applyAuthStrategyDefaults(method *AuthMethodDefinition) {
 		if method.RequestAuthStrategy == "" {
 			method.RequestAuthStrategy = RequestAuthStrategyProviderCustom
 		}
+	case AuthMethodTypeProviderInstall:
+		if method.IdentityKind == "" {
+			method.IdentityKind = AuthIdentityKindApplication
+		}
+		if method.AcquisitionStrategy == "" {
+			method.AcquisitionStrategy = AuthAcquisitionStrategyProviderInstallRedirect
+		}
+		if method.LifecycleStrategy == "" {
+			method.LifecycleStrategy = AuthLifecycleStrategyProviderExchange
+		}
+		if method.RequestAuthStrategy == "" {
+			method.RequestAuthStrategy = RequestAuthStrategyProviderCustom
+		}
 	case AuthMethodTypeNone:
 		if method.IdentityKind == "" {
 			method.IdentityKind = AuthIdentityKindApplication
@@ -751,7 +782,14 @@ func validateAuthStrategies(integrationID string, method AuthMethodDefinition) e
 				method.RequestAuthStrategy != RequestAuthStrategyProviderCustom) {
 			return fmt.Errorf("integration %s OAuth method %s has incompatible auth strategies", integrationID, method.ID)
 		}
+	} else if method.Type == AuthMethodTypeProviderInstall {
+		if method.AcquisitionStrategy != AuthAcquisitionStrategyProviderInstallRedirect ||
+			method.LifecycleStrategy != AuthLifecycleStrategyProviderExchange ||
+			method.RequestAuthStrategy != RequestAuthStrategyProviderCustom {
+			return fmt.Errorf("integration %s provider-install method %s has incompatible auth strategies", integrationID, method.ID)
+		}
 	} else if method.AcquisitionStrategy == AuthAcquisitionStrategyBrowserRedirect ||
+		method.AcquisitionStrategy == AuthAcquisitionStrategyProviderInstallRedirect ||
 		method.LifecycleStrategy == AuthLifecycleStrategyOAuthRefresh {
 		return fmt.Errorf("integration %s non-OAuth method %s has OAuth-only auth strategies", integrationID, method.ID)
 	}

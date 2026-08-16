@@ -1,11 +1,22 @@
 export type IntegrationCredentialSource = 'platform' | 'organization' | 'account';
-export type IntegrationAuthType = 'platform' | 'api_key' | 'oauth' | 'oauth2' | (string & {});
+export type IntegrationAuthType =
+  | 'platform'
+  | 'api_key'
+  | 'oauth'
+  | 'oauth2'
+  | 'provider_install'
+  | (string & {});
 export type IntegrationAuthIdentityKind = 'user' | 'application' | 'channel' | 'service';
-export type IntegrationAuthAcquisitionStrategy = 'browser_redirect' | 'manual_form' | 'none';
+export type IntegrationAuthAcquisitionStrategy =
+  | 'browser_redirect'
+  | 'provider_install_redirect'
+  | 'manual_form'
+  | 'none';
 export type IntegrationAuthLifecycleStrategy =
   | 'static'
   | 'oauth_refresh'
   | 'exchange_on_demand'
+  | 'provider_exchange'
   | 'signed_request';
 export type IntegrationRequestAuthStrategy =
   | 'none'

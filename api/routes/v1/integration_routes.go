@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	wecomintegration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/wecom"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -22,22 +23,26 @@ import (
 )
 
 type IntegrationRouteDeps struct {
-	DB               *gorm.DB
-	Registry         *integrations.Registry
-	Connections      integrations.ConnectionService
-	ConnectionRepo   integrations.ConnectionRepository
-	Grants           integrations.ConnectionGrantRepository
-	Access           *integrations.DefaultConnectionAccessService
-	Preferences      *integrations.DefaultAIChatIntegrationPreferenceService
-	HealthEvents     integrations.ConnectionHealthEventRepository
-	Policies         integrations.ActionPolicyService
-	Executions       integrations.ExecutionQueryRepository
-	AccountService   interfaces.AccountService
-	OAuthFlows       *integrations.OAuthFlowService
-	OAuthClients     *integrations.OAuthClientConfigService
-	OAuthRecovery    integrations.OAuthRecoveryAdminRepository
-	OAuthCallbackURL string
-	OAuthResultURL   string
+	DB                      *gorm.DB
+	Registry                *integrations.Registry
+	Connections             integrations.ConnectionService
+	ConnectionRepo          integrations.ConnectionRepository
+	Grants                  integrations.ConnectionGrantRepository
+	Access                  *integrations.DefaultConnectionAccessService
+	Preferences             *integrations.DefaultAIChatIntegrationPreferenceService
+	HealthEvents            integrations.ConnectionHealthEventRepository
+	Policies                integrations.ActionPolicyService
+	Executions              integrations.ExecutionQueryRepository
+	AccountService          interfaces.AccountService
+	OAuthFlows              *integrations.OAuthFlowService
+	OAuthClients            *integrations.OAuthClientConfigService
+	OAuthRecovery           integrations.OAuthRecoveryAdminRepository
+	ProviderInstallFlows    *integrations.ProviderInstallFlowService
+	WeComCallbacks          *wecomintegration.Adapter
+	OAuthCallbackURL        string
+	OAuthResultURL          string
+	WeComInstallCallbackURL string
+	WeComResultURL          string
 }
 
 type integrationHandler struct {
@@ -180,7 +185,7 @@ func connectionGrantResponse(
 }
 
 func RegisterIntegrationRoutes(router *gin.RouterGroup, deps IntegrationRouteDeps) {
-	if deps.DB == nil || deps.Registry == nil || deps.Connections == nil || deps.ConnectionRepo == nil || deps.Grants == nil || deps.Access == nil || deps.Preferences == nil || deps.HealthEvents == nil || deps.Policies == nil || deps.Executions == nil || deps.AccountService == nil || deps.OAuthFlows == nil || deps.OAuthClients == nil || deps.OAuthRecovery == nil || strings.TrimSpace(deps.OAuthCallbackURL) == "" || strings.TrimSpace(deps.OAuthResultURL) == "" {
+	if deps.DB == nil || deps.Registry == nil || deps.Connections == nil || deps.ConnectionRepo == nil || deps.Grants == nil || deps.Access == nil || deps.Preferences == nil || deps.HealthEvents == nil || deps.Policies == nil || deps.Executions == nil || deps.AccountService == nil || deps.OAuthFlows == nil || deps.OAuthClients == nil || deps.OAuthRecovery == nil || deps.ProviderInstallFlows == nil || deps.WeComCallbacks == nil || strings.TrimSpace(deps.OAuthCallbackURL) == "" || strings.TrimSpace(deps.OAuthResultURL) == "" || strings.TrimSpace(deps.WeComInstallCallbackURL) == "" || strings.TrimSpace(deps.WeComResultURL) == "" {
 		panic("integration routes require complete dependencies")
 	}
 	workspaceScopeResolver := &aichatWorkspaceScopeResolver{
@@ -192,6 +197,10 @@ func RegisterIntegrationRoutes(router *gin.RouterGroup, deps IntegrationRouteDep
 	// returning from a third-party origin. The single-use, server-stored OAuth
 	// state is the authorization boundary for this one public route.
 	router.GET("/integrations/oauth/callback", middleware.SetupRequired(), handler.oauthCallback)
+	router.GET("/integrations/wecom/install/callback", middleware.SetupRequired(), handler.wecomInstallCallback)
+	router.POST("/integrations/wecom/install/callback", middleware.SetupRequired(), handler.wecomEncryptedCallback)
+	router.GET("/integrations/wecom/suite/events", middleware.SetupRequired(), handler.wecomCallbackVerification)
+	router.POST("/integrations/wecom/suite/events", middleware.SetupRequired(), handler.wecomEncryptedCallback)
 	group := router.Group("/integrations")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
@@ -214,6 +223,9 @@ func RegisterIntegrationRoutes(router *gin.RouterGroup, deps IntegrationRouteDep
 	group.POST("/oauth/flows", handler.startOAuthFlow)
 	group.GET("/oauth/flows/:flow_id", handler.pollOAuthFlow)
 	group.POST("/oauth/flows/:flow_id/cancel", handler.cancelOAuthFlow)
+	group.POST("/provider-install/flows", handler.startProviderInstallFlow)
+	group.GET("/provider-install/flows/:flow_id", handler.pollProviderInstallFlow)
+	group.POST("/provider-install/flows/:flow_id/cancel", handler.cancelProviderInstallFlow)
 
 	management := group.Group("")
 	management.Use(middleware.EnterpriseAdminOrOwnerRequired())

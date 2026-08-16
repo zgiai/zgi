@@ -199,6 +199,51 @@ func validateExternalIntegrationsConfig(cfg ExternalIntegrationsConfig) error {
 			return fmt.Errorf("%s client %q is missing client_secret", envIntegrationOAuthClientsJSON, key)
 		}
 	}
+	wecomSecrets := []struct {
+		key   string
+		value string
+	}{
+		{envIntegrationWeComSuiteID, cfg.WeCom.SuiteID},
+		{envIntegrationWeComSuiteSecret, cfg.WeCom.SuiteSecret},
+		{envIntegrationWeComCallbackToken, cfg.WeCom.CallbackToken},
+		{envIntegrationWeComEncodingAESKey, cfg.WeCom.EncodingAESKey},
+	}
+	configuredWeComValues := 0
+	for _, item := range wecomSecrets {
+		if strings.TrimSpace(item.value) != "" {
+			configuredWeComValues++
+		}
+	}
+	if configuredWeComValues != 0 && configuredWeComValues != len(wecomSecrets) {
+		return fmt.Errorf("%s, %s, %s, and %s must be configured together", envIntegrationWeComSuiteID, envIntegrationWeComSuiteSecret, envIntegrationWeComCallbackToken, envIntegrationWeComEncodingAESKey)
+	}
+	if cfg.WeCom.Configured() {
+		suiteID := strings.TrimSpace(cfg.WeCom.SuiteID)
+		if len(suiteID) > 128 || (!strings.HasPrefix(suiteID, "ww") && !strings.HasPrefix(suiteID, "wx")) {
+			return fmt.Errorf("%s must be a valid third-party application id", envIntegrationWeComSuiteID)
+		}
+		if len(cfg.WeCom.SuiteSecret) > 512 {
+			return fmt.Errorf("%s is too long", envIntegrationWeComSuiteSecret)
+		}
+		if len(cfg.WeCom.CallbackToken) > 32 {
+			return fmt.Errorf("%s must not exceed 32 characters", envIntegrationWeComCallbackToken)
+		}
+		if len(cfg.WeCom.EncodingAESKey) != 43 {
+			return fmt.Errorf("%s must contain exactly 43 characters", envIntegrationWeComEncodingAESKey)
+		}
+		for _, item := range []struct {
+			key   string
+			value string
+		}{
+			{envIntegrationWeComInstallCallbackURL, cfg.WeCom.InstallCallbackURL},
+			{envIntegrationWeComSuiteEventsURL, cfg.WeCom.SuiteEventsURL},
+			{envIntegrationWeComResultURL, cfg.WeCom.ResultURL},
+		} {
+			if !validIntegrationOAuthURL(item.value) {
+				return fmt.Errorf("%s must be an HTTPS URL or a loopback HTTP URL", item.key)
+			}
+		}
+	}
 	return nil
 }
 
@@ -241,6 +286,13 @@ func validateExternalIntegrationOAuthDeployment(cfg *Config) error {
 	}{
 		{envIntegrationOAuthCallbackURL, cfg.ExternalIntegrations.OAuth.CallbackURL},
 		{envIntegrationOAuthResultURL, cfg.ExternalIntegrations.OAuth.ResultURL},
+	}
+	if cfg.ExternalIntegrations.WeCom.Configured() {
+		urls = append(urls,
+			struct{ key, value string }{envIntegrationWeComInstallCallbackURL, cfg.ExternalIntegrations.WeCom.InstallCallbackURL},
+			struct{ key, value string }{envIntegrationWeComSuiteEventsURL, cfg.ExternalIntegrations.WeCom.SuiteEventsURL},
+			struct{ key, value string }{envIntegrationWeComResultURL, cfg.ExternalIntegrations.WeCom.ResultURL},
+		)
 	}
 	for _, item := range urls {
 		parsed, err := url.ParseRequestURI(strings.TrimSpace(item.value))

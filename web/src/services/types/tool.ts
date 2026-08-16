@@ -22,7 +22,19 @@ export type ToolParameterType =
   | 'boolean'
   | 'select'
   | 'secret-input'
-  | 'file';
+  | 'file'
+  | 'json'
+  | 'date'
+  | 'date-time'
+  | 'string-list';
+
+export type ToolConstantValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | Record<string, unknown>
+  | unknown[];
 
 // Option item for select parameter
 export interface ToolParameterOption {
@@ -43,18 +55,37 @@ export interface ToolParameter {
   description?: string | null;
   // Form type: 'form' for user input, 'llm' for LLM-provided
   form?: 'form' | 'llm';
-  default?: string | number | boolean;
+  default?: ToolConstantValue;
   options?: ToolParameterOption[];
   // Support variable binding in form
   support_variable?: boolean;
   // Help tooltip or text
   help?: LocalizedStringPartial;
+  // Localized input placeholder
+  placeholder?: LocalizedStringPartial;
 }
 
 // Tool configuration parameters (e.g. for credentials)
 export interface ToolConfigParameters {
   enable: boolean;
   parameters: ToolParameter[];
+}
+
+export interface ToolWorkflowOutput {
+  /** Stable flat output key materialized by the workflow Tool node runtime. */
+  id: string;
+  /** Structured result path; `*` projects every item of an array. */
+  path: string[];
+  type:
+    | 'string'
+    | 'number'
+    | 'boolean'
+    | 'object'
+    | 'array[string]'
+    | 'array[number]'
+    | 'array[boolean]'
+    | 'array[object]';
+  label?: LocalizedStringPartial;
 }
 
 // Single tool item under a provider entry
@@ -73,6 +104,10 @@ export interface BuiltinToolItem {
   config_parameters?: ToolConfigParameters;
   // Tool tags
   tags?: string[];
+  // Structured output contract used by the workflow variable catalog.
+  output_schema?: Record<string, unknown>;
+  // Flat typed projections derived by the backend from output_schema.
+  workflow_outputs?: ToolWorkflowOutput[];
 }
 
 // Provider type alias
@@ -119,7 +154,9 @@ export interface ToolParameterBinding {
   type: ToolParameterBindingType;
   // Unified value field for both constant and variable/mixed types.
   // For 'constant', it's a primitive. For 'variable', it's a path array string[]. For 'mixed', it's a string.
-  value?: string | number | boolean | string[];
+  value?: ToolConstantValue;
+  /** Explicit runtime normalization for a compatible scalar variable binding. */
+  coerce?: 'singleton_array';
 }
 
 // Legacy ValueBinding type for backward compatibility (deprecated, use ToolParameterBinding)
@@ -132,7 +169,17 @@ export interface ValueBinding<T extends string | number | boolean> {
 }
 
 // Simple normalized form field type for UI mapping (non-UI specific)
-export type FormFieldType = 'text' | 'number' | 'checkbox' | 'select' | 'secret' | 'file';
+export type FormFieldType =
+  | 'text'
+  | 'number'
+  | 'checkbox'
+  | 'select'
+  | 'secret'
+  | 'file'
+  | 'json'
+  | 'date'
+  | 'date-time'
+  | 'string-list';
 
 export interface ToolFormField {
   name: string;
@@ -140,6 +187,7 @@ export interface ToolFormField {
   type: FormFieldType;
   required: boolean;
   description?: string;
-  default?: string | number | boolean;
+  placeholder?: string;
+  default?: ToolConstantValue;
   options?: Array<{ value: string; label: string }>;
 }

@@ -2,6 +2,7 @@ import type {
   ToolParameterBinding,
   ToolParameterBindingType,
   ProviderType,
+  ToolWorkflowOutput,
 } from '@/services/types/tool';
 import type { ValidationResult, ValidationError } from '../common/validation';
 import type { WorkflowNode } from '../../store/type';
@@ -19,10 +20,14 @@ export interface ToolNodeData {
   provider_type: ProviderType;
   // Provider id, e.g. 'time', 'github'
   provider_id: string;
+  // Explicit shared connection used by connector providers.
+  connection_id?: string;
   // Tool name within the provider, e.g. 'current_time', 'getIssue'
   tool_name: string;
   // Tool parameters with bindings keyed by parameter name
   tool_parameters: Record<string, ToolParameterBinding>;
+  /** Snapshot of typed outputs for deterministic variable binding after catalog changes. */
+  workflow_outputs?: ToolWorkflowOutput[];
   // Tool configuration parameters (e.g. credentials)
   tool_configurations?: Record<string, unknown>;
   isInLoop: boolean;
@@ -47,7 +52,17 @@ interface ValidationCtx {
 export interface ToolRequiredField {
   name: string;
   label?: string;
-  type?: 'string' | 'number' | 'boolean' | 'select' | 'secret-input' | 'file';
+  type?:
+    | 'string'
+    | 'number'
+    | 'boolean'
+    | 'select'
+    | 'secret-input'
+    | 'file'
+    | 'json'
+    | 'date'
+    | 'date-time'
+    | 'string-list';
 }
 
 /** Default tool node data */
@@ -59,6 +74,7 @@ export const DEFAULT_TOOL_NODE_DATA: ToolNodeData = {
   provider_id: '',
   tool_name: '',
   tool_parameters: {},
+  workflow_outputs: [],
   isInLoop: false,
   isInIteration: false,
 };
@@ -66,7 +82,11 @@ export const DEFAULT_TOOL_NODE_DATA: ToolNodeData = {
 const getFieldLabel = (field: ToolRequiredField) => field.label || field.name;
 
 const isEmptyConstant = (value: unknown) =>
-  value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+  value === undefined ||
+  value === null ||
+  (typeof value === 'string' && value.trim() === '') ||
+  (Array.isArray(value) && value.length === 0) ||
+  (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0);
 
 const isInvalidVariable = (value: unknown) => {
   if (!value) return true;
@@ -83,6 +103,9 @@ export const checkValid = (data: ToolNodeData, ctx?: ValidationCtx): ValidationR
   }
   if (!data.tool_name || data.tool_name.trim() === '') {
     errors.push({ code: 'tool.validation.toolRequired' });
+  }
+  if (data.provider_type === 'connector' && !data.connection_id?.trim()) {
+    errors.push({ code: 'tool.validation.connectionRequired' });
   }
 
   for (const field of ctx?.requiredParams || []) {

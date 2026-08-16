@@ -297,7 +297,7 @@ func Actions() []integrations.ActionDefinition {
 			},
 			DefaultPolicy: readOnlyPolicy(),
 			SupportedCallers: []tools.ToolInvokeFrom{
-				tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent,
+				tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow,
 			},
 		},
 		{
@@ -381,7 +381,7 @@ func Actions() []integrations.ActionDefinition {
 			},
 			DefaultPolicy: readOnlyPolicy(),
 			SupportedCallers: []tools.ToolInvokeFrom{
-				tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent,
+				tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow,
 			},
 		},
 		{
@@ -419,7 +419,7 @@ func Actions() []integrations.ActionDefinition {
 			},
 			DefaultPolicy: readOnlyPolicy(),
 			SupportedCallers: []tools.ToolInvokeFrom{
-				tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent,
+				tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow,
 			},
 		},
 		{

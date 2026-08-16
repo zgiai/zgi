@@ -132,6 +132,21 @@ export function useAllIntegrationConnections(
   });
 }
 
+export function useAllAvailableIntegrationConnections(
+  params?: {
+    integration_id?: string;
+  },
+  enabled = true
+) {
+  return useQuery({
+    queryKey: INTEGRATION_KEYS.availableConnections({ ...params, all: true }),
+    queryFn: () => integrationService.getAllAvailableConnections(params),
+    staleTime: 30_000,
+    retry: false,
+    enabled,
+  });
+}
+
 export function useMyIntegrationConnections(
   params?: {
     integration_id?: string;

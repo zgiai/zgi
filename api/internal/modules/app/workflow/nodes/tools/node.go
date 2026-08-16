@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -22,23 +23,26 @@ type Node struct {
 
 // ToolInput represents a tool parameter input with type information
 type ToolInput struct {
-	Value interface{} `json:"value"` // Can be string (for mixed/constant) or []string (for variable)
-	Type  string      `json:"type"`  // "variable", "mixed", "constant"
+	Value  interface{} `json:"value"`            // Can be string (for mixed/constant) or []string (for variable)
+	Type   string      `json:"type"`             // "variable", "mixed", "constant"
+	Coerce string      `json:"coerce,omitempty"` // Explicit compatible normalization, e.g. singleton_array
 }
 
 // NodeData contains the configuration for the tools node
 type NodeData struct {
-	Title                  string                `json:"title"`
-	ProviderType           string                `json:"provider_type"`           // builtin, runner, plugin_runner, api, workflow, app, dataset-retrieval, mcp
-	ProviderID             string                `json:"provider_id"`             // Tool provider identifier
-	ProviderName           string                `json:"provider_name,omitempty"` // Provider display name
-	ToolName               string                `json:"tool_name"`               // Tool name to invoke
-	ToolLabel              string                `json:"tool_label,omitempty"`    // Tool display label
-	ToolParameters         map[string]*ToolInput `json:"tool_parameters"`         // Tool parameters with type info
-	ToolConfigurations     map[string]any        `json:"tool_configurations"`     // Pre-configured tool settings (form type)
-	CredentialID           string                `json:"credential_id,omitempty"`
-	PluginUniqueIdentifier string                `json:"plugin_unique_identifier,omitempty"`
-	ToolNodeVersion        string                `json:"tool_node_version,omitempty"` // For backward compatibility
+	Title                  string                     `json:"title"`
+	ProviderType           string                     `json:"provider_type"`           // builtin, runner, plugin_runner, api, workflow, app, dataset-retrieval, mcp
+	ProviderID             string                     `json:"provider_id"`             // Tool provider identifier
+	ProviderName           string                     `json:"provider_name,omitempty"` // Provider display name
+	ToolName               string                     `json:"tool_name"`               // Tool name to invoke
+	ToolLabel              string                     `json:"tool_label,omitempty"`    // Tool display label
+	ToolParameters         map[string]*ToolInput      `json:"tool_parameters"`         // Tool parameters with type info
+	WorkflowOutputs        []tools.ToolWorkflowOutput `json:"workflow_outputs,omitempty"`
+	ToolConfigurations     map[string]any             `json:"tool_configurations"` // Pre-configured tool settings (form type)
+	CredentialID           string                     `json:"credential_id,omitempty"`
+	ConnectionID           string                     `json:"connection_id,omitempty"`
+	PluginUniqueIdentifier string                     `json:"plugin_unique_identifier,omitempty"`
+	ToolNodeVersion        string                     `json:"tool_node_version,omitempty"` // For backward compatibility
 }
 
 // New creates a new Tools node instance
@@ -63,6 +67,8 @@ func New(
 		NodeType:   shared.Tools,
 
 		TenantID:          graphInitParams.TenantID,
+		WorkspaceID:       graphInitParams.WorkspaceID,
+		OrganizationID:    graphInitParams.OrganizationID,
 		APPID:             graphInitParams.AppID,
 		WorkflowType:      string(graphInitParams.WorkflowType),
 		WorkflowID:        graphInitParams.WorkflowID,
@@ -153,17 +159,24 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 	ctx = n.withWorkflowRunID(ctx, variablePool)
 
 	providerType := n.getProviderType()
+	tenantID := n.TenantID
+	if providerType == tools.ToolProviderTypeConnector && strings.TrimSpace(n.OrganizationID) != "" {
+		tenantID = n.OrganizationID
+	}
+	runtimeParameters := n.workflowToolRuntimeParameters(variablePool)
 
 	req := tools.WorkflowToolInvokeRequest{
-		TenantID:           n.TenantID,
+		TenantID:           tenantID,
 		AppID:              n.APPID,
 		NodeID:             n.NodeID,
 		UserID:             n.UserID,
 		ProviderType:       providerType,
 		ProviderID:         n.nodeData.ProviderID,
 		ToolName:           n.nodeData.ToolName,
+		CredentialID:       n.nodeData.CredentialID,
 		ToolConfigurations: toolParams,
 		ToolCredentials:    n.nodeData.ToolConfigurations, // Pass tool_configurations as credentials for Plugin SDK
+		RuntimeParameters:  runtimeParameters,
 	}
 
 	result, err := n.toolEngine.InvokeForWorkflow(ctx, req)
@@ -171,7 +184,19 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		return nil, fmt.Errorf("failed to invoke tool via ToolEngine: %w", err)
 	}
 
-	outputs := n.convertResultToOutputs(result, eventChan)
+	workflowOutputs := n.nodeData.WorkflowOutputs
+	if len(workflowOutputs) == 0 {
+		if entity, resolveErr := n.toolEngine.ResolveToolEntity(
+			ctx,
+			providerType,
+			n.nodeData.ProviderID,
+			n.nodeData.ToolName,
+			tenantID,
+		); resolveErr == nil {
+			workflowOutputs = entity.WorkflowOutputs
+		}
+	}
+	outputs := n.convertResultToOutputs(result, eventChan, workflowOutputs)
 
 	return &shared.NodeRunResult{
 		Status:  shared.SUCCEEDED,
@@ -181,7 +206,7 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 				"provider_id":   n.nodeData.ProviderID,
 				"tool_name":     n.nodeData.ToolName,
 				"provider_type": n.nodeData.ProviderType,
-				"system":        "plugin_runner",
+				"system":        n.nodeData.ProviderType,
 			},
 		},
 	}, nil
@@ -210,12 +235,35 @@ func (n *Node) withWorkflowRunID(ctx context.Context, variablePool *entities.Var
 	return context.WithValue(ctx, "workflow_run_id", runID)
 }
 
+func (n *Node) workflowToolRuntimeParameters(variablePool *entities.VariablePool) map[string]interface{} {
+	workspaceID := strings.TrimSpace(n.WorkspaceID)
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(n.TenantID)
+	}
+	parameters := map[string]interface{}{
+		"connection_id": strings.TrimSpace(n.nodeData.ConnectionID),
+		"workspace_id":  workspaceID,
+		"workflow_id":   strings.TrimSpace(n.WorkflowID),
+		"node_id":       strings.TrimSpace(n.NodeID),
+	}
+	if variablePool != nil {
+		if value := variablePool.Get([]string{"sys", "workflow_run_id"}); value != nil {
+			if runID, ok := value.ToObject().(string); ok && strings.TrimSpace(runID) != "" {
+				parameters["workflow_run_id"] = strings.TrimSpace(runID)
+			}
+		}
+	}
+	return parameters
+}
+
 // getProviderType converts string provider type to tools.ToolProviderType
-// Currently only supports: builtin, runner, plugin_runner
+// Currently supports: builtin, connector, runner, plugin_runner
 func (n *Node) getProviderType() tools.ToolProviderType {
 	switch n.nodeData.ProviderType {
 	case "builtin":
 		return tools.ToolProviderTypeBuiltin
+	case "connector":
+		return tools.ToolProviderTypeConnector
 	case "runner", "plugin_runner", "plugin":
 		// runner is the preferred public value. plugin_runner and plugin remain
 		// compatibility aliases for existing workflow data.
@@ -243,6 +291,7 @@ func (n *Node) getProviderType() tools.ToolProviderType {
 // Implements variable/mixed/constant parameter resolution
 func (n *Node) prepareToolParameters(variablePool *entities.VariablePool) (map[string]interface{}, error) {
 	params := make(map[string]interface{})
+	omitEmptyConnectorValues := n.getProviderType() == tools.ToolProviderTypeConnector
 
 	// First, add tool configurations (form type parameters)
 	for k, v := range n.nodeData.ToolConfigurations {
@@ -268,7 +317,14 @@ func (n *Node) prepareToolParameters(variablePool *entities.VariablePool) (map[s
 			}
 			variable := variablePool.GetWithPath(selector)
 			if variable != nil {
-				params[paramName] = variable.ToObject()
+				value := variable.ToObject()
+				if input.Coerce == "singleton_array" && !isSliceOrArray(value) {
+					value = []interface{}{value}
+				}
+				if omitEmptyConnectorValues && isEmptyToolParameterValue(value) {
+					continue
+				}
+				params[paramName] = value
 			}
 
 		case "mixed":
@@ -278,19 +334,64 @@ func (n *Node) prepareToolParameters(variablePool *entities.VariablePool) (map[s
 				return nil, fmt.Errorf("mixed type value must be string for parameter %s", paramName)
 			}
 			resolved := n.resolveTemplateVariables(template, variablePool)
+			if omitEmptyConnectorValues && isEmptyToolParameterValue(resolved) {
+				continue
+			}
 			params[paramName] = resolved
 
 		case "constant":
 			// Constant type: use value directly
+			if omitEmptyConnectorValues && isEmptyToolParameterValue(input.Value) {
+				continue
+			}
 			params[paramName] = input.Value
 
 		default:
 			// Unknown type, treat as constant
+			if omitEmptyConnectorValues && isEmptyToolParameterValue(input.Value) {
+				continue
+			}
 			params[paramName] = input.Value
 		}
 	}
 
 	return params, nil
+}
+
+func isSliceOrArray(value interface{}) bool {
+	if value == nil {
+		return false
+	}
+	kind := reflect.TypeOf(value).Kind()
+	return kind == reflect.Slice || kind == reflect.Array
+}
+
+// isEmptyToolParameterValue identifies UI placeholders that should not be sent
+// to connector JSON Schema validation. Optional connector fields are persisted
+// as empty strings/collections by the workflow editor; sending those values is
+// different from omitting the property and can invalidate typed fields such as
+// date-time. False and numeric zero remain meaningful values and are retained.
+func isEmptyToolParameterValue(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+
+	reflected := reflect.ValueOf(value)
+	for reflected.Kind() == reflect.Pointer || reflected.Kind() == reflect.Interface {
+		if reflected.IsNil() {
+			return true
+		}
+		reflected = reflected.Elem()
+	}
+
+	switch reflected.Kind() {
+	case reflect.String:
+		return strings.TrimSpace(reflected.String()) == ""
+	case reflect.Array, reflect.Slice, reflect.Map:
+		return reflected.Len() == 0
+	default:
+		return false
+	}
 }
 
 func isEmptyValueSelector(value interface{}) bool {
@@ -366,7 +467,11 @@ func (n *Node) resolveTemplateVariables(template string, variablePool *entities.
 
 // convertResultToOutputs converts ToolEngine result to node outputs
 // Implements proper file handling, dynamic variables, and JSON output
-func (n *Node) convertResultToOutputs(result *tools.InvokeResult, eventChan chan *shared.NodeEventCh) map[string]interface{} {
+func (n *Node) convertResultToOutputs(
+	result *tools.InvokeResult,
+	eventChan chan *shared.NodeEventCh,
+	workflowOutputs []tools.ToolWorkflowOutput,
+) map[string]interface{} {
 	outputs := make(map[string]interface{})
 	var textOutput string
 	var files []*file.File
@@ -484,8 +589,21 @@ func (n *Node) convertResultToOutputs(result *tools.InvokeResult, eventChan chan
 	// Add JSON output
 	if len(jsonOutput) > 0 {
 		outputs["json"] = jsonOutput
+		outputs["result"] = jsonOutput[0]
 	} else {
 		outputs["json"] = []map[string]interface{}{}
+		outputs["result"] = map[string]interface{}{}
+	}
+
+	if len(jsonOutput) > 0 {
+		for _, definition := range workflowOutputs {
+			if definition.ID == "" || len(definition.Path) == 0 {
+				continue
+			}
+			if value, ok := projectWorkflowOutput(jsonOutput[0], definition.Path); ok {
+				outputs[definition.ID] = value
+			}
+		}
 	}
 
 	// Add dynamic variables to outputs
@@ -494,6 +612,63 @@ func (n *Node) convertResultToOutputs(result *tools.InvokeResult, eventChan chan
 	}
 
 	return outputs
+}
+
+// projectWorkflowOutput resolves a backend-compiled structured output path.
+// Wildcards are materialized here instead of being exposed as variable-pool
+// path syntax, keeping all existing Workflow variable semantics unchanged.
+func projectWorkflowOutput(value interface{}, path []string) (interface{}, bool) {
+	if len(path) == 0 {
+		return value, true
+	}
+	segment := path[0]
+	if segment == "*" {
+		items, ok := workflowOutputSlice(value)
+		if !ok {
+			return nil, false
+		}
+		projected := make([]interface{}, 0, len(items))
+		for _, item := range items {
+			child, found := projectWorkflowOutput(item, path[1:])
+			if !found {
+				continue
+			}
+			if nested, nestedOK := workflowOutputSlice(child); nestedOK {
+				projected = append(projected, nested...)
+			} else {
+				projected = append(projected, child)
+			}
+		}
+		return projected, true
+	}
+
+	object, ok := value.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	child, exists := object[segment]
+	if !exists {
+		return nil, false
+	}
+	return projectWorkflowOutput(child, path[1:])
+}
+
+func workflowOutputSlice(value interface{}) ([]interface{}, bool) {
+	if value == nil {
+		return nil, false
+	}
+	if items, ok := value.([]interface{}); ok {
+		return items, true
+	}
+	reflected := reflect.ValueOf(value)
+	if reflected.Kind() != reflect.Slice && reflected.Kind() != reflect.Array {
+		return nil, false
+	}
+	items := make([]interface{}, reflected.Len())
+	for index := 0; index < reflected.Len(); index++ {
+		items[index] = reflected.Index(index).Interface()
+	}
+	return items, true
 }
 
 // sendStreamChunk sends a stream chunk event
@@ -758,6 +933,11 @@ func parseNodeDataFromConfig(config map[string]any) (NodeData, string, error) {
 	// Parse credential_id (optional)
 	if credID, ok := data["credential_id"].(string); ok {
 		nd.CredentialID = credID
+	}
+
+	// Parse connection_id (optional for legacy nodes, required by connector nodes).
+	if connectionID, ok := data["connection_id"].(string); ok {
+		nd.ConnectionID = connectionID
 	}
 
 	// Parse plugin_unique_identifier (optional)

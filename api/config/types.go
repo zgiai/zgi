@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // GlobalConfig stores the loaded application configuration.
 var GlobalConfig *Config
@@ -478,6 +481,7 @@ type ExternalIntegrationsConfig struct {
 	CredentialKeys        map[string]string               `json:"-"`
 	Health                ExternalIntegrationHealthConfig `json:"health"`
 	OAuth                 ExternalIntegrationOAuthConfig  `json:"oauth"`
+	WeCom                 ExternalIntegrationWeComConfig  `json:"wecom"`
 }
 
 type ExternalIntegrationHealthConfig struct {
@@ -502,6 +506,23 @@ type ExternalIntegrationOAuthClientConfig struct {
 	ClientID     string            `json:"-"`
 	ClientSecret string            `json:"-"`
 	Config       map[string]string `json:"-"`
+}
+
+type ExternalIntegrationWeComConfig struct {
+	SuiteID            string `json:"-"`
+	SuiteSecret        string `json:"-"`
+	CallbackToken      string `json:"-"`
+	EncodingAESKey     string `json:"-"`
+	InstallCallbackURL string `json:"install_callback_url"`
+	SuiteEventsURL     string `json:"suite_events_url"`
+	ResultURL          string `json:"result_url"`
+}
+
+func (config ExternalIntegrationWeComConfig) Configured() bool {
+	return strings.TrimSpace(config.SuiteID) != "" &&
+		strings.TrimSpace(config.SuiteSecret) != "" &&
+		strings.TrimSpace(config.CallbackToken) != "" &&
+		strings.TrimSpace(config.EncodingAESKey) != ""
 }
 
 // WebSearchConfig contains Exa-specific runtime limits. Web Search registration

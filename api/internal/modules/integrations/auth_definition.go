@@ -19,6 +19,7 @@ const (
 	AuthMethodTypeCustomCredential AuthMethodType = "custom_credential"
 	AuthMethodTypeOAuth2           AuthMethodType = "oauth2"
 	AuthMethodTypeServiceAccount   AuthMethodType = "service_account"
+	AuthMethodTypeProviderInstall  AuthMethodType = "provider_install"
 	AuthMethodTypeNone             AuthMethodType = "no_auth"
 )
 
@@ -40,9 +41,10 @@ const (
 type AuthAcquisitionStrategy string
 
 const (
-	AuthAcquisitionStrategyBrowserRedirect AuthAcquisitionStrategy = "browser_redirect"
-	AuthAcquisitionStrategyManualForm      AuthAcquisitionStrategy = "manual_form"
-	AuthAcquisitionStrategyNone            AuthAcquisitionStrategy = "none"
+	AuthAcquisitionStrategyBrowserRedirect         AuthAcquisitionStrategy = "browser_redirect"
+	AuthAcquisitionStrategyProviderInstallRedirect AuthAcquisitionStrategy = "provider_install_redirect"
+	AuthAcquisitionStrategyManualForm              AuthAcquisitionStrategy = "manual_form"
+	AuthAcquisitionStrategyNone                    AuthAcquisitionStrategy = "none"
 )
 
 // AuthLifecycleStrategy describes how a connection maintains usable runtime
@@ -53,6 +55,7 @@ const (
 	AuthLifecycleStrategyStatic           AuthLifecycleStrategy = "static"
 	AuthLifecycleStrategyOAuthRefresh     AuthLifecycleStrategy = "oauth_refresh"
 	AuthLifecycleStrategyExchangeOnDemand AuthLifecycleStrategy = "exchange_on_demand"
+	AuthLifecycleStrategyProviderExchange AuthLifecycleStrategy = "provider_exchange"
 	AuthLifecycleStrategySignedRequest    AuthLifecycleStrategy = "signed_request"
 )
 
@@ -227,7 +230,7 @@ func (validator CredentialValidatorFunc) ValidateCredentials(ctx context.Context
 
 func validAuthMethodType(value AuthMethodType) bool {
 	switch AuthMethodType(strings.ToLower(strings.TrimSpace(string(value)))) {
-	case AuthMethodTypeAPIKey, AuthMethodTypeCustomCredential, AuthMethodTypeOAuth2, AuthMethodTypeServiceAccount, AuthMethodTypeNone:
+	case AuthMethodTypeAPIKey, AuthMethodTypeCustomCredential, AuthMethodTypeOAuth2, AuthMethodTypeServiceAccount, AuthMethodTypeProviderInstall, AuthMethodTypeNone:
 		return true
 	default:
 		return false
@@ -263,7 +266,7 @@ func validAuthScopeEvidence(value AuthScopeEvidence) bool {
 
 func validAuthAcquisitionStrategy(value AuthAcquisitionStrategy) bool {
 	switch AuthAcquisitionStrategy(strings.ToLower(strings.TrimSpace(string(value)))) {
-	case AuthAcquisitionStrategyBrowserRedirect, AuthAcquisitionStrategyManualForm, AuthAcquisitionStrategyNone:
+	case AuthAcquisitionStrategyBrowserRedirect, AuthAcquisitionStrategyProviderInstallRedirect, AuthAcquisitionStrategyManualForm, AuthAcquisitionStrategyNone:
 		return true
 	default:
 		return false
@@ -272,7 +275,7 @@ func validAuthAcquisitionStrategy(value AuthAcquisitionStrategy) bool {
 
 func validAuthLifecycleStrategy(value AuthLifecycleStrategy) bool {
 	switch AuthLifecycleStrategy(strings.ToLower(strings.TrimSpace(string(value)))) {
-	case AuthLifecycleStrategyStatic, AuthLifecycleStrategyOAuthRefresh, AuthLifecycleStrategyExchangeOnDemand, AuthLifecycleStrategySignedRequest:
+	case AuthLifecycleStrategyStatic, AuthLifecycleStrategyOAuthRefresh, AuthLifecycleStrategyExchangeOnDemand, AuthLifecycleStrategyProviderExchange, AuthLifecycleStrategySignedRequest:
 		return true
 	default:
 		return false

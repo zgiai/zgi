@@ -40,8 +40,20 @@ func Actions(defaultSearchType ...string) []integrations.ActionDefinition {
 				"$schema":              "https://json-schema.org/draft/2020-12/schema",
 				"type":                 "object",
 				"additionalProperties": false,
+				"x-zgi-property-order": []string{"query", "num_results", "search_type", "include_domains", "exclude_domains", "start_published_date", "end_published_date"},
 				"properties": map[string]interface{}{
-					"query":                localizedInputSchema(map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S", "description": "Public web search query. Never include secrets or private internal content."}, "Search query", "搜索词"),
+					"query": localizedInputSchema(map[string]interface{}{
+						"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S",
+						"description": "Public web search query. Never include secrets or private internal content.",
+						"description_i18n": integrations.LocalizedText{
+							integrations.LocaleEnglishUS:         "Describe the public information to search for. Never include secrets or private internal content.",
+							integrations.LocaleSimplifiedChinese: "请输入要搜索的公开信息，不要包含密钥或内部私有内容。",
+						},
+						"placeholder_i18n": integrations.LocalizedText{
+							integrations.LocaleEnglishUS:         "For example: latest Go release notes",
+							integrations.LocaleSimplifiedChinese: "例如：Go 最新版本更新内容",
+						},
+					}, "Search query", "搜索词"),
 					"num_results":          localizedInputSchema(map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 10, "default": 5}, "Result count", "结果数量"),
 					"search_type":          localizedInputSchema(map[string]interface{}{"type": "string", "enum": []string{"auto", "fast", "instant"}, "default": searchType}, "Search mode", "搜索模式", map[string]string{"auto": "Automatic", "fast": "Fast", "instant": "Instant"}, map[string]string{"auto": "自动", "fast": "快速", "instant": "即时"}),
 					"include_domains":      localizedInputSchema(map[string]interface{}{"type": "array", "maxItems": 20, "items": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 253, "pattern": "\\S"}}, "Included domains", "限定域名"),
@@ -65,7 +77,7 @@ func Actions(defaultSearchType ...string) []integrations.ActionDefinition {
 			DefaultPolicy: &integrations.DefaultActionPolicy{
 				Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true,
 			},
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		{
 			ID:       integrations.ActionWebFetch,
@@ -84,6 +96,7 @@ func Actions(defaultSearchType ...string) []integrations.ActionDefinition {
 				"$schema":              "https://json-schema.org/draft/2020-12/schema",
 				"type":                 "object",
 				"additionalProperties": false,
+				"x-zgi-property-order": []string{"urls", "content_mode", "highlight_query", "max_characters", "freshness"},
 				"properties": map[string]interface{}{
 					"urls":            localizedInputSchema(map[string]interface{}{"type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": map[string]interface{}{"type": "string", "minLength": 8, "maxLength": 2048}}, "Webpage URLs", "网页地址"),
 					"content_mode":    localizedInputSchema(map[string]interface{}{"type": "string", "enum": []string{"text", "highlights"}, "default": "text"}, "Content mode", "内容模式", map[string]string{"text": "Full text", "highlights": "Highlights"}, map[string]string{"text": "正文", "highlights": "摘要"}),
@@ -107,7 +120,7 @@ func Actions(defaultSearchType ...string) []integrations.ActionDefinition {
 			DefaultPolicy: &integrations.DefaultActionPolicy{
 				Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true,
 			},
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 	}
 	for index := range actions {

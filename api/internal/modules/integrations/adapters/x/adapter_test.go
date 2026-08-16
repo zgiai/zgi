@@ -100,7 +100,7 @@ func TestProviderDefinitionGatesSearchAndWrite(t *testing.T) {
 			if action.DefaultPolicy == nil || action.DefaultPolicy.Enabled {
 				t.Fatalf("recent search must be plan-gated: %#v", action)
 			}
-			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
+			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow}) {
 				t.Fatalf("search action callers = %#v", action.SupportedCallers)
 			}
 		case ActionCreatePost:
@@ -113,7 +113,7 @@ func TestProviderDefinitionGatesSearchAndWrite(t *testing.T) {
 				t.Fatalf("create action callers = %#v", action.SupportedCallers)
 			}
 		default:
-			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
+			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow}) {
 				t.Fatalf("read action callers = %#v", action.SupportedCallers)
 			}
 		}

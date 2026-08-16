@@ -86,7 +86,9 @@ import {
 const ORGANIZATION_CREDENTIAL_SOURCES = ['organization'] as const;
 
 function isOAuthConnection(connection: IntegrationConnection | null): boolean {
-  return Boolean(connection && ['oauth', 'oauth2'].includes(connection.auth_type));
+  return Boolean(
+    connection && ['oauth', 'oauth2', 'provider_install'].includes(connection.auth_type)
+  );
 }
 
 interface IntegrationConnectionsPanelProps {

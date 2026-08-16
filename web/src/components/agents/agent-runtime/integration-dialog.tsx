@@ -254,7 +254,7 @@ export function AgentRuntimeIntegrationDialog({
           />
         ) : (
           <div className="space-y-4">
-            <AgentRuntimeSelectionGrid>
+            <AgentRuntimeSelectionGrid className="items-start">
               {candidates.map(candidate => {
                 const selected =
                   draftByIntegration.get(candidate.integration_id)?.connection_id ===

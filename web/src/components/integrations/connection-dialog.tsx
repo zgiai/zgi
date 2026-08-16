@@ -122,7 +122,6 @@ export function IntegrationConnectionDialog({
   );
   const [oauthProviderName, setOAuthProviderName] = useState('');
   const [oauthConnectionName, setOAuthConnectionName] = useState('');
-  const oauthFlow = useIntegrationOAuthFlow();
 
   const selectedIntegration = useMemo(
     () => catalog.find(item => integrationCatalogID(item) === integrationId),
@@ -151,6 +150,12 @@ export function IntegrationConnectionDialog({
       (definition.type === authType &&
         integrationAuthCredentialSource(definition) === credentialSource)
   );
+  const oauthSelected = ['oauth', 'oauth2'].includes(selectedAuth?.type ?? '');
+  const providerInstallSelected =
+    selectedAuth?.type === 'provider_install' ||
+    selectedAuth?.acquisition_strategy === 'provider_install_redirect';
+  const redirectSelected = oauthSelected || providerInstallSelected;
+  const oauthFlow = useIntegrationOAuthFlow(providerInstallSelected ? 'provider_install' : 'oauth');
   const fields = useMemo(
     () => resolveCredentialFields(selectedIntegration, selectedAuth),
     [selectedAuth, selectedIntegration]
@@ -256,7 +261,6 @@ export function IntegrationConnectionDialog({
     if (editing && field.secret && connection?.credential_configured !== false) return false;
     return !fieldHasValue(fieldValues[field.name]);
   });
-  const oauthSelected = ['oauth', 'oauth2'].includes(selectedAuth?.type ?? '');
   const oauthConnectReady =
     editing ||
     !oauthSelected ||
@@ -293,7 +297,7 @@ export function IntegrationConnectionDialog({
       return;
     }
 
-    if (oauthSelected && !editing && selectedAuth && selectedIntegration) {
+    if (redirectSelected && !editing && selectedAuth && selectedIntegration) {
       const defaultActionIDs = selectedAuth.oauth?.default_action_ids;
       const requestedActionIDs =
         defaultActionIDs == null
@@ -533,7 +537,7 @@ export function IntegrationConnectionDialog({
               </div>
             ) : null}
 
-            {!oauthSelected && selectedAuth?.setup_guide ? (
+            {selectedAuth?.setup_guide && (!oauthSelected || providerInstallSelected) ? (
               <AuthSetupGuide
                 key={`${integrationId}:${selectedAuth.id}:${editing ? 'edit' : 'create'}`}
                 providerName={
@@ -658,7 +662,7 @@ export function IntegrationConnectionDialog({
             ) : null}
           </DialogBody>
           <DialogFooter className="border-t bg-muted/30">
-            {!oauthSelected ? (
+            {!redirectSelected ? (
               <p className="mr-auto max-w-sm text-left text-xs leading-5 text-muted-foreground">
                 {t('dialog.testAfterSaveNotice')}
               </p>
@@ -667,8 +671,8 @@ export function IntegrationConnectionDialog({
               {t('dialog.cancel')}
             </Button>
             <Button onClick={() => void submit()} disabled={isSubmitting || dynamicAuthUnsupported}>
-              {oauthSelected && !editing ? <ExternalLink className="size-4" /> : null}
-              {oauthSelected && !editing
+              {redirectSelected && !editing ? <ExternalLink className="size-4" /> : null}
+              {redirectSelected && !editing
                 ? t('oauth.flow.continueToProvider', {
                     provider: selectedIntegration
                       ? metadata.providerName(selectedIntegration)

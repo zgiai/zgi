@@ -118,7 +118,7 @@ func read(id, tool, en, zh, description, zhDescription string, input, output map
 		DataEgress: true, ExternalDestination: destination, Idempotent: true,
 		RequiredScopes: scopes, ScopeLabelsI18n: scopeLabels(scopes), SupportedAuthMethodIDs: []string{AuthMethodID},
 		DefaultPolicy:    &integrations.DefaultActionPolicy{Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true},
-		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 	}
 }
 

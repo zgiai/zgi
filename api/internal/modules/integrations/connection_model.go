@@ -30,6 +30,7 @@ const (
 	ConnectionAuthTypeOAuth2           ConnectionAuthType = "oauth2"
 	ConnectionAuthTypeCustomCredential ConnectionAuthType = "custom_credential"
 	ConnectionAuthTypeServiceAccount   ConnectionAuthType = "service_account"
+	ConnectionAuthTypeProviderInstall  ConnectionAuthType = "provider_install"
 )
 
 type ConnectionHealthStatus string

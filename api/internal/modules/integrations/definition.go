@@ -157,6 +157,7 @@ type Registration struct {
 	HealthProbe         HealthProbe
 	GovernanceResolver  DynamicActionGovernanceResolver
 	OAuth2Provider      OAuth2Provider
+	ProviderInstaller   ProviderInstallProvider
 }
 
 type ResolvedAction struct {

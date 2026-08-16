@@ -35,6 +35,71 @@ func allowExecutorConnectionAccess() ConnectionAccessAuthorizer {
 	return executorAccessAuthorizerFunc(func(context.Context, ConnectionAccessRequest) error { return nil })
 }
 
+func TestExecutorWorkflowAuthorizesSharedConnectionBeforeCredentialResolution(t *testing.T) {
+	connection := &ResolvedConnection{
+		ID:               testConnectionID,
+		OrganizationID:   testOrganizationID,
+		IntegrationID:    IntegrationWebSearch,
+		DriverID:         "test-driver",
+		CredentialSource: ConnectionCredentialSourceOrganization,
+		Credentials:      map[string]string{"api_key": "request-secret"},
+	}
+	adapter := &testAdapter{driverID: "test-driver", execute: func(context.Context, ActionRequest) (*ActionResult, error) {
+		return &ActionResult{Output: map[string]interface{}{"ok": true}}, nil
+	}}
+	registry := registerTestAction(t, testAction(ActionWebSearch, "search_web"), adapter)
+	authorizationCalls := 0
+	resolutionCalls := 0
+	executor := NewExecutor(registry, &testAudit{}, &testQuota{}, nil, []byte("audit-key"), 0).
+		WithConnectionAccessAuthorizer(executorAccessAuthorizerFunc(func(_ context.Context, request ConnectionAccessRequest) error {
+			authorizationCalls++
+			if request.ConnectionID.String() != testConnectionID || request.WorkspaceID == nil || request.WorkspaceID.String() != testWorkspaceID || request.ActionID != ActionWebSearch {
+				t.Fatalf("workflow access request = %#v", request)
+			}
+			return nil
+		})).
+		WithConnectionResolver(executorConnectionResolverFunc(func(_ context.Context, request ConnectionResolveRequest) (*ResolvedConnection, error) {
+			resolutionCalls++
+			if !request.DisallowAccountCredential {
+				t.Fatal("Workflow credential resolution did not reject personal credentials")
+			}
+			return connection, nil
+		}))
+
+	request := validActionRequest("current events")
+	request.InvokeFrom = tools.ToolInvokeFromWorkflow
+	if _, err := executor.Execute(t.Context(), request); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if authorizationCalls != 1 || resolutionCalls != 1 || adapter.calls != 1 {
+		t.Fatalf("calls: authorization=%d resolution=%d adapter=%d", authorizationCalls, resolutionCalls, adapter.calls)
+	}
+}
+
+func TestExecutorWorkflowRejectsPersonalConnectionReturnedByResolver(t *testing.T) {
+	adapter := &testAdapter{driverID: "test-driver"}
+	registry := registerTestAction(t, testAction(ActionWebSearch, "search_web"), adapter)
+	executor := NewExecutor(registry, &testAudit{}, &testQuota{}, nil, []byte("audit-key"), 0).
+		WithConnectionAccessAuthorizer(allowExecutorConnectionAccess()).
+		WithConnectionResolver(executorConnectionResolverFunc(func(context.Context, ConnectionResolveRequest) (*ResolvedConnection, error) {
+			return &ResolvedConnection{
+				ID:               testConnectionID,
+				OrganizationID:   testOrganizationID,
+				IntegrationID:    IntegrationWebSearch,
+				DriverID:         "test-driver",
+				CredentialSource: ConnectionCredentialSourceAccount,
+				Credentials:      map[string]string{"api_key": "request-secret"},
+			}, nil
+		}))
+
+	request := validActionRequest("current events")
+	request.InvokeFrom = tools.ToolInvokeFromWorkflow
+	result, err := executor.Execute(t.Context(), request)
+	if result != nil || ErrorCode(err) != ErrorCodeAccessDenied || adapter.calls != 0 {
+		t.Fatalf("Execute() result=%#v error=%v adapter calls=%d", result, err, adapter.calls)
+	}
+}
+
 func TestExecutorResolvesConnectionForOneRequestAndDestroysSecrets(t *testing.T) {
 	connection := &ResolvedConnection{
 		ID:             testConnectionID,

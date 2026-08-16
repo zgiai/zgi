@@ -21,17 +21,20 @@ import (
 const defaultBaseURL = "https://qyapi.weixin.qq.com"
 
 type Adapter struct {
-	client  *http.Client
-	baseURL string
-	mu      sync.Mutex
-	tokens  map[string]cachedToken
+	client     *http.Client
+	baseURL    string
+	suite      SuiteConfig
+	suiteState *SuiteStateRepository
+	mu         sync.Mutex
+	tokens     map[string]cachedToken
+	suiteToken cachedToken
 }
 type cachedToken struct {
 	value          string
 	expiresAt      time.Time
 	credentialHash [32]byte
 }
-type credentials struct{ CorpID, AgentID, Secret, ConnectionID string }
+type credentials struct{ AuthCorpID, AgentID, PermanentCode, ConnectionID string }
 type apiEnvelope struct {
 	ErrCode      int    `json:"errcode"`
 	ErrMsg       string `json:"errmsg"`
@@ -40,6 +43,16 @@ type apiEnvelope struct {
 }
 
 func New(httpClient *http.Client) (*Adapter, error) { return newForBaseURL(httpClient, defaultBaseURL) }
+
+func NewSuite(httpClient *http.Client, config SuiteConfig, state *SuiteStateRepository) (*Adapter, error) {
+	adapter, err := newForBaseURL(httpClient, defaultBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	adapter.suite = config
+	adapter.suiteState = state
+	return adapter, nil
+}
 func newForBaseURL(httpClient *http.Client, baseURL string) (*Adapter, error) {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -107,7 +120,7 @@ func (adapter *Adapter) ValidateConnection(ctx context.Context, connection *inte
 	}
 	app, _ := output["application"].(map[string]interface{})
 	name, _ := app["name"].(string)
-	return &integrations.ConnectionProfile{AccountID: creds.CorpID + ":" + creds.AgentID, DisplayName: firstNonEmpty(name, "WeCom application"), GrantedScopes: []string{ScopeApp, ScopeContacts, ScopeSend}}, nil
+	return &integrations.ConnectionProfile{AccountID: adapter.externalTenantHash(creds.AuthCorpID), DisplayName: firstNonEmpty(name, "WeCom application"), GrantedScopes: []string{ScopeApp, ScopeContacts, ScopeSend}}, nil
 }
 func (adapter *Adapter) ProbeConnection(ctx context.Context, connection *integrations.ResolvedConnection) (*integrations.HealthProbeReport, error) {
 	profile, err := adapter.ValidateConnection(ctx, connection)
@@ -274,7 +287,7 @@ func (adapter *Adapter) authorizedJSON(ctx context.Context, creds credentials, m
 	return wecomError(integrations.ErrorCodeAuthInvalid, "WeCom access token is invalid", nil)
 }
 func (adapter *Adapter) accessToken(ctx context.Context, creds credentials) (string, error) {
-	hash := sha256.Sum256([]byte(creds.CorpID + "\x00" + creds.AgentID + "\x00" + creds.Secret))
+	hash := sha256.Sum256([]byte(creds.AuthCorpID + "\x00" + creds.AgentID + "\x00" + creds.PermanentCode))
 	adapter.mu.Lock()
 	cached, ok := adapter.tokens[creds.ConnectionID]
 	adapter.mu.Unlock()
@@ -286,7 +299,11 @@ func (adapter *Adapter) accessToken(ctx context.Context, creds credentials) (str
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int    `json:"expires_in"`
 	}
-	status, envelope, err := adapter.doJSON(ctx, http.MethodGet, "/cgi-bin/gettoken", url.Values{"corpid": []string{creds.CorpID}, "corpsecret": []string{creds.Secret}}, nil, &response)
+	suiteToken, err := adapter.suiteAccessToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	status, envelope, err := adapter.doJSON(ctx, http.MethodPost, "/cgi-bin/service/get_corp_token", url.Values{"suite_access_token": []string{suiteToken}}, map[string]string{"auth_corpid": creds.AuthCorpID, "permanent_code": creds.PermanentCode}, &response)
 	if err != nil {
 		return "", err
 	}
@@ -359,8 +376,8 @@ func parseCredentials(connection *integrations.ResolvedConnection) (credentials,
 	if connection == nil || !strings.EqualFold(connection.IntegrationID, IntegrationID) || !strings.EqualFold(connection.DriverID, DriverID) {
 		return credentials{}, wecomError(integrations.ErrorCodeConnectionInvalid, "WeCom connection is invalid", nil)
 	}
-	creds := credentials{CorpID: strings.TrimSpace(connection.Credentials["corp_id"]), AgentID: strings.TrimSpace(connection.Credentials["agent_id"]), Secret: strings.TrimSpace(connection.Credentials["secret"]), ConnectionID: connection.ID}
-	if creds.CorpID == "" || creds.AgentID == "" || creds.Secret == "" || len(creds.CorpID) > 128 || len(creds.AgentID) > 32 || len(creds.Secret) > 512 {
+	creds := credentials{AuthCorpID: strings.TrimSpace(connection.Credentials["auth_corpid"]), AgentID: strings.TrimSpace(connection.Credentials["agent_id"]), PermanentCode: strings.TrimSpace(connection.Credentials["permanent_code"]), ConnectionID: connection.ID}
+	if creds.AuthCorpID == "" || creds.AgentID == "" || creds.PermanentCode == "" || len(creds.AuthCorpID) > 128 || len(creds.AgentID) > 32 || len(creds.PermanentCode) > 512 {
 		return credentials{}, wecomError(integrations.ErrorCodeConnectionInvalid, "WeCom credentials are unavailable", nil)
 	}
 	if _, err := strconv.ParseInt(creds.AgentID, 10, 64); err != nil {

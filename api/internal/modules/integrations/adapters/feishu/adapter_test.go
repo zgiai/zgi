@@ -118,7 +118,7 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				!slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
 				t.Fatalf("unsafe calendar create defaults = %#v", action)
 			}
-		} else if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
+		} else if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow}) {
 			t.Fatalf("read action callers = %#v", action.SupportedCallers)
 		}
 		if action.ID == ActionGetAccount && len(action.RequiredScopes) != 0 {

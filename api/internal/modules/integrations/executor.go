@@ -179,7 +179,7 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 	if resolved.Definition.DataEgress && !decision.DataEgressAllowed {
 		return nil, NewError(ErrorCodeAccessDenied, "organization policy blocks data egress for this integration action", nil)
 	}
-	if requestedConnectionID != "" && (req.InvokeFrom == tools.ToolInvokeFromAIChat || req.InvokeFrom == tools.ToolInvokeFromAPI) && e.connections != nil {
+	if requestedConnectionID != "" && (req.InvokeFrom == tools.ToolInvokeFromAIChat || req.InvokeFrom == tools.ToolInvokeFromWorkflow || req.InvokeFrom == tools.ToolInvokeFromAPI) && e.connections != nil {
 		if e.accessAuthorizer == nil {
 			return nil, NewError(ErrorCodeAccessDenied, "integration connection authorization is unavailable", nil)
 		}
@@ -215,7 +215,7 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 			IntegrationID:             resolved.IntegrationID,
 			DriverID:                  resolved.Adapter.DriverID(),
 			ConnectionID:              requestedConnectionID,
-			DisallowAccountCredential: req.InvokeFrom == tools.ToolInvokeFromAgent,
+			DisallowAccountCredential: req.InvokeFrom == tools.ToolInvokeFromAgent || req.InvokeFrom == tools.ToolInvokeFromWorkflow,
 		})
 		if resolveErr != nil {
 			if operationCtx.Err() != nil {
@@ -226,9 +226,9 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 		if connection == nil {
 			return nil, NewError(ErrorCodeAuthInvalid, "external integration credentials are unavailable", nil)
 		}
-		if req.InvokeFrom == tools.ToolInvokeFromAgent && connection.CredentialSource == ConnectionCredentialSourceAccount {
+		if (req.InvokeFrom == tools.ToolInvokeFromAgent || req.InvokeFrom == tools.ToolInvokeFromWorkflow) && connection.CredentialSource == ConnectionCredentialSourceAccount {
 			connection.Destroy()
-			return nil, NewError(ErrorCodeAccessDenied, "personal integration credentials are not available to Agents", nil)
+			return nil, NewError(ErrorCodeAccessDenied, "personal integration credentials are not available to Agents or Workflows", nil)
 		}
 		if !ActionSupportsAuthMethod(resolved.Definition, connection.AuthMethodID) {
 			connection.Destroy()

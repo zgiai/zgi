@@ -833,6 +833,8 @@ func connectionAuthTypeForMethod(methodType AuthMethodType) (ConnectionAuthType,
 		return ConnectionAuthTypeCustomCredential, true
 	case AuthMethodTypeServiceAccount:
 		return ConnectionAuthTypeServiceAccount, true
+	case AuthMethodTypeProviderInstall:
+		return ConnectionAuthTypeProviderInstall, true
 	default:
 		return "", false
 	}
@@ -871,7 +873,7 @@ func rejectLegacyPlatformConnection(connection *IntegrationConnection) error {
 
 func validStoredConnectionAuthType(authType ConnectionAuthType) bool {
 	switch authType {
-	case ConnectionAuthTypeAPIKey, ConnectionAuthTypeOAuth2, ConnectionAuthTypeCustomCredential, ConnectionAuthTypeServiceAccount:
+	case ConnectionAuthTypeAPIKey, ConnectionAuthTypeOAuth2, ConnectionAuthTypeCustomCredential, ConnectionAuthTypeServiceAccount, ConnectionAuthTypeProviderInstall:
 		return true
 	default:
 		return false

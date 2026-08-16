@@ -32,6 +32,11 @@ func TestLoadExternalIntegrationsConfigUsesUnifiedDefaults(t *testing.T) {
 		got.OAuth.ResultURL != "http://localhost:3000/console/integrations/oauth/result" {
 		t.Fatalf("unexpected OAuth flow defaults: %+v", got.OAuth)
 	}
+	if got.WeCom.InstallCallbackURL != "http://127.0.0.1:2670/console/api/integrations/wecom/install/callback" ||
+		got.WeCom.SuiteEventsURL != "http://127.0.0.1:2670/console/api/integrations/wecom/suite/events" ||
+		got.WeCom.ResultURL != "http://localhost:3000/console/integrations?provider=wecom" {
+		t.Fatalf("unexpected WeCom URL defaults: %+v", got.WeCom)
+	}
 }
 
 func TestLoadConsoleAndOAuthDefaultsFollowServerListener(t *testing.T) {
@@ -167,6 +172,34 @@ func TestExternalIntegrationsConfigRejectsInvalidKeyring(t *testing.T) {
 	}
 }
 
+func TestExternalIntegrationsConfigLoadsAndValidatesWeComSuite(t *testing.T) {
+	source := externalIntegrationsEnvSource(map[string]string{
+		envIntegrationWeComSuiteID:            "ww0123456789abcdef",
+		envIntegrationWeComSuiteSecret:        "suite-secret",
+		envIntegrationWeComCallbackToken:      "callback-token",
+		envIntegrationWeComEncodingAESKey:     "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+		envIntegrationWeComInstallCallbackURL: "https://cloud.vibeclass.cn/console/api/integrations/wecom/install/callback",
+		envIntegrationWeComSuiteEventsURL:     "https://cloud.vibeclass.cn/console/api/integrations/wecom/suite/events",
+		envIntegrationWeComResultURL:          "https://cloud.vibeclass.cn/console/integrations?provider=wecom",
+	})
+	cfg := &Config{}
+	if err := loadExternalIntegrationsConfig(cfg, source); err != nil {
+		t.Fatalf("loadExternalIntegrationsConfig() error = %v", err)
+	}
+	if !cfg.ExternalIntegrations.WeCom.Configured() {
+		t.Fatalf("WeCom Suite config was not loaded: %+v", cfg.ExternalIntegrations.WeCom)
+	}
+	if err := validateExternalIntegrationsConfig(cfg.ExternalIntegrations); err != nil {
+		t.Fatalf("valid WeCom Suite config rejected: %v", err)
+	}
+
+	partial := enabledExternalIntegrationsConfig()
+	partial.WeCom.SuiteID = "ww0123456789abcdef"
+	if err := validateExternalIntegrationsConfig(partial); err == nil || !strings.Contains(err.Error(), "configured together") {
+		t.Fatalf("partial WeCom Suite validation error = %v", err)
+	}
+}
+
 func TestExternalIntegrationsConfigAcceptsXPublicOAuthClient(t *testing.T) {
 	for _, key := range []string{"x", "x:x", "x/x"} {
 		t.Run(key, func(t *testing.T) {
@@ -228,6 +261,12 @@ func TestExternalIntegrationCredentialKeysAreNotSerialized(t *testing.T) {
 	cfg.OAuth.Clients = map[string]ExternalIntegrationOAuthClientConfig{
 		"gmail": {ClientID: "client-id", ClientSecret: "client-secret"},
 	}
+	cfg.WeCom = ExternalIntegrationWeComConfig{
+		SuiteID: "ww0123456789abcdef", SuiteSecret: "suite-secret",
+		CallbackToken: "callback-token", EncodingAESKey: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+		InstallCallbackURL: "https://app.example.com/install", SuiteEventsURL: "https://app.example.com/events",
+		ResultURL: "https://app.example.com/result",
+	}
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
@@ -237,6 +276,11 @@ func TestExternalIntegrationCredentialKeysAreNotSerialized(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "client-id") || strings.Contains(string(encoded), "client-secret") || strings.Contains(string(encoded), "clients") {
 		t.Fatalf("serialized integration config leaked OAuth client material: %s", encoded)
+	}
+	for _, secret := range []string{cfg.WeCom.SuiteID, cfg.WeCom.SuiteSecret, cfg.WeCom.CallbackToken, cfg.WeCom.EncodingAESKey} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("serialized integration config leaked WeCom secret material: %s", encoded)
+		}
 	}
 }
 

@@ -1,7 +1,7 @@
 # External integrations
 
-ZGI external integrations let AIChat, Agents, and future Workflow connector
-nodes use approved third-party applications through organization or personal
+ZGI external integrations let AIChat, Agents, and Workflow Tool nodes use
+approved third-party applications through organization or personal
 connections. Providers describe their authentication methods, actions,
 schemas, health probe, and governance metadata. Each product surface selects a
 Connection through its own tool-specific selection. AIChat discovers those actions
@@ -32,9 +32,30 @@ The current built-in providers are:
   administrator enables them.
 
 OAuth 2.0 browser connection, token refresh, reconnect, and scope upgrade are
-included for Gmail, delegated Feishu accounts, and X. Workflow integration
-nodes, MCP transport, dynamic OpenAPI imports, and the global Lark provider are
-not part of this release.
+included for Gmail, delegated Feishu accounts, and X. Workflow Tool nodes can
+invoke connector Actions that explicitly declare Workflow support; the first
+slice is limited to read-only Actions and organization-shared Connections. MCP
+transport, dynamic OpenAPI imports, and the global Lark provider are not part
+of this release.
+
+Workflow connector forms are generated from the provider Action JSON Schema.
+Required fields remain required in draft validation, `date` and `date-time`
+formats use semantic date controls, and string arrays use a compact one-item-
+per-line editor instead of requiring raw JSON. Labels, help text, placeholders,
+and enum values follow the active UI locale. Empty optional connector values
+are omitted before runtime Schema validation, while meaningful `false` and `0`
+values are preserved. Existing Builtin and Plugin Tool parameter serialization
+is unchanged.
+
+Connector Tool nodes also publish typed structured outputs derived from each
+Action output Schema. Primitive object fields are selectable directly, while
+primitive fields inside result arrays are materialized as typed arrays (for
+example, `results[].url` becomes an `array[string]`). This lets a search node
+feed a later fetch node without raw JSON parsing. Existing `text`, `files`, and
+`json` outputs remain available for compatibility. A scalar string may be
+explicitly bound to a string-list input and is normalized to a one-item array;
+array-to-scalar flows still require an Iteration or an explicit selection so
+the runtime never silently chooses the first result.
 
 ## Capability coverage and roadmap
 
@@ -47,8 +68,8 @@ the current Provider and Action counts.
 The next P1 capability layer is intentionally not implemented yet: GitHub pull
 requests and code reads, Gmail labels and attachments, Feishu group/member and
 document search, and X conversation and engagement reads. P2 is event-driven
-execution through triggers, webhooks, and Workflow integration. Those items are
-roadmap directions, not currently available Actions.
+execution through triggers and webhooks, plus approval-safe Workflow writes.
+Those items are roadmap directions, not currently available Actions.
 
 ## Runtime model
 
@@ -58,7 +79,7 @@ The main runtime boundary is:
 ProviderDefinition
   -> Connection (encrypted credential and non-secret configuration)
   -> Connection grant and organization Action policy
-  -> tool-specific selection (AIChat preference, Agent binding, future Workflow node)
+  -> tool-specific selection (AIChat preference, Agent binding, Workflow Tool node)
   -> target-specific runtime discovery
   -> Integration Executor
   -> Provider Adapter
@@ -72,11 +93,12 @@ grant, Action allowlist, provider scopes, policy, and health/auth state before
 decrypting a request-scoped credential. Resolved secrets are destroyed after
 the adapter call.
 
-Tool-specific selections are not authorization. AIChat preferences and
-Agent resource bindings remain separate because they have different ownership,
-versioning, and runtime semantics. Revoking a grant, disabling a Connection,
-changing an Action policy, or invalidating a token takes effect on the next call
-even when the target already selected the Connection.
+Tool-specific selections are not authorization. AIChat preferences, Agent
+resource bindings, and Workflow Tool-node selections remain separate because
+they have different ownership, versioning, and runtime semantics. Revoking a
+grant, disabling a Connection, changing an Action policy, or invalidating a
+token takes effect on the next call even when the target already selected the
+Connection.
 
 ## Authentication method model
 
@@ -152,12 +174,22 @@ INTEGRATION_OAUTH_FLOW_TTL_SECONDS=600
 INTEGRATION_OAUTH_REFRESH_WINDOW_SECONDS=600
 INTEGRATION_OAUTH_CALLBACK_URL=https://api.example.com/console/api/integrations/oauth/callback
 INTEGRATION_OAUTH_RESULT_URL=https://app.example.com/console/integrations/oauth/result
+
+# WeCom service-provider Suite application. Keep these values in a secret manager.
+INTEGRATION_WECOM_SUITE_ID=wwxxxxxxxxxxxxxxxx
+INTEGRATION_WECOM_SUITE_SECRET=replace-with-suite-secret
+INTEGRATION_WECOM_CALLBACK_TOKEN=replace-with-callback-token
+INTEGRATION_WECOM_ENCODING_AES_KEY=replace-with-43-character-encoding-aes-key
+INTEGRATION_WECOM_INSTALL_CALLBACK_URL=https://app.example.com/console/api/integrations/wecom/install/callback
+INTEGRATION_WECOM_SUITE_EVENTS_URL=https://app.example.com/console/api/integrations/wecom/suite/events
+INTEGRATION_WECOM_RESULT_URL=https://app.example.com/console/integrations?provider=wecom
 ```
 
-This single switch registers every built-in Provider, including Exa Web
-Search. Individual Provider availability is then determined by its configured
-Connections, connection health, usage rules, and caller selection or binding;
-Web Search has no separate enable flag.
+This switch enables the shared integration runtime and built-in Providers,
+including Exa Web Search. WeCom is registered only when all four Suite secrets
+are present, so a partially configured callback cannot be offered to users.
+Individual Provider availability is then determined by its configured
+Connections, connection health, usage rules, and caller selection or binding.
 
 The example key above is illustrative; generate a unique random 32-byte value
 for every deployment and store it in a secret manager. Do not commit the JSON
@@ -382,9 +414,10 @@ flow verifies the credential, shows the provider capabilities covered by the
 granted scopes, requires at least one explicit usage rule for a shared
 Connection, and then presents available tools as a separate step. AIChat can be
 selected for the explicitly named current workspace. Agent bindings remain in a
-specific Agent draft/version, and Workflow bindings will remain in a specific
-Workflow node once connector nodes are available. No target is required to mark
-the Connection itself ready. Closing the flow does not discard the Connection;
+specific Agent draft/version. Workflow selections remain in the configured Tool
+node and reference an organization-shared Connection without copying its
+credential into the workflow definition. No target is required to mark the
+Connection itself ready. Closing the flow does not discard the Connection;
 incomplete Connections show **Continue setup** in **Connected**. After the
 required connection steps are complete, **Connected** remains the place to
 maintain credentials, health, and usage rules, and to review or enter the
@@ -934,15 +967,16 @@ connection methods of Standard Mail rather than separate Providers. Their
 server endpoints, TLS modes, and ports are selected on the server, so users
 only enter the mailbox address and the provider-generated authorization code.
 Other standards-compliant services remain available through the advanced
-custom IMAP/SMTP method. These connectors are available whenever
-`EXTERNAL_INTEGRATIONS_ENABLED=true`; no provider-specific deployment
-environment variable or database migration is required.
+custom IMAP/SMTP method. These connectors use the shared external-integration
+runtime. WeCom additionally requires the Suite deployment settings above and
+the provider-install migration.
 
-- WeCom uses an organization-owned custom application. Administrators enter
-  its Corp ID, Agent ID, and Secret. The connection can inspect the application,
-  list departments, resolve visible members, read a resolved member, and send
-  one plain-text application message after approval. The application visible
-  range remains the provider-side security boundary.
+- WeCom uses a service-provider third-party Suite application. A WeCom system
+  administrator reviews the permissions and installs it; ZGI exchanges the
+  one-time authorization code for a permanent authorization and encrypts it at
+  rest. Users never enter Corp ID, AgentID, or an application Secret. The
+  installed application's visible range remains the provider-side security
+  boundary.
 - DingTalk uses an organization-owned internal application. Administrators
   enter its AppKey, AppSecret, and AgentId, configure the application's contact
   visibility, and grant only the contact, attendance, and work-notification
@@ -959,24 +993,39 @@ environment variable or database migration is required.
 
 ### WeCom connection checklist
 
-1. In the WeCom administration console, create an organization-owned custom
-   application under **Applications**. A group robot webhook is not compatible.
-2. Copy the **Corp ID** from **My Enterprise > Enterprise Information**.
-3. From that same custom application, copy its numeric **AgentID** and
-   **Secret**. Do not use a contacts Secret, callback Token, or EncodingAESKey.
-4. Configure the application visibility range to include every department or
-   member ZGI must resolve.
-5. When trusted-IP protection is enabled, add the public egress IP of the
-   server running the ZGI API. The provider sees the backend server egress IP,
-   not the browser address or `localhost`. WeCom error `60020` normally means
-   this IP is missing from the trusted list.
-6. Save the Connection. ZGI automatically obtains an application token and
-   reads the application profile; this check never sends a message.
+1. In the WeCom service-provider platform, create one third-party application.
+   Configure the application category and long-term permissions before tenants
+   install it; a self-built application or group robot is not compatible.
+2. Set **Installation completion callback domain** to the public hostname only,
+   without a scheme or path. For the current deployment use
+   `cloud.vibeclass.cn`.
+3. Set **Data callback URL** to
+   `https://cloud.vibeclass.cn/console/api/integrations/wecom/install/callback`
+   and **Command callback URL** to
+   `https://cloud.vibeclass.cn/console/api/integrations/wecom/suite/events`.
+   Generate Token and EncodingAESKey in WeCom, then deploy those exact values as
+   `INTEGRATION_WECOM_CALLBACK_TOKEN` and
+   `INTEGRATION_WECOM_ENCODING_AES_KEY` before validating the URLs.
+4. Set **Application settings URL** to
+   `https://cloud.vibeclass.cn/console/integrations?provider=wecom`, **Application
+   homepage** to `https://cloud.vibeclass.cn/console/integrations`, leave the
+   desktop-only homepage empty unless a separate desktop experience exists,
+   and add `cloud.vibeclass.cn` as the trusted domain.
+5. Deploy the Suite ID and Suite Secret as `INTEGRATION_WECOM_SUITE_ID` and
+   `INTEGRATION_WECOM_SUITE_SECRET`. Add the ZGI API server's public egress IP
+   to the service-provider allowlist. WeCom error `60020` normally means that
+   IP is missing.
+6. Confirm the command callback is receiving fresh `suite_ticket` events. In
+   Connection Center, choose WeCom and start authorization. A WeCom system
+   administrator reviews the requested visibility and installs the app. ZGI
+   then uses `suite_ticket → suite_access_token → pre_auth_code → auth_code →
+   permanent_code → corp_access_token` and reads the installed application
+   profile without sending a message.
 
-The Corp ID, AgentID, and Secret must identify one application in one
-enterprise. A successful token request with a failed application-profile check
-usually indicates an AgentID mismatch or an application visibility/trusted-IP
-restriction rather than a ZGI credential-storage failure.
+Authorization cancellation from WeCom immediately disables the matching local
+Connection, clears its encrypted permanent authorization, and requires a new
+installation. Permission-change events invalidate cached capability evidence so
+the Connection is rechecked before use.
 
 ### DingTalk connection checklist
 

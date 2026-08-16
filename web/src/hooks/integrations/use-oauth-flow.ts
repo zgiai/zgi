@@ -21,6 +21,7 @@ import {
 const POPUP_WIDTH = 600;
 const POPUP_HEIGHT = 700;
 const POPUP_CHECK_INTERVAL = 500;
+type IntegrationRedirectFlowKind = 'oauth' | 'provider_install';
 
 function popupFeatures() {
   const left = Math.max(0, window.screenX + (window.outerWidth - POPUP_WIDTH) / 2);
@@ -90,17 +91,24 @@ async function invalidateOAuthCompletionCaches(
   ]);
 }
 
-async function cancelOAuthFlowSilently(flowId: string): Promise<void> {
+async function cancelOAuthFlowSilently(
+  flowId: string,
+  kind: IntegrationRedirectFlowKind
+): Promise<void> {
   if (!flowId) return;
   try {
-    await integrationService.cancelOAuthFlow(flowId);
+    if (kind === 'provider_install') {
+      await integrationService.cancelProviderInstallFlow(flowId);
+    } else {
+      await integrationService.cancelOAuthFlow(flowId);
+    }
   } catch {
     // Cancellation is best effort when a start, callback, or another browser
     // action has already moved the flow to a terminal state.
   }
 }
 
-export function useIntegrationOAuthFlow() {
+export function useIntegrationOAuthFlow(kind: IntegrationRedirectFlowKind = 'oauth') {
   const queryClient = useQueryClient();
   const [state, dispatch] = useReducer(integrationOAuthUIReducer, initialIntegrationOAuthUIState);
   const popupRef = useRef<Window | null>(null);
@@ -154,7 +162,10 @@ export function useIntegrationOAuthFlow() {
     if (!flowId || pollingRef.current || !mountedRef.current) return;
     pollingRef.current = true;
     try {
-      const response = await integrationService.getOAuthFlow(flowId);
+      const response =
+        kind === 'provider_install'
+          ? await integrationService.getProviderInstallFlow(flowId)
+          : await integrationService.getOAuthFlow(flowId);
       if (!mountedRef.current || flowIdRef.current !== flowId) return;
       const flow = response.data;
       dispatch({ type: 'flow_updated', flow });
@@ -172,7 +183,7 @@ export function useIntegrationOAuthFlow() {
     } finally {
       pollingRef.current = false;
     }
-  }, [finish]);
+  }, [finish, kind]);
 
   const monitorPopup = useCallback(() => {
     if (popupTimerRef.current) clearInterval(popupTimerRef.current);
@@ -258,15 +269,18 @@ export function useIntegrationOAuthFlow() {
       authorizationURLRef.current = '';
       completionHandledRef.current = false;
       dispatch({ type: 'start' });
-      void cancelOAuthFlowSilently(previousFlowId);
+      void cancelOAuthFlowSilently(previousFlowId, kind);
 
       let popup: Window | null = null;
       let createdFlowId = '';
       try {
-        popup = window.open('', `zgi_oauth_${Date.now()}`, popupFeatures());
+        popup = window.open('', `zgi_integration_auth_${Date.now()}`, popupFeatures());
         detachPopupOpener(popup);
         popupRef.current = popup;
-        const response = await integrationService.startOAuthFlow(request);
+        const response =
+          kind === 'provider_install'
+            ? await integrationService.startProviderInstallFlow(request)
+            : await integrationService.startOAuthFlow(request);
         const flow: IntegrationOAuthFlowStartResponse = {
           ...response.data,
           integration_id: request.integration_id,
@@ -278,7 +292,7 @@ export function useIntegrationOAuthFlow() {
         createdFlowId = oauthFlowReference(flow);
         if (!mountedRef.current || operationRef.current !== operation) {
           if (popup && !popup.closed) popup.close();
-          await cancelOAuthFlowSilently(createdFlowId);
+          await cancelOAuthFlowSilently(createdFlowId, kind);
           return;
         }
         const authorizationURL = safeAuthorizationURL(flow.authorization_url);
@@ -295,13 +309,13 @@ export function useIntegrationOAuthFlow() {
         }
       } catch {
         if (popup && !popup.closed) popup.close();
-        await cancelOAuthFlowSilently(createdFlowId);
+        await cancelOAuthFlowSilently(createdFlowId, kind);
         if (!mountedRef.current || operationRef.current !== operation) return;
         popupRef.current = null;
         dispatch({ type: 'request_failed' });
       }
     },
-    [attachFlowSignals, clearChannel, clearTimers, closePopup]
+    [attachFlowSignals, clearChannel, clearTimers, closePopup, kind]
   );
 
   const openFullPage = useCallback(() => {
@@ -311,7 +325,11 @@ export function useIntegrationOAuthFlow() {
   const reopenPopup = useCallback(() => {
     const authorizationURL = authorizationURLRef.current;
     if (!authorizationURL) return false;
-    const popup = window.open(authorizationURL, `zgi_oauth_${Date.now()}`, popupFeatures());
+    const popup = window.open(
+      authorizationURL,
+      `zgi_integration_auth_${Date.now()}`,
+      popupFeatures()
+    );
     popupRef.current = popup;
     if (!popup) return false;
     detachPopupOpener(popup);
@@ -332,7 +350,11 @@ export function useIntegrationOAuthFlow() {
     closePopup();
     if (flowId) {
       try {
-        await integrationService.cancelOAuthFlow(flowId);
+        if (kind === 'provider_install') {
+          await integrationService.cancelProviderInstallFlow(flowId);
+        } else {
+          await integrationService.cancelOAuthFlow(flowId);
+        }
         if (!mountedRef.current || operationRef.current !== operation) return;
         dispatch({ type: 'cancelled' });
         return;
@@ -342,7 +364,7 @@ export function useIntegrationOAuthFlow() {
     }
     if (!mountedRef.current || operationRef.current !== operation) return;
     dispatch({ type: 'reset' });
-  }, [clearChannel, clearTimers, closePopup]);
+  }, [clearChannel, clearTimers, closePopup, kind]);
 
   const reset = useCallback(() => {
     operationRef.current += 1;
@@ -352,9 +374,9 @@ export function useIntegrationOAuthFlow() {
     closePopup();
     flowIdRef.current = '';
     authorizationURLRef.current = '';
-    void cancelOAuthFlowSilently(flowId);
+    void cancelOAuthFlowSilently(flowId, kind);
     dispatch({ type: 'reset' });
-  }, [clearChannel, clearTimers, closePopup]);
+  }, [clearChannel, clearTimers, closePopup, kind]);
 
   return {
     state,

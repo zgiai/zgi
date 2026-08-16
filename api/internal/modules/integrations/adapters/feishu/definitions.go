@@ -878,7 +878,7 @@ func readAction(id, toolName, name, chineseName, description, chineseDescription
 		DefaultPolicy: &integrations.DefaultActionPolicy{
 			Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true,
 		},
-		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 	}
 }
 

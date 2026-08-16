@@ -387,7 +387,7 @@ func Actions() []integrations.ActionDefinition {
 				ScopePostsRead: {integrations.LocaleEnglishUS: "Read posts", integrations.LocaleSimplifiedChinese: "读取帖子"},
 			},
 			DefaultPolicy:    readPolicy(true),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		{
 			ID: ActionListOwnPosts, ToolName: "list_x_posts", Name: "List my X posts",
@@ -407,7 +407,7 @@ func Actions() []integrations.ActionDefinition {
 				ScopePostsRead: {integrations.LocaleEnglishUS: "Read posts", integrations.LocaleSimplifiedChinese: "读取帖子"},
 			},
 			DefaultPolicy:    readPolicy(true),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		{
 			ID: ActionSearchRecentPosts, ToolName: "search_recent_x_posts", Name: "Search recent X posts",
@@ -431,7 +431,7 @@ func Actions() []integrations.ActionDefinition {
 				ScopePostsRead: {integrations.LocaleEnglishUS: "Read posts", integrations.LocaleSimplifiedChinese: "读取帖子"},
 			},
 			DefaultPolicy:    readPolicy(false),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		{
 			ID: ActionCreatePost, ToolName: "create_x_post", Name: "Create X post",
@@ -492,7 +492,7 @@ func Actions() []integrations.ActionDefinition {
 				ScopePostsRead: {integrations.LocaleEnglishUS: "Read posts", integrations.LocaleSimplifiedChinese: "读取帖子"},
 			},
 			DefaultPolicy:    readPolicy(true),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		integrations.ActionDefinition{
 			ID: ActionListPostsByUser, ToolName: "list_x_posts_by_user", Name: "List X posts by user",
@@ -524,7 +524,7 @@ func Actions() []integrations.ActionDefinition {
 				ScopePostsRead: {integrations.LocaleEnglishUS: "Read posts", integrations.LocaleSimplifiedChinese: "读取帖子"},
 			},
 			DefaultPolicy:    readPolicy(true),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 	)
 	userOAuthMethods := []string{AccountOAuthAuthMethodID, OrganizationOAuthAuthMethodID}

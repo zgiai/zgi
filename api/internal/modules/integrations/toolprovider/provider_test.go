@@ -97,6 +97,10 @@ func TestConnectorProviderInvokesIntegrationExecutor(t *testing.T) {
 		governance.SensitiveDataAllowed {
 		t.Fatalf("connector governance metadata = %#v", governance)
 	}
+	workflowOutputs := providerTool.GetEntity().WorkflowOutputs
+	if len(workflowOutputs) != 1 || workflowOutputs[0].ID != "result__ok" || workflowOutputs[0].Type != "boolean" {
+		t.Fatalf("connector workflow outputs = %#v", workflowOutputs)
+	}
 	manager := tools.NewToolManager(nil)
 	if err := manager.RegisterProvider(provider); err != nil {
 		t.Fatalf("RegisterProvider() error = %v", err)

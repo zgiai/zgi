@@ -1240,6 +1240,18 @@ func loadExternalIntegrationsConfig(cfg *Config, source *envSource) error {
 		oauthWebBaseURL+"/console/integrations/oauth/result",
 		envIntegrationOAuthResultURL,
 	))
+	wecomInstallCallbackURL := strings.TrimSpace(source.string(
+		oauthAPIBaseURL+"/console/api/integrations/wecom/install/callback",
+		envIntegrationWeComInstallCallbackURL,
+	))
+	wecomSuiteEventsURL := strings.TrimSpace(source.string(
+		oauthAPIBaseURL+"/console/api/integrations/wecom/suite/events",
+		envIntegrationWeComSuiteEventsURL,
+	))
+	wecomResultURL := strings.TrimSpace(source.string(
+		oauthWebBaseURL+"/console/integrations?provider=wecom",
+		envIntegrationWeComResultURL,
+	))
 	type rawOAuthClientConfig struct {
 		ClientID     string            `json:"client_id"`
 		ClientSecret string            `json:"client_secret"`
@@ -1307,6 +1319,15 @@ func loadExternalIntegrationsConfig(cfg *Config, source *envSource) error {
 			CallbackURL:          oauthCallbackURL,
 			ResultURL:            oauthResultURL,
 			Clients:              oauthClients,
+		},
+		WeCom: ExternalIntegrationWeComConfig{
+			SuiteID:            strings.TrimSpace(source.string("", envIntegrationWeComSuiteID)),
+			SuiteSecret:        strings.TrimSpace(source.string("", envIntegrationWeComSuiteSecret)),
+			CallbackToken:      strings.TrimSpace(source.string("", envIntegrationWeComCallbackToken)),
+			EncodingAESKey:     strings.TrimSpace(source.string("", envIntegrationWeComEncodingAESKey)),
+			InstallCallbackURL: wecomInstallCallbackURL,
+			SuiteEventsURL:     wecomSuiteEventsURL,
+			ResultURL:          wecomResultURL,
 		},
 	}
 	return nil

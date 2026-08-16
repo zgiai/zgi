@@ -20,6 +20,29 @@ func NewToolEngine(toolManager *ToolManager) *ToolEngine {
 	}
 }
 
+// ResolveToolEntity returns the authoritative catalog contract used by a Tool
+// node. Workflow execution uses this as a compatibility fallback for drafts
+// saved before structured output snapshots were introduced.
+func (e *ToolEngine) ResolveToolEntity(
+	ctx context.Context,
+	providerType ToolProviderType,
+	providerID, toolName, tenantID string,
+) (*ToolEntity, error) {
+	if e == nil || e.toolManager == nil {
+		return nil, fmt.Errorf("tool manager is not configured")
+	}
+	provider, err := e.toolManager.GetProvider(ctx, providerType, providerID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	tool, err := provider.GetTool(toolName)
+	if err != nil {
+		return nil, err
+	}
+	entity := tool.GetEntity()
+	return &entity, nil
+}
+
 // InvokeRequest represents a tool invocation request
 type InvokeRequest struct {
 	ProviderType      ToolProviderType       `json:"provider_type"`
@@ -184,6 +207,7 @@ type WorkflowToolInvokeRequest struct {
 	ToolConfigurations map[string]interface{} `json:"tool_configurations"`
 	ToolCredentials    map[string]interface{} `json:"tool_credentials,omitempty"` // Credentials for plugin runtime
 	ConversationID     string                 `json:"conversation_id,omitempty"`
+	RuntimeParameters  map[string]interface{} `json:"runtime_parameters,omitempty"`
 }
 
 // InvokeForWorkflow invokes a tool for workflow execution
@@ -200,16 +224,17 @@ func (e *ToolEngine) InvokeForWorkflow(ctx context.Context, req WorkflowToolInvo
 	}
 
 	return e.Invoke(ctx, InvokeRequest{
-		ProviderType:   req.ProviderType,
-		ProviderID:     req.ProviderID,
-		ToolName:       req.ToolName,
-		TenantID:       req.TenantID,
-		UserID:         req.UserID,
-		Parameters:     parameters,
-		CredentialID:   req.CredentialID,
-		ConversationID: req.ConversationID,
-		AppID:          req.AppID,
-		InvokeFrom:     ToolInvokeFromWorkflow,
+		ProviderType:      req.ProviderType,
+		ProviderID:        req.ProviderID,
+		ToolName:          req.ToolName,
+		TenantID:          req.TenantID,
+		UserID:            req.UserID,
+		Parameters:        parameters,
+		CredentialID:      req.CredentialID,
+		ConversationID:    req.ConversationID,
+		AppID:             req.AppID,
+		InvokeFrom:        ToolInvokeFromWorkflow,
+		RuntimeParameters: req.RuntimeParameters,
 	})
 }
 

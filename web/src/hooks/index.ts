@@ -201,6 +201,7 @@ export {
   integrationConnectionHealthEventItems,
   integrationExecutionItems,
   useAllIntegrationConnections,
+  useAllAvailableIntegrationConnections,
   useAllMyIntegrationConnections,
   useCreateIntegrationConnection,
   useCreateIntegrationConnectionGrant,

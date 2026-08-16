@@ -213,7 +213,7 @@ func readActionWithInput(id, tool, name, zh, description, zhDescription string, 
 		DataEgress: true, ExternalDestination: "mail-service", Idempotent: true,
 		RequiredScopes: scopes, ScopeLabelsI18n: scopeLabels(scopes), SupportedAuthMethodIDs: authIDs,
 		DefaultPolicy:    &integrations.DefaultActionPolicy{Enabled: true, ApprovalPolicy: toolgovernance.ApprovalPolicyNeverAsk, DataEgressAllowed: true},
-		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+		SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 	}
 }
 

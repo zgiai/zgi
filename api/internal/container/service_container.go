@@ -254,6 +254,9 @@ type ServiceContainer struct {
 	integrationOAuthRevoker         *integrations.OAuthConnectionRevoker
 	integrationOAuthRecoveryOutbox  *integrations.SplitOAuthRecoveryOutbox
 	integrationOAuthRecovery        *integrations.OAuthRecoveryService
+	integrationProviderInstallFlows *integrations.ProviderInstallFlowService
+	integrationWeComAdapter         *wecom_integration.Adapter
+	integrationWeComSuiteState      *wecom_integration.SuiteStateRepository
 
 	// Account memory
 	memoryService      *memory.Service
@@ -1120,18 +1123,37 @@ func (c *ServiceContainer) GetIntegrationRegistry() *integrations.Registry {
 				panic(fmt.Sprintf("register %s mail integration: %v", definition.ID, err))
 			}
 		}
-		wecomAdapter, err := wecom_integration.New(nil)
+		wecomConfig := wecom_integration.SuiteConfig{}
+		if c.config != nil {
+			wecomConfig = wecom_integration.SuiteConfig{
+				SuiteID:            c.config.ExternalIntegrations.WeCom.SuiteID,
+				SuiteSecret:        c.config.ExternalIntegrations.WeCom.SuiteSecret,
+				CallbackToken:      c.config.ExternalIntegrations.WeCom.CallbackToken,
+				EncodingAESKey:     c.config.ExternalIntegrations.WeCom.EncodingAESKey,
+				InstallCallbackURL: c.config.ExternalIntegrations.WeCom.InstallCallbackURL,
+			}
+		}
+		var wecomAdapter *wecom_integration.Adapter
+		if wecomConfig.Configured() {
+			wecomAdapter, err = wecom_integration.NewSuite(nil, wecomConfig, c.GetIntegrationWeComSuiteStateRepository())
+		} else {
+			wecomAdapter, err = wecom_integration.New(nil)
+		}
 		if err != nil {
 			panic(fmt.Sprintf("initialize WeCom adapter: %v", err))
 		}
-		if err := registry.Register(integrations.Registration{
-			Definition:          wecom_integration.ProviderDefinition(),
-			Adapter:             wecomAdapter,
-			ConnectionTester:    wecomAdapter,
-			CredentialValidator: wecomAdapter,
-			HealthProbe:         wecomAdapter,
-		}); err != nil {
-			panic(fmt.Sprintf("register WeCom integration: %v", err))
+		c.integrationWeComAdapter = wecomAdapter
+		if wecomConfig.Configured() {
+			if err := registry.Register(integrations.Registration{
+				Definition:          wecom_integration.ProviderDefinition(),
+				Adapter:             wecomAdapter,
+				ConnectionTester:    wecomAdapter,
+				CredentialValidator: wecomAdapter,
+				HealthProbe:         wecomAdapter,
+				ProviderInstaller:   wecomAdapter,
+			}); err != nil {
+				panic(fmt.Sprintf("register WeCom integration: %v", err))
+			}
 		}
 		dingtalkAdapter, err := dingtalk_integration.New(nil)
 		if err != nil {
@@ -1357,6 +1379,33 @@ func (c *ServiceContainer) GetIntegrationCredentialCipher() integrations.Credent
 		c.integrationCredentialCipher = cipher
 	}
 	return c.integrationCredentialCipher
+}
+
+func (c *ServiceContainer) GetIntegrationWeComSuiteStateRepository() *wecom_integration.SuiteStateRepository {
+	if c.integrationWeComSuiteState == nil {
+		c.integrationWeComSuiteState = wecom_integration.NewSuiteStateRepository(c.db, c.GetIntegrationCredentialCipher())
+	}
+	return c.integrationWeComSuiteState
+}
+
+func (c *ServiceContainer) GetIntegrationWeComAdapter() *wecom_integration.Adapter {
+	if c.integrationWeComAdapter == nil {
+		_ = c.GetIntegrationRegistry()
+	}
+	return c.integrationWeComAdapter
+}
+
+func (c *ServiceContainer) GetIntegrationProviderInstallFlowService() *integrations.ProviderInstallFlowService {
+	if c.integrationProviderInstallFlows == nil {
+		ttl := 10 * time.Minute
+		if c.config != nil && c.config.ExternalIntegrations.OAuth.FlowTTLSeconds > 0 {
+			ttl = time.Duration(c.config.ExternalIntegrations.OAuth.FlowTTLSeconds) * time.Second
+		}
+		c.integrationProviderInstallFlows = integrations.NewProviderInstallFlowService(
+			c.db, c.GetIntegrationCredentialCipher(), c.GetIntegrationRegistry(), ttl,
+		)
+	}
+	return c.integrationProviderInstallFlows
 }
 
 func (c *ServiceContainer) GetIntegrationConnectionResolver() *integrations.DefaultConnectionResolver {

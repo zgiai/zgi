@@ -74,7 +74,7 @@ func TestProviderDefinitionOAuthAndWriteDefaults(t *testing.T) {
 		send.Idempotent || send.Effect != toolgovernance.EffectExternalSend {
 		t.Fatalf("send action governance = %#v", send)
 	}
-	if !slices.Equal(account.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) ||
+	if !slices.Equal(account.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow}) ||
 		!slices.Equal(send.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
 		t.Fatalf("action callers: account=%#v send=%#v", account.SupportedCallers, send.SupportedCallers)
 	}
@@ -115,7 +115,7 @@ func TestCoreMailActionsHaveStrictScopesAndGovernance(t *testing.T) {
 			action.DefaultPolicy.ApprovalPolicy != toolgovernance.ApprovalPolicyNeverAsk ||
 			!action.Idempotent || action.Effect != toolgovernance.EffectRead ||
 			!slices.Equal(action.RequiredScopes, []string{ScopeMailReadonly}) ||
-			!slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
+			!slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow}) {
 			t.Fatalf("read action %s = %#v", actionID, action)
 		}
 	}

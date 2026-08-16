@@ -621,6 +621,13 @@ const (
 	envIntegrationOAuthCallbackURL          = "INTEGRATION_OAUTH_CALLBACK_URL"
 	envIntegrationOAuthResultURL            = "INTEGRATION_OAUTH_RESULT_URL"
 	envIntegrationOAuthClientsJSON          = "INTEGRATION_OAUTH_CLIENTS_JSON"
+	envIntegrationWeComSuiteID              = "INTEGRATION_WECOM_SUITE_ID"
+	envIntegrationWeComSuiteSecret          = "INTEGRATION_WECOM_SUITE_SECRET"
+	envIntegrationWeComCallbackToken        = "INTEGRATION_WECOM_CALLBACK_TOKEN"
+	envIntegrationWeComEncodingAESKey       = "INTEGRATION_WECOM_ENCODING_AES_KEY"
+	envIntegrationWeComInstallCallbackURL   = "INTEGRATION_WECOM_INSTALL_CALLBACK_URL"
+	envIntegrationWeComSuiteEventsURL       = "INTEGRATION_WECOM_SUITE_EVENTS_URL"
+	envIntegrationWeComResultURL            = "INTEGRATION_WECOM_RESULT_URL"
 
 	// Web search provider runtime configuration.
 	// envWebSearchProvider selects the web search provider. Phase one supports exa. Default: exa.

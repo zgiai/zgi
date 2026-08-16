@@ -288,7 +288,7 @@ func Actions() []integrations.ActionDefinition {
 			Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
 			DataEgress: true, ExternalDestination: "api.github.com", SensitiveDataAllowed: false,
 			Idempotent: true, DefaultPolicy: readOnlyDefaultPolicy(),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		{
 			ID:       ActionListRepositories,
@@ -323,7 +323,7 @@ func Actions() []integrations.ActionDefinition {
 				"metadata:read": {integrations.LocaleEnglishUS: "Read repository metadata", integrations.LocaleSimplifiedChinese: "读取仓库元数据"},
 			},
 			DefaultPolicy:    readOnlyDefaultPolicy(),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		{
 			ID:       ActionListIssues,
@@ -362,7 +362,7 @@ func Actions() []integrations.ActionDefinition {
 				"issues:read": {integrations.LocaleEnglishUS: "Read issues", integrations.LocaleSimplifiedChinese: "读取议题"},
 			},
 			DefaultPolicy:    readOnlyDefaultPolicy(),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 	}
 	actions = append(actions,
@@ -399,7 +399,7 @@ func Actions() []integrations.ActionDefinition {
 			Idempotent: true, RequiredScopes: []string{"metadata:read"},
 			ScopeLabelsI18n:  githubScopeLabels("metadata:read", "Read repository metadata", "读取仓库元数据"),
 			DefaultPolicy:    readOnlyDefaultPolicy(),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		integrations.ActionDefinition{
 			ID: ActionGetIssue, ToolName: "get_github_issue",
@@ -419,7 +419,7 @@ func Actions() []integrations.ActionDefinition {
 			Idempotent: true, RequiredScopes: []string{"issues:read"},
 			ScopeLabelsI18n:  githubScopeLabels("issues:read", "Read issues", "读取议题"),
 			DefaultPolicy:    readOnlyDefaultPolicy(),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		integrations.ActionDefinition{
 			ID: ActionListIssueComments, ToolName: "list_github_issue_comments",
@@ -444,7 +444,7 @@ func Actions() []integrations.ActionDefinition {
 			Idempotent: true, RequiredScopes: []string{"issues:read"},
 			ScopeLabelsI18n:  githubScopeLabels("issues:read", "Read issues", "读取议题"),
 			DefaultPolicy:    readOnlyDefaultPolicy(),
-			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent},
+			SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromWorkflow},
 		},
 		integrations.ActionDefinition{
 			ID: ActionCreateIssue, ToolName: "create_github_issue",
