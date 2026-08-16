@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -30,19 +31,20 @@ type ToolInput struct {
 
 // NodeData contains the configuration for the tools node
 type NodeData struct {
-	Title                  string                     `json:"title"`
-	ProviderType           string                     `json:"provider_type"`           // builtin, runner, plugin_runner, api, workflow, app, dataset-retrieval, mcp
-	ProviderID             string                     `json:"provider_id"`             // Tool provider identifier
-	ProviderName           string                     `json:"provider_name,omitempty"` // Provider display name
-	ToolName               string                     `json:"tool_name"`               // Tool name to invoke
-	ToolLabel              string                     `json:"tool_label,omitempty"`    // Tool display label
-	ToolParameters         map[string]*ToolInput      `json:"tool_parameters"`         // Tool parameters with type info
-	WorkflowOutputs        []tools.ToolWorkflowOutput `json:"workflow_outputs,omitempty"`
-	ToolConfigurations     map[string]any             `json:"tool_configurations"` // Pre-configured tool settings (form type)
-	CredentialID           string                     `json:"credential_id,omitempty"`
-	ConnectionID           string                     `json:"connection_id,omitempty"`
-	PluginUniqueIdentifier string                     `json:"plugin_unique_identifier,omitempty"`
-	ToolNodeVersion        string                     `json:"tool_node_version,omitempty"` // For backward compatibility
+	Title                      string                     `json:"title"`
+	ProviderType               string                     `json:"provider_type"`           // builtin, runner, plugin_runner, api, workflow, app, dataset-retrieval, mcp
+	ProviderID                 string                     `json:"provider_id"`             // Tool provider identifier
+	ProviderName               string                     `json:"provider_name,omitempty"` // Provider display name
+	ToolName                   string                     `json:"tool_name"`               // Tool name to invoke
+	ToolLabel                  string                     `json:"tool_label,omitempty"`    // Tool display label
+	ToolParameters             map[string]*ToolInput      `json:"tool_parameters"`         // Tool parameters with type info
+	WorkflowOutputs            []tools.ToolWorkflowOutput `json:"workflow_outputs,omitempty"`
+	HasWorkflowOutputsSnapshot bool                       `json:"-"`
+	ToolConfigurations         map[string]any             `json:"tool_configurations"` // Pre-configured tool settings (form type)
+	CredentialID               string                     `json:"credential_id,omitempty"`
+	ConnectionID               string                     `json:"connection_id,omitempty"`
+	PluginUniqueIdentifier     string                     `json:"plugin_unique_identifier,omitempty"`
+	ToolNodeVersion            string                     `json:"tool_node_version,omitempty"` // For backward compatibility
 }
 
 // New creates a new Tools node instance
@@ -185,7 +187,7 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 	}
 
 	workflowOutputs := n.nodeData.WorkflowOutputs
-	if len(workflowOutputs) == 0 {
+	if !n.nodeData.HasWorkflowOutputsSnapshot {
 		if entity, resolveErr := n.toolEngine.ResolveToolEntity(
 			ctx,
 			providerType,
@@ -916,11 +918,28 @@ func parseNodeDataFromConfig(config map[string]any) (NodeData, string, error) {
 				if t, ok := paramMap["type"].(string); ok {
 					input.Type = t
 				}
+				if coerce, ok := paramMap["coerce"].(string); ok {
+					input.Coerce = coerce
+				}
 				nd.ToolParameters[paramName] = input
 			}
 		}
 	} else {
 		nd.ToolParameters = make(map[string]*ToolInput)
+	}
+
+	// Preserve the output projection snapshot saved with the workflow. The
+	// presence flag distinguishes an explicitly empty snapshot from legacy
+	// drafts that predate workflow_outputs and may safely use the live catalog.
+	if rawOutputs, exists := data["workflow_outputs"]; exists {
+		nd.HasWorkflowOutputsSnapshot = true
+		encodedOutputs, err := json.Marshal(rawOutputs)
+		if err != nil {
+			return nd, "", fmt.Errorf("invalid workflow_outputs: %w", err)
+		}
+		if err := json.Unmarshal(encodedOutputs, &nd.WorkflowOutputs); err != nil {
+			return nd, "", fmt.Errorf("invalid workflow_outputs: %w", err)
+		}
 	}
 
 	// Parse tool_configurations (form type settings)

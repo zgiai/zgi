@@ -6,6 +6,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
+	toolentities "github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func TestPrepareToolParameters_UsesNestedSelector(t *testing.T) {
@@ -261,6 +262,85 @@ func TestParseNodeDataFromConfigReadsConnectorConnection(t *testing.T) {
 	}
 	if nodeID != "tool-node" || data.ConnectionID != "connection-123" || data.ProviderType != "connector" {
 		t.Fatalf("parsed connector data = %#v, nodeID = %q", data, nodeID)
+	}
+}
+
+func TestParseNodeDataFromConfigRestoresCoercionAndOutputSnapshot(t *testing.T) {
+	data, _, err := parseNodeDataFromConfig(map[string]any{
+		"id": "tool-node",
+		"data": map[string]interface{}{
+			"provider_type": "connector",
+			"provider_id":   "web-search",
+			"tool_name":     "fetch_webpage",
+			"tool_parameters": map[string]interface{}{
+				"urls": map[string]interface{}{
+					"type": "variable", "value": []interface{}{"source", "url"}, "coerce": "singleton_array",
+				},
+			},
+			"workflow_outputs": []interface{}{
+				map[string]interface{}{
+					"id": "result__items__url", "path": []interface{}{"result", "items", "*", "url"}, "type": "array[string]",
+					"label": map[string]interface{}{"en-US": "URLs", "zh-Hans": "链接"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("parseNodeDataFromConfig() error = %v", err)
+	}
+	if got := data.ToolParameters["urls"].Coerce; got != "singleton_array" {
+		t.Fatalf("tool parameter coercion = %q, want singleton_array", got)
+	}
+	if !data.HasWorkflowOutputsSnapshot || len(data.WorkflowOutputs) != 1 {
+		t.Fatalf("workflow output snapshot = %#v, present = %v", data.WorkflowOutputs, data.HasWorkflowOutputsSnapshot)
+	}
+	wantOutput := toolentities.ToolWorkflowOutput{
+		ID:    "result__items__url",
+		Path:  []string{"result", "items", "*", "url"},
+		Type:  "array[string]",
+		Label: toolentities.I18nText{"en-US": "URLs", "zh-Hans": "链接"},
+	}
+	if got := data.WorkflowOutputs[0]; !reflect.DeepEqual(got, wantOutput) {
+		t.Fatalf("workflow output = %#v, want %#v", got, wantOutput)
+	}
+
+	pool := entities.NewVariablePool()
+	pool.Add([]string{"source", "url"}, "https://example.com")
+	node := &Node{nodeData: data}
+	params, err := node.prepareToolParameters(pool)
+	if err != nil {
+		t.Fatalf("prepareToolParameters() error = %v", err)
+	}
+	if got, want := params["urls"], []interface{}{"https://example.com"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("params[urls] = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseNodeDataFromConfigDistinguishesLegacyAndEmptyOutputSnapshots(t *testing.T) {
+	baseData := map[string]interface{}{
+		"provider_type": "connector",
+		"provider_id":   "github",
+		"tool_name":     "list_github_repositories",
+	}
+	legacy, _, err := parseNodeDataFromConfig(map[string]any{"id": "legacy", "data": baseData})
+	if err != nil {
+		t.Fatalf("parse legacy node data: %v", err)
+	}
+	if legacy.HasWorkflowOutputsSnapshot {
+		t.Fatal("legacy node unexpectedly reports a workflow output snapshot")
+	}
+
+	withEmptySnapshot := make(map[string]interface{}, len(baseData)+1)
+	for key, value := range baseData {
+		withEmptySnapshot[key] = value
+	}
+	withEmptySnapshot["workflow_outputs"] = []interface{}{}
+	current, _, err := parseNodeDataFromConfig(map[string]any{"id": "current", "data": withEmptySnapshot})
+	if err != nil {
+		t.Fatalf("parse current node data: %v", err)
+	}
+	if !current.HasWorkflowOutputsSnapshot || len(current.WorkflowOutputs) != 0 {
+		t.Fatalf("empty workflow output snapshot = %#v, present = %v", current.WorkflowOutputs, current.HasWorkflowOutputsSnapshot)
 	}
 }
 

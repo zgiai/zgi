@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
-import { proxyIntegrationOAuthRequest } from '../src/server/integration-oauth-proxy.ts';
+import {
+  proxyIntegrationOAuthRequest,
+  proxyIntegrationProviderInstallRequest,
+} from '../src/server/integration-oauth-proxy.ts';
 
 const originalInternalURL = process.env.INTEGRATION_API_INTERNAL_URL;
 const originalAPIURL = process.env.API_URL;
@@ -92,6 +95,58 @@ try {
   );
   assert.equal(requests[2].cookie, '__Host-zgi_oauth_browser_binding=browser-secret');
 
+  const providerInstallStartResponse = await proxyIntegrationProviderInstallRequest(
+    new globalThis.Request(
+      'https://cloud.example.com/console/api/integrations/provider-install/flows?source=ui',
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer access-token',
+          cookie: 'session=current-session',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ integration_id: 'wecom' }),
+      }
+    ),
+    ['flows']
+  );
+  assert.equal(providerInstallStartResponse.status, 302);
+  assert.equal(requests[3].url, '/console/api/integrations/provider-install/flows?source=ui');
+  assert.equal(requests[3].authorization, 'Bearer access-token');
+  assert.equal(requests[3].cookie, 'session=current-session');
+
+  const providerInstallPollResponse = await proxyIntegrationProviderInstallRequest(
+    new globalThis.Request(
+      `https://cloud.example.com/console/api/integrations/provider-install/flows/${flowID}`,
+      { headers: { cookie: 'session=current-session' } }
+    ),
+    ['flows', flowID]
+  );
+  assert.equal(providerInstallPollResponse.status, 302);
+  assert.equal(requests[4].url, `/console/api/integrations/provider-install/flows/${flowID}`);
+
+  const providerInstallCancelResponse = await proxyIntegrationProviderInstallRequest(
+    new globalThis.Request(
+      `https://cloud.example.com/console/api/integrations/provider-install/flows/${flowID}/cancel`,
+      { method: 'POST', headers: { cookie: 'session=current-session' } }
+    ),
+    ['flows', flowID, 'cancel']
+  );
+  assert.equal(providerInstallCancelResponse.status, 302);
+  assert.equal(
+    requests[5].url,
+    `/console/api/integrations/provider-install/flows/${flowID}/cancel`
+  );
+
+  const providerInstallCallbackResponse = await proxyIntegrationProviderInstallRequest(
+    new globalThis.Request(
+      'https://cloud.example.com/console/api/integrations/provider-install/callback'
+    ),
+    ['callback']
+  );
+  assert.equal(providerInstallCallbackResponse.status, 404);
+  assert.equal(requests.length, 6);
+
   const invalidResponse = await proxyIntegrationOAuthRequest(
     new globalThis.Request('https://cloud.example.com/console/api/integrations/oauth/admin', {
       method: 'POST',
@@ -99,7 +154,7 @@ try {
     ['admin']
   );
   assert.equal(invalidResponse.status, 404);
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 6);
 
   process.env.INTEGRATION_API_INTERNAL_URL = 'https://cloud.example.com';
   const loopResponse = await proxyIntegrationOAuthRequest(
@@ -107,9 +162,9 @@ try {
     ['callback']
   );
   assert.equal(loopResponse.status, 503);
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 6);
 
-  console.log('integration OAuth same-origin proxy contract passed');
+  console.log('integration OAuth and provider-install same-origin proxy contracts passed');
 } finally {
   server.close();
   await once(server, 'close');
