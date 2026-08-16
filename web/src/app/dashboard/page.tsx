@@ -120,11 +120,8 @@ export default function DashboardPage() {
     if ((stats?.models.by_usecase?.embedding ?? 0) === 0) {
       missing.push(t('items.modelSettings'));
     }
-    if ((channelSummary?.data?.total ?? 0) === 0) {
-      missing.push(t('items.channel'));
-    }
     return missing;
-  }, [channelSummary?.data?.total, stats?.models.by_usecase, t]);
+  }, [stats?.models.by_usecase, t]);
 
   const isHealthy = requiredHealth.length === 0;
   const isLoading =
@@ -382,7 +379,7 @@ export default function DashboardPage() {
                     {requiredHealth.map(item => (
                       <Link
                         key={item}
-                        href={item === t('items.channel') ? '/dashboard/channel' : '/dashboard/provider'}
+                        href="/dashboard/provider"
                         className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-sm text-foreground hover:bg-warning/10"
                       >
                         <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
