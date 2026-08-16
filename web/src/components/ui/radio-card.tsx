@@ -11,6 +11,8 @@ interface RadioCardProps extends Omit<React.ComponentProps<typeof Radio>, 'varia
   disabled?: boolean;
   checked?: boolean;
   hiddenRadio?: boolean;
+  indicatorAlign?: 'center' | 'start';
+  alignDescriptionWithTitle?: boolean;
 }
 
 const RadioCard = React.forwardRef<HTMLInputElement, RadioCardProps>(
@@ -25,6 +27,8 @@ const RadioCard = React.forwardRef<HTMLInputElement, RadioCardProps>(
       disabled = false,
       checked = false,
       hiddenRadio = false,
+      indicatorAlign = 'center',
+      alignDescriptionWithTitle = false,
       ...props
     },
     ref
@@ -57,7 +61,12 @@ const RadioCard = React.forwardRef<HTMLInputElement, RadioCardProps>(
           <div className={cardStyles}>
             {/* Radio indicator */}
             {hiddenRadio ? null : (
-              <div className="absolute top-1/2 -translate-y-1/2 left-2 flex items-center justify-center">
+              <div
+                className={cn(
+                  'absolute left-2 flex items-center justify-center',
+                  indicatorAlign === 'start' ? 'top-4' : 'top-1/2 -translate-y-1/2'
+                )}
+              >
                 <div
                   className={cn(
                     'w-3.5 h-3.5 border rounded-full transition-all duration-200 group-hover:border-primary',
@@ -82,7 +91,7 @@ const RadioCard = React.forwardRef<HTMLInputElement, RadioCardProps>(
                   {icon && (
                     <div
                       className={cn(
-                        'flex-shrink-0 w-6 h-6',
+                        'flex h-6 w-6 flex-shrink-0 items-center justify-center',
                         checked ? 'text-primary' : 'text-muted-foreground'
                       )}
                     >
@@ -103,7 +112,16 @@ const RadioCard = React.forwardRef<HTMLInputElement, RadioCardProps>(
 
                 {subtitle && <div className="text-sm text-muted-foreground">{subtitle}</div>}
 
-                {description && <div className="text-xs text-muted-foreground">{description}</div>}
+                {description && (
+                  <div
+                    className={cn(
+                      'text-xs text-muted-foreground',
+                      icon && alignDescriptionWithTitle && 'pl-8'
+                    )}
+                  >
+                    {description}
+                  </div>
+                )}
               </div>
             </div>
           </div>

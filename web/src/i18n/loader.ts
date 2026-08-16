@@ -26,6 +26,7 @@ export const AVAILABLE_MODULES = [
   'automation',
   'contentParse',
   'prompts',
+  'integrations',
   'music',
 ] as const;
 
@@ -146,6 +147,10 @@ const moduleRegistry: ModuleRegistry = {
   prompts: {
     'zh-Hans': () => import('./modules/prompts/zh-Hans'),
     'en-US': () => import('./modules/prompts/en-US'),
+  },
+  integrations: {
+    'zh-Hans': () => import('./modules/integrations/zh-Hans'),
+    'en-US': () => import('./modules/integrations/en-US'),
   },
   music: {
     'zh-Hans': () => import('./modules/music/zh-Hans'),

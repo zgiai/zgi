@@ -21,6 +21,7 @@ import workspace from './workspace/en-US';
 import automation from './automation/en-US';
 import contentParse from './contentParse/en-US';
 import prompts from './prompts/en-US';
+import integrations from './integrations/en-US';
 import music from './music/en-US';
 
 /**
@@ -52,6 +53,7 @@ export const messages = {
   automation,
   contentParse,
   prompts,
+  integrations,
   music,
 } as const;
 

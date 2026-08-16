@@ -236,7 +236,10 @@ export function DashboardSidebar(): JSX.Element {
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
 
   // Build nav structure with i18n labels
-  const groups = React.useMemo<NavGroup[]>(() => buildDashboardGroups(t), [t]);
+  const groups = React.useMemo<NavGroup[]>(
+    () => buildDashboardGroups(t),
+    [t]
+  );
 
   // Open state per group, persisted in localStorage
   const [open, setOpen] = React.useState<Record<string, boolean>>(() => {
@@ -463,7 +466,10 @@ export function DashboardMobileSidebar({
 }) {
   const pathname = usePathname();
   const t = useT('dashboard');
-  const navGroups = React.useMemo<NavGroup[]>(() => buildDashboardGroups(t), [t]);
+  const navGroups = React.useMemo<NavGroup[]>(
+    () => buildDashboardGroups(t),
+    [t]
+  );
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>(() =>
     getDefaultOpenState(navGroups)
   );

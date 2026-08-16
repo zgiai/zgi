@@ -42,6 +42,9 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
     workflow_bindings: [...(payload.workflow_bindings ?? [])].sort((left, right) =>
       left.binding_id.localeCompare(right.binding_id)
     ),
+    integration_bindings: [...(payload.integration_bindings ?? [])].sort((left, right) =>
+      left.integration_id.localeCompare(right.integration_id)
+    ),
     agent_memory_slots: editableMemorySlots.sort((left, right) =>
       left.key.localeCompare(right.key)
     ),
@@ -90,7 +93,8 @@ export function getAgentTextIconDisplay(
   try {
     const parsed = JSON.parse(trimmed) as { icon?: unknown; icon_background?: unknown };
     return {
-      text: typeof parsed.icon === 'string' && parsed.icon.trim() ? parsed.icon.trim() : fallback.text,
+      text:
+        typeof parsed.icon === 'string' && parsed.icon.trim() ? parsed.icon.trim() : fallback.text,
       background:
         typeof parsed.icon_background === 'string' && parsed.icon_background.trim()
           ? parsed.icon_background.trim()

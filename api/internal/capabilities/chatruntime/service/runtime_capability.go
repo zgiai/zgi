@@ -1,6 +1,7 @@
 package service
 
 import (
+	"sort"
 	"strings"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -15,12 +16,14 @@ type BoundResourceGrant struct {
 
 // RuntimeCapabilityConfig groups runtime-managed capabilities derived from RunConfig.
 type RuntimeCapabilityConfig struct {
-	AgentID               string
-	BindingAuthorizations []ResourceBindingAuthorization
-	Knowledge             RuntimeKnowledgeCapability
-	Database              RuntimeDatabaseCapability
-	Workflow              RuntimeWorkflowCapability
-	Memory                RuntimeMemoryCapability
+	AgentID                          string
+	BindingAuthorizations            []ResourceBindingAuthorization
+	Knowledge                        RuntimeKnowledgeCapability
+	Database                         RuntimeDatabaseCapability
+	Workflow                         RuntimeWorkflowCapability
+	IntegrationConnectionIDs         map[string]string
+	IntegrationSelectedConnectionIDs map[string][]string
+	Memory                           RuntimeMemoryCapability
 }
 
 type RuntimeKnowledgeCapability struct {
@@ -62,6 +65,8 @@ func runtimeCapabilityConfigFromRunConfig(config RunConfig) RuntimeCapabilityCon
 			Bindings: copyAgentWorkflowBindings(config.WorkflowBindings),
 			Grant:    NewBoundResourceGrant(config.WorkflowBoundByAccountID, config.WorkflowBoundAtUnix),
 		},
+		IntegrationConnectionIDs:         copyIntegrationConnectionIDs(config.IntegrationConnectionIDs),
+		IntegrationSelectedConnectionIDs: copyIntegrationSelectedConnectionIDs(config.IntegrationSelectedConnectionIDs),
 		Memory: RuntimeMemoryCapability{
 			AgentEnabled: config.AgentMemoryEnabled,
 			AgentSlots:   enabledAgentMemorySlots(config.AgentMemorySlots),
@@ -93,6 +98,12 @@ func (c RuntimeCapabilityConfig) RuntimeParameters(scope Scope, billingAppType s
 	c.Knowledge.applyRuntimeParameters(params)
 	c.Database.applyRuntimeParameters(params)
 	c.Workflow.applyRuntimeParameters(params)
+	if connectionIDs := copyIntegrationConnectionIDs(c.IntegrationConnectionIDs); len(connectionIDs) > 0 {
+		params["integration_connection_ids"] = connectionIDs
+	}
+	if selectedConnectionIDs := copyIntegrationSelectedConnectionIDs(c.IntegrationSelectedConnectionIDs); len(selectedConnectionIDs) > 0 {
+		params["integration_selected_connection_ids"] = selectedConnectionIDs
+	}
 	c.Memory.applyRuntimeParameters(params)
 	if strings.EqualFold(strings.TrimSpace(billingAppType), runtimemodel.ConversationCallerAgent) && strings.TrimSpace(c.AgentID) != "" {
 		params["agent_id"] = strings.TrimSpace(c.AgentID)
@@ -107,12 +118,73 @@ func copyResourceBindingAuthorizations(input []ResourceBindingAuthorization) []R
 		authorization.ResourceID = strings.TrimSpace(authorization.ResourceID)
 		authorization.ParentResourceID = strings.TrimSpace(authorization.ParentResourceID)
 		authorization.AccessMode = strings.TrimSpace(authorization.AccessMode)
+		if strings.EqualFold(authorization.BindingType, "integration_connection") {
+			authorization.AllowedActionIDs = normalizeRuntimeStringIDs(authorization.AllowedActionIDs)
+		} else {
+			authorization.AllowedActionIDs = nil
+		}
 		authorization.BoundByAccountID = strings.TrimSpace(authorization.BoundByAccountID)
 		if authorization.BindingType == "" || authorization.ResourceID == "" || authorization.AccessMode == "" || authorization.BoundByAccountID == "" || authorization.BoundAtUnix <= 0 {
 			continue
 		}
 		result = append(result, authorization)
 	}
+	return result
+}
+
+func copyIntegrationConnectionIDs(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(input))
+	for integrationID, connectionID := range input {
+		integrationID = strings.ToLower(strings.TrimSpace(integrationID))
+		connectionID = strings.ToLower(strings.TrimSpace(connectionID))
+		if integrationID == "" || connectionID == "" {
+			continue
+		}
+		result[integrationID] = connectionID
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func copyIntegrationSelectedConnectionIDs(input map[string][]string) map[string][]string {
+	if len(input) == 0 {
+		return nil
+	}
+	result := make(map[string][]string, len(input))
+	for integrationID, connectionIDs := range input {
+		integrationID = strings.ToLower(strings.TrimSpace(integrationID))
+		connectionIDs = normalizeRuntimeStringIDs(connectionIDs)
+		if integrationID == "" || len(connectionIDs) == 0 {
+			continue
+		}
+		result[integrationID] = connectionIDs
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func normalizeRuntimeStringIDs(input []string) []string {
+	seen := make(map[string]struct{}, len(input))
+	result := make([]string, 0, len(input))
+	for _, value := range input {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
 	return result
 }
 

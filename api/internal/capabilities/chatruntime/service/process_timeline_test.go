@@ -456,7 +456,11 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
 		Message:      message,
 	}
-	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+	emitted := []StreamEvent{}
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, func(event StreamEvent) error {
+		emitted = append(emitted, event)
+		return nil
+	})
 
 	recorder.RecordInvocationStart("call-delete-agent-1", skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-1"})
 	recorder.RecordInvocationError(skills.SkillTrace{
@@ -466,6 +470,7 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 		ToolName:     "delete_agent",
 		Status:       "error",
 		Error:        "agent not found",
+		ErrorCode:    "integration_connection_not_found",
 	})
 
 	invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"])
@@ -481,6 +486,15 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 	}
 	if got := stringFromAny(invocation["error"]); got != "agent not found" {
 		t.Fatalf("error = %q, want agent not found; invocation=%#v", got, invocation)
+	}
+	if got := stringFromAny(invocation["error_code"]); got != "integration_connection_not_found" {
+		t.Fatalf("error_code = %q, want integration_connection_not_found; invocation=%#v", got, invocation)
+	}
+	if len(emitted) != 2 {
+		t.Fatalf("emitted events = %#v, want start and error", emitted)
+	}
+	if got := stringFromAny(emitted[1].Payload["error_code"]); got != "integration_connection_not_found" {
+		t.Fatalf("SSE error_code = %q, want integration_connection_not_found; payload=%#v", got, emitted[1].Payload)
 	}
 	if got := stringFromAny(invocation["invocation_id"]); got != "call-delete-agent-1" {
 		t.Fatalf("invocation_id = %q, want call-delete-agent-1; invocation=%#v", got, invocation)

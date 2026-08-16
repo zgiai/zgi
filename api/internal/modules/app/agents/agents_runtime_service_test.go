@@ -70,6 +70,7 @@ func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) 
 		skills.SkillAgentWorkflow,
 		skills.SkillUserMemory,
 		skills.SkillIntentRouter,
+		"web-search",
 		skills.SkillCalculator,
 		skills.SkillCalculator,
 		"  time  ",

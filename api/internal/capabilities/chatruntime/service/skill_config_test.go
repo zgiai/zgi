@@ -182,6 +182,8 @@ func TestOrganizationAllowsSkillID(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive},
 		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive},
+		{ID: skills.SkillImageGenerator, Status: skills.SkillStatusActive},
+		{ID: skills.SkillPromptProfessionalizer, Status: skills.SkillStatusActive},
 	}
 
 	if organizationAllowsSkillID(skills.SkillCalculator, catalog, nil) {
@@ -192,6 +194,29 @@ func TestOrganizationAllowsSkillID(t *testing.T) {
 	}
 	if !organizationAllowsSkillID(skills.SkillAgentKnowledge, catalog, nil) {
 		t.Fatal("organizationAllowsSkillID() = false for runtime-managed skill, want true")
+	}
+	if !organizationAllowsSkillID(skills.SkillPromptProfessionalizer, catalog, []string{skills.SkillImageGenerator}) {
+		t.Fatal("organizationAllowsSkillID() = false for an enabled image-generator dependency, want true")
+	}
+	if organizationAllowsSkillID(skills.SkillPromptProfessionalizer, catalog, []string{skills.SkillCalculator}) {
+		t.Fatal("organizationAllowsSkillID() = true without an enabled dependency owner, want false")
+	}
+}
+
+func TestAgentSkillAuthorizationBindingIDsInheritPromptProfessionalizerBinding(t *testing.T) {
+	got := agentSkillAuthorizationBindingIDs(skills.SkillPromptProfessionalizer, []string{
+		skills.SkillCalculator,
+		skills.SkillImageGenerator,
+		skills.SkillArchitectureDiagram,
+		skills.SkillImageGenerator,
+	})
+	want := []string{
+		skills.SkillPromptProfessionalizer,
+		skills.SkillImageGenerator,
+		skills.SkillArchitectureDiagram,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentSkillAuthorizationBindingIDs() = %#v, want %#v", got, want)
 	}
 }
 
@@ -1092,6 +1117,7 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 		WorkflowBindings:          []AgentWorkflowBinding{{BindingID: "approval-flow", AgentID: "agent-1", WorkflowID: "workflow-1"}},
 		WorkflowBoundByAccountID:  "workflow-binder",
 		WorkflowBoundAtUnix:       789,
+		IntegrationConnectionIDs:  map[string]string{"web-search": "connection-1"},
 	})
 
 	if params["organization_id"] != organizationID.String() || params["workspace_id"] != workspaceID.String() {
@@ -1112,6 +1138,9 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	if bindings, ok := params["workflow_bindings"].([]AgentWorkflowBinding); !ok || len(bindings) != 1 || bindings[0].BindingID != "approval-flow" {
 		t.Fatalf("workflow bindings param = %#v", params["workflow_bindings"])
 	}
+	if connectionIDs, ok := params["integration_connection_ids"].(map[string]string); !ok || connectionIDs["web-search"] != "connection-1" {
+		t.Fatalf("integration connection ids param = %#v", params["integration_connection_ids"])
+	}
 }
 
 func TestSkillRuntimeParametersPreservePerBindingAuthorizationEvidence(t *testing.T) {
@@ -1120,6 +1149,7 @@ func TestSkillRuntimeParametersPreservePerBindingAuthorizationEvidence(t *testin
 		BindingAuthorizations: []ResourceBindingAuthorization{
 			{BindingType: "knowledge_dataset", ResourceID: "dataset-old", AccessMode: "read", BoundByAccountID: "binder-old", BoundAtUnix: 100},
 			{BindingType: "knowledge_dataset", ResourceID: "dataset-new", AccessMode: "read", BoundByAccountID: "binder-new", BoundAtUnix: 200},
+			{BindingType: "integration_connection", ResourceID: "connection-1", ParentResourceID: "web-search", AccessMode: "read", AllowedActionIDs: []string{"web.search"}, BoundByAccountID: "binder-new", BoundAtUnix: 200},
 		},
 	})
 
@@ -1127,8 +1157,11 @@ func TestSkillRuntimeParametersPreservePerBindingAuthorizationEvidence(t *testin
 		t.Fatalf("knowledge_binding_grant = %#v, want true", params["knowledge_binding_grant"])
 	}
 	authorizations, ok := params["agent_binding_authorizations"].([]ResourceBindingAuthorization)
-	if !ok || len(authorizations) != 2 {
-		t.Fatalf("agent_binding_authorizations = %#v, want two entries", params["agent_binding_authorizations"])
+	if !ok || len(authorizations) != 3 {
+		t.Fatalf("agent_binding_authorizations = %#v, want three entries", params["agent_binding_authorizations"])
+	}
+	if len(authorizations[2].AllowedActionIDs) != 1 || authorizations[2].AllowedActionIDs[0] != "web.search" {
+		t.Fatalf("integration authorization allowlist = %#v", authorizations[2].AllowedActionIDs)
 	}
 	if _, exists := params["knowledge_bound_by_account_id"]; exists {
 		t.Fatalf("mixed per-binding grants must not synthesize one category actor: %#v", params)

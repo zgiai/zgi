@@ -8,6 +8,7 @@ export interface ConsoleRouteAccess {
 export const ORGANIZATION_SCOPED_CONSOLE_ROUTES = [
   '/console',
   '/console/skills',
+  '/console/integrations',
   '/console/work',
   '/console/work/chat',
   '/console/work/image',
@@ -16,7 +17,10 @@ export const ORGANIZATION_SCOPED_CONSOLE_ROUTES = [
   '/console/work/app',
 ] as const;
 
-export const ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES = ['/console/work/app/'] as const;
+export const ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES = [
+  '/console/integrations/',
+  '/console/work/app/',
+] as const;
 
 export const ORGANIZATION_SCOPED_WORK_ROUTES = [
   '/console/work',
@@ -34,7 +38,9 @@ function matchesRoute(
   exactRoutes: readonly string[],
   routePrefixes: readonly string[]
 ) {
-  return exactRoutes.includes(pathname) || routePrefixes.some(prefix => pathname.startsWith(prefix));
+  return (
+    exactRoutes.includes(pathname) || routePrefixes.some(prefix => pathname.startsWith(prefix))
+  );
 }
 
 export function getConsoleRouteAccess(pathname: string): ConsoleRouteAccess {

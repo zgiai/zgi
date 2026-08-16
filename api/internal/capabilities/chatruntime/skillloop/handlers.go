@@ -600,7 +600,7 @@ func (r *Runner) handleCallSkillTool(
 	planPhaseID := strings.TrimSpace(stringArg(args, "plan_phase_id"))
 	completionIntent := normalizeSkillToolCompletionIntent(stringArg(args, "completion_intent"))
 	planTarget := operationPlanSkillCallTarget(toolArgs)
-	argumentSummary := summarizeSkillToolArguments(skillID, toolName, toolArgs)
+	argumentSummary := summarizeSkillToolArgumentsForResolved(resolved, skillID, toolName, toolArgs)
 	if planPhaseID != "" {
 		argumentSummary["plan_phase_id"] = planPhaseID
 	}
@@ -664,7 +664,33 @@ func (r *Runner) handleCallSkillTool(
 		trace.InvocationID = strings.TrimSpace(callID)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName, resolved)), true, false)
+	}
+	if err != nil {
+		// CallSkillTool owns the safe trace summary for validation and provider
+		// failures. In particular, data-egress tools redact their arguments at
+		// that boundary; do not replace the redacted summary with call inputs.
+		if len(invocation.Trace.Arguments) == 0 {
+			invocation.Trace.Arguments = argumentSummary
+		}
+		if planPhaseID != "" {
+			invocation.Trace.Arguments["plan_phase_id"] = planPhaseID
+		}
+		if completionIntent != "" {
+			invocation.Trace.Arguments["completion_intent"] = completionIntent
+		}
+		applyPublicToolErrorRecoveryTrace(&invocation.Trace, err)
+		if invocation.Trace.Governance != nil {
+			r.emitEvent(prepared, EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
+		}
+		errorPayload := recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName, resolved)
+		if code := strings.TrimSpace(invocation.Trace.ErrorCode); code != "" {
+			// The model can reason about a stable failure category without
+			// receiving provider-specific messages or wrapped upstream causes.
+			errorPayload["error"] = code
+			errorPayload["error_code"] = code
+		}
+		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, errorPayload), true, false)
 	}
 	if !traceHasGovernanceArgumentRewrite(invocation.Trace) {
 		invocation.Trace.Arguments = argumentSummary
@@ -693,9 +719,6 @@ func (r *Runner) handleCallSkillTool(
 	}
 	if invocation.Trace.Governance != nil {
 		r.emitEvent(prepared, EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
-	}
-	if err != nil {
-		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName)), true, false)
 	}
 	if summary := summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages); len(summary) > 0 {
 		invocation.Trace.Result = summary

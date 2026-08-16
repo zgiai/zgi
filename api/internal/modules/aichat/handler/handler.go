@@ -16,6 +16,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -1030,6 +1031,14 @@ func conversationResponse(conversation *runtimemodel.Conversation) runtimedto.Co
 }
 
 func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillResponse {
+	integrationRequirements := make([]runtimedto.SkillIntegrationRequirementResponse, 0, len(metadata.IntegrationRequirements))
+	for _, requirement := range metadata.IntegrationRequirements {
+		integrationRequirements = append(integrationRequirements, runtimedto.SkillIntegrationRequirementResponse{
+			IntegrationID: requirement.IntegrationID,
+			ActionIDs:     append([]string(nil), requirement.ActionIDs...),
+			Required:      requirement.Required,
+		})
+	}
 	return runtimedto.SkillResponse{
 		SkillID:     metadata.ID,
 		Source:      metadata.Source,
@@ -1045,19 +1054,21 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 			WhenToUse:   metadata.Display.WhenToUse,
 			Tags:        metadata.Display.Tags,
 		},
-		RuntimeType:      metadata.RuntimeType,
-		Enabled:          metadata.Enabled,
-		HasTools:         metadata.HasTools,
-		HasReferences:    metadata.HasReferences,
-		HasScripts:       metadata.HasScripts,
-		ScriptsSupported: metadata.ScriptsSupported,
-		MaxCallsPerTurn:  metadata.MaxCallsPerTurn,
-		TimeoutSeconds:   metadata.TimeoutSeconds,
-		Status:           metadata.Status,
-		ValidationError:  metadata.ValidationError,
-		SupportedCallers: metadata.SupportedCallers,
-		RequiredConfig:   metadata.RequiredConfig,
-		Exposure:         skillExposureResponse(skills.SkillExposureForMetadata(metadata)),
+		RuntimeType:             metadata.RuntimeType,
+		Enabled:                 metadata.Enabled,
+		HasTools:                metadata.HasTools,
+		HasReferences:           metadata.HasReferences,
+		HasScripts:              metadata.HasScripts,
+		ScriptsSupported:        metadata.ScriptsSupported,
+		MaxCallsPerTurn:         metadata.MaxCallsPerTurn,
+		TimeoutSeconds:          metadata.TimeoutSeconds,
+		Status:                  metadata.Status,
+		ValidationError:         metadata.ValidationError,
+		SupportedCallers:        metadata.SupportedCallers,
+		RequiredConfig:          metadata.RequiredConfig,
+		DependencyType:          metadata.DependencyType,
+		IntegrationRequirements: integrationRequirements,
+		Exposure:                skillExposureResponse(skills.SkillExposureForMetadata(metadata)),
 	}
 }
 
@@ -1186,6 +1197,9 @@ func messageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
 func messageMetadataResponse(metadata map[string]interface{}) map[string]interface{} {
 	if len(metadata) == 0 {
 		return metadata
+	}
+	if sanitized, ok := toolgovernance.SanitizeExternalActionPublicValue(metadata).(map[string]interface{}); ok {
+		metadata = sanitized
 	}
 	out := make(map[string]interface{}, len(metadata))
 	redactedModelInvocations := false

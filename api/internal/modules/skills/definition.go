@@ -41,6 +41,7 @@ const (
 	SkillAgentWorkflow          = "agent-workflow"
 	SkillAgentMemory            = "agent-memory"
 	SkillUserMemory             = "user-memory"
+	SkillExternalApps           = "external-apps"
 
 	SkillSourceSystem = "system"
 	SkillSourceCustom = "custom"
@@ -63,6 +64,15 @@ const (
 	SkillRequiredConfigAgentWorkflow  = "agent_workflow"
 )
 
+// retiredWebSearchSkillID is retained only to discard historical Agent and
+// cached client configuration. Web search is exposed exclusively through the
+// external-apps runtime and is no longer a Skill.
+const retiredWebSearchSkillID = "web-search"
+
+func isRetiredSkillID(skillID string) bool {
+	return normalizeSkillID(skillID) == retiredWebSearchSkillID
+}
+
 const (
 	SkillExposureGeneral         = "general"
 	SkillExposureSidebarManaged  = "sidebar_managed"
@@ -75,7 +85,18 @@ const (
 	SkillGovernanceRiskMedium    = "medium"
 	SkillGovernanceRiskHigh      = "high"
 	SkillGovernanceRiskMixed     = "mixed"
+	SkillDependencyStandalone    = "standalone"
+	SkillDependencyIntegration   = "external_integration"
 )
+
+// SkillIntegrationRequirement declares an external integration capability a
+// Skill depends on. It is discovery metadata only: connection authorization,
+// action policy, and credential checks remain server-side execution concerns.
+type SkillIntegrationRequirement struct {
+	IntegrationID string   `json:"integration_id" yaml:"integration_id"`
+	ActionIDs     []string `json:"action_ids,omitempty" yaml:"required_actions,omitempty"`
+	Required      bool     `json:"required" yaml:"required"`
+}
 
 type SkillExposureProfile struct {
 	Category            string `json:"category"`
@@ -88,7 +109,7 @@ type SkillExposureProfile struct {
 
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory:
+	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory, SkillExternalApps:
 		return true
 	default:
 		return false
@@ -169,6 +190,24 @@ func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
 			PageContextRequired: false,
 			GovernanceRisk:      SkillGovernanceRiskLow,
 		}
+	case SkillExternalApps:
+		return SkillExposureProfile{
+			Category:            SkillExposureHiddenRuntime,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskMixed,
+		}
+	case retiredWebSearchSkillID:
+		return SkillExposureProfile{
+			Category:            SkillExposureHiddenRuntime,
+			UserSelectable:      false,
+			RuntimeManaged:      false,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskNone,
+		}
 	default:
 		return SkillExposureProfile{
 			Category:            SkillExposureGeneral,
@@ -226,26 +265,30 @@ func SkillSupportsCaller(supportedCallers []string, caller string) bool {
 }
 
 type SkillToolDefinition struct {
-	Name         string                   `json:"name" yaml:"name"`
-	ProviderType tools.ToolProviderType   `json:"provider_type" yaml:"provider_type"`
-	ProviderID   string                   `json:"provider_id" yaml:"provider_id"`
-	Governance   *toolgovernance.Manifest `json:"governance,omitempty" yaml:"governance"`
+	Name               string                   `json:"name" yaml:"name"`
+	ProviderType       tools.ToolProviderType   `json:"provider_type" yaml:"provider_type"`
+	ProviderID         string                   `json:"provider_id" yaml:"provider_id"`
+	Governance         *toolgovernance.Manifest `json:"governance,omitempty" yaml:"governance"`
+	InputSchema        map[string]interface{}   `json:"-" yaml:"-"`
+	OutputSchema       map[string]interface{}   `json:"-" yaml:"-"`
+	RuntimeDescription string                   `json:"-" yaml:"-"`
 }
 
 type SkillFrontmatter struct {
-	Name             string                             `yaml:"name"`
-	Description      string                             `yaml:"description"`
-	WhenToUse        string                             `yaml:"when_to_use"`
-	ProviderType     tools.ToolProviderType             `yaml:"provider_type"`
-	ProviderID       string                             `yaml:"provider_id"`
-	Tools            []string                           `yaml:"tools"`
-	ToolGovernance   map[string]toolgovernance.Manifest `yaml:"tool_governance"`
-	RuntimeType      string                             `yaml:"runtime_type"`
-	MaxCallsPerTurn  int                                `yaml:"max_calls_per_turn"`
-	TimeoutSeconds   int                                `yaml:"timeout_seconds"`
-	Display          SkillDisplayMetadata               `yaml:"display"`
-	SupportedCallers []string                           `yaml:"supported_callers"`
-	RequiredConfig   []string                           `yaml:"required_config"`
+	Name                    string                             `yaml:"name"`
+	Description             string                             `yaml:"description"`
+	WhenToUse               string                             `yaml:"when_to_use"`
+	ProviderType            tools.ToolProviderType             `yaml:"provider_type"`
+	ProviderID              string                             `yaml:"provider_id"`
+	Tools                   []string                           `yaml:"tools"`
+	ToolGovernance          map[string]toolgovernance.Manifest `yaml:"tool_governance"`
+	RuntimeType             string                             `yaml:"runtime_type"`
+	MaxCallsPerTurn         int                                `yaml:"max_calls_per_turn"`
+	TimeoutSeconds          int                                `yaml:"timeout_seconds"`
+	Display                 SkillDisplayMetadata               `yaml:"display"`
+	SupportedCallers        []string                           `yaml:"supported_callers"`
+	RequiredConfig          []string                           `yaml:"required_config"`
+	IntegrationRequirements []SkillIntegrationRequirement      `yaml:"integration_requirements"`
 }
 
 type SkillDisplayMetadata struct {
@@ -259,22 +302,24 @@ type SkillDisplayMetadata struct {
 }
 
 type SkillMetadata struct {
-	ID               string               `json:"skill_id"`
-	Source           string               `json:"source"`
-	Name             string               `json:"name"`
-	Description      string               `json:"description"`
-	WhenToUse        string               `json:"when_to_use"`
-	Display          SkillDisplayMetadata `json:"display"`
-	Tools            []string             `json:"tools"`
-	RuntimeType      string               `json:"runtime_type"`
-	References       []SkillReference     `json:"references,omitempty"`
-	HasScripts       bool                 `json:"has_scripts"`
-	ScriptsSupported bool                 `json:"scripts_supported"`
-	MaxCallsPerTurn  int                  `json:"max_calls_per_turn"`
-	TimeoutSeconds   int                  `json:"timeout_seconds"`
-	RootPath         string               `json:"-"`
-	SupportedCallers []string             `json:"supported_callers,omitempty"`
-	RequiredConfig   []string             `json:"required_config,omitempty"`
+	ID                      string                        `json:"skill_id"`
+	Source                  string                        `json:"source"`
+	Name                    string                        `json:"name"`
+	Description             string                        `json:"description"`
+	WhenToUse               string                        `json:"when_to_use"`
+	Display                 SkillDisplayMetadata          `json:"display"`
+	Tools                   []string                      `json:"tools"`
+	RuntimeType             string                        `json:"runtime_type"`
+	References              []SkillReference              `json:"references,omitempty"`
+	HasScripts              bool                          `json:"has_scripts"`
+	ScriptsSupported        bool                          `json:"scripts_supported"`
+	MaxCallsPerTurn         int                           `json:"max_calls_per_turn"`
+	TimeoutSeconds          int                           `json:"timeout_seconds"`
+	RootPath                string                        `json:"-"`
+	SupportedCallers        []string                      `json:"supported_callers,omitempty"`
+	RequiredConfig          []string                      `json:"required_config,omitempty"`
+	DependencyType          string                        `json:"dependency_type"`
+	IntegrationRequirements []SkillIntegrationRequirement `json:"integration_requirements,omitempty"`
 }
 
 type SkillPromptMetadata struct {
@@ -302,25 +347,27 @@ type SkillMetadataPromptStats struct {
 }
 
 type SkillDiscoveryMetadata struct {
-	ID               string               `json:"skill_id"`
-	Source           string               `json:"source"`
-	Name             string               `json:"name"`
-	Description      string               `json:"description"`
-	WhenToUse        string               `json:"when_to_use"`
-	Display          SkillDisplayMetadata `json:"display"`
-	RuntimeType      string               `json:"runtime_type"`
-	Enabled          bool                 `json:"enabled"`
-	HasTools         bool                 `json:"has_tools"`
-	HasReferences    bool                 `json:"has_references"`
-	HasScripts       bool                 `json:"has_scripts"`
-	ScriptsSupported bool                 `json:"scripts_supported"`
-	MaxCallsPerTurn  int                  `json:"max_calls_per_turn"`
-	TimeoutSeconds   int                  `json:"timeout_seconds"`
-	Status           string               `json:"status"`
-	ValidationError  string               `json:"validation_error,omitempty"`
-	SupportedCallers []string             `json:"supported_callers,omitempty"`
-	RequiredConfig   []string             `json:"required_config,omitempty"`
-	Exposure         SkillExposureProfile `json:"exposure"`
+	ID                      string                        `json:"skill_id"`
+	Source                  string                        `json:"source"`
+	Name                    string                        `json:"name"`
+	Description             string                        `json:"description"`
+	WhenToUse               string                        `json:"when_to_use"`
+	Display                 SkillDisplayMetadata          `json:"display"`
+	RuntimeType             string                        `json:"runtime_type"`
+	Enabled                 bool                          `json:"enabled"`
+	HasTools                bool                          `json:"has_tools"`
+	HasReferences           bool                          `json:"has_references"`
+	HasScripts              bool                          `json:"has_scripts"`
+	ScriptsSupported        bool                          `json:"scripts_supported"`
+	MaxCallsPerTurn         int                           `json:"max_calls_per_turn"`
+	TimeoutSeconds          int                           `json:"timeout_seconds"`
+	Status                  string                        `json:"status"`
+	ValidationError         string                        `json:"validation_error,omitempty"`
+	SupportedCallers        []string                      `json:"supported_callers,omitempty"`
+	RequiredConfig          []string                      `json:"required_config,omitempty"`
+	DependencyType          string                        `json:"dependency_type"`
+	IntegrationRequirements []SkillIntegrationRequirement `json:"integration_requirements,omitempty"`
+	Exposure                SkillExposureProfile          `json:"exposure"`
 }
 
 type SkillDocument struct {
@@ -349,6 +396,7 @@ type SkillTrace struct {
 	Result       map[string]interface{}   `json:"result,omitempty"`
 	Governance   *toolgovernance.Decision `json:"governance,omitempty"`
 	Error        string                   `json:"error,omitempty"`
+	ErrorCode    string                   `json:"error_code,omitempty"`
 }
 
 type ToolGovernanceRequest struct {
@@ -363,6 +411,10 @@ type ToolGovernanceRequest struct {
 
 type ToolGovernanceGateway interface {
 	DecideSkillTool(ctx context.Context, req ToolGovernanceRequest) (toolgovernance.Decision, error)
+}
+
+type ToolGovernanceManifestResolver interface {
+	ResolveToolGovernanceManifest(ctx context.Context, req ToolGovernanceRequest) (toolgovernance.Manifest, error)
 }
 
 type SkillToolArgumentContract struct {
@@ -473,22 +525,36 @@ func copyStringAnyMap(values map[string]interface{}) map[string]interface{} {
 func skillDiscoveryMetadata(skill SkillDocument) SkillDiscoveryMetadata {
 	metadata := skill.Metadata
 	return SkillDiscoveryMetadata{
-		ID:               metadata.ID,
-		Source:           metadata.Source,
-		Name:             metadata.Name,
-		Description:      metadata.Description,
-		WhenToUse:        metadata.WhenToUse,
-		Display:          metadata.Display,
-		RuntimeType:      metadata.RuntimeType,
-		HasTools:         len(skill.Tools) > 0,
-		HasReferences:    len(metadata.References) > 0,
-		HasScripts:       metadata.HasScripts,
-		ScriptsSupported: metadata.ScriptsSupported,
-		MaxCallsPerTurn:  metadata.MaxCallsPerTurn,
-		TimeoutSeconds:   metadata.TimeoutSeconds,
-		Status:           SkillStatusActive,
-		SupportedCallers: copyStringSlice(metadata.SupportedCallers),
-		RequiredConfig:   copyStringSlice(metadata.RequiredConfig),
-		Exposure:         SystemSkillExposureProfile(metadata.ID),
+		ID:                      metadata.ID,
+		Source:                  metadata.Source,
+		Name:                    metadata.Name,
+		Description:             metadata.Description,
+		WhenToUse:               metadata.WhenToUse,
+		Display:                 metadata.Display,
+		RuntimeType:             metadata.RuntimeType,
+		HasTools:                len(skill.Tools) > 0,
+		HasReferences:           len(metadata.References) > 0,
+		HasScripts:              metadata.HasScripts,
+		ScriptsSupported:        metadata.ScriptsSupported,
+		MaxCallsPerTurn:         metadata.MaxCallsPerTurn,
+		TimeoutSeconds:          metadata.TimeoutSeconds,
+		Status:                  SkillStatusActive,
+		SupportedCallers:        copyStringSlice(metadata.SupportedCallers),
+		RequiredConfig:          copyStringSlice(metadata.RequiredConfig),
+		DependencyType:          metadata.DependencyType,
+		IntegrationRequirements: copySkillIntegrationRequirements(metadata.IntegrationRequirements),
+		Exposure:                SystemSkillExposureProfile(metadata.ID),
 	}
+}
+
+func copySkillIntegrationRequirements(input []SkillIntegrationRequirement) []SkillIntegrationRequirement {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make([]SkillIntegrationRequirement, 0, len(input))
+	for _, item := range input {
+		item.ActionIDs = copyStringSlice(item.ActionIDs)
+		out = append(out, item)
+	}
+	return out
 }

@@ -124,6 +124,11 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		system_service.NewCloudBootstrapRunner(params.Config, params.BootstrapService),
 		params.Logger,
 	)
+	if params.Config != nil && params.Config.ExternalIntegrations.Enabled && params.ServiceContainer != nil {
+		RegisterIntegrationAuditCompletionLifecycle(lc, params.ServiceContainer.GetIntegrationExecutor(), params.Logger)
+		RegisterIntegrationOAuthMaintenanceLifecycle(lc, params.ServiceContainer.GetIntegrationOAuthFlowService(), params.Logger)
+		RegisterIntegrationOAuthRecoveryLifecycle(lc, params.ServiceContainer.GetIntegrationOAuthRecoveryService(), params.Logger)
+	}
 	RegisterGraphRuntimeHealthLifecycle(lc, graphRuntimeHealth)
 	RegisterGraphEvidenceRepairLifecycle(lc, params.GraphFlowService, params.Logger)
 	RegisterGraphOutboxReconcilerLifecycle(lc, outboxReconciler, params.Logger)
@@ -139,6 +144,104 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	registerZGIReporterLifecycle(lc, params.ZGIReporter, params.Logger)
 
 	return nil
+}
+
+// IntegrationOAuthRecoveryRunner drains encrypted OAuth token recovery work.
+type IntegrationOAuthRecoveryRunner interface {
+	RunOAuthRecovery(ctx context.Context)
+}
+
+// RegisterIntegrationOAuthRecoveryLifecycle runs durable token recovery for
+// the API process lifetime. Redis processing leases make this safe on every
+// API instance.
+func RegisterIntegrationOAuthRecoveryLifecycle(
+	lc fx.Lifecycle,
+	runner IntegrationOAuthRecoveryRunner,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			workerCtx, workerCancel := context.WithCancel(context.Background())
+			cancel = workerCancel
+			done = make(chan struct{})
+			go func() {
+				defer close(done)
+				runner.RunOAuthRecovery(workerCtx)
+			}()
+			log.Info("Started integration OAuth recovery")
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if cancel == nil {
+				return nil
+			}
+			cancel()
+			select {
+			case <-done:
+				log.Info("Stopped integration OAuth recovery")
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	})
+}
+
+// IntegrationOAuthMaintenanceRunner expires and removes short-lived OAuth
+// authorization artifacts.
+type IntegrationOAuthMaintenanceRunner interface {
+	RunOAuthMaintenance(ctx context.Context)
+}
+
+// RegisterIntegrationOAuthMaintenanceLifecycle runs the OAuth cleanup worker
+// for the API process lifetime. The repository owns the multi-instance lease.
+func RegisterIntegrationOAuthMaintenanceLifecycle(
+	lc fx.Lifecycle,
+	runner IntegrationOAuthMaintenanceRunner,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			workerCtx, workerCancel := context.WithCancel(context.Background())
+			cancel = workerCancel
+			done = make(chan struct{})
+			go func() {
+				defer close(done)
+				runner.RunOAuthMaintenance(workerCtx)
+			}()
+			log.Info("Started integration OAuth maintenance")
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if cancel == nil {
+				return nil
+			}
+			cancel()
+			select {
+			case <-done:
+				log.Info("Stopped integration OAuth maintenance")
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	})
 }
 
 func RegisterGraphEvidenceRepairLifecycle(
@@ -201,6 +304,53 @@ func RegisterGraphRunReconcilerLifecycle(
 				cancel()
 			}
 			return nil
+		},
+	})
+}
+
+// IntegrationAuditCompletionRecoveryRunner drains persisted integration audit completions.
+type IntegrationAuditCompletionRecoveryRunner interface {
+	RunCompletionRecovery(ctx context.Context)
+}
+
+// RegisterIntegrationAuditCompletionLifecycle runs completion recovery for the API process lifetime.
+func RegisterIntegrationAuditCompletionLifecycle(
+	lc fx.Lifecycle,
+	runner IntegrationAuditCompletionRecoveryRunner,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			workerCtx, workerCancel := context.WithCancel(context.Background())
+			cancel = workerCancel
+			done = make(chan struct{})
+			go func() {
+				defer close(done)
+				runner.RunCompletionRecovery(workerCtx)
+			}()
+			log.Info("Started integration audit completion recovery")
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if cancel == nil {
+				return nil
+			}
+			cancel()
+			select {
+			case <-done:
+				log.Info("Stopped integration audit completion recovery")
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		},
 	})
 }

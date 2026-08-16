@@ -44,6 +44,13 @@ func (s *service) persistToolGovernanceApprovalPendingResult(ctx context.Context
 	}
 	pendingPayload["conversation_id"] = prepared.Conversation.ID.String()
 	pendingPayload["message_id"] = prepared.Message.ID.String()
+	if frozen, ok, err := toolGovernanceFrozenInvocationFromEvent(pendingPayload); err != nil {
+		return nil, fmt.Errorf("%w: read pending frozen invocation: %v", ErrInvalidInput, err)
+	} else if ok {
+		if err := validateToolGovernanceFrozenInvocation(frozen, toolGovernanceCorrelationID(pendingPayload)); err != nil {
+			return nil, fmt.Errorf("persist tool governance approval: %w", err)
+		}
+	}
 
 	metadata := mergeToolGovernanceDecisionMetadata(prepared.Message.Metadata, pendingPayload)
 	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
@@ -73,6 +80,24 @@ func (s *service) persistToolGovernanceApprovalPendingResult(ctx context.Context
 		},
 	)
 	return metadata, err
+}
+
+func (s *service) finalizeToolGovernanceApprovalPersistenceError(
+	ctx context.Context,
+	prepared *PreparedChat,
+	err error,
+	onEvent func(StreamEvent) error,
+) error {
+	if err == nil {
+		return nil
+	}
+	if ownershipErr := finalizedRuntimeOwnershipError(err); ownershipErr != nil {
+		return ownershipErr
+	}
+	if finalizeErr := s.finalizePreparedError(ctx, prepared, err, onEvent); finalizeErr != nil {
+		return finalizedRuntimePersistenceError(finalizeErr)
+	}
+	return newFinalizedStreamError(err)
 }
 
 func (s *service) SubmitToolGovernanceDecision(
@@ -120,6 +145,9 @@ func (s *service) SubmitToolGovernanceDecision(
 		if err != nil {
 			return nil, err
 		}
+		if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
+			return nil, err
+		}
 		var message *runtimemodel.Message
 		message, err = s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
 		if err != nil {
@@ -158,6 +186,9 @@ func toolGovernanceDecisionConversationForUpdate(ctx context.Context, tx *gorm.D
 		Take(&conversation).Error; err != nil {
 		return nil, err
 	}
+	if err := ensureConversationWorkspaceScope(scope, &conversation); err != nil {
+		return nil, err
+	}
 	return &conversation, nil
 }
 
@@ -185,7 +216,21 @@ func (s *service) resolveToolGovernanceDecision(
 	}
 	if previous := strings.TrimSpace(stringFromAny(event["approval_status"])); previous != "" {
 		if previous == approvalStatus {
-			return toolGovernanceDecisionResponse(conversation.ID, message.ID, correlationID, action, approvalStatus, req.RememberForSession, nil, event), nil, nil
+			storedResult := governanceMapFromAny(governanceMapFromAny(event["governance"])["approval_result"])
+			storedGrant := governanceMapFromAny(storedResult["session_grant"])
+			if len(storedGrant) == 0 {
+				storedGrant = nil
+			}
+			return toolGovernanceDecisionResponse(
+				conversation.ID,
+				message.ID,
+				correlationID,
+				action,
+				approvalStatus,
+				boolMetadataValue(storedResult["remember_for_session"]),
+				storedGrant,
+				event,
+			), nil, nil
 		}
 		return nil, nil, fmt.Errorf("%w: tool governance approval already resolved", ErrInvalidInput)
 	}
@@ -194,6 +239,11 @@ func (s *service) resolveToolGovernanceDecision(
 	}
 	if err := ensurePendingToolGovernanceDecisionMessage(message); err != nil {
 		return nil, nil, err
+	}
+	if toolGovernanceApprovalEveryInvocation(event) {
+		// Per-invocation policies may use the approved grant only to resume the
+		// exact frozen call. They must never persist it as a conversation grant.
+		req.RememberForSession = false
 	}
 
 	now := time.Now().UTC()
@@ -249,6 +299,19 @@ func (s *service) resolveToolGovernanceDecision(
 	return response, updatedEvent, nil
 }
 
+func toolGovernanceApprovalEveryInvocation(event map[string]interface{}) bool {
+	if boolMetadataValue(event["approval_every_invocation"]) {
+		return true
+	}
+	approvalEvent := toolGovernanceApprovalEventFromEvent(event)
+	if boolMetadataValue(approvalEvent["approval_every_invocation"]) {
+		return true
+	}
+	governance := governanceMapFromAny(event["governance"])
+	manifest := governanceMapFromAny(governance["manifest"])
+	return boolMetadataValue(manifest["approval_every_invocation"])
+}
+
 func normalizeToolGovernanceApprovalAction(action string) (string, string, error) {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case toolGovernanceActionApprove, "approved", "allow", "allowed":
@@ -278,7 +341,7 @@ func toolGovernanceDecisionResponse(
 		ApprovalStatus:     approvalStatus,
 		RememberForSession: rememberForSession,
 		SessionGrant:       sessionGrant,
-		Event:              copyStringAnyMap(event),
+		Event:              publicExternalActionPayload(copyStringAnyMap(event)),
 	}
 }
 
@@ -908,6 +971,9 @@ func toolGovernanceSessionGrantKey(grant map[string]interface{}) string {
 		strings.TrimSpace(stringFromAny(grant["effect"])),
 		strings.TrimSpace(stringFromAny(grant["asset_type"])),
 		strings.TrimSpace(stringFromAny(grant["risk_level"])),
+		fmt.Sprintf("%t", boolMetadataValue(firstMapValue(grant, "data_egress", "dataEgress"))),
+		strings.ToLower(strings.TrimSpace(firstNonEmptyString(grant["external_destination"], grant["externalDestination"]))),
+		fmt.Sprintf("%t", boolMetadataValue(firstMapValue(grant, "sensitive_data_allowed", "sensitiveDataAllowed"))),
 		toolGovernanceGrantAssetsKey(grant),
 	}, "|")
 }

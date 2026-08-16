@@ -14,7 +14,9 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
@@ -34,11 +36,13 @@ const (
 	agentBindingStatusSuspended   = "suspended"
 	agentBindingStatusUnavailable = "unavailable"
 
-	agentBindingReasonOrganizationSkillSuspended = "organization_skill_suspended"
-	agentBindingReasonResourceDeletedOrMissing   = "resource_deleted_or_missing"
-	agentBindingReasonResourceMovedWorkspace     = "resource_moved_workspace"
-	agentBindingReasonAuthorizationRevoked       = "authorization_revoked"
-	agentBindingReasonResolutionFailed           = "resolution_failed"
+	agentBindingReasonOrganizationSkillSuspended       = "organization_skill_suspended"
+	agentBindingReasonResourceDeletedOrMissing         = "resource_deleted_or_missing"
+	agentBindingReasonResourceMovedWorkspace           = "resource_moved_workspace"
+	agentBindingReasonAuthorizationRevoked             = "authorization_revoked"
+	agentBindingReasonResolutionFailed                 = "resolution_failed"
+	agentBindingReasonIntegrationConnectionDisabled    = "integration_connection_disabled"
+	agentBindingReasonIntegrationConnectionUnavailable = "integration_connection_unavailable"
 )
 
 type agentBindingAPIError struct {
@@ -120,7 +124,14 @@ func (s *agentsService) bindingRowsForConfig(
 			at := time.Unix(authorizedAtUnix, 0)
 			binding.AuthorizedAt = &at
 		}
-		key := agentBindingItemKey(string(binding.BindingType), binding.ParentResourceID, binding.ResourceID, binding.AccessMode)
+		authorizationDescriptor := dto.AgentBindingAuthorization{
+			BindingType:      string(binding.BindingType),
+			ResourceID:       binding.ResourceID,
+			ParentResourceID: binding.ParentResourceID,
+			AccessMode:       binding.AccessMode,
+			AllowedActionIDs: agentbindings.IntegrationAllowedActionIDs(binding),
+		}
+		key := agentBindingAuthorizationKey(authorizationDescriptor)
 		if authorization, ok := authorizations[key]; ok && validAgentBindingAuthorization(authorization) {
 			if actorUUID, parseErr := uuid.Parse(authorization.BoundByAccountID); parseErr == nil {
 				binding.AuthorizedBy = uuidPtr(actorUUID)
@@ -167,6 +178,17 @@ func (s *agentsService) bindingRowsForConfig(
 	for _, workflow := range normalizeAgentWorkflowBindings(config.WorkflowBindings) {
 		appendBinding(workflowAgentBindingRow(workflow), config.WorkflowBoundByAccountID, config.WorkflowBoundAtUnix)
 	}
+	for _, integration := range normalizeAgentIntegrationBindings(config.IntegrationBindings) {
+		appendBinding(agentbindings.Binding{
+			BindingType:      agentbindings.BindingTypeIntegrationConnection,
+			ResourceID:       integration.ConnectionID,
+			ParentResourceID: integration.IntegrationID,
+			AccessMode:       integration.AccessMode,
+			Metadata: map[string]interface{}{
+				agentbindings.IntegrationAllowedActionIDsMetadataKey: append([]string(nil), integration.AllowedActionIDs...),
+			},
+		}, defaultActor, defaultAuthorizedAt.Unix())
+	}
 	sortAgentBindings(bindings)
 	return bindings, nil
 }
@@ -190,10 +212,11 @@ func (s *agentsService) resolveAgentBindingHealth(ctx context.Context, ag *Agent
 			ParentResourceID: row.ParentResourceID,
 			// Index labels are historical audit data, not authorization-bearing
 			// presentation data. Hydrate live only after current access succeeds.
-			DisplayName: "",
-			Status:      agentBindingStatusActive,
-			Reason:      "",
-			AccessMode:  row.AccessMode,
+			DisplayName:      "",
+			Status:           agentBindingStatusActive,
+			Reason:           "",
+			AccessMode:       row.AccessMode,
+			AllowedActionIDs: agentbindings.IntegrationAllowedActionIDs(row),
 		}
 		item.Status, item.Reason = s.resolveBindingHealthItem(ctx, ag, bindingHealthAccountID(row, accountID), config, row)
 		if item.DisplayName == "" && item.Status != agentBindingStatusUnavailable {
@@ -325,6 +348,77 @@ func (s *agentsService) resolveBindingHealthItem(ctx context.Context, ag *Agent,
 			return agentBindingStatusUnavailable, agentBindingReasonAuthorizationRevoked
 		}
 		return agentBindingStatusActive, ""
+	case agentbindings.BindingTypeIntegrationConnection:
+		if s.db == nil {
+			return agentBindingStatusActive, ""
+		}
+		var connection struct {
+			OrganizationID   string
+			IntegrationID    string
+			AuthMethodID     string
+			CredentialSource integrations.ConnectionCredentialSource
+			Status           string
+			ExpiresAt        *time.Time
+			DeletedAt        *time.Time
+		}
+		err := s.db.WithContext(ctx).Table("integration_connections").
+			Select("organization_id, integration_id, auth_method_id, credential_source, status, expires_at, deleted_at").
+			Where("id = ?", row.ResourceID).
+			Take(&connection).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) || connection.DeletedAt != nil {
+			return agentBindingStatusUnavailable, agentBindingReasonResourceDeletedOrMissing
+		}
+		if err != nil {
+			return agentBindingStatusUnavailable, agentBindingReasonResolutionFailed
+		}
+		if !strings.EqualFold(strings.TrimSpace(connection.OrganizationID), organizationID) ||
+			!strings.EqualFold(strings.TrimSpace(connection.IntegrationID), strings.TrimSpace(row.ParentResourceID)) {
+			return agentBindingStatusUnavailable, agentBindingReasonResourceDeletedOrMissing
+		}
+		if !agentIntegrationCredentialSourceAllowed(connection.CredentialSource) {
+			return agentBindingStatusUnavailable, agentBindingReasonIntegrationConnectionUnavailable
+		}
+		if connection.ExpiresAt != nil && !connection.ExpiresAt.After(time.Now().UTC()) {
+			return agentBindingStatusUnavailable, agentBindingReasonIntegrationConnectionUnavailable
+		}
+		switch strings.ToLower(strings.TrimSpace(connection.Status)) {
+		case "active":
+			actionIDs := agentbindings.IntegrationAllowedActionIDs(row)
+			if len(actionIDs) == 0 {
+				return agentBindingStatusUnavailable, agentBindingReasonIntegrationConnectionUnavailable
+			}
+			if s.integrationAccess == nil || s.integrationActions == nil {
+				return agentBindingStatusUnavailable, agentBindingReasonResolutionFailed
+			}
+			connectionID, connectionErr := uuid.Parse(strings.TrimSpace(row.ResourceID))
+			if connectionErr != nil || connectionID == uuid.Nil || row.OrganizationID == uuid.Nil || ag.TenantID == uuid.Nil {
+				return agentBindingStatusUnavailable, agentBindingReasonResolutionFailed
+			}
+			for _, actionID := range actionIDs {
+				action, found := s.integrationActions.ActionDetail(connection.IntegrationID, actionID)
+				if !found {
+					return agentBindingStatusUnavailable, agentBindingReasonIntegrationConnectionUnavailable
+				}
+				if !integrations.ActionSupportsAuthMethod(action, connection.AuthMethodID) {
+					return agentBindingStatusUnavailable, agentBindingReasonIntegrationConnectionUnavailable
+				}
+				if err := s.integrationAccess.AuthorizeAgentConnectionUse(ctx, integrations.ConnectionAccessRequest{
+					OrganizationID: row.OrganizationID,
+					WorkspaceID:    &ag.TenantID,
+					ConnectionID:   connectionID,
+					IntegrationID:  connection.IntegrationID,
+					ActionID:       actionID,
+					Effect:         toolgovernance.NormalizeEffect(action.Effect),
+				}); err != nil {
+					return agentBindingStatusUnavailable, agentBindingReasonAuthorizationRevoked
+				}
+			}
+			return agentBindingStatusActive, ""
+		case "disabled":
+			return agentBindingStatusSuspended, agentBindingReasonIntegrationConnectionDisabled
+		default:
+			return agentBindingStatusUnavailable, agentBindingReasonIntegrationConnectionUnavailable
+		}
 	default:
 		return agentBindingStatusUnavailable, agentBindingReasonResourceDeletedOrMissing
 	}
@@ -498,6 +592,8 @@ func (s *agentsService) resolveAgentBindingDisplayName(ctx context.Context, row 
 			return ""
 		}
 		return s.bindingResourceName(ctx, "agents", row.ParentResourceID)
+	case agentbindings.BindingTypeIntegrationConnection:
+		return s.bindingResourceName(ctx, "integration_connections", row.ResourceID)
 	default:
 		return ""
 	}
@@ -565,8 +661,95 @@ func (s *agentsService) validateIncrementalAgentBindingChanges(
 			return err
 		}
 	}
+	for _, binding := range normalizeAgentIntegrationBindings(next.IntegrationBindings) {
+		// Connection source, action catalog, and shared grants are live
+		// authorization inputs rather than immutable binding history. Recheck
+		// every retained integration binding on every save.
+		if err := s.validateIntegrationBindingGrant(ctx, organizationID, workspaceID, accountID, binding); err != nil {
+			return err
+		}
+	}
 	return nil
 }
+
+func (s *agentsService) validateIntegrationBindingGrant(ctx context.Context, organizationID, workspaceID, accountID string, binding dto.AgentIntegrationBinding) error {
+	if s.integrationConnections == nil || s.integrationAccess == nil {
+		return fmt.Errorf("integration connection candidate service is not configured")
+	}
+	actionIDs := normalizeStringIDs(binding.AllowedActionIDs)
+	if len(actionIDs) == 0 {
+		return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration connection binding requires at least one allowed action"}
+	}
+	if len(actionIDs) > maxAgentIntegrationAllowedActions {
+		return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration connection binding has too many allowed actions"}
+	}
+	if s.integrationActions == nil {
+		return fmt.Errorf("integration action catalog is not configured")
+	}
+	for _, actionID := range actionIDs {
+		if len(actionID) > maxAgentIntegrationActionIDLength {
+			return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration action id is too long"}
+		}
+		if !s.integrationActions.HasAction(binding.IntegrationID, actionID) {
+			return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration action is not available"}
+		}
+	}
+	organizationUUID, organizationErr := uuid.Parse(strings.TrimSpace(organizationID))
+	workspaceUUID, workspaceErr := uuid.Parse(strings.TrimSpace(workspaceID))
+	accountUUID, accountErr := uuid.Parse(strings.TrimSpace(accountID))
+	connectionUUID, connectionErr := uuid.Parse(strings.TrimSpace(binding.ConnectionID))
+	if organizationErr != nil || workspaceErr != nil || accountErr != nil || connectionErr != nil || organizationUUID == uuid.Nil || workspaceUUID == uuid.Nil || accountUUID == uuid.Nil || connectionUUID == uuid.Nil {
+		return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration connection authorization context is invalid"}
+	}
+	connection, err := s.integrationConnections.GetByID(ctx, organizationUUID, connectionUUID)
+	if errors.Is(err, integrations.ErrConnectionNotFound) {
+		return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration connection is not available"}
+	}
+	if err != nil {
+		return fmt.Errorf("validate integration connection binding: %w", err)
+	}
+	if connection == nil || !strings.EqualFold(strings.TrimSpace(connection.IntegrationID), binding.IntegrationID) {
+		return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration connection is not active"}
+	}
+	if !agentIntegrationCredentialSourceAllowed(connection.CredentialSource) {
+		return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "only organization integration connections can be bound to an Agent"}
+	}
+	for _, actionID := range actionIDs {
+		action, found := s.integrationActions.ActionDetail(binding.IntegrationID, actionID)
+		if !found {
+			return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration action is not available"}
+		}
+		if !integrations.ActionSupportsAuthMethod(action, connection.AuthMethodID) {
+			return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration action is not available for this connection authentication method"}
+		}
+		effect := toolgovernance.NormalizeEffect(action.Effect)
+		if strings.EqualFold(strings.TrimSpace(binding.AccessMode), string(integrations.ConnectionGrantAccessRead)) && effect != toolgovernance.EffectRead {
+			return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "read-only integration binding cannot allow a write action"}
+		}
+		if err := s.integrationAccess.AuthorizeAgentConnectionUse(ctx, integrations.ConnectionAccessRequest{
+			OrganizationID: organizationUUID,
+			WorkspaceID:    &workspaceUUID,
+			AccountID:      accountUUID,
+			ConnectionID:   connectionUUID,
+			IntegrationID:  binding.IntegrationID,
+			ActionID:       actionID,
+			Effect:         effect,
+		}); err != nil {
+			return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "integration connection is not authorized for this account and workspace"}
+		}
+	}
+	return nil
+}
+
+func agentIntegrationCredentialSourceAllowed(source integrations.ConnectionCredentialSource) bool {
+	return integrations.ConnectionCredentialSource(strings.ToLower(strings.TrimSpace(string(source)))) ==
+		integrations.ConnectionCredentialSourceOrganization
+}
+
+const (
+	maxAgentIntegrationAllowedActions = 64
+	maxAgentIntegrationActionIDLength = 128
+)
 
 // databaseBindingValidationDelta returns only newly granted table access. Existing
 // read access, unchanged write access, removals, and write-to-read downgrades do
@@ -664,6 +847,15 @@ func filterAgentConfigByBindingHealth(config dto.AgentConfigResponse) dto.AgentC
 	for _, item := range config.BindingHealth.Items {
 		if item.Status == agentBindingStatusActive {
 			active[agentBindingItemKey(item.BindingType, item.ParentResourceID, item.ResourceID, item.AccessMode)] = struct{}{}
+			if agentbindings.BindingType(item.BindingType) == agentbindings.BindingTypeIntegrationConnection {
+				active[agentBindingAuthorizationKey(dto.AgentBindingAuthorization{
+					BindingType:      item.BindingType,
+					ResourceID:       item.ResourceID,
+					ParentResourceID: item.ParentResourceID,
+					AccessMode:       item.AccessMode,
+					AllowedActionIDs: item.AllowedActionIDs,
+				})] = struct{}{}
+			}
 		}
 	}
 	config.EnabledSkillIDs = filterStringBindings(config.EnabledSkillIDs, agentbindings.BindingTypeSkill, "execute", active)
@@ -699,6 +891,13 @@ func filterAgentConfigByBindingHealth(config dto.AgentConfigResponse) dto.AgentC
 		}
 	}
 	config.WorkflowBindings = workflows
+	integrations := make([]dto.AgentIntegrationBinding, 0, len(config.IntegrationBindings))
+	for _, integration := range normalizeAgentIntegrationBindings(config.IntegrationBindings) {
+		if _, ok := active[agentBindingItemKey(string(agentbindings.BindingTypeIntegrationConnection), integration.IntegrationID, integration.ConnectionID, integration.AccessMode)]; ok {
+			integrations = append(integrations, integration)
+		}
+	}
+	config.IntegrationBindings = integrations
 	filteredAuthorizations := make([]dto.AgentBindingAuthorization, 0, len(config.BindingAuthorizations))
 	for _, authorization := range normalizeAgentBindingAuthorizations(config.BindingAuthorizations) {
 		if _, ok := active[agentBindingAuthorizationKey(authorization)]; ok {
@@ -730,7 +929,11 @@ func agentBindingRevision(rows []agentbindings.Binding) string {
 	sortAgentBindings(rows)
 	hash := sha256.New()
 	for _, row := range rows {
-		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00%s\x00%s\n", row.BindingType, row.ParentResourceID, row.ResourceID, row.AccessMode)
+		metadataRevision := ""
+		if row.BindingType == agentbindings.BindingTypeIntegrationConnection {
+			metadataRevision = strings.Join(agentbindings.IntegrationAllowedActionIDs(row), "\x00")
+		}
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00%s\x00%s\x00%s\n", row.BindingType, row.ParentResourceID, row.ResourceID, row.AccessMode, metadataRevision)
 	}
 	return "br_" + hex.EncodeToString(hash.Sum(nil))
 }
@@ -745,7 +948,7 @@ func agentBindingHealthRevision(health dto.AgentBindingHealth) string {
 	})
 	hash := sha256.New()
 	for _, item := range items {
-		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\n", item.BindingType, item.ParentResourceID, item.ResourceID, item.AccessMode, item.Status, item.Reason)
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\n", item.BindingType, item.ParentResourceID, item.ResourceID, item.AccessMode, strings.Join(normalizeStringIDs(item.AllowedActionIDs), "\x00"), item.Status, item.Reason)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
@@ -762,10 +965,10 @@ func sortAgentBindings(bindings []agentbindings.Binding) {
 func preserveAgentBindingEvidence(bindings, existing []agentbindings.Binding) []agentbindings.Binding {
 	byKey := make(map[string]agentbindings.Binding, len(existing))
 	for _, binding := range existing {
-		byKey[agentBindingItemKey(string(binding.BindingType), binding.ParentResourceID, binding.ResourceID, binding.AccessMode)] = binding
+		byKey[agentBindingEvidenceKey(binding)] = binding
 	}
 	for idx := range bindings {
-		key := agentBindingItemKey(string(bindings[idx].BindingType), bindings[idx].ParentResourceID, bindings[idx].ResourceID, bindings[idx].AccessMode)
+		key := agentBindingEvidenceKey(bindings[idx])
 		previous, ok := byKey[key]
 		if !ok {
 			continue
@@ -777,6 +980,14 @@ func preserveAgentBindingEvidence(bindings, existing []agentbindings.Binding) []
 		}
 	}
 	return bindings
+}
+
+func agentBindingEvidenceKey(binding agentbindings.Binding) string {
+	key := agentBindingItemKey(string(binding.BindingType), binding.ParentResourceID, binding.ResourceID, binding.AccessMode)
+	if binding.BindingType == agentbindings.BindingTypeIntegrationConnection {
+		key += "\x00" + strings.Join(agentbindings.IntegrationAllowedActionIDs(binding), "\x00")
+	}
+	return key
 }
 
 func stringSet(values []string) map[string]struct{} {

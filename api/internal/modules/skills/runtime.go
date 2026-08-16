@@ -107,7 +107,6 @@ func (r *Runtime) ResolveEnabledSkills(ctx context.Context, skillIDs []string) (
 }
 
 func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs []string, custom []CustomSkillCatalogEntry) (*ResolvedSkills, error) {
-	_ = ctx
 	ids := withRequiredPreflightSkills(normalizeSkillIDs(skillIDs))
 	resolved := &ResolvedSkills{Skills: make([]SkillDocument, 0, len(ids))}
 	locations, err := r.skillLocations(custom)
@@ -123,6 +122,7 @@ func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs [
 		if err != nil {
 			return nil, err
 		}
+		r.attachProviderToolSchemas(ctx, &doc)
 		resolved.Skills = append(resolved.Skills, doc)
 	}
 	return resolved, nil
@@ -135,10 +135,10 @@ func withRequiredPreflightSkills(ids []string) []string {
 	hasPromptProfessionalizer := false
 	needsPromptProfessionalizer := false
 	for _, id := range ids {
-		switch normalizeSkillID(id) {
-		case SkillPromptProfessionalizer:
+		if normalizeSkillID(id) == SkillPromptProfessionalizer {
 			hasPromptProfessionalizer = true
-		case SkillImageGenerator, SkillArchitectureDiagram, SkillChartGenerator:
+		}
+		if RequiresPromptProfessionalizerDependency(id) {
 			needsPromptProfessionalizer = true
 		}
 	}
@@ -148,6 +148,15 @@ func withRequiredPreflightSkills(ids []string) []string {
 	out := append([]string{}, ids...)
 	out = append(out, SkillPromptProfessionalizer)
 	return out
+}
+
+func RequiresPromptProfessionalizerDependency(skillID string) bool {
+	switch normalizeSkillID(skillID) {
+	case SkillImageGenerator, SkillArchitectureDiagram, SkillChartGenerator:
+		return true
+	default:
+		return false
+	}
 }
 
 func RequiresPromptProfessionalizerPreflight(skillID string, toolName string) bool {
@@ -459,14 +468,30 @@ func (r *Runtime) CallSkillTool(
 		executionArguments = rewritten
 		governanceArgumentRewrite = rewriteSummary
 	}
-	executionArguments = r.enrichToolGovernanceArguments(ctx, toolDef, executionArguments, execCtx)
-	if err := validateSkillToolArgumentsAgainstContract(doc.Metadata.ID, toolDef.Name, executionArguments); err != nil {
+	enrichedArguments, enrichErr := r.enrichToolGovernanceArguments(ctx, toolDef, executionArguments, execCtx)
+	if enrichErr != nil {
+		trace := SkillTrace{
+			Kind:      "tool_governance",
+			SkillID:   doc.Metadata.ID,
+			ToolName:  toolDef.Name,
+			Status:    "error",
+			Arguments: summarizeToolArguments(toolDef, executionArguments),
+			Error:     enrichErr.Error(),
+		}
+		return &ToolInvocationResult{Trace: trace}, enrichErr
+	}
+	executionArguments = enrichedArguments
+	if err := validateSkillToolArguments(doc.Metadata.ID, toolDef, executionArguments); err != nil {
+		traceArguments := summarizeToolArguments(toolDef, executionArguments)
+		if len(toolDef.InputSchema) > 0 {
+			traceArguments = dynamicSchemaValidationTraceArguments(toolDef, executionArguments)
+		}
 		trace := SkillTrace{
 			Kind:      "tool_call",
 			SkillID:   doc.Metadata.ID,
 			ToolName:  toolDef.Name,
 			Status:    "error",
-			Arguments: summarizeArguments(executionArguments),
+			Arguments: traceArguments,
 			Error:     err.Error(),
 		}
 		return &ToolInvocationResult{Trace: trace}, err
@@ -507,7 +532,7 @@ func (r *Runtime) CallSkillTool(
 		ToolName:   toolDef.Name,
 		Status:     "success",
 		DurationMS: time.Since(start).Milliseconds(),
-		Arguments:  summarizeArguments(executionArguments),
+		Arguments:  summarizeToolArguments(toolDef, executionArguments),
 	}
 	if len(governanceArgumentRewrite) > 0 {
 		trace.Arguments["governance_argument_rewrite"] = governanceArgumentRewrite
@@ -517,7 +542,7 @@ func (r *Runtime) CallSkillTool(
 	}
 	if err != nil {
 		trace.Status = "error"
-		trace.Error = err.Error()
+		trace.Error, trace.ErrorCode = skillTraceError(err)
 		return &ToolInvocationResult{Trace: trace}, err
 	}
 	if result == nil || !result.Success {

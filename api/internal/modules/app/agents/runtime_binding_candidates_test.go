@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	datasource_model "github.com/zgiai/zgi/api/internal/modules/datasource/model"
 	datasource_service "github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -330,6 +331,72 @@ func TestListAgentWorkflowBindingCandidatesUsesAgentWorkspace(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestListAgentIntegrationConnectionCandidatesReturnsSelectedActionAllowlist(t *testing.T) {
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	agentWorkspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	connectionID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	accountID := "99999999-9999-9999-9999-999999999999"
+	cfg := &AgentsConfig{AgentsID: agentID}
+	if _, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
+		IntegrationBindings: []dto.AgentIntegrationBinding{{
+			ConnectionID:     connectionID.String(),
+			IntegrationID:    "web-search",
+			AccessMode:       "read",
+			AllowedActionIDs: []string{"web.fetch", "web.search"},
+		}},
+	}, accountID); err != nil {
+		t.Fatalf("applyAgentConfigRequestToDraft() error = %v", err)
+	}
+	service := &agentsService{
+		agentsRepo: &stubWebAppStatusRepository{
+			agent:  &Agent{ID: agentID, TenantID: agentWorkspaceID, AgentsType: "AGENT"},
+			config: cfg,
+		},
+		accountService:    &stubWebAppStatusAccountService{isEditor: true},
+		enterpriseService: &stubWebAppStatusOrganizationService{allowed: true},
+	}
+	connections := &agentIntegrationConnectionRepository{items: map[uuid.UUID]*integrations.IntegrationConnection{
+		connectionID: {
+			ID: connectionID, OrganizationID: agentWorkspaceID, IntegrationID: "web-search", DriverID: "exa", Name: "Primary search",
+			CredentialSource: integrations.ConnectionCredentialSourceOrganization, Status: integrations.ConnectionStatusActive,
+			HealthStatus: integrations.ConnectionHealthHealthy, AuthStatus: integrations.ConnectionAuthValid, IsDefault: true, UpdatedAt: time.Now(),
+		},
+	}}
+	grants := &agentIntegrationGrantRepository{grants: []integrations.IntegrationConnectionGrant{{
+		OrganizationID: agentWorkspaceID, ConnectionID: connectionID,
+		PrincipalType: integrations.ConnectionGrantPrincipalOrganization,
+		AccessMode:    integrations.ConnectionGrantAccessRead, AllowedActionIDs: []string{"web.search"}, ResourceConstraints: map[string]any{},
+	}}}
+	service.integrationConnections = connections
+	service.integrationAccess = agentIntegrationACLService(connections, grants)
+	service.integrationActions = stubIntegrationActionCatalog{
+		"web-search/web.fetch":  {},
+		"web-search/web.search": {},
+	}
+	service.integrationActionPolicies = allowAgentIntegrationActionPolicies
+
+	ctx := context.WithValue(context.Background(), "tenant_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	resp, err := service.ListAgentIntegrationConnectionCandidates(ctx, agentID.String(), accountID, dto.AgentIntegrationConnectionCandidatesRequest{
+		IncludeSelected: true,
+		Limit:           10,
+	})
+	if err != nil {
+		t.Fatalf("ListAgentIntegrationConnectionCandidates() error = %v", err)
+	}
+	if len(resp.Data) != 1 || !resp.Data[0].Selected {
+		t.Fatalf("candidates = %#v, want selected connection", resp.Data)
+	}
+	if got := strings.Join(resp.Data[0].AllowedActionIDs, ","); got != "web.fetch,web.search" {
+		t.Fatalf("AllowedActionIDs = %q, want web.fetch,web.search", got)
+	}
+	if got := strings.Join(resp.Data[0].AvailableActionIDs, ","); got != "web.search" {
+		t.Fatalf("AvailableActionIDs = %q, want web.search", got)
+	}
+	if resp.Data[0].AvailableAccessMode != "read" || resp.Data[0].Status != "invalid" {
+		t.Fatalf("selected stale candidate availability = %#v", resp.Data[0])
 	}
 }
 

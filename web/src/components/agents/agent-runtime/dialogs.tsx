@@ -5,6 +5,7 @@ import { AgentRuntimeKnowledgeDialog } from './knowledge-dialog';
 import { AgentRuntimeMemoryValuesDialog } from './memory-values-dialog';
 import { AgentRuntimeSkillDialog } from './skill-dialog';
 import { AgentRuntimeWorkflowDialog } from './workflow-dialog';
+import { AgentRuntimeIntegrationDialog } from './integration-dialog';
 import { AgentSuspendedBindingsDialog } from './binding-health';
 import { AgentPublishVersionDialog } from './publish-version-dialog';
 import type { AgentRuntimePageModel } from './hooks/use-agent-runtime-page-model';
@@ -21,6 +22,9 @@ export function AgentRuntimeDialogs({ model }: AgentRuntimeDialogsProps) {
       <AgentRuntimeSkillDialog {...model.dialogs.skill} />
       <AgentRuntimeKnowledgeDialog {...model.dialogs.knowledge} />
       <AgentRuntimeWorkflowDialog {...model.dialogs.workflow} />
+      {model.externalIntegrationsEnabled ? (
+        <AgentRuntimeIntegrationDialog {...model.dialogs.integration} />
+      ) : null}
       <AgentRuntimeMemoryValuesDialog {...model.dialogs.memoryValues} />
       <AgentPublishVersionDialog {...model.dialogs.publishVersion} />
       <AgentSuspendedBindingsDialog {...model.dialogs.suspendedBindings} />

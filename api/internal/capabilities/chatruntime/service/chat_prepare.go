@@ -10,9 +10,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
-	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/prompt"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
@@ -28,7 +26,11 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-
+	var err error
+	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
+	if err != nil {
+		return nil, err
+	}
 	req = applyRunConfigToChatRequest(config, req)
 	parts, err := normalizeChatRequest(req)
 	if err != nil {
@@ -113,6 +115,11 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
+	var err error
+	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
+	if err != nil {
+		return nil, err
+	}
 	message, err := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
 	if err != nil {
 		return nil, mapRepoError(err)
@@ -128,6 +135,9 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
+		return nil, err
 	}
 	if err := s.ensureConversationAllowsNewTurn(ctx, scope, conversation); err != nil {
 		return nil, err
@@ -265,6 +275,9 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
+		return nil, err
+	}
 	applyPersistedConversationSurface(conversation, parts)
 	return conversation, nil
 }
@@ -281,14 +294,15 @@ func (s *service) createConversationForChat(ctx context.Context, scope Scope, ca
 	if err != nil {
 		return nil, err
 	}
-	if s.titleGen == nil || normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+	if s.titleGen == nil {
 		return conversation, nil
 	}
-	s.generateConversationTitleAsync(ctx, scope, conversation, parts, initialTitle)
+	s.markConversationTitleGenerationPending(ctx, scope, conversation)
+	s.generateConversationTitleAsync(ctx, scope, caller, conversation, parts, initialTitle)
 	return conversation, nil
 }
 
-func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parts *chatRequestParts, initialTitle string) {
+func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, caller Caller, conversation *runtimemodel.Conversation, parts *chatRequestParts, initialTitle string) {
 	if conversation == nil || s.titleGen == nil {
 		return
 	}
@@ -300,38 +314,22 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 		preferredProvider = parts.Provider
 		preferredModel = parts.ModelName
 	}
-	conversationID := conversation.ID
-	workspaceID := conversation.WorkspaceID
-	go func() {
-		titleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleGenerationTimeout)
-		defer cancel()
+	s.enqueueConversationTitleGeneration(ctx, scope, caller, conversation, conversationTitleGenerationInput{
+		Messages:          conversationTitleMessagesFromQuery(query),
+		FallbackTitle:     initialTitle,
+		PreferredProvider: preferredProvider,
+		PreferredModel:    preferredModel,
+	})
+}
 
-		result, err := s.titleGen.Generate(titleCtx, titlegen.GenerateRequest{
-			OrganizationID:    scope.OrganizationID,
-			AccountID:         scope.AccountID,
-			WorkspaceID:       workspaceID,
-			AppID:             conversationID.String(),
-			AppType:           runtimemodel.MessageBillingReasonSourceAIChat,
-			SessionID:         conversationID.String(),
-			ConversationID:    conversationID.String(),
-			Messages:          []titlegen.Message{{Role: "user", Content: query}},
-			FallbackTitle:     initialTitle,
-			PreferredProvider: preferredProvider,
-			PreferredModel:    preferredModel,
-			PreferredUseCase:  string(llmmodelmodel.UseCaseTextChat),
-		})
-		if err != nil {
-			logger.WarnContext(titleCtx, "failed to generate aichat conversation title", "conversation_id", conversationID.String(), err)
-			return
+func conversationTitleAppContext(caller Caller, conversationID uuid.UUID) (string, string) {
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+		if caller.ID != nil && *caller.ID != uuid.Nil {
+			return caller.ID.String(), runtimemodel.ConversationCallerAgent
 		}
-		title := normalizeTitle(result.Title, initialTitle)
-		if title == initialTitle {
-			return
-		}
-		if err := s.repos.Conversation.UpdateScoped(titleCtx, conversationID, scope.OrganizationID, scope.AccountID, map[string]interface{}{"title": title}); err != nil {
-			logger.WarnContext(titleCtx, "failed to update generated aichat conversation title", "conversation_id", conversationID.String(), err)
-		}
-	}()
+		return conversationID.String(), runtimemodel.ConversationCallerAgent
+	}
+	return conversationID.String(), runtimemodel.MessageBillingReasonSourceAIChat
 }
 
 func (s *service) resolveParentMessage(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parentIDRaw string) (*uuid.UUID, error) {
@@ -678,6 +676,7 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 		enabled = filterAIChatSkillIDsForSurface(enabled, parts)
 		trustedCapabilities := s.trustedContextualAIChatSkillCapabilities(ctx, scope, parts)
 		enabled = addContextualAIChatSkillIDsWithCapabilities(enabled, orgEnabled, catalog, parts, trustedCapabilities)
+		enabled = addAIChatExternalAppsSkillID(enabled, catalog, config)
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
 	if len(parts.SkillIDs) == 0 {

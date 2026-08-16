@@ -31,6 +31,16 @@ func summarizeSkillToolArguments(skillID string, toolName string, args map[strin
 	}
 }
 
+func summarizeSkillToolArgumentsForResolved(resolved *skills.ResolvedSkills, skillID string, toolName string, args map[string]interface{}) map[string]interface{} {
+	if skills.SkillToolUsesResolvedInputSchema(resolved, skillID, toolName) {
+		return map[string]interface{}{
+			"schema_bound_arguments_redacted": true,
+			"argument_count":                  len(args),
+		}
+	}
+	return summarizeSkillToolArguments(skillID, toolName, args)
+}
+
 func summarizeFileGeneratorArguments(args map[string]interface{}) map[string]interface{} {
 	summary := summarizeAllowedArguments(args, []string{"format", "filename", "title", "lifecycle", "target", "workspace_id", "folder_id"})
 	if filename, ok := summary["filename"].(string); ok {

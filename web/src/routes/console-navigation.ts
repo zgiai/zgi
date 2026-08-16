@@ -224,6 +224,13 @@ export const ZGI_CONSOLE_SITE_MAP = [
     permissions: NO_PERMISSIONS,
   },
   {
+    href: '/console/integrations',
+    label: 'Integrations',
+    purpose: 'external integration connection management',
+    scope: 'organization',
+    permissions: NO_PERMISSIONS,
+  },
+  {
     href: '/console/prompts',
     label: 'Prompts',
     purpose: 'prompt library',
@@ -271,6 +278,15 @@ const ZGI_CONSOLE_EXACT_ROUTES: ReadonlyMap<string, ZGIConsoleRouteDefinition> =
 );
 
 const ZGI_CONSOLE_DYNAMIC_ROUTES: readonly ZGIConsoleDynamicRouteDefinition[] = [
+  {
+    pattern: /^\/console\/integrations\/oauth\/result$/,
+    route: {
+      label: 'Integration OAuth Result',
+      purpose: 'external integration authorization result',
+      scope: 'organization',
+      permissions: NO_PERMISSIONS,
+    },
+  },
   {
     pattern: /^\/console\/agents\/[A-Za-z0-9_-]+\/logs$/,
     route: {

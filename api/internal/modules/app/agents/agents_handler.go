@@ -589,6 +589,36 @@ func (h *AgentsHandler) ListAgentSkillBindingCandidates(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) ListAgentIntegrationConnectionBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentIntegrationConnectionCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentIntegrationConnectionCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) ListAgentKnowledgeBindingCandidates(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {

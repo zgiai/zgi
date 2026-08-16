@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -59,6 +60,9 @@ func SkillCallEndPayload(ids PayloadIDs, trace skills.SkillTrace, includeKind bo
 	if trace.Governance != nil {
 		payload["governance"] = trace.Governance
 	}
+	if strings.TrimSpace(trace.ErrorCode) != "" {
+		payload["error_code"] = strings.TrimSpace(trace.ErrorCode)
+	}
 	enrichSkillCallPayloadSemantics(payload, trace)
 	return payload
 }
@@ -73,22 +77,96 @@ func ToolGovernanceDecisionPayload(ids PayloadIDs, trace skills.SkillTrace) map[
 		"duration_ms":     trace.DurationMS,
 	})
 	if trace.Governance != nil {
-		payload["governance"] = trace.Governance
-		payload["correlation_id"] = trace.Governance.CorrelationID
-		payload["decision"] = trace.Governance.Status
-		payload["requires_approval"] = trace.Governance.RequiresApproval
-		payload["reason"] = trace.Governance.Reason
-		payload["risk_level"] = trace.Governance.Manifest.RiskLevel
-		payload["effect"] = trace.Governance.Manifest.Effect
-		payload["asset_type"] = trace.Governance.Manifest.AssetType
-		if len(trace.Governance.AssetOperationAudit) > 0 {
-			payload["asset_operation_audit"] = trace.Governance.AssetOperationAudit
+		governance := sealedGovernanceDecisionSnapshot(trace.Governance)
+		payload["governance"] = governance
+		payload["correlation_id"] = governance.CorrelationID
+		payload["decision"] = governance.Status
+		payload["requires_approval"] = governance.RequiresApproval
+		payload["reason"] = governance.Reason
+		payload["risk_level"] = governance.Manifest.RiskLevel
+		payload["effect"] = governance.Manifest.Effect
+		payload["asset_type"] = governance.Manifest.AssetType
+		payload["approval_every_invocation"] = governance.Manifest.ApprovalEveryInvocation
+		if len(governance.AssetOperationAudit) > 0 {
+			payload["asset_operation_audit"] = governance.AssetOperationAudit
 		}
-		if trace.Governance.ApprovalEvent != nil {
-			payload["approval_event"] = trace.Governance.ApprovalEvent
+		if governance.ApprovalEvent != nil {
+			payload["approval_event"] = governance.ApprovalEvent
 		}
+		enrichFrozenInvocationIdentity(payload, governance.FrozenInvocation)
 	}
 	return payload
+}
+
+// sealedGovernanceDecisionSnapshot detaches the approval payload from runtime
+// governance state. This is the last point at which a frozen invocation may be
+// sealed; continuation code must only verify the stored hash.
+func sealedGovernanceDecisionSnapshot(source *toolgovernance.Decision) *toolgovernance.Decision {
+	if source == nil {
+		return nil
+	}
+	snapshot := *source
+	maySeal := source.Status == toolgovernance.DecisionStatusNeedsApproval && source.RequiresApproval
+	detachFrozen := func(invocation toolgovernance.FrozenInvocation) toolgovernance.FrozenInvocation {
+		if maySeal {
+			return toolgovernance.SealFrozenInvocation(invocation)
+		}
+		return toolgovernance.NormalizeFrozenInvocation(invocation)
+	}
+	var authoritative *toolgovernance.FrozenInvocation
+	if source.FrozenInvocation != nil {
+		detached := detachFrozen(*source.FrozenInvocation)
+		snapshot.FrozenInvocation = &detached
+		authoritative = &detached
+	}
+	if source.ApprovalEvent != nil {
+		approval := *source.ApprovalEvent
+		if authoritative != nil {
+			detached := detachFrozen(*authoritative)
+			approval.FrozenInvocation = &detached
+		} else if source.ApprovalEvent.FrozenInvocation != nil {
+			detached := detachFrozen(*source.ApprovalEvent.FrozenInvocation)
+			approval.FrozenInvocation = &detached
+			snapshot.FrozenInvocation = &detached
+		}
+		snapshot.ApprovalEvent = &approval
+	}
+	return &snapshot
+}
+
+// enrichFrozenInvocationIdentity exposes the provider-authoritative identity
+// needed to render an informed approval without copying action arguments out
+// of the signed frozen invocation. Dynamic connector facades keep their public
+// skill/tool names, while action_id and integration_id identify what will
+// actually run after approval.
+func enrichFrozenInvocationIdentity(payload map[string]interface{}, frozen *toolgovernance.FrozenInvocation) {
+	if payload == nil || frozen == nil {
+		return
+	}
+	if value := strings.TrimSpace(frozen.ToolID); value != "" {
+		payload["tool_id"] = value
+		payload["governed_tool_id"] = value
+	}
+	if value := strings.TrimSpace(frozen.ProviderType); value != "" {
+		payload["provider_type"] = value
+	}
+	if value := strings.TrimSpace(frozen.ProviderID); value != "" {
+		payload["provider_id"] = value
+	}
+	if value := strings.TrimSpace(frozen.ExternalDestination); value != "" {
+		payload["external_destination"] = value
+	}
+	for _, key := range []string{"integration_id", "action_id", "connection_name", "connection_display_name", "connection_selection"} {
+		value, _ := frozen.Arguments[key].(string)
+		if value = strings.TrimSpace(value); value != "" {
+			payload[key] = value
+		}
+	}
+	if _, exists := payload["action_id"]; !exists {
+		if value := strings.TrimSpace(frozen.ToolID); value != "" {
+			payload["action_id"] = value
+		}
+	}
 }
 
 // SkillCallErrorPayload builds the public skill_call_error event payload.
@@ -114,6 +192,9 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 	}
 	if trace.Governance != nil {
 		payload["governance"] = trace.Governance
+	}
+	if strings.TrimSpace(trace.ErrorCode) != "" {
+		payload["error_code"] = strings.TrimSpace(trace.ErrorCode)
 	}
 	enrichSkillCallPayloadSemantics(payload, trace)
 	return payload
@@ -256,8 +337,64 @@ var resultSummaryBuilders = map[string]resultSummaryBuilder{
 	skills.SkillAgentDatabase:     summarizeDatabaseResult,
 	skills.SkillAgentWorkflow:     summarizeWorkflowResult,
 	skills.SkillAgentManagement:   summarizeAgentManagementResult,
+	skills.SkillExternalApps:      summarizeExternalAppsResult,
 	skills.SkillFileManager:       summarizeFileReaderResult,
 	skills.SkillFileReader:        summarizeFileReaderResult,
+}
+
+func summarizeExternalAppsResult(toolName string, payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	switch strings.TrimSpace(toolName) {
+	case "execute_action":
+		result := compactFields(payload,
+			"integration_id", "action_id", "integration_name", "action_name",
+			"connection_name", "connection_display_name", "connection_selection",
+			"operation_status", "result_count", "attempt_count", "provider_request_id",
+			"retry_safe", "result_truncated",
+		)
+		operationStatus := strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload["operation_status"])))
+		switch operationStatus {
+		case "completed", "already_completed", "succeeded":
+			result["provider_success_confirmed"] = true
+		}
+		if providerResult := compactExternalAppsProviderResult(recordFromAny(payload["result"])); len(providerResult) > 0 {
+			result["provider_result"] = providerResult
+		}
+		if batch := recordFromAny(payload["batch"]); len(batch) > 0 {
+			result["batch"] = compactFields(batch,
+				"status", "item_count", "succeeded_count", "failed_safe_count",
+				"outcome_unknown_count", "executing_count",
+			)
+		}
+		return result
+	case "list_connections":
+		return map[string]interface{}{"connections_count": collectionLen(payload["connections"])}
+	case "search_actions":
+		return compactFields(payload, "count", "query", "integration_id")
+	case "get_action_guide":
+		return compactFields(payload, "integration_id", "action_id", "name", "effect", "risk_level", "supports_batch")
+	default:
+		return nil
+	}
+}
+
+func compactExternalAppsProviderResult(payload map[string]interface{}) map[string]interface{} {
+	if len(payload) == 0 {
+		return nil
+	}
+	result := compactFields(payload, "status", "provider", "request_id", "result_code", "content_truncated")
+	if event := recordFromAny(payload["event"]); len(event) > 0 {
+		result["event"] = compactFields(event,
+			"event_id", "organizer_calendar_id", "summary", "start_time", "end_time",
+			"status", "visibility", "free_busy_status", "location_name", "app_link",
+		)
+	}
+	if message := recordFromAny(payload["message"]); len(message) > 0 {
+		result["message"] = compactFields(message, "message_id", "root_id", "parent_id", "create_time")
+	}
+	return result
 }
 
 // SummarizeToolResult returns the compact trace-visible result for known skill tools.

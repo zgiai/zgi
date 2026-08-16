@@ -1059,7 +1059,7 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 }
 
 func clientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
-	metadata := copyStringAnyMap(source)
+	metadata := publicExternalActionPayload(copyStringAnyMap(source))
 	if len(metadata) == 0 {
 		return metadata
 	}
@@ -2258,6 +2258,7 @@ func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]int
 		"result":        trace.Result,
 		"message":       trace.Message,
 		"error":         trace.Error,
+		"error_code":    trace.ErrorCode,
 		"runtime_id":    traceRuntimeID(trace, index),
 	}
 	if trace.Governance != nil {

@@ -22,6 +22,7 @@ const messages = {
   workflowAgents: 'Workflows',
   prompts: 'Prompts',
   skills: 'Skills',
+  integrations: 'Connection Center',
   dbs: 'Databases',
   files: 'Files',
   chat: 'Chat',

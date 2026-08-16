@@ -483,6 +483,8 @@ func mergeAgentConfigRequestedFields(current dto.AgentConfigRequest, requested d
 			current.DatabaseBindings = requested.DatabaseBindings
 		case "workflow_bindings":
 			current.WorkflowBindings = requested.WorkflowBindings
+		case "integration_bindings":
+			current.IntegrationBindings = requested.IntegrationBindings
 		case "":
 			continue
 		default:
@@ -1148,6 +1150,7 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		WorkflowBindings:          config.WorkflowBindings,
 		WorkflowBoundByAccountID:  config.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:       config.WorkflowBoundAtUnix,
+		IntegrationBindings:       config.IntegrationBindings,
 		BindingAuthorizations:     config.BindingAuthorizations,
 	}
 }
@@ -1228,6 +1231,7 @@ func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequ
 	req.KnowledgeRetrievalConfig = normalizeAgentKnowledgeRetrievalConfig(req.KnowledgeRetrievalConfig)
 	req.DatabaseBindings = normalizeAgentDatabaseBindings(req.DatabaseBindings)
 	req.WorkflowBindings = normalizeAgentWorkflowBindings(req.WorkflowBindings)
+	req.IntegrationBindings = normalizeAgentIntegrationBindings(req.IntegrationBindings)
 	return req
 }
 
@@ -1288,6 +1292,7 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		WorkflowBindings:          runtimeCfg.WorkflowBindings,
 		WorkflowBoundByAccountID:  workflowBoundByAccountID,
 		WorkflowBoundAtUnix:       workflowBoundAtUnix,
+		IntegrationBindings:       runtimeCfg.IntegrationBindings,
 		BindingAuthorizations:     bindingAuthorizations,
 	})
 	if err != nil {
@@ -1327,6 +1332,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		WorkflowBindings:          normalizeAgentWorkflowBindings(mode.WorkflowBindings),
 		WorkflowBoundByAccountID:  strings.TrimSpace(mode.WorkflowBoundByAccountID),
 		WorkflowBoundAtUnix:       mode.WorkflowBoundAtUnix,
+		IntegrationBindings:       normalizeAgentIntegrationBindings(mode.IntegrationBindings),
 		BindingAuthorizations:     bindingAuthorizationsForRuntimeMode(mode),
 	}
 	if cfg != nil {
@@ -1368,6 +1374,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"workflow_bindings":             normalizeAgentWorkflowBindings(resp.WorkflowBindings),
 		"workflow_bound_by_account_id":  resp.WorkflowBoundByAccountID,
 		"workflow_bound_at_unix":        resp.WorkflowBoundAtUnix,
+		"integration_bindings":          normalizeAgentIntegrationBindings(resp.IntegrationBindings),
 		"binding_authorizations":        normalizeAgentBindingAuthorizations(resp.BindingAuthorizations),
 	}
 }
@@ -1419,6 +1426,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.WorkflowBindings = agentWorkflowBindingsFromSnapshot(snapshot["workflow_bindings"])
 	resp.WorkflowBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "workflow_bound_by_account_id"))
 	resp.WorkflowBoundAtUnix = int64FromSnapshot(snapshot["workflow_bound_at_unix"])
+	resp.IntegrationBindings = agentIntegrationBindingsFromSnapshot(snapshot["integration_bindings"])
 	resp.BindingAuthorizations = agentBindingAuthorizationsFromSnapshot(snapshot["binding_authorizations"])
 	if len(resp.BindingAuthorizations) == 0 {
 		resp.BindingAuthorizations = bindingAuthorizationsForRuntimeMode(dto.AgentRuntimeModeConfig{
@@ -1431,6 +1439,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 			WorkflowBindings:          resp.WorkflowBindings,
 			WorkflowBoundByAccountID:  resp.WorkflowBoundByAccountID,
 			WorkflowBoundAtUnix:       resp.WorkflowBoundAtUnix,
+			IntegrationBindings:       resp.IntegrationBindings,
 		})
 	}
 	return resp

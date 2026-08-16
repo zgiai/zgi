@@ -19,6 +19,7 @@ export interface UseChatRuntimeMessageActionsArgs {
   isLatestSelection: (seq: number, conversationId: string | null) => boolean;
   refreshConversationSilently: (conversationId: string) => void;
   refreshMessagesSilently: (conversationId: string) => void;
+  scheduleConversationTitleRefresh: (conversationId: string) => void;
   refreshAccountMemoryAfterMemoryMutation: (
     payload: Parameters<ChatRuntimeEventAppliers['applyMemoryMutation']>[0]
   ) => void;

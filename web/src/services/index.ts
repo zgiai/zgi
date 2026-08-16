@@ -31,6 +31,7 @@ export * from './automation.service';
 export * from './content-parse.service';
 export * from './prompt.service';
 export * from './shortlink.service';
+export * from './integration.service';
 // LLM management services
 export * from './provider.service';
 export * from './model.service';
@@ -69,6 +70,7 @@ export type * from './types/video-runtime';
 export type * from './types/setup';
 export type * from './types/statistics';
 export type * from './types/automation';
+export type * from './types/integration';
 // Types of LLM management
 export type * from './types/provider';
 export type * from './types/model';

@@ -3,9 +3,11 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -116,7 +118,13 @@ func (s *capturingChatSurfaceService) PrepareChat(_ context.Context, _ runtimese
 
 func TestSkillResponsePreservesDisplayTaxonomy(t *testing.T) {
 	metadata := skills.SkillDiscoveryMetadata{
-		ID: "taxonomy-test",
+		ID:             "taxonomy-test",
+		DependencyType: skills.SkillDependencyIntegration,
+		IntegrationRequirements: []skills.SkillIntegrationRequirement{{
+			IntegrationID: "github",
+			ActionIDs:     []string{"github.repository.list"},
+			Required:      true,
+		}},
 		Display: skills.SkillDisplayMetadata{
 			Category:  "document_processing",
 			Scenarios: []string{"document_handling", "legal_compliance"},
@@ -129,6 +137,15 @@ func TestSkillResponsePreservesDisplayTaxonomy(t *testing.T) {
 	}
 	if !reflect.DeepEqual(response.Display.Scenarios, metadata.Display.Scenarios) {
 		t.Fatalf("scenarios = %#v, want %#v", response.Display.Scenarios, metadata.Display.Scenarios)
+	}
+	if response.DependencyType != skills.SkillDependencyIntegration {
+		t.Fatalf("dependency type = %q, want %q", response.DependencyType, skills.SkillDependencyIntegration)
+	}
+	if len(response.IntegrationRequirements) != 1 || response.IntegrationRequirements[0].IntegrationID != "github" || !response.IntegrationRequirements[0].Required {
+		t.Fatalf("integration requirements = %#v", response.IntegrationRequirements)
+	}
+	if !reflect.DeepEqual(response.IntegrationRequirements[0].ActionIDs, []string{"github.repository.list"}) {
+		t.Fatalf("integration action ids = %#v", response.IntegrationRequirements[0].ActionIDs)
 	}
 }
 
@@ -194,5 +211,34 @@ func TestMessageResponseFiltersFinalAnswerInvocationMetadata(t *testing.T) {
 	invocation, _ := invocations[0].(map[string]interface{})
 	if invocation["kind"] != "tool_call" {
 		t.Fatalf("skill_invocations = %#v, want final_answer filtered", invocations)
+	}
+}
+
+func TestMessageResponseRedactsExternalActionArgumentsFromHistory(t *testing.T) {
+	message := &runtimemodel.Message{
+		ID: uuid.New(), ConversationID: uuid.New(), Status: runtimemodel.MessageStatusWaitingApproval,
+		Metadata: map[string]interface{}{"skill_invocations": []interface{}{map[string]interface{}{
+			"kind": "tool_governance", "skill_id": "external-apps", "tool_name": "execute_action",
+			"governance": map[string]interface{}{"frozen_invocation": map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "provider_id": "external-integrations",
+				"arguments": map[string]interface{}{
+					"integration_id": "github", "action_id": "github.issue.create", "connection_id": "connection-a",
+					"arguments": map[string]interface{}{"body": "xoxb-12345678901234567890", "title": "safe title"},
+				},
+			}},
+		}}},
+	}
+
+	response := messageResponse(message)
+	encoded, err := json.Marshal(response.Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "xoxb-") || !strings.Contains(string(encoded), "__zgi_redacted__") || !strings.Contains(string(encoded), "safe title") {
+		t.Fatalf("public history metadata = %s", encoded)
+	}
+	original, _ := json.Marshal(message.Metadata)
+	if !strings.Contains(string(original), "xoxb-") {
+		t.Fatal("message response projection mutated stored metadata")
 	}
 }

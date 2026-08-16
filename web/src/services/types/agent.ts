@@ -1,4 +1,5 @@
 import type { IconType } from '@/utils/icon-helpers';
+import type { AgentIntegrationConnectionBinding } from '@/services/types/integration';
 
 // Agent type enumeration
 export enum AgentType {
@@ -212,6 +213,7 @@ export interface AgentRuntimeConfig {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  integration_bindings?: AgentIntegrationConnectionBinding[];
   binding_revision?: string;
   binding_health?: AgentBindingHealth;
   updated_at: number;
@@ -222,7 +224,8 @@ export type AgentBindingType =
   | 'knowledge_dataset'
   | 'database'
   | 'database_table'
-  | 'workflow';
+  | 'workflow'
+  | 'integration_connection';
 
 export type AgentBindingStatus = 'active' | 'suspended' | 'unavailable';
 
@@ -425,6 +428,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  integration_bindings?: AgentIntegrationConnectionBinding[];
   binding_revision?: string;
 }
 

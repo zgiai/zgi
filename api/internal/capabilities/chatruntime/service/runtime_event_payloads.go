@@ -566,11 +566,38 @@ func recoverableErrorPayload(err error, nextAction string) map[string]interface{
 	return payload
 }
 
-func recoverableSkillToolErrorPayload(err error, nextAction string, skillID string, toolName string) map[string]interface{} {
+func recoverableSkillToolErrorPayload(err error, nextAction string, skillID string, toolName string, resolvedSkills ...*skills.ResolvedSkills) map[string]interface{} {
 	payload := recoverableErrorPayload(err, nextAction)
-	if expected := skills.ExpectedSkillToolArguments(skillID, toolName); expected != nil {
+	var surfaceExpected map[string]interface{}
+	if len(resolvedSkills) > 0 && resolvedSkills[0] != nil {
+		surfaceExpected = skills.ExpectedSkillToolArgumentsForResolved(resolvedSkills[0], skillID, toolName)
+	} else {
+		surfaceExpected = skills.ExpectedSkillToolArguments(skillID, toolName)
+	}
+	if recovery := skills.PublicToolErrorRecoveryForInvocation(err, skillID, toolName, surfaceExpected); len(recovery) > 0 {
+		for key, value := range recovery {
+			payload[key] = value
+		}
+		if code, ok := recovery["error_code"].(string); ok && strings.TrimSpace(code) != "" {
+			payload["error"] = strings.TrimSpace(code)
+		}
+		if retryAction, ok := recovery["retry_action"].(string); ok && strings.TrimSpace(retryAction) != "" {
+			payload["next_action"] = strings.TrimSpace(retryAction)
+		}
+		return payload
+	}
+	var expected map[string]interface{}
+	if len(resolvedSkills) > 0 && resolvedSkills[0] != nil {
+		expected = skills.ExpectedSkillToolArgumentsForResolved(resolvedSkills[0], skillID, toolName)
+	} else {
+		expected = skills.ExpectedSkillToolArguments(skillID, toolName)
+	}
+	if expected != nil {
 		payload["expected_arguments"] = expected
 		payload["next_action"] = strings.TrimSpace(nextAction + ". Retry call_skill_tool with arguments matching expected_arguments.schema")
+	}
+	if issues := skills.SkillToolArgumentValidationIssues(err); len(issues) > 0 {
+		payload["argument_errors"] = issues
 	}
 	return payload
 }

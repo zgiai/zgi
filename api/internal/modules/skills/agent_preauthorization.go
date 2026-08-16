@@ -107,6 +107,15 @@ func governanceAgentAuthorization(
 	case SkillAgentWorkflow:
 		authorizationIndex := newAgentBindingAuthorizationIndex(params)
 		return toolgovernance.ApprovalModeNonInteractive, agentWorkflowPreauthorization(params, authorizationIndex, toolName, arguments)
+	case SkillExternalApps:
+		if strings.TrimSpace(toolName) != "execute_action" {
+			// Catalog discovery is read-only and the meta-tool itself filters
+			// every result through current Agent binding and shared-grant
+			// checks. The concrete action is preauthorized separately below.
+			return toolgovernance.ApprovalModeNonInteractive, nil
+		}
+		authorizationIndex := newAgentBindingAuthorizationIndex(params)
+		return toolgovernance.ApprovalModeNonInteractive, agentIntegrationPreauthorization(authorizationIndex, manifest, arguments)
 	default:
 		return toolgovernance.ApprovalModeNonInteractive, &toolgovernance.Preauthorization{
 			Source: "agent_runtime",
@@ -114,6 +123,54 @@ func governanceAgentAuthorization(
 			Reason: "the current Agent does not have persistent authorization for this tool action",
 		}
 	}
+}
+
+func agentIntegrationPreauthorization(
+	authorizationIndex agentBindingAuthorizationIndex,
+	manifest toolgovernance.Manifest,
+	arguments map[string]interface{},
+) *toolgovernance.Preauthorization {
+	preauthorization := &toolgovernance.Preauthorization{
+		Required:    true,
+		Source:      agentAuthorizationSourceBinding,
+		BindingType: "integration_connection",
+	}
+	if manifest.Effect != toolgovernance.EffectRead {
+		preauthorization.Code = agentToolNotPreauthorizedCode
+		preauthorization.Reason = "write actions are unavailable in the non-interactive Agent runtime"
+		return preauthorization
+	}
+	connectionID := strings.ToLower(stringMapValue(arguments, "connection_id"))
+	integrationID := strings.ToLower(stringMapValue(arguments, "integration_id"))
+	actionID := strings.ToLower(stringMapValue(arguments, "action_id"))
+	if connectionID == "" || integrationID == "" || actionID == "" {
+		preauthorization.Code = agentBindingMissingCode
+		preauthorization.Reason = "the requested integration action has no resolved Agent binding"
+		return preauthorization
+	}
+	authorization, ok := authorizationIndex.authorizationFor(
+		"integration_connection",
+		integrationID,
+		connectionID,
+		"read",
+	)
+	if !ok || !authorization.AllowsAction(actionID) {
+		preauthorization.Code = agentResourceNotBoundCode
+		preauthorization.Reason = "the requested integration connection action is not bound to the current Agent"
+		return preauthorization
+	}
+	preauthorization.Matched = true
+	preauthorization.Resources = []toolgovernance.AssetRef{{
+		ID:   connectionID,
+		Type: "integration_connection",
+		Metadata: map[string]interface{}{
+			"integration_id": integrationID,
+			"action_id":      actionID,
+		},
+	}}
+	applyAgentBindingAuthorization(preauthorization, authorization)
+	preauthorization.Reason = "allowed by the current Agent integration connection binding"
+	return preauthorization
 }
 
 func agentKnowledgePreauthorization(params map[string]interface{}, authorizationIndex agentBindingAuthorizationIndex, toolName string) *toolgovernance.Preauthorization {

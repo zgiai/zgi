@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +37,7 @@ func NewToolManager(pluginRunnerManager PluginRunnerToolManagerInterface) *ToolM
 			// Supported types
 			ToolProviderTypeBuiltin:      make(map[string]ToolProvider),
 			ToolProviderTypePluginRunner: make(map[string]ToolProvider),
+			ToolProviderTypeConnector:    make(map[string]ToolProvider),
 			// Not supported - reserved for future extension
 			// ToolProviderTypeAPI:      make(map[string]ToolProvider),
 			// ToolProviderTypeWorkflow: make(map[string]ToolProvider),
@@ -52,17 +54,55 @@ func (m *ToolManager) RegisterBuiltinProviders(providers []ToolProvider) {
 
 // RegisterProvider registers a tool provider
 func (m *ToolManager) RegisterProvider(provider ToolProvider) error {
+	if provider == nil {
+		return fmt.Errorf("tool provider is required")
+	}
+	entity := provider.GetEntity()
+	if entity.Identity.Name == "" {
+		return fmt.Errorf("tool provider identity name is required")
+	}
+	for _, tool := range entity.Tools {
+		if err := ValidateJSONSchema(tool.InputSchema); err != nil {
+			return fmt.Errorf("invalid input schema for tool %s/%s: %w", entity.Identity.Name, tool.Identity.Name, err)
+		}
+		if err := ValidateJSONSchema(tool.OutputSchema); err != nil {
+			return fmt.Errorf("invalid output schema for tool %s/%s: %w", entity.Identity.Name, tool.Identity.Name, err)
+		}
+		if err := validateToolGovernanceMetadata(tool.Governance); err != nil {
+			return fmt.Errorf("invalid governance metadata for tool %s/%s: %w", entity.Identity.Name, tool.Identity.Name, err)
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	providerType := NormalizeToolProviderType(provider.GetProviderType())
-	entity := provider.GetEntity()
 
 	if _, exists := m.providers[providerType]; !exists {
 		m.providers[providerType] = make(map[string]ToolProvider)
 	}
 
 	m.providers[providerType][entity.Identity.Name] = provider
+	return nil
+}
+
+func validateToolGovernanceMetadata(metadata *ToolGovernanceMetadata) error {
+	if metadata == nil {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(metadata.Effect)) {
+	case "read", "create", "update", "delete", "publish", "invoke", "schedule", "external_send":
+	default:
+		return fmt.Errorf("effect %q is invalid", strings.TrimSpace(metadata.Effect))
+	}
+	switch strings.ToLower(strings.TrimSpace(metadata.RiskLevel)) {
+	case "low", "medium", "high", "critical":
+	default:
+		return fmt.Errorf("risk level %q is invalid", strings.TrimSpace(metadata.RiskLevel))
+	}
+	if metadata.DataEgress && strings.TrimSpace(metadata.ExternalDestination) == "" {
+		return fmt.Errorf("external destination is required when data egress is enabled")
+	}
 	return nil
 }
 
@@ -129,14 +169,21 @@ func (m *ToolManager) GetToolRuntime(
 
 	runtime := &ToolRuntime{
 		TenantID:          tenantID,
+		CredentialID:      credentialID,
+		ConnectionID:      runtimeParameterString(runtimeParameters, "connection_id"),
 		RuntimeParameters: copyRuntimeParameters(runtimeParameters),
 		InvokeFrom:        invokeFrom,
 	}
-	for key, value := range runtimeParameters {
-		runtime.RuntimeParameters[key] = value
-	}
 
 	return tool.ForkToolRuntime(runtime), nil
+}
+
+func runtimeParameterString(source map[string]interface{}, key string) string {
+	if len(source) == 0 {
+		return ""
+	}
+	value, _ := source[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func copyRuntimeParameters(source map[string]interface{}) map[string]interface{} {

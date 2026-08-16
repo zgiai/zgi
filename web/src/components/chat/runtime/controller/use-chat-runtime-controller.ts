@@ -150,11 +150,15 @@ export function useChatRuntimeController(options?: {
     []
   );
 
-  const { refreshConversationSilently, refreshMessagesSilently, refreshList } =
-    useChatRuntimeRefreshers({
-      transportRef,
-      setControllerState,
-    });
+  const {
+    refreshConversationSilently,
+    refreshMessagesSilently,
+    scheduleConversationTitleRefresh,
+    refreshList,
+  } = useChatRuntimeRefreshers({
+    transportRef,
+    setControllerState,
+  });
 
   const eventAppliers = useChatRuntimeEventAppliers({
     stateRef,
@@ -222,6 +226,7 @@ export function useChatRuntimeController(options?: {
     isLatestSelection,
     refreshConversationSilently,
     refreshMessagesSilently,
+    scheduleConversationTitleRefresh,
     refreshAccountMemoryAfterMemoryMutation,
     recoverStreamingConversation,
     eventAppliers,

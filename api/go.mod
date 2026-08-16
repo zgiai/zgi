@@ -12,6 +12,8 @@ require (
 	github.com/auxten/postgresql-parser v1.0.1
 	github.com/aws/aws-sdk-go v1.55.6
 	github.com/disintegration/imaging v1.6.2
+	github.com/emersion/go-imap v1.2.1
+	github.com/emersion/go-message v0.18.2
 	github.com/extrame/xls v0.0.1
 	github.com/flosch/pongo2/v6 v6.0.0
 	github.com/fumiama/go-docx v0.0.0-20250506085032-0c30fd09304b
@@ -34,6 +36,7 @@ require (
 	github.com/redis/go-redis/v9 v9.8.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/do/v2 v2.0.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/segmentio/kafka-go v0.4.48
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
@@ -87,6 +90,7 @@ require (
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/elastic/go-sysinfo v1.11.2 // indirect
 	github.com/elastic/go-windows v1.0.1 // indirect
+	github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21 // indirect
 	github.com/extrame/ole2 v0.0.0-20160812065207-d69429661ad7 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect

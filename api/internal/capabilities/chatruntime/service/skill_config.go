@@ -10,7 +10,9 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -27,6 +29,9 @@ func (s *service) catalogSkillMetadata(ctx context.Context, organizationID uuid.
 				logger.WarnContext(ctx, "aichat system skill catalog has invalid entries", err)
 			}
 		}
+		if !s.skillRuntime.ToolProviderConfigured(ctx, tools.ToolProviderTypeConnector, integrations.MetaProviderExternalIntegrations) {
+			systemMetadata = excludeSkillMetadata(systemMetadata, skills.SkillExternalApps)
+		}
 	}
 	customMetadata, err := s.customSkillDiscoveryMetadata(ctx, organizationID)
 	if err != nil {
@@ -35,6 +40,17 @@ func (s *service) catalogSkillMetadata(ctx context.Context, organizationID uuid.
 	metadata := append(systemMetadata, customMetadata...)
 	sort.Slice(metadata, func(i, j int) bool { return metadata[i].ID < metadata[j].ID })
 	return metadata, nil
+}
+
+func excludeSkillMetadata(metadata []skills.SkillDiscoveryMetadata, skillID string) []skills.SkillDiscoveryMetadata {
+	skillID = strings.ToLower(strings.TrimSpace(skillID))
+	filtered := make([]skills.SkillDiscoveryMetadata, 0, len(metadata))
+	for _, item := range metadata {
+		if !strings.EqualFold(strings.TrimSpace(item.ID), skillID) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func (s *service) customSkillCatalogEntries(ctx context.Context, organizationID uuid.UUID) ([]skills.CustomSkillCatalogEntry, error) {
@@ -227,21 +243,77 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 			out = append(out, id)
 		}
 	}
+	if runConfigHasAgentIntegrationBindings(runConfig) {
+		id := skills.SkillExternalApps
+		if _, ok := seen[id]; !ok &&
+			runtimeManagedSkillAvailableForCaller(catalog, id, runtimemodel.ConversationCallerAgent) {
+			out = append(out, id)
+		}
+	}
 	sort.Strings(out)
 	return out
 }
 
+func runConfigHasAgentIntegrationBindings(runConfig *RunConfig) bool {
+	if runConfig == nil || !strings.EqualFold(strings.TrimSpace(runConfig.BillingAppType), runtimemodel.ConversationCallerAgent) {
+		return false
+	}
+	for integrationID, connectionID := range runConfig.IntegrationConnectionIDs {
+		integrationID = strings.ToLower(strings.TrimSpace(integrationID))
+		connectionID = strings.ToLower(strings.TrimSpace(connectionID))
+		if integrationID == "" || connectionID == "" {
+			continue
+		}
+		for _, authorization := range runConfig.BindingAuthorizations {
+			if !strings.EqualFold(strings.TrimSpace(authorization.BindingType), "integration_connection") ||
+				!strings.EqualFold(strings.TrimSpace(authorization.ParentResourceID), integrationID) ||
+				!strings.EqualFold(strings.TrimSpace(authorization.ResourceID), connectionID) ||
+				strings.TrimSpace(authorization.BoundByAccountID) == "" ||
+				authorization.BoundAtUnix <= 0 ||
+				len(normalizeRuntimeStringIDs(authorization.AllowedActionIDs)) == 0 {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func runtimeManagedSkillAvailableForCaller(catalog []skills.SkillDiscoveryMetadata, skillID string, callerType string) bool {
+	for _, item := range catalog {
+		if strings.EqualFold(strings.TrimSpace(item.ID), strings.TrimSpace(skillID)) &&
+			item.Status != skills.SkillStatusInvalid &&
+			skillSupportsCaller(item, callerType) {
+			return true
+		}
+	}
+	return false
+}
+
 func organizationAllowsSkillID(skillID string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string) bool {
 	id := strings.ToLower(strings.TrimSpace(skillID))
-	metadata, ok := catalogSkillByID(catalog)[id]
+	catalogByID := catalogSkillByID(catalog)
+	metadata, ok := catalogByID[id]
 	if !ok {
 		return false
 	}
 	if !organizationSkillConfigManagesMetadata(metadata) {
 		return true
 	}
-	_, ok = stringSet(organizationEnabled)[id]
-	return ok
+	enabledSet := stringSet(organizationEnabled)
+	if _, ok = enabledSet[id]; ok {
+		return true
+	}
+	if id != skills.SkillPromptProfessionalizer {
+		return false
+	}
+	for enabledID := range enabledSet {
+		dependencyOwner, exists := catalogByID[enabledID]
+		if exists && dependencyOwner.Status != skills.SkillStatusInvalid && skills.RequiresPromptProfessionalizerDependency(enabledID) {
+			return true
+		}
+	}
+	return false
 }
 
 func filterSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMetadata, callerType string) []string {
@@ -858,6 +930,35 @@ func runConfigHasWorkflowBindings(runConfig *RunConfig) bool {
 
 func runConfigHasAgentMemory(runConfig *RunConfig) bool {
 	return runConfig != nil && runConfig.AgentMemoryEnabled && len(enabledAgentMemorySlots(runConfig.AgentMemorySlots)) > 0
+}
+
+func runConfigHasSelectedIntegrationConnections(runConfig *RunConfig) bool {
+	if runConfig == nil {
+		return false
+	}
+	for integrationID, connectionIDs := range runConfig.IntegrationSelectedConnectionIDs {
+		if strings.TrimSpace(integrationID) == "" {
+			continue
+		}
+		for _, connectionID := range connectionIDs {
+			if strings.TrimSpace(connectionID) != "" {
+				return true
+			}
+		}
+	}
+	for integrationID, connectionID := range runConfig.IntegrationConnectionIDs {
+		if strings.TrimSpace(integrationID) != "" && strings.TrimSpace(connectionID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func addAIChatExternalAppsSkillID(enabled []string, catalog []skills.SkillDiscoveryMetadata, runConfig *RunConfig) []string {
+	if !runConfigHasSelectedIntegrationConnections(runConfig) {
+		return enabled
+	}
+	return addRuntimeManagedSkillIDIfAvailable(enabled, catalog, skills.SkillExternalApps, runtimemodel.ConversationCallerAIChat)
 }
 
 func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {

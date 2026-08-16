@@ -1,5 +1,6 @@
 'use client';
 
+import { safeIntegrationDisplayText } from '@/components/integrations/display-utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -33,6 +34,7 @@ function typeLabel(t: ReturnType<typeof useT<'agents.agentRuntime'>>, type: Agen
   if (type === 'knowledge_dataset') return t('bindingHealth.types.knowledge_dataset');
   if (type === 'database') return t('bindingHealth.types.database');
   if (type === 'database_table') return t('bindingHealth.types.database_table');
+  if (type === 'integration_connection') return t('bindingHealth.types.integration_connection');
   return t('bindingHealth.types.workflow');
 }
 
@@ -61,7 +63,13 @@ function reasonLabel(t: ReturnType<typeof useT<'agents.agentRuntime'>>, reason: 
   if (reason === 'resolution_failed') {
     return t('bindingHealth.reasons.resolutionFailed');
   }
-  return reason;
+  if (reason === 'integration_connection_disabled') {
+    return t('bindingHealth.reasons.integrationConnectionDisabled');
+  }
+  if (reason === 'integration_connection_unavailable') {
+    return t('bindingHealth.reasons.integrationConnectionUnavailable');
+  }
+  return t('bindingHealth.reasons.unknown');
 }
 
 function suggestionLabel(t: ReturnType<typeof useT<'agents.agentRuntime'>>, suggestion: string) {
@@ -71,7 +79,7 @@ function suggestionLabel(t: ReturnType<typeof useT<'agents.agentRuntime'>>, sugg
   if (suggestion === 'restore_access_or_remove_binding') {
     return t('bindingHealth.suggestions.restoreOrRemove');
   }
-  return suggestion;
+  return t('bindingHealth.suggestions.unknown');
 }
 
 export function AgentBindingHealthBadge({ item }: { item?: AgentBindingHealthItem }) {
@@ -87,13 +95,15 @@ export function AgentBindingHealthBadge({ item }: { item?: AgentBindingHealthIte
 
 export function AgentBindingHealthItemRow({ item }: { item: AgentBindingHealthItem }) {
   const t = useT('agents.agentRuntime');
+  const isIntegrationConnection = item.binding_type === 'integration_connection';
+  const displayName = isIntegrationConnection
+    ? safeIntegrationDisplayText(item.display_name, t('integration.unavailableConnection'))
+    : item.display_name || item.resource_id;
   return (
     <div className="rounded-md border bg-background p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium">
-            {item.display_name || item.resource_id}
-          </div>
+          <div className="truncate text-sm font-medium">{displayName}</div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <Badge variant="outline">{typeLabel(t, item.binding_type)}</Badge>
             {item.access_mode ? (
@@ -119,9 +129,11 @@ export function AgentBindingHealthItemRow({ item }: { item: AgentBindingHealthIt
           {t('bindingHealth.suggestion', { suggestion: suggestionLabel(t, item.suggestion) })}
         </p>
       ) : null}
-      <p className="mt-1 truncate text-[11px] text-muted-foreground/70">
-        {t('bindingHealth.resourceId', { id: item.resource_id })}
-      </p>
+      {!isIntegrationConnection ? (
+        <p className="mt-1 truncate text-[11px] text-muted-foreground/70">
+          {t('bindingHealth.resourceId', { id: item.resource_id })}
+        </p>
+      ) : null}
     </div>
   );
 }

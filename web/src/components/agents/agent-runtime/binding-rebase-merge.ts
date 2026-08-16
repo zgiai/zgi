@@ -3,6 +3,7 @@ import type {
   AgentWorkflowBinding,
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
+import type { AgentIntegrationConnectionBinding } from '@/services/types/integration';
 import { normalizeAgentDatabaseBindings } from './database-binding-draft';
 
 function normalizeIDs(ids: string[] | undefined): string[] {
@@ -51,6 +52,29 @@ export function normalizeAgentWorkflowBindings(
   });
   return Array.from(byBindingID.values()).sort((left, right) =>
     left.binding_id.localeCompare(right.binding_id)
+  );
+}
+
+export function normalizeAgentIntegrationBindings(
+  bindings: AgentIntegrationConnectionBinding[]
+): AgentIntegrationConnectionBinding[] {
+  const byIntegrationID = new Map<string, AgentIntegrationConnectionBinding>();
+  bindings.forEach(binding => {
+    const connectionId = binding.connection_id.trim().toLowerCase();
+    const integrationId = binding.integration_id.trim().toLowerCase();
+    const accessMode = binding.access_mode || 'read';
+    const allowedActionIds = normalizeIDs(binding.allowed_action_ids).sort();
+    if (!connectionId || !integrationId || allowedActionIds.length === 0) return;
+    if (accessMode !== 'read' && accessMode !== 'write') return;
+    byIntegrationID.set(integrationId, {
+      connection_id: connectionId,
+      integration_id: integrationId,
+      access_mode: accessMode,
+      allowed_action_ids: allowedActionIds,
+    });
+  });
+  return Array.from(byIntegrationID.values()).sort((left, right) =>
+    left.integration_id.localeCompare(right.integration_id)
   );
 }
 
@@ -136,6 +160,35 @@ function mergeWorkflowBindingDelta(
   );
 }
 
+function mergeIntegrationBindingDelta(
+  submitted: AgentIntegrationConnectionBinding[],
+  current: AgentIntegrationConnectionBinding[],
+  saved: AgentIntegrationConnectionBinding[]
+): AgentIntegrationConnectionBinding[] {
+  const submittedMap = new Map(
+    normalizeAgentIntegrationBindings(submitted).map(binding => [binding.integration_id, binding])
+  );
+  const currentMap = new Map(
+    normalizeAgentIntegrationBindings(current).map(binding => [binding.integration_id, binding])
+  );
+  const resultMap = new Map(
+    normalizeAgentIntegrationBindings(saved).map(binding => [binding.integration_id, binding])
+  );
+
+  submittedMap.forEach((_, integrationID) => {
+    if (!currentMap.has(integrationID)) resultMap.delete(integrationID);
+  });
+  currentMap.forEach((currentBinding, integrationID) => {
+    const submittedBinding = submittedMap.get(integrationID);
+    if (!submittedBinding || JSON.stringify(submittedBinding) !== JSON.stringify(currentBinding)) {
+      resultMap.set(integrationID, currentBinding);
+    }
+  });
+  return Array.from(resultMap.values()).sort((left, right) =>
+    left.integration_id.localeCompare(right.integration_id)
+  );
+}
+
 // Use the server-saved payload as the new baseline and replay only edits made
 // after this save started. Unchanged local bindings therefore cannot restore
 // resources that another editor changed before the revision conflict.
@@ -166,6 +219,11 @@ export function mergeSupersededAgentRuntimePayload(
       submitted.workflow_bindings ?? [],
       current.workflow_bindings ?? [],
       saved.workflow_bindings ?? []
+    ),
+    integration_bindings: mergeIntegrationBindingDelta(
+      submitted.integration_bindings ?? [],
+      current.integration_bindings ?? [],
+      saved.integration_bindings ?? []
     ),
     binding_revision: saved.binding_revision,
   };

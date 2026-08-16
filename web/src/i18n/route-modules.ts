@@ -46,6 +46,7 @@ const CONSOLE_MODULES: ModuleName[] = [
   'channels',
   'apikeys',
   'settings',
+  'integrations',
   'music',
 ];
 
@@ -62,6 +63,7 @@ const DASHBOARD_MODULES: ModuleName[] = [
   'apikeys',
   'market',
   'settings',
+  'integrations',
 ];
 
 const AUTH_SEGMENTS = new Set([

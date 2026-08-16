@@ -9,6 +9,7 @@ import {
   Maximize2,
   Minimize2,
   Paperclip,
+  PlugZap,
   Send,
   Settings2,
   Shield,
@@ -79,6 +80,10 @@ interface AIChatInputToolbarProps {
   toolGovernancePermissionTier?: AIChatToolGovernancePermissionTier;
   enableUpload?: boolean;
   showFileLibraryPicker?: boolean;
+  showConnectedApps?: boolean;
+  connectedAppsLabel?: string;
+  connectedAppsSelectedCount?: number;
+  connectedAppsAttentionRequired?: boolean;
   showSkillManagement?: boolean;
   skillManagementLabel?: string;
   surface?: AIChatComposerSurface;
@@ -87,6 +92,7 @@ interface AIChatInputToolbarProps {
   onUploadDocument: () => void;
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
+  onOpenConnectedApps?: () => void;
   onOpenSkillManagement?: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
   onToggleComposerExpanded?: () => void;
@@ -183,6 +189,10 @@ export function AIChatInputToolbar({
   toolGovernancePermissionTier = 'basic',
   enableUpload = true,
   showFileLibraryPicker = true,
+  showConnectedApps = false,
+  connectedAppsLabel,
+  connectedAppsSelectedCount = 0,
+  connectedAppsAttentionRequired = false,
   showSkillManagement = false,
   skillManagementLabel,
   surface = 'aichat',
@@ -191,6 +201,7 @@ export function AIChatInputToolbar({
   onUploadDocument,
   onUploadImage,
   onSelectFromFiles,
+  onOpenConnectedApps,
   onOpenSkillManagement,
   onMemoryEnabledChange,
   onToggleComposerExpanded,
@@ -392,6 +403,37 @@ export function AIChatInputToolbar({
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
+        ) : null}
+        {showConnectedApps && onOpenConnectedApps && connectedAppsLabel ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                isIcon
+                variant="ghost"
+                className={cn(
+                  'relative size-8 rounded-full',
+                  connectedAppsAttentionRequired && 'text-warning'
+                )}
+                onClick={onOpenConnectedApps}
+                aria-label={connectedAppsLabel}
+              >
+                <PlugZap className="size-4" />
+                {connectedAppsSelectedCount > 0 ? (
+                  <span
+                    className={cn(
+                      'absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full border border-background bg-primary px-1 text-[9px] font-semibold leading-[14px] text-primary-foreground',
+                      connectedAppsAttentionRequired && 'bg-warning text-warning-foreground'
+                    )}
+                    aria-hidden="true"
+                  >
+                    {connectedAppsSelectedCount > 9 ? '9+' : connectedAppsSelectedCount}
+                  </span>
+                ) : null}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{connectedAppsLabel}</TooltipContent>
+          </Tooltip>
         ) : null}
         {showSkillManagement && onOpenSkillManagement && skillManagementLabel ? (
           <Tooltip>

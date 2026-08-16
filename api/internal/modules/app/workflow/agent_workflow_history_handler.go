@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -14,16 +15,49 @@ import (
 type AgentWorkflowHistoryHandler struct {
 	conversationService conversationHistoryAccessService
 	messageService      conversationMessageQueryService
+	titleService        *WorkflowService
 }
 
 func NewAgentWorkflowHistoryHandler(
 	conversationService conversationHistoryAccessService,
 	messageService conversationMessageQueryService,
+	titleServices ...*WorkflowService,
 ) *AgentWorkflowHistoryHandler {
-	return &AgentWorkflowHistoryHandler{
+	handler := &AgentWorkflowHistoryHandler{
 		conversationService: conversationService,
 		messageService:      messageService,
 	}
+	if len(titleServices) > 0 {
+		handler.titleService = titleServices[0]
+	}
+	return handler
+}
+
+func (h *AgentWorkflowHistoryHandler) enqueueConversationTitleBackfill(c *gin.Context, agentID uuid.UUID, conv *conversation.AgentConversation) {
+	if h == nil || h.titleService == nil || c == nil || conv == nil || conv.DialogueCount <= 0 || !isDefaultWorkflowConversationName(conv.Name) {
+		return
+	}
+	accountID := conv.FromAccountID
+	if accountID == nil {
+		accountID = conv.FromEndUserID
+	}
+	if accountID == nil {
+		accountID = conv.CreatedBy
+	}
+	if accountID == nil || *accountID == uuid.Nil {
+		return
+	}
+	webAppID := ""
+	if conv.WebAppID != nil {
+		webAppID = *conv.WebAppID
+	}
+	h.titleService.enqueueWebAppConversationTitleGeneration(c.Request.Context(), workflowConversationTitleParams{
+		OrganizationID: util.GetOrganizationID(c),
+		AgentID:        agentID.String(),
+		AccountID:      *accountID,
+		ConversationID: conv.ID,
+		WebAppID:       webAppID,
+	})
 }
 
 // GetConversations handles GET /agents/:agent_id/conversations
@@ -83,6 +117,7 @@ func (h *AgentWorkflowHistoryHandler) GetConversations(c *gin.Context) {
 
 	items := make([]AgentConversationListItem, 0, len(conversations))
 	for _, conv := range conversations {
+		h.enqueueConversationTitleBackfill(c, agentUUID, conv)
 		items = append(items, buildAgentConversationListItem(conv))
 	}
 
@@ -122,6 +157,7 @@ func (h *AgentWorkflowHistoryHandler) GetConversationDetail(c *gin.Context) {
 		response.Fail(c, response.ErrConversationNotFound)
 		return
 	}
+	h.enqueueConversationTitleBackfill(c, agentUUID, conv)
 
 	response.Success(c, buildAgentConversationDetailResponse(conv))
 }

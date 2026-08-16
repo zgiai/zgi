@@ -18,6 +18,7 @@ import {
   AppWindow,
   Clock3,
   ChevronDown,
+  PlugZap,
   Workflow,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
@@ -32,6 +33,7 @@ import { withBasePathIfInternal } from '@/lib/config';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
+import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 import { resolveZGIConsoleNavigationRoute } from '@/routes/console-navigation';
 
 interface NavItem {
@@ -139,6 +141,8 @@ export function ConsoleSidebar({
   const { hasAnyPermission } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const isWorkspaceRequired = contextStatus === 'workspace_required';
+  const systemFeatures = useSystemFeatures();
+  const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
@@ -259,6 +263,15 @@ export function ConsoleSidebar({
         key: 'tools',
         title: t('tools'),
         items: [
+          ...(externalIntegrationsEnabled
+            ? [
+                {
+                  title: t('integrations'),
+                  href: '/console/integrations',
+                  icon: PlugZap,
+                },
+              ]
+            : []),
           {
             title: t('skills'),
             href: '/console/skills',
@@ -278,7 +291,7 @@ export function ConsoleSidebar({
         ],
       },
     ],
-    [t]
+    [externalIntegrationsEnabled, t]
   );
 
   // Filter groups and items
@@ -561,6 +574,8 @@ export function ConsoleMobileSidebar({
   const { hasAnyPermission } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const isWorkspaceRequired = contextStatus === 'workspace_required';
+  const systemFeatures = useSystemFeatures();
+  const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
     work: true,
     resources: true,
@@ -641,6 +656,15 @@ export function ConsoleMobileSidebar({
         key: 'tools',
         title: t('tools'),
         items: [
+          ...(externalIntegrationsEnabled
+            ? [
+                {
+                  title: t('integrations'),
+                  href: '/console/integrations',
+                  icon: PlugZap,
+                },
+              ]
+            : []),
           {
             title: t('skills'),
             href: '/console/skills',
@@ -662,7 +686,7 @@ export function ConsoleMobileSidebar({
     ];
 
     return filterConsoleNavGroups(groups, isWorkspaceRequired, hasAnyPermission);
-  }, [hasAnyPermission, isWorkspaceRequired, t]);
+  }, [externalIntegrationsEnabled, hasAnyPermission, isWorkspaceRequired, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));

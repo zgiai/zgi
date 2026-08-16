@@ -64,6 +64,9 @@ func (s *service) CreateConversationWithCompletedMessage(ctx context.Context, sc
 		Source:           source,
 		SourceWebAppID:   sourceWebAppID,
 	}
+	if s.titleGen != nil {
+		conversation.Metadata = conversationMetadataWithTitleStatus(conversation.Metadata, conversationTitleStatusPending)
+	}
 	messageReq := req.Message
 	messageReq.ConversationID = conversationID
 	message := completedMessageForConversation(conversation, messageReq)
@@ -79,6 +82,12 @@ func (s *service) CreateConversationWithCompletedMessage(ctx context.Context, sc
 		return txRepos.Conversation.UpdateAfterMessage(ctx, conversation.ID, message.ID)
 	}); err != nil {
 		return nil, nil, err
+	}
+	if s.titleGen != nil {
+		s.enqueueConversationTitleGeneration(ctx, scope, caller, conversation, conversationTitleGenerationInput{
+			Messages:      conversationTitleMessagesFromQuery(message.Query),
+			FallbackTitle: conversation.Title,
+		})
 	}
 	return conversation, message, nil
 }

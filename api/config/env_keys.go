@@ -186,7 +186,9 @@ const (
 // Console routing and product feature keys.
 const (
 	// Console endpoints and service-to-service credentials.
-	// envConsoleAPIURL sets the public base URL of the console API. Default: http://127.0.0.1:2679.
+	// envConsoleAPIURL sets the public base URL of the console API. By default,
+	// local source runs use the configured SERVER_PORT; gateways and production
+	// deployments must set their externally reachable URL explicitly.
 	envConsoleAPIURL = "CONSOLE_API_URL"
 	// envConsoleAPIGRPCAddr sets the console gRPC endpoint address. Default: empty.
 	envConsoleAPIGRPCAddr = "CONSOLE_API_GRPC_ADDR"
@@ -607,6 +609,33 @@ const (
 
 // Domain behavior and toolchain keys.
 const (
+	// Shared external-integration runtime, including Web Search.
+	envExternalIntegrationsEnabled          = "EXTERNAL_INTEGRATIONS_ENABLED"
+	envIntegrationOrgDailyLimit             = "INTEGRATION_ORG_DAILY_LIMIT"
+	envIntegrationTimeoutSeconds            = "INTEGRATION_TIMEOUT_SECONDS"
+	envIntegrationCredentialActiveKeyID     = "INTEGRATION_CREDENTIAL_ACTIVE_KEY_ID"
+	envIntegrationCredentialKeysJSON        = "INTEGRATION_CREDENTIAL_KEYS_JSON"
+	envIntegrationHealthFailureThreshold    = "INTEGRATION_HEALTH_FAILURE_THRESHOLD"
+	envIntegrationOAuthRefreshWindowSeconds = "INTEGRATION_OAUTH_REFRESH_WINDOW_SECONDS"
+	envIntegrationOAuthFlowTTLSeconds       = "INTEGRATION_OAUTH_FLOW_TTL_SECONDS"
+	envIntegrationOAuthCallbackURL          = "INTEGRATION_OAUTH_CALLBACK_URL"
+	envIntegrationOAuthResultURL            = "INTEGRATION_OAUTH_RESULT_URL"
+	envIntegrationOAuthClientsJSON          = "INTEGRATION_OAUTH_CLIENTS_JSON"
+
+	// Web search provider runtime configuration.
+	// envWebSearchProvider selects the web search provider. Phase one supports exa. Default: exa.
+	envWebSearchProvider = "WEB_SEARCH_PROVIDER"
+	// envExaTimeoutSeconds sets the total Exa request timeout in seconds. Default: 20.
+	envExaTimeoutSeconds = "EXA_TIMEOUT_SECONDS"
+	// envExaMaxResults caps results returned by one search action. Default: 10.
+	envExaMaxResults = "EXA_MAX_RESULTS"
+	// envExaDefaultSearchType selects the search mode used when a tool call omits search_type. Default: auto.
+	envExaDefaultSearchType = "EXA_DEFAULT_SEARCH_TYPE"
+	// envExaMaxFetchURLs caps URLs handled by one fetch action. Default: 5.
+	envExaMaxFetchURLs = "EXA_MAX_FETCH_URLS"
+	// envExaMaxContentCharacters caps content retained for one fetched page. Default: 20000.
+	envExaMaxContentCharacters = "EXA_MAX_CONTENT_CHARACTERS"
+
 	// Knowledge retrieval limit switch.
 	// envKnowledgeRateLimitEnabled controls whether knowledge retrieval rate limiting is enabled. Default: false.
 	envKnowledgeRateLimitEnabled = "KNOWLEDGE_RATE_LIMIT_ENABLED"

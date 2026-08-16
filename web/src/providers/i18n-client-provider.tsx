@@ -23,9 +23,7 @@ type I18nMessages = Record<string, unknown>;
 function hasRouteMessages(messages: I18nMessages, pathname: string): boolean {
   const modules = getModulesForPathname(pathname);
 
-  return modules.every(module =>
-    Object.prototype.hasOwnProperty.call(messages, module)
-  );
+  return modules.every(module => Object.prototype.hasOwnProperty.call(messages, module));
 }
 
 function getMissingRouteModules(messages: I18nMessages, pathname: string) {
@@ -74,6 +72,10 @@ export function I18nClientProvider({
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    document.documentElement.lang = resolvedLocale;
+  }, [resolvedLocale]);
 
   const mergeMessages = useCallback(
     (routeMessages: I18nMessages, options?: { sync?: boolean }) => {
@@ -203,6 +205,8 @@ export function I18nClientProvider({
         newLocale
       )) as I18nMessages;
 
+      document.documentElement.lang = newLocale;
+
       startTransition(() => {
         // Update cookie for future server-side renders or reloads
         const expires = new Date();
@@ -219,11 +223,7 @@ export function I18nClientProvider({
 
   return (
     <I18nContext.Provider value={{ locale: resolvedLocale, setLocale, isPending }}>
-      <NextIntlClientProvider
-        locale={resolvedLocale}
-        messages={messages}
-        timeZone="Asia/Shanghai"
-      >
+      <NextIntlClientProvider locale={resolvedLocale} messages={messages} timeZone="Asia/Shanghai">
         {children}
       </NextIntlClientProvider>
     </I18nContext.Provider>
