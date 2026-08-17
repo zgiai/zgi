@@ -1389,8 +1389,29 @@ function getTaskReferenceMaterials(
   if (Array.isArray(payload.image_urls)) {
     payload.image_urls.forEach(url => pushMaterial(url, 'image'));
   }
+  if (Array.isArray(payload.reference_urls)) {
+    payload.reference_urls.forEach((url, index) => {
+      pushMaterial(url, referenceKindAtPayloadIndex(payload.reference_types, index, url));
+    });
+  }
 
   return materials;
+}
+
+function referenceKindAtPayloadIndex(
+  referenceTypes: unknown,
+  index: number,
+  referenceUrl: unknown
+): ReferenceKind {
+  if (Array.isArray(referenceTypes)) {
+    const rawKind = referenceTypes[index];
+    if (typeof rawKind === 'string') {
+      const kind = rawKind.trim().toLowerCase();
+      if (kind === 'image' || kind === 'video' || kind === 'audio') return kind;
+    }
+  }
+  if (typeof referenceUrl !== 'string') return 'image';
+  return getReferenceKindFromURL(referenceUrl);
 }
 
 function useVideoPoster(url: string | undefined) {
@@ -2215,6 +2236,13 @@ function isTruthy(value: unknown): boolean {
 function getReferenceKindFromFile(file: File, allowedKinds: ReferenceKind[]): ReferenceKind | null {
   const kind = allowedKinds.find(candidate => file.type.startsWith(candidate + '/'));
   return kind ?? null;
+}
+
+function getReferenceKindFromURL(referenceUrl: string): ReferenceKind {
+  const normalized = referenceUrl.trim().toLowerCase().split('?')[0]?.split('#')[0] ?? '';
+  if (/\.(mp4|mov|webm|m4v|avi|mkv)$/.test(normalized)) return 'video';
+  if (/\.(mp3|wav|m4a|aac|flac|ogg)$/.test(normalized)) return 'audio';
+  return 'image';
 }
 
 async function uploadVideoReferenceFile(file: File, missingUrlMessage: string): Promise<string> {
