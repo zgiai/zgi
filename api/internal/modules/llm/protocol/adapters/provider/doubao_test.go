@@ -913,3 +913,35 @@ func TestDoubaoAdapterGetProviderInfo(t *testing.T) {
 		t.Fatalf("info.BaseURL = %q, want %q", info.BaseURL, doubaoDefaultBaseURL)
 	}
 }
+
+func TestNewAdapter_CreatesDoubaoSpeechFromSharedImplementation(t *testing.T) {
+	instance, err := adapter.NewAdapter(&adapter.AdapterConfig{
+		ProviderName: "doubao-speech",
+		APIKey:       "test-key",
+		BaseURL:      "https://openspeech.bytedance.com",
+	})
+	if err != nil {
+		t.Fatalf("NewAdapter() error = %v", err)
+	}
+	if _, ok := instance.(*DoubaoAdapter); !ok {
+		t.Fatalf("adapter type = %T, want *DoubaoAdapter", instance)
+	}
+}
+
+func TestDoubaoAudioBaseURL_UsesSpeechChannelBaseURL(t *testing.T) {
+	config := &adapter.AdapterConfig{
+		ProviderName: "doubao-speech",
+		BaseURL:      "https://speech.example.com/api/v3/",
+	}
+
+	if got, want := doubaoAudioBaseURL(config), "https://speech.example.com/api/v3"; got != want {
+		t.Fatalf("doubaoAudioBaseURL() = %q, want %q", got, want)
+	}
+	endpoint, err := resolveDoubaoAudioWebSocketEndpoint(config, doubaoTranscriptionPath)
+	if err != nil {
+		t.Fatalf("resolveDoubaoAudioWebSocketEndpoint() error = %v", err)
+	}
+	if want := "wss://speech.example.com/api/v3/sauc/bigmodel_nostream"; endpoint != want {
+		t.Fatalf("endpoint = %q, want %q", endpoint, want)
+	}
+}

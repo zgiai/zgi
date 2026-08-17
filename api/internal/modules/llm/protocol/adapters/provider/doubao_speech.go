@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	doubaoSpeechProviderName      = "doubao-speech"
 	doubaoAudioDefaultBaseURL     = "https://openspeech.bytedance.com"
 	doubaoAudioBaseURLParam       = "audio_base_url"
 	doubaoAudioAPIPrefix          = "/api/v3"
@@ -143,13 +144,15 @@ func resolveDoubaoAudioEndpoint(config *adapter.AdapterConfig, path string) stri
 }
 
 func doubaoAudioBaseURL(config *adapter.AdapterConfig) string {
-	baseURL := doubaoAudioDefaultBaseURL
 	if config != nil && config.CustomParams != nil {
 		if configured, ok := config.CustomParams[doubaoAudioBaseURLParam].(string); ok && strings.TrimSpace(configured) != "" {
-			baseURL = strings.TrimSpace(configured)
+			return strings.TrimRight(strings.TrimSpace(configured), "/")
 		}
 	}
-	return strings.TrimRight(baseURL, "/")
+	if config != nil && config.ProviderName == doubaoSpeechProviderName && strings.TrimSpace(config.BaseURL) != "" {
+		return strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
+	}
+	return doubaoAudioDefaultBaseURL
 }
 
 func doubaoAudioHeaders(config *adapter.AdapterConfig, model string) map[string]string {

@@ -17,23 +17,25 @@ import (
 )
 
 const (
-	capabilityCacheTTL         = 5 * time.Minute
-	sampledValidationSize      = 5
-	sampledValidationMinPass   = 4
-	validationModeFull         = "full"
-	validationModeSampled      = "sampled"
-	validationModeMetadataOnly = "metadata_only"
-	testMethodChat             = "chat"
-	testMethodEmbedding        = "embedding"
-	testMethodImageGeneration  = "image-gen"
-	testMethodMetadata         = "metadata"
-	testMethodMusicGeneration  = "music-gen"
-	testMethodRerank           = "rerank"
-	testMethodSpeechGeneration = "text-to-speech"
-	testMethodTranscription    = "speech-to-text"
-	testMethodVideoGeneration  = "video-gen"
-	openAICompatibleProvider   = "openai-compatible"
-	defaultImageProbeSize      = "1024x1024"
+	capabilityCacheTTL          = 5 * time.Minute
+	sampledValidationSize       = 5
+	sampledValidationMinPass    = 4
+	validationModeFull          = "full"
+	validationModeSampled       = "sampled"
+	validationModeMetadataOnly  = "metadata_only"
+	testMethodChat              = "chat"
+	testMethodEmbedding         = "embedding"
+	testMethodImageGeneration   = "image-gen"
+	testMethodMetadata          = "metadata"
+	testMethodMusicGeneration   = "music-gen"
+	testMethodRerank            = "rerank"
+	testMethodSpeechGeneration  = "text-to-speech"
+	testMethodTranscription     = "speech-to-text"
+	testMethodVideoGeneration   = "video-gen"
+	openAICompatibleProvider    = "openai-compatible"
+	doubaoChannelProvider       = "doubao"
+	doubaoSpeechChannelProvider = "doubao-speech"
+	defaultImageProbeSize       = "1024x1024"
 )
 
 type modelLookupRepository interface {
@@ -602,8 +604,24 @@ func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID
 		}
 		resolved = append(resolved, capability)
 	}
+	if err := validateDoubaoCredentialScope(spec.Name, resolved); err != nil {
+		return nil, err
+	}
 
 	return resolved, nil
+}
+
+func validateDoubaoCredentialScope(channelProvider string, capabilities []modelCapability) error {
+	for _, capability := range capabilities {
+		isSpeech := capability.UseCase == testMethodSpeechGeneration || capability.UseCase == testMethodTranscription
+		switch {
+		case channelProvider == doubaoChannelProvider && isSpeech:
+			return fmt.Errorf("model %q requires channel_provider %q", capability.Model, doubaoSpeechChannelProvider)
+		case channelProvider == doubaoSpeechChannelProvider && !isSpeech:
+			return fmt.Errorf("model %q requires channel_provider %q", capability.Model, doubaoChannelProvider)
+		}
+	}
+	return nil
 }
 
 func capabilityCacheScope(spec Spec, apiBaseURL string) string {

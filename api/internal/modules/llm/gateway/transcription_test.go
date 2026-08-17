@@ -172,7 +172,7 @@ func TestTranscribeDoesNotReportClientUploadFailureAsProviderFailure(t *testing.
 	}
 }
 
-func TestTranscribeUsesPrivateDoubaoRouteAndSettlesActualAudioDuration(t *testing.T) {
+func TestTranscribeUsesPrivateDoubaoSpeechRouteAndSettlesActualAudioDuration(t *testing.T) {
 	organizationID := uuid.New()
 	audio := bytes.Repeat([]byte{0x2a}, 3200)
 	remote := &fakeBillingProvider{checkBalanceResult: true}
@@ -189,7 +189,7 @@ func TestTranscribeUsesPrivateDoubaoRouteAndSettlesActualAudioDuration(t *testin
 	}}
 	providerAdapter := &privateTranscriptionGatewayAdapter{}
 	factory := adapter.NewDefaultAdapterFactory()
-	factory.Register("doubao", func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+	factory.Register("doubao-speech", func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
 		if config.APIKey != "test-api-key" {
 			t.Fatalf("adapter API key = %q, want decrypted private key", config.APIKey)
 		}
@@ -274,11 +274,11 @@ func newPrivateTranscriptionGatewayTestService(t *testing.T, organizationID uuid
 		ID:              uuid.New(),
 		OrganizationID:  organizationID,
 		Type:            shared.RouteTypePrivate,
-		ChannelProvider: "doubao",
+		ChannelProvider: "doubao-speech",
 		IsEnabled:       true,
 		Models:          []string{transcriptionTestModel},
 		TenantCredential: &credentialmodel.TenantCredential{
-			ChannelProvider:  "doubao",
+			ChannelProvider:  "doubao-speech",
 			APIKeyCiphertext: "ciphertext",
 			IsActive:         true,
 		},

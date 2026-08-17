@@ -1092,7 +1092,7 @@ func TestValidatorValidateModelsForCreation_AllowsMusicAndAudioModels(t *testing
 		models   []string
 	}{
 		{name: "minimax music", provider: "minimax", models: []string{"music-2.6", "music-3.0"}},
-		{name: "doubao audio", provider: "doubao", models: []string{"seed-tts-2.0", "volc.seedasr.sauc.duration"}},
+		{name: "doubao audio", provider: "doubao-speech", models: []string{"seed-tts-2.0", "volc.seedasr.sauc.duration"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			validator := NewValidator(nil, nil)
@@ -1104,6 +1104,50 @@ func TestValidatorValidateModelsForCreation_AllowsMusicAndAudioModels(t *testing
 			require.NoError(t, err)
 			require.Equal(t, test.models, result.NormalizedModels)
 			require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+		})
+	}
+}
+
+func TestValidatorValidateModelsForCreation_EnforcesDoubaoCredentialScopes(t *testing.T) {
+	modelRepo := &fakeModelLookupRepo{models: map[string]*llmmodelmodel.LLMModel{
+		"doubao-seed-2.0-lite": {
+			Model: "doubao-seed-2.0-lite", Provider: "doubao",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseTextChat)}, ChatCompletions: true,
+		},
+		"seed-tts-2.0": {
+			Model: "seed-tts-2.0", Provider: "doubao",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseTextToSpeech)}, SpeechGeneration: true,
+		},
+		"volc.seedasr.sauc.duration": {
+			Model: "volc.seedasr.sauc.duration", Provider: "doubao",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseSpeechToText)}, Transcription: true,
+		},
+	}}
+
+	for _, test := range []struct {
+		name     string
+		provider string
+		models   []string
+		wantErr  string
+	}{
+		{name: "ark accepts ark models", provider: "doubao", models: []string{"doubao-seed-2.0-lite"}},
+		{name: "ark rejects speech models", provider: "doubao", models: []string{"seed-tts-2.0"}, wantErr: `model "seed-tts-2.0" requires channel_provider "doubao-speech"`},
+		{name: "speech accepts tts and stt", provider: "doubao-speech", models: []string{"seed-tts-2.0", "volc.seedasr.sauc.duration"}},
+		{name: "speech rejects ark models", provider: "doubao-speech", models: []string{"doubao-seed-2.0-lite"}, wantErr: `model "doubao-seed-2.0-lite" requires channel_provider "doubao"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			validator := NewValidator(nil, nil)
+			validator.modelRepo = modelRepo
+
+			result, err := validator.ValidateModelsForCreation(
+				t.Context(), uuid.Nil, test.provider, "key", "", test.models,
+			)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.models, result.NormalizedModels)
 		})
 	}
 }
@@ -1120,11 +1164,11 @@ func TestValidatorTestModel_SkipsMusicAndAudioWorkspaceModels(t *testing.T) {
 			model: &llmmodelmodel.LLMModel{Model: "music-3.0", Provider: "minimax", MusicGeneration: true, SupportsStreaming: true},
 		},
 		{
-			name: "speech", provider: "doubao", useCase: llmmodelmodel.UseCaseTextToSpeech,
+			name: "speech", provider: "doubao-speech", useCase: llmmodelmodel.UseCaseTextToSpeech,
 			model: &llmmodelmodel.LLMModel{Model: "seed-tts-2.0", Provider: "doubao", SpeechGeneration: true, SupportsStreaming: true},
 		},
 		{
-			name: "transcription", provider: "doubao", useCase: llmmodelmodel.UseCaseSpeechToText,
+			name: "transcription", provider: "doubao-speech", useCase: llmmodelmodel.UseCaseSpeechToText,
 			model: &llmmodelmodel.LLMModel{Model: "volc.seedasr.sauc.duration", Provider: "doubao", Transcription: true, SupportsStreaming: true},
 		},
 	} {

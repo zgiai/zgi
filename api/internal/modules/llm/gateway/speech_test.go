@@ -195,7 +195,7 @@ func TestGenerateSpeechRejectsInvalidUTF8(t *testing.T) {
 	}
 }
 
-func TestGenerateSpeechUsesPrivateDoubaoRouteAndSettlesMeteredBilling(t *testing.T) {
+func TestGenerateSpeechUsesPrivateDoubaoSpeechRouteAndSettlesMeteredBilling(t *testing.T) {
 	organizationID := uuid.New()
 	setSpeechGatewayTestConfig(t, "")
 
@@ -206,7 +206,7 @@ func TestGenerateSpeechUsesPrivateDoubaoRouteAndSettlesMeteredBilling(t *testing
 	}}
 	providerAdapter := &privateSpeechGatewayAdapter{}
 	factory := adapter.NewDefaultAdapterFactory()
-	factory.Register("doubao", func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+	factory.Register("doubao-speech", func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
 		if config.APIKey != "test-api-key" {
 			t.Fatalf("adapter API key = %q, want decrypted private key", config.APIKey)
 		}
@@ -250,7 +250,7 @@ func TestGenerateSpeechPrivateProviderFailureRollsBackReservation(t *testing.T) 
 	providerErr := errors.New("provider failed")
 	providerAdapter := &privateSpeechGatewayAdapter{err: providerErr}
 	factory := adapter.NewDefaultAdapterFactory()
-	factory.Register("doubao", func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+	factory.Register("doubao-speech", func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
 		return providerAdapter, nil
 	})
 	local := &fakeBillingProvider{checkBalanceResult: true}
@@ -313,11 +313,11 @@ func newPrivateSpeechGatewayTestService(t *testing.T, organizationID uuid.UUID) 
 		ID:              uuid.New(),
 		OrganizationID:  organizationID,
 		Type:            shared.RouteTypePrivate,
-		ChannelProvider: "doubao",
+		ChannelProvider: "doubao-speech",
 		IsEnabled:       true,
 		Models:          []string{speechTestModel},
 		TenantCredential: &credentialmodel.TenantCredential{
-			ChannelProvider:  "doubao",
+			ChannelProvider:  "doubao-speech",
 			APIKeyCiphertext: "ciphertext",
 			IsActive:         true,
 		},
