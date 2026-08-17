@@ -172,7 +172,7 @@ export function MusicComposer({
           data-ui="music-prompt-surface"
           className="mx-4 flex min-h-0 flex-1 flex-col overflow-y-auto rounded-2xl border border-border"
         >
-          <div className="min-h-44 p-4">
+          <div className={cn('flex min-h-44 flex-col p-4', mode !== 'vocal' && 'flex-1')}>
             <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>{t('prompt')}</span>
               <div className="flex items-center gap-3">
@@ -200,7 +200,10 @@ export function MusicComposer({
                 setValidationError(null);
               }}
               placeholder={t('promptPlaceholder')}
-              className="mt-2 min-h-32 resize-none border-0 bg-transparent px-0 text-[15px] leading-6 shadow-none focus-visible:ring-0"
+              className={cn(
+                'mt-2 min-h-32 resize-none border-0 bg-transparent px-0 text-[15px] leading-6 shadow-none focus-visible:ring-0',
+                mode !== 'vocal' && '!max-h-none flex-1'
+              )}
               aria-invalid={promptLength > MAX_PROMPT_RUNES}
             />
           </div>
