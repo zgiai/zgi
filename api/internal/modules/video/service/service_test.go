@@ -58,8 +58,14 @@ func TestBuildVideoRequestKeepsImageReferenceOutOfInputVideo(t *testing.T) {
 	references := videoReferenceURLs(req)
 	videoReq := buildVideoRequest("doubao", "seedance", "prompt", req, normalizeGenerateOptions(GenerateOptions{}), "user", references)
 
-	if videoReq.ImageURL != "https://example.com/ref.png" {
-		t.Fatalf("ImageURL = %q, want image reference", videoReq.ImageURL)
+	if len(videoReq.ReferenceURLs) != 1 || videoReq.ReferenceURLs[0] != "https://example.com/ref.png" {
+		t.Fatalf("ReferenceURLs = %#v, want image reference", videoReq.ReferenceURLs)
+	}
+	if len(videoReq.ReferenceTypes) != 1 || videoReq.ReferenceTypes[0] != "image" {
+		t.Fatalf("ReferenceTypes = %#v, want image", videoReq.ReferenceTypes)
+	}
+	if videoReq.ImageURL != "" || len(videoReq.ImageURLs) != 0 {
+		t.Fatalf("legacy image references = %q/%v, want empty for omni reference", videoReq.ImageURL, videoReq.ImageURLs)
 	}
 	if videoReq.VideoURL != "" {
 		t.Fatalf("VideoURL = %q, want empty for image reference", videoReq.VideoURL)
@@ -77,8 +83,14 @@ func TestBuildVideoRequestMarksVideoReferenceAsInputVideo(t *testing.T) {
 	references := videoReferenceURLs(req)
 	videoReq := buildVideoRequest("doubao", "seedance", "prompt", req, normalizeGenerateOptions(GenerateOptions{}), "user", references)
 
-	if videoReq.VideoURL != "https://example.com/ref.mp4" {
-		t.Fatalf("VideoURL = %q, want video reference", videoReq.VideoURL)
+	if len(videoReq.ReferenceURLs) != 1 || videoReq.ReferenceURLs[0] != "https://example.com/ref.mp4" {
+		t.Fatalf("ReferenceURLs = %#v, want video reference", videoReq.ReferenceURLs)
+	}
+	if len(videoReq.ReferenceTypes) != 1 || videoReq.ReferenceTypes[0] != "video" {
+		t.Fatalf("ReferenceTypes = %#v, want video", videoReq.ReferenceTypes)
+	}
+	if videoReq.VideoURL != "" {
+		t.Fatalf("VideoURL = %q, want empty for omni reference", videoReq.VideoURL)
 	}
 	if videoReq.ImageURL != "" || len(videoReq.ImageURLs) != 0 {
 		t.Fatalf("image references = %q/%v, want empty for video reference", videoReq.ImageURL, videoReq.ImageURLs)
