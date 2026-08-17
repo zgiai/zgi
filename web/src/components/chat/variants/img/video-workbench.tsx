@@ -704,7 +704,10 @@ function VideoTaskCard({
   const status = getTaskDisplayStatus(task);
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
-  const posterUrl = useVideoPoster(status === 'succeeded' ? task.video_url : undefined);
+  const videoUrl = toDirectToolFileDeliveryUrl(
+    status === 'succeeded' ? task.video_url : undefined
+  );
+  const posterUrl = useVideoPoster(videoUrl);
   const Icon = isLoadingStatus
     ? Loader2
     : status === 'succeeded'
@@ -737,9 +740,9 @@ function VideoTaskCard({
       )}
     >
       <div className="relative h-[72px] w-[92px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-slate-800 via-slate-900 to-black shadow-sm">
-        {task.video_url && status === 'succeeded' ? (
+        {videoUrl ? (
           <video
-            src={task.video_url}
+            src={videoUrl}
             poster={posterUrl || undefined}
             muted
             playsInline
@@ -1101,7 +1104,8 @@ function TaskDetailSheet({
   const [downloadingTaskId, setDownloadingTaskId] = React.useState<string | null>(null);
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
   const isDownloadingVideo = Boolean(task?.task_id && downloadingTaskId === task.task_id);
-  const posterUrl = useVideoPoster(task?.video_url);
+  const videoUrl = toDirectToolFileDeliveryUrl(task?.video_url);
+  const posterUrl = useVideoPoster(videoUrl);
   const referenceMaterials = React.useMemo(
     () =>
       getTaskReferenceMaterials(
@@ -1147,13 +1151,13 @@ function TaskDetailSheet({
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               <div className="space-y-4">
-                {task.video_url ? (
+                {videoUrl ? (
                   <video
                     className="aspect-video w-full rounded-lg border border-border bg-black object-contain"
                     controls
                     preload="auto"
                     poster={posterUrl || undefined}
-                    src={task.video_url}
+                    src={videoUrl}
                   />
                 ) : (
                   <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border bg-[#030711]">
@@ -1413,14 +1417,16 @@ function useVideoPoster(url: string | undefined) {
 function preloadTaskMedia(task: VideoRuntimeTask, options: { eagerVideo?: boolean } = {}) {
   if (typeof window === 'undefined') return;
 
-  preloadVideo(task.video_url, options.eagerVideo ? 'auto' : 'metadata');
-  if (options.eagerVideo) void ensureVideoPoster(task.video_url);
+  const videoUrl = toDirectToolFileDeliveryUrl(task.video_url);
+  preloadVideo(videoUrl, options.eagerVideo ? 'auto' : 'metadata');
+  if (options.eagerVideo) void ensureVideoPoster(videoUrl);
   getTaskReferenceMaterials(task, '', '').forEach(material => {
     if (material.kind === 'image') {
       preloadImage(material.url);
     } else if (material.kind === 'video') {
-      preloadVideo(material.url, options.eagerVideo ? 'auto' : 'metadata');
-      if (options.eagerVideo) void ensureVideoPoster(material.url);
+      const materialVideoUrl = toDirectToolFileDeliveryUrl(material.url);
+      preloadVideo(materialVideoUrl, options.eagerVideo ? 'auto' : 'metadata');
+      if (options.eagerVideo) void ensureVideoPoster(materialVideoUrl);
     }
   });
 }
@@ -1507,6 +1513,29 @@ function ensureVideoPoster(url: string | undefined): Promise<string | null> {
 
   videoPosterPromises.set(normalizedUrl, posterPromise);
   return posterPromise;
+}
+
+function toDirectToolFileDeliveryUrl(url: string | undefined) {
+  const normalizedUrl = url?.trim();
+  if (!normalizedUrl) return '';
+
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const parsedUrl = new URL(normalizedUrl, base);
+    if (!parsedUrl.pathname.startsWith('/console/api/files/tools/')) {
+      return normalizedUrl;
+    }
+    if (parsedUrl.searchParams.get('download')) {
+      return normalizedUrl;
+    }
+    parsedUrl.searchParams.set('delivery', 'direct');
+    if (!/^https?:\/\//i.test(normalizedUrl) && !normalizedUrl.startsWith('//')) {
+      return `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+    }
+    return parsedUrl.toString();
+  } catch {
+    return normalizedUrl;
+  }
 }
 
 function normalizePreloadUrl(url: string | undefined) {
