@@ -2007,11 +2007,24 @@ function supportsVideoAudioGeneration(videoConfig: Record<string, unknown> | nul
 }
 
 function getReferenceModeOptions(videoConfig: Record<string, unknown> | null): string[] {
-  return getStringOptions(
+  const rawModes = getStringOptions(
     videoConfig,
-    ['reference_modes', 'referenceModes'],
-    [...VIDEO_REFERENCE_MODES]
+    ['reference_modes', 'referenceModes', 'modes'],
+    []
   );
+  const normalizedModes = rawModes
+    .map(mode => normalizeReferenceModeOption(mode))
+    .filter(Boolean);
+  const uniqueModes = Array.from(new Set(normalizedModes));
+  return uniqueModes.length > 0 ? uniqueModes : [...VIDEO_REFERENCE_MODES];
+}
+
+function normalizeReferenceModeOption(mode: string) {
+  const normalizedMode = mode.trim().toLowerCase();
+  if (!normalizedMode) return '';
+  if (normalizedMode === 'omni_reference' || normalizedMode === 'auto') return 'auto';
+  if (normalizedMode === VIDEO_FRAME_REFERENCE_MODE) return VIDEO_FRAME_REFERENCE_MODE;
+  return normalizedMode;
 }
 
 function getAllowedReferenceKinds(
@@ -2115,18 +2128,42 @@ function getModelVideoConfig(model?: ModelItem): Record<string, unknown> | null 
     parameters?: unknown;
   };
 
-  return (
-    getNestedRecord(maybeModel.video, []) ??
-    getNestedRecord(maybeModel.capabilities, ['video']) ??
-    getNestedRecord(maybeModel.default_parameters, ['capabilities', 'video']) ??
-    getNestedRecord(maybeModel.default_parameters, ['video']) ??
-    getNestedRecord(maybeModel.config, ['video']) ??
-    getNestedRecord(maybeModel.config_parameters, ['video']) ??
-    getNestedRecord(maybeModel.parameters_metadata, ['video']) ??
-    getNestedRecord(maybeModel.supported_parameters, ['video']) ??
-    getNestedRecord(maybeModel.features, ['video']) ??
-    getNestedRecord(maybeModel.parameters, ['video'])
-  );
+  return mergeVideoConfigRecords([
+    getNestedRecord(maybeModel.default_parameters, ['capabilities', 'video']),
+    getNestedRecord(maybeModel.default_parameters, ['video']),
+    getNestedRecord(maybeModel.video, []),
+    getNestedRecord(maybeModel.capabilities, ['video']),
+    getNestedRecord(maybeModel.config, ['video']),
+    getNestedRecord(maybeModel.config_parameters, ['video']),
+    getNestedRecord(maybeModel.parameters_metadata, ['video']),
+    getNestedRecord(maybeModel.supported_parameters, ['video']),
+    getNestedRecord(maybeModel.features, ['video']),
+    getNestedRecord(maybeModel.parameters, ['video']),
+  ]);
+}
+
+function mergeVideoConfigRecords(
+  records: Array<Record<string, unknown> | null>
+): Record<string, unknown> | null {
+  const merged: Record<string, unknown> = {};
+  let hasRecord = false;
+
+  records.forEach(record => {
+    if (!record) return;
+    hasRecord = true;
+    Object.entries(record).forEach(([key, value]) => {
+      const existingValue = merged[key];
+      if (isPlainRecord(existingValue) && isPlainRecord(value)) {
+        merged[key] = { ...existingValue, ...value };
+      } else if (Array.isArray(existingValue) && Array.isArray(value)) {
+        merged[key] = Array.from(new Set([...existingValue, ...value]));
+      } else {
+        merged[key] = value;
+      }
+    });
+  });
+
+  return hasRecord ? merged : null;
 }
 
 function getNestedValue(value: unknown, path: string[]): unknown {
@@ -2144,9 +2181,13 @@ function getNestedRecord(value: unknown, path: string[]): Record<string, unknown
     if (!current || typeof current !== 'object') return null;
     current = (current as Record<string, unknown>)[key];
   }
-  return current && typeof current === 'object' && !Array.isArray(current)
+  return isPlainRecord(current)
     ? (current as Record<string, unknown>)
     : null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function toPositiveNumber(value: unknown): number {
