@@ -35,8 +35,8 @@ function loadTypeScriptModule(relativePath, mocks = new Map()) {
   }
 }
 
-function renderMusicComposer(mutation) {
-  const stateValues = ['instrumental', 'A quiet piano piece', '', 1, null, false];
+function renderMusicComposer(mutation, mode = 'instrumental') {
+  const stateValues = [mode, 'A quiet piano piece', '', 1, null, false];
   let stateIndex = 0;
   const react = {
     useEffect() {},
@@ -223,6 +223,28 @@ try {
     },
   });
   assert.ok(composerForm, 'music composer must render a form');
+  const autoLyricsForm = renderMusicComposer(
+    { error: null, isPending: false, reset() {}, mutateAsync() {} },
+    'auto_lyrics'
+  );
+  for (const [mode, form] of [
+    ['instrumental', composerForm],
+    ['auto lyrics', autoLyricsForm],
+  ]) {
+    const promptSurface = form.props.children[1];
+    const promptSection = promptSurface.props.children[0];
+    const promptTextarea = promptSection.props.children[1];
+    assert.match(
+      promptSection.props.className,
+      /\bflex-1\b/,
+      `${mode} prompt section must fill the visible prompt surface`
+    );
+    assert.match(
+      promptTextarea.props.className,
+      /\bmax-h-none\b.*\bflex-1\b/,
+      `${mode} textarea must fill the prompt section without the shared height cap`
+    );
+  }
   const submitEvent = { preventDefault() {} };
   const pendingSubmission = composerForm.props.onSubmit(submitEvent);
   const ignoredSubmission = composerForm.props.onSubmit(submitEvent);
