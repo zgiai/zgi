@@ -470,14 +470,38 @@ func doubaoArkVideoContent(request *adapter.VideoRequest) []map[string]any {
 	if prompt := strings.TrimSpace(request.Prompt); prompt != "" {
 		content = append(content, map[string]any{"type": doubaoVideoContentTypeText, "text": prompt})
 	}
-	if firstFrameURL := strings.TrimSpace(request.FirstFrameURL); firstFrameURL != "" {
+	firstFrameURL := strings.TrimSpace(request.FirstFrameURL)
+	lastFrameURL := strings.TrimSpace(request.LastFrameURL)
+	hasFrameReference := firstFrameURL != "" || lastFrameURL != ""
+	if firstFrameURL != "" {
 		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeImageURL, firstFrameURL, doubaoVideoContentRoleFirstFrame))
+	}
+	if !hasFrameReference {
+		content = append(content, doubaoReferenceMediaContent(request)...)
+	}
+	if lastFrameURL != "" {
+		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeImageURL, lastFrameURL, doubaoVideoContentRoleLastFrame))
+	}
+	return content
+}
+
+func doubaoReferenceMediaContent(request *adapter.VideoRequest) []map[string]any {
+	content := make([]map[string]any, 0, len(request.ReferenceURLs)+len(request.ImageURLs)+2)
+	for index, referenceURL := range request.ReferenceURLs {
+		switch doubaoReferenceKindAt(request.ReferenceTypes, index, referenceURL) {
+		case "video":
+			content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeVideoURL, referenceURL, doubaoVideoContentRoleReferenceVideo))
+		case "audio":
+			content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeAudioURL, referenceURL, doubaoVideoContentRoleReferenceAudio))
+		default:
+			content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeImageURL, referenceURL, doubaoVideoContentRoleReferenceImage))
+		}
+	}
+	if len(request.ReferenceURLs) > 0 {
+		return content
 	}
 	for _, imageURL := range doubaoReferenceImageURLs(request) {
 		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeImageURL, imageURL, doubaoVideoContentRoleReferenceImage))
-	}
-	if lastFrameURL := strings.TrimSpace(request.LastFrameURL); lastFrameURL != "" {
-		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeImageURL, lastFrameURL, doubaoVideoContentRoleLastFrame))
 	}
 	if videoURL := strings.TrimSpace(request.VideoURL); videoURL != "" {
 		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeVideoURL, videoURL, doubaoVideoContentRoleReferenceVideo))
@@ -486,6 +510,43 @@ func doubaoArkVideoContent(request *adapter.VideoRequest) []map[string]any {
 		content = append(content, doubaoArkVideoURLContent(doubaoVideoContentTypeAudioURL, audioURL, doubaoVideoContentRoleReferenceAudio))
 	}
 	return content
+}
+
+func doubaoReferenceKindAt(referenceTypes []string, index int, referenceURL string) string {
+	if index >= 0 && index < len(referenceTypes) {
+		switch strings.ToLower(strings.TrimSpace(referenceTypes[index])) {
+		case "image", "video", "audio":
+			return strings.ToLower(strings.TrimSpace(referenceTypes[index]))
+		}
+	}
+	return doubaoReferenceKindFromURL(referenceURL)
+}
+
+func doubaoReferenceKindFromURL(referenceURL string) string {
+	value := strings.ToLower(strings.TrimSpace(referenceURL))
+	if value == "" {
+		return "image"
+	}
+	value = strings.Split(value, "?")[0]
+	value = strings.Split(value, "#")[0]
+	switch {
+	case strings.HasSuffix(value, ".mp4"),
+		strings.HasSuffix(value, ".mov"),
+		strings.HasSuffix(value, ".webm"),
+		strings.HasSuffix(value, ".m4v"),
+		strings.HasSuffix(value, ".avi"),
+		strings.HasSuffix(value, ".mkv"):
+		return "video"
+	case strings.HasSuffix(value, ".mp3"),
+		strings.HasSuffix(value, ".wav"),
+		strings.HasSuffix(value, ".m4a"),
+		strings.HasSuffix(value, ".aac"),
+		strings.HasSuffix(value, ".flac"),
+		strings.HasSuffix(value, ".ogg"):
+		return "audio"
+	default:
+		return "image"
+	}
 }
 
 func doubaoReferenceImageURLs(request *adapter.VideoRequest) []string {

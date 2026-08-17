@@ -25,6 +25,12 @@ func buildOpenAICompatibleVideoPayload(request *adapter.VideoRequest) map[string
 	if len(request.ImageURLs) > 0 {
 		payload["image_urls"] = request.ImageURLs
 	}
+	if len(request.ReferenceURLs) > 0 {
+		payload["reference_urls"] = request.ReferenceURLs
+	}
+	if len(request.ReferenceTypes) > 0 {
+		payload["reference_types"] = request.ReferenceTypes
+	}
 	if strings.TrimSpace(request.FirstFrameURL) != "" {
 		payload["first_frame_url"] = request.FirstFrameURL
 	}

@@ -589,21 +589,9 @@ func buildVideoRequest(provider, modelName, prompt string, req GenerateRequest, 
 	videoReq.LastFrameURL = strings.TrimSpace(req.LastFrameURL)
 	if len(referenceURLs) > 0 {
 		for index, referenceURL := range referenceURLs {
-			switch referenceKindAt(req.ReferenceTypes, index, referenceURL) {
-			case "video":
-				if strings.TrimSpace(videoReq.VideoURL) == "" {
-					videoReq.VideoURL = referenceURL
-				}
-			case "audio":
-				if strings.TrimSpace(videoReq.AudioURL) == "" {
-					videoReq.AudioURL = referenceURL
-				}
-			default:
-				if strings.TrimSpace(videoReq.ImageURL) == "" {
-					videoReq.ImageURL = referenceURL
-				}
-				videoReq.ImageURLs = append(videoReq.ImageURLs, referenceURL)
-			}
+			kind := referenceKindAt(req.ReferenceTypes, index, referenceURL)
+			videoReq.ReferenceURLs = append(videoReq.ReferenceURLs, referenceURL)
+			videoReq.ReferenceTypes = append(videoReq.ReferenceTypes, kind)
 		}
 	}
 	if options.Voice != "" {
@@ -615,6 +603,13 @@ func buildVideoRequest(provider, modelName, prompt string, req GenerateRequest, 
 func hasVideoInputReference(req GenerateRequest, videoReq *adapter.VideoRequest, referenceURLs []string) bool {
 	if videoReq != nil && strings.TrimSpace(videoReq.VideoURL) != "" {
 		return true
+	}
+	if videoReq != nil {
+		for index, referenceURL := range videoReq.ReferenceURLs {
+			if referenceKindAt(videoReq.ReferenceTypes, index, referenceURL) == "video" {
+				return true
+			}
+		}
 	}
 	for index, referenceURL := range referenceURLs {
 		if referenceKindAt(req.ReferenceTypes, index, referenceURL) == "video" {

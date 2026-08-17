@@ -536,6 +536,8 @@ type VideoRequest struct {
 	Prompt         string   `json:"prompt,omitempty"`
 	ImageURL       string   `json:"image_url,omitempty"`
 	ImageURLs      []string `json:"image_urls,omitempty"`
+	ReferenceURLs  []string `json:"reference_urls,omitempty"`
+	ReferenceTypes []string `json:"reference_types,omitempty"`
 	FirstFrameURL  string   `json:"first_frame_url,omitempty"`
 	LastFrameURL   string   `json:"last_frame_url,omitempty"`
 	VideoURL       string   `json:"video_url,omitempty"`
@@ -568,8 +570,8 @@ func (r *VideoRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	for _, key := range []string{
-		"model", "prompt", "image_url", "image_urls", "first_frame_url", "last_frame_url", "video_url",
-		"audio_url", "negative_prompt", "size", "ratio", "resolution", "duration", "n",
+		"model", "prompt", "image_url", "image_urls", "reference_urls", "reference_types",
+		"first_frame_url", "last_frame_url", "video_url", "audio_url", "negative_prompt", "size", "ratio", "resolution", "duration", "n",
 		"generate_audio", "prompt_extend", "watermark", "callback_url", "user",
 	} {
 		delete(raw, key)

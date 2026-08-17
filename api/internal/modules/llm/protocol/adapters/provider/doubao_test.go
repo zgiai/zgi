@@ -494,7 +494,7 @@ func TestDoubaoAdapterCreateVideo_UsesArkVideoTasks(t *testing.T) {
 	resp, err := a.CreateVideo(context.Background(), &adapter.VideoRequest{
 		Model:         "doubao-seedance-2-0-mini-260615",
 		Prompt:        "a bear by the sea",
-		ImageURL:      "https://cdn.example.com/first.png",
+		FirstFrameURL: "https://cdn.example.com/first.png",
 		LastFrameURL:  "https://cdn.example.com/last.png",
 		Ratio:         "1:1",
 		Resolution:    "720p",
@@ -527,8 +527,80 @@ func TestDoubaoAdapterCreateVideo_UsesArkVideoTasks(t *testing.T) {
 	if !ok || len(content) != 3 {
 		t.Fatalf("payload.content = %#v, want text plus two image entries", gotPayload["content"])
 	}
+	if got := content[1].(map[string]any)["role"]; got != doubaoVideoContentRoleFirstFrame {
+		t.Fatalf("first image role = %#v, want first_frame", got)
+	}
+	if got := content[2].(map[string]any)["role"]; got != doubaoVideoContentRoleLastFrame {
+		t.Fatalf("last image role = %#v, want last_frame", got)
+	}
 	if resp.TaskID != "task_video_123" || resp.Status != "running" {
 		t.Fatalf("response = %#v, want task id and running status", resp)
+	}
+}
+
+func TestDoubaoAdapterCreateVideo_UsesReferenceMediaRoles(t *testing.T) {
+	t.Helper()
+
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"task_video_123","status":"running"}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	duration := 5
+	_, err = a.CreateVideo(context.Background(), &adapter.VideoRequest{
+		Model:          "doubao-seedance-2-0-260128",
+		Prompt:         "bamboo bells",
+		ReferenceURLs:  []string{"https://cdn.example.com/bamboo.png", "https://cdn.example.com/bell.mp3"},
+		ReferenceTypes: []string{"image", "audio"},
+		Duration:       &duration,
+	})
+	if err != nil {
+		t.Fatalf("CreateVideo() error = %v", err)
+	}
+
+	content, ok := gotPayload["content"].([]any)
+	if !ok || len(content) != 3 {
+		t.Fatalf("payload.content = %#v, want text plus reference image/audio", gotPayload["content"])
+	}
+	if got := content[1].(map[string]any)["role"]; got != doubaoVideoContentRoleReferenceImage {
+		t.Fatalf("image role = %#v, want reference_image", got)
+	}
+	if got := content[2].(map[string]any)["role"]; got != doubaoVideoContentRoleReferenceAudio {
+		t.Fatalf("audio role = %#v, want reference_audio", got)
+	}
+}
+
+func TestBuildOpenAICompatibleVideoPayload_ForwardsReferenceMedia(t *testing.T) {
+	payload := buildOpenAICompatibleVideoPayload(&adapter.VideoRequest{
+		Model:          "video-model",
+		Prompt:         "prompt",
+		ReferenceURLs:  []string{"https://cdn.example.com/ref.png", "https://cdn.example.com/ref.mp3"},
+		ReferenceTypes: []string{"image", "audio"},
+	})
+
+	if _, exists := payload["image_urls"]; exists {
+		t.Fatalf("payload.image_urls = %#v, want omitted for omni references", payload["image_urls"])
+	}
+	urls, ok := payload["reference_urls"].([]string)
+	if !ok || len(urls) != 2 {
+		t.Fatalf("payload.reference_urls = %#v, want two reference urls", payload["reference_urls"])
+	}
+	types, ok := payload["reference_types"].([]string)
+	if !ok || len(types) != 2 || types[0] != "image" || types[1] != "audio" {
+		t.Fatalf("payload.reference_types = %#v, want image/audio", payload["reference_types"])
 	}
 }
 

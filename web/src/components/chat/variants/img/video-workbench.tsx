@@ -301,10 +301,14 @@ export function VideoWorkbench() {
     submitClientRequestIdRef.current = clientRequestId;
     setIsSubmitting(true);
     try {
+      const isFrameReferenceMode = effectiveReferenceMode === VIDEO_FRAME_REFERENCE_MODE;
+      const referenceFilesToUpload = isFrameReferenceMode
+        ? referenceFiles.filter(referenceFile => referenceFile.kind === 'image')
+        : referenceFiles;
       const uploadedReferences =
-        referenceFiles.length > 0
+        referenceFilesToUpload.length > 0
           ? await Promise.all(
-              referenceFiles.map(referenceFile =>
+              referenceFilesToUpload.map(referenceFile =>
                 uploadVideoReferenceFile(
                   referenceFile.file,
                   t('chat.videoWorkbench.referenceUploadNoUrl')
@@ -312,7 +316,6 @@ export function VideoWorkbench() {
               )
             )
           : [];
-      const isFrameReferenceMode = effectiveReferenceMode === VIDEO_FRAME_REFERENCE_MODE;
       const frameImageReferences = isFrameReferenceMode
         ? uploadedReferences.filter(reference => reference.kind === 'image')
         : [];
@@ -332,8 +335,6 @@ export function VideoWorkbench() {
               ...(frameImageReferences[1]?.url
                 ? { last_frame_url: frameImageReferences[1].url }
                 : {}),
-              ...(referenceUrls.length > 0 ? { reference_urls: referenceUrls } : {}),
-              ...(referenceTypes.length > 0 ? { reference_types: referenceTypes } : {}),
             }
           : {
               ...(referenceUrls[0] ? { reference_url: referenceUrls[0] } : {}),
@@ -888,6 +889,7 @@ function ComposerPanel({
   const [isConfirmSubmitting, setIsConfirmSubmitting] = React.useState(false);
   const confirmSubmitRef = React.useRef(false);
   const effectiveGenerating = isGenerating || isConfirmSubmitting;
+  const effectiveReferenceMode = getEffectiveReferenceMode(settings.referenceMode, generationOptions);
   const submitDisabled =
     !prompt.trim() || !selectedModel.provider || !selectedModel.model || effectiveGenerating;
 
@@ -911,7 +913,7 @@ function ComposerPanel({
           <ReferenceMaterialButton
             allowedKinds={allowedReferenceKinds}
             maxFiles={maxReferenceFiles}
-            mode={settings.referenceMode}
+            mode={effectiveReferenceMode}
             files={referenceFiles}
             onFilesSelected={files =>
               onReferenceFilesChange(prev => {
@@ -962,7 +964,18 @@ function ComposerPanel({
                 [VIDEO_FRAME_REFERENCE_MODE]: t('chat.videoWorkbench.referenceModeFirstLastFrame'),
               }}
               menuHint={t('chat.videoWorkbench.referenceModePriceHintShort')}
-              onChange={referenceMode => onSettingsChange({ ...settings, referenceMode })}
+              onChange={referenceMode => {
+                onSettingsChange({ ...settings, referenceMode });
+                if (referenceMode === VIDEO_FRAME_REFERENCE_MODE) {
+                  onReferenceFilesChange(prev => {
+                    const next = prev.filter(file => file.kind === 'image');
+                    prev.forEach(file => {
+                      if (!next.includes(file)) URL.revokeObjectURL(file.previewUrl);
+                    });
+                    return next;
+                  });
+                }
+              }}
             />
           ) : null}
           {generationOptions.audioModes.length > 1 ? (
