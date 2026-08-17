@@ -10,9 +10,8 @@ import (
 
 const contextBranchPageSize = 100
 
-// loadedContextState is only the bootstrap history for a new Agent run. Run
-// execution state and compaction checkpoints live in contextmgr and are keyed
-// by agent_run_id rather than database message boundaries.
+// loadedContextState contains the database-backed bootstrap history used to
+// construct a new Agent run.
 type loadedContextState struct {
 	RawMessages []*runtimemodel.Message
 }

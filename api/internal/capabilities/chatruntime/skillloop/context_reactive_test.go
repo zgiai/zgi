@@ -20,7 +20,7 @@ func TestRunModelToolRoundReactivelyCompactsAndRetriesPromptTooLongOnce(t *testi
 		MaxInputTokens:         128_000,
 		MaxOutputTokens:        8_000,
 		TailMinTextRounds:      1,
-	}, compactor, nil, nil, nil)
+	}, compactor, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,20 +59,20 @@ func TestRunModelToolRoundReactivelyCompactsAndRetriesPromptTooLongOnce(t *testi
 		t.Fatalf("prompt-too-long retry advanced API rounds more than once: next_round=%d", state.NextRound)
 	}
 	if state := manager.State(); state.LastUsage == nil || state.LastUsage.PromptTokens != 300 {
-		t.Fatalf("checkpoint usage must contain only main-model usage: %#v", state.LastUsage)
+		t.Fatalf("context state usage must contain only main-model usage: %#v", state.LastUsage)
 	}
 	if result.usage == nil || result.usage.PromptTokens != 400 || result.usage.TotalTokens != 470 {
 		t.Fatalf("returned usage must include compaction billing: %#v", result.usage)
 	}
 }
 
-func TestCheckpointTerminalToolBatchCompletesEveryToolCall(t *testing.T) {
+func TestTerminalToolBatchCompletesEveryToolCall(t *testing.T) {
 	manager, err := contextmgr.New(contextmgr.Config{
 		AgentRunID:             "terminal-tool-batch",
 		ConfiguredAgentWindowK: 64,
 		ModelContextWindow:     128_000,
 		MaxOutputTokens:        8_000,
-	}, nil, nil, nil, nil)
+	}, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,10 +95,10 @@ func TestCheckpointTerminalToolBatchCompletesEveryToolCall(t *testing.T) {
 	}
 	state := manager.State()
 	if len(state.Messages) != 4 || state.Messages[2].ToolCallID != "final" || state.Messages[3].ToolCallID != "sibling" {
-		t.Fatalf("terminal batch checkpoint = %#v", state.Messages)
+		t.Fatalf("terminal batch state = %#v", state.Messages)
 	}
 	if state.Messages[1].ReasoningContent != "" {
-		t.Fatalf("terminal assistant reasoning was checkpointed: %q", state.Messages[1].ReasoningContent)
+		t.Fatalf("terminal assistant reasoning was retained: %q", state.Messages[1].ReasoningContent)
 	}
 	if _, _, err := manager.PrepareBeforeModelCall(context.Background(), &adapter.ChatRequest{Model: "gpt-5", Messages: state.Messages}); err != nil {
 		t.Fatalf("terminal batch left invalid tool pairing: %v", err)
@@ -113,7 +113,7 @@ func TestRunModelToolRoundReturnsContextExhaustedAfterReactiveRetryFails(t *test
 		MaxInputTokens:         128_000,
 		MaxOutputTokens:        8_000,
 		TailMinTextRounds:      1,
-	}, &reactiveTestCompactor{}, nil, nil, nil)
+	}, &reactiveTestCompactor{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

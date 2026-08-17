@@ -1108,9 +1108,8 @@ func ClientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 }
 
 // RedactPrivateContextMetadata returns a detached metadata copy before it
-// crosses an HTTP or SSE boundary. Agent context checkpoints remain in the
-// runtime store, while the durable turn transcript remains private DB metadata
-// used only to reconstruct later model requests.
+// crosses an HTTP or SSE boundary. The durable turn transcript remains private
+// DB metadata used only to reconstruct later model requests.
 func RedactPrivateContextMetadata(source map[string]interface{}) map[string]interface{} {
 	metadata := copyStringAnyMap(source)
 	delete(metadata, agentTranscriptMetadataKey)

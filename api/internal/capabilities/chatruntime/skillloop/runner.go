@@ -1958,7 +1958,7 @@ func (r *Runner) checkpointContext(ctx context.Context, messages []adapter.Messa
 	if r == nil || r.ContextManager == nil {
 		return nil
 	}
-	return r.ContextManager.ReplaceMessagesAndCheckpoint(ctx, messages)
+	return r.ContextManager.ReplaceMessages(ctx, messages)
 }
 
 func (r *Runner) retryAfterPromptTooLong(

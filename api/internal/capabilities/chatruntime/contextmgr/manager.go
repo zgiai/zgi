@@ -22,26 +22,23 @@ type Manager struct {
 	config       Config
 	estimator    *tokenestimate.Estimator
 	compactor    Compactor
-	checkpoint   CheckpointStore
 	toolStore    ToolResultStore
 	observer     RequestObserver
 	state        AgentContextState
 	pendingUsage *adapter.Usage
-	restored     bool
 }
 
-func New(config Config, compactor Compactor, checkpoint CheckpointStore, toolStore ToolResultStore, observer RequestObserver) (*Manager, error) {
+func New(config Config, compactor Compactor, toolStore ToolResultStore, observer RequestObserver) (*Manager, error) {
 	normalized, err := normalizeConfig(config)
 	if err != nil {
 		return nil, err
 	}
 	manager := &Manager{
-		config:     normalized,
-		estimator:  tokenestimate.NewEstimator(),
-		compactor:  compactor,
-		checkpoint: checkpoint,
-		toolStore:  toolStore,
-		observer:   observer,
+		config:    normalized,
+		estimator: tokenestimate.NewEstimator(),
+		compactor: compactor,
+		toolStore: toolStore,
+		observer:  observer,
 		state: AgentContextState{
 			SchemaVersion:       1,
 			AgentRunID:          strings.TrimSpace(normalized.AgentRunID),
@@ -54,19 +51,6 @@ func New(config Config, compactor Compactor, checkpoint CheckpointStore, toolSto
 	if manager.state.AgentRunID == "" {
 		return nil, fmt.Errorf("agent run id is required")
 	}
-	if checkpoint != nil {
-		loaded, loadErr := checkpoint.Load(context.Background(), manager.state.AgentRunID)
-		if loadErr != nil {
-			return nil, fmt.Errorf("load agent context checkpoint: %w", loadErr)
-		}
-		if loaded != nil {
-			manager.state = cloneState(*loaded)
-			manager.restored = true
-			if manager.state.ContentReplacements == nil {
-				manager.state.ContentReplacements = map[string]ContentReplacement{}
-			}
-		}
-	}
 	return manager, nil
 }
 
@@ -78,10 +62,6 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	defer m.mu.Unlock()
 
 	prepared := cloneRequest(request)
-	if m.restored && len(m.state.Messages) > 0 {
-		prepared.Messages = mergeRestoredMessages(m.state.Messages, prepared.Messages)
-		m.restored = false
-	}
 	prepared.Messages = adapter.NormalizeSystemMessages(prepared.Messages)
 	round := m.state.NextRound
 	if round <= 0 {
@@ -210,9 +190,6 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	decision.ConsecutiveCompactionFailures = m.state.Compaction.ConsecutiveFailures
 	if estimate.Tokens > budget.HardLimit {
 		m.state.Messages = cloneMessages(prepared.Messages)
-		if checkpointErr := m.saveCheckpoint(ctx); checkpointErr != nil {
-			return nil, decision, checkpointErr
-		}
 		if finalRecoveryErr != nil {
 			return nil, decision, fmt.Errorf("%w: final recovery compaction failed: %v; prompt=%d hard_limit=%d", ErrContextExhausted, finalRecoveryErr, estimate.Tokens, budget.HardLimit)
 		}
@@ -220,9 +197,6 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	}
 
 	m.state.Messages = cloneMessages(prepared.Messages)
-	if err := m.saveCheckpoint(ctx); err != nil {
-		return nil, decision, err
-	}
 	return prepared, decision, nil
 }
 
@@ -265,13 +239,10 @@ func (m *Manager) PrepareReactiveCompact(ctx context.Context, request *adapter.C
 	m.state.Compaction.ConsecutiveFailures = 0
 	m.state.Compaction.LastFailure = ""
 	m.state.Compaction.LastCompactedAt = time.Now().UTC()
-	if err := m.saveCheckpoint(ctx); err != nil {
-		return nil, decision, err
-	}
 	return compacted, decision, nil
 }
 
-func (m *Manager) ObserveModelResponse(ctx context.Context, message adapter.Message, usage *adapter.Usage) error {
+func (m *Manager) ObserveModelResponse(_ context.Context, message adapter.Message, usage *adapter.Usage) error {
 	if m == nil {
 		return nil
 	}
@@ -291,7 +262,7 @@ func (m *Manager) ObserveModelResponse(ctx context.Context, message adapter.Mess
 		cloned := *usage
 		m.state.LastUsage = &cloned
 	}
-	return m.saveCheckpoint(ctx)
+	return nil
 }
 
 func (m *Manager) ConsumeCompactionUsage() *adapter.Usage {
@@ -309,7 +280,7 @@ func (m *Manager) ConsumeCompactionUsage() *adapter.Usage {
 	return &cloned
 }
 
-func (m *Manager) ReplaceMessagesAndCheckpoint(ctx context.Context, messages []adapter.Message) error {
+func (m *Manager) ReplaceMessages(_ context.Context, messages []adapter.Message) error {
 	if m == nil {
 		return nil
 	}
@@ -318,7 +289,7 @@ func (m *Manager) ReplaceMessagesAndCheckpoint(ctx context.Context, messages []a
 	m.appendNewTurnToolMessages(messages)
 	m.syncTurnTranscriptMessages(messages)
 	m.state.Messages = cloneMessages(messages)
-	return m.saveCheckpoint(ctx)
+	return nil
 }
 
 // TurnTranscript returns the model-protocol messages produced by this run.
@@ -966,13 +937,8 @@ func (m *Manager) semanticCompact(ctx context.Context, request *adapter.ChatRequ
 		compactedThrough = max(compactedThrough, m.state.Summary.CompactedThroughRound)
 	}
 	newSummary := &ContextSummary{Content: contentString(summaryMessage.Content), CompactedThroughRound: compactedThrough, CreatedAt: time.Now().UTC()}
-	previousState := cloneState(m.state)
 	m.state.Messages = cloneMessages(candidate.Messages)
 	m.state.Summary = newSummary
-	if err := m.saveCheckpoint(ctx); err != nil {
-		m.state = previousState
-		return nil, nil, decision, fmt.Errorf("checkpoint compacted context: %w", err)
-	}
 	decision.Action = compactDecision.Action
 	decision.LossyRecoveryDroppedRounds = lossyDroppedRounds
 	decision.AfterTokens = candidateEstimate.Tokens
@@ -1094,17 +1060,6 @@ func (m *Manager) requestTokenClasses(request *adapter.ChatRequest) (int, int) {
 	return fixedTokens, max(0, fullTokens-fixedTokens)
 }
 
-func (m *Manager) saveCheckpoint(ctx context.Context) error {
-	if m.checkpoint == nil {
-		return nil
-	}
-	m.state.LastCheckpointAt = time.Now().UTC()
-	if err := m.checkpoint.Save(ctx, cloneState(m.state)); err != nil {
-		return fmt.Errorf("save agent context checkpoint: %w", err)
-	}
-	return nil
-}
-
 func cloneState(state AgentContextState) AgentContextState {
 	state.Messages = cloneMessages(state.Messages)
 	state.TurnTranscript = cloneMessages(state.TurnTranscript)
@@ -1149,31 +1104,6 @@ func truncateRunes(value string, limit int) string {
 	}
 	runes := []rune(value)
 	return string(runes[:limit]) + "\n...[truncated]"
-}
-
-func mergeRestoredMessages(saved []adapter.Message, incoming []adapter.Message) []adapter.Message {
-	systems, _ := splitSystemMessages(incoming)
-	_, savedDialogue := splitSystemMessages(saved)
-	merged := append(cloneMessages(systems), cloneMessages(savedDialogue)...)
-	for index := len(incoming) - 1; index >= 0; index-- {
-		message := incoming[index]
-		if !strings.EqualFold(strings.TrimSpace(message.Role), "user") {
-			continue
-		}
-		content := contentString(message.Content)
-		found := false
-		for _, existing := range savedDialogue {
-			if strings.EqualFold(strings.TrimSpace(existing.Role), "user") && contentString(existing.Content) == content {
-				found = true
-				break
-			}
-		}
-		if !found {
-			merged = append(merged, cloneMessage(message))
-		}
-		break
-	}
-	return merged
 }
 
 func mergeUsage(left *adapter.Usage, right *adapter.Usage) *adapter.Usage {

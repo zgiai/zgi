@@ -136,7 +136,6 @@ type AgentContextState struct {
 	EstimatorScale      float64                       `json:"estimator_scale"`
 	Compaction          CompactionTracking            `json:"compaction"`
 	CreatedAt           time.Time                     `json:"created_at,omitempty"`
-	LastCheckpointAt    time.Time                     `json:"updated_at,omitempty"`
 }
 
 type CompactCall struct {
@@ -148,11 +147,6 @@ type CompactCall struct {
 
 type Compactor interface {
 	Compact(context.Context, *adapter.ChatRequest, CompactCall) (string, *adapter.Usage, error)
-}
-
-type CheckpointStore interface {
-	Save(context.Context, AgentContextState) error
-	Load(context.Context, string) (*AgentContextState, error)
 }
 
 type ToolResultStore interface {

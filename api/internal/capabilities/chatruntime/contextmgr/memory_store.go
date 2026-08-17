@@ -6,49 +6,17 @@ import (
 	"sync"
 )
 
-// MemoryStore keeps tests and embedded callers from writing runtime
-// checkpoints into the repository's storage directory.
+// MemoryStore keeps oversized tool results in memory for tests and embedded
+// callers.
 type MemoryStore struct {
 	mu      sync.Mutex
-	states  map[string]AgentContextState
 	results map[string]string
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		states:  map[string]AgentContextState{},
 		results: map[string]string{},
 	}
-}
-
-func (s *MemoryStore) Save(ctx context.Context, state AgentContextState) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if s == nil {
-		return fmt.Errorf("memory context store is required")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.states[state.AgentRunID] = cloneState(state)
-	return nil
-}
-
-func (s *MemoryStore) Load(ctx context.Context, agentRunID string) (*AgentContextState, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if s == nil {
-		return nil, fmt.Errorf("memory context store is required")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, ok := s.states[agentRunID]
-	if !ok {
-		return nil, nil
-	}
-	cloned := cloneState(state)
-	return &cloned, nil
 }
 
 func (s *MemoryStore) Put(ctx context.Context, agentRunID string, contentHash string, content string) (string, error) {

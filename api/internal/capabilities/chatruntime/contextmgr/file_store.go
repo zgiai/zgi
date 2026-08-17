@@ -2,7 +2,6 @@ package contextmgr
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,55 +12,14 @@ import (
 
 var safePathPartPattern = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
-// FileStore persists run checkpoints and raw oversized tool results below the
-// runtime storage directory. The files are runtime data and must remain out of
-// source control.
+// FileStore persists raw oversized tool results below the runtime storage
+// directory. The files are runtime data and must remain out of source control.
 type FileStore struct {
 	root string
 }
 
 func NewFileStore(root string) *FileStore {
 	return &FileStore{root: filepath.Clean(root)}
-}
-
-func (s *FileStore) Save(ctx context.Context, state AgentContextState) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	path, err := s.checkpointPath(state.AgentRunID)
-	if err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("marshal checkpoint: %w", err)
-	}
-	return atomicWrite(path, encoded, 0o600)
-}
-
-func (s *FileStore) Load(ctx context.Context, agentRunID string) (*AgentContextState, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	path, err := s.checkpointPath(agentRunID)
-	if err != nil {
-		return nil, err
-	}
-	encoded, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read checkpoint: %w", err)
-	}
-	var state AgentContextState
-	if err := json.Unmarshal(encoded, &state); err != nil {
-		return nil, fmt.Errorf("decode checkpoint: %w", err)
-	}
-	if strings.TrimSpace(state.AgentRunID) != strings.TrimSpace(agentRunID) {
-		return nil, fmt.Errorf("checkpoint agent run id mismatch")
-	}
-	return &state, nil
 }
 
 func (s *FileStore) Put(ctx context.Context, agentRunID string, contentHash string, content string) (string, error) {
@@ -114,17 +72,6 @@ func (s *FileStore) toolResultPath(agentRunID string, contentHash string) (strin
 		return "", "", "", err
 	}
 	return filepath.Join(s.root, "tool-results", runPart, hashPart+".txt"), runPart, hashPart, nil
-}
-
-func (s *FileStore) checkpointPath(agentRunID string) (string, error) {
-	if s == nil || strings.TrimSpace(s.root) == "" || s.root == "." {
-		return "", fmt.Errorf("agent context storage root is required")
-	}
-	runPart, err := safePathPart(agentRunID)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(s.root, "checkpoints", runPart+".json"), nil
 }
 
 func safePathPart(value string) (string, error) {

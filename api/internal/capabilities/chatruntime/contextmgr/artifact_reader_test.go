@@ -16,7 +16,7 @@ func TestReadContextArtifactReturnsCompleteOriginalContent(t *testing.T) {
 		AgentRunID:             "run-artifact-read",
 		ConfiguredAgentWindowK: 256,
 		ModelContextWindow:     1_000_000,
-	}, nil, store, store, nil)
+	}, nil, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestReadContextArtifactReturnsCompleteOriginalContent(t *testing.T) {
 
 func TestReadContextArtifactRejectsAnotherAgentRun(t *testing.T) {
 	store := NewMemoryStore()
-	manager, err := New(Config{AgentRunID: "run-owner", ConfiguredAgentWindowK: 256, ModelContextWindow: 1_000_000}, nil, store, store, nil)
+	manager, err := New(Config{AgentRunID: "run-owner", ConfiguredAgentWindowK: 256, ModelContextWindow: 1_000_000}, nil, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestReadContextArtifactRejectsAnotherAgentRun(t *testing.T) {
 
 func TestReadContextArtifactAllowsReferencedHistoricalRun(t *testing.T) {
 	store := NewMemoryStore()
-	manager, err := New(Config{AgentRunID: "run-current", ConfiguredAgentWindowK: 256, ModelContextWindow: 1_000_000}, nil, store, store, nil)
+	manager, err := New(Config{AgentRunID: "run-current", ConfiguredAgentWindowK: 256, ModelContextWindow: 1_000_000}, nil, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestReadContextArtifactAllowsReferencedHistoricalRun(t *testing.T) {
 
 func TestReadContextArtifactRejectsTamperedReference(t *testing.T) {
 	store := NewMemoryStore()
-	manager, err := New(Config{AgentRunID: "run-artifact-validation", ConfiguredAgentWindowK: 256, ModelContextWindow: 1_000_000}, nil, store, store, nil)
+	manager, err := New(Config{AgentRunID: "run-artifact-validation", ConfiguredAgentWindowK: 256, ModelContextWindow: 1_000_000}, nil, store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -58,15 +58,12 @@ func (s *service) newAgentContextManager(ctx context.Context, prepared *Prepared
 		prepared.Message.Metadata = map[string]interface{}{}
 	}
 	prepared.Message.Metadata["agent_run_id"] = runID
-	var checkpointStore contextmgr.CheckpointStore
 	var toolResultStore contextmgr.ToolResultStore
 	if runningUnderGoTest() {
 		store := contextmgr.NewMemoryStore()
-		checkpointStore = store
 		toolResultStore = store
 	} else {
 		store := contextmgr.NewFileStore(agentContextStoragePath())
-		checkpointStore = store
 		toolResultStore = store
 	}
 	manager, err := contextmgr.New(contextmgr.Config{
@@ -76,7 +73,7 @@ func (s *service) newAgentContextManager(ctx context.Context, prepared *Prepared
 		MaxInputTokens:          spec.MaxInputTokens,
 		MaxOutputTokens:         spec.MaxOutputTokens,
 		DefaultMainOutputTokens: mainOutput,
-	}, &serviceContextCompactor{service: s, prepared: prepared}, checkpointStore, toolResultStore, func(requestType string, round int, request *adapter.ChatRequest, decision contextmgr.Decision) {
+	}, &serviceContextCompactor{service: s, prepared: prepared}, toolResultStore, func(requestType string, round int, request *adapter.ChatRequest, decision contextmgr.Decision) {
 		s.writeAgentContextPromptDumpBestEffort(context.Background(), prepared, requestType, round, request, &decision)
 	})
 	if err != nil {
