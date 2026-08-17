@@ -72,6 +72,9 @@ const VIDEO_REFERENCE_MODES = ['auto'] as const;
 const VIDEO_FRAME_REFERENCE_MODE = 'first_last_frame';
 const VIDEO_AUDIO_MODES = ['off', 'on'] as const;
 const preloadedMediaUrls = new Set<string>();
+const preloadedVideoUrls = new Map<string, 'metadata' | 'auto'>();
+const videoPosterCache = new Map<string, string>();
+const videoPosterPromises = new Map<string, Promise<string | null>>();
 const HISTORY_AUTO_PREFETCH_COUNT = 6;
 const REFERENCE_KIND_ORDER: ReferenceKind[] = ['image', 'video', 'audio'];
 const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
@@ -400,7 +403,7 @@ export function VideoWorkbench() {
   const handlePrefetchTask = React.useCallback(
     (task: VideoRuntimeTask) => {
       prefetchTaskDetail(task);
-      preloadTaskMedia(task);
+      preloadTaskMedia(task, { eagerVideo: true });
     },
     [prefetchTaskDetail]
   );
@@ -701,6 +704,7 @@ function VideoTaskCard({
   const status = getTaskDisplayStatus(task);
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
+  const posterUrl = useVideoPoster(status === 'succeeded' ? task.video_url : undefined);
   const Icon = isLoadingStatus
     ? Loader2
     : status === 'succeeded'
@@ -736,9 +740,10 @@ function VideoTaskCard({
         {task.video_url && status === 'succeeded' ? (
           <video
             src={task.video_url}
+            poster={posterUrl || undefined}
             muted
             playsInline
-            preload="metadata"
+            preload={posterUrl ? 'metadata' : 'auto'}
             className="h-full w-full object-cover opacity-90"
           />
         ) : (
@@ -1096,6 +1101,7 @@ function TaskDetailSheet({
   const [downloadingTaskId, setDownloadingTaskId] = React.useState<string | null>(null);
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
   const isDownloadingVideo = Boolean(task?.task_id && downloadingTaskId === task.task_id);
+  const posterUrl = useVideoPoster(task?.video_url);
   const referenceMaterials = React.useMemo(
     () =>
       getTaskReferenceMaterials(
@@ -1117,6 +1123,10 @@ function TaskDetailSheet({
       setDownloadingTaskId(current => (current === task.task_id ? null : current));
     }
   }, [isDownloadingVideo, task, t]);
+
+  React.useEffect(() => {
+    if (task) preloadTaskMedia(task, { eagerVideo: true });
+  }, [task]);
 
   return (
     <Sheet open={!!task} onOpenChange={onOpenChange}>
@@ -1141,7 +1151,8 @@ function TaskDetailSheet({
                   <video
                     className="aspect-video w-full rounded-lg border border-border bg-black object-contain"
                     controls
-                    preload="metadata"
+                    preload="auto"
+                    poster={posterUrl || undefined}
                     src={task.video_url}
                   />
                 ) : (
@@ -1365,15 +1376,51 @@ function getTaskReferenceMaterials(
   return materials;
 }
 
-function preloadTaskMedia(task: VideoRuntimeTask) {
+function useVideoPoster(url: string | undefined) {
+  const normalizedUrl = url?.trim() || '';
+  const [posterUrl, setPosterUrl] = React.useState(() =>
+    normalizedUrl ? videoPosterCache.get(normalizedUrl) || '' : ''
+  );
+
+  React.useEffect(() => {
+    if (!normalizedUrl) {
+      setPosterUrl('');
+      return;
+    }
+
+    const cachedPoster = videoPosterCache.get(normalizedUrl);
+    if (cachedPoster) {
+      setPosterUrl(cachedPoster);
+      return;
+    }
+
+    let cancelled = false;
+    setPosterUrl('');
+    ensureVideoPoster(normalizedUrl).then(nextPosterUrl => {
+      if (!cancelled && nextPosterUrl) {
+        setPosterUrl(nextPosterUrl);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedUrl]);
+
+  return posterUrl;
+}
+
+function preloadTaskMedia(task: VideoRuntimeTask, options: { eagerVideo?: boolean } = {}) {
   if (typeof window === 'undefined') return;
 
-  preloadVideoMetadata(task.video_url);
+  preloadVideo(task.video_url, options.eagerVideo ? 'auto' : 'metadata');
+  if (options.eagerVideo) void ensureVideoPoster(task.video_url);
   getTaskReferenceMaterials(task, '', '').forEach(material => {
     if (material.kind === 'image') {
       preloadImage(material.url);
     } else if (material.kind === 'video') {
-      preloadVideoMetadata(material.url);
+      preloadVideo(material.url, options.eagerVideo ? 'auto' : 'metadata');
+      if (options.eagerVideo) void ensureVideoPoster(material.url);
     }
   });
 }
@@ -1385,15 +1432,81 @@ function preloadImage(url: string | undefined) {
   image.src = normalizedUrl;
 }
 
-function preloadVideoMetadata(url: string | undefined) {
-  const normalizedUrl = normalizePreloadUrl(url);
+function preloadVideo(url: string | undefined, preload: 'metadata' | 'auto' = 'metadata') {
+  const normalizedUrl = url?.trim();
   if (!normalizedUrl) return;
+  const previousPreload = preloadedVideoUrls.get(normalizedUrl);
+  if (previousPreload === 'auto' || (previousPreload === 'metadata' && preload === 'metadata')) {
+    return;
+  }
+  preloadedVideoUrls.set(normalizedUrl, preload);
   const video = document.createElement('video');
-  video.preload = 'metadata';
+  video.preload = preload;
   video.muted = true;
   video.playsInline = true;
   video.src = normalizedUrl;
   video.load();
+}
+
+function ensureVideoPoster(url: string | undefined): Promise<string | null> {
+  const normalizedUrl = url?.trim();
+  if (!normalizedUrl || typeof document === 'undefined') return Promise.resolve(null);
+  const cachedPoster = videoPosterCache.get(normalizedUrl);
+  if (cachedPoster) return Promise.resolve(cachedPoster);
+  const pendingPoster = videoPosterPromises.get(normalizedUrl);
+  if (pendingPoster) return pendingPoster;
+
+  const posterPromise = new Promise<string | null>(resolve => {
+    const video = document.createElement('video');
+    let settled = false;
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      video.removeEventListener('loadeddata', handleLoadedData);
+      video.removeEventListener('seeked', handleLoadedData);
+      video.removeEventListener('error', handleError);
+    };
+    const finish = (posterUrl: string | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      videoPosterPromises.delete(normalizedUrl);
+      if (posterUrl) videoPosterCache.set(normalizedUrl, posterUrl);
+      resolve(posterUrl);
+    };
+    const handleError = () => finish(null);
+    const handleLoadedData = () => {
+      try {
+        const width = video.videoWidth || 320;
+        const height = video.videoHeight || 180;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          finish(null);
+          return;
+        }
+        context.drawImage(video, 0, 0, width, height);
+        finish(canvas.toDataURL('image/jpeg', 0.72));
+      } catch {
+        finish(null);
+      }
+    };
+    const timeoutId = window.setTimeout(() => finish(null), 10000);
+
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.addEventListener('loadeddata', handleLoadedData, { once: true });
+    video.addEventListener('seeked', handleLoadedData, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+    video.src = normalizedUrl;
+    video.load();
+  });
+
+  videoPosterPromises.set(normalizedUrl, posterPromise);
+  return posterPromise;
 }
 
 function normalizePreloadUrl(url: string | undefined) {
