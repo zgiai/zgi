@@ -52,6 +52,7 @@ import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
 import {
   useDeleteVideoTask,
   useGenerateVideoTask,
+  usePrefetchVideoRuntimeTask,
   useVideoRuntimeTask,
   useVideoRuntimeTasks,
 } from '@/hooks/video-runtime/use-video-runtime';
@@ -70,6 +71,8 @@ const VIDEO_RESOLUTIONS = ['720p', '1080p'] as const;
 const VIDEO_REFERENCE_MODES = ['auto'] as const;
 const VIDEO_FRAME_REFERENCE_MODE = 'first_last_frame';
 const VIDEO_AUDIO_MODES = ['off', 'on'] as const;
+const preloadedMediaUrls = new Set<string>();
+const HISTORY_AUTO_PREFETCH_COUNT = 6;
 const REFERENCE_KIND_ORDER: ReferenceKind[] = ['image', 'video', 'audio'];
 const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
   image: 'image/*',
@@ -162,6 +165,7 @@ export function VideoWorkbench() {
   } = useVideoRuntimeTasks(debouncedHistoryQuery);
   const generateMutation = useGenerateVideoTask();
   const deleteTaskMutation = useDeleteVideoTask();
+  const prefetchTaskDetail = usePrefetchVideoRuntimeTask();
   const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>({
     provider: '',
     model: '',
@@ -393,6 +397,14 @@ export function VideoWorkbench() {
     [deleteTaskMutation, pollingTaskId, selectedTaskId, t]
   );
 
+  const handlePrefetchTask = React.useCallback(
+    (task: VideoRuntimeTask) => {
+      prefetchTaskDetail(task);
+      preloadTaskMedia(task);
+    },
+    [prefetchTaskDetail]
+  );
+
   return (
     <div className="flex h-full min-h-0 w-full bg-background">
       <GenerationRecordsSidebar
@@ -411,6 +423,7 @@ export function VideoWorkbench() {
         onLoadMore={fetchNextPage}
         selectedTaskId={selectedTaskId}
         onSelectTask={setSelectedTaskId}
+        onPrefetchTask={handlePrefetchTask}
         onDeleteTask={handleDeleteTask}
         deletingTaskId={deleteTaskMutation.variables ?? null}
         onRefresh={() => void reloadTasks()}
@@ -475,6 +488,7 @@ function GenerationRecordsSidebar({
   onLoadMore,
   selectedTaskId,
   onSelectTask,
+  onPrefetchTask,
   onDeleteTask,
   deletingTaskId,
   onRefresh,
@@ -491,6 +505,7 @@ function GenerationRecordsSidebar({
   onLoadMore: () => Promise<unknown>;
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
+  onPrefetchTask: (task: VideoRuntimeTask) => void;
   onDeleteTask: (taskId: string) => void;
   deletingTaskId: string | null;
   onRefresh: () => void;
@@ -499,6 +514,10 @@ function GenerationRecordsSidebar({
   const [searchOpen, setSearchOpen] = React.useState(false);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
+  const autoPrefetchTasks = React.useMemo(
+    () => tasks.slice(0, HISTORY_AUTO_PREFETCH_COUNT),
+    [tasks]
+  );
   const loadMoreRef = useInfiniteObserver({
     hasNextPage,
     isFetchingNextPage,
@@ -511,6 +530,18 @@ function GenerationRecordsSidebar({
   React.useEffect(() => {
     listRef.current?.scrollTo({ top: 0 });
   }, [query]);
+
+  React.useEffect(() => {
+    if (isLoading || isError || isSearchPending || autoPrefetchTasks.length === 0) return;
+
+    const timeoutIds = autoPrefetchTasks.map((task, index) =>
+      window.setTimeout(() => onPrefetchTask(task), 120 + index * 80)
+    );
+
+    return () => {
+      timeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId));
+    };
+  }, [autoPrefetchTasks, isError, isLoading, isSearchPending, onPrefetchTask]);
 
   return (
     <aside className="hidden h-full w-[328px] shrink-0 flex-col border-r border-border bg-background md:flex">
@@ -619,6 +650,7 @@ function GenerationRecordsSidebar({
                 isSelected={task.task_id === selectedTaskId}
                 isDeleting={task.task_id === deletingTaskId}
                 onSelect={() => onSelectTask(task.task_id)}
+                onPrefetch={() => onPrefetchTask(task)}
                 onDelete={() => onDeleteTask(task.task_id)}
               />
             ))}
@@ -655,12 +687,14 @@ function VideoTaskCard({
   isSelected,
   isDeleting,
   onSelect,
+  onPrefetch,
   onDelete,
 }: {
   task: VideoRuntimeTask;
   isSelected: boolean;
   isDeleting: boolean;
   onSelect: () => void;
+  onPrefetch: () => void;
   onDelete: () => void;
 }) {
   const t = useT('webapp');
@@ -678,10 +712,16 @@ function VideoTaskCard({
     <div
       role="button"
       tabIndex={0}
-      onClick={onSelect}
+      onPointerEnter={onPrefetch}
+      onFocus={onPrefetch}
+      onClick={() => {
+        onPrefetch();
+        onSelect();
+      }}
       onKeyDown={event => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
+          onPrefetch();
           onSelect();
         }
       }}
@@ -1053,7 +1093,9 @@ function TaskDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT('webapp');
+  const [downloadingTaskId, setDownloadingTaskId] = React.useState<string | null>(null);
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
+  const isDownloadingVideo = Boolean(task?.task_id && downloadingTaskId === task.task_id);
   const referenceMaterials = React.useMemo(
     () =>
       getTaskReferenceMaterials(
@@ -1063,6 +1105,18 @@ function TaskDetailSheet({
       ),
     [task, t]
   );
+  const handleDownloadVideo = React.useCallback(async () => {
+    if (!task?.video_url || isDownloadingVideo) return;
+    setDownloadingTaskId(task.task_id);
+    try {
+      await downloadUrlAsFile(task.video_url, getVideoDownloadFileName(task));
+      toast.success(t('chat.videoWorkbench.downloadVideoStarted'));
+    } catch {
+      toast.error(t('chat.videoWorkbench.downloadVideoFailed'));
+    } finally {
+      setDownloadingTaskId(current => (current === task.task_id ? null : current));
+    }
+  }, [isDownloadingVideo, task, t]);
 
   return (
     <Sheet open={!!task} onOpenChange={onOpenChange}>
@@ -1087,6 +1141,7 @@ function TaskDetailSheet({
                   <video
                     className="aspect-video w-full rounded-lg border border-border bg-black object-contain"
                     controls
+                    preload="metadata"
                     src={task.video_url}
                   />
                 ) : (
@@ -1175,11 +1230,19 @@ function TaskDetailSheet({
                 {t('chat.videoWorkbench.copyTaskId')}
               </Button>
               {task.video_url ? (
-                <Button asChild type="button" className="h-9 rounded-md">
-                  <a href={task.video_url} download rel="noreferrer">
-                    {t('chat.videoWorkbench.downloadVideo')}
-                    <Download className="ml-2 h-4 w-4" />
-                  </a>
+                <Button
+                  type="button"
+                  className="h-9 rounded-md"
+                  disabled={isDownloadingVideo}
+                  onClick={() => void handleDownloadVideo()}
+                >
+                  {isDownloadingVideo ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  {isDownloadingVideo
+                    ? t('chat.videoWorkbench.downloadingVideo')
+                    : t('chat.videoWorkbench.downloadVideo')}
+                  <Download className="ml-2 h-4 w-4" />
                 </Button>
               ) : null}
             </div>
@@ -1300,6 +1363,81 @@ function getTaskReferenceMaterials(
   }
 
   return materials;
+}
+
+function preloadTaskMedia(task: VideoRuntimeTask) {
+  if (typeof window === 'undefined') return;
+
+  preloadVideoMetadata(task.video_url);
+  getTaskReferenceMaterials(task, '', '').forEach(material => {
+    if (material.kind === 'image') {
+      preloadImage(material.url);
+    } else if (material.kind === 'video') {
+      preloadVideoMetadata(material.url);
+    }
+  });
+}
+
+function preloadImage(url: string | undefined) {
+  const normalizedUrl = normalizePreloadUrl(url);
+  if (!normalizedUrl) return;
+  const image = new window.Image();
+  image.src = normalizedUrl;
+}
+
+function preloadVideoMetadata(url: string | undefined) {
+  const normalizedUrl = normalizePreloadUrl(url);
+  if (!normalizedUrl) return;
+  const video = document.createElement('video');
+  video.preload = 'metadata';
+  video.muted = true;
+  video.playsInline = true;
+  video.src = normalizedUrl;
+  video.load();
+}
+
+function normalizePreloadUrl(url: string | undefined) {
+  const normalizedUrl = url?.trim();
+  if (!normalizedUrl || preloadedMediaUrls.has(normalizedUrl)) return '';
+  preloadedMediaUrls.add(normalizedUrl);
+  return normalizedUrl;
+}
+
+async function downloadUrlAsFile(url: string, fileName: string) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Download failed with status ${response.status}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = fileName;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+function getVideoDownloadFileName(task: VideoRuntimeTask) {
+  const baseName = [task.model_label || task.model || 'video', task.task_id || Date.now()]
+    .filter(Boolean)
+    .join('-');
+  return `${sanitizeDownloadFileName(baseName)}.mp4`;
+}
+
+function sanitizeDownloadFileName(value: string) {
+  const withoutControlCharacters = Array.from(value)
+    .map(character => (character.charCodeAt(0) < 32 ? '-' : character))
+    .join('');
+  return (
+    withoutControlCharacters
+      .replace(/[<>:"/\\|?*]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 140) || 'video'
+  );
 }
 
 function taskHasVideoInput(task: VideoRuntimeTask) {

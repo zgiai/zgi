@@ -205,6 +205,9 @@ const messages = {
       outputAudio: 'Output audio',
       openVideo: 'Open video',
       downloadVideo: 'Download video',
+      downloadingVideo: 'Downloading',
+      downloadVideoStarted: 'Video download started.',
+      downloadVideoFailed: 'Failed to download video. Please try again later.',
       recordFailedHint: 'Generation failed. Open for details',
       status: {
         pending: 'Generating',

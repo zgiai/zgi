@@ -190,6 +190,9 @@ const messages: WebappMessages = {
       outputAudio: '输出音频',
       openVideo: '打开视频',
       downloadVideo: '下载视频',
+      downloadingVideo: '下载中',
+      downloadVideoStarted: '视频已开始下载。',
+      downloadVideoFailed: '视频下载失败，请稍后重试。',
       recordFailedHint: '生成失败，打开查看详情',
       status: {
         pending: '生成中',

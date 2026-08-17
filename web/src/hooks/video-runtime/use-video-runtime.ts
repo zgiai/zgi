@@ -1,8 +1,18 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo } from 'react';
 
 import { VideoRuntimeService } from '@/services/video-runtime.service';
-import type { VideoRuntimeGenerateRequest, VideoRuntimeTask } from '@/services/types/video-runtime';
+import type {
+  VideoRuntimeGenerateRequest,
+  VideoRuntimeTask,
+  VideoRuntimeTaskResponse,
+} from '@/services/types/video-runtime';
 
 export const VIDEO_RUNTIME_KEYS = {
   models: ['video-runtime', 'models'] as const,
@@ -11,6 +21,27 @@ export const VIDEO_RUNTIME_KEYS = {
   taskList: (search: string) => ['video-runtime', 'tasks', 'list', { search }] as const,
   task: (taskId: string) => ['video-runtime', 'tasks', taskId] as const,
 };
+
+const VIDEO_TASK_DETAIL_STALE_TIME = 10 * 1000;
+
+function createCachedVideoTaskResponse(task: VideoRuntimeTask): VideoRuntimeTaskResponse {
+  return {
+    code: '0',
+    message: 'success',
+    data: task,
+  };
+}
+
+function seedVideoTaskDetailCache(queryClient: QueryClient, task: VideoRuntimeTask) {
+  if (!task.task_id) return;
+  const queryKey = VIDEO_RUNTIME_KEYS.task(task.task_id);
+  if (queryClient.getQueryData(queryKey)) return;
+  queryClient.setQueryData<VideoRuntimeTaskResponse>(
+    queryKey,
+    createCachedVideoTaskResponse(task),
+    { updatedAt: 0 }
+  );
+}
 
 export function useVideoRuntimeModels() {
   const query = useQuery({
@@ -58,6 +89,12 @@ export function useVideoRuntimeTasks(search = '') {
       });
   }, [query.data?.pages]);
 
+  useEffect(() => {
+    tasks.forEach(task => {
+      seedVideoTaskDetailCache(queryClient, task);
+    });
+  }, [queryClient, tasks]);
+
   const reload = useCallback(async () => {
     await queryClient.resetQueries({ queryKey, exact: true });
   }, [queryClient, queryKey]);
@@ -81,6 +118,7 @@ export function useVideoRuntimeTask(taskId?: string | null) {
       const task = query.state.data?.data;
       return task && isVideoRuntimeTaskActive(task) ? 5000 : false;
     },
+    staleTime: VIDEO_TASK_DETAIL_STALE_TIME,
     retry: false,
   });
 
@@ -98,6 +136,23 @@ export function useVideoRuntimeTask(taskId?: string | null) {
     ...query,
     task,
   };
+}
+
+export function usePrefetchVideoRuntimeTask() {
+  const queryClient = useQueryClient();
+
+  return useCallback(
+    (task: VideoRuntimeTask) => {
+      if (!task.task_id) return;
+      seedVideoTaskDetailCache(queryClient, task);
+      void queryClient.prefetchQuery({
+        queryKey: VIDEO_RUNTIME_KEYS.task(task.task_id),
+        queryFn: () => VideoRuntimeService.getTask(task.task_id),
+        staleTime: VIDEO_TASK_DETAIL_STALE_TIME,
+      });
+    },
+    [queryClient]
+  );
 }
 
 export function useGenerateVideoTask() {
