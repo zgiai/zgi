@@ -16,11 +16,12 @@ import (
 )
 
 const (
-	defaultWorkflowConversationNamePrefix = "Conversation "
 	defaultWorkflowConversationNameLayout = "2006-01-02 15:04:05"
 	workflowConversationTitleTimeout      = 15 * time.Second
 	workflowConversationTitleMaxTurns     = 3
 )
+
+var defaultWorkflowConversationNamePrefixes = []string{"Conversation ", "\u4f1a\u8bdd "}
 
 type workflowConversationTitleParams struct {
 	WorkspaceID    string
@@ -51,11 +52,15 @@ func (s *WorkflowService) enqueueWebAppConversationTitleGeneration(ctx context.C
 		logger.WarnContext(ctx, "workflow conversation title generator is not configured", "conversation_id", params.ConversationID.String())
 		return
 	}
-	if params.ConversationID == uuid.Nil || params.AccountID == uuid.Nil || strings.TrimSpace(params.WebAppID) == "" {
+	if params.ConversationID == uuid.Nil || params.AccountID == uuid.Nil {
+		return
+	}
+	if _, loaded := s.conversationTitleJobs.LoadOrStore(params.ConversationID, struct{}{}); loaded {
 		return
 	}
 
 	go func() {
+		defer s.conversationTitleJobs.Delete(params.ConversationID)
 		titleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workflowConversationTitleTimeout)
 		defer cancel()
 
@@ -172,12 +177,17 @@ func fallbackWorkflowConversationTitle(currentName string, messages []titlegen.M
 }
 
 func isDefaultWorkflowConversationName(name string) bool {
-	timestamp := strings.TrimPrefix(strings.TrimSpace(name), defaultWorkflowConversationNamePrefix)
-	if timestamp == strings.TrimSpace(name) || timestamp == "" {
-		return false
+	normalized := strings.TrimSpace(name)
+	for _, prefix := range defaultWorkflowConversationNamePrefixes {
+		timestamp := strings.TrimPrefix(normalized, prefix)
+		if timestamp == normalized || timestamp == "" {
+			continue
+		}
+		if _, err := time.Parse(defaultWorkflowConversationNameLayout, timestamp); err == nil {
+			return true
+		}
 	}
-	_, err := time.Parse(defaultWorkflowConversationNameLayout, timestamp)
-	return err == nil
+	return false
 }
 
 func buildWorkflowConversationTitleMessages(messages []*conversation.AgentMessage) []titlegen.Message {

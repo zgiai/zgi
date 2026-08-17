@@ -188,6 +188,26 @@ function validateParameterExtractorNodes(locale, fileName, nodes) {
   }
 }
 
+function validateKnowledgeRetrievalNodes(locale, fileName, nodes) {
+  for (const node of nodes) {
+    if (node?.data?.type !== 'knowledge-retrieval') continue;
+
+    const datasetIds = node.data.dataset_ids;
+    if (!Array.isArray(datasetIds)) {
+      fail(
+        `${locale}/${fileName} knowledge-retrieval node ${node.id} must define dataset_ids as an array.`
+      );
+      continue;
+    }
+
+    if (datasetIds.length > 0) {
+      fail(
+        `${locale}/${fileName} knowledge-retrieval node ${node.id} must leave dataset_ids empty for users to configure.`
+      );
+    }
+  }
+}
+
 function validatePromptAssetReferences(locale, fileName, nodes) {
   for (const node of nodes) {
     if (node?.data?.type !== 'llm') continue;
@@ -354,6 +374,7 @@ function validateGraph(locale, fileName, doc) {
   validateStartDefaults(locale, fileName, nodes);
   validateNodeModels(locale, fileName, nodes);
   validateParameterExtractorNodes(locale, fileName, nodes);
+  validateKnowledgeRetrievalNodes(locale, fileName, nodes);
   validatePromptAssetReferences(locale, fileName, nodes);
   validateLocaleText(locale, fileName, doc);
 

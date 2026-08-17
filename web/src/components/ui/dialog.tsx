@@ -5,6 +5,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { X } from 'lucide-react';
 
+import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 
 const Dialog = DialogPrimitive.Root;
@@ -52,26 +53,44 @@ const dialogContentVariants = cva(
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> &
-    VariantProps<typeof dialogContentVariants> & { showCloseButton?: boolean; showOverlay?: boolean }
->(({ className, children, size, showCloseButton = true, showOverlay = true, ...props }, ref) => (
-  <DialogPortal>
-    {showOverlay && <DialogOverlay />}
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(dialogContentVariants({ size, className }))}
-      aria-describedby={props['aria-describedby'] ?? ''}
-      {...props}
-    >
-      {children}
-      {showCloseButton && (
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full p-1 opacity-40 transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground interactive-subtle">
-          <X className="size-4" />
-          <span className="sr-only">Close</span>
-        </DialogPrimitive.Close>
-      )}
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
+    VariantProps<typeof dialogContentVariants> & {
+      showCloseButton?: boolean;
+      showOverlay?: boolean;
+      overlayClassName?: string;
+    }
+>(function DialogContent(
+  {
+    className,
+    children,
+    size,
+    showCloseButton = true,
+    showOverlay = true,
+    overlayClassName,
+    ...props
+  },
+  ref
+) {
+  const t = useT('common');
+  return (
+    <DialogPortal>
+      {showOverlay && <DialogOverlay className={overlayClassName} />}
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(dialogContentVariants({ size, className }))}
+        aria-describedby={props['aria-describedby'] ?? ''}
+        {...props}
+      >
+        {children}
+        {showCloseButton && (
+          <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full p-1 opacity-40 transition-opacity hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground interactive-subtle">
+            <X className="size-4" />
+            <span className="sr-only">{t('close')}</span>
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  );
+});
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (

@@ -14,9 +14,14 @@ import (
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
-func newSkillRuntimeWithSandbox(toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, fileService interfaces.FileService, organizationService interfaces.OrganizationService) *skills.Runtime {
+func newSkillRuntimeWithSandbox(toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, fileService interfaces.FileService, organizationService interfaces.OrganizationService, manifestResolvers ...skills.ToolGovernanceManifestResolver) *skills.Runtime {
+	var manifestResolver skills.ToolGovernanceManifestResolver
+	if len(manifestResolvers) > 0 {
+		manifestResolver = manifestResolvers[0]
+	}
+	gateway := skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()).WithManifestResolver(manifestResolver)
 	runtime := skills.NewRuntime(toolEngine, toolManager).
-		WithToolGovernanceGateway(skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
+		WithToolGovernanceGateway(gateway)
 	if appconfig.GlobalConfig == nil {
 		return runtime
 	}

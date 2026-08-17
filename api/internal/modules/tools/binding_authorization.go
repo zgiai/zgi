@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -10,12 +11,13 @@ const AgentBindingAuthorizationsParameter = "agent_binding_authorizations"
 // AgentBindingAuthorization is persisted runtime evidence for one concrete
 // Agent resource binding.
 type AgentBindingAuthorization struct {
-	BindingType      string `json:"binding_type"`
-	ResourceID       string `json:"resource_id"`
-	ParentResourceID string `json:"parent_resource_id,omitempty"`
-	AccessMode       string `json:"access_mode"`
-	BoundByAccountID string `json:"bound_by_account_id"`
-	BoundAtUnix      int64  `json:"bound_at_unix"`
+	BindingType      string   `json:"binding_type"`
+	ResourceID       string   `json:"resource_id"`
+	ParentResourceID string   `json:"parent_resource_id,omitempty"`
+	AccessMode       string   `json:"access_mode"`
+	AllowedActionIDs []string `json:"allowed_action_ids,omitempty"`
+	BoundByAccountID string   `json:"bound_by_account_id"`
+	BoundAtUnix      int64    `json:"bound_at_unix"`
 }
 
 // AgentBindingAuthorizations returns normalized, valid per-resource evidence.
@@ -38,17 +40,56 @@ func AgentBindingAuthorizations(parameters map[string]interface{}) []AgentBindin
 		authorization.ResourceID = strings.TrimSpace(authorization.ResourceID)
 		authorization.ParentResourceID = strings.TrimSpace(authorization.ParentResourceID)
 		authorization.AccessMode = strings.TrimSpace(authorization.AccessMode)
+		if authorization.BindingType == "integration_connection" {
+			authorization.AllowedActionIDs = normalizeAgentBindingActionIDs(authorization.AllowedActionIDs)
+		} else {
+			authorization.AllowedActionIDs = nil
+		}
 		authorization.BoundByAccountID = strings.TrimSpace(authorization.BoundByAccountID)
 		if authorization.BindingType == "" || authorization.ResourceID == "" || authorization.AccessMode == "" || authorization.BoundByAccountID == "" || authorization.BoundAtUnix <= 0 {
 			continue
 		}
 		key := agentBindingAuthorizationKey(authorization.BindingType, authorization.ParentResourceID, authorization.ResourceID, authorization.AccessMode)
+		if authorization.BindingType == "integration_connection" {
+			key += "\x00" + strings.Join(authorization.AllowedActionIDs, "\x00")
+		}
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
 		result = append(result, authorization)
 	}
+	return result
+}
+
+func (authorization AgentBindingAuthorization) AllowsAction(actionID string) bool {
+	actionID = strings.ToLower(strings.TrimSpace(actionID))
+	if actionID == "" {
+		return false
+	}
+	for _, allowed := range normalizeAgentBindingActionIDs(authorization.AllowedActionIDs) {
+		if allowed == actionID {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeAgentBindingActionIDs(input []string) []string {
+	seen := make(map[string]struct{}, len(input))
+	result := make([]string, 0, len(input))
+	for _, value := range input {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
 	return result
 }
 

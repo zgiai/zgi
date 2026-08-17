@@ -8,6 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/middleware"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -50,7 +51,7 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 
 	// API v1 routes
 	v1Group := r.Group("/console/api")
-	v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory)
+	v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory, applicationErrorCatalog)
 
 	external.RegisterExternalRoutes(r, external.ExternalRouteDeps{
 		DB:                    serviceContainer.GetDB(),
@@ -69,6 +70,8 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 		KnowledgeService:      serviceContainer.GetKnowledgeRetrievalService(),
 		ResourcePermission:    serviceContainer.GetResourcePermissionService(),
 		WorkflowEngineFactory: workflowEngineFactory,
+		SkillManifestResolver: integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
+		IntegrationRegistry:   serviceContainer.GetIntegrationRegistry(),
 	})
 
 	registerConsoleInternalRoutes(r, serviceContainer.GetDB())

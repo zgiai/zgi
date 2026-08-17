@@ -14,6 +14,77 @@ const messages = {
   wordCount: 'Words',
   appCount: 'Apps',
   graphFlowBadge: 'GraphFlow',
+  graph: {
+    enableTitle: 'Enable knowledge graph',
+    enableDescription:
+      'Build graph entities and relationships with the knowledge base embedding model.',
+    enableSaveHint: 'Save the settings to show the knowledge graph in the sidebar.',
+    statusTitle: 'Knowledge graph status',
+    statusDescription: 'Current status: {status}. Progress: {progress}%.',
+    emptyStatusDescription: 'Current status: The knowledge base is empty. Waiting for documents.',
+    rebuild: 'Rebuild graph',
+    repair: 'Repair graph',
+    rebuildConfirmationTitle: 'Rebuild the knowledge graph?',
+    rebuildConfirmationDescription:
+      'The system will reprocess all active documents and regenerate graph entities and relationships. Graph browsing and graph retrieval may be temporarily unavailable while rebuilding. Your source documents will not be changed.',
+    confirmRebuild: 'Confirm rebuild',
+    repairConfirmationTitle: 'Repair the knowledge graph?',
+    repairConfirmationDescription:
+      'The failed run will resume from its earliest unfinished stage. Completed entity extraction and alignment results will be reused, so source documents are not processed by the model again unless extraction itself failed.',
+    confirmRepair: 'Confirm repair',
+    failedRepairHint:
+      'Graph synchronization stopped after three retries. Repair the graph to resume from the failed stage and restore consistency with the knowledge base.',
+    partialFailureTitle: 'Knowledge graph synchronization needs repair',
+    partialFailureDescription:
+      'The current graph remains available, but it may not fully match the knowledge base. Repair the graph to resume from the failed stage and restore consistency.',
+    retryDocument: 'Retry',
+    modelChangeConfirmation:
+      'Changing the extraction model rebuilds the graph for all current documents. Continue?',
+    runtimeUnavailable: 'Knowledge graph runtime is unavailable.',
+    disableNotSupported: 'An existing knowledge graph cannot be disabled.',
+    embeddingImmutable: 'The knowledge base embedding model is inherited and cannot be changed.',
+    overrideNotAllowed: 'A separate graph embedding model is not supported.',
+    graph_model_change_confirmation_required: 'Confirm the full graph rebuild to continue.',
+    graph_disable_not_supported: 'An existing knowledge graph cannot be disabled.',
+    buildProgress: {
+      title: 'Building knowledge graph',
+      overall: 'Overall progress',
+      currentStage: 'Current stage: {stage}',
+      documentSummary: '{total} documents · {processing} currently processing',
+      runRevision: 'Graph revision {revision}',
+      stages: {
+        extraction: 'Entity extraction',
+        alignment: 'Entity alignment',
+        graph_sync: 'Graph projection',
+        vector_sync: 'Vector indexing',
+      },
+      stageStatuses: {
+        pending: 'Waiting',
+        processing: 'In progress',
+        completed: 'Completed',
+        failed: 'Failed',
+      },
+    },
+    statuses: {
+      disabled: 'Disabled',
+      unavailable: 'Unavailable',
+      waiting_content: 'Waiting for content',
+      queued: 'Queued',
+      building: 'Building',
+      partial: 'Partially ready',
+      ready: 'Ready',
+      empty: 'Empty',
+      failed: 'Failed',
+    },
+    documentStatuses: {
+      waiting: 'Waiting',
+      queued: 'Queued',
+      processing: 'Processing',
+      ready: 'Ready',
+      failed: 'Failed',
+      superseded: 'Superseded',
+    },
+  },
 
   empty: {
     noDocuments: 'No Documents',
@@ -56,6 +127,30 @@ const messages = {
     noCompletedDocuments: 'No Completed Documents',
     noCompletedDocumentsDesc:
       'Please wait for documents to finish indexing before viewing the knowledge graph.',
+    selectEntity: 'Select an entity to inspect its graph evidence.',
+    entityDetails: 'Entity details',
+    activeSources: 'Active sources: {count}',
+    expandNeighbors: 'Expand neighbors',
+    expandingNeighbors: 'Expanding...',
+    neighborsExpanded: 'Neighbors expanded',
+    backToOverview: 'Back to overview',
+    visibleEntities: 'Showing {visible} of {total} entities',
+    decreaseOverviewEntities: 'Show 100 fewer entities',
+    increaseOverviewEntities: 'Show 100 more entities',
+    overviewHint:
+      'The overview prioritizes strongly connected entities. Search to locate any entity in the full graph.',
+    nodeWeightHint: 'Node size represents the entity weight in the selected source documents.',
+    sourceDocuments: 'Source documents',
+    selectAllSources: 'Select all',
+    hideLegend: 'Hide',
+    showLegend: 'Show legend',
+    visibleLimitReached:
+      'This view has reached its readability limit. Return to the overview or search for another entity.',
+    searchResultsSummary: 'Showing {visible} of {total} matching entities',
+    description: 'Description',
+    relatedEntities: 'Related entities ({count})',
+    noRelatedEntities: 'No related entities',
+    activeSourceDocuments: 'Active source documents ({count})',
   },
   noEditPermission: 'You do not have permission to edit this dataset',
   noEditPermissionDescription:
@@ -710,12 +805,14 @@ const messages = {
       embeddingModel: {
         title: 'Embedding Model',
         placeholder: 'Select Embedding Model',
-        lockedTooltip: 'The embedding model cannot be changed after the dataset is created.',
+        lockedTooltip:
+          'The embedding model cannot be changed after the dataset is created. It is used by both vector + keyword hybrid retrieval and graph retrieval.',
       },
 
       graphModel: {
-        title: 'Graph Model',
-        placeholder: 'Select graph model',
+        title: 'Graph Extraction Model',
+        placeholder: 'Select graph extraction model',
+        help: 'Identifies entities and their relationships in documents to build the knowledge graph.',
       },
 
       // Embedding configuration
@@ -734,7 +831,7 @@ const messages = {
         graphSearch: 'Graph Search',
         semanticSearch: 'Semantic Search',
         fullTextSearch: 'Full Text Search',
-        hybridSearch: 'Hybrid Search',
+        hybridSearch: 'Vector + Keyword Hybrid Retrieval',
         topK: 'Top K',
         scoreThreshold: 'Score Threshold',
         reranking: 'Enable Reranking',
@@ -800,10 +897,14 @@ const messages = {
       retrievalConfig: 'Retrieval Configuration',
       searchMethod: 'Search Method',
       searchMethodHelp:
-        'Semantic search matches meaning even when wording differs. Full-text search matches exact keywords. Hybrid search combines semantic and keyword matching and is usually the most balanced.',
+        '“Vector + Keyword Hybrid + Graph Retrieval” returns vector-semantic matches, keyword matches, and entity-relationship results. “Vector + Keyword Hybrid Retrieval” searches document content only and does not include graph relationships.',
+      graphHopDepth: 'Graph retrieval depth',
+      graphHopDepthHelp:
+        'Controls how many relationship hops graph retrieval traverses, from 1 to 3. A greater depth covers more related entities but may add latency and noise.',
+      graphHopDepthValue: '{depth} hop(s)',
       semanticSearch: 'Semantic Search',
       fullTextSearch: 'Full-text Search',
-      hybridSearch: 'Hybrid Search',
+      hybridSearch: 'Vector + Keyword Hybrid Retrieval',
       topK: 'Top K',
       topKHelp:
         'Controls the maximum number of candidate chunks returned for each retrieval. A higher value broadens coverage but may include less relevant content; a lower value keeps results focused but may miss useful context.',
@@ -813,7 +914,7 @@ const messages = {
       enableReranking: 'Enable Reranking',
       changeRerankModel: 'Change Rerank Model',
       rerankingHelp:
-        'Uses a reranking model to reorder initially retrieved content so the most relevant chunks appear first. This usually improves answer quality, with some added latency and model cost.',
+        'The rerank model reorders initially retrieved content so the most relevant chunks appear first. Reranking is always enabled and cannot be turned off. It usually improves answer quality, with some added latency and model cost.',
       rerankingDescription: 'Use reranking model to improve result quality',
       rerankModel: 'Rerank Model',
       selectRerankModel: 'Select rerank model',
@@ -842,16 +943,16 @@ const messages = {
       },
       // Search methods
       methods: {
-        graph_search: 'Graph Search',
+        graph_search: 'Vector + Keyword Hybrid + Graph Retrieval',
         semantic_search: 'Semantic Search',
         full_text_search: 'Full-text Search',
-        hybrid_search: 'Hybrid Search',
+        hybrid_search: 'Vector + Keyword Hybrid Retrieval',
       },
       methodsDesc: {
-        graph_search: 'Knowledge graph enhanced retrieval',
+        graph_search: 'Runs vector + keyword hybrid retrieval and graph retrieval together',
         semantic_search: 'Vector similarity based retrieval',
         full_text_search: 'Keyword matching based retrieval',
-        hybrid_search: 'Combined semantic and full-text search',
+        hybrid_search: 'Document retrieval combining vector-semantic and keyword matching',
       },
       // History
       testHistory: 'Test History',
@@ -891,7 +992,7 @@ const messages = {
       advancedOptions: 'Advanced Options',
       advancedDescription: 'Advanced configuration options',
       advancedWarning: 'Advanced options may affect retrieval performance, modify with caution',
-      hybridWeights: 'Weights',
+      hybridWeights: 'Vector and Keyword Weights',
       returnFullDoc: 'Return Full Document',
       returnFullDocDescription: 'Return full document content instead of segments',
       weightedScore: 'Weighted Score',
@@ -921,8 +1022,8 @@ const messages = {
     advancedSettingsLabel: 'Advanced Settings',
     embeddingModelLabel: 'Embedding Model',
     embeddingModelPlaceholder: 'Please select embedding model',
-    graphModelLabel: 'Graph Model',
-    graphModelPlaceholder: 'Please select graph model',
+    graphModelLabel: 'Graph Extraction Model',
+    graphModelPlaceholder: 'Please select graph extraction model',
     graphModelDescription: 'Use a LLM to extract entities and relationships',
     iconLabel: 'Dataset Icon',
     retrievalConfigLabel: 'Retrieval Settings',
@@ -1111,11 +1212,11 @@ const messages = {
     graphFlowLabel: 'Enable Knowledge Graph (GraphFlow)',
     graphFlowEnabledLabel: 'Knowledge Graph enabled',
     graphFlowEnabledDescription:
-      'Knowledge graph is enabled for this dataset. You can adjust the graph model.',
+      'Knowledge graph is enabled for this dataset. You can adjust the graph extraction model.',
     graphFlowDescription:
-      'Enable a graph model for this dataset to extract entity relationships and enhance retrieval',
+      'Enable a graph extraction model for this dataset to extract entity relationships and enhance retrieval',
     graphFlowLockedDescription:
-      'Once GraphFlow is enabled it becomes permanent. You can still adjust the graph model, but you cannot turn GraphFlow off for this dataset.',
+      'Once GraphFlow is enabled it becomes permanent. You can still adjust the graph extraction model, but you cannot turn GraphFlow off for this dataset.',
     documentCount: 'Document Count',
     wordCount: 'Word Count',
     dataSource: 'Data Source Type',
@@ -1150,7 +1251,7 @@ const messages = {
       required: 'Please select an embedding model',
     },
     graphModel: {
-      required: 'Please select a graph model when GraphFlow is enabled',
+      required: 'Please select a graph extraction model when GraphFlow is enabled',
     },
     workspace: {
       required: 'No workspace selected',
@@ -1183,6 +1284,10 @@ const messages = {
     vectorRetrievalFailed: 'Vector retrieval failed',
     graphRetrievalFailed: 'Graph retrieval failed',
     hitTestingFailed: 'Hit testing failed, please retry',
+    graphVisibilitySyncTitle: 'Updating graph data',
+    graphVisibilitySyncDescription:
+      'Document availability has changed. The knowledge graph retrieval scope is being synchronized and graph retrieval will resume when it finishes.',
+    graphUnavailableTitle: 'Graph retrieval unavailable',
     noCompletedDocuments: 'No Completed Documents',
     noCompletedDocumentsDesc:
       'Please wait for documents to finish indexing before testing retrieval.',
@@ -1197,6 +1302,7 @@ const messages = {
     details: 'Details',
     fileDetails: 'File Details',
     fileName: 'Name',
+    sourceDocument: 'Source document',
     viewDocumentDetails: 'View Document Details',
     close: 'Close',
 
@@ -1222,16 +1328,16 @@ const messages = {
 
     // Search methods
     methods: {
-      graph_search: 'Graph Search',
+      graph_search: 'Vector + Keyword Hybrid + Graph Retrieval',
       semantic_search: 'Semantic Search',
       full_text_search: 'Full-text Search',
-      hybrid_search: 'Hybrid Search',
+      hybrid_search: 'Vector + Keyword Hybrid Retrieval',
     },
     methodsDesc: {
-      graph_search: 'Knowledge graph enhanced retrieval',
+      graph_search: 'Shows vector + keyword hybrid retrieval and graph retrieval results together',
       semantic_search: 'Vector similarity based retrieval',
       full_text_search: 'Keyword matching based retrieval',
-      hybrid_search: 'Combined semantic and full-text search',
+      hybrid_search: 'Document retrieval combining vector-semantic and keyword matching',
     },
 
     // History
@@ -1276,7 +1382,7 @@ const messages = {
     advancedOptions: 'Advanced Options',
     advancedDescription: 'Advanced configuration options',
     advancedWarning: 'Advanced options may affect retrieval performance, modify with caution',
-    hybridWeights: 'Weights',
+    hybridWeights: 'Vector and Keyword Weights',
     returnFullDoc: 'Return Full Document',
     returnFullDocDescription: 'Return full document content instead of segments',
     weightedScore: 'Weighted Score',
@@ -1375,7 +1481,7 @@ const messages = {
 
     // Graph Retrieval
     vectorResults: 'Vector Results',
-    hybridResults: 'Hybrid Results',
+    hybridResults: 'Vector + Keyword Results',
     bm25Results: 'BM25 Results',
     graphResults: 'Graph Results',
     score: 'Score',
@@ -1383,9 +1489,21 @@ const messages = {
     matchedEntities: 'Matched Entities',
     noMatchedEntities: 'No matched entities',
     graphExecution: 'Graph Execution',
+    viewGraphDetails: 'View graph details',
+    hideGraphDetails: 'Hide graph details',
+    graphNotEnabled: 'Enable the knowledge graph before selecting graph retrieval.',
+    graphNotReady: 'Graph retrieval is unavailable until the current graph revision is ready.',
+    relationshipPaths: 'Relationship paths',
+    activeSources: 'Active sources',
+    batchRowFailed: 'This query failed. Review the graph status and retry.',
+    elapsedTime: 'Elapsed time',
     chunks: 'chunks',
+    candidateChunks: 'candidate chunks',
+    candidateChunksHelp:
+      'Candidate chunks are relevant chunks found during graph execution. Final results are further filtered by deduplication, reranking, the score threshold, and Top-K.',
     entitiesCount: 'Entities',
     chunksCount: 'Chunks',
+    candidateChunksCount: 'Candidate chunks',
 
     // Entity Search
     entitySearch: {

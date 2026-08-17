@@ -7,6 +7,7 @@ import type { Role } from '@/services/types/organization';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { getWorkspaceRoleErrorTranslationKey } from '@/utils/workspace-role-errors';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 
 import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
@@ -25,7 +26,7 @@ export function useRoleDetail(roleId: string | null, enabled: boolean = true) {
     queryKey: ORGANIZATION_KEYS.roleDetail(organizationId || '', roleId || ''),
     queryFn: async () => {
       if (!organizationId || !roleId) {
-        throw new Error('No organization or role selected');
+        throw new Error(t('organization.permissions.errors.noOrganization'));
       }
       return await organizationService.getRoleDetail(organizationId, roleId);
     },
@@ -36,17 +37,24 @@ export function useRoleDetail(roleId: string | null, enabled: boolean = true) {
     retry: false,
   });
 
+  const errorMessage = error
+    ? (() => {
+        const translationKey = getWorkspaceRoleErrorTranslationKey(error);
+        return translationKey ? t(translationKey) : getErrorMessage(error);
+      })()
+    : null;
+
   // Show error toast if query fails
   useEffect(() => {
-    if (!error) return;
-    toast.error(getErrorMessage(error) || t('organization.permissions.loadError'));
-  }, [error, toast, t]);
+    if (!errorMessage) return;
+    toast.error(errorMessage || t('organization.permissions.loadError'));
+  }, [errorMessage, t]);
 
   return {
     role: data,
     isLoading,
     isFetching,
-    error: error ? getErrorMessage(error) : null,
+    error: errorMessage,
     refetch,
   };
 }

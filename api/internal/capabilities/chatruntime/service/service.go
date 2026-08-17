@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"mime/multipart"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -130,40 +131,43 @@ type Caller struct {
 }
 
 type RunConfig struct {
-	SystemPrompt              string
-	SystemPromptVersion       string
-	ModelProvider             string
-	Model                     string
-	ModelParameters           map[string]interface{}
-	EnabledSkillIDs           []string
-	KnowledgeDatasetIDs       []string
-	KnowledgeBoundByAccountID string
-	KnowledgeBoundAtUnix      int64
-	KnowledgeRetrievalConfig  map[string]interface{}
-	DatabaseBindings          []AgentDatabaseBinding
-	DatabaseBoundByAccountID  string
-	DatabaseBoundAtUnix       int64
-	WorkflowBindings          []AgentWorkflowBinding
-	WorkflowBoundByAccountID  string
-	WorkflowBoundAtUnix       int64
-	BindingAuthorizations     []ResourceBindingAuthorization
-	UseMemory                 bool
-	AgentMemoryEnabled        bool
-	AgentMemorySlots          []AgentMemorySlotConfig
-	AgentMemoryUserScope      string
-	BillingAppID              string
-	BillingAppType            string
+	SystemPrompt                     string
+	SystemPromptVersion              string
+	ModelProvider                    string
+	Model                            string
+	ModelParameters                  map[string]interface{}
+	EnabledSkillIDs                  []string
+	KnowledgeDatasetIDs              []string
+	KnowledgeBoundByAccountID        string
+	KnowledgeBoundAtUnix             int64
+	KnowledgeRetrievalConfig         map[string]interface{}
+	DatabaseBindings                 []AgentDatabaseBinding
+	DatabaseBoundByAccountID         string
+	DatabaseBoundAtUnix              int64
+	WorkflowBindings                 []AgentWorkflowBinding
+	WorkflowBoundByAccountID         string
+	WorkflowBoundAtUnix              int64
+	IntegrationConnectionIDs         map[string]string
+	IntegrationSelectedConnectionIDs map[string][]string
+	BindingAuthorizations            []ResourceBindingAuthorization
+	UseMemory                        bool
+	AgentMemoryEnabled               bool
+	AgentMemorySlots                 []AgentMemorySlotConfig
+	AgentMemoryUserScope             string
+	BillingAppID                     string
+	BillingAppType                   string
 }
 
 // ResourceBindingAuthorization is the runtime authorization evidence for one
 // concrete Agent resource binding.
 type ResourceBindingAuthorization struct {
-	BindingType      string `json:"binding_type"`
-	ResourceID       string `json:"resource_id"`
-	ParentResourceID string `json:"parent_resource_id,omitempty"`
-	AccessMode       string `json:"access_mode"`
-	BoundByAccountID string `json:"bound_by_account_id"`
-	BoundAtUnix      int64  `json:"bound_at_unix"`
+	BindingType      string   `json:"binding_type"`
+	ResourceID       string   `json:"resource_id"`
+	ParentResourceID string   `json:"parent_resource_id,omitempty"`
+	AccessMode       string   `json:"access_mode"`
+	AllowedActionIDs []string `json:"allowed_action_ids,omitempty"`
+	BoundByAccountID string   `json:"bound_by_account_id"`
+	BoundAtUnix      int64    `json:"bound_at_unix"`
 }
 
 type AgentMemorySlotConfig = agentmemoryruntime.Slot
@@ -290,6 +294,31 @@ type AgentMemoryContextService interface {
 	ClearValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, key string, meta agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error)
 }
 
+// AIChatIntegrationRuntimePreferences is the trusted, server-side snapshot of
+// external connections selected by the current AIChat user. It is deliberately
+// separate from request DTOs: callers must not be able to grant themselves a
+// connection by supplying these IDs in a chat request.
+type AIChatIntegrationRuntimePreferences struct {
+	SelectedConnectionIDs  map[string][]string
+	PreferredConnectionIDs map[string]string
+}
+
+// AIChatIntegrationPreferenceResolver reloads the current user's external-app
+// selection for every AIChat execution boundary, including continuations.
+// Implementations should read authoritative persisted preferences; individual
+// tools and the integration executor still perform their own current ACL check.
+type AIChatIntegrationPreferenceResolver interface {
+	ResolveAIChatIntegrationPreferences(ctx context.Context, scope Scope) (AIChatIntegrationRuntimePreferences, error)
+}
+
+// AIChatIntegrationPreferenceResolverFunc adapts a function for dependency
+// injection without coupling chatruntime to the integrations persistence model.
+type AIChatIntegrationPreferenceResolverFunc func(context.Context, Scope) (AIChatIntegrationRuntimePreferences, error)
+
+func (f AIChatIntegrationPreferenceResolverFunc) ResolveAIChatIntegrationPreferences(ctx context.Context, scope Scope) (AIChatIntegrationRuntimePreferences, error) {
+	return f(ctx, scope)
+}
+
 type service struct {
 	repos                 *repository.Repositories
 	llmClient             llmclient.LLMClient
@@ -304,9 +333,11 @@ type service struct {
 	skillRuntime          *skills.Runtime
 	memoryService         UserMemoryService
 	agentMemoryService    AgentMemoryContextService
+	integrationPrefs      AIChatIntegrationPreferenceResolver
 	customSkillStorage    customSkillStorage
 	modelIdleTimeout      time.Duration
 	modelProgressSchedule modelprogress.Schedule
+	titleGenerationJobs   sync.Map
 }
 
 func NewService(repos *repository.Repositories, llmClient llmclient.LLMClient) Service {
@@ -351,11 +382,16 @@ func NewServiceWithSkillRuntime(
 	optionalServices ...interface{},
 ) Service {
 	var agentMemoryService AgentMemoryContextService
+	var integrationPrefs AIChatIntegrationPreferenceResolver
 	for _, item := range optionalServices {
 		switch typed := item.(type) {
 		case AgentMemoryContextService:
 			if agentMemoryService == nil {
 				agentMemoryService = typed
+			}
+		case AIChatIntegrationPreferenceResolver:
+			if integrationPrefs == nil {
+				integrationPrefs = typed
 			}
 		}
 	}
@@ -373,6 +409,7 @@ func NewServiceWithSkillRuntime(
 		skillRuntime:       skillRuntime,
 		memoryService:      memoryService,
 		agentMemoryService: agentMemoryService,
+		integrationPrefs:   integrationPrefs,
 		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),
 		modelIdleTimeout:   configuredModelIdleTimeout(),
 	}

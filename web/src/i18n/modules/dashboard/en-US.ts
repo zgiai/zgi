@@ -4,6 +4,7 @@ const messages = {
     billing: 'Billing',
     usage: 'Usage Statistics',
     llm: 'AI Configuration',
+    capabilities: 'AI Capabilities',
     security: 'API Keys',
     org: 'Organization',
     settings: 'Platform Settings',
@@ -28,6 +29,7 @@ const messages = {
     permissions: 'Roles & Access',
     organizationSettings: 'Organization Settings',
     aichatSkills: 'Skill Management',
+    integrations: 'External Integrations',
     modelSettings: 'Default Models',
     parserSettings: 'Document Parsing',
     marketplace: 'Marketplace',
@@ -97,6 +99,7 @@ const messages = {
       agent: 'Agent',
       aichat: 'General Chat',
       'image-runtime': 'Image Generation',
+      'video-runtime': 'Video Generation',
       data_library_file: 'Document Vectorization & Q&A',
       prompt_optimizer: 'Prompt Optimization',
       prompt_playground: 'Prompt Playground',
@@ -144,9 +147,9 @@ const messages = {
       loadMore: 'Load more',
       loadingMore: 'Loading...',
       retried: '{count} attempts',
-      unknownHint: '{count} historical calls predate reliable source attribution.',
+      unknownHint: '{count} calls have no reliable source attribution.',
       historicalExplanation:
-        'Historical calls were created before source attribution was introduced. Model, token, cost, and duration data remain available, but API versus in-product origin cannot be reconstructed reliably.',
+        'This call has no reliable source attribution. It may predate attribution or come from a path that did not pass source context completely. Model, token, cost, and duration data remain available.',
       contentSettings: {
         title: 'Input/output content audit',
         compactLabel: 'Content audit',
@@ -197,7 +200,7 @@ const messages = {
         sourceApi: 'Gateway call authenticated with an organization API key',
         sourceProduct:
           'Gateway call made by an in-product agent, workflow, chat, or knowledge base',
-        sourceUnknown: 'Historical call created before source attribution was recorded',
+        sourceUnknown: 'This call has no reliable API or in-product source attribution',
         business: 'Business attribution',
         appId: 'App ID',
         model: 'Model',
@@ -237,7 +240,7 @@ const messages = {
         all: 'All calls',
         api: 'API calls',
         product: 'In-product',
-        unknown: 'Historical',
+        unknown: 'Unattributed',
       },
       metrics: {
         calls: 'Business calls',
@@ -349,6 +352,28 @@ const messages = {
       'image-gen': {
         title: 'Default Image Generation Model',
         description: 'Used for prompt-based image generation in console and workflow scenarios.',
+      },
+      'speech-to-text': {
+        title: 'Default Speech Recognition Model',
+        description: 'Used to turn Agent voice input into editable text.',
+      },
+      'text-to-speech': {
+        title: 'Default Speech Generation Model',
+        description: 'Used to turn Agent answers into playable speech.',
+        defaultVoice: {
+          label: 'Default voice',
+          selectPlaceholder: 'Select a voice',
+          unavailablePlaceholder: 'No voices available for this model',
+          selectMode: 'Choose from model voices',
+          loadingMode: 'Loading voices',
+          unavailableMode: 'Voices unavailable',
+          unavailableDescription:
+            'This model is missing voice options. Fix the model catalog configuration first.',
+          selectDescription:
+            'These voices are provided by the current model and used for Agent speech playback.',
+          required: 'Select a voice before saving.',
+          unsupported: 'The current voice is not available for this model. Select another voice.',
+        },
       },
     },
     parserSettings: {
@@ -908,6 +933,8 @@ const messages = {
         statusAria: 'Filter by enabled status',
         allRuntime: 'All types',
         allStatus: 'All statuses',
+        dependencyAria: 'Filter by external dependency',
+        allDependencies: 'All dependencies',
         visibleCount: '{count} Skills shown',
         empty: 'No Skills match the current filters.',
       },
@@ -951,6 +978,23 @@ const messages = {
         enabled: 'Enabled',
         disabled: 'Disabled',
         invalid: 'Invalid',
+      },
+      dependency: {
+        standalone: 'Standalone',
+        external: 'Requires external app',
+        usesExternal: 'Uses external app',
+        unknownExternalApp: 'External app',
+        configure: 'Configure',
+        manage: 'Manage',
+      },
+      availability: {
+        ready: 'Ready',
+        setupRequired: 'Setup required',
+        noAccess: 'No access',
+        degraded: 'Needs attention',
+        unavailable: 'Unavailable',
+        blockedDescription:
+          'Configure a healthy, authorized connection before enabling this Skill.',
       },
       scriptStatus: {
         runnable: 'Scripts runnable',
@@ -1138,11 +1182,33 @@ const messages = {
         migrateAndDelete: 'Switch and Delete',
         migrating: 'Processing...',
         migrationPartial:
-          'Switched {applied}; {failed} failed. Resolve the failed items before deleting.',
+          'No changes were applied because {failed} member updates failed. Resolve the failures and try again.',
         migrationError: 'Failed to delete template',
       },
       deleteSuccess: 'Template deleted successfully',
       deleteError: 'Delete failed',
+      errors: {
+        noOrganization: 'No current organization was found. Refresh the page and try again.',
+        nameRequired: 'Enter a template name.',
+        nameTooLong: 'Template name cannot exceed 30 characters.',
+        descriptionTooLong: 'Template description cannot exceed 200 characters.',
+        invalidRequest: 'The request is incomplete or invalid. Check it and try again.',
+        nameExists: 'A permission template with this name already exists. Use a different name.',
+        reservedName:
+          'Owner, Admin, Member, and Viewer are reserved built-in role names. Use a different name.',
+        templateInUse:
+          'This template is still applied to workspace members. Move them to another template before deleting it.',
+        lastRemaining:
+          'At least one active permission template must remain. This template cannot be deleted.',
+        builtinImmutable:
+          'Built-in workspace roles cannot be edited. Create a permission template to customize access.',
+        notFound:
+          'This permission template does not exist or has been removed. Return to the list and refresh.',
+        deleted:
+          'This permission template has already been deleted and can no longer be edited. Return to the template list.',
+        ownerNotApplicable:
+          'The Workspace Lead identity cannot be applied as a permission template.',
+      },
       associatedMembers: 'Applied Members',
       searchMembersPlaceholder: 'Search members using this template...',
       noMembersFound: 'No members found',

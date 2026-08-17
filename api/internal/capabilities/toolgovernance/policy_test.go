@@ -624,6 +624,46 @@ func TestDecidePersistentPreauthorizationOverridesApprovalPolicies(t *testing.T)
 	}
 }
 
+func TestDecideApprovalEveryInvocationOverridesPersistentAndSessionGrants(t *testing.T) {
+	manifest := fileManifest(EffectRead, RiskLevelLow)
+	manifest.DefaultApprovalPolicy = ApprovalPolicyAlwaysAsk
+	manifest.ApprovalEveryInvocation = true
+	now := time.Now().UTC()
+	request := Request{
+		Manifest:       manifest,
+		PermissionTier: PermissionTierAdvanced,
+		ConversationID: "conversation-1",
+		OrganizationID: "organization-1",
+		UserID:         "user-1",
+		SkillID:        "web-search",
+		ProviderType:   "connector",
+		ProviderID:     "web-search",
+		CorrelationID:  "approval-corr-1",
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+		Preauthorization: &Preauthorization{
+			Required: true, Matched: true, Source: "agent_binding", BindingType: "integration_connection",
+		},
+		SessionGrants: []SessionGrant{{
+			ConversationID: "conversation-1", OrganizationID: "organization-1", UserID: "user-1",
+			SkillID: "web-search", ProviderType: "connector", ProviderID: "web-search", ToolID: manifest.ToolID,
+			Effect: manifest.Effect, GrantedAt: now, ExpiresAt: now.Add(time.Hour),
+		}},
+	}
+	decision := Decide(request, DefaultPolicy())
+	assertNeedsApproval(t, decision, "approval every invocation")
+	if decision.MatchedGrant != nil {
+		t.Fatalf("per-invocation approval reused a grant: %#v", decision.MatchedGrant)
+	}
+	request.SessionGrants = []SessionGrant{decision.ApprovalEvent.Grant}
+	approved := Decide(request, DefaultPolicy())
+	if approved.Status != DecisionStatusAllowed || approved.MatchedGrant == nil || approved.ApprovedByCorrelationID != "approval-corr-1" {
+		t.Fatalf("one-shot approval did not resume exact invocation: %#v", approved)
+	}
+	request.CorrelationID = "approval-corr-2"
+	nextInvocation := Decide(request, DefaultPolicy())
+	assertNeedsApproval(t, nextInvocation, "new invocation after one-shot approval")
+}
+
 func TestDecideMissingPersistentPreauthorizationDeniesBeforeSessionGrant(t *testing.T) {
 	decision := Decide(Request{
 		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
@@ -695,6 +735,196 @@ func TestDecideCriticalBlockPrecedesPersistentPreauthorization(t *testing.T) {
 
 	if decision.Status != DecisionStatusBlocked {
 		t.Fatalf("decision = %#v, want critical policy block", decision)
+	}
+}
+
+func TestDecideDataEgressReadNeverAskDoesNotRequireApproval(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       webDataEgressManifest(),
+		PermissionTier: PermissionTierBasic,
+		CorrelationID:  "corr-egress",
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusAllowed || decision.RequiresApproval || decision.ApprovalEvent != nil {
+		t.Fatalf("decision = %#v, want allowed without approval", decision)
+	}
+	if decision.Manifest.ExternalDestination != "exa.ai" {
+		t.Fatalf("manifest destination = %q, want normalized exa.ai", decision.Manifest.ExternalDestination)
+	}
+	for name, payload := range map[string]map[string]interface{}{
+		"model feedback": decision.ModelFeedback,
+		"audit":          decision.AssetOperationAudit,
+	} {
+		if payload["data_egress"] != true || payload["external_destination"] != "exa.ai" || payload["sensitive_data_allowed"] != false {
+			t.Fatalf("%s = %#v, want data-egress metadata", name, payload)
+		}
+	}
+}
+
+func TestDecideExternalSideEffectStillRequiresApprovalWithDataEgress(t *testing.T) {
+	manifest := webDataEgressManifest()
+	manifest.ExternalSideEffect = true
+	manifest.SensitiveDataAllowed = true
+	decision := Decide(Request{
+		Manifest:       manifest,
+		PermissionTier: PermissionTierBasic,
+		CorrelationID:  "corr-side-effect",
+	}, DefaultPolicy())
+
+	assertNeedsApproval(t, decision, "external side effect")
+	if decision.Reason != "external side effect requires user approval" {
+		t.Fatalf("reason = %q, want external side effect approval reason", decision.Reason)
+	}
+	if !decision.ApprovalEvent.DataEgress || decision.ApprovalEvent.ExternalDestination != "exa.ai" || !decision.ApprovalEvent.SensitiveDataAllowed {
+		t.Fatalf("approval event = %#v, want data-egress metadata", decision.ApprovalEvent)
+	}
+	if !decision.ApprovalEvent.Grant.DataEgress || decision.ApprovalEvent.Grant.ExternalDestination != "exa.ai" || !decision.ApprovalEvent.Grant.SensitiveDataAllowed {
+		t.Fatalf("approval grant = %#v, want bound data-egress metadata", decision.ApprovalEvent.Grant)
+	}
+}
+
+func TestDecideSessionGrantCannotCrossDataEgressScope(t *testing.T) {
+	manifest := webDataEgressManifest()
+	manifest.ExternalSideEffect = true
+	manifest.ExternalDestination = "api.exa.ai"
+	manifest.SensitiveDataAllowed = true
+	baseGrant := SessionGrant{
+		ConversationID:        "conversation-egress",
+		SkillID:               manifest.SkillID,
+		ProviderType:          "connector",
+		ProviderID:            "web-search",
+		ToolID:                manifest.ToolID,
+		Effect:                manifest.Effect,
+		AssetType:             manifest.AssetType,
+		RiskLevel:             manifest.RiskLevel,
+		DataEgress:            true,
+		ExternalDestination:   " API.EXA.AI ",
+		SensitiveDataAllowed:  true,
+		ApprovalCorrelationID: "approval-egress",
+		ExpiresAt:             time.Now().Add(time.Hour),
+	}
+	baseRequest := Request{
+		Manifest:       manifest,
+		PermissionTier: PermissionTierBasic,
+		ConversationID: baseGrant.ConversationID,
+		SkillID:        baseGrant.SkillID,
+		ProviderType:   baseGrant.ProviderType,
+		ProviderID:     baseGrant.ProviderID,
+	}
+
+	matching := baseRequest
+	matching.Manifest.ExternalDestination = "api.exa.ai"
+	matching.SessionGrants = []SessionGrant{baseGrant}
+	decision := Decide(matching, DefaultPolicy())
+	if decision.Status != DecisionStatusAllowed || decision.MatchedGrant == nil || decision.ApprovedByCorrelationID != "approval-egress" {
+		t.Fatalf("normalized matching egress grant decision = %#v, want allowed", decision)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*SessionGrant)
+	}{
+		{name: "different destination", mutate: func(grant *SessionGrant) { grant.ExternalDestination = "other.example" }},
+		{name: "different data egress flag", mutate: func(grant *SessionGrant) { grant.DataEgress = false }},
+		{name: "different sensitive data flag", mutate: func(grant *SessionGrant) { grant.SensitiveDataAllowed = false }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			grant := baseGrant
+			tt.mutate(&grant)
+			request := baseRequest
+			request.SessionGrants = []SessionGrant{grant}
+			decision := Decide(request, DefaultPolicy())
+			assertNeedsApproval(t, decision, tt.name)
+			if decision.MatchedGrant != nil || decision.ApprovedByCorrelationID != "" {
+				t.Fatalf("mismatched egress grant was replayed: %#v", decision)
+			}
+		})
+	}
+}
+
+func TestFrozenInvocationPreservesDataEgressScope(t *testing.T) {
+	invocation := NewFrozenInvocation(FrozenInvocationRequest{
+		CorrelationID: "corr-egress",
+		Manifest:      webDataEgressManifest(),
+		ToolName:      "search_web",
+		Arguments:     map[string]interface{}{"query": "latest news"},
+	})
+
+	if !invocation.DataEgress || invocation.ExternalDestination != "exa.ai" || invocation.SensitiveDataAllowed {
+		t.Fatalf("frozen invocation = %#v, want normalized data-egress scope", invocation)
+	}
+	if !FrozenInvocationHashMatches(invocation) {
+		t.Fatalf("frozen invocation hash %q should match", invocation.Hash)
+	}
+	invocation.ExternalDestination = "example.com"
+	if FrozenInvocationHashMatches(invocation) {
+		t.Fatal("changing the frozen external destination must invalidate the hash")
+	}
+}
+
+func TestFrozenInvocationDetachesAssetMetadataBeforeHashing(t *testing.T) {
+	metadata := map[string]interface{}{
+		"integration_id": "feishu",
+		"action_id":      "feishu.message.send_user",
+		"constraints": map[string]interface{}{
+			"recipient_type": "self",
+		},
+	}
+	invocation := NewFrozenInvocation(FrozenInvocationRequest{
+		CorrelationID: "corr-feishu-send",
+		Manifest: Manifest{
+			ToolID:              "feishu.message.send_user",
+			SkillID:             "external-apps",
+			Effect:              EffectExternalSend,
+			RiskLevel:           RiskLevelHigh,
+			DataEgress:          true,
+			ExternalDestination: "open.feishu.cn",
+		},
+		ToolName: "execute_action",
+		Arguments: map[string]interface{}{
+			"integration_id": "feishu",
+			"action_id":      "feishu.message.send_user",
+			"arguments":      map[string]interface{}{"recipient_type": "self", "text": "你好"},
+		},
+		Assets: []AssetRef{{
+			ID:       "connection",
+			Type:     "integration_connection",
+			Name:     "yy",
+			Metadata: metadata,
+		}},
+	})
+
+	metadata["action_id"] = "feishu.message.send_message"
+	metadata["constraints"].(map[string]interface{})["recipient_type"] = "open_id"
+
+	got := invocation.Assets[0].Metadata
+	if got["action_id"] != "feishu.message.send_user" {
+		t.Fatalf("frozen action metadata = %#v, want detached original value", got["action_id"])
+	}
+	constraints, ok := got["constraints"].(map[string]interface{})
+	if !ok || constraints["recipient_type"] != "self" {
+		t.Fatalf("frozen nested metadata = %#v, want detached original value", got["constraints"])
+	}
+	if !FrozenInvocationHashMatches(invocation) {
+		t.Fatalf("detached frozen invocation hash %q should match", invocation.Hash)
+	}
+}
+
+func webDataEgressManifest() Manifest {
+	return Manifest{
+		ToolID:                 "web.search",
+		SkillID:                "web-search",
+		Domain:                 "web",
+		Effect:                 EffectRead,
+		AssetType:              "web_result",
+		RiskLevel:              RiskLevelLow,
+		DataEgress:             true,
+		ExternalDestination:    " ExA.AI ",
+		PermissionScopes:       []string{"web:search"},
+		DefaultApprovalPolicy:  ApprovalPolicyNeverAsk,
+		AllowedPermissionTiers: []PermissionTier{PermissionTierBasic},
+		AuditRequired:          true,
 	}
 }
 

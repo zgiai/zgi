@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // EntityMentionRepository handles CRUD for kb_entity_mentions
@@ -25,7 +26,7 @@ func (r *EntityMentionRepository) CreateBatch(ctx context.Context, mentions []*m
 	if len(mentions) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).CreateInBatches(mentions, 100).Error
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(mentions, 100).Error
 }
 
 // FindPendingByKBID retrieves all pending mentions for a specific knowledge base with a limit
@@ -134,6 +135,13 @@ func (r *EntityMentionRepository) SoftDeleteByDocumentSegments(ctx context.Conte
 	return r.db.WithContext(ctx).Model(&model.EntityMention{}).
 		Where("segment_id IN (SELECT id FROM document_segments WHERE document_id = ?)", documentID).
 		Updates(updates).Error
+}
+
+func (r *EntityMentionRepository) SoftDeleteByDocumentID(ctx context.Context, documentID uuid.UUID) error {
+	now := time.Now().UTC()
+	return r.db.WithContext(ctx).Model(&model.EntityMention{}).
+		Where("is_deleted = ? AND (document_id = ? OR (document_id IS NULL AND segment_id IN (SELECT id FROM document_segments WHERE document_id = ?)))", false, documentID, documentID).
+		Updates(map[string]any{"is_deleted": true, "deleted_at": now}).Error
 }
 
 // FindByDocumentSegments retrieves all entity mentions for segments belonging to a document

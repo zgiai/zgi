@@ -22,6 +22,7 @@ export type SkillScenarioFilter = 'all' | SkillScenario;
 export type SkillCapabilityFilter = 'all' | SkillCapabilityCategory;
 export type SkillSourceFilter = 'all' | AIChatSkillSource;
 export type SkillStatusFilter = 'all' | 'enabled' | 'disabled' | 'invalid';
+export type SkillDependencyFilter = 'all' | 'standalone' | 'external_integration';
 
 interface AIChatSkillCatalogFiltersProps {
   locale: string;
@@ -31,12 +32,14 @@ interface AIChatSkillCatalogFiltersProps {
   capability: SkillCapabilityFilter;
   source: SkillSourceFilter;
   status: SkillStatusFilter;
+  dependency: SkillDependencyFilter;
   searchQuery: string;
   hasActiveFilters: boolean;
   onScenarioChange: (value: SkillScenarioFilter) => void;
   onCapabilityChange: (value: SkillCapabilityFilter) => void;
   onSourceChange: (value: SkillSourceFilter) => void;
   onStatusChange: (value: SkillStatusFilter) => void;
+  onDependencyChange: (value: SkillDependencyFilter) => void;
   onSearchQueryChange: (value: string) => void;
   onClearFilters: () => void;
 }
@@ -49,12 +52,14 @@ export function AIChatSkillCatalogFilters({
   capability,
   source,
   status,
+  dependency,
   searchQuery,
   hasActiveFilters,
   onScenarioChange,
   onCapabilityChange,
   onSourceChange,
   onStatusChange,
+  onDependencyChange,
   onSearchQueryChange,
   onClearFilters,
 }: AIChatSkillCatalogFiltersProps) {
@@ -146,6 +151,29 @@ export function AIChatSkillCatalogFilters({
           </SelectContent>
         </Select>
       </div>
+
+      <Select
+        value={dependency}
+        onValueChange={value => onDependencyChange(value as SkillDependencyFilter)}
+      >
+        <SelectTrigger
+          className="h-8 rounded-md bg-background lg:w-36"
+          aria-label={t('organization.aichatSkills.filters.dependencyAria')}
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">
+            {t('organization.aichatSkills.filters.allDependencies')}
+          </SelectItem>
+          <SelectItem value="standalone">
+            {t('organization.aichatSkills.dependency.standalone')}
+          </SelectItem>
+          <SelectItem value="external_integration">
+            {t('organization.aichatSkills.dependency.external')}
+          </SelectItem>
+        </SelectContent>
+      </Select>
 
       {hasActiveFilters ? (
         <Button variant="ghost" size="sm" className="h-8 shrink-0" onClick={onClearFilters}>

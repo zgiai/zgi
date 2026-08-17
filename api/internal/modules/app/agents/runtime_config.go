@@ -483,6 +483,8 @@ func mergeAgentConfigRequestedFields(current dto.AgentConfigRequest, requested d
 			current.DatabaseBindings = requested.DatabaseBindings
 		case "workflow_bindings":
 			current.WorkflowBindings = requested.WorkflowBindings
+		case "integration_bindings":
+			current.IntegrationBindings = requested.IntegrationBindings
 		case "":
 			continue
 		default:
@@ -1148,6 +1150,7 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		WorkflowBindings:          config.WorkflowBindings,
 		WorkflowBoundByAccountID:  config.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:       config.WorkflowBoundAtUnix,
+		IntegrationBindings:       config.IntegrationBindings,
 		BindingAuthorizations:     config.BindingAuthorizations,
 	}
 }
@@ -1225,11 +1228,10 @@ func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequ
 	req.EnabledSkillIDs = normalizeAgentEnabledSkillIDs(req.EnabledSkillIDs)
 	req.SuggestedQuestions = normalizeSuggestedQuestions(req.SuggestedQuestions)
 	req.KnowledgeDatasetIDs = normalizeStringIDs(req.KnowledgeDatasetIDs)
-	if req.KnowledgeRetrievalConfig == nil {
-		req.KnowledgeRetrievalConfig = map[string]interface{}{}
-	}
+	req.KnowledgeRetrievalConfig = normalizeAgentKnowledgeRetrievalConfig(req.KnowledgeRetrievalConfig)
 	req.DatabaseBindings = normalizeAgentDatabaseBindings(req.DatabaseBindings)
 	req.WorkflowBindings = normalizeAgentWorkflowBindings(req.WorkflowBindings)
+	req.IntegrationBindings = normalizeAgentIntegrationBindings(req.IntegrationBindings)
 	return req
 }
 
@@ -1290,6 +1292,7 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		WorkflowBindings:          runtimeCfg.WorkflowBindings,
 		WorkflowBoundByAccountID:  workflowBoundByAccountID,
 		WorkflowBoundAtUnix:       workflowBoundAtUnix,
+		IntegrationBindings:       runtimeCfg.IntegrationBindings,
 		BindingAuthorizations:     bindingAuthorizations,
 	})
 	if err != nil {
@@ -1322,13 +1325,14 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		KnowledgeDatasetIDs:       normalizeStringIDs(mode.KnowledgeDatasetIDs),
 		KnowledgeBoundByAccountID: strings.TrimSpace(mode.KnowledgeBoundByAccountID),
 		KnowledgeBoundAtUnix:      mode.KnowledgeBoundAtUnix,
-		KnowledgeRetrievalConfig:  copyStringAnyMap(mode.KnowledgeRetrievalConfig),
+		KnowledgeRetrievalConfig:  normalizeAgentKnowledgeRetrievalConfig(mode.KnowledgeRetrievalConfig),
 		DatabaseBindings:          normalizeAgentDatabaseBindings(mode.DatabaseBindings),
 		DatabaseBoundByAccountID:  strings.TrimSpace(mode.DatabaseBoundByAccountID),
 		DatabaseBoundAtUnix:       mode.DatabaseBoundAtUnix,
 		WorkflowBindings:          normalizeAgentWorkflowBindings(mode.WorkflowBindings),
 		WorkflowBoundByAccountID:  strings.TrimSpace(mode.WorkflowBoundByAccountID),
 		WorkflowBoundAtUnix:       mode.WorkflowBoundAtUnix,
+		IntegrationBindings:       normalizeAgentIntegrationBindings(mode.IntegrationBindings),
 		BindingAuthorizations:     bindingAuthorizationsForRuntimeMode(mode),
 	}
 	if cfg != nil {
@@ -1370,6 +1374,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"workflow_bindings":             normalizeAgentWorkflowBindings(resp.WorkflowBindings),
 		"workflow_bound_by_account_id":  resp.WorkflowBoundByAccountID,
 		"workflow_bound_at_unix":        resp.WorkflowBoundAtUnix,
+		"integration_bindings":          normalizeAgentIntegrationBindings(resp.IntegrationBindings),
 		"binding_authorizations":        normalizeAgentBindingAuthorizations(resp.BindingAuthorizations),
 	}
 }
@@ -1413,7 +1418,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.KnowledgeBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "knowledge_bound_by_account_id"))
 	resp.KnowledgeBoundAtUnix = int64FromSnapshot(snapshot["knowledge_bound_at_unix"])
 	if cfg, ok := snapshot["knowledge_retrieval_config"].(map[string]interface{}); ok {
-		resp.KnowledgeRetrievalConfig = copyStringAnyMap(cfg)
+		resp.KnowledgeRetrievalConfig = normalizeAgentKnowledgeRetrievalConfig(cfg)
 	}
 	resp.DatabaseBindings = agentDatabaseBindingsFromSnapshot(snapshot["database_bindings"])
 	resp.DatabaseBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "database_bound_by_account_id"))
@@ -1421,6 +1426,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.WorkflowBindings = agentWorkflowBindingsFromSnapshot(snapshot["workflow_bindings"])
 	resp.WorkflowBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "workflow_bound_by_account_id"))
 	resp.WorkflowBoundAtUnix = int64FromSnapshot(snapshot["workflow_bound_at_unix"])
+	resp.IntegrationBindings = agentIntegrationBindingsFromSnapshot(snapshot["integration_bindings"])
 	resp.BindingAuthorizations = agentBindingAuthorizationsFromSnapshot(snapshot["binding_authorizations"])
 	if len(resp.BindingAuthorizations) == 0 {
 		resp.BindingAuthorizations = bindingAuthorizationsForRuntimeMode(dto.AgentRuntimeModeConfig{
@@ -1433,9 +1439,31 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 			WorkflowBindings:          resp.WorkflowBindings,
 			WorkflowBoundByAccountID:  resp.WorkflowBoundByAccountID,
 			WorkflowBoundAtUnix:       resp.WorkflowBoundAtUnix,
+			IntegrationBindings:       resp.IntegrationBindings,
 		})
 	}
 	return resp
+}
+
+func normalizeAgentKnowledgeRetrievalConfig(config map[string]interface{}) map[string]interface{} {
+	result := copyStringAnyMap(config)
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	method, _ := result["search_method"].(string)
+	method = strings.TrimSpace(method)
+	if method != "" {
+		result["search_method"] = method
+	}
+	if method == "graph" || method == "graph_search" {
+		policy, _ := result["fallback_policy"].(string)
+		policy = strings.TrimSpace(policy)
+		if policy == "" {
+			policy = "none"
+		}
+		result["fallback_policy"] = policy
+	}
+	return result
 }
 
 func agentBindingAuthorizationsFromSnapshot(value interface{}) []dto.AgentBindingAuthorization {

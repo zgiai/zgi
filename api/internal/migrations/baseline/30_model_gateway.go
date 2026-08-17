@@ -430,6 +430,7 @@ var ModelGatewaySchema = File{
     cached_input_price numeric(10,6),
     videos boolean DEFAULT false,
     image_edit boolean DEFAULT false,
+    music_generation boolean DEFAULT false NOT NULL,
     translation boolean DEFAULT false,
     is_configured boolean DEFAULT false,
     image_prices jsonb DEFAULT '[]'::jsonb,

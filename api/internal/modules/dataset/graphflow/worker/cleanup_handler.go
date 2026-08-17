@@ -4,13 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	graphmodel "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
+	"gorm.io/gorm"
 )
+
+type evidenceGarbageCollectionPlan struct {
+	DeleteRelationship bool
+	DeleteEntity       bool
+}
+
+type documentProjectionCleanup struct {
+	Relationships []*graphmodel.Relationship
+	Entities      []*graphmodel.Entity
+}
+
+func planEvidenceGarbageCollection(remainingEvidence int, remainingRelationships int) evidenceGarbageCollectionPlan {
+	deleteRelationship := remainingEvidence == 0
+	return evidenceGarbageCollectionPlan{
+		DeleteRelationship: deleteRelationship,
+		DeleteEntity:       deleteRelationship && remainingRelationships == 0,
+	}
+}
 
 // NewCleanupHandler creates a handler for cleaning up GraphFlow data when a document is deleted
 func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) func(context.Context, *asynq.Task) error {
@@ -31,6 +53,19 @@ func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) f
 				return fmt.Errorf("failed to parse task_id: %v: %w", err, asynq.SkipRetry)
 			}
 			hasTaskID = true
+			graphFlowTask, loadErr := svc.TaskRepo.GetByID(ctx, taskID)
+			if loadErr != nil {
+				return fmt.Errorf("failed to load cleanup task: %v: %w", loadErr, asynq.SkipRetry)
+			}
+			if graphFlowTask == nil {
+				return fmt.Errorf("cleanup task not found: %s: %w", taskID, asynq.SkipRetry)
+			}
+			if graphFlowTask.Status == "completed" || graphFlowTask.Status == "failed" {
+				return nil
+			}
+			if err := validateActiveRunTask(ctx, svc, graphFlowTask); err != nil {
+				return fmt.Errorf("cleanup task belongs to an inactive run: %v: %w", err, asynq.SkipRetry)
+			}
 
 			// Update task status to processing
 			if err := svc.TaskRepo.UpdateTaskProcessing(ctx, taskID); err != nil {
@@ -83,82 +118,18 @@ func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) f
 			svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 20)
 		}
 
-		// 2. Process entity mentions and handle cascade soft deletes
+		// 2. Remove concrete document evidence and derive garbage collection from remaining evidence.
 		if svc.EntityMentionRepo != nil && svc.EntityRepo != nil && svc.RelationshipRepo != nil {
-			// Find all entity mentions for this document
-			mentions, err := svc.EntityMentionRepo.FindByDocumentSegments(ctx, documentID)
+			cleanup, err := cleanupDocumentEvidence(ctx, svc.DB, kbID, documentID)
 			if err != nil {
-				logger.Error("Failed to find entity mentions", err)
+				logger.Error("Failed to clean document graph evidence", err)
 				errors = append(errors, err)
-			} else {
-				// Map to track processed entities to avoid race conditions/redundant checks within this task
-				// though source count decrement should be atomic in DB.
-				// However, if one doc mentions the same entity 10 times, we should decrement 10 times?
-				// Requirement says: "Traverse every mention... a. entity.source_count -= 1"
-				// So yes, for EACH mention, we decrement.
-
-				totalMentions := len(mentions)
-				for i, mention := range mentions {
-					if mention.EntityID != nil {
-						entityID := *mention.EntityID
-
-						// a. Decrement source count
-						if err := svc.EntityRepo.DecrementSourceCount(ctx, entityID); err != nil {
-							logger.Error("Failed to decrement entity source count", err)
-						} else {
-							// b. Check if source count <= 0
-							entity, err := svc.EntityRepo.GetByID(ctx, entityID)
-							if err != nil {
-								logger.Error("Failed to fetching entity to check source count", err)
-								continue
-							}
-
-							if entity != nil && entity.SourceCount <= 0 {
-								// Soft delete entity
-								if err := svc.EntityRepo.SoftDelete(ctx, entityID); err != nil {
-									logger.Error("Failed to soft delete entity", err)
-									errors = append(errors, err)
-								} else {
-									logger.Info("Soft deleted entity due to zero source count", map[string]interface{}{
-										"entity_id": entityID.String(),
-									})
-
-									// Soft delete associated relationships
-									if err := svc.RelationshipRepo.SoftDeleteByEntityID(ctx, entityID); err != nil {
-										logger.Error("Failed to soft delete relationships", err)
-										errors = append(errors, err)
-									}
-								}
-							}
-						}
-					}
-					// Update progress incrementally from 20% to 80%
-					if hasTaskID && totalMentions > 0 {
-						progress := 20 + int(float64(i+1)/float64(totalMentions)*60)
-						if progress%10 == 0 { // Update every 10% to avoid too many DB writes
-							svc.TaskRepo.UpdateTaskProgress(ctx, taskID, progress)
-						}
-					}
-				}
-
-				// 3. Soft delete mentions (80% -> 90% progress)
-				if err := svc.EntityMentionRepo.SoftDeleteByDocumentSegments(ctx, documentID); err != nil {
-					logger.Error("Failed to soft delete entity mentions", err)
-					errors = append(errors, err)
-				}
-
-				if hasTaskID {
-					svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 85)
-				}
-
-				if err := svc.TripleMentionRepo.SoftDeleteByDocumentSegments(ctx, documentID); err != nil {
-					logger.Error("Failed to soft delete triple mentions", err)
-					errors = append(errors, err)
-				}
-
-				if hasTaskID {
-					svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 90)
-				}
+			} else if err := cleanupDocumentProjections(ctx, svc, cleanup); err != nil {
+				logger.Error("Failed to clean document graph projections", err)
+				errors = append(errors, err)
+			}
+			if hasTaskID {
+				svc.TaskRepo.UpdateTaskProgress(ctx, taskID, 90)
 			}
 		}
 
@@ -169,16 +140,175 @@ func NewCleanupHandler(svc *graphflow.Service, taskManager *queue.TaskManager) f
 				if err := svc.TaskRepo.UpdateTaskFailed(ctx, taskID, errorMsg); err != nil {
 					logger.Error("Failed to update task status to failed", err)
 				}
+				return fmt.Errorf("%s", errorMsg)
 			} else {
 				if err := svc.TaskRepo.UpdateTaskCompleted(ctx, taskID); err != nil {
 					logger.Error("Failed to update task status to completed", err)
+				} else if graphFlowTask, loadErr := svc.TaskRepo.GetByID(ctx, taskID); loadErr != nil {
+					logger.Error("Failed to reload completed cleanup task", loadErr)
+				} else if err := advanceBatchPipelineAfterItemTask(ctx, svc, taskManager, graphFlowTask); err != nil {
+					logger.Error("Failed to advance batched graph run after cleanup", err)
+					return err
 				}
 			}
 		}
 
-		// Preserve taskManager for potential future use
-		_ = taskManager
-
 		return nil
 	}
+}
+
+func cleanupDocumentEvidence(ctx context.Context, db *gorm.DB, kbID uuid.UUID, documentID uuid.UUID) (*documentProjectionCleanup, error) {
+	if db == nil || kbID == uuid.Nil {
+		return nil, fmt.Errorf("graph cleanup database and kb_id are required")
+	}
+	cleanup := &documentProjectionCleanup{}
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now().UTC()
+		mentionScope := "kb_id = ? AND is_deleted = ? AND (document_id = ? OR (document_id IS NULL AND segment_id IN (SELECT id FROM document_segments WHERE document_id = ?)))"
+		evidenceScope := "kb_id = ? AND (document_id = ? OR (document_id IS NULL AND segment_id IN (SELECT id FROM document_segments WHERE document_id = ?)))"
+
+		entityIDs := make([]uuid.UUID, 0)
+		if err := tx.Model(&graphmodel.EntityMention{}).
+			Where(evidenceScope+" AND entity_id IS NOT NULL", kbID, documentID, documentID).
+			Distinct("entity_id").
+			Pluck("entity_id", &entityIDs).Error; err != nil {
+			return err
+		}
+
+		relationshipIDs := make([]uuid.UUID, 0)
+		if err := tx.Model(&graphmodel.TripleMention{}).
+			Where(evidenceScope+" AND relationship_id IS NOT NULL", kbID, documentID, documentID).
+			Distinct("relationship_id").
+			Pluck("relationship_id", &relationshipIDs).Error; err != nil {
+			return err
+		}
+		for _, column := range []string{"head_entity_id", "tail_entity_id"} {
+			var tripleEntityIDs []uuid.UUID
+			if err := tx.Model(&graphmodel.TripleMention{}).
+				Where(evidenceScope+" AND "+column+" IS NOT NULL", kbID, documentID, documentID).
+				Distinct(column).
+				Pluck(column, &tripleEntityIDs).Error; err != nil {
+				return err
+			}
+			entityIDs = appendUniqueUUIDs(entityIDs, tripleEntityIDs...)
+		}
+
+		if err := tx.Model(&graphmodel.EntityMention{}).
+			Where(mentionScope, kbID, false, documentID, documentID).
+			Updates(map[string]any{"is_deleted": true, "deleted_at": now}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&graphmodel.TripleMention{}).
+			Where(mentionScope, kbID, false, documentID, documentID).
+			Updates(map[string]any{"is_deleted": true, "deleted_at": now}).Error; err != nil {
+			return err
+		}
+		if err := repository.NewRelationshipRepository(tx).RecalculateSourceCounts(ctx, kbID); err != nil {
+			return err
+		}
+		if err := repository.NewEntityRepository(tx).RecalculateSourceCounts(ctx, kbID); err != nil {
+			return err
+		}
+		if len(relationshipIDs) > 0 {
+			if err := tx.Model(&graphmodel.Relationship{}).
+				Where("kb_id = ? AND id IN ? AND is_deleted = ? AND weight = 0", kbID, relationshipIDs, false).
+				Updates(map[string]any{
+					"is_deleted":  true,
+					"deleted_at":  now,
+					"graph_state": "pending_delete",
+				}).Error; err != nil {
+				return err
+			}
+		}
+		if len(entityIDs) > 0 {
+			if err := tx.Model(&graphmodel.Entity{}).
+				Where(`kb_id = ? AND id IN ? AND is_deleted = ? AND source_count = 0 AND NOT EXISTS (
+				SELECT 1 FROM kb_relationships relationship
+				WHERE relationship.kb_id = kb_entities.kb_id
+				  AND relationship.is_deleted = false
+				  AND (relationship.head_entity_id = kb_entities.id OR relationship.tail_entity_id = kb_entities.id)
+			)`, kbID, entityIDs, false).
+				Updates(map[string]any{
+					"is_deleted":   true,
+					"deleted_at":   now,
+					"graph_state":  "pending_delete",
+					"vector_state": "pending_delete",
+				}).Error; err != nil {
+				return err
+			}
+		}
+
+		if len(relationshipIDs) > 0 {
+			if err := tx.Where("kb_id = ? AND id IN ? AND graph_state = ?", kbID, relationshipIDs, "pending_delete").
+				Find(&cleanup.Relationships).Error; err != nil {
+				return err
+			}
+		}
+		if len(entityIDs) > 0 {
+			if err := tx.Where("kb_id = ? AND id IN ? AND graph_state = ?", kbID, entityIDs, "pending_delete").
+				Find(&cleanup.Entities).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cleanup, nil
+}
+
+func appendUniqueUUIDs(existing []uuid.UUID, values ...uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(existing)+len(values))
+	for _, id := range existing {
+		seen[id] = struct{}{}
+	}
+	for _, id := range values {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		existing = append(existing, id)
+	}
+	return existing
+}
+
+func cleanupDocumentProjections(ctx context.Context, svc *graphflow.Service, cleanup *documentProjectionCleanup) error {
+	if cleanup == nil {
+		return nil
+	}
+	for _, relationship := range cleanup.Relationships {
+		if svc.Neo4jClient != nil {
+			if err := svc.Neo4jClient.DeleteRelationship(ctx, relationship.ID.String()); err != nil {
+				return fmt.Errorf("delete relationship %s from Neo4j: %w", relationship.ID, err)
+			}
+		}
+		if err := svc.RelationshipRepo.UpdateGraphState(ctx, relationship.ID, "deleted"); err != nil {
+			return fmt.Errorf("mark relationship %s projection deleted: %w", relationship.ID, err)
+		}
+	}
+
+	for _, entity := range cleanup.Entities {
+		if svc.Neo4jClient != nil {
+			if err := svc.Neo4jClient.DeleteNode(ctx, entity.ID.String()); err != nil {
+				return fmt.Errorf("delete entity %s from Neo4j: %w", entity.ID, err)
+			}
+		}
+		if svc.WeaviateClient != nil && entity.EmbeddingID != "" {
+			className := fmt.Sprintf("Entity_%s", entity.KBID.String())
+			if err := svc.WeaviateClient.DeleteObjectByID(ctx, className, entity.ID.String()); err != nil {
+				return fmt.Errorf("delete entity %s from Weaviate: %w", entity.ID, err)
+			}
+		}
+		if err := svc.EntityRepo.UpdateGraphState(ctx, entity.ID, "deleted", ""); err != nil {
+			return fmt.Errorf("mark entity %s graph projection deleted: %w", entity.ID, err)
+		}
+		if err := svc.EntityRepo.UpdateVectorState(ctx, entity.ID, "deleted", "", ""); err != nil {
+			return fmt.Errorf("mark entity %s vector projection deleted: %w", entity.ID, err)
+		}
+	}
+	return nil
 }

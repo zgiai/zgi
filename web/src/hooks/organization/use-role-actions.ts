@@ -6,6 +6,7 @@ import { organizationService } from '@/services/organization.service';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { getWorkspaceRoleErrorTranslationKey } from '@/utils/workspace-role-errors';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
 import { invalidateOrganizationMemberGraph } from '@/hooks/organization/invalidate-organization-member-graph';
@@ -25,12 +26,16 @@ export function useRoleActions() {
   const t = useT('dashboard');
   const { currentOrganization } = useOrganizations();
   const queryClient = useQueryClient();
+  const getRoleErrorMessage = (error: unknown, fallback: string) => {
+    const translationKey = getWorkspaceRoleErrorTranslationKey(error);
+    return translationKey ? t(translationKey) : getErrorMessage(error) || fallback;
+  };
 
   // Create role mutation
   const createRoleMutation = useMutation({
     mutationFn: async (data: CreateRoleRequest) => {
       if (!currentOrganization?.id) {
-        throw new Error('No organization selected');
+        throw new Error(t('organization.permissions.errors.noOrganization'));
       }
       return await organizationService.createRole(currentOrganization.id, data);
     },
@@ -45,7 +50,9 @@ export function useRoleActions() {
       }
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('organization.permissions.config.saveError'));
+      toast.error(
+        getRoleErrorMessage(error, t('organization.permissions.config.saveError'))
+      );
     },
   });
 
@@ -59,7 +66,7 @@ export function useRoleActions() {
       data: UpdateRolePermissionsRequest;
     }) => {
       if (!currentOrganization?.id) {
-        throw new Error('No organization selected');
+        throw new Error(t('organization.permissions.errors.noOrganization'));
       }
       return await organizationService.updateRolePermissions(currentOrganization.id, roleId, data);
     },
@@ -72,7 +79,9 @@ export function useRoleActions() {
       router.push('/dashboard/organization/permissions');
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('organization.permissions.config.saveError'));
+      toast.error(
+        getRoleErrorMessage(error, t('organization.permissions.config.saveError'))
+      );
     },
   });
 
@@ -80,7 +89,7 @@ export function useRoleActions() {
   const updateRoleInfoMutation = useMutation({
     mutationFn: async ({ roleId, data }: { roleId: string; data: UpdateRoleInfoRequest }) => {
       if (!currentOrganization?.id) {
-        throw new Error('No organization selected');
+        throw new Error(t('organization.permissions.errors.noOrganization'));
       }
       return await organizationService.updateRoleInfo(currentOrganization.id, roleId, data);
     },
@@ -93,7 +102,9 @@ export function useRoleActions() {
       invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('organization.permissions.config.saveError'));
+      toast.error(
+        getRoleErrorMessage(error, t('organization.permissions.config.saveError'))
+      );
     },
   });
 
@@ -106,7 +117,7 @@ export function useRoleActions() {
       data: ApplyRoleTemplateRequest;
     }) => {
       if (!currentOrganization?.id) {
-        throw new Error('No organization selected');
+        throw new Error(t('organization.permissions.errors.noOrganization'));
       }
       return await organizationService.applyRoleTemplate(currentOrganization.id, roleId, data);
     },
@@ -130,7 +141,9 @@ export function useRoleActions() {
       });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('organization.permissions.applyTemplateError'));
+      toast.error(
+        getRoleErrorMessage(error, t('organization.permissions.applyTemplateError'))
+      );
     },
   });
 
@@ -143,7 +156,7 @@ export function useRoleActions() {
       data: ReplaceAndDeleteRoleRequest;
     }) => {
       if (!currentOrganization?.id) {
-        throw new Error('No organization selected');
+        throw new Error(t('organization.permissions.errors.noOrganization'));
       }
       return await organizationService.replaceAndDeleteRole(currentOrganization.id, roleId, data);
     },
@@ -162,7 +175,6 @@ export function useRoleActions() {
       if (response.failed_count > 0) {
         toast.warning(
           t('organization.permissions.deleteConfirm.migrationPartial', {
-            applied: response.replaced_count,
             failed: response.failed_count,
           })
         );
@@ -175,7 +187,9 @@ export function useRoleActions() {
       });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('organization.permissions.config.deleteError'));
+      toast.error(
+        getRoleErrorMessage(error, t('organization.permissions.config.deleteError'))
+      );
     },
   });
 
@@ -183,7 +197,7 @@ export function useRoleActions() {
   const deleteRoleMutation = useMutation({
     mutationFn: async (roleId: string) => {
       if (!currentOrganization?.id) {
-        throw new Error('No organization selected');
+        throw new Error(t('organization.permissions.errors.noOrganization'));
       }
       return await organizationService.deleteRole(currentOrganization.id, roleId);
     },
@@ -198,7 +212,9 @@ export function useRoleActions() {
       });
     },
     onError: error => {
-      toast.error(getErrorMessage(error) || t('organization.permissions.config.deleteError'));
+      toast.error(
+        getRoleErrorMessage(error, t('organization.permissions.config.deleteError'))
+      );
     },
   });
 

@@ -72,6 +72,27 @@ func (s *OrganizationServiceImpl) UpsertOrganizationRole(ctx context.Context, or
 	if result.Error != nil {
 		return fmt.Errorf("failed to upsert organization role: %w", result.Error)
 	}
+	if role != model.OrganizationRoleOwner {
+		return nil
+	}
+
+	var account struct {
+		InterfaceLanguage *string `gorm:"column:interface_language"`
+	}
+	if err := s.db.WithContext(ctx).
+		Table("accounts").
+		Select("interface_language").
+		Where("id = ?", accountID).
+		Take(&account).Error; err != nil {
+		return fmt.Errorf("failed to get default role template language: %w", err)
+	}
+	language := ""
+	if account.InterfaceLanguage != nil {
+		language = *account.InterfaceLanguage
+	}
+	if err := ensureDefaultWorkspaceRoleTemplates(ctx, s.db, organizationID, accountID, language); err != nil {
+		return fmt.Errorf("failed to initialize default workspace role templates: %w", err)
+	}
 
 	return nil
 }

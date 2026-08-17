@@ -3885,6 +3885,7 @@ func agentConfigRequestFromResponse(current dto.AgentConfigResponse) dto.AgentCo
 		KnowledgeRetrievalConfig: copyStringAnyMap(current.KnowledgeRetrievalConfig),
 		DatabaseBindings:         append([]dto.AgentDatabaseBinding(nil), current.DatabaseBindings...),
 		WorkflowBindings:         append([]dto.AgentWorkflowBinding(nil), current.WorkflowBindings...),
+		IntegrationBindings:      append([]dto.AgentIntegrationBinding(nil), current.IntegrationBindings...),
 	}
 }
 
@@ -3906,6 +3907,7 @@ func agentConfigResponseFromRequest(current dto.AgentConfigResponse, req dto.Age
 	after.KnowledgeRetrievalConfig = copyStringAnyMap(req.KnowledgeRetrievalConfig)
 	after.DatabaseBindings = append([]dto.AgentDatabaseBinding(nil), req.DatabaseBindings...)
 	after.WorkflowBindings = append([]dto.AgentWorkflowBinding(nil), req.WorkflowBindings...)
+	after.IntegrationBindings = append([]dto.AgentIntegrationBinding(nil), req.IntegrationBindings...)
 	return after
 }
 

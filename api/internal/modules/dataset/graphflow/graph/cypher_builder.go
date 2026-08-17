@@ -146,7 +146,7 @@ func BuildNeighborQuery(entityNames []string, kbID string, limit int) (string, m
 		Where("toLower(n.name) IN [x IN $names | toLower(x)]").
 		And("n.kb_id = $kbID").
 		OptionalMatch("(n)-[r]-(m)").
-		Return("n", "collect({type: type(r), node: m}) as neighbors").
+		Return("n", "collect({type: type(r), node: m, source: startNode(r), target: endNode(r)}) as neighbors").
 		Limit(limit).
 		WithParam("names", entityNames).
 		WithParam("kbID", kbID).

@@ -173,7 +173,19 @@ func (p *ParentChildIndexProcessor) buildParagraphParentChunks(
 	autoFillEnabled bool,
 	options *ProcessOptions,
 ) ([]dto.TransformedChunk, error) {
-	textSplitter := p._get_splitter(segmentation.MaxTokens, segmentation.ChunkOverlap, segmentation.Separator)
+	maxChars := segmentation.MaxTokens
+	if maxChars <= 0 {
+		maxChars = DefaultParagraphParentMaxChars
+	}
+	overlapChars := segmentation.ChunkOverlap
+	if overlapChars < 0 {
+		overlapChars = 0
+	}
+	textSplitter := paragraphSlidingWindowSplitter{
+		maxChars:           maxChars,
+		overlapChars:       overlapChars,
+		preferredSeparator: segmentation.Separator,
+	}
 	elements := sortedExtractElements(output)
 	if len(elements) == 0 {
 		return p.buildFallbackParentChunks(ctx, output, textSplitter, autoFillEnabled, options)
@@ -218,6 +230,29 @@ func (p *ParentChildIndexProcessor) buildParagraphParentChunks(
 	parentChunks = append(parentChunks, textChunks...)
 
 	return parentChunks, nil
+}
+
+// paragraphSlidingWindowSplitter keeps the existing SplitText call sites while
+// enforcing character-based sliding windows for ordinary paragraph parents.
+type paragraphSlidingWindowSplitter struct {
+	maxChars           int
+	overlapChars       int
+	preferredSeparator string
+}
+
+func (s paragraphSlidingWindowSplitter) SplitText(text string) []string {
+	maxChars := s.maxChars
+	if maxChars <= 0 {
+		maxChars = DefaultParagraphParentMaxChars
+	}
+	return splitSlidingWindowText(
+		text,
+		maxChars,
+		maxChars/2,
+		maxChars,
+		s.overlapChars,
+		s.preferredSeparator,
+	)
 }
 
 func (p *ParentChildIndexProcessor) buildParentTextChunks(
@@ -1227,7 +1262,7 @@ func splitSlidingWindowText(text string, target, minSize, maxSize, overlap int, 
 		}
 		start = next
 	}
-	return mergeSmallTrailingTextChunk(chunks, minSize)
+	return mergeSmallTrailingTextChunk(chunks, minSize, maxSize)
 }
 
 func chooseSlidingWindowEnd(runes []rune, start, target, minSize, maxSize int, preferredSeparator string) int {
@@ -1305,7 +1340,7 @@ func isSlidingWindowBoundary(r rune) bool {
 	}
 }
 
-func mergeSmallTrailingTextChunk(chunks []string, minSize int) []string {
+func mergeSmallTrailingTextChunk(chunks []string, minSize, maxSize int) []string {
 	if len(chunks) < 2 || minSize <= 0 {
 		return chunks
 	}
@@ -1313,7 +1348,12 @@ func mergeSmallTrailingTextChunk(chunks []string, minSize int) []string {
 	if len([]rune(last)) >= minSize {
 		return chunks
 	}
-	chunks[len(chunks)-2] = strings.TrimSpace(chunks[len(chunks)-2] + "\n" + last)
+	previous := chunks[len(chunks)-2]
+	mergedLength := len([]rune(previous)) + 1 + len([]rune(last))
+	if maxSize > 0 && mergedLength > maxSize {
+		return chunks
+	}
+	chunks[len(chunks)-2] = strings.TrimSpace(previous + "\n" + last)
 	return chunks[:len(chunks)-1]
 }
 

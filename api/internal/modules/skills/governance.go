@@ -26,6 +26,7 @@ type AgentBindingCheck struct {
 	ResourceID       string
 	ParentResourceID string
 	AccessMode       string
+	ActionID         string
 }
 
 type AgentBindingVerifier func(context.Context, AgentBindingCheck) (bool, error)
@@ -42,12 +43,42 @@ func WithAgentBindingVerifier(params map[string]interface{}, verifier AgentBindi
 	return params
 }
 
+// WithToolGovernanceCorrelationID scopes a previously approved one-shot grant
+// to the exact frozen invocation being resumed. Callers should attach it only
+// to that single execution context, never to the surrounding chat loop.
+func WithToolGovernanceCorrelationID(params map[string]interface{}, correlationID string) map[string]interface{} {
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	correlationID = strings.TrimSpace(correlationID)
+	if correlationID != "" {
+		params[governanceCorrelationIDKey] = correlationID
+	}
+	return params
+}
+
+func AgentBindingVerifierFromRuntimeParameters(params map[string]interface{}) AgentBindingVerifier {
+	if len(params) == 0 {
+		return nil
+	}
+	verifier, _ := params[agentBindingVerifierKey].(AgentBindingVerifier)
+	return verifier
+}
+
 type PolicyToolGovernanceGateway struct {
-	policy toolgovernance.Policy
+	policy           toolgovernance.Policy
+	manifestResolver ToolGovernanceManifestResolver
 }
 
 func NewPolicyToolGovernanceGateway(policy toolgovernance.Policy) *PolicyToolGovernanceGateway {
 	return &PolicyToolGovernanceGateway{policy: policy}
+}
+
+func (g *PolicyToolGovernanceGateway) WithManifestResolver(resolver ToolGovernanceManifestResolver) *PolicyToolGovernanceGateway {
+	if g != nil {
+		g.manifestResolver = resolver
+	}
+	return g
 }
 
 func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req ToolGovernanceRequest) (toolgovernance.Decision, error) {
@@ -58,6 +89,14 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 	params := req.ExecutionContext.RuntimeParameters
 	governance := governanceRuntimeParameters(params)
 	manifest := governanceManifestForArguments(req.Manifest, req.SkillID, req.ToolName, req.Arguments, params)
+	if g.manifestResolver != nil {
+		req.Manifest = manifest
+		resolvedManifest, err := g.manifestResolver.ResolveToolGovernanceManifest(ctx, req)
+		if err != nil {
+			return toolgovernance.Decision{}, fmt.Errorf("resolve organization tool governance policy: %w", err)
+		}
+		manifest = resolvedManifest
+	}
 	approvalMode, preauthorization := governanceAgentAuthorization(params, governance, req.SkillID, req.ToolName, manifest, req.Arguments)
 	preauthorization = verifyCurrentAgentBindings(ctx, params, manifest, preauthorization)
 	return toolgovernance.Decide(toolgovernance.Request{
@@ -138,6 +177,10 @@ func agentBindingChecks(
 			check.BindingType = "workflow"
 			check.AccessMode = "execute"
 			check.ParentResourceID = stringMapValue(resource.Metadata, "agent_id", "workflow_id")
+		case "integration_connection":
+			check.BindingType = "integration_connection"
+			check.ParentResourceID = stringMapValue(resource.Metadata, "integration_id")
+			check.ActionID = stringMapValue(resource.Metadata, "action_id")
 		}
 		if check.BindingType == "" || check.ResourceID == "" {
 			continue
@@ -618,6 +661,9 @@ func assetRefsFromToolArguments(manifest toolgovernance.Manifest, arguments map[
 	case "workflow_run":
 		idKeys = []string{"workflow_run_id", "workflowRunId", "run_id", "runId", "asset_id", "resource_id", "id"}
 		nameKeys = []string{"workflow_run_name", "workflowRunName", "run_name", "runName", "asset_name", "resource_name", "name"}
+	case "integration_connection":
+		idKeys = []string{"connection_id", "connectionId", "integration_connection_id", "integrationConnectionId", "asset_id", "resource_id", "id"}
+		nameKeys = []string{"connection_name", "connectionName", "integration_connection_name", "integrationConnectionName", "asset_name", "resource_name", "name"}
 	}
 
 	metadata := assetMetadataFromToolArguments(assetType, arguments)
@@ -1014,6 +1060,14 @@ func assetMetadataFromToolArguments(assetType string, arguments map[string]inter
 			metadata["lifecycle"] = lifecycle
 		}
 	}
+	if assetType == "integration_connection" {
+		if integrationID := stringMapValue(arguments, "integration_id", "integrationId"); integrationID != "" {
+			metadata["integration_id"] = strings.ToLower(integrationID)
+		}
+		if actionID := stringMapValue(arguments, "action_id", "actionId"); actionID != "" {
+			metadata["action_id"] = strings.ToLower(actionID)
+		}
+	}
 	if len(metadata) == 0 {
 		return nil
 	}
@@ -1075,8 +1129,17 @@ func sessionGrantFromMap(input map[string]interface{}) toolgovernance.SessionGra
 		ToolID:       stringMapValue(input, "tool_id", "toolId"),
 		Effect:       toolgovernance.Effect(stringMapValue(input, "effect")),
 		AssetType:    stringMapValue(input, "asset_type", "assetType"),
-		Assets:       assetRefsFromAny(firstMapValue(input, "assets", "asset_refs", "assetRefs")),
-		RiskLevel:    toolgovernance.RiskLevel(stringMapValue(input, "risk_level", "riskLevel")),
+		DataEgress:   boolMapValue(input, "data_egress", "dataEgress"),
+		ExternalDestination: stringMapValue(input,
+			"external_destination",
+			"externalDestination",
+		),
+		SensitiveDataAllowed: boolMapValue(input,
+			"sensitive_data_allowed",
+			"sensitiveDataAllowed",
+		),
+		Assets:    assetRefsFromAny(firstMapValue(input, "assets", "asset_refs", "assetRefs")),
+		RiskLevel: toolgovernance.RiskLevel(stringMapValue(input, "risk_level", "riskLevel")),
 		ApprovalCorrelationID: stringMapValue(input,
 			"approval_correlation_id",
 			"approvalCorrelationId",

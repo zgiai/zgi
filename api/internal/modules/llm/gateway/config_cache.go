@@ -191,6 +191,7 @@ type llmModelCachePayload struct {
 	Moderation               bool                      `json:"moderation"`
 	Videos                   bool                      `json:"videos"`
 	ImageEdit                bool                      `json:"image_edit"`
+	MusicGeneration          bool                      `json:"music_generation"`
 	Realtime                 bool                      `json:"realtime"`
 	Batch                    bool                      `json:"batch"`
 	FineTuning               bool                      `json:"fine_tuning"`
@@ -243,6 +244,7 @@ func marshalCachedModel(m *llmmodel.LLMModel) ([]byte, error) {
 		Moderation:               m.Moderation,
 		Videos:                   m.Videos,
 		ImageEdit:                m.ImageEdit,
+		MusicGeneration:          m.MusicGeneration,
 		Realtime:                 m.Realtime,
 		Batch:                    m.Batch,
 		FineTuning:               m.FineTuning,
@@ -299,6 +301,7 @@ func unmarshalCachedModel(data []byte, m *llmmodel.LLMModel) error {
 	m.Moderation = payload.Moderation
 	m.Videos = payload.Videos
 	m.ImageEdit = payload.ImageEdit
+	m.MusicGeneration = payload.MusicGeneration
 	m.Realtime = payload.Realtime
 	m.Batch = payload.Batch
 	m.FineTuning = payload.FineTuning

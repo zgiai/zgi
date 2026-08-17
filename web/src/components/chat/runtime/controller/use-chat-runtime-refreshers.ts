@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { MutableRefObject } from 'react';
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
@@ -11,6 +11,7 @@ import { getNextActiveSendingState } from '@/components/chat/controllers/aichat/
 import { mergeAIChatMessages } from '@/components/chat/controllers/aichat/state-reducers';
 import type { AIChatRuntimeTransport } from '@/components/chat/transports/aichat-transport';
 import { replaceAIChatConversation } from '@/components/chat/utils/aichat-message';
+import { conversationTitleNeedsRefresh } from '@/components/chat/controllers/conversation-title';
 import {
   getErrorMessage,
   removeRunningStreamingStateByConversation,
@@ -52,6 +53,16 @@ export function useChatRuntimeRefreshers({
   transportRef,
   setControllerState,
 }: UseChatRuntimeRefreshersArgs) {
+  const titleRefreshTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  useEffect(
+    () => () => {
+      titleRefreshTimersRef.current.forEach(timer => clearTimeout(timer));
+      titleRefreshTimersRef.current.clear();
+    },
+    []
+  );
+
   const refreshConversationSilently = useCallback(
     (conversationId: string) => {
       void transportRef.current
@@ -122,6 +133,28 @@ export function useChatRuntimeRefreshers({
     [setControllerState, transportRef]
   );
 
+  const scheduleConversationTitleRefresh = useCallback(
+    (conversationId: string) => {
+      if (!conversationId) return;
+
+      const existingTimer = titleRefreshTimersRef.current.get(conversationId);
+      if (existingTimer) clearTimeout(existingTimer);
+
+      const delays = [750, 2500, 6000, 12000];
+      const run = (index: number) => {
+        const timer = setTimeout(() => {
+          titleRefreshTimersRef.current.delete(conversationId);
+          refreshConversationSilently(conversationId);
+          if (index + 1 < delays.length) run(index + 1);
+        }, delays[index]);
+        titleRefreshTimersRef.current.set(conversationId, timer);
+      };
+
+      run(0);
+    },
+    [refreshConversationSilently]
+  );
+
   const refreshList = useCallback(
     async (params: { page?: number; append?: boolean } = {}) => {
       const page = params.page ?? 1;
@@ -150,18 +183,27 @@ export function useChatRuntimeRefreshers({
             pagination: response.pagination,
           };
         });
+        incoming.forEach(conversation => {
+          if (
+            conversation.dialogue_count > 0 &&
+            conversationTitleNeedsRefresh(conversation.title, conversation.metadata)
+          ) {
+            scheduleConversationTitleRefresh(conversation.id);
+          }
+        });
       } catch (error) {
         setControllerState(current => ({ ...current, error: getErrorMessage(error) }));
       } finally {
         setControllerState(current => ({ ...current, isLoadingList: false }));
       }
     },
-    [setControllerState, transportRef]
+    [scheduleConversationTitleRefresh, setControllerState, transportRef]
   );
 
   return {
     refreshConversationSilently,
     refreshMessagesSilently,
+    scheduleConversationTitleRefresh,
     refreshList,
   };
 }

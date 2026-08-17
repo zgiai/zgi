@@ -96,6 +96,7 @@ type KnowledgeRetrieveRequest struct {
 	AgentBindingGrant bool
 	TopK              int
 	RetrievalMode     string
+	FallbackPolicy    string
 	RetrievalConfig   map[string]interface{}
 	ContextSeparator  string
 	MaxContextChars   int
@@ -347,7 +348,7 @@ func (s *KnowledgeRetrievalService) ListAccessibleDatasetCandidates(ctx context.
 	}
 	if includeSelected && len(selectedIDs) > 0 {
 		dbQuery = dbQuery.Clauses(clause.OrderBy{Expression: clause.Expr{
-			SQL:                "CASE WHEN id IN ? THEN 0 ELSE 1 END, LOWER(name) ASC, id ASC",
+			SQL:                "CASE WHEN id IN (?) THEN 0 ELSE 1 END, LOWER(name) ASC, id ASC",
 			Vars:               []interface{}{selectedIDs},
 			WithoutParentheses: true,
 		}})
@@ -436,7 +437,7 @@ func (s *KnowledgeRetrievalService) Retrieve(ctx context.Context, req KnowledgeR
 		if err != nil {
 			return nil, fmt.Errorf("dataset %s is not accessible: %w", datasetID, err)
 		}
-		datasetRecords, graphExecution, err := s.retrieveDataset(ctx, dataset, query, req.RetrievalConfig, topK, req.RetrievalMode)
+		datasetRecords, graphExecution, err := s.retrieveDataset(ctx, dataset, query, req.RetrievalConfig, topK, req.RetrievalMode, req.FallbackPolicy)
 		if err != nil {
 			return nil, fmt.Errorf("failed to retrieve dataset %s: %w", datasetID, err)
 		}
@@ -706,7 +707,7 @@ func knowledgeRateLimitScopeID(scope KnowledgeScope) string {
 	return strings.TrimSpace(scope.WorkspaceID)
 }
 
-func (s *KnowledgeRetrievalService) retrieveDataset(ctx context.Context, dataset *dataset_model.Dataset, query string, retrievalConfig map[string]interface{}, topK int, retrievalMode string) ([]dto.HitTestingRecordResponse, *dto.GraphExecution, error) {
+func (s *KnowledgeRetrievalService) retrieveDataset(ctx context.Context, dataset *dataset_model.Dataset, query string, retrievalConfig map[string]interface{}, topK int, retrievalMode string, fallbackPolicy string) ([]dto.HitTestingRecordResponse, *dto.GraphExecution, error) {
 	effectiveRetrievalConfig := mergeKnowledgeRetrievalConfig(dataset.RetrievalConfig, retrievalConfig)
 	if dataset.Provider == "external" {
 		response, err := s.hitTesting.ExternalRetrieve(ctx, dataset, query, "", effectiveRetrievalConfig)
@@ -729,6 +730,12 @@ func (s *KnowledgeRetrievalService) retrieveDataset(ctx context.Context, dataset
 	options := s.hitTesting.getRetrievalOptions(ctx, effectiveRetrievalConfig, dataset)
 	options.TopK = topK
 	options.RetrievalMode = normalizeRetrievalMode(retrievalMode)
+	options.FallbackPolicy = strings.TrimSpace(fallbackPolicy)
+	if options.FallbackPolicy == "" {
+		if configuredPolicy, ok := effectiveRetrievalConfig["fallback_policy"].(string); ok {
+			options.FallbackPolicy = configuredPolicy
+		}
+	}
 	records, graphExecution, err := s.retrievalService.Retrieve(ctx, dataset, query, options)
 	if err != nil {
 		return nil, nil, err

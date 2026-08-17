@@ -604,6 +604,10 @@ func TestTerminalProjectionCompactValuePrioritizesStableKeysDeterministically(t 
 	input := map[string]interface{}{
 		"status": "success", "code": "ok", "message": "done", "summary": "stable",
 		"agent_id": "agent-1", "file_id": "file-1", "system_prompt_digest": "sha256:prompt",
+		"operation_status": "completed", "provider_success_confirmed": true,
+		"provider_result": map[string]interface{}{
+			"event": map[string]interface{}{"event_id": "event-1", "summary": "未来七天日程"},
+		},
 		"updated_fields": []interface{}{"system_prompt", "description"},
 	}
 	for index := 0; index < 40; index++ {
@@ -619,6 +623,12 @@ func TestTerminalProjectionCompactValuePrioritizesStableKeysDeterministically(t 
 	for _, key := range []string{"status", "code", "message", "summary", "agent_id", "file_id", "system_prompt_digest", "updated_fields"} {
 		if _, ok := projected[key]; !ok {
 			t.Fatalf("projection omitted priority key %q: %#v", key, projected)
+		}
+	}
+	stable := terminalProjectionStableSummary(input)
+	for _, key := range []string{"operation_status", "provider_success_confirmed", "provider_result"} {
+		if _, ok := stable[key]; !ok {
+			t.Fatalf("stable projection omitted provider key %q: %#v", key, stable)
 		}
 	}
 }
@@ -3858,6 +3868,18 @@ Use the calculator tool.
 					},
 				}},
 			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_bad_3", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+						},
+					},
+				}},
+			},
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I cannot evaluate that expression without corrected input."}}}},
 		},
 	}
@@ -3919,8 +3941,11 @@ Use the calculator tool.
 			trace.ToolName == "evaluate_expression" &&
 			trace.Arguments["reason_code"] == skillToolRetryNoProgressCode &&
 			strings.Contains(trace.Error, "same tool call with the same arguments already failed") {
-			if trace.Arguments["retry_count"] != 2 {
-				t.Fatalf("no-progress retry_count = %#v, want 2", trace.Arguments["retry_count"])
+			if trace.Arguments["termination_reason"] == nil {
+				continue
+			}
+			if trace.Arguments["retry_count"] != 3 {
+				t.Fatalf("no-progress retry_count = %#v, want 3", trace.Arguments["retry_count"])
 			}
 			if trace.Arguments["termination_reason"] != "retry_no_progress" {
 				t.Fatalf("no-progress termination_reason = %#v, want retry_no_progress", trace.Arguments["termination_reason"])
@@ -3935,8 +3960,8 @@ Use the calculator tool.
 	if !foundNoProgress {
 		t.Fatalf("traces = %#v, want repeated failed tool call no-progress evidence", traces)
 	}
-	if fakeLLM.appChatCalls != 4 {
-		t.Fatalf("AppChat calls = %d, want load, first failure, blocked retry, final answer", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 5 {
+		t.Fatalf("AppChat calls = %d, want load, first failure, warning retry, blocked retry, final answer", fakeLLM.appChatCalls)
 	}
 	lastRequest := fakeLLM.appChatRequests[len(fakeLLM.appChatRequests)-1]
 	if len(lastRequest.Tools) != 0 || lastRequest.ToolChoice != nil {
@@ -4091,6 +4116,13 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 			},
 		}
 	}
+	providerFailure := func(argumentFingerprint string) skills.SkillTrace {
+		value := trace("external-apps", "execute_action", "arguments", argumentFingerprint, "object")
+		value.Arguments["recovery_kind"] = "provider_validation"
+		value.Arguments["provider_error_code"] = "99992402"
+		value.Arguments["invalid_fields"] = []string{"page_size"}
+		return value
+	}
 
 	tests := []struct {
 		name     string
@@ -4132,6 +4164,11 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 			previous: trace("file-generator", "generate_file", "transient", "sha256:before", "object"),
 			current:  trace("file-generator", "generate_file", "transient", "sha256:after", "object"),
 		},
+		{
+			name:     "same provider validation is not progress despite changed arguments",
+			previous: providerFailure("sha256:before"),
+			current:  providerFailure("sha256:after"),
+		},
 	}
 
 	for _, test := range tests {
@@ -4140,6 +4177,27 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 				t.Fatalf("recoverableSkillFailureMadeProgress() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestRepeatedProviderValidationFailureRequiresSameCodeAndFields(t *testing.T) {
+	trace := func(code string, fields []string) skills.SkillTrace {
+		return skills.SkillTrace{
+			Kind: "tool_call", SkillID: "external-apps", ToolName: "execute_action", Status: "error",
+			Arguments: map[string]interface{}{
+				"recovery_kind": "provider_validation", "provider_error_code": code, "invalid_fields": fields,
+			},
+		}
+	}
+	previous := trace("99992402", []string{"page_size"})
+	if !repeatedProviderValidationFailure(previous, trace("99992402", []string{"page_size"})) {
+		t.Fatal("identical provider validation failure was not detected")
+	}
+	if repeatedProviderValidationFailure(previous, trace("99992402", []string{"start_time"})) {
+		t.Fatal("different invalid field was treated as an identical provider failure")
+	}
+	if repeatedProviderValidationFailure(previous, trace("other", []string{"page_size"})) {
+		t.Fatal("different provider error code was treated as identical")
 	}
 }
 
@@ -4547,6 +4605,21 @@ Use the calculator tool.
 				},
 			}},
 		},
+		{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{
+						runnerTestSkillToolCall(
+							"call_bad_2",
+							"limited-calculator",
+							"evaluate_expression",
+							map[string]interface{}{"expression": "1/"},
+						),
+					},
+				},
+			}},
+		},
 		responses[1],
 	}...)
 	fakeLLM := &runnerTestLLMClient{appChatResponses: responses}
@@ -4592,8 +4665,8 @@ Use the calculator tool.
 	if findRunnerTestEvent(events, EventSkillCallError) == nil {
 		t.Fatalf("events = %#v, want skill error event for failed tool evidence", events)
 	}
-	if fakeLLM.appChatCalls != 4 {
-		t.Fatalf("AppChat calls = %d, want load, first failure, no-progress retry, and explanation", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 5 {
+		t.Fatalf("AppChat calls = %d, want load, first failure, corrective retry, blocked retry, and explanation", fakeLLM.appChatCalls)
 	}
 	lastRequest := fakeLLM.appChatRequests[len(fakeLLM.appChatRequests)-1]
 	if len(lastRequest.Tools) != 0 || lastRequest.ToolChoice != nil {
@@ -5677,6 +5750,52 @@ func runnerTestSkillToolCall(callID string, skillID string, toolName string, arg
 			Name:      skills.MetaToolCallSkillTool,
 			Arguments: string(payload),
 		},
+	}
+}
+
+func TestRunnerRetriesWhenReadyExternalGuideWasNotExecuted(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The DingTalk role function is unavailable."}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Please provide the role search criteria required by the selected action."}}}},
+	}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "query DingTalk notification status"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			return map[string]interface{}{
+				"latest_user_request": "query DingTalk notification status",
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+					"result": map[string]interface{}{
+						"integration_id": "dingtalk", "action_id": "dingtalk.message.delivery.get", "availability": "ready",
+						"required_arguments": []interface{}{map[string]interface{}{"name": "message_ref", "type": "string"}},
+					},
+				}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Please provide the role search criteria required by the selected action." {
+		t.Fatalf("answer = %q", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 2 ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "external-apps/execute_action") {
+		t.Fatal("second request did not contain the external-action completion correction")
 	}
 }
 

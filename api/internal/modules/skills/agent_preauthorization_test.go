@@ -396,6 +396,78 @@ func TestAgentWorkflowBindingCheckUsesTargetAgentAsParentResource(t *testing.T) 
 	}
 }
 
+func TestAgentExternalAppsPreauthorizationUsesExactReadActionBinding(t *testing.T) {
+	connectionID := "33333333-3333-3333-3333-333333333333"
+	params := agentGovernanceRuntimeParameters(map[string]interface{}{
+		"agent_binding_authorizations": []map[string]interface{}{{
+			"binding_type": "integration_connection", "resource_id": connectionID,
+			"parent_resource_id": "github", "access_mode": "read",
+			"allowed_action_ids":  []string{"github.issue.list"},
+			"bound_by_account_id": "account-1", "bound_at_unix": int64(1_720_000_000),
+		}},
+	})
+	approvalMode, preauthorization := governanceAgentAuthorization(
+		params,
+		governanceRuntimeParameters(params),
+		SkillExternalApps,
+		"execute_action",
+		toolgovernance.Manifest{Effect: toolgovernance.EffectRead},
+		map[string]interface{}{
+			"connection_id":  connectionID,
+			"integration_id": "github",
+			"action_id":      "github.issue.list",
+			"arguments":      map[string]interface{}{},
+		},
+	)
+	if approvalMode != toolgovernance.ApprovalModeNonInteractive || preauthorization == nil || !preauthorization.Matched {
+		t.Fatalf("approval=%q preauthorization=%#v", approvalMode, preauthorization)
+	}
+	if preauthorization.AuthorizedBy != "account-1" || len(preauthorization.Resources) != 1 {
+		t.Fatalf("preauthorization audit evidence = %#v", preauthorization)
+	}
+	checks := agentBindingChecks(preauthorization, toolgovernance.Manifest{Effect: toolgovernance.EffectRead})
+	if len(checks) != 1 ||
+		checks[0].BindingType != "integration_connection" ||
+		checks[0].ResourceID != connectionID ||
+		checks[0].ParentResourceID != "github" ||
+		checks[0].AccessMode != "read" ||
+		checks[0].ActionID != "github.issue.list" {
+		t.Fatalf("integration binding checks = %#v", checks)
+	}
+
+	_, denied := governanceAgentAuthorization(
+		params,
+		governanceRuntimeParameters(params),
+		SkillExternalApps,
+		"execute_action",
+		toolgovernance.Manifest{Effect: toolgovernance.EffectRead},
+		map[string]interface{}{
+			"connection_id":  connectionID,
+			"integration_id": "github",
+			"action_id":      "github.issue.create",
+		},
+	)
+	if denied == nil || denied.Matched || denied.Code != agentResourceNotBoundCode {
+		t.Fatalf("unbound action preauthorization = %#v", denied)
+	}
+
+	_, writeDenied := governanceAgentAuthorization(
+		params,
+		governanceRuntimeParameters(params),
+		SkillExternalApps,
+		"execute_action",
+		toolgovernance.Manifest{Effect: toolgovernance.EffectCreate},
+		map[string]interface{}{
+			"connection_id":  connectionID,
+			"integration_id": "github",
+			"action_id":      "github.issue.list",
+		},
+	)
+	if writeDenied == nil || writeDenied.Matched || writeDenied.Code != agentToolNotPreauthorizedCode {
+		t.Fatalf("write preauthorization = %#v", writeDenied)
+	}
+}
+
 func TestPolicyToolGovernanceNonBoundAgentToolCannotWaitForApproval(t *testing.T) {
 	manifest := toolgovernance.Manifest{
 		ToolID:                 "custom.send",

@@ -291,8 +291,8 @@ func TestToolManager_GetToolRuntimeInjectsRuntime(t *testing.T) {
 		"runtime_aware",
 		"workspace-123",
 		tools.ToolInvokeFromWorkflow,
-		"",
-		nil,
+		"credential-456",
+		map[string]interface{}{"connection_id": "connection-789"},
 	)
 	require.NoError(t, err)
 
@@ -301,6 +301,8 @@ func TestToolManager_GetToolRuntimeInjectsRuntime(t *testing.T) {
 	require.NotNil(t, runtimeTool.runtime)
 	assert.Equal(t, "workspace-123", runtimeTool.tenantID)
 	assert.Equal(t, "workspace-123", runtimeTool.runtime.TenantID)
+	assert.Equal(t, "credential-456", runtimeTool.runtime.CredentialID)
+	assert.Equal(t, "connection-789", runtimeTool.runtime.ConnectionID)
 	assert.Equal(t, tools.ToolInvokeFromWorkflow, runtimeTool.runtime.InvokeFrom)
 }
 

@@ -70,6 +70,7 @@ func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) 
 		skills.SkillAgentWorkflow,
 		skills.SkillUserMemory,
 		skills.SkillIntentRouter,
+		"web-search",
 		skills.SkillCalculator,
 		skills.SkillCalculator,
 		"  time  ",
@@ -553,5 +554,27 @@ func TestApplyAgentConfigRequestCanRestoreSnapshotBindingGrant(t *testing.T) {
 	}
 	if len(mode.DatabaseBindings) != 1 || !reflect.DeepEqual(mode.DatabaseBindings[0].WritableTableIDs, []string{"table-1"}) {
 		t.Fatalf("database bindings = %#v, want writable table-1", mode.DatabaseBindings)
+	}
+}
+
+func TestAgentKnowledgeRetrievalConfigPreservesGraphExecutionPolicy(t *testing.T) {
+	config := normalizeAgentKnowledgeRetrievalConfig(map[string]interface{}{
+		"search_method": "graph",
+		"top_k":         float64(8),
+	})
+	if config["search_method"] != "graph" {
+		t.Fatalf("search_method = %v, want graph", config["search_method"])
+	}
+	if config["fallback_policy"] != "none" {
+		t.Fatalf("fallback_policy = %v, want none", config["fallback_policy"])
+	}
+
+	snapshot := map[string]interface{}{"knowledge_retrieval_config": config}
+	restored := agentConfigResponseFromSnapshot("agent-id", snapshot)
+	if restored.KnowledgeRetrievalConfig["search_method"] != "graph" {
+		t.Fatalf("restored search_method = %v, want graph", restored.KnowledgeRetrievalConfig["search_method"])
+	}
+	if restored.KnowledgeRetrievalConfig["fallback_policy"] != "none" {
+		t.Fatalf("restored fallback_policy = %v, want none", restored.KnowledgeRetrievalConfig["fallback_policy"])
 	}
 }

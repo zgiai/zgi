@@ -109,6 +109,33 @@ func TestCallSkillToolValidatesRequiredArgumentsBeforeGovernance(t *testing.T) {
 	}
 }
 
+func TestCallSkillToolStopsWhenGovernanceArgumentResolutionFails(t *testing.T) {
+	runtime, resolved, readTool := governedRuntimeWithReadToolForTest(t)
+	readTool.enrichErr = fmt.Errorf("provider authorization needs an OAuth scope upgrade")
+	invocation, err := runtime.CallSkillTool(
+		context.Background(),
+		resolved,
+		"governed-files",
+		"read_file",
+		map[string]interface{}{"file_id": "file-1"},
+		ExecutionContext{
+			OrganizationID: "organization-1",
+			UserID:         "user-1",
+			ConversationID: "conversation-1",
+		},
+		"call_read",
+	)
+	if err == nil || invocation == nil {
+		t.Fatalf("invocation = %#v, err = %v", invocation, err)
+	}
+	if invocation.Trace.Kind != "tool_governance" || invocation.Trace.Status != "error" {
+		t.Fatalf("trace = %#v", invocation.Trace)
+	}
+	if len(readTool.calls) != 0 {
+		t.Fatalf("tool ran after governance argument resolution failed: %#v", readTool.calls)
+	}
+}
+
 func TestCallSkillToolGovernanceNeedsResolutionBeforeEngine(t *testing.T) {
 	runtime, resolved := governedRuntimeForTest(t)
 	invocation, err := runtime.CallSkillTool(
@@ -688,6 +715,38 @@ func TestCallSkillToolMatchingSessionGrantAllowsEnginePath(t *testing.T) {
 	}
 }
 
+func TestSessionGrantFromMapPreservesDataEgressScope(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]interface{}
+	}{
+		{
+			name: "snake case",
+			input: map[string]interface{}{
+				"data_egress":            true,
+				"external_destination":   "api.exa.ai",
+				"sensitive_data_allowed": true,
+			},
+		},
+		{
+			name: "camel case",
+			input: map[string]interface{}{
+				"dataEgress":           "true",
+				"externalDestination":  "api.exa.ai",
+				"sensitiveDataAllowed": true,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			grant := sessionGrantFromMap(tt.input)
+			if !grant.DataEgress || grant.ExternalDestination != "api.exa.ai" || !grant.SensitiveDataAllowed {
+				t.Fatalf("session grant = %#v, want preserved data-egress scope", grant)
+			}
+		})
+	}
+}
+
 func TestPolicyToolGovernanceMatchingSessionGrantCarriesApprovalCorrelation(t *testing.T) {
 	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
 	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
@@ -1037,8 +1096,9 @@ func (p *governedReadProviderForTest) ValidateCredentials(context.Context, map[s
 }
 
 type governedReadToolForTest struct {
-	calls  []string
-	enrich func(map[string]interface{}) map[string]interface{}
+	calls     []string
+	enrich    func(map[string]interface{}) map[string]interface{}
+	enrichErr error
 }
 
 func (t *governedReadToolForTest) GetEntity() tools.ToolEntity {
@@ -1104,6 +1164,17 @@ func (t *governedReadToolForTest) EnrichGovernanceArguments(ctx context.Context,
 		return toolParameters
 	}
 	return t.enrich(toolParameters)
+}
+
+func (t *governedReadToolForTest) EnrichGovernanceArgumentsWithError(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+) (map[string]interface{}, error) {
+	if t.enrichErr != nil {
+		return toolParameters, t.enrichErr
+	}
+	return t.EnrichGovernanceArguments(ctx, userID, toolParameters), nil
 }
 
 func (t *governedReadToolForTest) GetRuntimeParameters(

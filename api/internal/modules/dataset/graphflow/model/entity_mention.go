@@ -8,10 +8,15 @@ import (
 
 // EntityMention represents a raw entity mention extracted from a segment
 type EntityMention struct {
-	ID        uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	KBID      uuid.UUID `gorm:"type:uuid;column:kb_id;not null" json:"kb_id"`
-	TenantID  uuid.UUID `gorm:"type:uuid;not null" json:"tenant_id"`
-	SegmentID uuid.UUID `gorm:"type:uuid;not null" json:"segment_id"`
+	ID                  uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	KBID                uuid.UUID  `gorm:"type:uuid;column:kb_id;not null" json:"kb_id"`
+	TenantID            uuid.UUID  `gorm:"type:uuid;not null" json:"tenant_id"`
+	SegmentID           uuid.UUID  `gorm:"type:uuid;not null" json:"segment_id"`
+	OrganizationID      uuid.UUID  `gorm:"type:uuid;index" json:"organization_id"`
+	SourceRefID         *uuid.UUID `gorm:"type:uuid;index" json:"source_ref_id,omitempty"`
+	DocumentID          *uuid.UUID `gorm:"type:uuid;index" json:"document_id,omitempty"`
+	RunID               *uuid.UUID `gorm:"type:uuid;index" json:"run_id,omitempty"`
+	EvidenceFingerprint string     `gorm:"type:varchar(128);not null;default:''" json:"evidence_fingerprint"`
 
 	RawName    string  `gorm:"type:varchar(255);not null" json:"raw_name"`
 	RawType    string  `gorm:"type:varchar(100)" json:"raw_type"`

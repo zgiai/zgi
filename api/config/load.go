@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/mail"
 	"runtime"
@@ -151,6 +152,8 @@ func loadDomainConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("neo4j", loadNeo4jConfig),
 		optionalConfigLoader("marketplace", loadMarketplaceConfig),
 
+		requiredConfigLoader("web search", loadWebSearchConfig),
+		requiredConfigLoader("external integrations", loadExternalIntegrationsConfig),
 		optionalConfigLoader("knowledge", loadKnowledgeConfig),
 		optionalConfigLoader("graph flow", loadGraphFlowConfig),
 		optionalConfigLoader("content parse", loadContentParseConfig),
@@ -433,11 +436,19 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 
 func loadConsoleConfig(cfg *Config, source *envSource) {
 	cfg.Console = ConsoleConfig{
-		APIURL:         source.string("http://127.0.0.1:2679", envConsoleAPIURL),
+		APIURL:         source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
 		GRPCAddr:       source.string("", envConsoleAPIGRPCAddr),
 		InternalAPIKey: source.string("", envConsoleInternalAPIKey),
 		WebURL:         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
 	}
+}
+
+func defaultLocalConsoleAPIURL(cfg *Config) string {
+	port := defaultServerPort
+	if cfg != nil && cfg.Server.Port > 0 {
+		port = cfg.Server.Port
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
 }
 
 func loadPlatformConfig(cfg *Config, source *envSource) {
@@ -509,9 +520,16 @@ func loadTaskQueueConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
-	concurrency, err := source.int(4, envTaskQueueConcurrency)
+	concurrency, err := source.int(8, envTaskQueueConcurrency)
 	if err != nil {
 		return err
+	}
+	graphFlowConcurrency, err := source.int(4, envGraphFlowTaskQueueConcurrency)
+	if err != nil {
+		return err
+	}
+	if graphFlowConcurrency < 1 || graphFlowConcurrency > 4 {
+		return fmt.Errorf("%s must be between 1 and 4", envGraphFlowTaskQueueConcurrency)
 	}
 	retention, err := source.duration(24*time.Hour, envTaskQueueRetention)
 	if err != nil {
@@ -521,6 +539,7 @@ func loadTaskQueueConfig(cfg *Config, source *envSource) error {
 	cfg.TaskQueue = TaskQueueConfig{
 		RedisDB:                 redisDB,
 		Concurrency:             concurrency,
+		GraphFlowConcurrency:    graphFlowConcurrency,
 		Retention:               retention,
 		EnvPrefix:               source.string("", envTaskQueueEnvPrefix),
 		WorkflowTestTaskBackend: source.string("local", envWorkflowTestTaskBackend),
@@ -1122,7 +1141,7 @@ func loadKnowledgeConfig(cfg *Config, source *envSource) {
 
 func loadGraphFlowConfig(cfg *Config, source *envSource) {
 	cfg.GraphFlow = GraphFlowConfig{
-		VectorSyncBatchSize:   mustInt(source.int(50, envGraphFlowVectorSyncBatchSize)),
+		VectorSyncBatchSize:   mustInt(source.int(10, envGraphFlowVectorSyncBatchSize)),
 		VectorSyncConcurrency: mustInt(source.int(10, envGraphFlowVectorSyncConcurrency)),
 	}
 }
@@ -1147,6 +1166,150 @@ func loadAutomationConfig(cfg *Config, source *envSource) {
 	cfg.Automation = AutomationConfig{
 		DispatchEnabled: mustBool(source.bool(true, envAutomationDispatchEnabled)),
 	}
+}
+
+func loadWebSearchConfig(cfg *Config, source *envSource) error {
+	timeoutSeconds, err := source.int(20, envExaTimeoutSeconds)
+	if err != nil {
+		return err
+	}
+	maxResults, err := source.int(10, envExaMaxResults)
+	if err != nil {
+		return err
+	}
+	maxFetchURLs, err := source.int(5, envExaMaxFetchURLs)
+	if err != nil {
+		return err
+	}
+	maxContentCharacters, err := source.int(20000, envExaMaxContentCharacters)
+	if err != nil {
+		return err
+	}
+
+	cfg.WebSearch = WebSearchConfig{
+		Provider: strings.ToLower(strings.TrimSpace(source.string("exa", envWebSearchProvider))),
+		Exa: ExaConfig{
+			TimeoutSeconds:       timeoutSeconds,
+			MaxResults:           maxResults,
+			DefaultSearchType:    strings.ToLower(strings.TrimSpace(source.string("auto", envExaDefaultSearchType))),
+			MaxFetchURLs:         maxFetchURLs,
+			MaxContentCharacters: maxContentCharacters,
+		},
+	}
+	return nil
+}
+
+func loadExternalIntegrationsConfig(cfg *Config, source *envSource) error {
+	enabled, err := source.bool(false, envExternalIntegrationsEnabled)
+	if err != nil {
+		return err
+	}
+	orgDailyLimit, err := source.int(1000, envIntegrationOrgDailyLimit)
+	if err != nil {
+		return err
+	}
+	timeoutSeconds, err := source.int(20, envIntegrationTimeoutSeconds)
+	if err != nil {
+		return err
+	}
+	healthFailureThreshold, err := source.int(3, envIntegrationHealthFailureThreshold)
+	if err != nil {
+		return err
+	}
+	oauthRefreshWindow, err := source.int(600, envIntegrationOAuthRefreshWindowSeconds)
+	if err != nil {
+		return err
+	}
+	oauthFlowTTL, err := source.int(600, envIntegrationOAuthFlowTTLSeconds)
+	if err != nil {
+		return err
+	}
+	oauthAPIBaseURL := strings.TrimRight(strings.TrimSpace(cfg.Console.APIURL), "/")
+	if oauthAPIBaseURL == "" {
+		oauthAPIBaseURL = defaultLocalConsoleAPIURL(cfg)
+	}
+	oauthWebBaseURL := strings.TrimRight(strings.TrimSpace(cfg.Console.WebURL), "/")
+	if oauthWebBaseURL == "" {
+		oauthWebBaseURL = "http://localhost:3000"
+	}
+	oauthCallbackURL := strings.TrimSpace(source.string(
+		oauthAPIBaseURL+"/console/api/integrations/oauth/callback",
+		envIntegrationOAuthCallbackURL,
+	))
+	oauthResultURL := strings.TrimSpace(source.string(
+		oauthWebBaseURL+"/console/integrations/oauth/result",
+		envIntegrationOAuthResultURL,
+	))
+	type rawOAuthClientConfig struct {
+		ClientID     string            `json:"client_id"`
+		ClientSecret string            `json:"client_secret"`
+		Config       map[string]string `json:"config"`
+	}
+	rawOAuthClients := make(map[string]rawOAuthClientConfig)
+	clientsJSON := strings.TrimSpace(source.string("", envIntegrationOAuthClientsJSON))
+	if clientsJSON != "" {
+		if err := json.Unmarshal([]byte(clientsJSON), &rawOAuthClients); err != nil {
+			return fmt.Errorf("%s must be a JSON object: %w", envIntegrationOAuthClientsJSON, err)
+		}
+	}
+	oauthClients := make(map[string]ExternalIntegrationOAuthClientConfig, len(rawOAuthClients))
+	for rawKey, rawClient := range rawOAuthClients {
+		key := strings.ToLower(strings.TrimSpace(rawKey))
+		if key == "" {
+			return fmt.Errorf("%s contains an empty provider key", envIntegrationOAuthClientsJSON)
+		}
+		configValues := make(map[string]string, len(rawClient.Config))
+		for rawConfigKey, rawValue := range rawClient.Config {
+			configKey := strings.ToLower(strings.TrimSpace(rawConfigKey))
+			if configKey == "" {
+				return fmt.Errorf("%s contains an empty config key for %q", envIntegrationOAuthClientsJSON, key)
+			}
+			configValues[configKey] = strings.TrimSpace(rawValue)
+		}
+		oauthClients[key] = ExternalIntegrationOAuthClientConfig{
+			ClientID:     strings.TrimSpace(rawClient.ClientID),
+			ClientSecret: strings.TrimSpace(rawClient.ClientSecret),
+			Config:       configValues,
+		}
+	}
+	credentialKeys := make(map[string]string)
+	keysJSON := strings.TrimSpace(source.string("", envIntegrationCredentialKeysJSON))
+	if keysJSON != "" {
+		if err := json.Unmarshal([]byte(keysJSON), &credentialKeys); err != nil {
+			return fmt.Errorf("%s must be a JSON object: %w", envIntegrationCredentialKeysJSON, err)
+		}
+	}
+	activeKeyID := strings.TrimSpace(source.string("", envIntegrationCredentialActiveKeyID))
+	if len(credentialKeys) == 0 && strings.TrimSpace(cfg.Encryption.APIKeyEncryptionKey) != "" {
+		credentialKeys["legacy"] = cfg.Encryption.APIKeyEncryptionKey
+		if activeKeyID == "" {
+			activeKeyID = "legacy"
+		}
+	}
+	if activeKeyID == "" {
+		if _, ok := credentialKeys["default"]; ok {
+			activeKeyID = "default"
+		}
+	}
+
+	cfg.ExternalIntegrations = ExternalIntegrationsConfig{
+		Enabled:               enabled,
+		OrgDailyLimit:         orgDailyLimit,
+		TimeoutSeconds:        timeoutSeconds,
+		CredentialActiveKeyID: activeKeyID,
+		CredentialKeys:        credentialKeys,
+		Health: ExternalIntegrationHealthConfig{
+			FailureThreshold: healthFailureThreshold,
+		},
+		OAuth: ExternalIntegrationOAuthConfig{
+			RefreshWindowSeconds: oauthRefreshWindow,
+			FlowTTLSeconds:       oauthFlowTTL,
+			CallbackURL:          oauthCallbackURL,
+			ResultURL:            oauthResultURL,
+			Clients:              oauthClients,
+		},
+	}
+	return nil
 }
 
 func loadToolingConfig(cfg *Config, source *envSource) {

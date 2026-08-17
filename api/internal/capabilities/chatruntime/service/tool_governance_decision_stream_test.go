@@ -340,7 +340,7 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	assertToolGovernanceStreamEvents(t, events)
 }
 
-func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer(t *testing.T) {
+func TestRunToolGovernanceDecisionStreamApproveEveryInvocationExecutesFrozenCallOnce(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -354,6 +354,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
 	governance := invocation["governance"].(map[string]interface{})
 	approvalEvent := governance["approval_event"].(map[string]interface{})
+	approvalEvent["approval_every_invocation"] = true
 	approvalEvent["assets"] = []interface{}{
 		map[string]interface{}{
 			"id":           "file-1",
@@ -380,11 +381,12 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	frozenInvocation := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
 		CorrelationID: "corr-approve",
 		Manifest: toolgovernance.Manifest{
-			ToolID:    "file.delete",
-			SkillID:   skills.SkillFileManager,
-			Effect:    toolgovernance.EffectDelete,
-			AssetType: "file",
-			RiskLevel: toolgovernance.RiskLevelHigh,
+			ToolID:                  "file.delete",
+			SkillID:                 skills.SkillFileManager,
+			Effect:                  toolgovernance.EffectDelete,
+			AssetType:               "file",
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			ApprovalEveryInvocation: true,
 		},
 		SkillID:      skills.SkillFileManager,
 		ToolName:     "delete_file",
@@ -443,7 +445,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 		},
 	}
 	workspacePerms := &toolGovernanceStreamWorkspacePermissionService{allowed: true}
-	runtime := newToolGovernanceStreamSkillRuntime(t, fileService, workspacePerms)
+	runtime := newToolGovernanceStreamSkillRuntime(t, fileService, workspacePerms, true)
 	llm := &toolGovernanceStreamLLM{
 		streamChunks: []string{"Deleted report.pdf."},
 	}
@@ -533,6 +535,105 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 		t.Fatalf("tool_governance_continuation = %#v, want completed approved", continuation)
 	}
 	assertToolGovernanceApprovedStreamEvents(t, events, firstNonEmptyString(frozenInvocation.IdempotencyKey, frozenInvocation.ID))
+}
+
+func TestToolGovernanceContinuationUsesAuthoritativeConnectionEvent(t *testing.T) {
+	connectionID := uuid.New().String()
+	correlationID := "corr-feishu-send"
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: correlationID,
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "feishu:feishu.message.send_user",
+			SkillID:                 "external-apps",
+			Effect:                  toolgovernance.EffectExternalSend,
+			AssetType:               "integration_connection",
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			DataEgress:              true,
+			ExternalDestination:     "open.feishu.cn",
+			ApprovalEveryInvocation: true,
+		},
+		SkillID:      "external-apps",
+		ToolName:     "execute_action",
+		ProviderType: "connector",
+		ProviderID:   "external-integrations",
+		Arguments: map[string]interface{}{
+			"integration_id":  "feishu",
+			"action_id":       "feishu.message.send_user",
+			"connection_id":   connectionID,
+			"connection_name": "yy",
+			"arguments": map[string]interface{}{
+				"recipient_type": "self",
+				"content":        "hello",
+			},
+		},
+		Assets: []toolgovernance.AssetRef{{
+			ID:     connectionID,
+			Type:   "integration_connection",
+			Name:   "yy",
+			Source: "tool_arguments",
+			Metadata: map[string]interface{}{
+				"integration_id": "feishu",
+				"action_id":      "feishu.message.send_user",
+			},
+		}},
+	})
+	approvalEvent := map[string]interface{}{
+		"correlation_id":    correlationID,
+		"tool_id":           "feishu:feishu.message.send_user",
+		"skill_id":          "external-apps",
+		"effect":            "external_send",
+		"asset_type":        "integration_connection",
+		"risk_level":        "high",
+		"frozen_invocation": frozen,
+	}
+	event := map[string]interface{}{
+		"correlation_id":    correlationID,
+		"status":            "approved",
+		"decision":          "approved",
+		"approval_status":   "approved",
+		"requires_approval": false,
+		"integration_id":    "feishu",
+		"action_id":         "feishu.message.send_user",
+		"approval_event":    approvalEvent,
+		"governance": map[string]interface{}{
+			"status":            "approved",
+			"approval_status":   "approved",
+			"requires_approval": false,
+			"approval_event":    approvalEvent,
+			"frozen_invocation": frozen,
+		},
+	}
+	message := &runtimemodel.Message{
+		Metadata: mergeToolGovernanceDecisionMetadata(nil, event),
+	}
+
+	publicResponse := toolGovernanceDecisionResponse(
+		uuid.New(), uuid.New(), correlationID, toolGovernanceActionApprove,
+		toolGovernanceApprovalStatusApproved, false, nil, event,
+	)
+	publicFrozen, found, err := toolGovernanceFrozenInvocationFromEvent(publicResponse.Event)
+	if err != nil || !found {
+		t.Fatalf("public frozen invocation = %#v found=%t error=%v", publicFrozen, found, err)
+	}
+	if toolgovernance.FrozenInvocationHashMatches(publicFrozen) {
+		t.Fatal("public projection should be detached and sanitized, not used for internal execution")
+	}
+	if publicFrozen.Arguments["connection_id"] != nil || publicFrozen.Assets[0].ID != "" {
+		t.Fatalf("public projection exposed internal connection identifiers: %#v", publicFrozen)
+	}
+
+	authoritative, err := authoritativeToolGovernanceContinuationEvent(message, correlationID, toolGovernanceActionApprove)
+	if err != nil {
+		t.Fatalf("authoritativeToolGovernanceContinuationEvent() error = %v", err)
+	}
+	internalFrozen, found, err := toolGovernanceFrozenInvocationFromEvent(authoritative)
+	if err != nil || !found || !toolgovernance.FrozenInvocationHashMatches(internalFrozen) {
+		t.Fatalf("authoritative frozen invocation = %#v found=%t error=%v", internalFrozen, found, err)
+	}
+	if internalFrozen.Arguments["connection_id"] != connectionID ||
+		len(internalFrozen.Assets) != 1 || internalFrozen.Assets[0].ID != connectionID {
+		t.Fatalf("authoritative connection identity was lost: %#v", internalFrozen)
+	}
 }
 
 func TestRunClientActionContinuationStreamAssetObservationUsesVerifierWithoutRepeatingTools(t *testing.T) {
@@ -1964,12 +2065,16 @@ func toolGovernanceStreamChatResponse(content string) *adapter.ChatResponse {
 	}
 }
 
-func newToolGovernanceStreamSkillRuntime(t *testing.T, fileService *toolGovernanceStreamFileService, workspacePerms *toolGovernanceStreamWorkspacePermissionService) *skills.Runtime {
+func newToolGovernanceStreamSkillRuntime(t *testing.T, fileService *toolGovernanceStreamFileService, workspacePerms *toolGovernanceStreamWorkspacePermissionService, approvalEveryInvocation ...bool) *skills.Runtime {
 	t.Helper()
 	catalogDir := t.TempDir()
 	root := filepath.Join(catalogDir, skills.SkillFileManager)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir skill root: %v", err)
+	}
+	approvalEveryInvocationLine := ""
+	if len(approvalEveryInvocation) > 0 && approvalEveryInvocation[0] {
+		approvalEveryInvocationLine = "    approval_every_invocation: true\n"
 	}
 	skill := `---
 name: file-manager
@@ -1992,7 +2097,7 @@ tool_governance:
     permission_scopes:
       - file:manage
     default_approval_policy: always_ask
-    allowed_permission_tiers:
+` + approvalEveryInvocationLine + `    allowed_permission_tiers:
       - basic
       - advanced
       - full

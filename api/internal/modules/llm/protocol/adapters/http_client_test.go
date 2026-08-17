@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -74,6 +75,43 @@ func TestHTTPClientClassifiesUpstreamGatewayTimeout(t *testing.T) {
 	_, err := client.DoRequestDetailed(context.Background(), http.MethodGet, server.URL, nil, nil)
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("DoRequestDetailed() error = %v, want ErrTimeout", err)
+	}
+}
+
+func TestHTTPClientRawRequestStreamsBodyWithoutRetry(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if got := r.Header.Get("Content-Type"); got != "audio/pcm" {
+			t.Errorf("Content-Type = %q, want audio/pcm", got)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		if got := string(body); got != "pcm-audio" {
+			t.Errorf("body = %q, want pcm-audio", got)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := NewHTTPClientWithOptions(time.Second, 3, HTTPClientOptions{})
+	response, err := client.DoRawRequestDetailed(
+		context.Background(),
+		http.MethodPost,
+		server.URL,
+		map[string]string{"Content-Type": "audio/pcm"},
+		strings.NewReader("pcm-audio"),
+	)
+	if err != nil {
+		t.Fatalf("DoRawRequestDetailed() error = %v", err)
+	}
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusServiceUnavailable)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want one non-retryable attempt", requestCount)
 	}
 }
 

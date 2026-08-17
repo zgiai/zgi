@@ -7,13 +7,93 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
+
+func TestToolGovernanceDecisionConversationForUpdateRejectsWorkspaceMismatch(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatalf("create sqlmock: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		Conn: sqlDB, PreferSimpleProtocol: true,
+	}), &gorm.Config{DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatalf("open gorm mock: %v", err)
+	}
+
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	conversationWorkspaceID := uuid.New()
+	activeWorkspaceID := uuid.New()
+	mock.ExpectQuery(`(?s)SELECT .* FROM "chat_runtime_conversations" WHERE .*id = .*organization_id = .*account_id = .*deleted_at IS NULL.*LIMIT.*FOR UPDATE`).
+		WithArgs(conversationID, organizationID, accountID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id", "account_id"}).
+			AddRow(conversationID, organizationID, conversationWorkspaceID, accountID))
+
+	_, err = toolGovernanceDecisionConversationForUpdate(context.Background(), db, conversationID, Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &activeWorkspaceID,
+	})
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("error = %v, want workspace permission denial", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestPersistToolGovernanceApprovalPendingRejectsFrozenInvocationHashMismatch(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-feishu-send",
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "feishu.message.send_user",
+			Effect:                  toolgovernance.EffectExternalSend,
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			DataEgress:              true,
+			ExternalDestination:     "open.feishu.cn",
+			ApprovalEveryInvocation: true,
+		},
+		SkillID:  "external-apps",
+		ToolName: "execute_action",
+		Arguments: map[string]interface{}{
+			"integration_id": "feishu",
+			"action_id":      "feishu.message.send_user",
+			"arguments":      map[string]interface{}{"recipient_type": "self", "text": "你好"},
+		},
+	})
+	frozen.Arguments["connection_name"] = "mutated-after-seal"
+
+	_, err := (&service{}).persistToolGovernanceApprovalPendingResult(
+		context.Background(),
+		prepared,
+		map[string]interface{}{
+			"correlation_id": "corr-feishu-send",
+			"skill_id":       "external-apps",
+			"tool_name":      "execute_action",
+			"approval_event": map[string]interface{}{
+				"correlation_id":    "corr-feishu-send",
+				"frozen_invocation": frozen,
+			},
+		},
+		nil,
+	)
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "frozen invocation hash mismatch") {
+		t.Fatalf("error = %v, want frozen invocation hash mismatch", err)
+	}
+}
 
 func TestMergeSkillInvocationMetadataKeepsToolGovernanceTrace(t *testing.T) {
 	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{
@@ -884,6 +964,72 @@ func TestSubmitToolGovernanceDecisionRememberForSessionPreservesExistingConversa
 	}
 }
 
+func TestSubmitToolGovernanceDecisionApprovalEveryInvocationCannotPersistSessionGrant(t *testing.T) {
+	ctx := context.Background()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	conversation := &runtimemodel.Conversation{
+		ID:             conversationID,
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		Metadata:       map[string]interface{}{},
+	}
+	metadata := pendingToolGovernanceDecisionMetadata("corr-1")
+	invocation := metadata["skill_invocations"].([]interface{})[0].(map[string]interface{})
+	governance := invocation["governance"].(map[string]interface{})
+	approvalEvent := governance["approval_event"].(map[string]interface{})
+	approvalEvent["approval_every_invocation"] = true
+	message := &runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Status:         runtimemodel.MessageStatusWaitingApproval,
+		Metadata:       metadata,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	svc := &service{repos: &repository.Repositories{
+		Access:       toolGovernanceDecisionAccessRepo{},
+		Conversation: toolGovernanceDecisionConversationRepo{conversation: conversation},
+		Message:      &toolGovernanceDecisionMessageRepo{message: message},
+	}}
+
+	response, err := svc.SubmitToolGovernanceDecision(ctx, Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversationID, messageID, "corr-1", runtimedto.ToolGovernanceDecisionRequest{
+		Action:             "approve",
+		RememberForSession: true,
+	})
+	if err != nil {
+		t.Fatalf("SubmitToolGovernanceDecision() error = %v", err)
+	}
+	if response.RememberForSession || response.SessionGrant != nil {
+		t.Fatalf("response = %#v, want one-shot approval without session grant", response)
+	}
+	if grants := mapSliceFromAny(conversation.Metadata["tool_governance_session_grants"]); len(grants) != 0 {
+		t.Fatalf("conversation session grants = %#v, want none", grants)
+	}
+	if grants := mapSliceFromAny(message.Metadata["tool_governance_one_shot_grants"]); len(grants) != 1 {
+		t.Fatalf("message one-shot grants = %#v, want one", grants)
+	}
+	retried, err := svc.SubmitToolGovernanceDecision(ctx, Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversationID, messageID, "corr-1", runtimedto.ToolGovernanceDecisionRequest{
+		Action:             "approve",
+		RememberForSession: true,
+	})
+	if err != nil {
+		t.Fatalf("idempotent SubmitToolGovernanceDecision() error = %v", err)
+	}
+	if retried.RememberForSession || retried.SessionGrant != nil {
+		t.Fatalf("idempotent response = %#v, want stored one-shot result", retried)
+	}
+}
+
 func TestCompleteToolGovernanceContinuationMetadataMarksApprovedContinuationCompleted(t *testing.T) {
 	metadata := map[string]interface{}{
 		"tool_governance_continuation": map[string]interface{}{
@@ -1218,13 +1364,16 @@ func TestToolGovernanceSessionGrantKeyIncludesConversationToolEffectAssetAndRisk
 		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "update", "asset_type": "file", "risk_level": "high"},
 		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "database", "risk_level": "high"},
 		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "medium"},
+		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high", "data_egress": true},
+		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high", "external_destination": "api.exa.ai"},
+		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high", "sensitive_data_allowed": true},
 		{"conversation_id": "conversation-1", "tool_id": "file.delete", "effect": "delete", "asset_type": "file", "risk_level": "high", "assets": []interface{}{map[string]interface{}{"id": "file-2", "type": "file"}}},
 	} {
 		metadata = appendToolGovernanceSessionGrant(metadata, variant)
 	}
 	grants = mapSliceFromAny(metadata["tool_governance_session_grants"])
-	if len(grants) != 12 {
-		t.Fatalf("session grants = %#v, want one base plus eleven distinct scoped grants", grants)
+	if len(grants) != 15 {
+		t.Fatalf("session grants = %#v, want one base plus fourteen distinct scoped grants", grants)
 	}
 }
 

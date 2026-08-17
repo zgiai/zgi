@@ -11,6 +11,36 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 )
 
+type graphTraversalCandidate struct {
+	ID                string
+	ActiveSourceCount int
+}
+
+type graphTraversalEdge struct {
+	ID           string
+	ActiveWeight int
+}
+
+func filterActiveGraphTraversal(candidates []graphTraversalCandidate, edges []graphTraversalEdge) ([]graphTraversalCandidate, []graphTraversalEdge) {
+	activeCandidates := make([]graphTraversalCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ActiveSourceCount > 0 {
+			activeCandidates = append(activeCandidates, candidate)
+		}
+	}
+	activeEdges := make([]graphTraversalEdge, 0, len(edges))
+	for _, edge := range edges {
+		if edge.ActiveWeight > 0 {
+			activeEdges = append(activeEdges, edge)
+		}
+	}
+	return activeCandidates, activeEdges
+}
+
+func graphVisibilityReady(authoritativeRevision int64, projectedRevision int64) bool {
+	return authoritativeRevision == projectedRevision
+}
+
 // GraphContext represents the graph-based context for retrieved entities
 type GraphContext struct {
 	Entities      []GraphEntity   `json:"entities"`
@@ -20,12 +50,13 @@ type GraphContext struct {
 
 // GraphEntity represents an entity with its graph context
 type GraphEntity struct {
-	ID            string                 `json:"id"`
-	Name          string                 `json:"name"`
-	CanonicalName string                 `json:"canonical_name"`
-	Type          string                 `json:"type"`
-	SourceCount   int                    `json:"source_count"`
-	Properties    map[string]interface{} `json:"properties,omitempty"`
+	ID                string                 `json:"id"`
+	Name              string                 `json:"name"`
+	CanonicalName     string                 `json:"canonical_name"`
+	Type              string                 `json:"type"`
+	SourceCount       int                    `json:"source_count"`
+	ActiveSourceCount int                    `json:"active_source_count"`
+	Properties        map[string]interface{} `json:"properties,omitempty"`
 }
 
 // GraphRelation represents a relationship between entities
@@ -34,6 +65,7 @@ type GraphRelation struct {
 	TailEntity   string `json:"tail_entity"`
 	RelationType string `json:"relation_type"`
 	Weight       int    `json:"weight"`
+	ActiveWeight int    `json:"active_weight"`
 }
 
 // GraphRetrieval handles graph-based context retrieval using Neo4j
@@ -57,7 +89,7 @@ func NewGraphRetrieval(
 }
 
 // Retrieve fetches graph context for given entity names
-// hopDepth: 1 = direct neighbors, 2 = neighbors of neighbors
+// hopDepth: 1 = direct neighbors, up to 3 = wider relationship traversal
 func (r *GraphRetrieval) Retrieve(ctx context.Context, kbID uuid.UUID, entityNames []string, hopDepth int) (*GraphContext, error) {
 	if len(entityNames) == 0 {
 		return &GraphContext{}, nil
@@ -67,8 +99,8 @@ func (r *GraphRetrieval) Retrieve(ctx context.Context, kbID uuid.UUID, entityNam
 	if hopDepth < 1 {
 		hopDepth = 1
 	}
-	if hopDepth > 5 {
-		hopDepth = 5
+	if hopDepth > 3 {
+		hopDepth = 3
 	}
 
 	// 1. Try Neo4j first if available
@@ -87,28 +119,7 @@ func (r *GraphRetrieval) retrieveFromNeo4j(ctx context.Context, kbID uuid.UUID, 
 		Relationships: make([]GraphRelation, 0),
 	}
 
-	// Run Personalized PageRank to find most relevant nodes
-	// We use the extracted entities as seed nodes
-	pprResults, err := graph.RunPPR(ctx, r.neo4jClient, entityNames, 0.85, 100)
-	if err != nil {
-		// Fallback to simple neighbor lookup if PPR fails (e.g. GDS not available)
-		return r.retrieveFromNeo4jSimple(ctx, kbID, entityNames)
-	}
-
-	// If no results from PPR, try simple lookup
-	if len(pprResults) == 0 {
-		return r.retrieveFromNeo4jSimple(ctx, kbID, entityNames)
-	}
-
-	// Collect top nodes from PPR results
-	topNodes := make([]string, 0, len(pprResults))
-	for _, res := range pprResults {
-		topNodes = append(topNodes, res.NodeName)
-	}
-
-	// Get full context (properties and relationships) for these top nodes
-	// Use Multi-Hop to capture deeper relationships and paths
-	searchResults, _, err := r.neo4jClient.GetEntityContextMultiHop(ctx, kbID.String(), topNodes, hopDepth)
+	searchResults, _, err := r.neo4jClient.GetEntityContextMultiHop(ctx, kbID.String(), entityNames, hopDepth)
 	if err != nil {
 		return nil, fmt.Errorf("neo4j context query failed: %w", err)
 	}
@@ -159,11 +170,12 @@ func (r *GraphRetrieval) retrieveFromNeo4j(ctx context.Context, kbID uuid.UUID, 
 			}
 
 			// Add relationship
-			headName, _ := sr.Entity["name"].(string)
-			tailName, _ := neighbor.Node["name"].(string)
+			headNode, tailNode := neighbor.DirectedEndpoints(sr.Entity)
+			headName, _ := headNode["name"].(string)
+			tailName, _ := tailNode["name"].(string)
 			relKey := fmt.Sprintf("%s-%s-%s", headName, neighbor.RelationshipType, tailName)
 
-			if !seenRelations[relKey] {
+			if headName != "" && tailName != "" && !seenRelations[relKey] {
 				seenRelations[relKey] = true
 				result.Relationships = append(result.Relationships, GraphRelation{
 					HeadEntity:   headName,
@@ -234,11 +246,12 @@ func (r *GraphRetrieval) retrieveFromNeo4jSimple(ctx context.Context, kbID uuid.
 				result.Entities = append(result.Entities, neighborEntity)
 			}
 
-			headName, _ := sr.Entity["name"].(string)
-			tailName, _ := neighbor.Node["name"].(string)
+			headNode, tailNode := neighbor.DirectedEndpoints(sr.Entity)
+			headName, _ := headNode["name"].(string)
+			tailName, _ := tailNode["name"].(string)
 			relKey := fmt.Sprintf("%s-%s-%s", headName, neighbor.RelationshipType, tailName)
 
-			if !seenRelations[relKey] {
+			if headName != "" && tailName != "" && !seenRelations[relKey] {
 				seenRelations[relKey] = true
 				result.Relationships = append(result.Relationships, GraphRelation{
 					HeadEntity:   headName,
@@ -279,14 +292,18 @@ func (r *GraphRetrieval) retrieveFromPostgres(ctx context.Context, kbID uuid.UUI
 
 	matchedEntityIDs := make(map[uuid.UUID]bool)
 	for _, entity := range entities {
+		if entity.ActiveSourceCount <= 0 {
+			continue
+		}
 		if queryNamesLower[strings.ToLower(entity.Name)] || queryNamesLower[strings.ToLower(entity.CanonicalName)] {
 			matchedEntityIDs[entity.ID] = true
 			result.Entities = append(result.Entities, GraphEntity{
-				ID:            entity.ID.String(),
-				Name:          entity.Name,
-				CanonicalName: entity.CanonicalName,
-				Type:          entity.Type,
-				SourceCount:   entity.SourceCount,
+				ID:                entity.ID.String(),
+				Name:              entity.Name,
+				CanonicalName:     entity.CanonicalName,
+				Type:              entity.Type,
+				SourceCount:       entity.SourceCount,
+				ActiveSourceCount: entity.ActiveSourceCount,
 			})
 		}
 	}
@@ -296,6 +313,9 @@ func (r *GraphRetrieval) retrieveFromPostgres(ctx context.Context, kbID uuid.UUI
 		relationships, err := r.relRepo.FindByKBID(ctx, kbID)
 		if err == nil {
 			for _, rel := range relationships {
+				if rel.IsDeleted || rel.ActiveWeight <= 0 {
+					continue
+				}
 				// Include relationships where either head or tail is in matched entities
 				if matchedEntityIDs[rel.HeadEntityID] || matchedEntityIDs[rel.TailEntityID] {
 					// Find entity names
@@ -307,19 +327,21 @@ func (r *GraphRetrieval) retrieveFromPostgres(ctx context.Context, kbID uuid.UUI
 						TailEntity:   tailName,
 						RelationType: rel.RelationType,
 						Weight:       rel.Weight,
+						ActiveWeight: rel.ActiveWeight,
 					})
 
 					// Also add the connected entity if not already present
 					if !matchedEntityIDs[rel.HeadEntityID] {
 						for _, e := range entities {
-							if e.ID == rel.HeadEntityID {
+							if e.ID == rel.HeadEntityID && e.ActiveSourceCount > 0 {
 								matchedEntityIDs[e.ID] = true
 								result.Entities = append(result.Entities, GraphEntity{
-									ID:            e.ID.String(),
-									Name:          e.Name,
-									CanonicalName: e.CanonicalName,
-									Type:          e.Type,
-									SourceCount:   e.SourceCount,
+									ID:                e.ID.String(),
+									Name:              e.Name,
+									CanonicalName:     e.CanonicalName,
+									Type:              e.Type,
+									SourceCount:       e.SourceCount,
+									ActiveSourceCount: e.ActiveSourceCount,
 								})
 								break
 							}
@@ -327,14 +349,15 @@ func (r *GraphRetrieval) retrieveFromPostgres(ctx context.Context, kbID uuid.UUI
 					}
 					if !matchedEntityIDs[rel.TailEntityID] {
 						for _, e := range entities {
-							if e.ID == rel.TailEntityID {
+							if e.ID == rel.TailEntityID && e.ActiveSourceCount > 0 {
 								matchedEntityIDs[e.ID] = true
 								result.Entities = append(result.Entities, GraphEntity{
-									ID:            e.ID.String(),
-									Name:          e.Name,
-									CanonicalName: e.CanonicalName,
-									Type:          e.Type,
-									SourceCount:   e.SourceCount,
+									ID:                e.ID.String(),
+									Name:              e.Name,
+									CanonicalName:     e.CanonicalName,
+									Type:              e.Type,
+									SourceCount:       e.SourceCount,
+									ActiveSourceCount: e.ActiveSourceCount,
 								})
 								break
 							}

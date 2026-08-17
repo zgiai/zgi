@@ -39,10 +39,11 @@ type SingleRetrievalConfig struct {
 	TopK                  int      `json:"top_k"`
 	ScoreThreshold        *float64 `json:"score_threshold"`
 	ScoreThresholdEnabled *bool    `json:"score_threshold_enabled"`
-	SearchMethod          string   `json:"search_method"` // keyword_search | full_text_search | semantic_search | hybrid_search
+	SearchMethod          string   `json:"search_method"` // keyword_search | full_text_search | semantic_search | hybrid_search | graph_search
 	RerankingEnable       bool     `json:"reranking_enable"`
 	ContextSeparator      string   `json:"context_separator"` // e.g., "\n\n"
 	MaxContextChars       int      `json:"max_context_chars"` // character cap for context
+	FallbackPolicy        string   `json:"fallback_policy,omitempty"`
 
 	llm.ModelConfig
 }
@@ -55,6 +56,8 @@ type rerankModelConfig struct {
 type MultipleRetrievalConfig struct {
 	TopK            int                `json:"top_k"`
 	ScoreThreshold  *float64           `json:"score_threshold"`
+	SearchMethod    string             `json:"search_method,omitempty"`
+	FallbackPolicy  string             `json:"fallback_policy,omitempty"`
 	RerankingMode   rerankingMode      `json:"reranking_mode"`
 	RerankingModel  *rerankModelConfig `json:"reranking_model,omitempty"`
 	RerankingEnable bool               `json:"reranking_enable"`
@@ -102,6 +105,8 @@ type RetrievalOptions struct {
 	RerankingModel        map[string]any
 	Weights               map[string]any
 	DocumentIDsFilter     []string
+	RetrievalMode         string
+	FallbackPolicy        string
 }
 
 type NodeData struct {

@@ -1,7 +1,10 @@
 package queue
 
 import (
+	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
@@ -10,21 +13,54 @@ import (
 
 // TaskManager manages asynq tasks
 type TaskManager struct {
-	client *asynq.Client
-	server *asynq.Server
-	config *config.Config
+	client          *asynq.Client
+	inspector       *asynq.Inspector
+	server          *asynq.Server
+	graphFlowServer *asynq.Server
+	config          *config.Config
+	stopping        atomic.Bool
+	stopOnce        sync.Once
 }
 
 // NewTaskManager creates a new task manager
 func NewTaskManager(cfg *config.Config) (*TaskManager, error) {
-	client := NewAsynqClient(cfg)
+	redisOpt := taskQueueRedisOpt(cfg)
+	client := asynq.NewClient(redisOpt)
+	inspector := asynq.NewInspector(redisOpt)
 	server := NewAsynqServer(cfg)
+	graphFlowServer := NewGraphFlowAsynqServer(cfg)
 
 	return &TaskManager{
-		client: client,
-		server: server,
-		config: cfg,
+		client:          client,
+		inspector:       inspector,
+		server:          server,
+		graphFlowServer: graphFlowServer,
+		config:          cfg,
 	}, nil
+}
+
+// ResetArchivedTask removes an archived delivery so it can be enqueued again
+// with a fresh retry budget. Other runnable states are left untouched and
+// reported as already available.
+func (tm *TaskManager) ResetArchivedTask(queueName, taskID string) (bool, error) {
+	if tm == nil || tm.inspector == nil {
+		return false, fmt.Errorf("task inspector is not configured")
+	}
+	info, err := tm.inspector.GetTaskInfo(queueName, taskID)
+	if err != nil {
+		return false, fmt.Errorf("inspect task %s in queue %s: %w", taskID, queueName, err)
+	}
+	switch info.State {
+	case asynq.TaskStatePending, asynq.TaskStateActive, asynq.TaskStateScheduled, asynq.TaskStateRetry:
+		return false, nil
+	case asynq.TaskStateArchived:
+		if err := tm.inspector.DeleteTask(queueName, taskID); err != nil {
+			return false, fmt.Errorf("delete archived task %s in queue %s: %w", taskID, queueName, err)
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("task %s in queue %s cannot be reset from state %s", taskID, queueName, info.State)
+	}
 }
 
 // EnqueueTask enqueues a task with given type and payload
@@ -58,20 +94,70 @@ func (tm *TaskManager) GetServer() *asynq.Server {
 	return tm.server
 }
 
+// GetGraphFlowServer returns the dedicated GraphFlow worker server.
+func (tm *TaskManager) GetGraphFlowServer() *asynq.Server {
+	return tm.graphFlowServer
+}
+
 // StartServer starts the asynq server with given mux
 func (tm *TaskManager) StartServer(mux *asynq.ServeMux) error {
-	logger.Info("Starting asynq server")
-	return tm.server.Run(mux)
+	tm.stopping.Store(false)
+	tm.stopOnce = sync.Once{}
+	logger.Info("Starting asynq worker servers", map[string]interface{}{
+		"main_concurrency":      tm.config.TaskQueue.Concurrency,
+		"graphflow_concurrency": graphFlowWorkerConcurrency(tm.config),
+	})
+	type workerResult struct {
+		name string
+		err  error
+	}
+	resultCh := make(chan workerResult, 2)
+	go func() {
+		resultCh <- workerResult{name: "main", err: tm.server.Run(mux)}
+	}()
+	go func() {
+		resultCh <- workerResult{name: "graphflow", err: tm.graphFlowServer.Run(mux)}
+	}()
+
+	first := <-resultCh
+	intentionalStop := tm.stopping.Load()
+	// The two servers form one worker subsystem. If either exits, stop its
+	// sibling as well instead of leaving the API with a silently missing queue.
+	tm.StopServer()
+	second := <-resultCh
+	if intentionalStop {
+		return nil
+	}
+	return errors.Join(
+		workerExitError(first.name, first.err),
+		workerExitError(second.name, second.err),
+	)
+}
+
+func workerExitError(name string, err error) error {
+	if err == nil {
+		return fmt.Errorf("%s task worker stopped unexpectedly", name)
+	}
+	return fmt.Errorf("%s task worker stopped: %w", name, err)
 }
 
 // StopServer stops the asynq server
 func (tm *TaskManager) StopServer() {
-	logger.Info("Stopping asynq server")
-	tm.server.Shutdown()
+	tm.stopping.Store(true)
+	tm.stopOnce.Do(func() {
+		logger.Info("Stopping asynq worker servers")
+		tm.server.Shutdown()
+		tm.graphFlowServer.Shutdown()
+	})
 }
 
 // Close closes the task manager connections
 func (tm *TaskManager) Close() error {
+	if tm.inspector != nil {
+		if err := tm.inspector.Close(); err != nil {
+			return fmt.Errorf("failed to close asynq inspector: %w", err)
+		}
+	}
 	if tm.client != nil {
 		if err := tm.client.Close(); err != nil {
 			return fmt.Errorf("failed to close asynq client: %w", err)

@@ -2,6 +2,8 @@ package v1
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -18,6 +20,7 @@ import (
 	datalibService "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	datalibWorker "github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	graphflow "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	graphflowHandler "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/handler"
 	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	graphflow_repo "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 	datasetHandler "github.com/zgiai/zgi/api/internal/modules/dataset/handler"
@@ -32,6 +35,8 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	systemService "github.com/zgiai/zgi/api/internal/modules/system/service"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
@@ -67,6 +72,8 @@ type DatasetRouteDeps struct {
 	DefaultModelService        llmdefaultservice.DefaultModelService
 	TaskManager                *queue.TaskManager
 	GraphFlowService           *graphflow.Service
+	GraphLifecycleService      *graphflow.LifecycleService
+	GraphRuntimeHealthService  *systemService.GraphRuntimeHealthService
 	TaskHandlerRegistry        datasetTaskHandlerRegistry
 	ResourcePermissionService  interfaces.ResourcePermissionService
 	AuthorizationService       interfaces.AuthorizationService
@@ -116,7 +123,17 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	graphFlowTaskRepoObj := graphflow_repo.NewGraphFlowTaskRepository(deps.DB)
 
 	datasetServiceObj := datasetService.NewDatasetService(datasetRepoObj, documentRepoObj, chunkRepoObj, deps.WorkspaceManagementService, fileServiceObj, embeddingService, vectorClient, deps.DefaultModelService, storageInstance, deps.DB, deps.QuotaService, deps.OrganizationService, deps.LLMClient, taskManager)
+	if configurable, ok := datasetServiceObj.(interface {
+		ConfigureGraphRuntime(*systemService.GraphRuntimeHealthService, *graphflow.LifecycleService)
+	}); ok {
+		configurable.ConfigureGraphRuntime(deps.GraphRuntimeHealthService, deps.GraphLifecycleService)
+	}
 	documentServiceObj := datasetService.NewDocumentService(documentRepoObj, datasetRepoObj, deps.OrganizationService, indexingServiceObj, fileServiceObj, vectorClient, taskManager, graphFlowTaskRepoObj)
+	if configurable, ok := documentServiceObj.(interface {
+		ConfigureGraphLifecycle(*graphflow.LifecycleService)
+	}); ok {
+		configurable.ConfigureGraphLifecycle(deps.GraphLifecycleService)
+	}
 
 	datasetQueryServiceObj := datasetService.NewDatasetQueryService(datasetQueryRepoObj, datasetServiceObj)
 
@@ -147,6 +164,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		documentRepoObj,
 		dataLibraryFileRefEmbeddingService,
 		dataLibraryProcessingRequestService,
+		vectorClient,
 	)
 	dataLibraryTaskDispatcher := datalibWorker.NewFileProcessTaskDispatcher(deps.TaskManager)
 	dataLibraryFileRefHandler := datalibHandler.NewKnowledgeBaseFileRefHandler(dataLibraryFileRefService, dataLibraryTaskDispatcher, deps.AccountService, documentServiceObj, datasetServiceObj, deps.OrganizationService, dataLibraryProcessingRequestService)
@@ -159,6 +177,7 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		Chunks:     dataLibraryChunkRepo,
 		Embeddings: dataLibraryEmbeddingRepo,
 		VectorDB:   vectorClient,
+		Graph:      deps.GraphLifecycleService,
 	})
 
 	// Create BatchHitTestingTaskRepository instance
@@ -188,6 +207,11 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		deps.AccountService,
 		deps.OrganizationService,
 		deps.AuthorizationService,
+	)
+	graphFlowHandlerObj := graphflowHandler.NewGraphFlowHandler(
+		deps.GraphLifecycleService,
+		datasetServiceObj,
+		deps.OrganizationService,
 	)
 	segmentHandlerObj := datasetHandler.NewSegmentHandler(
 		segmentServiceObj,
@@ -223,7 +247,11 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 	datalibWorker.RegisterFileCandidateEmbeddingTaskHandler(deps.TaskHandlerRegistry, dataLibraryFileCandidateEmbeddingRunner, taskManager)
 
 	// Register Graph API endpoint for knowledge graph visualization
-	router.GET("/datasets/:dataset_id/graph", middleware.JWTWithOrganizationAndService(deps.AccountService), newDatasetGraphHandler(datasetServiceObj, graphFlowServiceObj))
+	router.GET("/datasets/graph-capability", middleware.JWTWithOrganizationAndService(deps.AccountService), newGraphCapabilityHandler(deps.GraphRuntimeHealthService))
+	router.GET("/datasets/:dataset_id/graph/status", middleware.JWTWithOrganizationAndService(deps.AccountService), graphFlowHandlerObj.GetStatus)
+	router.POST("/datasets/:dataset_id/graph/rebuild", middleware.JWTWithOrganizationAndService(deps.AccountService), graphFlowHandlerObj.Rebuild)
+	router.POST("/datasets/:dataset_id/documents/:document_id/graph/retry", middleware.JWTWithOrganizationAndService(deps.AccountService), graphFlowHandlerObj.RetryDocument)
+	router.GET("/datasets/:dataset_id/graph", middleware.JWTWithOrganizationAndService(deps.AccountService), newDatasetGraphHandler(datasetServiceObj, graphFlowServiceObj, deps.OrganizationService))
 
 	contentParseRunService := contentparseService.NewRunQueryService(
 		contentparseRepo.NewParseRunRepository(deps.DB),
@@ -275,6 +303,12 @@ func validateDatasetRouteDeps(deps DatasetRouteDeps) {
 	if deps.GraphFlowService == nil {
 		panic("dataset routes require graph flow service")
 	}
+	if deps.GraphLifecycleService == nil {
+		panic("dataset routes require graph lifecycle service")
+	}
+	if deps.GraphRuntimeHealthService == nil {
+		panic("dataset routes require graph runtime health service")
+	}
 	if deps.TaskHandlerRegistry == nil {
 		panic("dataset routes require task handler registry")
 	}
@@ -292,14 +326,45 @@ type datasetGraphPermissionChecker interface {
 }
 
 type datasetGraphReader interface {
-	GetGraphData(ctx context.Context, datasetID string) (*graphflow_model.GraphDataResponse, error)
+	QueryGraphData(ctx context.Context, datasetID string, query graphflow_model.GraphQuery) (*graphflow_model.GraphDataResponse, error)
+}
+
+type datasetGraphWorkspacePermissionChecker interface {
+	CheckWorkspaceOrganizationAnyPermission(
+		ctx context.Context,
+		organizationID string,
+		workspaceID string,
+		accountID string,
+		permissionCodes ...workspace_model.WorkspacePermissionCode,
+	) (bool, error)
+}
+
+type graphCapabilityReader interface {
+	Capability(ctx context.Context) systemService.GraphRuntimeCapability
+}
+
+func newGraphCapabilityHandler(reader graphCapabilityReader) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if reader == nil {
+			c.JSON(503, gin.H{
+				"code":    datasetService.GraphErrorCodeRuntimeUnavailable,
+				"message": "Knowledge graph runtime is unavailable.",
+			})
+			return
+		}
+		response.Success(c, reader.Capability(c.Request.Context()))
+	}
 }
 
 type datasetContentParseShadowSampler interface {
 	StartContentParseShadowSampling(ctx context.Context, datasetID, organizationID string, limit int, documentIDs []string) (*datasetIndexing.ContentParseShadowSamplingResult, error)
 }
 
-func newDatasetGraphHandler(datasetService datasetGraphPermissionChecker, graphService datasetGraphReader) gin.HandlerFunc {
+func newDatasetGraphHandler(
+	datasetService datasetGraphPermissionChecker,
+	graphService datasetGraphReader,
+	graphPermissions ...datasetGraphWorkspacePermissionChecker,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		datasetID := c.Param("dataset_id")
 		if datasetID == "" {
@@ -329,6 +394,20 @@ func newDatasetGraphHandler(datasetService datasetGraphPermissionChecker, graphS
 			response.Fail(c, response.ErrDatasetPermissionDenied)
 			return
 		}
+		if len(graphPermissions) > 0 && graphPermissions[0] != nil {
+			allowed, permissionErr := graphPermissions[0].CheckWorkspaceOrganizationAnyPermission(
+				c.Request.Context(),
+				organizationID,
+				dataset.WorkspaceID,
+				accountID,
+				workspace_model.WorkspacePermissionKnowledgeBaseGraphView,
+				workspace_model.WorkspacePermissionKnowledgeBaseGraphManage,
+			)
+			if permissionErr != nil || !allowed {
+				response.Fail(c, response.ErrDatasetPermissionDenied)
+				return
+			}
+		}
 
 		hasPermission, err := datasetService.CheckDatasetPermission(c.Request.Context(), datasetID, accountID, dataset.WorkspaceID)
 		if err != nil {
@@ -339,8 +418,34 @@ func newDatasetGraphHandler(datasetService datasetGraphPermissionChecker, graphS
 			response.Fail(c, response.ErrDatasetPermissionDenied)
 			return
 		}
+		if !dataset.EnableGraphFlow {
+			c.JSON(http.StatusConflict, gin.H{
+				"code":    "graph_not_enabled",
+				"message": "Knowledge graph is not enabled.",
+			})
+			return
+		}
+		if dataset.GraphAvailableRevision == nil ||
+			dataset.GraphVisibilityRevision != dataset.GraphProjectedVisibilityRevision {
+			c.JSON(http.StatusConflict, gin.H{
+				"code":                                "graph_visibility_not_ready",
+				"message":                             "Knowledge graph visibility is not ready.",
+				"graph_visibility_revision":           dataset.GraphVisibilityRevision,
+				"graph_projected_visibility_revision": dataset.GraphProjectedVisibilityRevision,
+			})
+			return
+		}
 
-		graphData, err := graphService.GetGraphData(c.Request.Context(), datasetID)
+		query, queryErr := parseDatasetGraphQuery(c)
+		if queryErr != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"code":    "graph_query_limit_exceeded",
+				"message": queryErr.Error(),
+			})
+			return
+		}
+
+		graphData, err := graphService.QueryGraphData(c.Request.Context(), datasetID, query)
 		if err != nil {
 			logger.Error("Failed to get graph data", err)
 			c.JSON(500, gin.H{"error": "Failed to retrieve graph data"})
@@ -349,6 +454,49 @@ func newDatasetGraphHandler(datasetService datasetGraphPermissionChecker, graphS
 
 		response.Success(c, graphData)
 	}
+}
+
+func parseDatasetGraphQuery(c *gin.Context) (graphflow_model.GraphQuery, error) {
+	query := graphflow_model.GraphQuery{
+		Keyword:    strings.TrimSpace(c.Query("keyword")),
+		Category:   strings.TrimSpace(c.Query("category")),
+		DocumentID: strings.TrimSpace(c.Query("document_id")),
+		SeedNodeID: strings.TrimSpace(c.Query("seed_node_id")),
+		Cursor:     strings.TrimSpace(c.Query("cursor")),
+		Overview:   strings.EqualFold(strings.TrimSpace(c.Query("overview")), "true"),
+		NodeLimit:  300,
+		EdgeLimit:  900,
+	}
+	var err error
+	if value := strings.TrimSpace(c.Query("node_limit")); value != "" {
+		query.NodeLimit, err = strconv.Atoi(value)
+		if err != nil || query.NodeLimit <= 0 {
+			return graphflow_model.GraphQuery{}, fmt.Errorf("node_limit must be a positive integer")
+		}
+	}
+	if value := strings.TrimSpace(c.Query("edge_limit")); value != "" {
+		query.EdgeLimit, err = strconv.Atoi(value)
+		if err != nil || query.EdgeLimit <= 0 {
+			return graphflow_model.GraphQuery{}, fmt.Errorf("edge_limit must be a positive integer")
+		}
+	}
+	if value := strings.TrimSpace(c.Query("hop_depth")); value != "" {
+		query.HopDepth, err = strconv.Atoi(value)
+		if err != nil || query.HopDepth < 0 {
+			return graphflow_model.GraphQuery{}, fmt.Errorf("hop_depth must be a non-negative integer")
+		}
+	}
+	isFullOverview := query.Overview &&
+		query.Keyword == "" &&
+		query.Category == "" &&
+		query.DocumentID == "" &&
+		query.SeedNodeID == "" &&
+		query.Cursor == ""
+	if query.HopDepth > 2 ||
+		(!isFullOverview && (query.NodeLimit > 500 || query.EdgeLimit > 1500)) {
+		return graphflow_model.GraphQuery{}, fmt.Errorf("graph query exceeds the supported bounds")
+	}
+	return query, nil
 }
 
 func handleDatasetGraphPermissionError(c *gin.Context, err error) {

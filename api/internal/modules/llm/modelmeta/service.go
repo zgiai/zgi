@@ -151,6 +151,7 @@ type ModelMetaData struct {
 	Features         map[string]interface{} `json:"features"`
 	Tools            map[string]interface{} `json:"tools"`
 	Capabilities     map[string]interface{} `json:"capabilities"`
+	Video            map[string]interface{} `json:"video"`
 	UseCases         []string               `json:"use_cases"`
 	InputModalities  []string               `json:"input_modalities"`
 	OutputModalities []string               `json:"output_modalities"`
@@ -815,6 +816,9 @@ func mergeModelMetaDetail(base, detail ModelMetaData) ModelMetaData {
 	if len(detail.Capabilities) > 0 {
 		base.Capabilities = detail.Capabilities
 	}
+	if len(detail.Video) > 0 {
+		base.Video = detail.Video
+	}
 	if len(detail.UseCases) > 0 {
 		base.UseCases = detail.UseCases
 	}
@@ -1339,12 +1343,30 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 }
 
 func publishedModelDefaultParameters(meta *ModelMetaData) llmmodel.JSONObject {
-	if meta == nil || len(meta.Capabilities) == 0 {
+	capabilities := publishedModelCapabilities(meta)
+	if len(capabilities) == 0 {
 		return llmmodel.JSONObject{}
 	}
 	return llmmodel.JSONObject{
-		"capabilities": meta.Capabilities,
+		"capabilities": capabilities,
 	}
+}
+
+func publishedModelCapabilities(meta *ModelMetaData) map[string]interface{} {
+	if meta == nil {
+		return nil
+	}
+	capabilities := make(map[string]interface{}, len(meta.Capabilities)+1)
+	for key, value := range meta.Capabilities {
+		capabilities[key] = value
+	}
+	if len(meta.Video) > 0 {
+		capabilities["video"] = meta.Video
+	}
+	if len(capabilities) == 0 {
+		return nil
+	}
+	return capabilities
 }
 
 func normalizeOptionalString(value *string) *string {
@@ -1396,6 +1418,7 @@ func parsePublishedModelEndpoints(raw map[string]interface{}) *llmmodel.ModelEnd
 		Moderation:       boolValue(raw, "moderation"),
 		Videos:           boolValue(raw, "videos"),
 		ImageEdit:        boolValue(raw, "image_edit"),
+		MusicGeneration:  boolValue(raw, "music_generation"),
 	}
 }
 

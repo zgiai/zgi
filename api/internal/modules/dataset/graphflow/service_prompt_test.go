@@ -19,7 +19,7 @@ import (
 type graphPromptDefaultModelService struct{}
 
 func (s *graphPromptDefaultModelService) ResolveModelType(ctx context.Context, organizationID string, explicitProvider, explicitModel *string, modelType shared_model.ModelType) (*llmdefaultservice.ResolvedModel, error) {
-	return &llmdefaultservice.ResolvedModel{UseCase: string(llmmodelmodel.UseCaseTextChat), Provider: "openai", Model: "test-model", Params: llmsharedtypes.JSONObject{}, Source: llmdefaultservice.SourceExplicit}, nil
+	return &llmdefaultservice.ResolvedModel{UseCase: string(llmmodelmodel.UseCaseTextChat), Provider: "qwen", Model: "qwen3.7-max", Params: llmsharedtypes.JSONObject{}, Source: llmdefaultservice.SourceExplicit}, nil
 }
 
 func (s *graphPromptDefaultModelService) ResolveUseCase(ctx context.Context, organizationID string, useCase llmmodelmodel.UseCase, explicitProvider, explicitModel *string) (*llmdefaultservice.ResolvedModel, error) {
@@ -39,7 +39,10 @@ func (s *graphPromptDefaultModelService) Delete(ctx context.Context, organizatio
 }
 
 type graphPromptLLMClient struct {
-	lastPrompt string
+	lastPrompt               string
+	lastTemperature          *float64
+	lastMaxTokens            *int
+	lastAdditionalParameters map[string]interface{}
 }
 
 func (m *graphPromptLLMClient) Chat(ctx context.Context, organizationID string, req *llmadapter.ChatRequest) (*llmadapter.ChatResponse, error) {
@@ -48,6 +51,9 @@ func (m *graphPromptLLMClient) Chat(ctx context.Context, organizationID string, 
 			m.lastPrompt = content
 		}
 	}
+	m.lastTemperature = req.Temperature
+	m.lastMaxTokens = req.MaxTokens
+	m.lastAdditionalParameters = req.AdditionalParameters
 	return &llmadapter.ChatResponse{Choices: []llmadapter.Choice{{Message: llmadapter.Message{Content: `{"entities":["Seed"]}`}}}}, nil
 }
 
@@ -101,5 +107,17 @@ func TestExtractQueryEntitiesUsesGoTemplate(t *testing.T) {
 	}
 	if strings.Contains(llmClient.lastPrompt, "{{") {
 		t.Fatalf("prompt still contains raw template markers: %q", llmClient.lastPrompt)
+	}
+	if !strings.Contains(llmClient.lastPrompt, "Do not generate synonyms") {
+		t.Fatalf("prompt does not prohibit query expansion: %q", llmClient.lastPrompt)
+	}
+	if llmClient.lastTemperature == nil || *llmClient.lastTemperature != 0 {
+		t.Fatalf("temperature = %v, want 0", llmClient.lastTemperature)
+	}
+	if llmClient.lastMaxTokens == nil || *llmClient.lastMaxTokens != 128 {
+		t.Fatalf("max tokens = %v, want 128", llmClient.lastMaxTokens)
+	}
+	if enabled, ok := llmClient.lastAdditionalParameters["enable_thinking"].(bool); !ok || enabled {
+		t.Fatalf("enable_thinking = %v, want false", llmClient.lastAdditionalParameters["enable_thinking"])
 	}
 }

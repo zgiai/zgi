@@ -19,24 +19,28 @@ const (
 )
 
 type FrozenInvocation struct {
-	ID             string                 `json:"id,omitempty"`
-	IdempotencyKey string                 `json:"idempotency_key,omitempty"`
-	Hash           string                 `json:"hash,omitempty"`
-	Status         string                 `json:"status"`
-	CorrelationID  string                 `json:"correlation_id,omitempty"`
-	SkillID        string                 `json:"skill_id"`
-	ToolName       string                 `json:"tool_name"`
-	ToolID         string                 `json:"tool_id,omitempty"`
-	ProviderType   string                 `json:"provider_type,omitempty"`
-	ProviderID     string                 `json:"provider_id,omitempty"`
-	Effect         Effect                 `json:"effect,omitempty"`
-	AssetType      string                 `json:"asset_type,omitempty"`
-	RiskLevel      RiskLevel              `json:"risk_level,omitempty"`
-	Arguments      map[string]interface{} `json:"arguments"`
-	Assets         []AssetRef             `json:"assets,omitempty"`
-	ExpectedAssets []AssetRef             `json:"expected_assets,omitempty"`
-	CreatedAt      *time.Time             `json:"created_at,omitempty"`
-	ExpiresAt      *time.Time             `json:"expires_at,omitempty"`
+	ID                      string                 `json:"id,omitempty"`
+	IdempotencyKey          string                 `json:"idempotency_key,omitempty"`
+	Hash                    string                 `json:"hash,omitempty"`
+	Status                  string                 `json:"status"`
+	CorrelationID           string                 `json:"correlation_id,omitempty"`
+	SkillID                 string                 `json:"skill_id"`
+	ToolName                string                 `json:"tool_name"`
+	ToolID                  string                 `json:"tool_id,omitempty"`
+	ProviderType            string                 `json:"provider_type,omitempty"`
+	ProviderID              string                 `json:"provider_id,omitempty"`
+	Effect                  Effect                 `json:"effect,omitempty"`
+	AssetType               string                 `json:"asset_type,omitempty"`
+	RiskLevel               RiskLevel              `json:"risk_level,omitempty"`
+	DataEgress              bool                   `json:"data_egress,omitempty"`
+	ExternalDestination     string                 `json:"external_destination,omitempty"`
+	SensitiveDataAllowed    bool                   `json:"sensitive_data_allowed,omitempty"`
+	ApprovalEveryInvocation bool                   `json:"approval_every_invocation,omitempty"`
+	Arguments               map[string]interface{} `json:"arguments"`
+	Assets                  []AssetRef             `json:"assets,omitempty"`
+	ExpectedAssets          []AssetRef             `json:"expected_assets,omitempty"`
+	CreatedAt               *time.Time             `json:"created_at,omitempty"`
+	ExpiresAt               *time.Time             `json:"expires_at,omitempty"`
 }
 
 type FrozenInvocationRequest struct {
@@ -65,22 +69,34 @@ func NewFrozenInvocation(req FrozenInvocationRequest) FrozenInvocation {
 	expiresAt := now.Add(ttl)
 	manifest := NormalizeManifest(req.Manifest)
 	invocation := FrozenInvocation{
-		Status:         FrozenInvocationStatusPending,
-		CorrelationID:  strings.TrimSpace(req.CorrelationID),
-		SkillID:        firstNonEmptyString(req.SkillID, manifest.SkillID),
-		ToolName:       strings.TrimSpace(req.ToolName),
-		ToolID:         manifest.ToolID,
-		ProviderType:   strings.TrimSpace(req.ProviderType),
-		ProviderID:     strings.TrimSpace(req.ProviderID),
-		Effect:         manifest.Effect,
-		AssetType:      manifest.AssetType,
-		RiskLevel:      manifest.RiskLevel,
-		Arguments:      cloneStringAnyMap(req.Arguments),
-		Assets:         sortedAssets(normalizeAssets(req.Assets)),
-		ExpectedAssets: sortedAssets(normalizeAssets(req.ExpectedAssets)),
-		CreatedAt:      &now,
-		ExpiresAt:      &expiresAt,
+		Status:                  FrozenInvocationStatusPending,
+		CorrelationID:           strings.TrimSpace(req.CorrelationID),
+		SkillID:                 firstNonEmptyString(req.SkillID, manifest.SkillID),
+		ToolName:                strings.TrimSpace(req.ToolName),
+		ToolID:                  manifest.ToolID,
+		ProviderType:            strings.TrimSpace(req.ProviderType),
+		ProviderID:              strings.TrimSpace(req.ProviderID),
+		Effect:                  manifest.Effect,
+		AssetType:               manifest.AssetType,
+		RiskLevel:               manifest.RiskLevel,
+		DataEgress:              manifest.DataEgress,
+		ExternalDestination:     manifest.ExternalDestination,
+		SensitiveDataAllowed:    manifest.SensitiveDataAllowed,
+		ApprovalEveryInvocation: manifest.ApprovalEveryInvocation,
+		Arguments:               cloneStringAnyMap(req.Arguments),
+		Assets:                  sortedAssets(normalizeAssets(req.Assets)),
+		ExpectedAssets:          sortedAssets(normalizeAssets(req.ExpectedAssets)),
+		CreatedAt:               &now,
+		ExpiresAt:               &expiresAt,
 	}
+	return SealFrozenInvocation(invocation)
+}
+
+// SealFrozenInvocation creates the immutable, canonical snapshot that may be
+// presented for approval. Callers must seal before exposing or persisting an
+// approval request. Approved invocations must only be verified, never resealed.
+func SealFrozenInvocation(invocation FrozenInvocation) FrozenInvocation {
+	invocation = NormalizeFrozenInvocation(invocation)
 	invocation.Hash = FrozenInvocationHash(invocation)
 	shortHash := shortFrozenInvocationHash(invocation.Hash)
 	if invocation.CorrelationID != "" {
@@ -103,6 +119,7 @@ func NormalizeFrozenInvocation(invocation FrozenInvocation) FrozenInvocation {
 	invocation.Effect = NormalizeEffect(invocation.Effect)
 	invocation.AssetType = normalizeAssetType(invocation.AssetType)
 	invocation.RiskLevel = NormalizeRiskLevel(invocation.RiskLevel)
+	invocation.ExternalDestination = strings.ToLower(strings.TrimSpace(invocation.ExternalDestination))
 	invocation.Status = normalizeFrozenInvocationStatus(invocation.Status)
 	invocation.Arguments = cloneStringAnyMap(invocation.Arguments)
 	if invocation.Arguments == nil {
@@ -116,17 +133,21 @@ func NormalizeFrozenInvocation(invocation FrozenInvocation) FrozenInvocation {
 func FrozenInvocationHash(invocation FrozenInvocation) string {
 	normalized := NormalizeFrozenInvocation(invocation)
 	payload := frozenInvocationCanonicalPayload{
-		SkillID:        normalized.SkillID,
-		ToolName:       normalized.ToolName,
-		ToolID:         normalized.ToolID,
-		ProviderType:   normalized.ProviderType,
-		ProviderID:     normalized.ProviderID,
-		Effect:         normalized.Effect,
-		AssetType:      normalized.AssetType,
-		RiskLevel:      normalized.RiskLevel,
-		Arguments:      normalized.Arguments,
-		Assets:         normalized.Assets,
-		ExpectedAssets: normalized.ExpectedAssets,
+		SkillID:                 normalized.SkillID,
+		ToolName:                normalized.ToolName,
+		ToolID:                  normalized.ToolID,
+		ProviderType:            normalized.ProviderType,
+		ProviderID:              normalized.ProviderID,
+		Effect:                  normalized.Effect,
+		AssetType:               normalized.AssetType,
+		RiskLevel:               normalized.RiskLevel,
+		DataEgress:              normalized.DataEgress,
+		ExternalDestination:     normalized.ExternalDestination,
+		SensitiveDataAllowed:    normalized.SensitiveDataAllowed,
+		ApprovalEveryInvocation: normalized.ApprovalEveryInvocation,
+		Arguments:               normalized.Arguments,
+		Assets:                  normalized.Assets,
+		ExpectedAssets:          normalized.ExpectedAssets,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -145,17 +166,21 @@ func FrozenInvocationHashMatches(invocation FrozenInvocation) bool {
 }
 
 type frozenInvocationCanonicalPayload struct {
-	SkillID        string                 `json:"skill_id"`
-	ToolName       string                 `json:"tool_name"`
-	ToolID         string                 `json:"tool_id,omitempty"`
-	ProviderType   string                 `json:"provider_type,omitempty"`
-	ProviderID     string                 `json:"provider_id,omitempty"`
-	Effect         Effect                 `json:"effect,omitempty"`
-	AssetType      string                 `json:"asset_type,omitempty"`
-	RiskLevel      RiskLevel              `json:"risk_level,omitempty"`
-	Arguments      map[string]interface{} `json:"arguments"`
-	Assets         []AssetRef             `json:"assets,omitempty"`
-	ExpectedAssets []AssetRef             `json:"expected_assets,omitempty"`
+	SkillID                 string                 `json:"skill_id"`
+	ToolName                string                 `json:"tool_name"`
+	ToolID                  string                 `json:"tool_id,omitempty"`
+	ProviderType            string                 `json:"provider_type,omitempty"`
+	ProviderID              string                 `json:"provider_id,omitempty"`
+	Effect                  Effect                 `json:"effect,omitempty"`
+	AssetType               string                 `json:"asset_type,omitempty"`
+	RiskLevel               RiskLevel              `json:"risk_level,omitempty"`
+	DataEgress              bool                   `json:"data_egress,omitempty"`
+	ExternalDestination     string                 `json:"external_destination,omitempty"`
+	SensitiveDataAllowed    bool                   `json:"sensitive_data_allowed,omitempty"`
+	ApprovalEveryInvocation bool                   `json:"approval_every_invocation,omitempty"`
+	Arguments               map[string]interface{} `json:"arguments"`
+	Assets                  []AssetRef             `json:"assets,omitempty"`
+	ExpectedAssets          []AssetRef             `json:"expected_assets,omitempty"`
 }
 
 func normalizeFrozenInvocationStatus(status string) string {

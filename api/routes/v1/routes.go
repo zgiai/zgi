@@ -7,15 +7,17 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 // RegisterRoutes registers all v1 version routes
-func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory) {
+func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory, applicationErrorCatalog *appcatalog.Catalog) {
 	// Health & setup routes first
 	RegisterHealthRoutes(v1)
 	RegisterSetupRoutes(v1, SetupRouteDeps{
@@ -78,6 +80,27 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		WorkspaceManagementService: tenantService,
 	})
 
+	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
+		RegisterIntegrationRoutes(v1, IntegrationRouteDeps{
+			DB:               db,
+			Registry:         serviceContainer.GetIntegrationRegistry(),
+			Connections:      serviceContainer.GetIntegrationConnectionService(),
+			ConnectionRepo:   serviceContainer.GetIntegrationConnectionRepository(),
+			Grants:           serviceContainer.GetIntegrationConnectionGrantRepository(),
+			Access:           serviceContainer.GetIntegrationConnectionAccessService(),
+			Preferences:      serviceContainer.GetIntegrationAIChatPreferenceService(),
+			HealthEvents:     serviceContainer.GetIntegrationConnectionHealthRepository(),
+			Policies:         serviceContainer.GetIntegrationActionPolicyService(),
+			Executions:       serviceContainer.GetIntegrationExecutionRepository(),
+			AccountService:   accountService,
+			OAuthFlows:       serviceContainer.GetIntegrationOAuthFlowService(),
+			OAuthClients:     serviceContainer.GetIntegrationOAuthClientService(),
+			OAuthRecovery:    serviceContainer.GetIntegrationOAuthRecoveryOutbox(),
+			OAuthCallbackURL: currentConfig.ExternalIntegrations.OAuth.CallbackURL,
+			OAuthResultURL:   currentConfig.ExternalIntegrations.OAuth.ResultURL,
+		})
+	}
+
 	// ---------- API Key ----------
 	if _, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
 		RegisterAPIKeyRoutes(v1, db, accountService, serviceContainer.GetOrganizationService())
@@ -118,6 +141,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DefaultModelService:        serviceContainer.GetDefaultModelService(),
 		TaskManager:                serviceContainer.GetTaskManager(),
 		GraphFlowService:           serviceContainer.GetGraphFlowService(),
+		GraphLifecycleService:      serviceContainer.GetGraphLifecycleService(),
+		GraphRuntimeHealthService:  serviceContainer.GetGraphRuntimeHealthService(),
 		TaskHandlerRegistry:        serviceContainer.GetTaskHandlerRegistry(),
 		ResourcePermissionService:  serviceContainer.GetResourcePermissionService(),
 		AuthorizationService:       serviceContainer.GetAuthorizationService(),
@@ -208,7 +233,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend)
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetIntegrationRegistry(), integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()))
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, PromptRouteDeps{
@@ -247,6 +272,10 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 
 	// ---------- AIChat ----------
+	var aiChatIntegrationPreferences *integrations.DefaultAIChatIntegrationPreferenceService
+	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
+		aiChatIntegrationPreferences = serviceContainer.GetIntegrationAIChatPreferenceService()
+	}
 	chatService := RegisterAIChatRoutes(v1, AIChatRouteDeps{
 		DB:                         db,
 		LLMClient:                  serviceContainer.GetLLMClient(),
@@ -256,8 +285,15 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		WorkspacePermissionService: serviceContainer.GetOrganizationService(),
 		MemoryService:              serviceContainer.GetMemoryService(),
 		AgentMemoryService:         serviceContainer.GetAgentMemoryService(),
-		SkillRuntime:               newSkillRuntimeWithSandbox(serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetFileService(), serviceContainer.GetOrganizationService()),
-		AccountService:             accountService,
+		SkillRuntime: newSkillRuntimeWithSandbox(
+			serviceContainer.GetToolEngine(),
+			serviceContainer.GetToolManager(),
+			serviceContainer.GetFileService(),
+			serviceContainer.GetOrganizationService(),
+			integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
+		),
+		AccountService:         accountService,
+		IntegrationPreferences: aiChatIntegrationPreferences,
 	})
 	if llmModule != nil && llmModule.LLMModelModule != nil {
 		RegisterImageRuntimeRoutes(v1, ImageRuntimeRouteDeps{
@@ -272,6 +308,18 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			AvailableModels: llmModule.LLMModelModule.AvailableModelsSvc,
 			LLMClient:       serviceContainer.GetLLMClient(),
 			AccountService:  accountService,
+		})
+		RegisterMusicRoutes(v1, MusicRouteDeps{
+			DB:                      db,
+			AvailableModels:         llmModule.LLMModelModule.AvailableModelsSvc,
+			Generator:               serviceContainer.GetMusicGenerator(),
+			LyricsGenerator:         serviceContainer.GetMusicLyricsGenerator(),
+			Compensator:             serviceContainer.GetMusicDeliveryCompensator(),
+			AccountService:          accountService,
+			TaskManager:             serviceContainer.GetTaskManager(),
+			TaskRegistry:            serviceContainer.GetTaskHandlerRegistry(),
+			Scheduler:               serviceContainer.GetScheduler(),
+			ApplicationErrorCatalog: applicationErrorCatalog,
 		})
 	}
 

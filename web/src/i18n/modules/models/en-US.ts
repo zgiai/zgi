@@ -108,6 +108,7 @@ const messages = {
       moderation: 'Moderation Model',
       speech2text: 'Speech to Text Model',
       tts: 'Text to Speech Model',
+      music: 'Music Model',
     },
     usecases: {
       'text-chat': 'Chat Model',
@@ -117,6 +118,7 @@ const messages = {
       rerank: 'Rerank Model',
       'speech-to-text': 'STT Model',
       'text-to-speech': 'TTS Model',
+      'music-gen': 'Music Gen Model',
       'realtime-audio': 'Realtime Audio',
       'video-gen': 'Video Gen Model',
       moderation: 'Moderation Model',

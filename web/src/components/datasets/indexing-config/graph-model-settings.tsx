@@ -14,6 +14,7 @@ interface GraphModelSettingsProps {
   className?: string;
   title?: string;
   description?: string;
+  titleTooltip?: string;
   placeholder?: string;
 }
 
@@ -36,35 +37,39 @@ export function GraphModelSettings({
   className,
   title,
   description,
+  titleTooltip,
   placeholder,
 }: GraphModelSettingsProps) {
   const t = useT('datasets');
 
   return (
-    <ModelFieldSection
-      icon={Network}
-      title={title || t('createWizard.processConfig.graphModel.title')}
-      required={required}
-      description={description}
-      errorMessage={errorMessage}
-      className={className}
-    >
-      <ModelSelector
-        modelType="text-chat"
-        value={{
-          provider: graphModel.provider,
-          model: graphModel.model,
-        }}
-        onChange={({ provider, model }) =>
-          onChange({
-            provider,
-            model,
-          })
-        }
-        placeholder={placeholder || t('createWizard.processConfig.graphModel.placeholder')}
-        disabled={disabled}
-        hasError={hasError}
-      />
-    </ModelFieldSection>
+    <div className="space-y-3">
+      <ModelFieldSection
+        icon={Network}
+        title={title || t('createWizard.processConfig.graphModel.title')}
+        required={required}
+        description={description}
+        titleTooltip={titleTooltip || t('createWizard.processConfig.graphModel.help')}
+        errorMessage={errorMessage}
+        className={className}
+      >
+        <ModelSelector
+          modelType="text-chat"
+          value={{
+            provider: graphModel.provider,
+            model: graphModel.model,
+          }}
+          onChange={({ provider, model }) =>
+            onChange({
+              provider,
+              model,
+            })
+          }
+          placeholder={placeholder || t('createWizard.processConfig.graphModel.placeholder')}
+          disabled={disabled}
+          hasError={hasError}
+        />
+      </ModelFieldSection>
+    </div>
   );
 }

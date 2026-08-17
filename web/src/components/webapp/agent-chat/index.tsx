@@ -26,6 +26,8 @@ import {
   resolveConversationRouteSync,
   shouldStartNewConversationForRoute,
 } from '@/components/chat/runtime/conversation-route-handoff';
+import { transcribeAgentWebAppVoice } from '@/services/voice-transcription.service';
+import { generateAgentWebAppSpeech } from '@/services/voice-speech.service';
 
 interface AgentWebappChatProps {
   webAppId: string;
@@ -95,6 +97,17 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const handleBeforeSend = useCallback(
     () => allowSendAfterAgentModelPrecheck(modelPrecheck.refetch),
     [modelPrecheck.refetch]
+  );
+  const handleVoiceTranscription = useCallback(
+    (audio: ArrayBuffer, signal: AbortSignal) =>
+      transcribeAgentWebAppVoice(webAppId, audio, signal),
+    [webAppId]
+  );
+  const voiceInputEnabled = Boolean(config.features?.speech_to_text?.enabled);
+  const speechEnabled = Boolean(config.features?.text_to_speech?.enabled);
+  const handleSpeechSynthesis = useCallback(
+    (input: string, signal: AbortSignal) => generateAgentWebAppSpeech(webAppId, input, signal),
+    [webAppId]
   );
   const initController = controller.init;
   const startNewConversation = controller.startNew;
@@ -272,6 +285,8 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       openingGuideBrand={openingGuideBrand}
       homeTitle={homeTitle}
       homeDescription={agentConfig?.opening_statement ?? ''}
+      voiceTranscriber={voiceInputEnabled ? handleVoiceTranscription : undefined}
+      speechSynthesizer={speechEnabled ? handleSpeechSynthesis : undefined}
     />
   );
 }

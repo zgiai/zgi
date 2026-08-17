@@ -467,13 +467,17 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 		return nil, 0, err
 	}
 	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage {
-		return s.listImageConversationsWithLegacy(ctx, scope, caller, page, limit)
+		conversations, total, err := s.listImageConversationsWithLegacy(ctx, scope, caller, page, limit)
+		if err == nil {
+			s.enqueueConversationTitleBackfills(ctx, scope, caller, conversations)
+		}
+		return conversations, total, err
 	}
 	limit = clampLimit(limit, 20, 100)
 	offset := pageOffset(page, limit)
 	conversationType := normalizeConversationType(caller.ConversationType)
 	if strings.TrimSpace(caller.Source) != "" {
-		return s.repos.Conversation.ListByCallerSourceScoped(
+		conversations, total, err := s.repos.Conversation.ListByCallerSourceScoped(
 			ctx,
 			scope.OrganizationID,
 			scope.AccountID,
@@ -485,8 +489,16 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 			limit,
 			offset,
 		)
+		if err == nil {
+			s.enqueueConversationTitleBackfills(ctx, scope, caller, conversations)
+		}
+		return conversations, total, err
 	}
-	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), conversationType, limit, offset)
+	conversations, total, err := s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), conversationType, limit, offset)
+	if err == nil {
+		s.enqueueConversationTitleBackfills(ctx, scope, caller, conversations)
+	}
+	return conversations, total, err
 }
 
 func (s *service) ListConversationsBySurface(ctx context.Context, scope Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
@@ -495,7 +507,12 @@ func (s *service) ListConversationsBySurface(ctx context.Context, scope Scope, s
 	}
 	limit = clampLimit(limit, 20, 100)
 	offset := pageOffset(page, limit)
-	return s.repos.Conversation.ListByCallerSurfaceScoped(ctx, scope.OrganizationID, scope.AccountID, runtimemodel.ConversationCallerAIChat, nil, normalizeAIChatSurface(surface), limit, offset)
+	caller := Caller{Type: runtimemodel.ConversationCallerAIChat}
+	conversations, total, err := s.repos.Conversation.ListByCallerSurfaceScoped(ctx, scope.OrganizationID, scope.AccountID, runtimemodel.ConversationCallerAIChat, nil, normalizeAIChatSurface(surface), limit, offset)
+	if err == nil {
+		s.enqueueConversationTitleBackfills(ctx, scope, caller, conversations)
+	}
+	return conversations, total, err
 }
 
 func (s *service) Search(ctx context.Context, scope Scope, query string, limit int) ([]*SearchResult, error) {
@@ -627,10 +644,15 @@ func (s *service) GetConversationByCaller(ctx context.Context, scope Scope, call
 	}
 	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, id)
 	if err == nil {
+		s.enqueueConversationTitleBackfill(ctx, scope, caller, conversation)
 		return conversation, nil
 	}
 	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAIChat && normalizeCallerID(caller.ID) == nil && normalizeConversationType(caller.ConversationType) == runtimemodel.ConversationTypeImage && errors.Is(err, ErrNotFound) {
-		return s.getLegacyImageConversation(ctx, scope, id)
+		conversation, legacyErr := s.getLegacyImageConversation(ctx, scope, id)
+		if legacyErr == nil {
+			s.enqueueConversationTitleBackfill(ctx, scope, caller, conversation)
+		}
+		return conversation, legacyErr
 	}
 	return nil, err
 }
@@ -664,6 +686,7 @@ func (s *service) updateConversation(ctx context.Context, scope Scope, conversat
 	updates := make(map[string]interface{})
 	if req.Title != nil {
 		updates["title"] = normalizeTitle(*req.Title, defaultConversationTitle)
+		updates["metadata"] = conversationMetadataWithTitleStatus(conversation.Metadata, conversationTitleStatusCompleted)
 	}
 	if req.Status != nil {
 		status := strings.TrimSpace(*req.Status)

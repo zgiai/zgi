@@ -150,7 +150,10 @@ func governedInvocationPlanBinding(frozen toolgovernance.FrozenInvocation) map[s
 
 func governedInvocationPlanTarget(frozen toolgovernance.FrozenInvocation) map[string]interface{} {
 	target := map[string]interface{}{}
-	for _, key := range []string{"agent_id", "file_id", "asset_id", "resource_id", "dataset_id", "data_source_id", "table_id", "workflow_id", "binding_id"} {
+	for _, key := range []string{
+		"integration_id", "action_id", "batch_id", "operation_item_id",
+		"agent_id", "file_id", "asset_id", "resource_id", "dataset_id", "data_source_id", "table_id", "workflow_id", "binding_id",
+	} {
 		if value := strings.TrimSpace(stringFromAny(frozen.Arguments[key])); value != "" {
 			target[key] = value
 		}

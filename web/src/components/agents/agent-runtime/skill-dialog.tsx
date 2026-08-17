@@ -19,8 +19,6 @@ import { AGENT_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import agentService from '@/services/agent.service';
-import type { AgentSkillBindingCandidate } from '@/services/types/agent';
-import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import {
   AgentRuntimeSelectionDialog,
   AgentRuntimeSelectionCardIcon,
@@ -30,6 +28,7 @@ import {
   AgentRuntimeSelectionSkeleton,
 } from './selection-dialog';
 import { useSelectionDialogDraftGuard } from './use-selection-dialog-draft-guard';
+import { agentSkillCandidateToMetadata, normalizeAgentSkillCandidates } from './skill-candidates';
 
 interface AgentRuntimeSkillDialogProps {
   agentId: string;
@@ -87,7 +86,10 @@ export function AgentRuntimeSkillDialog({
   }, [normalizedSelectedSkillIds, open]);
 
   const candidates = useMemo(
-    () => candidatesQuery.data?.pages.flatMap(page => page.data.data ?? []) ?? [],
+    () =>
+      normalizeAgentSkillCandidates(
+        candidatesQuery.data?.pages.flatMap(page => page.data.data ?? [])
+      ),
     [candidatesQuery.data?.pages]
   );
   const fetchNextCandidatePage = candidatesQuery.fetchNextPage;
@@ -196,7 +198,7 @@ export function AgentRuntimeSkillDialog({
           <>
             <AgentRuntimeSelectionGrid>
               {candidates.map(candidate => {
-                const skill = candidateToSkillMetadata(candidate);
+                const skill = agentSkillCandidateToMetadata(candidate);
                 const display = getAIChatSkillDisplayInfo(skill, locale);
                 const checked = selectedSet.has(candidate.skill_id);
                 return (
@@ -251,24 +253,4 @@ export function AgentRuntimeSkillDialog({
       {closeGuard}
     </>
   );
-}
-
-function candidateToSkillMetadata(candidate: AgentSkillBindingCandidate): AIChatSkillMetadata {
-  return {
-    skill_id: candidate.skill_id,
-    source: candidate.source === 'custom' ? 'custom' : 'system',
-    name: candidate.name,
-    description: candidate.description ?? '',
-    when_to_use: candidate.when_to_use ?? '',
-    runtime_type: (candidate.runtime_type || 'prompt') as AIChatSkillMetadata['runtime_type'],
-    enabled: true,
-    display: candidate.display,
-    has_tools: candidate.has_tools,
-    has_references: candidate.has_references,
-    has_scripts: candidate.has_scripts,
-    scripts_supported: candidate.scripts_supported,
-    max_calls_per_turn: 0,
-    timeout_seconds: 0,
-    required_config: candidate.required_config,
-  };
 }

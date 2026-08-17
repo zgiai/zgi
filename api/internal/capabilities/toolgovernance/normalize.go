@@ -9,6 +9,7 @@ func NormalizeManifest(manifest Manifest) Manifest {
 	manifest.Effect = NormalizeEffect(manifest.Effect)
 	manifest.AssetType = normalizeAssetType(manifest.AssetType)
 	manifest.RiskLevel = NormalizeRiskLevel(manifest.RiskLevel)
+	manifest.ExternalDestination = strings.ToLower(strings.TrimSpace(manifest.ExternalDestination))
 	manifest.DefaultApprovalPolicy = NormalizeApprovalPolicy(manifest.DefaultApprovalPolicy)
 	manifest.PermissionScopes = normalizeStringList(manifest.PermissionScopes)
 	manifest.AllowedPermissionTiers = normalizePermissionTierList(manifest.AllowedPermissionTiers)
@@ -108,6 +109,7 @@ func normalizeAssets(assets []AssetRef) []AssetRef {
 		asset.Name = strings.TrimSpace(asset.Name)
 		asset.WorkspaceID = strings.TrimSpace(asset.WorkspaceID)
 		asset.Source = strings.TrimSpace(asset.Source)
+		asset.Metadata = cloneStringAnyMap(asset.Metadata)
 		if asset.ID == "" && asset.Name == "" && asset.Type == "" {
 			continue
 		}
@@ -126,6 +128,7 @@ func normalizeSessionGrant(grant SessionGrant) SessionGrant {
 	grant.ToolID = strings.TrimSpace(grant.ToolID)
 	grant.Effect = NormalizeEffect(grant.Effect)
 	grant.AssetType = normalizeAssetType(grant.AssetType)
+	grant.ExternalDestination = strings.ToLower(strings.TrimSpace(grant.ExternalDestination))
 	grant.Assets = normalizeAssets(grant.Assets)
 	for index := range grant.Assets {
 		if grant.Assets[index].Type == "" {
@@ -150,16 +153,6 @@ func normalizePreauthorization(preauthorization *Preauthorization) *Preauthoriza
 		normalized.AuthorizedAt = &authorizedAt
 	}
 	normalized.Resources = normalizeAssets(normalized.Resources)
-	for index := range normalized.Resources {
-		if len(normalized.Resources[index].Metadata) == 0 {
-			continue
-		}
-		metadata := make(map[string]interface{}, len(normalized.Resources[index].Metadata))
-		for key, value := range normalized.Resources[index].Metadata {
-			metadata[key] = value
-		}
-		normalized.Resources[index].Metadata = metadata
-	}
 	normalized.Code = strings.ToLower(strings.TrimSpace(normalized.Code))
 	normalized.Reason = strings.TrimSpace(normalized.Reason)
 	return &normalized

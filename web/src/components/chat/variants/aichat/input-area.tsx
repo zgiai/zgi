@@ -77,6 +77,9 @@ import {
   useToolGovernancePendingApprovalScope,
   type ToolGovernancePendingApproval,
 } from '@/components/chat/variants/aichat/tool-governance-decision-card';
+import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
+import { useAgentVoiceInput } from '@/components/chat/variants/aichat/voice/use-agent-voice-input';
+import { getVoiceInputErrorKey } from '@/components/chat/variants/aichat/voice/voice-input-errors';
 
 export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
 
@@ -229,6 +232,11 @@ interface AIChatInputAreaProps {
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
+  showConnectedApps?: boolean;
+  connectedAppsLabel?: string;
+  connectedAppsSelectedCount?: number;
+  connectedAppsAttentionRequired?: boolean;
+  onOpenConnectedApps?: () => void;
   showSkillManagement?: boolean;
   skillManagementLabel?: string;
   onOpenSkillManagement?: () => void;
@@ -242,6 +250,11 @@ interface AIChatInputAreaProps {
   activeConversationId?: string | null;
   activeToolGovernanceMessageId?: string | null;
   activeToolGovernanceApprovalFallback?: ToolGovernancePendingApproval | null;
+  voiceTranscriber?: AIChatVoiceTranscriber;
+  speechAutoPlay?: {
+    enabled: boolean;
+    onEnabledChange: (enabled: boolean) => void;
+  };
 }
 
 function ToolGovernancePendingApprovalBridge({
@@ -312,6 +325,11 @@ export function AIChatInputArea({
   uploadScope = { type: 'console' },
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
+  showConnectedApps = false,
+  connectedAppsLabel,
+  connectedAppsSelectedCount = 0,
+  connectedAppsAttentionRequired = false,
+  onOpenConnectedApps,
   showSkillManagement = false,
   skillManagementLabel,
   onOpenSkillManagement,
@@ -325,6 +343,8 @@ export function AIChatInputArea({
   activeConversationId = null,
   activeToolGovernanceMessageId = null,
   activeToolGovernanceApprovalFallback = null,
+  voiceTranscriber,
+  speechAutoPlay,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -551,6 +571,39 @@ export function AIChatInputArea({
     !isUploading &&
     !hasUploadError &&
     !isSending;
+
+  const handleVoiceInputError = useCallback(
+    (error: unknown) => {
+      const key = getVoiceInputErrorKey(error);
+      if (key === 'cancelled') return;
+      const message = {
+        permissionDenied: t('consoleChat.voice.errors.permissionDenied'),
+        unsupported: t('consoleChat.voice.errors.unsupported'),
+        noSpeech: t('consoleChat.voice.errors.noSpeech'),
+        timeout: t('consoleChat.voice.errors.timeout'),
+        balance: t('consoleChat.voice.errors.balance'),
+        quota: t('consoleChat.voice.errors.quota'),
+        unavailable: t('consoleChat.voice.errors.unavailable'),
+        failed: t('consoleChat.voice.errors.failed'),
+      }[key];
+      toast.error(message);
+    },
+    [t]
+  );
+  const voiceInput = useAgentVoiceInput({
+    transcriber: voiceTranscriber,
+    input,
+    onInputChange,
+    onError: handleVoiceInputError,
+    disabled:
+      isSending ||
+      isPreparingSend ||
+      isLoadingMessages ||
+      isUploading ||
+      hasBlockingApproval ||
+      hasActiveUserInputRequest,
+  });
+  const voiceInputBusy = voiceInput.phase !== 'idle';
 
   useEffect(() => {
     setQuestionAnswers({});
@@ -944,7 +997,7 @@ export function AIChatInputArea({
   );
 
   const handleSend = useCallback(async () => {
-    if (!input.trim() || isPreparingSend || isUploading || hasUploadError) return;
+    if (!input.trim() || isPreparingSend || isUploading || hasUploadError || voiceInputBusy) return;
     setIsPreparingSend(true);
     try {
       const sent = await onSend(uploadedFiles, useMemory);
@@ -954,7 +1007,16 @@ export function AIChatInputArea({
     } finally {
       setIsPreparingSend(false);
     }
-  }, [hasUploadError, input, isPreparingSend, isUploading, onSend, uploadedFiles, useMemory]);
+  }, [
+    hasUploadError,
+    input,
+    isPreparingSend,
+    isUploading,
+    onSend,
+    uploadedFiles,
+    useMemory,
+    voiceInputBusy,
+  ]);
 
   const handleWorkflowApprovalSubmit = useCallback(
     async (payload: { inputs: Record<string, unknown>; action: string }) => {
@@ -1369,7 +1431,8 @@ export function AIChatInputArea({
                           isPreparingSend ||
                           isModelInitializing ||
                           isUploading ||
-                          hasUploadError
+                          hasUploadError ||
+                          voiceInputBusy
                         ) {
                           return;
                         }
@@ -1427,7 +1490,7 @@ export function AIChatInputArea({
                 canStop={canStop}
                 isUploading={isUploading || isPreparingSend}
                 isStopping={isStopping}
-                canSend={!hasActiveUserInputRequest && canClickSend}
+                canSend={!hasActiveUserInputRequest && canClickSend && !voiceInputBusy}
                 canUseImage={canUseImage}
                 remainingSlots={remainingSlots}
                 attachmentLimit={AICHAT_ATTACHMENT_LIMIT}
@@ -1446,6 +1509,10 @@ export function AIChatInputArea({
                 onToolGovernancePermissionTierChange={onToolGovernancePermissionTierChange}
                 enableUpload={!hasActiveUserInputRequest && enableUpload}
                 showFileLibraryPicker={showFileLibraryPicker}
+                showConnectedApps={showConnectedApps}
+                connectedAppsLabel={connectedAppsLabel}
+                connectedAppsSelectedCount={connectedAppsSelectedCount}
+                connectedAppsAttentionRequired={connectedAppsAttentionRequired}
                 showSkillManagement={showSkillManagement}
                 skillManagementLabel={skillManagementLabel}
                 surface={surface}
@@ -1454,11 +1521,14 @@ export function AIChatInputArea({
                 onUploadDocument={() => fileInputRef.current?.click()}
                 onUploadImage={handleImageUpload}
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
+                onOpenConnectedApps={onOpenConnectedApps}
                 onOpenSkillManagement={onOpenSkillManagement}
                 onMemoryEnabledChange={setUseMemory}
                 onToggleComposerExpanded={() => setIsComposerExpanded(current => !current)}
                 onSend={handleSend}
                 onStop={onStop}
+                voiceInput={voiceTranscriber ? voiceInput : undefined}
+                speechAutoPlay={speechAutoPlay}
               />
             ) : null}
           </div>

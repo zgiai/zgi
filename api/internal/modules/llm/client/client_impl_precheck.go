@@ -12,6 +12,7 @@ type gatewayAppModelPrechecker interface {
 }
 
 var _ AppModelPrechecker = (*llmClientImpl)(nil)
+var _ LLMClient = (*llmClientImpl)(nil)
 
 func (c *llmClientImpl) PrecheckAppModels(ctx context.Context, appCtx *AppContext, models []AppModelRef) (*AppModelPrecheckResult, error) {
 	if appCtx == nil {

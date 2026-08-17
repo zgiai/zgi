@@ -200,3 +200,24 @@ func TestPublishedModelConfigPayloadCarriesDefaultParameters(t *testing.T) {
 	require.JSONEq(t, `[{"name":"quality","template_key":"quality","type":"string","required":false,"default":"standard"}]`, string(catalog.Models[0].ConfigParameters))
 	require.Equal(t, []interface{}{"480p", "720p"}, catalog.Models[0].DefaultParameters["capabilities"].(map[string]interface{})["video"].(map[string]interface{})["resolutions"])
 }
+
+func TestPublishedModelConfigParametersPreserveVoiceCatalog(t *testing.T) {
+	const configParameters = `[{"name":"voice","template_key":"voice","label":{"en_US":"Voice"},"type":"string","help":{"en_US":"Select a voice"},"required":true,"default":"voice-a","options":["voice-a"],"option_labels":{"voice-a":{"en_US":"Voice A"}}}]`
+	resp := &pb.GetPublishedCatalogResponse{
+		Version:     14,
+		PublishedAt: 1700000000000,
+		Models: []*pb.CatalogModel{{
+			Provider:             "doubao",
+			Model:                "seed-tts-2.0",
+			ConfigParametersJson: configParameters,
+		}},
+	}
+
+	catalog := catalogFromResponse(resp)
+	require.Len(t, catalog.Models, 1)
+	params, err := llmmodel.NormalizeConfigParametersJSON(catalog.Models[0].ConfigParameters)
+	require.NoError(t, err)
+	require.Len(t, params, 1)
+	require.Equal(t, []string{"voice-a"}, params[0].Options)
+	require.Equal(t, "Voice A", params[0].OptionLabels["voice-a"].EnUS)
+}

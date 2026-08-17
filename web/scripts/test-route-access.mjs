@@ -1353,9 +1353,13 @@ const {
 const organizationRoutes = [
   '/console',
   '/console/skills',
+  '/console/integrations',
+  '/console/integrations/oauth/result',
   '/console/work',
   '/console/work/chat',
   '/console/work/image',
+  '/console/work/video',
+  '/console/work/music',
   '/console/work/app',
   '/console/work/app/agent-1',
 ];
@@ -1364,12 +1368,16 @@ const workRouteRoot = path.join(rootDir, 'src', 'app', 'console', 'work');
 const consoleRouteRoot = path.join(rootDir, 'src', 'app', 'console');
 const expectedOrganizationConsolePageRoutes = [
   '/console',
+  '/console/integrations',
+  '/console/integrations/oauth/result',
   '/console/skills',
   '/console/work',
   '/console/work/app',
   '/console/work/app/:web_app_id',
   '/console/work/chat',
   '/console/work/image',
+  '/console/work/music',
+  '/console/work/video',
 ];
 const expectedWorkspaceConsolePageRoutes = [
   '/console/agents',
@@ -1455,7 +1463,9 @@ assert.deepEqual(
     '/console/work/app/:web_app_id',
     '/console/work/chat',
     '/console/work/image',
+    '/console/work/music',
     '/console/work/task',
+    '/console/work/video',
   ],
   'console work route tree should be explicitly classified by shared access metadata'
 );
@@ -1467,6 +1477,8 @@ assert.deepEqual(
     '/console/work/app/:web_app_id',
     '/console/work/chat',
     '/console/work/image',
+    '/console/work/music',
+    '/console/work/video',
   ],
   'console work product routes should remain organization scoped'
 );
@@ -1481,21 +1493,31 @@ assert.deepEqual(
   [
     '/console',
     '/console/skills',
+    '/console/integrations',
     '/console/work',
     '/console/work/chat',
     '/console/work/image',
+    '/console/work/video',
+    '/console/work/music',
     '/console/work/app',
   ],
-  'console organization-scoped exact route metadata should include the personal workbench and product routes'
+  'console organization-scoped exact route metadata should include the personal workbench, connection center, and product routes'
 );
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES],
-  ['/console/work/app/'],
-  'console organization-scoped prefix metadata should include app detail routes'
+  ['/console/integrations/', '/console/work/app/'],
+  'console organization-scoped prefix metadata should include connection and app detail routes'
 );
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_WORK_ROUTES],
-  ['/console/work', '/console/work/chat', '/console/work/image', '/console/work/app'],
+  [
+    '/console/work',
+    '/console/work/chat',
+    '/console/work/image',
+    '/console/work/video',
+    '/console/work/music',
+    '/console/work/app',
+  ],
   'work layout organization-scoped exact route metadata should include product routes only'
 );
 assert.deepEqual(
@@ -2940,9 +2962,19 @@ const dashboardVisiblePermissionPairs = [
     'dashboardKnowledgeBaseVisiblePermissionCodes',
     ['knowledge_base.create', 'knowledge_base.document.create'],
   ],
-  ['database', 'DATABASE_PERMISSION_ACTIONS', 'dashboardDatabaseVisiblePermissionCodes', ['database.create']],
+  [
+    'database',
+    'DATABASE_PERMISSION_ACTIONS',
+    'dashboardDatabaseVisiblePermissionCodes',
+    ['database.create'],
+  ],
 ];
-for (const [label, frontendActionName, backendHelperName, excludedResourceOnlyCodes] of dashboardVisiblePermissionPairs) {
+for (const [
+  label,
+  frontendActionName,
+  backendHelperName,
+  excludedResourceOnlyCodes,
+] of dashboardVisiblePermissionPairs) {
   const frontendPageCodes = [
     ...new Set(collectPermissionActionPageCodes(permissionConstantsSource, frontendActionName)),
   ]

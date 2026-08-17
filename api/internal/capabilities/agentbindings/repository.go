@@ -79,6 +79,60 @@ func (r *Repository) HasBinding(ctx context.Context, ref ScopeRef, match Match) 
 	return count > 0, nil
 }
 
+// FindBinding returns one concrete binding from the effective draft or
+// published scope. It is useful when authorization depends on binding metadata
+// in addition to the resource identity.
+func (r *Repository) FindBinding(ctx context.Context, ref ScopeRef, match Match) (*Binding, error) {
+	if err := validateScopeRef(ref); err != nil {
+		return nil, err
+	}
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("agent bindings database is required")
+	}
+	if match.BindingType == "" || strings.TrimSpace(match.ResourceID) == "" {
+		return nil, fmt.Errorf("binding type and resource id are required")
+	}
+	query := r.db.WithContext(ctx).
+		Where("agent_id = ? AND binding_scope = ? AND binding_type = ? AND resource_id = ? AND parent_resource_id = ?",
+			ref.AgentID, ref.Scope, match.BindingType, strings.TrimSpace(match.ResourceID), strings.TrimSpace(match.ParentResourceID))
+	query = applyVersionScope(query, ref.PublishedVersionUUID)
+	switch strings.ToLower(strings.TrimSpace(match.AccessMode)) {
+	case "read":
+		query = query.Where("access_mode IN ?", []string{"read", "write"})
+	case "write", "execute":
+		query = query.Where("access_mode = ?", strings.ToLower(strings.TrimSpace(match.AccessMode)))
+	}
+	var binding Binding
+	if err := query.Take(&binding).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find agent resource binding: %w", err)
+	}
+	return &binding, nil
+}
+
+// AllowsIntegrationAction enforces the action allowlist persisted with an
+// Agent's selected Integration Connection. An empty or absent allowlist denies
+// every action.
+func (r *Repository) AllowsIntegrationAction(
+	ctx context.Context,
+	ref ScopeRef,
+	connectionID string,
+	integrationID string,
+	actionID string,
+) (bool, error) {
+	binding, err := r.FindBinding(ctx, ref, Match{
+		BindingType:      BindingTypeIntegrationConnection,
+		ResourceID:       strings.TrimSpace(connectionID),
+		ParentResourceID: strings.TrimSpace(integrationID),
+	})
+	if err != nil || binding == nil {
+		return false, err
+	}
+	return binding.AllowsIntegrationAction(actionID), nil
+}
+
 // LockResources serializes binding creation, rollback, publish, move, and
 // deletion for the same concrete resources. Callers must pass their active
 // transaction so PostgreSQL holds these advisory locks until commit/rollback.
@@ -182,7 +236,8 @@ func (r *Repository) ReplaceScope(ctx context.Context, tx *gorm.DB, ref ScopeRef
 			binding.ResourceID = strings.TrimSpace(binding.ResourceID)
 			binding.ParentResourceID = strings.TrimSpace(binding.ParentResourceID)
 			binding.DisplayName = strings.TrimSpace(binding.DisplayName)
-			binding.AccessMode = strings.TrimSpace(binding.AccessMode)
+			binding.AccessMode = strings.ToLower(strings.TrimSpace(binding.AccessMode))
+			binding.Metadata = normalizeBindingMetadata(binding)
 			binding.CreatedAt = now
 			binding.UpdatedAt = now
 			rows = append(rows, binding)
@@ -196,6 +251,21 @@ func (r *Repository) ReplaceScope(ctx context.Context, tx *gorm.DB, ref ScopeRef
 		return replace(db)
 	}
 	return db.WithContext(ctx).Transaction(replace)
+}
+
+func normalizeBindingMetadata(binding Binding) map[string]interface{} {
+	metadata := make(map[string]interface{}, len(binding.Metadata)+1)
+	for key, value := range binding.Metadata {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		metadata[key] = value
+	}
+	if binding.BindingType == BindingTypeIntegrationConnection {
+		metadata[IntegrationAllowedActionIDsMetadataKey] = IntegrationAllowedActionIDs(binding)
+	}
+	return metadata
 }
 
 // ReplacePublishedHead atomically removes every historical published binding
