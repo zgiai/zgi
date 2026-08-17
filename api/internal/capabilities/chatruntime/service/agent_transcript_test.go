@@ -76,6 +76,26 @@ func TestAgentTranscriptDropsIncompleteFinalToolBatch(t *testing.T) {
 	}
 }
 
+func TestAppendCurrentTurnAgentTranscriptRestoresCompleteToolEvidence(t *testing.T) {
+	message := &runtimemodel.Message{
+		Metadata: mergeAgentTranscriptMetadata(nil, []adapter.Message{
+			{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Function: adapter.FunctionCall{Name: "search"}}}},
+			{Role: "tool", ToolCallID: "call-1", Content: `{"status":"ok"}`},
+			{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "incomplete", Function: adapter.FunctionCall{Name: "write"}}}},
+		}, ""),
+	}
+	request := &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "original request"}}}
+
+	appendCurrentTurnAgentTranscript(request, message)
+
+	if len(request.Messages) != 3 {
+		t.Fatalf("messages = %#v, want original request and one complete tool batch", request.Messages)
+	}
+	if request.Messages[0].Role != "user" || request.Messages[1].ToolCalls[0].ID != "call-1" || request.Messages[2].ToolCallID != "call-1" {
+		t.Fatalf("restored messages = %#v", request.Messages)
+	}
+}
+
 func TestClientVisibleMetadataOmitsAgentTranscript(t *testing.T) {
 	metadata := mergeAgentTranscriptMetadata(map[string]interface{}{
 		"public": "value",

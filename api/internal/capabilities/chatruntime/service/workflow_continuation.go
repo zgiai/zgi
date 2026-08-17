@@ -642,6 +642,7 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 	}
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
+	appendCurrentTurnAgentTranscript(llmRequest, message)
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}

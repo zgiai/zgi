@@ -80,6 +80,13 @@ func agentTranscriptFromMetadata(metadata map[string]interface{}, answer string)
 	return normalizeAgentTranscript(messages, answer)
 }
 
+func appendCurrentTurnAgentTranscript(request *adapter.ChatRequest, message *runtimemodel.Message) {
+	if request == nil || message == nil {
+		return
+	}
+	request.Messages = append(request.Messages, agentTranscriptFromMetadata(message.Metadata, message.Answer)...)
+}
+
 // normalizeAgentTranscript accepts only complete assistant tool-call batches.
 // A crash can leave the final batch half-written; dropping that whole batch is
 // safer than producing an invalid provider request with orphaned tool messages.

@@ -10,6 +10,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -277,6 +278,10 @@ func TestPrepareUserInputContinuationRestoresAgentRunConfig(t *testing.T) {
 	message := waitingUserInputTestMessage(messageID, conversationID, "ask-1")
 	message.ModelProvider = &legacyProvider
 	message.ModelName = "legacy-model"
+	message.Metadata = mergeAgentTranscriptMetadata(message.Metadata, []adapter.Message{
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-before-question", Function: adapter.FunctionCall{Name: "search"}}}},
+		{Role: "tool", ToolCallID: "call-before-question", Content: `{"result":"durable evidence"}`},
+	}, "")
 	continuation := &UserInputContinuation{
 		Conversation: &runtimemodel.Conversation{
 			ID:             conversationID,
@@ -340,6 +345,19 @@ func TestPrepareUserInputContinuationRestoresAgentRunConfig(t *testing.T) {
 	}
 	if len(prepared.LLMRequest.Messages) == 0 || !strings.Contains(stringFromAny(prepared.LLMRequest.Messages[0].Content), config.SystemPrompt) {
 		t.Fatalf("system message = %#v, want configured prompt", prepared.LLMRequest.Messages)
+	}
+	transcriptIndex := -1
+	toolResultIndex := -1
+	for index, requestMessage := range prepared.LLMRequest.Messages {
+		if len(requestMessage.ToolCalls) > 0 && requestMessage.ToolCalls[0].ID == "call-before-question" {
+			transcriptIndex = index
+		}
+		if requestMessage.ToolCallID == "call-before-question" {
+			toolResultIndex = index
+		}
+	}
+	if transcriptIndex < 0 || toolResultIndex != transcriptIndex+1 || toolResultIndex >= len(prepared.LLMRequest.Messages)-1 {
+		t.Fatalf("same-turn transcript order = %#v, want complete tool evidence before continuation prompt", prepared.LLMRequest.Messages)
 	}
 	if !prepared.parts.ProtocolToolsEnabled {
 		t.Fatalf("protocol tools disabled for verified Agent model capability: parts=%#v", prepared.parts)
