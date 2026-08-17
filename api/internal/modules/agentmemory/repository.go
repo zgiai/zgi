@@ -256,6 +256,14 @@ func (r *Repository) LockSubjectState(ctx context.Context, workspaceID, agentID 
 	return &state, err
 }
 
+func (r *Repository) ListSubjectStatesForAgentForUpdate(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemorySubjectState, error) {
+	var states []*AgentMemorySubjectState
+	err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("workspace_id = ? AND agent_id = ?", workspaceID, agentID).
+		Order("user_scope ASC, user_id ASC").Find(&states).Error
+	return states, err
+}
+
 func (r *Repository) UpdateSubjectEpoch(ctx context.Context, state *AgentMemorySubjectState, epoch int64) error {
 	return r.db.WithContext(ctx).Model(&AgentMemorySubjectState{}).Where("id = ?", state.ID).
 		Updates(map[string]interface{}{"memory_epoch": epoch, "extraction_cutoff_at": state.ExtractionCutoffAt, "updated_at": time.Now()}).Error

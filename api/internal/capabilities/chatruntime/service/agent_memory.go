@@ -139,6 +139,10 @@ func agentMemoryUserID(scope Scope) uuid.UUID {
 
 func agentMemoryMutationMetadata(prepared *PreparedChat) agentmemory.MutationMetadata {
 	meta := agentmemory.MutationMetadata{ActorType: agentmemory.EventActorModel, Source: agentmemory.EventSourceAgent}
+	if prepared != nil && prepared.parts != nil && prepared.parts.AgentMemoryRuntimeState != nil && prepared.parts.AgentMemoryRuntimeState.MemoryEpoch != nil {
+		epoch := *prepared.parts.AgentMemoryRuntimeState.MemoryEpoch
+		meta.MemoryEpoch = &epoch
+	}
 	if prepared != nil && prepared.Conversation != nil {
 		id := prepared.Conversation.ID
 		meta.SourceConversationID = &id

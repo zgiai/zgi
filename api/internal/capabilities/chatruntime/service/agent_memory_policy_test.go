@@ -47,6 +47,7 @@ func TestAgentMemoryRuntimeToolMutatesOneAtomicBatch(t *testing.T) {
 	workspaceID, accountID, agentID := uuid.New(), uuid.New(), uuid.New()
 	conversationID, messageID := uuid.New(), uuid.New()
 	memory := &fakeAgentMemoryContextService{}
+	epoch := int64(7)
 	prepared := &PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: conversationID},
 		Message:      &runtimemodel.Message{ID: messageID, Metadata: map[string]interface{}{}},
@@ -54,7 +55,8 @@ func TestAgentMemoryRuntimeToolMutatesOneAtomicBatch(t *testing.T) {
 		parts: &chatRequestParts{
 			Query: "Please remember that I prefer concise replies.", AgentMemoryEnabled: true,
 			AgentMemoryToolsEnabled: true, AgentMemoryAgentID: agentID.String(), AgentMemoryUserScope: agentmemory.UserScopeAccount,
-			AgentMemorySlots: []AgentMemorySlotConfig{{Key: "preferences", Name: "回答偏好", Enabled: true, MaxChars: 500}},
+			AgentMemorySlots:        []AgentMemorySlotConfig{{Key: "preferences", Name: "回答偏好", Enabled: true, MaxChars: 500}},
+			AgentMemoryRuntimeState: &AgentMemoryRuntimeState{MemoryEpoch: &epoch},
 		},
 	}
 	svc := &service{agentMemoryService: memory}
@@ -69,6 +71,9 @@ func TestAgentMemoryRuntimeToolMutatesOneAtomicBatch(t *testing.T) {
 	}})
 	if result.Error != nil || memory.mutateCalls != 1 || len(memory.lastMutation.Operations) != 1 {
 		t.Fatalf("result=%#v mutateCalls=%d mutation=%#v", result, memory.mutateCalls, memory.lastMutation)
+	}
+	if memory.lastMetadata.MemoryEpoch == nil || *memory.lastMetadata.MemoryEpoch != epoch {
+		t.Fatalf("mutation epoch = %#v, want %d", memory.lastMetadata.MemoryEpoch, epoch)
 	}
 	if _, leaked := result.Arguments["content"]; leaked {
 		t.Fatalf("runtime trace arguments leaked content: %#v", result.Arguments)
@@ -134,15 +139,21 @@ type fakeAgentMemoryContextService struct {
 	values       []agentmemory.SlotValueResponse
 	mutateCalls  int
 	lastMutation agentmemory.MutateValuesRequest
+	lastMetadata agentmemory.MutationMetadata
+}
+
+func (f *fakeAgentMemoryContextService) ReadSubjectEpoch(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID) (int64, error) {
+	return 0, nil
 }
 
 func (f *fakeAgentMemoryContextService) ReadUserMemory(context.Context, uuid.UUID, uuid.UUID, []agentmemory.RuntimeSlot, string, uuid.UUID) ([]agentmemory.SlotValueResponse, error) {
 	return f.values, nil
 }
 
-func (f *fakeAgentMemoryContextService) MutateValues(_ context.Context, _, _ uuid.UUID, _ []agentmemory.RuntimeSlot, _ string, _ uuid.UUID, req agentmemory.MutateValuesRequest, _ agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error) {
+func (f *fakeAgentMemoryContextService) MutateValues(_ context.Context, _, _ uuid.UUID, _ []agentmemory.RuntimeSlot, _ string, _ uuid.UUID, req agentmemory.MutateValuesRequest, meta agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error) {
 	f.mutateCalls++
 	f.lastMutation = req
+	f.lastMetadata = meta
 	results := make([]agentmemory.ValueMutationResult, 0, len(req.Operations))
 	for _, operation := range req.Operations {
 		sourceKind := agentmemory.SourceKindExplicit

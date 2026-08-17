@@ -698,21 +698,13 @@ export function useAgentRuntimePageModel(agentId: string) {
         payload.agent_memory_slots ?? []
       ).some(Boolean);
       if (payloadMemorySlotErrors) throw new Error('Invalid Agent Memory slot configuration');
-      let configPayload = payload;
+      let configPayload: UpdateAgentRuntimeConfigRequest = {
+        ...payload,
+        agent_memory_config_revision: agentMemoryConfigRevision || undefined,
+      };
       let wasBindingRevisionRebased = false;
       let rebasedBindingHealth: AgentBindingHealth | undefined;
       let response: Awaited<ReturnType<typeof agentService.updateAgentConfig>>;
-      const memoryResponse = await agentService.updateAgentMemoryConfig(agentId, {
-        enabled: Boolean(configPayload.agent_memory_enabled),
-        auto_extraction_enabled: Boolean(configPayload.agent_memory_auto_extraction_enabled),
-        slots: configPayload.agent_memory_slots ?? [],
-        config_revision: agentMemoryConfigRevision || undefined,
-      });
-      setAgentMemoryConfigRevision(memoryResponse.data.config_revision);
-      configPayload = {
-        ...configPayload,
-        agent_memory_slots: memoryResponse.data.slots,
-      };
       try {
         response = await agentService.updateAgentConfig(agentId, configPayload);
       } catch (error) {
@@ -747,6 +739,8 @@ export function useAgentRuntimePageModel(agentId: string) {
             serverConfig.integration_bindings ?? []
           ),
           binding_revision: serverConfig.binding_revision,
+          agent_memory_config_revision:
+            serverConfig.agent_memory_config_revision ?? configPayload.agent_memory_config_revision,
         };
         wasBindingRevisionRebased = true;
         rebasedBindingHealth = conflict?.bindingHealth;
@@ -756,11 +750,12 @@ export function useAgentRuntimePageModel(agentId: string) {
       const savedPayload = {
         ...configPayload,
         binding_revision: response.data.binding_revision ?? configPayload.binding_revision,
-        agent_memory_slots:
-          memoryResponse.data.slots ??
-          response.data.agent_memory_slots ??
-          payload.agent_memory_slots,
+        agent_memory_slots: response.data.agent_memory_slots ?? payload.agent_memory_slots,
+        agent_memory_config_revision:
+          response.data.agent_memory_config_revision ??
+          configPayload.agent_memory_config_revision,
       };
+      setAgentMemoryConfigRevision(savedPayload.agent_memory_config_revision ?? '');
 
       queryClient.setQueryData(AGENT_KEYS.config(agentId), {
         ...response,
@@ -768,9 +763,10 @@ export function useAgentRuntimePageModel(agentId: string) {
           ...response.data,
           agent_memory_enabled: payload.agent_memory_enabled,
           agent_memory_auto_extraction_enabled:
+            response.data.agent_memory_auto_extraction_enabled ??
             payload.agent_memory_auto_extraction_enabled,
           agent_memory_slots: savedPayload.agent_memory_slots,
-          agent_memory_config_revision: memoryResponse.data.config_revision,
+          agent_memory_config_revision: savedPayload.agent_memory_config_revision,
         },
       });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });

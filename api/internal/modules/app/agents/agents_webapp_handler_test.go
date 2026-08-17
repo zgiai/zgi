@@ -47,6 +47,19 @@ func TestAgentsHandlerFailRuntimeSanitizesAgentMemoryErrors(t *testing.T) {
 	}
 }
 
+func TestPutDirectMemoryRejectsNewWritesWhenMemoryIsDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/memory/profile", bytes.NewBufferString(`{"content":"value"}`))
+
+	(&AgentsHandler{}).putDirectMemory(ctx, memoryAccessScope{writesEnabled: false})
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
 func TestAgentsHandler_UpdateWebAppStatus_PassesContextAndRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

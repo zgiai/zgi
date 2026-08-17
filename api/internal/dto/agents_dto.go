@@ -579,6 +579,8 @@ type AgentConfigRequest struct {
 	UseMemory                        bool                        `json:"use_memory"`
 	AgentMemoryEnabled               bool                        `json:"agent_memory_enabled"`
 	AgentMemoryAutoExtractionEnabled bool                        `json:"agent_memory_auto_extraction_enabled"`
+	AgentMemorySlots                 *[]AgentMemorySlotConfig    `json:"agent_memory_slots,omitempty"`
+	AgentMemoryConfigRevision        string                      `json:"agent_memory_config_revision,omitempty"`
 	FileUpload                       bool                        `json:"file_upload_enabled"`
 	HomeTitle                        string                      `json:"home_title"`
 	OpeningStatement                 string                      `json:"opening_statement"`

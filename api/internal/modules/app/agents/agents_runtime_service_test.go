@@ -397,6 +397,24 @@ func TestApplyAgentConfigRequestToDraftDoesNotPersistDraftMemorySlots(t *testing
 	}
 }
 
+func TestAgentConfigRequestDistinguishesOmittedAndEmptyMemorySlots(t *testing.T) {
+	var omitted dto.AgentConfigRequest
+	if err := json.Unmarshal([]byte(`{}`), &omitted); err != nil {
+		t.Fatal(err)
+	}
+	if omitted.AgentMemorySlots != nil {
+		t.Fatalf("omitted AgentMemorySlots = %#v, want nil for legacy clients", omitted.AgentMemorySlots)
+	}
+
+	var empty dto.AgentConfigRequest
+	if err := json.Unmarshal([]byte(`{"agent_memory_slots":[]}`), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.AgentMemorySlots == nil || len(*empty.AgentMemorySlots) != 0 {
+		t.Fatalf("explicit empty AgentMemorySlots = %#v, want non-nil empty slice", empty.AgentMemorySlots)
+	}
+}
+
 func TestApplyAgentConfigRequestPersistsDatabaseBindings(t *testing.T) {
 	cfg := &AgentsConfig{}
 	applied, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{

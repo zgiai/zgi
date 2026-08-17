@@ -32,6 +32,7 @@ type State struct {
 	Enabled       bool
 	AgentID       uuid.UUID
 	UserScope     string
+	MemoryEpoch   *int64
 	EnabledSlots  []Slot
 	SavedValues   []agentmemory.SlotValueResponse
 	ContextStatus string
@@ -51,6 +52,7 @@ type ToolArguments struct {
 }
 
 type MemoryService interface {
+	ReadSubjectEpoch(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (int64, error)
 	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
 	MutateValues(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.MutateValuesRequest, meta agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error)
 }

@@ -17,13 +17,15 @@ type directMemoryUpdateRequest struct {
 }
 
 type memoryAccessScope struct {
-	workspaceID uuid.UUID
-	agentID     uuid.UUID
-	userScope   string
-	userID      uuid.UUID
-	slots       []agentmemory.RuntimeSlot
-	actorType   string
-	sourceKind  string
+	workspaceID   uuid.UUID
+	agentID       uuid.UUID
+	userScope     string
+	userID        uuid.UUID
+	slots         []agentmemory.RuntimeSlot
+	writeSlots    []agentmemory.RuntimeSlot
+	writesEnabled bool
+	actorType     string
+	sourceKind    string
 }
 
 func (h *AgentsHandler) GetWebAppMemory(c *gin.Context) {
@@ -97,10 +99,6 @@ func (h *AgentsHandler) webAppMemoryAccess(c *gin.Context) (memoryAccessScope, b
 	if !ok {
 		return memoryAccessScope{}, false
 	}
-	if !runtimeCtx.RunConfig.AgentMemoryEnabled {
-		response.FailWithMessage(c, response.ErrInvalidParam, "Agent Memory is disabled")
-		return memoryAccessScope{}, false
-	}
 	if runtimeCtx.Scope.WorkspaceID == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
 		return memoryAccessScope{}, false
@@ -109,14 +107,21 @@ func (h *AgentsHandler) webAppMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		response.Fail(c, response.ErrInvalidParam)
 		return memoryAccessScope{}, false
 	}
+	privacySlots, err := h.agentMemoryPrivacySlots(c, *runtimeCtx.Caller.ID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return memoryAccessScope{}, false
+	}
 	return memoryAccessScope{
-		workspaceID: *runtimeCtx.Scope.WorkspaceID,
-		agentID:     *runtimeCtx.Caller.ID,
-		userScope:   agentmemory.UserScopeAccount,
-		userID:      runtimeCtx.Scope.AccountID,
-		slots:       agentMemoryRuntimeStoreSlots(runtimeCtx.RunConfig.AgentMemorySlots),
-		actorType:   agentmemory.EventActorUser,
-		sourceKind:  agentmemory.SourceKindExplicit,
+		workspaceID:   *runtimeCtx.Scope.WorkspaceID,
+		agentID:       *runtimeCtx.Caller.ID,
+		userScope:     agentmemory.UserScopeAccount,
+		userID:        runtimeCtx.Scope.AccountID,
+		slots:         privacySlots,
+		writeSlots:    agentMemoryRuntimeStoreSlots(runtimeCtx.RunConfig.AgentMemorySlots),
+		writesEnabled: runtimeCtx.RunConfig.AgentMemoryEnabled,
+		actorType:     agentmemory.EventActorUser,
+		sourceKind:    agentmemory.SourceKindExplicit,
 	}, true
 }
 
@@ -141,19 +146,39 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		h.failRuntime(c, err)
 		return memoryAccessScope{}, false
 	}
-	if !published.Config.AgentMemoryEnabled {
-		response.FailWithMessage(c, response.ErrInvalidParam, "Agent Memory is disabled")
+	privacySlots, err := h.agentMemoryPrivacySlots(c, agentID)
+	if err != nil {
+		h.failRuntime(c, err)
 		return memoryAccessScope{}, false
 	}
 	return memoryAccessScope{
-		workspaceID: workspaceID,
-		agentID:     agentID,
-		userScope:   agentmemory.UserScopeEndUser,
-		userID:      externalAgentMemoryUserID(workspaceID, agentID, externalUser),
-		slots:       agentMemoryRuntimeStoreSlots(agentMemoryRuntimeSlots(published.Config.AgentMemorySlots)),
-		actorType:   agentmemory.EventActorOrganizer,
-		sourceKind:  agentmemory.SourceKindManager,
+		workspaceID:   workspaceID,
+		agentID:       agentID,
+		userScope:     agentmemory.UserScopeEndUser,
+		userID:        externalAgentMemoryUserID(workspaceID, agentID, externalUser),
+		slots:         privacySlots,
+		writeSlots:    agentMemoryRuntimeStoreSlots(agentMemoryRuntimeSlots(published.Config.AgentMemorySlots)),
+		writesEnabled: published.Config.AgentMemoryEnabled,
+		actorType:     agentmemory.EventActorOrganizer,
+		sourceKind:    agentmemory.SourceKindManager,
 	}, true
+}
+
+func (h *AgentsHandler) agentMemoryPrivacySlots(c *gin.Context, agentID uuid.UUID) ([]agentmemory.RuntimeSlot, error) {
+	configured, err := h.memoryService().ListSlots(c.Request.Context(), agentID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentmemory.RuntimeSlot, 0, len(configured))
+	for _, slot := range configured {
+		// Privacy operations remain available for inactive slots so users can
+		// inspect, export, delete, or undo retained data after memory is disabled.
+		out = append(out, agentmemory.RuntimeSlot{
+			Key: slot.Key, Description: slot.Description, MaxChars: slot.MaxChars,
+			Enabled: true, SortOrder: slot.SortOrder,
+		})
+	}
+	return out, nil
 }
 
 func agentMemoryRuntimeStoreSlots(slots []runtimeservice.AgentMemorySlotConfig) []agentmemory.RuntimeSlot {
@@ -187,13 +212,17 @@ func (h *AgentsHandler) exportDirectMemory(c *gin.Context, access memoryAccessSc
 	h.getDirectMemory(c, access)
 }
 func (h *AgentsHandler) putDirectMemory(c *gin.Context, access memoryAccessScope) {
+	if !access.writesEnabled {
+		response.FailWithMessage(c, response.ErrInvalidParam, "Agent Memory is disabled")
+		return
+	}
 	var req directMemoryUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 	key := strings.TrimSpace(c.Param("key"))
-	value, err := h.memoryService().UpdateValue(c.Request.Context(), access.workspaceID, access.agentID, access.slots, access.userScope, access.userID, agentmemory.UpdateValueRequest{Key: key, Content: req.Content, ExpectedRevision: req.ExpectedRevision}, access.mutationMetadata())
+	value, err := h.memoryService().UpdateValue(c.Request.Context(), access.workspaceID, access.agentID, access.writeSlots, access.userScope, access.userID, agentmemory.UpdateValueRequest{Key: key, Content: req.Content, ExpectedRevision: req.ExpectedRevision}, access.mutationMetadata())
 	if err != nil {
 		h.failRuntime(c, err)
 		return

@@ -148,6 +148,10 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	}
 	runtimeReq.WorkflowBindings = s.hydrateAgentWorkflowBindingTypes(ctx, ag.TenantID.String(), runtimeReq.WorkflowBindings)
 	previous := agentConfigResponse(ag.ID.String(), cfg)
+	if runtimeReq.AgentMemorySlots != nil {
+		previous.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+		previous.AgentMemoryConfigRevision = agentMemoryConfigRevision(previous.AgentMemoryEnabled, previous.AgentMemoryAutoExtractionEnabled, previous.AgentMemorySlots)
+	}
 	previousRows, currentRevision, currentHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
 	if err != nil {
 		return nil, err
@@ -176,6 +180,9 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 			return nil, err
 		}
 	} else {
+		if runtimeReq.AgentMemorySlots != nil {
+			return nil, fmt.Errorf("database is required for atomic agent memory configuration updates")
+		}
 		if _, err := applyAgentConfigRequestToDraft(cfg, runtimeReq, accountID); err != nil {
 			return nil, err
 		}
@@ -253,6 +260,13 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {
 			return err
 		}
+		if req.AgentMemorySlots != nil {
+			var lockedAgent struct{ ID uuid.UUID }
+			if err := tx.WithContext(ctx).Table("agents").Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ? AND deleted_at IS NULL", ag.ID).Select("id").Take(&lockedAgent).Error; err != nil {
+				return err
+			}
+		}
 		if err := ensureAgentWorkspaceUnchanged(ctx, tx, ag); err != nil {
 			return err
 		}
@@ -267,6 +281,26 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 			return err
 		}
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		var memoryService *agentmemory.Service
+		if req.AgentMemorySlots != nil {
+			memoryService = agentmemory.NewService(tx)
+			currentSlots, memoryErr := memoryService.ListSlots(ctx, ag.ID)
+			if memoryErr != nil {
+				return memoryErr
+			}
+			currentConfig.AgentMemorySlots = agentMemorySlotConfigsFromResponses(currentSlots)
+			currentConfig.AgentMemoryConfigRevision = agentMemoryConfigRevision(
+				currentConfig.AgentMemoryEnabled,
+				currentConfig.AgentMemoryAutoExtractionEnabled,
+				currentConfig.AgentMemorySlots,
+			)
+			if expected := strings.TrimSpace(req.AgentMemoryConfigRevision); expected != "" && expected != currentConfig.AgentMemoryConfigRevision {
+				return &agentBindingAPIError{
+					Code: agentMemoryConfigRevisionConflictCode, Message: "agent memory configuration has changed",
+					Data: map[string]interface{}{"config_revision": currentConfig.AgentMemoryConfigRevision, "current_config": currentConfig},
+				}
+			}
+		}
 		currentRows, err := s.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
 		if err != nil {
 			return err
@@ -312,6 +346,15 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		}
 		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, nextRows); err != nil {
 			return err
+		}
+		if req.AgentMemorySlots != nil {
+			actorID, parseErr := uuid.Parse(strings.TrimSpace(accountID))
+			if parseErr != nil || actorID == uuid.Nil {
+				return fmt.Errorf("account id is invalid")
+			}
+			if _, replaceErr := memoryService.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(*req.AgentMemorySlots, true)); replaceErr != nil {
+				return replaceErr
+			}
 		}
 		saved = &current
 		savedRows = nextRows
@@ -799,6 +842,15 @@ func (s *agentsService) createAgentPublishedVersion(
 		txService.db = tx
 		txService.agentBindings = bindingRepo
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		var memoryService *agentmemory.Service
+		if s.agentMemoryService != nil {
+			memoryService = agentmemory.NewService(tx)
+			lockedSlots, memoryErr := memoryService.ListSlots(ctx, ag.ID)
+			if memoryErr != nil {
+				return fmt.Errorf("reload agent memory slots for publish: %w", memoryErr)
+			}
+			currentMemorySlots = agentMemorySlotConfigsFromResponses(lockedSlots)
+		}
 		rows, err := txService.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
 		if err != nil {
 			return err
@@ -855,6 +907,26 @@ func (s *agentsService) createAgentPublishedVersion(
 			snapshotMemorySlots = agentMemorySnapshotSlots(enabledAgentMemorySlots(currentMemorySlots))
 		}
 		snapshot["agent_memory_slots"] = snapshotMemorySlots
+		memoryConfigurationChanged := false
+		if memoryService != nil {
+			var previousVersion AgentPublishedVersion
+			previousErr := tx.Where("agent_id = ? AND deleted_at IS NULL", ag.ID).
+				Order("created_at DESC, version DESC").First(&previousVersion).Error
+			if previousErr == nil {
+				previousConfig := agentConfigResponseFromSnapshot(ag.ID.String(), previousVersion.ConfigSnapshot)
+				memoryConfigurationChanged = agentMemoryConfigRevision(
+					previousConfig.AgentMemoryEnabled,
+					previousConfig.AgentMemoryAutoExtractionEnabled,
+					previousConfig.AgentMemorySlots,
+				) != agentMemoryConfigRevision(
+					currentConfig.AgentMemoryEnabled,
+					currentConfig.AgentMemoryAutoExtractionEnabled,
+					snapshotMemorySlots,
+				)
+			} else if !errors.Is(previousErr, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("load previous agent published version: %w", previousErr)
+			}
+		}
 		version.ConfigSnapshot = snapshot
 		if err := tx.Create(version).Error; err != nil {
 			return fmt.Errorf("failed to create agent published version: %w", err)
@@ -873,11 +945,10 @@ func (s *agentsService) createAgentPublishedVersion(
 		}, publishedBindings); err != nil {
 			return err
 		}
-		if s.agentMemoryService == nil {
+		if memoryService == nil {
 			return nil
 		}
-		memoryService := agentmemory.NewService(tx)
-		if err := memoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(currentMemorySlots)); err != nil {
+		if err := memoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(currentMemorySlots), memoryConfigurationChanged); err != nil {
 			return fmt.Errorf("clear removed agent memory values: %w", err)
 		}
 		return nil

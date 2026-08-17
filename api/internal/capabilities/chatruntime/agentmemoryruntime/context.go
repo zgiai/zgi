@@ -30,6 +30,18 @@ func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error
 	if req.MemoryService == nil || req.WorkspaceID == zeroUUID || req.AgentID == zeroUUID {
 		return ContextResult{SystemPrompt: req.SystemPrompt, Metadata: metadata, State: state}, nil
 	}
+	epoch, err := req.MemoryService.ReadSubjectEpoch(ctx, req.WorkspaceID, req.AgentID, req.UserScope, req.UserID)
+	if err != nil {
+		state.ContextStatus = "error"
+		metadata["agent_memory"] = map[string]interface{}{
+			"enabled":        true,
+			"available":      false,
+			"injected":       false,
+			"context_status": "error",
+		}
+		return ContextResult{SystemPrompt: req.SystemPrompt, Metadata: metadata, State: state}, nil
+	}
+	state.MemoryEpoch = &epoch
 	values, err := req.MemoryService.ReadUserMemory(ctx, req.WorkspaceID, req.AgentID, RuntimeSlots(slots), req.UserScope, req.UserID)
 	if err != nil {
 		state.ContextStatus = "error"

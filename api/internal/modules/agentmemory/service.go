@@ -67,6 +67,7 @@ type store interface {
 	DeleteUndoRecord(ctx context.Context, operationID uuid.UUID) error
 	FindUndoExpiry(ctx context.Context, operationID uuid.UUID) (*time.Time, error)
 	LockSubjectState(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentMemorySubjectState, error)
+	ListSubjectStatesForAgentForUpdate(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemorySubjectState, error)
 	UpdateSubjectEpoch(ctx context.Context, state *AgentMemorySubjectState, epoch int64) error
 	CancelPendingJobsForSubject(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) error
 	CreateExtractionJob(ctx context.Context, job *AgentMemoryExtractionJob) error
@@ -212,6 +213,11 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 				return err
 			}
 		}
+		if len(existingByKey) > 0 {
+			if err := invalidateAgentSubjects(ctx, tx, workspaceID, agentID); err != nil {
+				return err
+			}
+		}
 		for _, stale := range existingByKey {
 			if stale == nil {
 				continue
@@ -250,6 +256,29 @@ func (s *Service) ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.
 		return nil, fmt.Errorf("list agent memory values: %w", err)
 	}
 	return runtimeSlotValueResponses(slots, values), nil
+}
+
+// ReadSubjectEpoch captures the deletion/configuration fence that automatic
+// writers must present when they commit. It is deliberately read before the
+// corresponding memory values so a concurrent delete cannot be missed.
+func (s *Service) ReadSubjectEpoch(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (int64, error) {
+	if s == nil || s.repo == nil || workspaceID == uuid.Nil || agentID == uuid.Nil {
+		return 0, ErrUnauthorized
+	}
+	userScope, err := s.resolveRuntimeScope(userScope, userID)
+	if err != nil {
+		return 0, err
+	}
+	var epoch int64
+	err = s.repo.WithTransaction(ctx, func(tx store) error {
+		state, lockErr := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
+		if lockErr != nil {
+			return lockErr
+		}
+		epoch = state.MemoryEpoch
+		return nil
+	})
+	return epoch, err
 }
 
 func (s *Service) ListOrganizerValues(ctx context.Context, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]SlotValueResponse, error) {
@@ -525,7 +554,28 @@ func invalidateSubjectJobs(ctx context.Context, tx store, state *AgentMemorySubj
 	return tx.UpdateSubjectEpoch(ctx, state, state.MemoryEpoch+1)
 }
 
-func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, keepKeys []string) error {
+func invalidateAgentSubjects(ctx context.Context, tx store, workspaceID, agentID uuid.UUID) error {
+	states, err := tx.ListSubjectStatesForAgentForUpdate(ctx, workspaceID, agentID)
+	if err != nil {
+		return fmt.Errorf("list agent memory subject states: %w", err)
+	}
+	for _, state := range states {
+		if state == nil {
+			continue
+		}
+		if err := tx.CancelPendingJobsForSubject(ctx, state.WorkspaceID, state.AgentID, state.UserScope, state.UserID); err != nil {
+			return err
+		}
+		// Configuration changes fence old writers without moving the user-delete
+		// cutoff; new workers may still inspect eligible newer conversations.
+		if err := tx.UpdateSubjectEpoch(ctx, state, state.MemoryEpoch+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, keepKeys []string, invalidateSubjects bool) error {
 	workspaceID, err := s.resolveAgentWorkspace(ctx, agentID)
 	if err != nil {
 		return err
@@ -537,11 +587,16 @@ func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, k
 			keep[normalized] = struct{}{}
 		}
 	}
-	values, err := s.repo.ListValuesForAgent(ctx, workspaceID, agentID)
-	if err != nil {
-		return fmt.Errorf("list agent memory values: %w", err)
-	}
 	return s.repo.WithTransaction(ctx, func(tx store) error {
+		if invalidateSubjects {
+			if err := invalidateAgentSubjects(ctx, tx, workspaceID, agentID); err != nil {
+				return err
+			}
+		}
+		values, err := tx.ListValuesForAgent(ctx, workspaceID, agentID)
+		if err != nil {
+			return fmt.Errorf("list agent memory values: %w", err)
+		}
 		meta := organizerMetadata()
 		for _, before := range values {
 			if before == nil {
@@ -719,6 +774,13 @@ func (s *Service) ClearAllValues(ctx context.Context, workspaceID, agentID uuid.
 		}
 		if err := tx.CancelPendingJobsForSubject(ctx, workspaceID, agentID, userScope, userID); err != nil {
 			return err
+		}
+		cutoff := time.Now()
+		if meta.SourceCompletedAt != nil {
+			cutoff = *meta.SourceCompletedAt
+		}
+		if state.ExtractionCutoffAt == nil || state.ExtractionCutoffAt.Before(cutoff) {
+			state.ExtractionCutoffAt = &cutoff
 		}
 		if err := tx.UpdateSubjectEpoch(ctx, state, state.MemoryEpoch+1); err != nil {
 			return err

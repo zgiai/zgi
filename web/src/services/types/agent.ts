@@ -437,6 +437,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   agent_memory_enabled?: boolean;
   agent_memory_auto_extraction_enabled?: boolean;
   agent_memory_slots?: AgentMemorySlotConfig[];
+  agent_memory_config_revision?: string;
   file_upload_enabled: boolean;
   home_title: string;
   opening_statement: string;

@@ -43,13 +43,24 @@ func (s *Service) MutateValues(
 	if err != nil {
 		return nil, err
 	}
-	if response, complete, receiptErr := mutationReceiptResponse(ctx, s.repo, workspaceID, agentID, userScope, userID, operations); receiptErr != nil {
-		return nil, receiptErr
-	} else if complete {
-		return response, nil
-	}
-
 	meta = normalizeMutationMetadata(meta)
+	requiresEpoch := false
+	for _, operation := range operations {
+		if operation.sourceKind == SourceKindAutomatic {
+			requiresEpoch = true
+			break
+		}
+	}
+	if requiresEpoch && meta.MemoryEpoch == nil {
+		return nil, fmt.Errorf("%w: automatic memory epoch is required", ErrInvalidInput)
+	}
+	if !requiresEpoch {
+		if response, complete, receiptErr := mutationReceiptResponse(ctx, s.repo, workspaceID, agentID, userScope, userID, operations); receiptErr != nil {
+			return nil, receiptErr
+		} else if complete {
+			return response, nil
+		}
+	}
 	var response *MutateValuesResponse
 	err = s.repo.WithTransaction(ctx, func(tx store) error {
 		state, lockErr := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
@@ -176,8 +187,10 @@ func (s *Service) MutateValues(
 	if err == nil {
 		return response, nil
 	}
-	if response, complete, receiptErr := mutationReceiptResponse(ctx, s.repo, workspaceID, agentID, userScope, userID, operations); receiptErr == nil && complete {
-		return response, nil
+	if !requiresEpoch {
+		if response, complete, receiptErr := mutationReceiptResponse(ctx, s.repo, workspaceID, agentID, userScope, userID, operations); receiptErr == nil && complete {
+			return response, nil
+		}
 	}
 	if isDuplicateKeyError(err) {
 		return nil, ErrConflict
