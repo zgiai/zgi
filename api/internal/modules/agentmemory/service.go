@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -21,6 +22,8 @@ const (
 	maxSlotDescriptionChars = 200
 	maxSlotsPerAgent        = 5
 	defaultRenderBudget     = 4000
+	ConfigScopeDraft        = "draft"
+	ConfigScopePublished    = "published"
 )
 
 var (
@@ -66,8 +69,10 @@ type store interface {
 	GetUndoRecordForUpdate(ctx context.Context, operationID, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentMemoryUndoRecord, error)
 	DeleteUndoRecord(ctx context.Context, operationID uuid.UUID) error
 	FindUndoExpiry(ctx context.Context, operationID uuid.UUID) (*time.Time, error)
+	LockAgentState(ctx context.Context, workspaceID, agentID uuid.UUID) (*AgentMemoryAgentState, error)
+	UpdateAgentConfigRevision(ctx context.Context, state *AgentMemoryAgentState, scope, revision string) error
+	CancelPendingJobsForAgentConfig(ctx context.Context, workspaceID, agentID uuid.UUID, scope, revision string) error
 	LockSubjectState(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentMemorySubjectState, error)
-	ListSubjectStatesForAgentForUpdate(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemorySubjectState, error)
 	UpdateSubjectEpoch(ctx context.Context, state *AgentMemorySubjectState, epoch int64) error
 	CancelPendingJobsForSubject(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) error
 	CreateExtractionJob(ctx context.Context, job *AgentMemoryExtractionJob) error
@@ -86,6 +91,7 @@ type store interface {
 
 type RuntimeSlot struct {
 	Key         string `json:"key"`
+	Name        string `json:"name,omitempty"`
 	Description string `json:"description"`
 	MaxChars    int    `json:"max_chars"`
 	Enabled     bool   `json:"enabled"`
@@ -103,6 +109,8 @@ type MutationMetadata struct {
 	OperationID          *uuid.UUID
 	ExpectedRevision     *int64
 	MemoryEpoch          *int64
+	ConfigScope          string
+	ConfigRevision       string
 	EventResult          string
 }
 
@@ -213,11 +221,6 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 				return err
 			}
 		}
-		if len(existingByKey) > 0 {
-			if err := invalidateAgentSubjects(ctx, tx, workspaceID, agentID); err != nil {
-				return err
-			}
-		}
 		for _, stale := range existingByKey {
 			if stale == nil {
 				continue
@@ -258,19 +261,63 @@ func (s *Service) ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.
 	return runtimeSlotValueResponses(slots, values), nil
 }
 
-// ReadSubjectEpoch captures the deletion/configuration fence that automatic
-// writers must present when they commit. It is deliberately read before the
-// corresponding memory values so a concurrent delete cannot be missed.
-func (s *Service) ReadSubjectEpoch(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (int64, error) {
+// PrivacySlots returns published slot metadata plus synthetic entries for
+// retained values whose slots are no longer published. Draft metadata is never
+// consulted, so unpublished changes cannot leak into an end-user privacy view.
+func (s *Service) PrivacySlots(ctx context.Context, workspaceID, agentID uuid.UUID, publishedSlots []RuntimeSlot, userScope string, userID uuid.UUID) ([]RuntimeSlot, error) {
+	if s == nil || s.repo == nil || workspaceID == uuid.Nil || agentID == uuid.Nil {
+		return nil, ErrUnauthorized
+	}
+	userScope, err := s.resolveRuntimeScope(userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	slots := normalizeRuntimeSlots(publishedSlots)
+	seen := make(map[string]struct{}, len(slots))
+	for i := range slots {
+		slots[i].Enabled = true
+		seen[slots[i].Key] = struct{}{}
+	}
+	values, err := s.repo.ListValuesForUser(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list retained agent memory values: %w", err)
+	}
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		key, keyErr := normalizeKey(value.SlotKey)
+		if keyErr != nil {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		slots = append(slots, RuntimeSlot{Key: key, Name: key, MaxChars: defaultSlotMaxChars, Enabled: true, SortOrder: len(slots)})
+		seen[key] = struct{}{}
+	}
+	return normalizeRuntimeSlots(slots), nil
+}
+
+// ReadRuntimeFence atomically binds a runtime configuration snapshot to the
+// subject deletion epoch. Writers must present both values when they commit.
+func (s *Service) ReadRuntimeFence(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, configScope, configRevision string) (int64, error) {
 	if s == nil || s.repo == nil || workspaceID == uuid.Nil || agentID == uuid.Nil {
 		return 0, ErrUnauthorized
 	}
-	userScope, err := s.resolveRuntimeScope(userScope, userID)
+	configScope, err := normalizeConfigScope(configScope)
+	if err != nil || strings.TrimSpace(configRevision) == "" {
+		return 0, fmt.Errorf("%w: memory configuration revision is required", ErrInvalidInput)
+	}
+	userScope, err = s.resolveRuntimeScope(userScope, userID)
 	if err != nil {
 		return 0, err
 	}
 	var epoch int64
 	err = s.repo.WithTransaction(ctx, func(tx store) error {
+		if err := lockAgentConfigRevision(ctx, tx, workspaceID, agentID, configScope, configRevision); err != nil {
+			return err
+		}
 		state, lockErr := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
 		if lockErr != nil {
 			return lockErr
@@ -279,6 +326,94 @@ func (s *Service) ReadSubjectEpoch(ctx context.Context, workspaceID, agentID uui
 		return nil
 	})
 	return epoch, err
+}
+
+// ReadSubjectEpoch is retained for callers that only need the deletion fence.
+// Runtime writers must use ReadRuntimeFence so their slot snapshot is also fenced.
+func (s *Service) ReadSubjectEpoch(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (int64, error) {
+	if s == nil || s.repo == nil || workspaceID == uuid.Nil || agentID == uuid.Nil {
+		return 0, ErrUnauthorized
+	}
+	resolvedScope, err := s.resolveRuntimeScope(userScope, userID)
+	if err != nil {
+		return 0, err
+	}
+	var epoch int64
+	err = s.repo.WithTransaction(ctx, func(tx store) error {
+		state, lockErr := tx.LockSubjectState(ctx, workspaceID, agentID, resolvedScope, userID)
+		if lockErr != nil {
+			return lockErr
+		}
+		epoch = state.MemoryEpoch
+		return nil
+	})
+	return epoch, err
+}
+
+// SetAgentConfigRevision advances one Agent-level configuration generation and
+// cancels queued jobs from older generations with one set-based update.
+func (s *Service) SetAgentConfigRevision(ctx context.Context, workspaceID, agentID uuid.UUID, configScope, configRevision string) error {
+	if s == nil || s.repo == nil || workspaceID == uuid.Nil || agentID == uuid.Nil {
+		return ErrUnauthorized
+	}
+	configScope, err := normalizeConfigScope(configScope)
+	if err != nil || strings.TrimSpace(configRevision) == "" {
+		return fmt.Errorf("%w: memory configuration revision is required", ErrInvalidInput)
+	}
+	return s.repo.WithTransaction(ctx, func(tx store) error {
+		state, err := tx.LockAgentState(ctx, workspaceID, agentID)
+		if err != nil {
+			return err
+		}
+		current := agentConfigRevisionForScope(state, configScope)
+		if current == configRevision {
+			return nil
+		}
+		if err := tx.UpdateAgentConfigRevision(ctx, state, configScope, configRevision); err != nil {
+			return err
+		}
+		return tx.CancelPendingJobsForAgentConfig(ctx, workspaceID, agentID, configScope, configRevision)
+	})
+}
+
+func lockAgentConfigRevision(ctx context.Context, tx store, workspaceID, agentID uuid.UUID, configScope, configRevision string) error {
+	configScope, err := normalizeConfigScope(configScope)
+	if err != nil || strings.TrimSpace(configRevision) == "" {
+		return fmt.Errorf("%w: memory configuration revision is required", ErrInvalidInput)
+	}
+	state, err := tx.LockAgentState(ctx, workspaceID, agentID)
+	if err != nil {
+		return err
+	}
+	current := agentConfigRevisionForScope(state, configScope)
+	if current != "" && current != configRevision {
+		return ErrConflict
+	}
+	if current == "" {
+		return tx.UpdateAgentConfigRevision(ctx, state, configScope, configRevision)
+	}
+	return nil
+}
+
+func agentConfigRevisionForScope(state *AgentMemoryAgentState, configScope string) string {
+	if state == nil {
+		return ""
+	}
+	if configScope == ConfigScopePublished {
+		return strings.TrimSpace(state.PublishedConfigRevision)
+	}
+	return strings.TrimSpace(state.DraftConfigRevision)
+}
+
+func normalizeConfigScope(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case ConfigScopeDraft:
+		return ConfigScopeDraft, nil
+	case ConfigScopePublished:
+		return ConfigScopePublished, nil
+	default:
+		return "", fmt.Errorf("%w: invalid memory configuration scope", ErrInvalidInput)
+	}
 }
 
 func (s *Service) ListOrganizerValues(ctx context.Context, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]SlotValueResponse, error) {
@@ -367,9 +502,17 @@ func (s *Service) updateValueForSlot(ctx context.Context, workspaceID, agentID u
 		return nil, fmt.Errorf("%w: sensitive content cannot be saved", ErrInvalidInput)
 	}
 	meta = normalizeMutationMetadata(meta)
+	if meta.SourceKind == SourceKindAutomatic && (meta.MemoryEpoch == nil || strings.TrimSpace(meta.ConfigScope) == "" || strings.TrimSpace(meta.ConfigRevision) == "") {
+		return nil, fmt.Errorf("%w: automatic memory runtime fence is required", ErrInvalidInput)
+	}
 
 	var response *SlotValueResponse
 	if err := s.repo.WithTransaction(ctx, func(tx store) error {
+		if strings.TrimSpace(meta.ConfigScope) != "" || strings.TrimSpace(meta.ConfigRevision) != "" {
+			if err := lockAgentConfigRevision(ctx, tx, workspaceID, agentID, meta.ConfigScope, meta.ConfigRevision); err != nil {
+				return err
+			}
+		}
 		if meta.SourceKind == SourceKindAutomatic {
 			if meta.MemoryEpoch == nil {
 				return fmt.Errorf("%w: automatic memory epoch is required", ErrInvalidInput)
@@ -494,6 +637,11 @@ func (s *Service) clearValueForSlot(ctx context.Context, workspaceID, agentID uu
 		return nil, fmt.Errorf("%w: automatic extraction cannot clear memory", ErrUnauthorized)
 	}
 	if err := s.repo.WithTransaction(ctx, func(tx store) error {
+		if strings.TrimSpace(meta.ConfigScope) != "" || strings.TrimSpace(meta.ConfigRevision) != "" {
+			if err := lockAgentConfigRevision(ctx, tx, workspaceID, agentID, meta.ConfigScope, meta.ConfigRevision); err != nil {
+				return err
+			}
+		}
 		state, err := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
 		if err != nil {
 			return err
@@ -554,28 +702,7 @@ func invalidateSubjectJobs(ctx context.Context, tx store, state *AgentMemorySubj
 	return tx.UpdateSubjectEpoch(ctx, state, state.MemoryEpoch+1)
 }
 
-func invalidateAgentSubjects(ctx context.Context, tx store, workspaceID, agentID uuid.UUID) error {
-	states, err := tx.ListSubjectStatesForAgentForUpdate(ctx, workspaceID, agentID)
-	if err != nil {
-		return fmt.Errorf("list agent memory subject states: %w", err)
-	}
-	for _, state := range states {
-		if state == nil {
-			continue
-		}
-		if err := tx.CancelPendingJobsForSubject(ctx, state.WorkspaceID, state.AgentID, state.UserScope, state.UserID); err != nil {
-			return err
-		}
-		// Configuration changes fence old writers without moving the user-delete
-		// cutoff; new workers may still inspect eligible newer conversations.
-		if err := tx.UpdateSubjectEpoch(ctx, state, state.MemoryEpoch+1); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, keepKeys []string, invalidateSubjects bool) error {
+func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, keepKeys []string) error {
 	workspaceID, err := s.resolveAgentWorkspace(ctx, agentID)
 	if err != nil {
 		return err
@@ -588,11 +715,6 @@ func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, k
 		}
 	}
 	return s.repo.WithTransaction(ctx, func(tx store) error {
-		if invalidateSubjects {
-			if err := invalidateAgentSubjects(ctx, tx, workspaceID, agentID); err != nil {
-				return err
-			}
-		}
 		values, err := tx.ListValuesForAgent(ctx, workspaceID, agentID)
 		if err != nil {
 			return fmt.Errorf("list agent memory values: %w", err)
@@ -665,6 +787,7 @@ func (s *Service) configuredSlotByKey(ctx context.Context, workspaceID, agentID 
 		if slot != nil && slot.Key == normalizedKey {
 			return RuntimeSlot{
 				Key:         slot.Key,
+				Name:        slot.Name,
 				Description: slot.Description,
 				MaxChars:    slot.MaxChars,
 				Enabled:     slot.Enabled,
@@ -885,7 +1008,23 @@ func (s *Service) ScheduleExtraction(ctx context.Context, req ScheduleExtraction
 	if extractorVersion == "" {
 		extractorVersion = "agent-memory-v2"
 	}
-	keyMaterial := strings.Join([]string{workspaceID.String(), agentID.String(), userScope, userID.String(), conversationID.String(), watermarkID.String(), extractorVersion}, ":")
+	configScope, err := normalizeConfigScope(req.ConfigScope)
+	if err != nil {
+		return nil, err
+	}
+	configRevision := strings.TrimSpace(req.ConfigRevision)
+	runtimeSlots := normalizeRuntimeSlots(req.Slots)
+	if configRevision == "" || len(runtimeSlots) == 0 {
+		return nil, fmt.Errorf("%w: memory configuration snapshot is required", ErrInvalidInput)
+	}
+	for i := range runtimeSlots {
+		runtimeSlots[i].Enabled = true
+	}
+	runtimeSlotsJSON, err := json.Marshal(runtimeSlots)
+	if err != nil {
+		return nil, fmt.Errorf("encode memory slot snapshot: %w", err)
+	}
+	keyMaterial := strings.Join([]string{workspaceID.String(), agentID.String(), userScope, userID.String(), conversationID.String(), watermarkID.String(), extractorVersion, configScope, configRevision}, ":")
 	digest := sha256.Sum256([]byte(keyMaterial))
 	idempotencyKey := hex.EncodeToString(digest[:])
 	var job *AgentMemoryExtractionJob
@@ -895,6 +1034,9 @@ func (s *Service) ScheduleExtraction(ctx context.Context, req ScheduleExtraction
 			return nil
 		} else if !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
+		}
+		if fenceErr := lockAgentConfigRevision(ctx, tx, workspaceID, agentID, configScope, configRevision); fenceErr != nil {
+			return fenceErr
 		}
 		state, stateErr := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
 		if stateErr != nil {
@@ -914,6 +1056,7 @@ func (s *Service) ScheduleExtraction(ctx context.Context, req ScheduleExtraction
 		job = &AgentMemoryExtractionJob{
 			WorkspaceID: workspaceID, AgentID: agentID, UserScope: userScope, UserID: userID,
 			ConversationID: conversationID, MessageWatermarkID: watermarkID, MemoryEpoch: state.MemoryEpoch,
+			ConfigScope: configScope, ConfigRevision: configRevision, RuntimeSlots: runtimeSlotsJSON,
 			ExtractorVersion: extractorVersion, IdempotencyKey: idempotencyKey, Status: ExtractionJobPending,
 			ScheduledAt: scheduledAt, ForceAt: forceAt,
 		}
@@ -931,22 +1074,30 @@ func (s *Service) ListDueExtractionJobs(ctx context.Context, limit int) ([]*Agen
 
 func (s *Service) ClaimExtractionJob(ctx context.Context, id uuid.UUID) (*AgentMemoryExtractionJob, error) {
 	var claimed *AgentMemoryExtractionJob
+	cancelCode := ""
 	err := s.repo.WithTransaction(ctx, func(tx store) error {
 		job, err := tx.GetExtractionJob(ctx, id)
 		if err != nil {
 			return err
+		}
+		if err := lockAgentConfigRevision(ctx, tx, job.WorkspaceID, job.AgentID, job.ConfigScope, job.ConfigRevision); err != nil {
+			cancelCode = "memory_config_changed"
+			return ErrConflict
 		}
 		state, err := tx.LockSubjectState(ctx, job.WorkspaceID, job.AgentID, job.UserScope, job.UserID)
 		if err != nil {
 			return err
 		}
 		if state.MemoryEpoch != job.MemoryEpoch {
-			_ = tx.FinishExtractionJob(ctx, id, ExtractionJobCancelled, "memory_epoch_changed")
+			cancelCode = "memory_epoch_changed"
 			return ErrConflict
 		}
 		claimed, err = tx.ClaimExtractionJob(ctx, id, job.MemoryEpoch)
 		return err
 	})
+	if cancelCode != "" {
+		_ = s.repo.FinishExtractionJob(ctx, id, ExtractionJobCancelled, cancelCode)
+	}
 	return claimed, err
 }
 
@@ -1049,6 +1200,7 @@ func normalizeRuntimeSlots(slots []RuntimeSlot) []RuntimeSlot {
 		}
 		normalized = append(normalized, RuntimeSlot{
 			Key:         key,
+			Name:        strings.TrimSpace(slot.Name),
 			Description: strings.TrimSpace(slot.Description),
 			MaxChars:    maxChars,
 			Enabled:     slot.Enabled,
@@ -1160,6 +1312,7 @@ func runtimeSlotValueResponse(slot RuntimeSlot, value *AgentMemoryValue) SlotVal
 	resp := SlotValueResponse{
 		SlotResponse: SlotResponse{
 			Key:         slot.Key,
+			Name:        slot.Name,
 			Description: slot.Description,
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,

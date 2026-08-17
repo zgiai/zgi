@@ -142,7 +142,7 @@ type fakeAgentMemoryContextService struct {
 	lastMetadata agentmemory.MutationMetadata
 }
 
-func (f *fakeAgentMemoryContextService) ReadSubjectEpoch(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID) (int64, error) {
+func (f *fakeAgentMemoryContextService) ReadRuntimeFence(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID, string, string) (int64, error) {
 	return 0, nil
 }
 

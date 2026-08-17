@@ -38,7 +38,8 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 		SystemPrompt: systemPrompt, Enabled: parts.AgentMemoryEnabled,
 		Slots: enabledAgentMemorySlots(parts.AgentMemorySlots), MemoryService: s.agentMemoryService,
 		WorkspaceID: workspaceID, AgentID: agentID, UserID: agentMemoryUserID(scope),
-		UserScope: parts.AgentMemoryUserScope, Budget: budgetChars,
+		UserScope: parts.AgentMemoryUserScope, ConfigScope: parts.AgentMemoryConfigScope,
+		ConfigRevision: parts.AgentMemoryConfigRevision, Budget: budgetChars,
 	})
 	if strings.TrimSpace(result.Context) != "" && result.State != nil && s.tokenEstimator != nil {
 		bestContext := ""
@@ -101,7 +102,8 @@ func (s *service) scheduleAgentMemoryExtractionBestEffort(ctx context.Context, p
 		WorkspaceID: prepared.Scope.WorkspaceID.String(), AgentID: agentID.String(),
 		UserScope: prepared.parts.AgentMemoryUserScope, UserID: agentMemoryUserID(prepared.Scope).String(),
 		ConversationID: prepared.Conversation.ID.String(), MessageWatermarkID: prepared.Message.ID.String(),
-		ExtractorVersion: "agent-memory-v2",
+		ExtractorVersion: "agent-memory-v2", ConfigScope: prepared.parts.AgentMemoryConfigScope,
+		ConfigRevision: prepared.parts.AgentMemoryConfigRevision, Slots: agentMemoryRuntimeSlots(prepared.parts.AgentMemorySlots),
 	})
 }
 
@@ -139,9 +141,14 @@ func agentMemoryUserID(scope Scope) uuid.UUID {
 
 func agentMemoryMutationMetadata(prepared *PreparedChat) agentmemory.MutationMetadata {
 	meta := agentmemory.MutationMetadata{ActorType: agentmemory.EventActorModel, Source: agentmemory.EventSourceAgent}
-	if prepared != nil && prepared.parts != nil && prepared.parts.AgentMemoryRuntimeState != nil && prepared.parts.AgentMemoryRuntimeState.MemoryEpoch != nil {
-		epoch := *prepared.parts.AgentMemoryRuntimeState.MemoryEpoch
-		meta.MemoryEpoch = &epoch
+	if prepared != nil && prepared.parts != nil && prepared.parts.AgentMemoryRuntimeState != nil {
+		state := prepared.parts.AgentMemoryRuntimeState
+		if state.MemoryEpoch != nil {
+			epoch := *state.MemoryEpoch
+			meta.MemoryEpoch = &epoch
+		}
+		meta.ConfigScope = state.ConfigScope
+		meta.ConfigRevision = state.ConfigRevision
 	}
 	if prepared != nil && prepared.Conversation != nil {
 		id := prepared.Conversation.ID
@@ -178,8 +185,18 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 	parts := prepared.parts
 	state := parts.AgentMemoryRuntimeState
 	if state == nil {
-		state = &AgentMemoryRuntimeState{Enabled: true, UserScope: parts.AgentMemoryUserScope, EnabledSlots: enabledAgentMemorySlots(parts.AgentMemorySlots)}
+		state = &AgentMemoryRuntimeState{
+			Enabled: true, UserScope: parts.AgentMemoryUserScope,
+			ConfigScope: parts.AgentMemoryConfigScope, ConfigRevision: parts.AgentMemoryConfigRevision,
+			EnabledSlots: enabledAgentMemorySlots(parts.AgentMemorySlots),
+		}
 		parts.AgentMemoryRuntimeState = state
+	}
+	if state.ConfigScope == "" {
+		state.ConfigScope = parts.AgentMemoryConfigScope
+	}
+	if state.ConfigRevision == "" {
+		state.ConfigRevision = parts.AgentMemoryConfigRevision
 	}
 	if len(state.EnabledSlots) == 0 {
 		state.EnabledSlots = enabledAgentMemorySlots(parts.AgentMemorySlots)

@@ -289,7 +289,9 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       voiceTranscriber={voiceInputEnabled ? handleVoiceTranscription : undefined}
       speechSynthesizer={speechEnabled ? handleSpeechSynthesis : undefined}
       headerRightAction={
-        memoryEnabled && isAuthenticated ? <AgentMemoryManager webAppId={webAppId} /> : undefined
+        isAuthenticated ? (
+          <AgentMemoryManager webAppId={webAppId} memoryEnabled={memoryEnabled} />
+        ) : undefined
       }
     />
   );

@@ -2075,6 +2075,8 @@ const messages = {
         'Resource status changed. Review the latest rollback impact and retry.',
       bindingRevisionRebased:
         'Bindings changed elsewhere. Non-binding edits were kept and server bindings were applied: {resources}',
+      memoryRevisionChanged:
+        'Memory settings changed elsewhere. Your draft was kept; refresh and review it before saving again.',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
       fixMemorySlotsBeforeSave: 'Fix memory item keys before saving.',
       fixMemorySlotsBeforePublish: 'Fix memory item keys before publishing.',

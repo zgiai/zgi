@@ -123,4 +123,7 @@ type ScheduleExtractionRequest struct {
 	ConversationID     string
 	MessageWatermarkID string
 	ExtractorVersion   string
+	ConfigScope        string
+	ConfigRevision     string
+	Slots              []RuntimeSlot
 }

@@ -282,8 +282,10 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		}
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
 		var memoryService *agentmemory.Service
-		if req.AgentMemorySlots != nil {
+		if s.agentMemoryService != nil || req.AgentMemorySlots != nil {
 			memoryService = agentmemory.NewService(tx)
+		}
+		if req.AgentMemorySlots != nil {
 			currentSlots, memoryErr := memoryService.ListSlots(ctx, ag.ID)
 			if memoryErr != nil {
 				return memoryErr
@@ -354,6 +356,21 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 			}
 			if _, replaceErr := memoryService.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(*req.AgentMemorySlots, true)); replaceErr != nil {
 				return replaceErr
+			}
+		}
+		if memoryService != nil {
+			updatedSlots, memoryErr := memoryService.ListSlots(ctx, ag.ID)
+			if memoryErr != nil {
+				return memoryErr
+			}
+			nextMemoryConfig := agentConfigResponse(ag.ID.String(), &current)
+			nextRevision := agentMemoryConfigRevision(
+				nextMemoryConfig.AgentMemoryEnabled,
+				nextMemoryConfig.AgentMemoryAutoExtractionEnabled,
+				agentMemorySlotConfigsFromResponses(updatedSlots),
+			)
+			if err := memoryService.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, nextRevision); err != nil {
+				return err
 			}
 		}
 		saved = &current
@@ -479,6 +496,17 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		}
 		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, nextRows); err != nil {
 			return err
+		}
+		if s.agentMemoryService != nil {
+			memorySvc := agentmemory.NewService(tx)
+			currentSlots, err := memorySvc.ListSlots(ctx, ag.ID)
+			if err != nil {
+				return err
+			}
+			revision := agentMemoryConfigRevision(nextConfig.AgentMemoryEnabled, nextConfig.AgentMemoryAutoExtractionEnabled, agentMemorySlotConfigsFromResponses(currentSlots))
+			if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, revision); err != nil {
+				return err
+			}
 		}
 		saved = &current
 		savedRows = nextRows
@@ -907,26 +935,12 @@ func (s *agentsService) createAgentPublishedVersion(
 			snapshotMemorySlots = agentMemorySnapshotSlots(enabledAgentMemorySlots(currentMemorySlots))
 		}
 		snapshot["agent_memory_slots"] = snapshotMemorySlots
-		memoryConfigurationChanged := false
-		if memoryService != nil {
-			var previousVersion AgentPublishedVersion
-			previousErr := tx.Where("agent_id = ? AND deleted_at IS NULL", ag.ID).
-				Order("created_at DESC, version DESC").First(&previousVersion).Error
-			if previousErr == nil {
-				previousConfig := agentConfigResponseFromSnapshot(ag.ID.String(), previousVersion.ConfigSnapshot)
-				memoryConfigurationChanged = agentMemoryConfigRevision(
-					previousConfig.AgentMemoryEnabled,
-					previousConfig.AgentMemoryAutoExtractionEnabled,
-					previousConfig.AgentMemorySlots,
-				) != agentMemoryConfigRevision(
-					currentConfig.AgentMemoryEnabled,
-					currentConfig.AgentMemoryAutoExtractionEnabled,
-					snapshotMemorySlots,
-				)
-			} else if !errors.Is(previousErr, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("load previous agent published version: %w", previousErr)
-			}
-		}
+		publishedMemoryRevision := agentMemoryConfigRevision(
+			currentConfig.AgentMemoryEnabled,
+			currentConfig.AgentMemoryAutoExtractionEnabled,
+			snapshotMemorySlots,
+		)
+		snapshot["agent_memory_config_revision"] = publishedMemoryRevision
 		version.ConfigSnapshot = snapshot
 		if err := tx.Create(version).Error; err != nil {
 			return fmt.Errorf("failed to create agent published version: %w", err)
@@ -948,7 +962,14 @@ func (s *agentsService) createAgentPublishedVersion(
 		if memoryService == nil {
 			return nil
 		}
-		if err := memoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(currentMemorySlots), memoryConfigurationChanged); err != nil {
+		if err := memoryService.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopePublished, publishedMemoryRevision); err != nil {
+			return fmt.Errorf("advance published agent memory configuration: %w", err)
+		}
+		keepMemorySlots := currentMemorySlots
+		if currentConfig.AgentMemoryEnabled {
+			keepMemorySlots = snapshotMemorySlots
+		}
+		if err := memoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(keepMemorySlots)); err != nil {
 			return fmt.Errorf("clear removed agent memory values: %w", err)
 		}
 		return nil
@@ -1169,8 +1190,14 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 			return err
 		}
 		if s.agentMemoryService != nil {
-			if _, err := agentmemory.NewService(tx).ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(snapshot.AgentMemorySlots, false)); err != nil {
+			memorySvc := agentmemory.NewService(tx)
+			updatedSlots, err := memorySvc.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(snapshot.AgentMemorySlots, false))
+			if err != nil {
 				return fmt.Errorf("replace agent memory slots during rollback: %w", err)
+			}
+			revision := agentMemoryConfigRevision(snapshot.AgentMemoryEnabled, snapshot.AgentMemoryAutoExtractionEnabled, agentMemorySlotConfigsFromResponses(updatedSlots))
+			if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, revision); err != nil {
+				return fmt.Errorf("advance draft agent memory configuration during rollback: %w", err)
 			}
 		}
 		result = agentConfigResponse(ag.ID.String(), &current)
@@ -1440,6 +1467,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"agent_memory_enabled":                 resp.AgentMemoryEnabled,
 		"agent_memory_auto_extraction_enabled": resp.AgentMemoryAutoExtractionEnabled,
 		"agent_memory_slots":                   normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
+		"agent_memory_config_revision":         resp.AgentMemoryConfigRevision,
 		"file_upload_enabled":                  resp.FileUpload,
 		"home_title":                           resp.HomeTitle,
 		"opening_statement":                    resp.OpeningStatement,
@@ -1491,6 +1519,10 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 		resp.AgentMemoryAutoExtractionEnabled = enabled
 	}
 	resp.AgentMemorySlots = agentMemorySlotConfigsFromSnapshot(snapshot["agent_memory_slots"])
+	resp.AgentMemoryConfigRevision = strings.TrimSpace(stringFromSnapshot(snapshot, "agent_memory_config_revision"))
+	if resp.AgentMemoryConfigRevision == "" {
+		resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
+	}
 	if fileUpload, ok := snapshot["file_upload_enabled"].(bool); ok {
 		resp.FileUpload = fileUpload
 	}

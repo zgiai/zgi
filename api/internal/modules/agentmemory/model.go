@@ -145,27 +145,51 @@ func (s *AgentMemorySubjectState) BeforeCreate(tx *gorm.DB) error {
 	return nil
 }
 
+// AgentMemoryAgentState fences runtime writes against stale draft or published
+// memory configurations without touching every subject row when configuration changes.
+type AgentMemoryAgentState struct {
+	ID                      uuid.UUID `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
+	WorkspaceID             uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_agent_memory_agent_scope,priority:1" json:"workspace_id"`
+	AgentID                 uuid.UUID `gorm:"type:uuid;not null;uniqueIndex:idx_agent_memory_agent_scope,priority:2" json:"agent_id"`
+	DraftConfigRevision     string    `gorm:"type:varchar(64);not null;default:''" json:"draft_config_revision"`
+	PublishedConfigRevision string    `gorm:"type:varchar(64);not null;default:''" json:"published_config_revision"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+func (AgentMemoryAgentState) TableName() string { return "agent_memory_agent_states" }
+
+func (s *AgentMemoryAgentState) BeforeCreate(tx *gorm.DB) error {
+	if s.ID == uuid.Nil {
+		s.ID = uuid.New()
+	}
+	return nil
+}
+
 // AgentMemoryExtractionJob is a durable outbox record. It stores references only.
 type AgentMemoryExtractionJob struct {
-	ID                 uuid.UUID  `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
-	WorkspaceID        uuid.UUID  `gorm:"type:uuid;not null;index:idx_agent_memory_jobs_due,priority:1" json:"workspace_id"`
-	AgentID            uuid.UUID  `gorm:"type:uuid;not null;index" json:"agent_id"`
-	UserScope          string     `gorm:"type:varchar(32);not null" json:"user_scope"`
-	UserID             uuid.UUID  `gorm:"type:uuid;not null" json:"user_id"`
-	ConversationID     uuid.UUID  `gorm:"type:uuid;not null" json:"conversation_id"`
-	MessageWatermarkID uuid.UUID  `gorm:"type:uuid;not null" json:"message_watermark_id"`
-	MemoryEpoch        int64      `gorm:"not null;default:0" json:"memory_epoch"`
-	ExtractorVersion   string     `gorm:"type:varchar(64);not null" json:"extractor_version"`
-	IdempotencyKey     string     `gorm:"type:varchar(128);not null;uniqueIndex" json:"idempotency_key"`
-	Status             string     `gorm:"type:varchar(24);not null;default:'pending';index:idx_agent_memory_jobs_due,priority:2" json:"status"`
-	AttemptCount       int        `gorm:"not null;default:0" json:"attempt_count"`
-	ErrorCode          string     `gorm:"type:varchar(64);not null;default:''" json:"error_code,omitempty"`
-	ScheduledAt        time.Time  `gorm:"not null;index:idx_agent_memory_jobs_due,priority:3" json:"scheduled_at"`
-	ForceAt            time.Time  `gorm:"not null" json:"force_at"`
-	StartedAt          *time.Time `json:"started_at,omitempty"`
-	FinishedAt         *time.Time `json:"finished_at,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ID                 uuid.UUID      `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
+	WorkspaceID        uuid.UUID      `gorm:"type:uuid;not null;index:idx_agent_memory_jobs_due,priority:1" json:"workspace_id"`
+	AgentID            uuid.UUID      `gorm:"type:uuid;not null;index" json:"agent_id"`
+	UserScope          string         `gorm:"type:varchar(32);not null" json:"user_scope"`
+	UserID             uuid.UUID      `gorm:"type:uuid;not null" json:"user_id"`
+	ConversationID     uuid.UUID      `gorm:"type:uuid;not null" json:"conversation_id"`
+	MessageWatermarkID uuid.UUID      `gorm:"type:uuid;not null" json:"message_watermark_id"`
+	MemoryEpoch        int64          `gorm:"not null;default:0" json:"memory_epoch"`
+	ConfigScope        string         `gorm:"type:varchar(16);not null;default:''" json:"config_scope"`
+	ConfigRevision     string         `gorm:"type:varchar(64);not null;default:''" json:"config_revision"`
+	RuntimeSlots       datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"runtime_slots"`
+	ExtractorVersion   string         `gorm:"type:varchar(64);not null" json:"extractor_version"`
+	IdempotencyKey     string         `gorm:"type:varchar(128);not null;uniqueIndex" json:"idempotency_key"`
+	Status             string         `gorm:"type:varchar(24);not null;default:'pending';index:idx_agent_memory_jobs_due,priority:2" json:"status"`
+	AttemptCount       int            `gorm:"not null;default:0" json:"attempt_count"`
+	ErrorCode          string         `gorm:"type:varchar(64);not null;default:''" json:"error_code,omitempty"`
+	ScheduledAt        time.Time      `gorm:"not null;index:idx_agent_memory_jobs_due,priority:3" json:"scheduled_at"`
+	ForceAt            time.Time      `gorm:"not null" json:"force_at"`
+	StartedAt          *time.Time     `json:"started_at,omitempty"`
+	FinishedAt         *time.Time     `json:"finished_at,omitempty"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
 }
 
 func (AgentMemoryExtractionJob) TableName() string { return "agent_memory_extraction_jobs" }

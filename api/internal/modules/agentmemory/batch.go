@@ -54,7 +54,11 @@ func (s *Service) MutateValues(
 	if requiresEpoch && meta.MemoryEpoch == nil {
 		return nil, fmt.Errorf("%w: automatic memory epoch is required", ErrInvalidInput)
 	}
-	if !requiresEpoch {
+	requiresFence := requiresEpoch || strings.TrimSpace(meta.ConfigScope) != "" || strings.TrimSpace(meta.ConfigRevision) != ""
+	if requiresEpoch && (strings.TrimSpace(meta.ConfigScope) == "" || strings.TrimSpace(meta.ConfigRevision) == "") {
+		return nil, fmt.Errorf("%w: automatic memory configuration fence is required", ErrInvalidInput)
+	}
+	if !requiresFence {
 		if response, complete, receiptErr := mutationReceiptResponse(ctx, s.repo, workspaceID, agentID, userScope, userID, operations); receiptErr != nil {
 			return nil, receiptErr
 		} else if complete {
@@ -63,6 +67,11 @@ func (s *Service) MutateValues(
 	}
 	var response *MutateValuesResponse
 	err = s.repo.WithTransaction(ctx, func(tx store) error {
+		if requiresFence {
+			if err := lockAgentConfigRevision(ctx, tx, workspaceID, agentID, meta.ConfigScope, meta.ConfigRevision); err != nil {
+				return err
+			}
+		}
 		state, lockErr := tx.LockSubjectState(ctx, workspaceID, agentID, userScope, userID)
 		if lockErr != nil {
 			return lockErr
@@ -187,7 +196,7 @@ func (s *Service) MutateValues(
 	if err == nil {
 		return response, nil
 	}
-	if !requiresEpoch {
+	if !requiresFence {
 		if response, complete, receiptErr := mutationReceiptResponse(ctx, s.repo, workspaceID, agentID, userScope, userID, operations); receiptErr == nil && complete {
 			return response, nil
 		}

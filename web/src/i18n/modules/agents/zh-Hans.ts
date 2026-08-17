@@ -1934,6 +1934,7 @@ const messages: AgentsMessages = {
       rollbackFailed: '恢复所选版本失败',
       rollbackImpactChanged: '资源状态已变化，请确认最新的回滚影响后重试',
       bindingRevisionRebased: '绑定已被其他操作更新，已保留非绑定修改并采用服务端绑定：{resources}',
+      memoryRevisionChanged: '记忆配置已在其他页面更新。当前草稿已保留，请刷新后重新确认。',
       finishVersionPreviewFirst: '请先确认或取消版本预览',
       fixMemorySlotsBeforeSave: '请先修正记忆名称后再保存。',
       fixMemorySlotsBeforePublish: '请先修正记忆名称后再发布。',

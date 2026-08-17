@@ -287,16 +287,9 @@ type automaticOperation struct {
 }
 
 func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn) (bool, error) {
-	slots, err := r.memory.ListSlots(ctx, job.AgentID)
+	runtimeSlots, err := extractionJobRuntimeSlots(job)
 	if err != nil {
 		return false, err
-	}
-	runtimeSlots := make([]agentmemory.RuntimeSlot, 0, len(slots))
-	for _, slot := range slots {
-		if !slot.Enabled {
-			continue
-		}
-		runtimeSlots = append(runtimeSlots, agentmemory.RuntimeSlot{Key: slot.Key, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: true, SortOrder: slot.SortOrder})
 	}
 	if len(runtimeSlots) == 0 {
 		return false, nil
@@ -374,6 +367,7 @@ func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemo
 	_, err = r.memory.MutateValues(ctx, job.WorkspaceID, job.AgentID, runtimeSlots, job.UserScope, job.UserID, agentmemory.MutateValuesRequest{Operations: mutations}, agentmemory.MutationMetadata{
 		ActorType: agentmemory.EventActorModel, Source: agentmemory.EventSourceAgent,
 		SourceConversationID: &job.ConversationID, ExtractorVersion: job.ExtractorVersion, MemoryEpoch: &job.MemoryEpoch,
+		ConfigScope: job.ConfigScope, ConfigRevision: job.ConfigRevision,
 	})
 	if errors.Is(err, agentmemory.ErrConflict) || (err != nil && errors.Is(errors.Unwrap(err), agentmemory.ErrConflict)) {
 		return true, nil
@@ -382,6 +376,33 @@ func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemo
 		return false, err
 	}
 	return false, nil
+}
+
+func extractionJobRuntimeSlots(job *agentmemory.AgentMemoryExtractionJob) ([]agentmemory.RuntimeSlot, error) {
+	if job == nil || len(job.RuntimeSlots) == 0 {
+		return nil, fmt.Errorf("memory extraction job is missing its slot snapshot")
+	}
+	var stored []agentmemory.RuntimeSlot
+	if err := json.Unmarshal(job.RuntimeSlots, &stored); err != nil {
+		return nil, fmt.Errorf("decode memory extraction slot snapshot: %w", err)
+	}
+	runtimeSlots := make([]agentmemory.RuntimeSlot, 0, len(stored))
+	seen := make(map[string]struct{}, len(stored))
+	for _, slot := range stored {
+		slot.Key = strings.ToLower(strings.TrimSpace(slot.Key))
+		if !slot.Enabled || slot.Key == "" || slot.MaxChars <= 0 {
+			continue
+		}
+		if _, ok := seen[slot.Key]; ok {
+			continue
+		}
+		seen[slot.Key] = struct{}{}
+		runtimeSlots = append(runtimeSlots, slot)
+	}
+	if len(runtimeSlots) == 0 {
+		return nil, fmt.Errorf("memory extraction job has no enabled slot snapshot")
+	}
+	return runtimeSlots, nil
 }
 
 func (r *Runner) decide(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) ([]automaticOperation, error) {

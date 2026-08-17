@@ -79,7 +79,7 @@ type fakeMemoryService struct {
 	request agentmemory.MutateValuesRequest
 }
 
-func (f *fakeMemoryService) ReadSubjectEpoch(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID) (int64, error) {
+func (f *fakeMemoryService) ReadRuntimeFence(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID, string, string) (int64, error) {
 	return 0, errors.New("unexpected epoch read")
 }
 

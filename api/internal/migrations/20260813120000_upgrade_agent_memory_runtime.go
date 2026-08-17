@@ -91,6 +91,17 @@ func upUpgradeAgentMemoryRuntime(schema *mschema.Builder) error {
 			CONSTRAINT idx_agent_memory_subject_scope UNIQUE (workspace_id, agent_id, user_scope, user_id)
 		);
 
+		CREATE TABLE IF NOT EXISTS public.agent_memory_agent_states (
+			id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+			workspace_id uuid NOT NULL,
+			agent_id uuid NOT NULL REFERENCES public.agents(id) ON DELETE CASCADE,
+			draft_config_revision varchar(64) NOT NULL DEFAULT '',
+			published_config_revision varchar(64) NOT NULL DEFAULT '',
+			created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			CONSTRAINT idx_agent_memory_agent_scope UNIQUE (workspace_id, agent_id)
+		);
+
 		CREATE TABLE IF NOT EXISTS public.agent_memory_extraction_jobs (
 			id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
 			workspace_id uuid NOT NULL,
@@ -100,6 +111,9 @@ func upUpgradeAgentMemoryRuntime(schema *mschema.Builder) error {
 			conversation_id uuid NOT NULL,
 			message_watermark_id uuid NOT NULL,
 			memory_epoch bigint NOT NULL DEFAULT 0,
+			config_scope varchar(16) NOT NULL DEFAULT '',
+			config_revision varchar(64) NOT NULL DEFAULT '',
+			runtime_slots jsonb NOT NULL DEFAULT '[]'::jsonb,
 			extractor_version varchar(64) NOT NULL,
 			idempotency_key varchar(128) NOT NULL UNIQUE,
 			status varchar(24) NOT NULL DEFAULT 'pending',
@@ -156,5 +170,8 @@ func downUpgradeAgentMemoryRuntime(schema *mschema.Builder) error {
 	if err := schema.DropIfExists("agent_memory_extraction_jobs"); err != nil {
 		return err
 	}
-	return schema.DropIfExists("agent_memory_subject_states")
+	if err := schema.DropIfExists("agent_memory_subject_states"); err != nil {
+		return err
+	}
+	return schema.DropIfExists("agent_memory_agent_states")
 }

@@ -60,6 +60,8 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.AgentMemoryAutoExtractionEnabled = config.AgentMemoryAutoExtractionEnabled
 	parts.AgentMemorySlots = normalizeAgentMemorySlots(config.AgentMemorySlots)
 	parts.AgentMemoryUserScope = strings.TrimSpace(config.AgentMemoryUserScope)
+	parts.AgentMemoryConfigScope = strings.TrimSpace(config.AgentMemoryConfigScope)
+	parts.AgentMemoryConfigRevision = strings.TrimSpace(config.AgentMemoryConfigRevision)
 	parts.AgentMemoryAgentID = strings.TrimSpace(config.BillingAppID)
 	parts.BillingSource = strings.TrimSpace(config.BillingAppType)
 	if runConfigDisablesUserMemory(config) {

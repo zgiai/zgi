@@ -31,22 +31,40 @@ func (s *agentsService) ListAgentMemorySlots(ctx context.Context, agentID, accou
 }
 
 func (s *agentsService) ReplaceAgentMemorySlots(ctx context.Context, agentID, accountID string, slots []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error) {
-	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
 	if err != nil {
 		return nil, err
 	}
-	if s.agentMemoryService == nil {
-		return nil, fmt.Errorf("agent memory service is not configured")
+	if s.db == nil || s.agentMemoryService == nil {
+		return nil, fmt.Errorf("database and agent memory service are required")
 	}
 	actorID, err := uuid.Parse(accountID)
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
 	}
-	updated, err := s.agentMemoryService.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(slots, true))
-	if err != nil {
-		return nil, err
-	}
-	return agentMemorySlotConfigsFromResponses(updated), nil
+	var result []dto.AgentMemorySlotConfig
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current AgentsConfig
+		query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("deleted_at IS NULL")
+		if cfg != nil && cfg.ID != uuid.Nil {
+			query = query.Where("id = ?", cfg.ID)
+		} else {
+			query = query.Where("agents_id = ?", ag.ID).Order("updated_at DESC")
+		}
+		if err := query.Take(&current).Error; err != nil {
+			return err
+		}
+		memorySvc := agentmemory.NewService(tx)
+		updated, err := memorySvc.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(slots, true))
+		if err != nil {
+			return err
+		}
+		result = agentMemorySlotConfigsFromResponses(updated)
+		config := agentConfigResponse(ag.ID.String(), &current)
+		revision := agentMemoryConfigRevision(config.AgentMemoryEnabled, config.AgentMemoryAutoExtractionEnabled, result)
+		return memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, revision)
+	})
+	return result, err
 }
 
 func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, accountID string) (*dto.AgentMemoryValuesResponse, error) {
@@ -368,6 +386,9 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 		}
 		slots := agentMemorySlotConfigsFromResponses(updatedSlots)
 		result = &dto.AgentMemoryConfigResponse{Enabled: req.Enabled, AutoExtractionEnabled: req.AutoExtractionEnabled, Slots: slots, ConfigRevision: agentMemoryConfigRevision(req.Enabled, req.AutoExtractionEnabled, slots)}
+		if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, result.ConfigRevision); err != nil {
+			return err
+		}
 		return nil
 	})
 	return result, err

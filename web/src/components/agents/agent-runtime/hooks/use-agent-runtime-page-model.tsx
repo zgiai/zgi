@@ -80,6 +80,13 @@ const EMPTY_PUBLISH_VERSION_DETAILS: AgentPublishVersionDetails = {
   description: '',
 };
 
+class AgentMemoryRevisionChangedError extends Error {
+  constructor() {
+    super('Agent memory configuration changed during binding conflict recovery');
+    this.name = 'AgentMemoryRevisionChangedError';
+  }
+}
+
 function describeBindingChanges(
   local: UpdateAgentRuntimeConfigRequest,
   server: Partial<AgentRuntimeConfig>,
@@ -712,6 +719,11 @@ export function useAgentRuntimePageModel(agentId: string) {
         if (conflict?.bindingHealth) setBindingHealth(conflict.bindingHealth);
         const serverConfig = conflict?.currentConfig;
         if (!serverConfig?.binding_revision) throw error;
+        const serverMemoryRevision = serverConfig.agent_memory_config_revision?.trim() ?? '';
+        const submittedMemoryRevision = configPayload.agent_memory_config_revision?.trim() ?? '';
+        if (serverMemoryRevision && serverMemoryRevision !== submittedMemoryRevision) {
+          throw new AgentMemoryRevisionChangedError();
+        }
         const changedBindings = describeBindingChanges(payload, serverConfig, {
           skill: t('bindingHealth.types.skill'),
           knowledge: t('bindingHealth.types.knowledge_dataset'),
@@ -823,7 +835,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       if (!options.silent) {
         const bindingConflict = getAgentBindingConflict(error);
         toast.error(
-          bindingConflict?.code === 'agent_bindings_invalid'
+          error instanceof AgentMemoryRevisionChangedError
+            ? t('toasts.memoryRevisionChanged')
+            : bindingConflict?.code === 'agent_bindings_invalid'
             ? t('toasts.saveBindingsInvalid')
             : t('toasts.saveFailedDraftKept')
         );

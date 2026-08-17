@@ -29,14 +29,16 @@ type Slot struct {
 }
 
 type State struct {
-	Enabled       bool
-	AgentID       uuid.UUID
-	UserScope     string
-	MemoryEpoch   *int64
-	EnabledSlots  []Slot
-	SavedValues   []agentmemory.SlotValueResponse
-	ContextStatus string
-	ContextError  string
+	Enabled        bool
+	AgentID        uuid.UUID
+	UserScope      string
+	MemoryEpoch    *int64
+	ConfigScope    string
+	ConfigRevision string
+	EnabledSlots   []Slot
+	SavedValues    []agentmemory.SlotValueResponse
+	ContextStatus  string
+	ContextError   string
 }
 
 type ToolOperation struct {
@@ -52,21 +54,23 @@ type ToolArguments struct {
 }
 
 type MemoryService interface {
-	ReadSubjectEpoch(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (int64, error)
+	ReadRuntimeFence(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, configScope, configRevision string) (int64, error)
 	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
 	MutateValues(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.MutateValuesRequest, meta agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error)
 }
 
 type ContextRequest struct {
-	SystemPrompt  string
-	Enabled       bool
-	Slots         []Slot
-	MemoryService MemoryService
-	WorkspaceID   uuid.UUID
-	AgentID       uuid.UUID
-	UserID        uuid.UUID
-	UserScope     string
-	Budget        int
+	SystemPrompt   string
+	Enabled        bool
+	Slots          []Slot
+	MemoryService  MemoryService
+	WorkspaceID    uuid.UUID
+	AgentID        uuid.UUID
+	UserID         uuid.UUID
+	UserScope      string
+	ConfigScope    string
+	ConfigRevision string
+	Budget         int
 }
 
 type ContextResult struct {
@@ -105,6 +109,7 @@ func RuntimeSlots(input []Slot) []agentmemory.RuntimeSlot {
 		}
 		out = append(out, agentmemory.RuntimeSlot{
 			Key:         slot.Key,
+			Name:        slot.Name,
 			Description: slot.Description,
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,

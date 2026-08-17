@@ -23,6 +23,7 @@ import { getErrorMessage } from '@/utils/error-notifications';
 
 interface AgentMemoryManagerProps {
   webAppId: string;
+  memoryEnabled: boolean;
 }
 
 function downloadJSON(filename: string, value: unknown) {
@@ -38,7 +39,7 @@ function downloadJSON(filename: string, value: unknown) {
   URL.revokeObjectURL(url);
 }
 
-export function AgentMemoryManager({ webAppId }: AgentMemoryManagerProps) {
+export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManagerProps) {
   const t = useT('webapp.agentChat.memory');
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<WebAppAgentMemoryValue[]>([]);
@@ -220,7 +221,7 @@ export function AgentMemoryManager({ webAppId }: AgentMemoryManagerProps) {
                       value={draft}
                       maxLength={value.max_chars}
                       rows={4}
-                      disabled={isBusy}
+                      disabled={isBusy || !memoryEnabled}
                       onChange={event =>
                         setDrafts(current => ({ ...current, [value.key]: event.target.value }))
                       }
@@ -253,7 +254,9 @@ export function AgentMemoryManager({ webAppId }: AgentMemoryManagerProps) {
                       <Button
                         type="button"
                         size="sm"
-                        disabled={isBusy || !draft.trim() || draft === value.content}
+                        disabled={
+                          isBusy || !memoryEnabled || !draft.trim() || draft === value.content
+                        }
                         onClick={() => void save(value)}
                       >
                         {isBusy ? (

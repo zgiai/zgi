@@ -301,6 +301,10 @@ func (h *AgentsHandler) webAppAgentRuntimeAccess(c *gin.Context) (runtimeservice
 }
 
 func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResponse, agentMemoryUserScope string) runtimeservice.RunConfig {
+	memoryConfigScope := agentmemory.ConfigScopeDraft
+	if strings.HasPrefix(strings.TrimSpace(systemPromptVersion), "agent.published.") {
+		memoryConfigScope = agentmemory.ConfigScopePublished
+	}
 	return runtimeservice.RunConfig{
 		SystemPrompt:                     cfg.SystemPrompt,
 		SystemPromptVersion:              systemPromptVersion,
@@ -326,6 +330,8 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		AgentMemoryAutoExtractionEnabled: cfg.AgentMemoryAutoExtractionEnabled,
 		AgentMemorySlots:                 agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
 		AgentMemoryUserScope:             agentMemoryUserScope,
+		AgentMemoryConfigScope:           memoryConfigScope,
+		AgentMemoryConfigRevision:        cfg.AgentMemoryConfigRevision,
 		BillingAppID:                     agentID,
 		BillingAppType:                   runtimemodel.ConversationCallerAgent,
 	}

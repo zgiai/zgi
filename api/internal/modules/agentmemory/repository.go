@@ -244,6 +244,37 @@ func (r *Repository) FindUndoExpiry(ctx context.Context, operationID uuid.UUID) 
 	return &row.ExpiresAt, nil
 }
 
+func (r *Repository) LockAgentState(ctx context.Context, workspaceID, agentID uuid.UUID) (*AgentMemoryAgentState, error) {
+	seed := AgentMemoryAgentState{WorkspaceID: workspaceID, AgentID: agentID}
+	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&seed).Error; err != nil {
+		return nil, err
+	}
+	var state AgentMemoryAgentState
+	err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("workspace_id = ? AND agent_id = ?", workspaceID, agentID).First(&state).Error
+	return &state, err
+}
+
+func (r *Repository) UpdateAgentConfigRevision(ctx context.Context, state *AgentMemoryAgentState, scope, revision string) error {
+	updates := map[string]interface{}{"updated_at": time.Now()}
+	switch scope {
+	case ConfigScopeDraft:
+		updates["draft_config_revision"] = revision
+	case ConfigScopePublished:
+		updates["published_config_revision"] = revision
+	default:
+		return ErrInvalidInput
+	}
+	return r.db.WithContext(ctx).Model(&AgentMemoryAgentState{}).Where("id = ?", state.ID).Updates(updates).Error
+}
+
+func (r *Repository) CancelPendingJobsForAgentConfig(ctx context.Context, workspaceID, agentID uuid.UUID, scope, revision string) error {
+	now := time.Now()
+	return r.db.WithContext(ctx).Model(&AgentMemoryExtractionJob{}).
+		Where("workspace_id = ? AND agent_id = ? AND config_scope = ? AND config_revision <> ? AND status IN ?", workspaceID, agentID, scope, revision, []string{ExtractionJobPending, ExtractionJobQueued, ExtractionJobFailed}).
+		Updates(map[string]interface{}{"status": ExtractionJobCancelled, "error_code": "memory_config_changed", "finished_at": now, "updated_at": now}).Error
+}
+
 func (r *Repository) LockSubjectState(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentMemorySubjectState, error) {
 	seed := AgentMemorySubjectState{WorkspaceID: workspaceID, AgentID: agentID, UserScope: userScope, UserID: userID}
 	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&seed).Error; err != nil {
@@ -254,14 +285,6 @@ func (r *Repository) LockSubjectState(ctx context.Context, workspaceID, agentID 
 		Where("workspace_id = ? AND agent_id = ? AND user_scope = ? AND user_id = ?", workspaceID, agentID, userScope, userID).
 		First(&state).Error
 	return &state, err
-}
-
-func (r *Repository) ListSubjectStatesForAgentForUpdate(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemorySubjectState, error) {
-	var states []*AgentMemorySubjectState
-	err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("workspace_id = ? AND agent_id = ?", workspaceID, agentID).
-		Order("user_scope ASC, user_id ASC").Find(&states).Error
-	return states, err
 }
 
 func (r *Repository) UpdateSubjectEpoch(ctx context.Context, state *AgentMemorySubjectState, epoch int64) error {

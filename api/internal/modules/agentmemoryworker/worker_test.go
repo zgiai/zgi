@@ -1,12 +1,27 @@
 package agentmemoryworker
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 )
+
+func TestExtractionJobUsesStoredRuntimeSlotSnapshot(t *testing.T) {
+	raw, err := json.Marshal([]agentmemory.RuntimeSlot{{Key: "published_profile", Name: "Published profile", Enabled: true, MaxChars: 500}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slots, err := extractionJobRuntimeSlots(&agentmemory.AgentMemoryExtractionJob{RuntimeSlots: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 1 || slots[0].Key != "published_profile" || slots[0].Name != "Published profile" {
+		t.Fatalf("runtime slots = %#v", slots)
+	}
+}
 
 func TestParseAutomaticOperationsAcceptsOnlyUpsertOrNone(t *testing.T) {
 	operations, err := parseAutomaticOperations(`{"operations":[{"action":"upsert","key":"profile","content":"Prefers concise replies","evidence":"I prefer concise replies","confidence":0.42},{"action":"none","key":"project"}]}`)

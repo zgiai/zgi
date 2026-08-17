@@ -21,16 +21,18 @@ func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error
 		},
 	}
 	state := &State{
-		Enabled:       true,
-		AgentID:       req.AgentID,
-		UserScope:     strings.TrimSpace(req.UserScope),
-		EnabledSlots:  slots,
-		ContextStatus: "skipped_scope",
+		Enabled:        true,
+		AgentID:        req.AgentID,
+		UserScope:      strings.TrimSpace(req.UserScope),
+		ConfigScope:    strings.TrimSpace(req.ConfigScope),
+		ConfigRevision: strings.TrimSpace(req.ConfigRevision),
+		EnabledSlots:   slots,
+		ContextStatus:  "skipped_scope",
 	}
 	if req.MemoryService == nil || req.WorkspaceID == zeroUUID || req.AgentID == zeroUUID {
 		return ContextResult{SystemPrompt: req.SystemPrompt, Metadata: metadata, State: state}, nil
 	}
-	epoch, err := req.MemoryService.ReadSubjectEpoch(ctx, req.WorkspaceID, req.AgentID, req.UserScope, req.UserID)
+	epoch, err := req.MemoryService.ReadRuntimeFence(ctx, req.WorkspaceID, req.AgentID, req.UserScope, req.UserID, req.ConfigScope, req.ConfigRevision)
 	if err != nil {
 		state.ContextStatus = "error"
 		metadata["agent_memory"] = map[string]interface{}{

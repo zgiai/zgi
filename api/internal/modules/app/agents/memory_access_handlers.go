@@ -17,15 +17,17 @@ type directMemoryUpdateRequest struct {
 }
 
 type memoryAccessScope struct {
-	workspaceID   uuid.UUID
-	agentID       uuid.UUID
-	userScope     string
-	userID        uuid.UUID
-	slots         []agentmemory.RuntimeSlot
-	writeSlots    []agentmemory.RuntimeSlot
-	writesEnabled bool
-	actorType     string
-	sourceKind    string
+	workspaceID    uuid.UUID
+	agentID        uuid.UUID
+	userScope      string
+	userID         uuid.UUID
+	slots          []agentmemory.RuntimeSlot
+	writeSlots     []agentmemory.RuntimeSlot
+	writesEnabled  bool
+	actorType      string
+	sourceKind     string
+	configScope    string
+	configRevision string
 }
 
 func (h *AgentsHandler) GetWebAppMemory(c *gin.Context) {
@@ -107,21 +109,24 @@ func (h *AgentsHandler) webAppMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		response.Fail(c, response.ErrInvalidParam)
 		return memoryAccessScope{}, false
 	}
-	privacySlots, err := h.agentMemoryPrivacySlots(c, *runtimeCtx.Caller.ID)
+	writeSlots := agentMemoryRuntimeStoreSlots(runtimeCtx.RunConfig.AgentMemorySlots)
+	privacySlots, err := h.memoryService().PrivacySlots(c.Request.Context(), *runtimeCtx.Scope.WorkspaceID, *runtimeCtx.Caller.ID, writeSlots, agentmemory.UserScopeAccount, runtimeCtx.Scope.AccountID)
 	if err != nil {
 		h.failRuntime(c, err)
 		return memoryAccessScope{}, false
 	}
 	return memoryAccessScope{
-		workspaceID:   *runtimeCtx.Scope.WorkspaceID,
-		agentID:       *runtimeCtx.Caller.ID,
-		userScope:     agentmemory.UserScopeAccount,
-		userID:        runtimeCtx.Scope.AccountID,
-		slots:         privacySlots,
-		writeSlots:    agentMemoryRuntimeStoreSlots(runtimeCtx.RunConfig.AgentMemorySlots),
-		writesEnabled: runtimeCtx.RunConfig.AgentMemoryEnabled,
-		actorType:     agentmemory.EventActorUser,
-		sourceKind:    agentmemory.SourceKindExplicit,
+		workspaceID:    *runtimeCtx.Scope.WorkspaceID,
+		agentID:        *runtimeCtx.Caller.ID,
+		userScope:      agentmemory.UserScopeAccount,
+		userID:         runtimeCtx.Scope.AccountID,
+		slots:          privacySlots,
+		writeSlots:     writeSlots,
+		writesEnabled:  runtimeCtx.RunConfig.AgentMemoryEnabled,
+		actorType:      agentmemory.EventActorUser,
+		sourceKind:     agentmemory.SourceKindExplicit,
+		configScope:    runtimeCtx.RunConfig.AgentMemoryConfigScope,
+		configRevision: runtimeCtx.RunConfig.AgentMemoryConfigRevision,
 	}, true
 }
 
@@ -146,45 +151,31 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 		h.failRuntime(c, err)
 		return memoryAccessScope{}, false
 	}
-	privacySlots, err := h.agentMemoryPrivacySlots(c, agentID)
+	writeSlots := agentMemoryRuntimeStoreSlots(agentMemoryRuntimeSlots(published.Config.AgentMemorySlots))
+	privacySlots, err := h.memoryService().PrivacySlots(c.Request.Context(), workspaceID, agentID, writeSlots, agentmemory.UserScopeEndUser, externalAgentMemoryUserID(workspaceID, agentID, externalUser))
 	if err != nil {
 		h.failRuntime(c, err)
 		return memoryAccessScope{}, false
 	}
 	return memoryAccessScope{
-		workspaceID:   workspaceID,
-		agentID:       agentID,
-		userScope:     agentmemory.UserScopeEndUser,
-		userID:        externalAgentMemoryUserID(workspaceID, agentID, externalUser),
-		slots:         privacySlots,
-		writeSlots:    agentMemoryRuntimeStoreSlots(agentMemoryRuntimeSlots(published.Config.AgentMemorySlots)),
-		writesEnabled: published.Config.AgentMemoryEnabled,
-		actorType:     agentmemory.EventActorOrganizer,
-		sourceKind:    agentmemory.SourceKindManager,
+		workspaceID:    workspaceID,
+		agentID:        agentID,
+		userScope:      agentmemory.UserScopeEndUser,
+		userID:         externalAgentMemoryUserID(workspaceID, agentID, externalUser),
+		slots:          privacySlots,
+		writeSlots:     writeSlots,
+		writesEnabled:  published.Config.AgentMemoryEnabled,
+		actorType:      agentmemory.EventActorOrganizer,
+		sourceKind:     agentmemory.SourceKindManager,
+		configScope:    agentmemory.ConfigScopePublished,
+		configRevision: published.Config.AgentMemoryConfigRevision,
 	}, true
-}
-
-func (h *AgentsHandler) agentMemoryPrivacySlots(c *gin.Context, agentID uuid.UUID) ([]agentmemory.RuntimeSlot, error) {
-	configured, err := h.memoryService().ListSlots(c.Request.Context(), agentID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]agentmemory.RuntimeSlot, 0, len(configured))
-	for _, slot := range configured {
-		// Privacy operations remain available for inactive slots so users can
-		// inspect, export, delete, or undo retained data after memory is disabled.
-		out = append(out, agentmemory.RuntimeSlot{
-			Key: slot.Key, Description: slot.Description, MaxChars: slot.MaxChars,
-			Enabled: true, SortOrder: slot.SortOrder,
-		})
-	}
-	return out, nil
 }
 
 func agentMemoryRuntimeStoreSlots(slots []runtimeservice.AgentMemorySlotConfig) []agentmemory.RuntimeSlot {
 	out := make([]agentmemory.RuntimeSlot, 0, len(slots))
 	for _, slot := range slots {
-		out = append(out, agentmemory.RuntimeSlot{Key: slot.Key, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder})
+		out = append(out, agentmemory.RuntimeSlot{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder})
 	}
 	return out
 }
@@ -193,9 +184,11 @@ func (h *AgentsHandler) memoryService() *agentmemory.Service { return agentmemor
 
 func (access memoryAccessScope) mutationMetadata() agentmemory.MutationMetadata {
 	return agentmemory.MutationMetadata{
-		ActorType:  access.actorType,
-		Source:     agentmemory.EventSourceAPI,
-		SourceKind: access.sourceKind,
+		ActorType:      access.actorType,
+		Source:         agentmemory.EventSourceAPI,
+		SourceKind:     access.sourceKind,
+		ConfigScope:    access.configScope,
+		ConfigRevision: access.configRevision,
 	}
 }
 

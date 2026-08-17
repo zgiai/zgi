@@ -19,6 +19,7 @@ type fakeStore struct {
 	undos       map[uuid.UUID]*AgentMemoryUndoRecord
 	jobs        map[uuid.UUID]*AgentMemoryExtractionJob
 	subjects    map[string]*AgentMemorySubjectState
+	agents      map[string]*AgentMemoryAgentState
 }
 
 func newFakeStore(workspaceID uuid.UUID) *fakeStore {
@@ -29,6 +30,7 @@ func newFakeStore(workspaceID uuid.UUID) *fakeStore {
 		undos:       map[uuid.UUID]*AgentMemoryUndoRecord{},
 		jobs:        map[uuid.UUID]*AgentMemoryExtractionJob{},
 		subjects:    map[string]*AgentMemorySubjectState{},
+		agents:      map[string]*AgentMemoryAgentState{},
 	}
 }
 
@@ -66,6 +68,10 @@ func (f *fakeStore) clone() *fakeStore {
 	for key, state := range f.subjects {
 		value := *state
 		cloned.subjects[key] = &value
+	}
+	for key, state := range f.agents {
+		value := *state
+		cloned.agents[key] = &value
 	}
 	return cloned
 }
@@ -261,6 +267,40 @@ func (f *fakeStore) FindUndoExpiry(ctx context.Context, operationID uuid.UUID) (
 
 func subjectKey(workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) string {
 	return workspaceID.String() + ":" + agentID.String() + ":" + userScope + ":" + userID.String()
+}
+func agentStateKey(workspaceID, agentID uuid.UUID) string {
+	return workspaceID.String() + ":" + agentID.String()
+}
+func (f *fakeStore) LockAgentState(ctx context.Context, workspaceID, agentID uuid.UUID) (*AgentMemoryAgentState, error) {
+	key := agentStateKey(workspaceID, agentID)
+	state := f.agents[key]
+	if state == nil {
+		state = &AgentMemoryAgentState{ID: uuid.New(), WorkspaceID: workspaceID, AgentID: agentID}
+		f.agents[key] = state
+	}
+	copy := *state
+	return &copy, nil
+}
+func (f *fakeStore) UpdateAgentConfigRevision(ctx context.Context, state *AgentMemoryAgentState, scope, revision string) error {
+	stored := f.agents[agentStateKey(state.WorkspaceID, state.AgentID)]
+	if stored == nil {
+		return gorm.ErrRecordNotFound
+	}
+	if scope == ConfigScopePublished {
+		stored.PublishedConfigRevision = revision
+	} else {
+		stored.DraftConfigRevision = revision
+	}
+	return nil
+}
+func (f *fakeStore) CancelPendingJobsForAgentConfig(ctx context.Context, workspaceID, agentID uuid.UUID, scope, revision string) error {
+	for _, job := range f.jobs {
+		if job.WorkspaceID == workspaceID && job.AgentID == agentID && job.ConfigScope == scope && job.ConfigRevision != revision && (job.Status == ExtractionJobPending || job.Status == ExtractionJobQueued || job.Status == ExtractionJobFailed) {
+			job.Status = ExtractionJobCancelled
+			job.ErrorCode = "memory_config_changed"
+		}
+	}
+	return nil
 }
 func (f *fakeStore) LockSubjectState(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentMemorySubjectState, error) {
 	key := subjectKey(workspaceID, agentID, userScope, userID)
@@ -538,7 +578,7 @@ func TestMutateValuesProactiveCreatesUndoReceipt(t *testing.T) {
 	epoch := int64(0)
 	response, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 500}}, UserScopeAccount, userID, MutateValuesRequest{Operations: []ValueMutation{{
 		Action: MutationActionUpsert, Key: "profile", Content: "Prefers diagrams.", Mode: MutationModeProactive, OperationID: operationID,
-	}}}, MutationMetadata{MemoryEpoch: &epoch})
+	}}}, MutationMetadata{MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,17 +598,17 @@ func TestMutateValuesProactiveRequiresCurrentEpoch(t *testing.T) {
 	if _, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, request, MutationMetadata{}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("missing epoch error = %v, want ErrInvalidInput", err)
 	}
-	epoch, err := svc.ReadSubjectEpoch(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID)
+	epoch, err := svc.ReadRuntimeFence(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID, ConfigScopeDraft, "draft-v1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, request, MutationMetadata{MemoryEpoch: &epoch}); err != nil {
+	if _, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, request, MutationMetadata{MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}); err != nil {
 		t.Fatalf("initial proactive mutation error = %v", err)
 	}
 	if err := svc.ClearAllValues(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID, MutationMetadata{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, request, MutationMetadata{MemoryEpoch: &epoch}); !errors.Is(err, ErrConflict) {
+	if _, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, request, MutationMetadata{MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale epoch error = %v, want ErrConflict", err)
 	}
 	if len(store.values) != 0 {
@@ -576,7 +616,7 @@ func TestMutateValuesProactiveRequiresCurrentEpoch(t *testing.T) {
 	}
 }
 
-func TestReplaceSlotsInvalidatesSubjectsWhenSlotIsRemoved(t *testing.T) {
+func TestAgentConfigRevisionCancelsOlderJobsWithoutAdvancingSubjectEpoch(t *testing.T) {
 	store := newFakeStore(uuid.New())
 	svc := &Service{repo: store}
 	agentID, userID := uuid.New(), uuid.New()
@@ -584,12 +624,15 @@ func TestReplaceSlotsInvalidatesSubjectsWhenSlotIsRemoved(t *testing.T) {
 	if _, err := svc.ReplaceSlots(context.Background(), agentID, actorID, ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}, {Key: "preferences"}}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.SetAgentConfigRevision(context.Background(), store.workspaceID, agentID, ConfigScopeDraft, "draft-v1"); err != nil {
+		t.Fatal(err)
+	}
 	state, err := store.LockSubjectState(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	jobID := uuid.New()
-	store.jobs[jobID] = &AgentMemoryExtractionJob{ID: jobID, WorkspaceID: store.workspaceID, AgentID: agentID, UserScope: UserScopeAccount, UserID: userID, Status: ExtractionJobPending, MemoryEpoch: state.MemoryEpoch}
+	store.jobs[jobID] = &AgentMemoryExtractionJob{ID: jobID, WorkspaceID: store.workspaceID, AgentID: agentID, UserScope: UserScopeAccount, UserID: userID, Status: ExtractionJobPending, MemoryEpoch: state.MemoryEpoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}
 	profileID := uuid.Nil
 	for _, slot := range store.slots {
 		if slot.AgentID == agentID && slot.Key == "profile" {
@@ -603,9 +646,12 @@ func TestReplaceSlotsInvalidatesSubjectsWhenSlotIsRemoved(t *testing.T) {
 	if _, err := svc.ReplaceSlots(context.Background(), agentID, actorID, ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{ID: profileID.String(), Key: "profile"}}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.SetAgentConfigRevision(context.Background(), store.workspaceID, agentID, ConfigScopeDraft, "draft-v2"); err != nil {
+		t.Fatal(err)
+	}
 	updatedState := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
-	if updatedState.MemoryEpoch != state.MemoryEpoch+1 || store.jobs[jobID].Status != ExtractionJobCancelled {
-		t.Fatalf("subject/job = %#v/%#v, want invalidated and cancelled", updatedState, store.jobs[jobID])
+	if updatedState.MemoryEpoch != state.MemoryEpoch || store.jobs[jobID].Status != ExtractionJobCancelled {
+		t.Fatalf("subject/job = %#v/%#v, want unchanged epoch and cancelled job", updatedState, store.jobs[jobID])
 	}
 }
 
@@ -879,14 +925,7 @@ func TestClearValuesNotInKeysClearsRemovedMemoryValues(t *testing.T) {
 		ID: uuid.New(), WorkspaceID: store.workspaceID, AgentID: agentID, SlotKey: "preference", UserScope: UserScopeAccount, UserID: userID, Content: "clear me",
 	}
 
-	state, err := store.LockSubjectState(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	jobID := uuid.New()
-	store.jobs[jobID] = &AgentMemoryExtractionJob{ID: jobID, WorkspaceID: store.workspaceID, AgentID: agentID, UserScope: UserScopeAccount, UserID: userID, Status: ExtractionJobPending, MemoryEpoch: state.MemoryEpoch}
-
-	if err := svc.ClearValuesNotInKeys(context.Background(), agentID, []string{"profile"}, true); err != nil {
+	if err := svc.ClearValuesNotInKeys(context.Background(), agentID, []string{"profile"}); err != nil {
 		t.Fatalf("ClearValuesNotInKeys error = %v", err)
 	}
 	if got := store.values[valueKey(store.workspaceID, agentID, "profile", UserScopeAccount, userID)].Content; got != "keep me" {
@@ -894,10 +933,6 @@ func TestClearValuesNotInKeysClearsRemovedMemoryValues(t *testing.T) {
 	}
 	if _, ok := store.values[valueKey(store.workspaceID, agentID, "preference", UserScopeAccount, userID)]; ok {
 		t.Fatal("preference value still exists after permanent clear")
-	}
-	updatedState := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
-	if updatedState.MemoryEpoch != state.MemoryEpoch+1 || store.jobs[jobID].Status != ExtractionJobCancelled {
-		t.Fatalf("subject/job = %#v/%#v, want invalidated and cancelled", updatedState, store.jobs[jobID])
 	}
 }
 
@@ -913,7 +948,7 @@ func TestAutomaticUpdateHonorsEnabledSlotsRevisionAndSourceTime(t *testing.T) {
 	epoch := int64(0)
 	if _, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, runtimeSlots, UserScopeAccount, userID, UpdateValueRequest{
 		Key: "standing_instructions", Content: "always lead with the conclusion", ExpectedRevision: &expectedZero,
-	}, MutationMetadata{SourceKind: SourceKindAutomatic, MemoryEpoch: &epoch}); err != nil {
+	}, MutationMetadata{SourceKind: SourceKindAutomatic, MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}); err != nil {
 		t.Fatalf("automatic standing-instructions update error = %v", err)
 	}
 
@@ -929,7 +964,7 @@ func TestAutomaticUpdateHonorsEnabledSlotsRevisionAndSourceTime(t *testing.T) {
 	expected := managerValue.Revision
 	if _, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, runtimeSlots, UserScopeAccount, userID, UpdateValueRequest{
 		Key: "profile", Content: "stale automatic value", ExpectedRevision: &expected,
-	}, MutationMetadata{SourceKind: SourceKindAutomatic, SourceCompletedAt: &olderSource, MemoryEpoch: &epoch}); !errors.Is(err, ErrConflict) {
+	}, MutationMetadata{SourceKind: SourceKindAutomatic, SourceCompletedAt: &olderSource, MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale automatic update error = %v, want ErrConflict", err)
 	}
 	wrongRevision := expected + 1
@@ -957,7 +992,7 @@ func TestAutomaticUpdateCanBeUndoneOnlyAtItsResultingRevision(t *testing.T) {
 	expected := base.Revision
 	automatic, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, UpdateValueRequest{
 		Key: "profile", Content: "automatic", ExpectedRevision: &expected,
-	}, MutationMetadata{SourceKind: SourceKindAutomatic, OperationID: &operationID, MemoryEpoch: &epoch})
+	}, MutationMetadata{SourceKind: SourceKindAutomatic, OperationID: &operationID, MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -983,6 +1018,7 @@ func TestClearAllAdvancesEpochAndCancelsPendingJobs(t *testing.T) {
 	job, err := svc.ScheduleExtraction(context.Background(), ScheduleExtractionRequest{
 		WorkspaceID: store.workspaceID.String(), AgentID: agentID.String(), UserScope: UserScopeAccount,
 		UserID: userID.String(), ConversationID: conversationID.String(), MessageWatermarkID: uuid.New().String(), ExtractorVersion: "test-v1",
+		ConfigScope: ConfigScopePublished, ConfigRevision: "published-v1", Slots: []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 2000}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1004,7 +1040,7 @@ func TestClearAllAdvancesEpochAndCancelsPendingJobs(t *testing.T) {
 	if _, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{
 		Key: "profile", MaxChars: 2000, Enabled: true,
 	}}, UserScopeAccount, userID, UpdateValueRequest{Key: "profile", Content: "must not return", ExpectedRevision: &expectedZero}, MutationMetadata{
-		SourceKind: SourceKindAutomatic, MemoryEpoch: &staleEpoch,
+		SourceKind: SourceKindAutomatic, MemoryEpoch: &staleEpoch, ConfigScope: ConfigScopePublished, ConfigRevision: "published-v1",
 	}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale running worker write error = %v, want ErrConflict", err)
 	}
@@ -1019,6 +1055,7 @@ func TestScheduleExtractionIsIdempotentAndKeepsOriginalForceDeadline(t *testing.
 	request := ScheduleExtractionRequest{
 		WorkspaceID: store.workspaceID.String(), AgentID: uuid.New().String(), UserScope: UserScopeAccount,
 		UserID: uuid.New().String(), ConversationID: uuid.New().String(), MessageWatermarkID: uuid.New().String(), ExtractorVersion: "test-v1",
+		ConfigScope: ConfigScopePublished, ConfigRevision: "published-v1", Slots: []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 2000}},
 	}
 	first, err := svc.ScheduleExtraction(context.Background(), request)
 	if err != nil {
@@ -1041,5 +1078,52 @@ func TestScheduleExtractionIsIdempotentAndKeepsOriginalForceDeadline(t *testing.
 	}
 	if store.jobs[first.ID].Status != ExtractionJobCancelled {
 		t.Fatalf("superseded status = %q, want cancelled", store.jobs[first.ID].Status)
+	}
+}
+
+func TestPrivacySlotsUsePublishedMetadataAndRetainedValuesOnly(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	draftOnlyID := uuid.New()
+	store.slots[draftOnlyID] = &AgentMemorySlot{ID: draftOnlyID, WorkspaceID: store.workspaceID, AgentID: agentID, Key: "draft_only", Name: "Unpublished name", Enabled: true}
+	store.values[valueKey(store.workspaceID, agentID, "legacy_value", UserScopeAccount, userID)] = &AgentMemoryValue{
+		ID: uuid.New(), WorkspaceID: store.workspaceID, AgentID: agentID, SlotKey: "legacy_value", UserScope: UserScopeAccount, UserID: userID, Content: "retained",
+	}
+
+	slots, err := svc.PrivacySlots(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{Key: "profile", Name: "Published profile", Enabled: true, MaxChars: 500}}, UserScopeAccount, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 2 || slots[0].Key != "profile" || slots[0].Name != "Published profile" || slots[1].Key != "legacy_value" {
+		t.Fatalf("privacy slots = %#v", slots)
+	}
+	for _, slot := range slots {
+		if slot.Key == "draft_only" || slot.Name == "Unpublished name" {
+			t.Fatalf("privacy slots exposed draft metadata: %#v", slots)
+		}
+	}
+}
+
+func TestRuntimeFenceRejectsStaleConfigurationWithoutTouchingSubjectEpoch(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	epoch, err := svc.ReadRuntimeFence(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID, ConfigScopePublished, "published-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetAgentConfigRevision(context.Background(), store.workspaceID, agentID, ConfigScopePublished, "published-v2"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.MutateValues(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{Key: "removed", Enabled: true, MaxChars: 500}}, UserScopeAccount, userID, MutateValuesRequest{Operations: []ValueMutation{{
+		Action: MutationActionUpsert, Key: "removed", Content: "must not return", Mode: MutationModeExplicit, OperationID: uuid.New(),
+	}}}, MutationMetadata{MemoryEpoch: &epoch, ConfigScope: ConfigScopePublished, ConfigRevision: "published-v1"})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale configuration error = %v, want ErrConflict", err)
+	}
+	state := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
+	if state == nil || state.MemoryEpoch != epoch || len(store.values) != 0 {
+		t.Fatalf("subject/value state = %#v/%#v", state, store.values)
 	}
 }

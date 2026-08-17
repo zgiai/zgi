@@ -13,7 +13,7 @@ func TestBuildContextCapturesEpochBeforeReadingValues(t *testing.T) {
 	memory := &contextMemoryService{epoch: 9}
 	result, err := BuildContext(context.Background(), ContextRequest{
 		Enabled: true, MemoryService: memory, WorkspaceID: uuid.New(), AgentID: uuid.New(), UserID: uuid.New(),
-		UserScope: agentmemory.UserScopeAccount, Budget: 1024,
+		UserScope: agentmemory.UserScopeAccount, ConfigScope: agentmemory.ConfigScopePublished, ConfigRevision: "revision-1", Budget: 1024,
 		Slots: []Slot{{Key: "profile", Enabled: true, MaxChars: 500}},
 	})
 	if err != nil {
@@ -32,7 +32,7 @@ type contextMemoryService struct {
 	calls []string
 }
 
-func (f *contextMemoryService) ReadSubjectEpoch(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID) (int64, error) {
+func (f *contextMemoryService) ReadRuntimeFence(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID, string, string) (int64, error) {
 	f.calls = append(f.calls, "epoch")
 	return f.epoch, nil
 }

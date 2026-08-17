@@ -10,7 +10,7 @@ import (
 
 func TestUpgradeAgentMemoryRuntimeMigration(t *testing.T) {
 	db, mock := openMigrationMockDB(t)
-	mock.ExpectExec("(?s).*revision.*source_kind.*agent_memory_subject_states.*agent_memory_extraction_jobs.*agent_memory_undo_records.*").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("(?s).*revision.*source_kind.*agent_memory_subject_states.*agent_memory_agent_states.*agent_memory_extraction_jobs.*agent_memory_undo_records.*").WillReturnResult(sqlmock.NewResult(0, 0))
 	builder := mschema.New(db)
 	if err := upUpgradeAgentMemoryRuntime(builder); err != nil {
 		t.Fatal(err)
@@ -21,6 +21,7 @@ func TestUpgradeAgentMemoryRuntimeMigration(t *testing.T) {
 		"idempotency_key", "resulting_revision", "agent_memory_value_legacy_write_guard",
 		"agent_memory_event_content_guard", "operation_id", "idx_agent_memory_events_operation",
 		"extraction_cutoff_at", "idx_agent_memory_jobs_terminal_cleanup",
+		"draft_config_revision", "published_config_revision", "config_scope", "config_revision", "runtime_slots",
 	} {
 		if !strings.Contains(statements, expected) {
 			t.Fatalf("migration statements missing %q:\n%s", expected, statements)
