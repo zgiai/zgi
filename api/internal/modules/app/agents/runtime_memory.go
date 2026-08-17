@@ -395,11 +395,31 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 }
 
 func agentMemoryConfigRevision(enabled, automatic bool, slots []dto.AgentMemorySlotConfig) string {
+	type revisionSlot struct {
+		Key         string `json:"key"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		MaxChars    int    `json:"max_chars"`
+		Enabled     bool   `json:"enabled"`
+		SortOrder   int    `json:"sort_order"`
+	}
+	normalizedSlots := normalizeAgentMemorySlotConfigs(slots)
+	revisionSlots := make([]revisionSlot, 0, len(normalizedSlots))
+	for _, slot := range normalizedSlots {
+		revisionSlots = append(revisionSlots, revisionSlot{
+			Key:         slot.Key,
+			Name:        slot.Name,
+			Description: slot.Description,
+			MaxChars:    slot.MaxChars,
+			Enabled:     slot.Enabled,
+			SortOrder:   slot.SortOrder,
+		})
+	}
 	payload := struct {
-		Enabled   bool                        `json:"enabled"`
-		Automatic bool                        `json:"automatic"`
-		Slots     []dto.AgentMemorySlotConfig `json:"slots"`
-	}{enabled, automatic, normalizeAgentMemorySlotConfigs(slots)}
+		Enabled   bool           `json:"enabled"`
+		Automatic bool           `json:"automatic"`
+		Slots     []revisionSlot `json:"slots"`
+	}{enabled, automatic, revisionSlots}
 	raw, _ := json.Marshal(payload)
 	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:])
