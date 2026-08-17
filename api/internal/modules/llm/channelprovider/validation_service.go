@@ -27,7 +27,10 @@ const (
 	testMethodEmbedding        = "embedding"
 	testMethodImageGeneration  = "image-gen"
 	testMethodMetadata         = "metadata"
+	testMethodMusicGeneration  = "music-gen"
 	testMethodRerank           = "rerank"
+	testMethodSpeechGeneration = "text-to-speech"
+	testMethodTranscription    = "speech-to-text"
 	testMethodVideoGeneration  = "video-gen"
 	openAICompatibleProvider   = "openai-compatible"
 	defaultImageProbeSize      = "1024x1024"
@@ -264,11 +267,15 @@ func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, cha
 		}
 	}
 
-	if useCase == testMethodImageGeneration && !explicitTestMethod {
-		return v.skipImageModelTest(capabilities[0]), nil
-	}
-	if useCase == testMethodVideoGeneration {
+	switch useCase {
+	case testMethodImageGeneration:
+		if !explicitTestMethod {
+			return v.skipImageModelTest(capabilities[0]), nil
+		}
+	case testMethodVideoGeneration:
 		return v.skipVideoModelTest(capabilities[0]), nil
+	case testMethodMusicGeneration, testMethodSpeechGeneration, testMethodTranscription:
+		return v.skipMediaModelTest(capabilities[0]), nil
 	}
 
 	adapterInstance, err := v.newAdapterForProvider(spec.AdapterKey, apiBaseURL, apiKey)
@@ -482,6 +489,18 @@ func (v *Validator) skipVideoModelTest(capability modelCapability) *TestResult {
 		Model:          capability.Model,
 		UseCase:        capability.UseCase,
 		TestMethod:     testMethodVideoGeneration,
+	}
+}
+
+func (v *Validator) skipMediaModelTest(capability modelCapability) *TestResult {
+	return &TestResult{
+		Success:        false,
+		Status:         TestStatusSkipped,
+		Message:        "music and audio models require a real feature test in their workspace",
+		ResponseTimeMs: 0,
+		Model:          capability.Model,
+		UseCase:        capability.UseCase,
+		TestMethod:     capability.UseCase,
 	}
 }
 
@@ -795,6 +814,12 @@ func inferValidationUseCase(modelRecord *llmmodelmodel.LLMModel) (string, error)
 		return testMethodImageGeneration, nil
 	case modelRecord.Videos || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseVideoGen)):
 		return testMethodVideoGeneration, nil
+	case modelRecord.MusicGeneration || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseMusicGen)):
+		return testMethodMusicGeneration, nil
+	case modelRecord.SpeechGeneration || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseTextToSpeech)):
+		return testMethodSpeechGeneration, nil
+	case modelRecord.Transcription || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseSpeechToText)):
+		return testMethodTranscription, nil
 	case modelRecord.IsLLM() || modelRecord.ChatCompletions || modelRecord.Responses || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseVision)) || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseReasoning)) || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseFuncCalling)):
 		return testMethodChat, nil
 	default:
@@ -817,6 +842,12 @@ func inferValidationUseCaseFromCustomModel(modelRecord *llmmodelmodel.CustomMode
 		return testMethodImageGeneration, nil
 	case containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseVideoGen)):
 		return testMethodVideoGeneration, nil
+	case containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseMusicGen)):
+		return testMethodMusicGeneration, nil
+	case modelRecord.SpeechGeneration || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseTextToSpeech)):
+		return testMethodSpeechGeneration, nil
+	case modelRecord.Transcription || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseSpeechToText)):
+		return testMethodTranscription, nil
 	case modelRecord.ChatCompletions || modelRecord.Responses || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseTextChat)) || containsUseCase(modelRecord.UseCases, "chat") || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseVision)) || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseReasoning)) || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseFuncCalling)):
 		return testMethodChat, nil
 	default:
