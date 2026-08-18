@@ -56,6 +56,7 @@ import {
   useVideoRuntimeTask,
   useVideoRuntimeTasks,
 } from '@/hooks/video-runtime/use-video-runtime';
+import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type { ModelItem } from '@/services/types/model';
@@ -1114,11 +1115,16 @@ function TaskDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT('webapp');
+  const { locale } = useLocale();
   const [downloadingTaskId, setDownloadingTaskId] = React.useState<string | null>(null);
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
   const isDownloadingVideo = Boolean(task?.task_id && downloadingTaskId === task.task_id);
   const videoUrl = toDirectToolFileDeliveryUrl(task?.video_url);
   const posterUrl = useVideoPoster(videoUrl);
+  const displayErrorMessage = React.useMemo(
+    () => formatVideoTaskErrorMessage(task?.error_message, locale),
+    [locale, task?.error_message]
+  );
   const referenceMaterials = React.useMemo(
     () =>
       getTaskReferenceMaterials(
@@ -1236,9 +1242,9 @@ function TaskDetailSheet({
                   />
                 </div>
 
-                {task.error_message && status === 'failed' ? (
+                {displayErrorMessage && status === 'failed' ? (
                   <DetailSection title={t('chat.videoWorkbench.errorMessage')}>
-                    <p className="text-sm leading-6 text-red-600">{task.error_message}</p>
+                    <p className="text-sm leading-6 text-red-600">{displayErrorMessage}</p>
                   </DetailSection>
                 ) : null}
               </div>
@@ -1631,6 +1637,106 @@ function getTaskDisplayStatus(task: VideoRuntimeTask): NormalizedVideoStatus {
   const status = normalizeStatus(task.status);
   if (status === 'succeeded' && task.error_message && !task.video_url) return 'failed';
   return status;
+}
+
+function formatVideoTaskErrorMessage(message: string | undefined, locale: string) {
+  const normalizedMessage = message?.trim();
+  if (!normalizedMessage) return '';
+  if (!locale.toLowerCase().startsWith('zh')) return normalizedMessage;
+
+  const localizedMessage = localizeVideoContentReferences(normalizedMessage);
+  const lowerMessage = normalizedMessage.toLowerCase();
+  if (lowerMessage.includes('first/last frame content cannot be mixed with reference media content')) {
+    return '首尾帧模式参考素材只能为图片';
+  }
+  if (lowerMessage.includes('may contain real person')) {
+    const contentLabels = videoContentReferenceLabels(normalizedMessage);
+    if (contentLabels.length > 0) {
+      return `${contentLabels.join('、')}可能包含真人`;
+    }
+    return '输入图片可能包含真人';
+  }
+  if (lowerMessage.includes('output video') && lowerMessage.includes('sensitive information')) {
+    return '模型输出视频涉及敏感内容';
+  }
+  if (lowerMessage.includes('may contain sensitive information')) {
+    const contentLabels = videoContentReferenceLabels(normalizedMessage);
+    if (contentLabels.length > 0) {
+      return `${contentLabels.join('、')}含有敏感内容`;
+    }
+    return '输入内容含有敏感内容';
+  }
+  if (
+    lowerMessage.includes('output video') &&
+    lowerMessage.includes('copyright restrictions')
+  ) {
+    return '模型输出视频涉及版权问题';
+  }
+  if (lowerMessage.includes('copyright restrictions')) {
+    const contentLabels = videoContentReferenceLabels(normalizedMessage);
+    if (contentLabels.length > 0) {
+      return `${contentLabels.join('、')}涉及版权问题`;
+    }
+  }
+  if (lowerMessage.includes('reference images')) {
+    const referenceImageLimit = normalizedMessage.match(
+      /expected\s+at\s+most\s+([0-9]+)\s+reference\s+images/i
+    );
+    if (referenceImageLimit?.[1]) {
+      return `图片素材最多${referenceImageLimit[1]}张`;
+    }
+  }
+  if (lowerMessage.includes('audio duration (seconds)')) {
+    const audioDurationLimit = normalizedMessage.match(
+      /less\s+than\s+or\s+equal\s+to\s+([0-9]+(?:\.[0-9]+)?)/i
+    );
+    if (audioDurationLimit?.[1]) {
+      return `${videoInvalidContentPrefix(normalizedMessage)}音频素材总时长不能超过${audioDurationLimit[1]}秒`;
+    }
+  }
+
+  return localizedMessage;
+}
+
+function localizeVideoContentReferences(message: string) {
+  return message
+    .replace(
+      /the\s+parameter\s+`?content\[(\d+)\]`?\s+specified\s+in\s+the\s+request\s+is\s+not\s+valid(\s*:)?/gi,
+      (_match, indexText: string, colon: string | undefined) => {
+        const label = videoContentReferenceLabel(indexText);
+        return label ? `${label}无效${colon ? '：' : ''}` : _match;
+      }
+    )
+    .replace(/`?content\[(\d+)\]`?/gi, (_match, indexText: string) => {
+      const label = videoContentReferenceLabel(indexText);
+      return label || _match;
+    });
+}
+
+function videoInvalidContentPrefix(message: string) {
+  const match = message.match(
+    /the\s+parameter\s+`?content\[(\d+)\]`?\s+specified\s+in\s+the\s+request\s+is\s+not\s+valid\s*:?/i
+  );
+  if (!match?.[1]) return '';
+  const label = videoContentReferenceLabel(match[1]);
+  return label ? `${label}无效：` : '';
+}
+
+function videoContentReferenceLabels(message: string) {
+  const labels: string[] = [];
+  for (const match of message.matchAll(/`?content\[(\d+)\]`?/gi)) {
+    const label = videoContentReferenceLabel(match[1]);
+    if (label && !labels.includes(label)) {
+      labels.push(label);
+    }
+  }
+  return labels;
+}
+
+function videoContentReferenceLabel(indexText: string) {
+  const index = Number.parseInt(indexText, 10);
+  if (!Number.isFinite(index)) return '';
+  return index === 0 ? '提示词' : `素材${index}`;
 }
 
 function ConfirmationSpec({ label, value }: { label: string; value: string }) {
