@@ -1,4 +1,6 @@
 import {
+  type InfiniteData,
+  type QueryKey,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -12,6 +14,7 @@ import type {
   VideoRuntimeGenerateRequest,
   VideoRuntimeTask,
   VideoRuntimeTaskResponse,
+  VideoRuntimeTasksResponse,
 } from '@/services/types/video-runtime';
 
 export const VIDEO_RUNTIME_KEYS = {
@@ -43,6 +46,44 @@ function seedVideoTaskDetailCache(queryClient: QueryClient, task: VideoRuntimeTa
   );
 }
 
+function removeVideoTaskFromListCache(
+  data: InfiniteData<VideoRuntimeTasksResponse> | undefined,
+  taskId: string
+): InfiniteData<VideoRuntimeTasksResponse> | undefined {
+  if (!data) return data;
+
+  let didRemove = false;
+  const pages = data.pages.map(page => {
+    const items = page.data?.data;
+    if (!Array.isArray(items)) return page;
+
+    const nextItems = items.filter(task => task.task_id !== taskId);
+    if (nextItems.length === items.length) return page;
+
+    didRemove = true;
+    return {
+      ...page,
+      data: {
+        ...page.data,
+        data: nextItems,
+      },
+    };
+  });
+
+  if (!didRemove) return data;
+
+  return {
+    ...data,
+    pages: pages.map(page => ({
+      ...page,
+      data: {
+        ...page.data,
+        total: Math.max(0, (page.data?.total ?? 0) - 1),
+      },
+    })),
+  };
+}
+
 export function useVideoRuntimeModels() {
   const query = useQuery({
     queryKey: VIDEO_RUNTIME_KEYS.models,
@@ -60,10 +101,7 @@ export function useVideoRuntimeModels() {
 export function useVideoRuntimeTasks(search = '') {
   const queryClient = useQueryClient();
   const normalizedSearch = search.trim();
-  const queryKey = useMemo(
-    () => VIDEO_RUNTIME_KEYS.taskList(normalizedSearch),
-    [normalizedSearch]
-  );
+  const queryKey = useMemo(() => VIDEO_RUNTIME_KEYS.taskList(normalizedSearch), [normalizedSearch]);
   const query = useInfiniteQuery({
     queryKey,
     queryFn: ({ pageParam }) =>
@@ -73,8 +111,7 @@ export function useVideoRuntimeTasks(search = '') {
         cursor: typeof pageParam === 'string' && pageParam ? pageParam : undefined,
       }),
     initialPageParam: '',
-    getNextPageParam: lastPage =>
-      lastPage.data?.has_more ? lastPage.data.next_cursor : undefined,
+    getNextPageParam: lastPage => (lastPage.data?.has_more ? lastPage.data.next_cursor : undefined),
     retry: false,
   });
 
@@ -169,14 +206,45 @@ export function useDeleteVideoTask() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (taskId: string) => VideoRuntimeService.deleteTask(taskId),
+    onMutate: async taskId => {
+      await queryClient.cancelQueries({ queryKey: VIDEO_RUNTIME_KEYS.taskLists });
+
+      const snapshots = queryClient.getQueriesData<InfiniteData<VideoRuntimeTasksResponse>>({
+        queryKey: VIDEO_RUNTIME_KEYS.taskLists,
+      });
+
+      queryClient.setQueriesData<InfiniteData<VideoRuntimeTasksResponse>>(
+        { queryKey: VIDEO_RUNTIME_KEYS.taskLists },
+        current => removeVideoTaskFromListCache(current, taskId)
+      );
+
+      return { snapshots };
+    },
+    onError: (_error, _taskId, context) => {
+      context?.snapshots.forEach(
+        ([queryKey, data]: [QueryKey, InfiniteData<VideoRuntimeTasksResponse> | undefined]) => {
+          queryClient.setQueryData(queryKey, data);
+        }
+      );
+    },
     onSuccess: (_data, taskId) => {
-      void queryClient.resetQueries({ queryKey: VIDEO_RUNTIME_KEYS.taskLists });
       queryClient.removeQueries({ queryKey: VIDEO_RUNTIME_KEYS.task(taskId) });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: VIDEO_RUNTIME_KEYS.taskLists,
+        refetchType: 'active',
+      });
     },
   });
 }
 
 function isVideoRuntimeTaskActive(task: Pick<VideoRuntimeTask, 'status'>) {
   const status = task.status?.toLowerCase?.() ?? '';
-  return status === 'pending' || status === 'running' || status === 'processing' || status === 'in_progress';
+  return (
+    status === 'pending' ||
+    status === 'running' ||
+    status === 'processing' ||
+    status === 'in_progress'
+  );
 }

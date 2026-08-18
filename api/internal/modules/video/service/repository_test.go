@@ -22,12 +22,26 @@ func TestTaskRepositoryListPaginatesCountsAndSearchesAllRecords(t *testing.T) {
 		account_id text NOT NULL,
 		workspace_id text,
 		task_id text,
+		client_request_id text,
+		upstream_task_id text,
 		provider text,
 		model text,
 		model_label text,
 		prompt text,
 		status text,
-		created_at datetime
+		video_url text,
+		error_message text,
+		duration_seconds integer,
+		resolution text,
+		ratio text,
+		has_input_video boolean,
+		generate_audio boolean,
+		voice text,
+		estimated_credits integer,
+		actual_credits integer,
+		created_at datetime,
+		updated_at datetime,
+		completed_at datetime
 	)`).Error; err != nil {
 		t.Fatalf("create table error = %v", err)
 	}

@@ -229,7 +229,10 @@ export function VideoWorkbench() {
     () => getVideoGenerationOptions(selectedModelItem),
     [selectedModelItem]
   );
-  const effectiveReferenceMode = getEffectiveReferenceMode(settings.referenceMode, generationOptions);
+  const effectiveReferenceMode = getEffectiveReferenceMode(
+    settings.referenceMode,
+    generationOptions
+  );
   const allowedReferenceKinds = React.useMemo(
     () => getAllowedReferenceKinds(selectedModelItem, effectiveReferenceMode),
     [effectiveReferenceMode, selectedModelItem]
@@ -405,7 +408,7 @@ export function VideoWorkbench() {
   const handlePrefetchTask = React.useCallback(
     (task: VideoRuntimeTask) => {
       prefetchTaskDetail(task);
-      preloadTaskMedia(task, { eagerVideo: true });
+      preloadTaskMedia(task);
     },
     [prefetchTaskDetail]
   );
@@ -418,8 +421,7 @@ export function VideoWorkbench() {
         query={historyQuery}
         onQueryChange={setHistoryQuery}
         isSearchPending={
-          historyQuery.trim() !== debouncedHistoryQuery ||
-          (isFetchingTasks && !isFetchingNextPage)
+          historyQuery.trim() !== debouncedHistoryQuery || (isFetchingTasks && !isFetchingNextPage)
         }
         isLoading={isLoadingTasks}
         isError={isTasksError}
@@ -517,6 +519,7 @@ function GenerationRecordsSidebar({
 }) {
   const t = useT('webapp');
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const [deleteTargetTask, setDeleteTargetTask] = React.useState<VideoRuntimeTask | null>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const autoPrefetchTasks = React.useMemo(
@@ -656,7 +659,7 @@ function GenerationRecordsSidebar({
                 isDeleting={task.task_id === deletingTaskId}
                 onSelect={() => onSelectTask(task.task_id)}
                 onPrefetch={() => onPrefetchTask(task)}
-                onDelete={() => onDeleteTask(task.task_id)}
+                onDelete={() => setDeleteTargetTask(task)}
               />
             ))}
             <div ref={loadMoreRef} className="flex min-h-9 items-center justify-center py-2">
@@ -683,6 +686,20 @@ function GenerationRecordsSidebar({
           </div>
         )}
       </div>
+      <ConfirmDialog
+        variant="danger"
+        open={deleteTargetTask !== null}
+        onOpenChange={open => {
+          if (!open) setDeleteTargetTask(null);
+        }}
+        title={t('chat.videoWorkbench.deleteRecordConfirmTitle')}
+        description={t('chat.videoWorkbench.deleteRecordConfirmDescription')}
+        confirmText={t('chat.videoWorkbench.deleteRecord')}
+        cancelText={t('chat.videoWorkbench.deleteRecordCancel')}
+        onConfirm={() => {
+          if (deleteTargetTask) onDeleteTask(deleteTargetTask.task_id);
+        }}
+      />
     </aside>
   );
 }
@@ -706,9 +723,7 @@ function VideoTaskCard({
   const status = getTaskDisplayStatus(task);
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
-  const videoUrl = toDirectToolFileDeliveryUrl(
-    status === 'succeeded' ? task.video_url : undefined
-  );
+  const videoUrl = toDirectToolFileDeliveryUrl(status === 'succeeded' ? task.video_url : undefined);
   const posterUrl = useVideoPoster(videoUrl);
   const Icon = isLoadingStatus
     ? Loader2
@@ -748,7 +763,7 @@ function VideoTaskCard({
             poster={posterUrl || undefined}
             muted
             playsInline
-            preload={posterUrl ? 'metadata' : 'auto'}
+            preload="metadata"
             className="h-full w-full object-cover opacity-90"
           />
         ) : (
@@ -890,7 +905,10 @@ function ComposerPanel({
   const [isConfirmSubmitting, setIsConfirmSubmitting] = React.useState(false);
   const confirmSubmitRef = React.useRef(false);
   const effectiveGenerating = isGenerating || isConfirmSubmitting;
-  const effectiveReferenceMode = getEffectiveReferenceMode(settings.referenceMode, generationOptions);
+  const effectiveReferenceMode = getEffectiveReferenceMode(
+    settings.referenceMode,
+    generationOptions
+  );
   const submitDisabled =
     !prompt.trim() || !selectedModel.provider || !selectedModel.model || effectiveGenerating;
 
@@ -1270,9 +1288,7 @@ function TaskDetailSheet({
                   disabled={isDownloadingVideo}
                   onClick={() => void handleDownloadVideo()}
                 >
-                  {isDownloadingVideo ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
+                  {isDownloadingVideo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   {isDownloadingVideo
                     ? t('chat.videoWorkbench.downloadingVideo')
                     : t('chat.videoWorkbench.downloadVideo')}
@@ -1646,7 +1662,9 @@ function formatVideoTaskErrorMessage(message: string | undefined, locale: string
 
   const localizedMessage = localizeVideoContentReferences(normalizedMessage);
   const lowerMessage = normalizedMessage.toLowerCase();
-  if (lowerMessage.includes('first/last frame content cannot be mixed with reference media content')) {
+  if (
+    lowerMessage.includes('first/last frame content cannot be mixed with reference media content')
+  ) {
     return '首尾帧模式参考素材只能为图片';
   }
   if (lowerMessage.includes('may contain real person')) {
@@ -1666,10 +1684,7 @@ function formatVideoTaskErrorMessage(message: string | undefined, locale: string
     }
     return '输入内容含有敏感内容';
   }
-  if (
-    lowerMessage.includes('output video') &&
-    lowerMessage.includes('copyright restrictions')
-  ) {
+  if (lowerMessage.includes('output video') && lowerMessage.includes('copyright restrictions')) {
     return '模型输出视频涉及版权问题';
   }
   if (lowerMessage.includes('copyright restrictions')) {
@@ -2152,9 +2167,7 @@ function getReferenceModeOptions(videoConfig: Record<string, unknown> | null): s
     ['reference_modes', 'referenceModes', 'modes'],
     []
   );
-  const normalizedModes = rawModes
-    .map(mode => normalizeReferenceModeOption(mode))
-    .filter(Boolean);
+  const normalizedModes = rawModes.map(mode => normalizeReferenceModeOption(mode)).filter(Boolean);
   const uniqueModes = Array.from(new Set(normalizedModes));
   return uniqueModes.length > 0 ? uniqueModes : [...VIDEO_REFERENCE_MODES];
 }
@@ -2196,7 +2209,9 @@ function getVideoReferenceKinds(model?: ModelItem): ReferenceKind[] {
   return configuredKinds;
 }
 
-function getReferenceKindsFromVideoConfig(videoConfig: Record<string, unknown> | null): ReferenceKind[] {
+function getReferenceKindsFromVideoConfig(
+  videoConfig: Record<string, unknown> | null
+): ReferenceKind[] {
   if (!videoConfig) return [];
 
   const audioInput = [
@@ -2321,9 +2336,7 @@ function getNestedRecord(value: unknown, path: string[]): Record<string, unknown
     if (!current || typeof current !== 'object') return null;
     current = (current as Record<string, unknown>)[key];
   }
-  return isPlainRecord(current)
-    ? (current as Record<string, unknown>)
-    : null;
+  return isPlainRecord(current) ? (current as Record<string, unknown>) : null;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
