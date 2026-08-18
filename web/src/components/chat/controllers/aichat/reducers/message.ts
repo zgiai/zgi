@@ -329,9 +329,12 @@ export function applyMessageStartState(
         updated_at: createdAt,
       }
     : createdMessage;
+  // Only migrate streaming state when the server replaces a local draft
+  // conversation. Reusing another message from the same persisted conversation
+  // would carry its timeline (for example, a memory mutation) into the new turn.
   const previousStreaming =
     current.streamingByMessageId[payload.message_id] ??
-    (context.previousConversationId
+    (shouldMigrateDraftConversation && context.previousConversationId
       ? Object.values(current.streamingByMessageId).find(
           streaming => streaming.conversation_id === context.previousConversationId
         )
