@@ -57,8 +57,11 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.KnowledgeDatasetIDs = normalizedSkillIDs(config.KnowledgeDatasetIDs)
 	parts.KnowledgeRetrievalConfig = copyStringAnyMap(config.KnowledgeRetrievalConfig)
 	parts.AgentMemoryEnabled = config.AgentMemoryEnabled
+	parts.AgentMemoryAutoExtractionEnabled = config.AgentMemoryAutoExtractionEnabled
 	parts.AgentMemorySlots = normalizeAgentMemorySlots(config.AgentMemorySlots)
 	parts.AgentMemoryUserScope = strings.TrimSpace(config.AgentMemoryUserScope)
+	parts.AgentMemoryConfigScope = strings.TrimSpace(config.AgentMemoryConfigScope)
+	parts.AgentMemoryConfigRevision = strings.TrimSpace(config.AgentMemoryConfigRevision)
 	parts.AgentMemoryAgentID = strings.TrimSpace(config.BillingAppID)
 	parts.BillingSource = strings.TrimSpace(config.BillingAppType)
 	if runConfigDisablesUserMemory(config) {
@@ -121,6 +124,7 @@ func normalizeAgentMemorySlots(input []AgentMemorySlotConfig) []AgentMemorySlotC
 		}
 		out = append(out, AgentMemorySlotConfig{
 			Key:         key,
+			Name:        strings.TrimSpace(slot.Name),
 			Description: strings.TrimSpace(slot.Description),
 			MaxChars:    maxChars,
 			Enabled:     slot.Enabled,
@@ -342,7 +346,10 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	if parts.ProtocolToolsEnabled {
 		metadata["protocol_tools_enabled"] = true
 	}
-	if parts.ProtocolToolsEnabled || (parts.SkillMode != "" && parts.SkillMode != skillModeDisabled) {
+	if parts.AgentMemoryToolsEnabled {
+		metadata["agent_memory_tools_enabled"] = true
+	}
+	if parts.ProtocolToolsEnabled || parts.AgentMemoryToolsEnabled || (parts.SkillMode != "" && parts.SkillMode != skillModeDisabled) {
 		metadata["has_trace"] = false
 		metadata["skill_call_count"] = 0
 		metadata["skill_names"] = []interface{}{}

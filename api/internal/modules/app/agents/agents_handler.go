@@ -740,7 +740,7 @@ func (h *AgentsHandler) ReplaceAgentMemorySlots(c *gin.Context) {
 		Slots []dto.AgentMemorySlotConfig `json:"slots" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 	result, err := h.appService.ReplaceAgentMemorySlots(c.Request.Context(), c.Param("agent_id"), accountID.String(), req.Slots)
@@ -749,6 +749,28 @@ func (h *AgentsHandler) ReplaceAgentMemorySlots(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"slots": result})
+}
+
+func (h *AgentsHandler) UpdateAgentMemoryConfig(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if _, ok := h.requireAgentManageAccess(c, accountID.String()); !ok {
+		return
+	}
+	var req dto.AgentMemoryConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.UpdateAgentMemoryConfig(c.Request.Context(), c.Param("agent_id"), accountID.String(), req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 func (h *AgentsHandler) ListAgentMemoryValues(c *gin.Context) {
@@ -776,7 +798,7 @@ func (h *AgentsHandler) UpdateAgentMemoryValue(c *gin.Context) {
 	}
 	var req dto.UpdateAgentMemoryValueRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 	result, err := h.appService.UpdateAgentMemoryValue(c.Request.Context(), c.Param("agent_id"), accountID.String(), req)

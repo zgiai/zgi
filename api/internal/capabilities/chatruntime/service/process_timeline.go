@@ -511,6 +511,43 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 			invocation["runtime_id"] = r.runtimeIDForStandalone(invocation)
 		}
 		return invocation
+	case streamEventMemoryCreate, streamEventMemoryUpdate, streamEventMemoryDelete, streamEventMemoryClear:
+		action := payloadString(payload, "action")
+		if action == "" {
+			switch eventType {
+			case streamEventMemoryDelete, streamEventMemoryClear:
+				action = "clear"
+			default:
+				action = "update"
+			}
+		}
+		mutationStatus := payloadString(payload, "mutation_status")
+		if mutationStatus == "" {
+			if action == "clear" {
+				mutationStatus = "cleared"
+			} else {
+				mutationStatus = "updated"
+			}
+		}
+		invocation := newSkillInvocation("memory_mutation", skills.SkillAgentMemory, agentMemoryToolMutate, payloadStatus(payload, "success"), invocationTimelineFields(payload, map[string]interface{}{
+			"memory_scope":    payloadString(payload, "memory_scope"),
+			"action":          action,
+			"key":             payloadString(payload, "key"),
+			"display_name":    payloadString(payload, "display_name"),
+			"mutation_status": mutationStatus,
+			"source_kind":     payloadString(payload, "source_kind"),
+			"operation_id":    payloadString(payload, "operation_id"),
+			"revision":        payload["revision"],
+			"undoable_until":  payload["undoable_until"],
+			"conversation_id": payload["conversation_id"],
+			"message_id":      payload["message_id"],
+		}))
+		if operationID := payloadString(payload, "operation_id"); operationID != "" {
+			invocation["runtime_id"] = "memory_mutation:" + operationID
+		} else {
+			invocation["runtime_id"] = r.runtimeIDForStandalone(invocation)
+		}
+		return invocation
 	default:
 		return nil
 	}

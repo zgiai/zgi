@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -49,6 +50,8 @@ func (s *service) runPreparedToolLoop(
 	if s.llmClient == nil {
 		return "", nil, fmt.Errorf("llm client is not configured")
 	}
+	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
+	runtimeTools := s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)
 	resolved := &skills.ResolvedSkills{}
 	if chatPartsBusinessSkillsEnabled(prepared.parts) {
 		if s.skillRuntime == nil {
@@ -70,11 +73,10 @@ func (s *service) runPreparedToolLoop(
 		if len(resolved.Skills) == 0 {
 			return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 		}
-	} else if prepared.parts == nil || !prepared.parts.ProtocolToolsEnabled {
+	} else if (prepared.parts == nil || !prepared.parts.ProtocolToolsEnabled) && len(runtimeTools) == 0 {
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 
-	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	runner := &skillloop.Runner{
 		LLMClient:             s.llmClient,
 		SkillRuntime:          s.skillRuntime,
@@ -124,21 +126,30 @@ func (s *service) runPreparedToolLoop(
 	}
 	authorizeSkillStep := s.currentAgentSkillStepAuthorizer(prepared)
 	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
+	if len(runtimeTools) > 0 {
+		proactiveAllowed := prepared.parts.AgentMemoryAutoExtractionEnabled && globalAgentMemoryAutoExtractionEnabled()
+		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
+	}
 	var nativeToolSet *skills.NativeToolSet
 	var nativeSkillSession *skills.NativeSkillSession
 	if nativeLoop {
 		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, additionalSystemMessages)
 		toolSetOptions := skills.NativeToolSetOptions{
-			TenantID:         prepared.Scope.OrganizationID.String(),
-			BudgetChars:      budgetChars,
-			BudgetTokens:     budgetTokens,
-			PrioritySkillIDs: nativeSkillPriorityIDs(prepared, resolved),
-			AuthorizeSkill:   authorizeSkillStep,
-			EstimateTokens:   estimateNativeTokens,
+			TenantID:          prepared.Scope.OrganizationID.String(),
+			BudgetChars:       budgetChars,
+			BudgetTokens:      budgetTokens,
+			PrioritySkillIDs:  nativeSkillPriorityIDs(prepared, resolved),
+			AuthorizeSkill:    authorizeSkillStep,
+			EstimateTokens:    estimateNativeTokens,
+			ReservedToolNames: runtimeToolNames(runtimeTools),
 		}
 		protocol := nativeSkillProtocolForPrepared(prepared)
 		prepared.Message.Metadata["native_skill_protocol"] = protocol
-		if protocol == skills.NativeSkillProtocolProgressiveV1 {
+		if len(resolved.Skills) == 0 {
+			projected := skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{}}
+			nativeToolSet = &projected
+			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillDiagnostics(projected)
+		} else if protocol == skills.NativeSkillProtocolProgressiveV1 {
 			initialSkillIDs := nativeInitialActiveSkillIDs(prepared, resolved)
 			prioritySkillIDs := skills.RankNativeSkillIDs(resolved, nativeSkillSelectionText(prepared), initialSkillIDs)
 			// Initial skills already receive their full instructions and schemas. Rank
@@ -196,11 +207,12 @@ func (s *service) runPreparedToolLoop(
 	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                       loopPrepared,
 		Resolved:                       resolved,
-		ProtocolToolsOnly:              len(resolved.Skills) == 0,
+		ProtocolToolsOnly:              len(resolved.Skills) == 0 && len(runtimeTools) == 0,
 		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
 		NativeAgentLoop:                nativeLoop,
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
+		RuntimeTools:                   runtimeTools,
 		ExecutionContext:               s.skillExecutionContext(prepared),
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
@@ -2688,7 +2700,20 @@ func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
 
 func chatPartsToolLoopEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.ExecutionMode != executionModeDirectChat &&
-		(parts.ProtocolToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+		(parts.ProtocolToolsEnabled || parts.AgentMemoryToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+}
+
+func runtimeToolNames(runtimeTools []skillloop.RuntimeTool) []string {
+	if len(runtimeTools) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(runtimeTools))
+	for _, runtimeTool := range runtimeTools {
+		if name := strings.TrimSpace(runtimeTool.Definition.Function.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func continuationMessageForExecutionMode(message adapter.Message, mode string) adapter.Message {

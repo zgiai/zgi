@@ -332,6 +332,42 @@ const messages = {
     memoryLoginRequiredTitle: 'Sign in to use this agent',
     memoryLoginRequiredDescription:
       'This agent has memory enabled. Please sign in before using it.',
+    memory: {
+      title: 'My memory',
+      description:
+        'Review what this agent remembers about you. You can correct, permanently delete, export, or undo a recent automatic update.',
+      empty: 'This agent has not saved any memory about you.',
+      autoUpdated: 'Memory was automatically updated. Review or undo it in My memory.',
+      metadata: '{source} · revision {revision} · {time}',
+      notSaved: 'Not saved',
+      sources: {
+        legacy: 'Existing memory',
+        explicit: 'Explicit request',
+        automatic: 'Automatic update',
+        manager: 'Direct edit',
+      },
+      save: 'Save correction',
+      saved: 'Memory updated',
+      saveFailed: 'Unable to update memory',
+      delete: 'Delete',
+      deleted: 'Memory permanently deleted',
+      deleteFailed: 'Unable to delete memory',
+      deleteConfirmTitle: 'Permanently delete this memory?',
+      deleteConfirmDescription:
+        'This removes the saved value and its undo snapshot. The action cannot be undone.',
+      deleteAll: 'Delete all',
+      allDeleted: 'All memory permanently deleted',
+      deleteAllConfirmTitle: 'Permanently delete all memory?',
+      deleteAllConfirmDescription:
+        'This removes every saved value and cancels pending automatic updates for this agent.',
+      undo: 'Undo automatic update',
+      undone: 'Automatic update undone',
+      undoFailed: 'Unable to undo because the memory changed or the 24-hour window expired',
+      export: 'Export JSON',
+      exportFailed: 'Unable to export memory',
+      loadFailed: 'Unable to load memory',
+      cancel: 'Cancel',
+    },
   },
   billing: {
     precheckWarnings: {
@@ -1434,6 +1470,8 @@ const messages = {
       intermediateAnswer: 'Intermediate Answer',
       userInputRequest: 'User Input Request',
       guardrail: 'Guardrail',
+      memoryUpdated: 'Memory updated: {name}',
+      memoryCleared: 'Memory cleared: {name}',
       workflowRun: 'Workflow run',
       workflowNode: 'Workflow node: {name}',
       workflowApproval: 'Workflow approval',
@@ -1453,6 +1491,7 @@ const messages = {
       reference: 'reference',
       workflowNode: 'workflow node',
       event: 'runtime event',
+      memory: 'memory',
     },
     builtinSkills: {
       'agent-database': 'Agent Database',

@@ -8,6 +8,7 @@ import (
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemoryworker"
 	app "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	workflow "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -95,6 +96,11 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		handler := runtimeservice.NewRuntimeLeaseCleanupHandler(chatRuntimeService)
 		if err := scheduler.RegisterTask(task, handler); err != nil {
 			logger.Error("Failed to register chat runtime lease cleanup task", err)
+		}
+		extractionTask := agentmemoryworker.NewExtractionSweepTask()
+		extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, agentMemoryService, llmClient))
+		if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
+			logger.Error("Failed to register Agent memory extraction sweep", err)
 		}
 	}
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db, integrationActions)
@@ -191,6 +197,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.DELETE("/:agent_id", appHandler.DeleteAgent)
 	appsGroup.GET("/:agent_id/memory/slots", appHandler.ListAgentMemorySlots)
 	appsGroup.PUT("/:agent_id/memory/slots", appHandler.ReplaceAgentMemorySlots)
+	appsGroup.PUT("/:agent_id/memory/config", appHandler.UpdateAgentMemoryConfig)
 	appsGroup.GET("/:agent_id/memory/values", appHandler.ListAgentMemoryValues)
 	appsGroup.PUT("/:agent_id/memory/values", appHandler.UpdateAgentMemoryValue)
 	appsGroup.DELETE("/:agent_id/memory/values/:key", appHandler.ClearAgentMemoryValue)
@@ -221,6 +228,12 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueWebAppAgentRuntimeWorkflowApproval)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", appHandler.ContinueWebAppAgentRuntimeUserInput)
 	protectedWebApps.POST("/:web_app_id/runtime/messages/:message_id/regenerate", appHandler.RegenerateWebAppAgentRuntimeMessage)
+	protectedWebApps.GET("/:web_app_id/memory", appHandler.GetWebAppMemory)
+	protectedWebApps.PUT("/:web_app_id/memory/:key", appHandler.PutWebAppMemory)
+	protectedWebApps.DELETE("/:web_app_id/memory/:key", appHandler.DeleteWebAppMemoryValue)
+	protectedWebApps.DELETE("/:web_app_id/memory", appHandler.DeleteAllWebAppMemory)
+	protectedWebApps.GET("/:web_app_id/memory/export", appHandler.ExportWebAppMemory)
+	protectedWebApps.POST("/:web_app_id/memory/operations/:operation_id/undo", appHandler.UndoWebAppMemoryOperation)
 
 	workflowTests := appsGroup.Group("/:agent_id/workflow-tests")
 	workflowTests.GET("/settings", workflowTestHandler.GetSettings)

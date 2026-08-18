@@ -168,6 +168,7 @@ type RunRequest struct {
 	NativeAgentLoop                bool
 	NativeToolSet                  *skills.NativeToolSet
 	NativeSkillSession             *skills.NativeSkillSession
+	RuntimeTools                   []RuntimeTool
 	ExecutionContext               skills.ExecutionContext
 	PreferExplicitFinalAnswer      bool
 	SuppressInitialNaturalProgress bool
@@ -182,6 +183,23 @@ type RunRequest struct {
 	PreferredRestoredSkillID       string
 	ContinuationType               string
 	TerminalOnly                   bool
+}
+
+// RuntimeTool is a first-party capability owned by the chat runtime rather
+// than an installable Skill. Its handler must return only safe, content-free
+// arguments and results because they are persisted in traces.
+type RuntimeTool struct {
+	Definition adapter.Tool
+	SkillID    string
+	Handler    func(context.Context, adapter.ToolCall) RuntimeToolResult
+}
+
+type RuntimeToolResult struct {
+	Status      string
+	Arguments   map[string]interface{}
+	Result      map[string]interface{}
+	Error       error
+	Recoverable bool
 }
 
 type TerminalStateGuardDecisionRecord struct {
