@@ -196,6 +196,10 @@ const messages = {
       cancelAction: 'Back to edit',
       referenceCount: '{count} references',
       deleteRecord: 'Delete record',
+      deleteRecordConfirmTitle: 'Delete this video record?',
+      deleteRecordConfirmDescription:
+        'This generation record will no longer be shown. This action cannot be undone.',
+      deleteRecordCancel: 'Cancel',
       deleteRecordSuccess: 'Record deleted.',
       deleteRecordFailed: 'Failed to delete record.',
       deleteActiveRecordDisabled: 'Generating records cannot be deleted yet',
