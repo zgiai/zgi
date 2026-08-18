@@ -149,6 +149,18 @@ func TestVideoErrorMessageExtractsUpstreamErrorText(t *testing.T) {
 	}
 }
 
+func TestVideoErrorMessageExtractsUpstreamTextFromAdapterError(t *testing.T) {
+	err := &adapter.AdapterError{
+		Message: "Video generation failed: all 1 candidate channels failed for video model doubao-seedance-2-0-260128: upstream error: The parameter `content[3]` specified in the request is not valid: audio duration is too long",
+	}
+
+	got := videoErrorMessage(err)
+	const want = "The parameter `content[3]` specified in the request is not valid: audio duration is too long"
+	if got != want {
+		t.Fatalf("videoErrorMessage() = %q, want %q", got, want)
+	}
+}
+
 func TestStoreVideoArtifactTransfersSucceededURL(t *testing.T) {
 	saver := &fakeVideoArtifactSaver{storedURL: "https://files.example.com/console/api/files/tools/stored.mp4?expires_at=0"}
 	svc := &service{artifactSaver: saver}
