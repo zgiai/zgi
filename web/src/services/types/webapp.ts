@@ -122,6 +122,37 @@ export interface WebAppRuntimeCapability {
   version_uuid?: string;
 }
 
+export type WebAppAgentMemorySourceKind = 'legacy' | 'explicit' | 'automatic' | 'manager';
+
+export interface WebAppAgentMemoryValue {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  max_chars: number;
+  enabled: boolean;
+  sort_order: number;
+  content: string;
+  revision: number;
+  source_kind?: WebAppAgentMemorySourceKind;
+  last_operation_id?: string;
+  undoable_until?: number;
+  updated_at: number;
+}
+
+export interface WebAppAgentMemoryExport {
+  agent_id: string;
+  user_scope: 'account';
+  user_id: string;
+  exported_at: number;
+  values: WebAppAgentMemoryValue[];
+}
+
+export interface WebAppAgentMemoryUndoResponse {
+  operation_id: string;
+  value?: WebAppAgentMemoryValue;
+}
+
 export interface WebAppRunRequest {
   query: string;
   conversation_id?: string;

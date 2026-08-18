@@ -71,12 +71,13 @@ const (
 
 	executionRouteNativeAgent                = "native_agent"
 	executionRouteNativeSkillsAvailable      = "native_skills_available"
+	executionRouteAgentMemoryAvailable       = "agent_memory_available"
 	executionRouteNoUsableSkills             = "no_usable_skills"
 	executionRouteFunctionCallingUnavailable = "function_calling_unavailable"
 	executionRoutePersistedMode              = "persisted_mode"
 
-	userMemoryContextBudgetChars  = 4000
-	agentMemoryContextBudgetChars = 4000
+	userMemoryContextBudgetChars = 4000
+	maxAgentMemoryContextTokens  = 2048
 )
 
 var defaultSystemSkillIDs = []string{
@@ -152,8 +153,11 @@ type RunConfig struct {
 	BindingAuthorizations            []ResourceBindingAuthorization
 	UseMemory                        bool
 	AgentMemoryEnabled               bool
+	AgentMemoryAutoExtractionEnabled bool
 	AgentMemorySlots                 []AgentMemorySlotConfig
 	AgentMemoryUserScope             string
+	AgentMemoryConfigScope           string
+	AgentMemoryConfigRevision        string
 	BillingAppID                     string
 	BillingAppType                   string
 }
@@ -199,8 +203,6 @@ type AgentWorkflowStartInput struct {
 	DefaultDateTimeMode string      `json:"default_datetime_mode,omitempty"`
 }
 type AgentMemoryRuntimeState = agentmemoryruntime.State
-type AgentMemoryPlannerDecision = agentmemoryruntime.Decision
-type AgentMemoryPlannerResult = agentmemoryruntime.PlannerResult
 type AgentMemoryMutationResult = agentmemoryruntime.MutationResult
 
 type CreateCompletedMessageRequest struct {
@@ -289,9 +291,13 @@ type UserMemoryService interface {
 }
 
 type AgentMemoryContextService interface {
+	ReadRuntimeFence(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, configScope, configRevision string) (int64, error)
 	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
-	UpdateValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.UpdateValueRequest, meta agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error)
-	ClearValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, key string, meta agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error)
+	MutateValues(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.MutateValuesRequest, meta agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error)
+}
+
+type AgentMemoryExtractionScheduler interface {
+	ScheduleExtraction(ctx context.Context, req agentmemory.ScheduleExtractionRequest) (*agentmemory.AgentMemoryExtractionJob, error)
 }
 
 // AIChatIntegrationRuntimePreferences is the trusted, server-side snapshot of
@@ -320,24 +326,25 @@ func (f AIChatIntegrationPreferenceResolverFunc) ResolveAIChatIntegrationPrefere
 }
 
 type service struct {
-	repos                 *repository.Repositories
-	llmClient             llmclient.LLMClient
-	streams               *streamRegistry
-	events                *streamEventStore
-	titleGen              titlegen.Service
-	modelSpecResolver     ModelSpecResolver
-	tokenEstimator        *tokenestimate.Estimator
-	fileService           FileLookupService
-	contentExtractor      ContentExtractionService
-	workspacePerms        WorkspacePermissionService
-	skillRuntime          *skills.Runtime
-	memoryService         UserMemoryService
-	agentMemoryService    AgentMemoryContextService
-	integrationPrefs      AIChatIntegrationPreferenceResolver
-	customSkillStorage    customSkillStorage
-	modelIdleTimeout      time.Duration
-	modelProgressSchedule modelprogress.Schedule
-	titleGenerationJobs   sync.Map
+	repos                          *repository.Repositories
+	llmClient                      llmclient.LLMClient
+	streams                        *streamRegistry
+	events                         *streamEventStore
+	titleGen                       titlegen.Service
+	modelSpecResolver              ModelSpecResolver
+	tokenEstimator                 *tokenestimate.Estimator
+	fileService                    FileLookupService
+	contentExtractor               ContentExtractionService
+	workspacePerms                 WorkspacePermissionService
+	skillRuntime                   *skills.Runtime
+	memoryService                  UserMemoryService
+	agentMemoryService             AgentMemoryContextService
+	agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
+	integrationPrefs               AIChatIntegrationPreferenceResolver
+	customSkillStorage             customSkillStorage
+	modelIdleTimeout               time.Duration
+	modelProgressSchedule          modelprogress.Schedule
+	titleGenerationJobs            sync.Map
 }
 
 func NewService(repos *repository.Repositories, llmClient llmclient.LLMClient) Service {
@@ -382,12 +389,17 @@ func NewServiceWithSkillRuntime(
 	optionalServices ...interface{},
 ) Service {
 	var agentMemoryService AgentMemoryContextService
+	var agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	var integrationPrefs AIChatIntegrationPreferenceResolver
 	for _, item := range optionalServices {
 		switch typed := item.(type) {
 		case AgentMemoryContextService:
 			if agentMemoryService == nil {
 				agentMemoryService = typed
+			}
+		case AgentMemoryExtractionScheduler:
+			if agentMemoryExtractionScheduler == nil {
+				agentMemoryExtractionScheduler = typed
 			}
 		case AIChatIntegrationPreferenceResolver:
 			if integrationPrefs == nil {
@@ -396,22 +408,23 @@ func NewServiceWithSkillRuntime(
 		}
 	}
 	return &service{
-		repos:              repos,
-		llmClient:          llmClient,
-		streams:            newStreamRegistry(),
-		events:             newStreamEventStore(redisutil.GetClient()),
-		titleGen:           titleGen,
-		modelSpecResolver:  modelSpecResolver,
-		tokenEstimator:     newTokenEstimator(),
-		fileService:        fileService,
-		contentExtractor:   contentExtractor,
-		workspacePerms:     workspacePerms,
-		skillRuntime:       skillRuntime,
-		memoryService:      memoryService,
-		agentMemoryService: agentMemoryService,
-		integrationPrefs:   integrationPrefs,
-		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),
-		modelIdleTimeout:   configuredModelIdleTimeout(),
+		repos:                          repos,
+		llmClient:                      llmClient,
+		streams:                        newStreamRegistry(),
+		events:                         newStreamEventStore(redisutil.GetClient()),
+		titleGen:                       titleGen,
+		modelSpecResolver:              modelSpecResolver,
+		tokenEstimator:                 newTokenEstimator(),
+		fileService:                    fileService,
+		contentExtractor:               contentExtractor,
+		workspacePerms:                 workspacePerms,
+		skillRuntime:                   skillRuntime,
+		memoryService:                  memoryService,
+		agentMemoryService:             agentMemoryService,
+		agentMemoryExtractionScheduler: agentMemoryExtractionScheduler,
+		integrationPrefs:               integrationPrefs,
+		customSkillStorage:             newFilesystemCustomSkillStorage(customSkillStorageRoot),
+		modelIdleTimeout:               configuredModelIdleTimeout(),
 	}
 }
 
@@ -506,46 +519,51 @@ type ExistingSkill struct {
 }
 
 type chatRequestParts struct {
-	Query                        string
-	Surface                      string
-	RuntimeContext               string
-	RawOperationContext          map[string]interface{}
-	OperationContext             map[string]interface{}
-	OperationLedger              map[string]interface{}
-	ModelName                    string
-	Provider                     string
-	ProviderPtr                  *string
-	Parameters                   map[string]interface{}
-	ContextControl               map[string]interface{}
-	Attachments                  *attachmentBundle
-	RecentAssetCandidates        []ResourceCandidate
-	RecentGeneratedArtifacts     []map[string]interface{}
-	RecentOperationPlans         []map[string]interface{}
-	ModelSupportsVision          bool
-	ModelSupportsAgent           bool
-	ExecutionMode                string
-	ExecutionRouteReason         string
-	FunctionCallingKnown         bool
-	ModelSupportsFunctionCalling bool
-	FunctionCallingAssumed       bool
-	ModelCapabilityStatus        string
-	ModelCapabilityError         string
-	ProtocolToolsEnabled         bool
-	UseMemory                    bool
-	SkillIDs                     []string
-	ToolSkillIDs                 []string
-	SkillMode                    string
-	SystemPrompt                 string
-	SystemPromptVersion          string
-	ConfiguredSkillIDs           []string
-	KnowledgeDatasetIDs          []string
-	KnowledgeRetrievalConfig     map[string]interface{}
-	AgentMemoryEnabled           bool
-	AgentMemorySlots             []AgentMemorySlotConfig
-	AgentMemoryUserScope         string
-	AgentMemoryAgentID           string
-	AgentMemoryRuntimeState      *AgentMemoryRuntimeState
-	BillingSource                string
-	ModelTurnIntent              *AIChatModelTurnIntent
-	ModelTurnIntentError         string
+	Query                            string
+	Surface                          string
+	RuntimeContext                   string
+	RawOperationContext              map[string]interface{}
+	OperationContext                 map[string]interface{}
+	OperationLedger                  map[string]interface{}
+	ModelName                        string
+	Provider                         string
+	ProviderPtr                      *string
+	Parameters                       map[string]interface{}
+	ContextControl                   map[string]interface{}
+	Attachments                      *attachmentBundle
+	RecentAssetCandidates            []ResourceCandidate
+	RecentGeneratedArtifacts         []map[string]interface{}
+	RecentOperationPlans             []map[string]interface{}
+	ModelSupportsVision              bool
+	ModelSupportsAgent               bool
+	ExecutionMode                    string
+	ExecutionRouteReason             string
+	FunctionCallingKnown             bool
+	ModelSupportsFunctionCalling     bool
+	FunctionCallingAssumed           bool
+	ModelCapabilityStatus            string
+	ModelCapabilityError             string
+	ProtocolToolsEnabled             bool
+	UseMemory                        bool
+	SkillIDs                         []string
+	ToolSkillIDs                     []string
+	SkillMode                        string
+	SystemPrompt                     string
+	SystemPromptVersion              string
+	ConfiguredSkillIDs               []string
+	KnowledgeDatasetIDs              []string
+	KnowledgeRetrievalConfig         map[string]interface{}
+	AgentMemoryEnabled               bool
+	AgentMemoryAutoExtractionEnabled bool
+	AgentMemoryToolsEnabled          bool
+	AgentMemorySlots                 []AgentMemorySlotConfig
+	AgentMemoryUserScope             string
+	AgentMemoryConfigScope           string
+	AgentMemoryConfigRevision        string
+	AgentMemoryAgentID               string
+	AgentMemoryRuntimeState          *AgentMemoryRuntimeState
+	AgentMemoryContext               string
+	BillingSource                    string
+	ModelTurnIntent                  *AIChatModelTurnIntent
+	ModelTurnIntentError             string
 }

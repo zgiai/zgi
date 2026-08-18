@@ -2,10 +2,10 @@ package agentmemory
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -16,6 +16,10 @@ type fakeStore struct {
 	slots       map[uuid.UUID]*AgentMemorySlot
 	values      map[string]*AgentMemoryValue
 	events      []*AgentMemoryEvent
+	undos       map[uuid.UUID]*AgentMemoryUndoRecord
+	jobs        map[uuid.UUID]*AgentMemoryExtractionJob
+	subjects    map[string]*AgentMemorySubjectState
+	agents      map[string]*AgentMemoryAgentState
 }
 
 func newFakeStore(workspaceID uuid.UUID) *fakeStore {
@@ -23,11 +27,53 @@ func newFakeStore(workspaceID uuid.UUID) *fakeStore {
 		workspaceID: workspaceID,
 		slots:       map[uuid.UUID]*AgentMemorySlot{},
 		values:      map[string]*AgentMemoryValue{},
+		undos:       map[uuid.UUID]*AgentMemoryUndoRecord{},
+		jobs:        map[uuid.UUID]*AgentMemoryExtractionJob{},
+		subjects:    map[string]*AgentMemorySubjectState{},
+		agents:      map[string]*AgentMemoryAgentState{},
 	}
 }
 
 func (f *fakeStore) WithTransaction(ctx context.Context, fn func(store) error) error {
-	return fn(f)
+	tx := f.clone()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	*f = *tx
+	return nil
+}
+
+func (f *fakeStore) clone() *fakeStore {
+	cloned := newFakeStore(f.workspaceID)
+	for id, slot := range f.slots {
+		value := *slot
+		cloned.slots[id] = &value
+	}
+	for key, stored := range f.values {
+		value := *stored
+		cloned.values[key] = &value
+	}
+	for _, event := range f.events {
+		value := *event
+		cloned.events = append(cloned.events, &value)
+	}
+	for id, record := range f.undos {
+		value := *record
+		cloned.undos[id] = &value
+	}
+	for id, job := range f.jobs {
+		value := *job
+		cloned.jobs[id] = &value
+	}
+	for key, state := range f.subjects {
+		value := *state
+		cloned.subjects[key] = &value
+	}
+	for key, state := range f.agents {
+		value := *state
+		cloned.agents[key] = &value
+	}
+	return cloned
 }
 
 func (f *fakeStore) ResolveAgentWorkspace(ctx context.Context, agentID uuid.UUID) (uuid.UUID, error) {
@@ -128,6 +174,10 @@ func (f *fakeStore) GetValueScoped(ctx context.Context, workspaceID, agentID uui
 	return &copy, nil
 }
 
+func (f *fakeStore) GetValueScopedForUpdate(ctx context.Context, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID) (*AgentMemoryValue, error) {
+	return f.GetValueScoped(ctx, workspaceID, agentID, slotKey, userScope, userID)
+}
+
 func (f *fakeStore) UpsertValue(ctx context.Context, value *AgentMemoryValue) error {
 	if value.ID == uuid.Nil {
 		value.ID = uuid.New()
@@ -137,13 +187,472 @@ func (f *fakeStore) UpsertValue(ctx context.Context, value *AgentMemoryValue) er
 	return nil
 }
 
-func (f *fakeStore) CreateEvent(ctx context.Context, event *AgentMemoryEvent) error {
-	f.events = append(f.events, event)
+func (f *fakeStore) CreateValue(ctx context.Context, value *AgentMemoryValue) error {
+	return f.UpsertValue(ctx, value)
+}
+
+func (f *fakeStore) UpdateValueCAS(ctx context.Context, value *AgentMemoryValue, expectedRevision int64) error {
+	key := valueKey(value.WorkspaceID, value.AgentID, value.SlotKey, value.UserScope, value.UserID)
+	current := f.values[key]
+	if current == nil || current.Revision != expectedRevision {
+		return ErrConflict
+	}
+	copy := *value
+	f.values[key] = &copy
 	return nil
+}
+
+func (f *fakeStore) DeleteValueCAS(ctx context.Context, value *AgentMemoryValue, expectedRevision int64) error {
+	key := valueKey(value.WorkspaceID, value.AgentID, value.SlotKey, value.UserScope, value.UserID)
+	current := f.values[key]
+	if current == nil || current.Revision != expectedRevision {
+		return ErrConflict
+	}
+	delete(f.values, key)
+	return nil
+}
+
+func (f *fakeStore) DeleteValuesForSubject(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) error {
+	for key, value := range f.values {
+		if value.WorkspaceID == workspaceID && value.AgentID == agentID && value.UserScope == userScope && value.UserID == userID {
+			delete(f.values, key)
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) DeleteUndoForSlot(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, slotKey string) error {
+	for id, record := range f.undos {
+		if record.WorkspaceID == workspaceID && record.AgentID == agentID && record.UserScope == userScope && record.UserID == userID && record.SlotKey == slotKey {
+			delete(f.undos, id)
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) DeleteUndoForSubject(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) error {
+	for id, record := range f.undos {
+		if record.WorkspaceID == workspaceID && record.AgentID == agentID && record.UserScope == userScope && record.UserID == userID {
+			delete(f.undos, id)
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) CreateUndoRecord(ctx context.Context, record *AgentMemoryUndoRecord) error {
+	copy := *record
+	f.undos[record.OperationID] = &copy
+	return nil
+}
+func (f *fakeStore) GetUndoRecordForUpdate(ctx context.Context, operationID, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentMemoryUndoRecord, error) {
+	record := f.undos[operationID]
+	if record == nil || record.WorkspaceID != workspaceID || record.AgentID != agentID || record.UserScope != userScope || record.UserID != userID {
+		return nil, gorm.ErrRecordNotFound
+	}
+	copy := *record
+	return &copy, nil
+}
+func (f *fakeStore) DeleteUndoRecord(ctx context.Context, operationID uuid.UUID) error {
+	delete(f.undos, operationID)
+	return nil
+}
+func (f *fakeStore) FindUndoExpiry(ctx context.Context, operationID uuid.UUID) (*time.Time, error) {
+	record := f.undos[operationID]
+	if record == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	expires := record.ExpiresAt
+	return &expires, nil
+}
+
+func subjectKey(workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) string {
+	return workspaceID.String() + ":" + agentID.String() + ":" + userScope + ":" + userID.String()
+}
+func agentStateKey(workspaceID, agentID uuid.UUID) string {
+	return workspaceID.String() + ":" + agentID.String()
+}
+func (f *fakeStore) LockAgentState(ctx context.Context, workspaceID, agentID uuid.UUID) (*AgentMemoryAgentState, error) {
+	key := agentStateKey(workspaceID, agentID)
+	state := f.agents[key]
+	if state == nil {
+		state = &AgentMemoryAgentState{ID: uuid.New(), WorkspaceID: workspaceID, AgentID: agentID}
+		f.agents[key] = state
+	}
+	copy := *state
+	return &copy, nil
+}
+func (f *fakeStore) UpdateAgentConfigRevision(ctx context.Context, state *AgentMemoryAgentState, scope, revision string) error {
+	stored := f.agents[agentStateKey(state.WorkspaceID, state.AgentID)]
+	if stored == nil {
+		return gorm.ErrRecordNotFound
+	}
+	if scope == ConfigScopePublished {
+		stored.PublishedConfigRevision = revision
+	} else {
+		stored.DraftConfigRevision = revision
+	}
+	return nil
+}
+func (f *fakeStore) CancelPendingJobsForAgentConfig(ctx context.Context, workspaceID, agentID uuid.UUID, scope, revision string) error {
+	for _, job := range f.jobs {
+		if job.WorkspaceID == workspaceID && job.AgentID == agentID && job.ConfigScope == scope && job.ConfigRevision != revision && (job.Status == ExtractionJobPending || job.Status == ExtractionJobQueued || job.Status == ExtractionJobFailed) {
+			job.Status = ExtractionJobCancelled
+			job.ErrorCode = "memory_config_changed"
+		}
+	}
+	return nil
+}
+func (f *fakeStore) LockSubjectState(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentMemorySubjectState, error) {
+	key := subjectKey(workspaceID, agentID, userScope, userID)
+	state := f.subjects[key]
+	if state == nil {
+		state = &AgentMemorySubjectState{ID: uuid.New(), WorkspaceID: workspaceID, AgentID: agentID, UserScope: userScope, UserID: userID}
+		f.subjects[key] = state
+	}
+	copy := *state
+	return &copy, nil
+}
+func (f *fakeStore) ListSubjectStatesForAgentForUpdate(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemorySubjectState, error) {
+	out := make([]*AgentMemorySubjectState, 0)
+	for _, state := range f.subjects {
+		if state.WorkspaceID == workspaceID && state.AgentID == agentID {
+			copy := *state
+			out = append(out, &copy)
+		}
+	}
+	return out, nil
+}
+func (f *fakeStore) UpdateSubjectEpoch(ctx context.Context, state *AgentMemorySubjectState, epoch int64) error {
+	key := subjectKey(state.WorkspaceID, state.AgentID, state.UserScope, state.UserID)
+	stored := f.subjects[key]
+	stored.MemoryEpoch = epoch
+	if state.ExtractionCutoffAt == nil {
+		stored.ExtractionCutoffAt = nil
+	} else {
+		cutoff := *state.ExtractionCutoffAt
+		stored.ExtractionCutoffAt = &cutoff
+	}
+	return nil
+}
+func (f *fakeStore) CancelPendingJobsForSubject(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) error {
+	for _, job := range f.jobs {
+		if job.WorkspaceID == workspaceID && job.AgentID == agentID && job.UserScope == userScope && job.UserID == userID && (job.Status == ExtractionJobPending || job.Status == ExtractionJobQueued || job.Status == ExtractionJobFailed) {
+			job.Status = ExtractionJobCancelled
+		}
+	}
+	return nil
+}
+func (f *fakeStore) CreateExtractionJob(ctx context.Context, job *AgentMemoryExtractionJob) error {
+	if job.ID == uuid.Nil {
+		job.ID = uuid.New()
+	}
+	copy := *job
+	f.jobs[job.ID] = &copy
+	return nil
+}
+func (f *fakeStore) GetExtractionJob(ctx context.Context, id uuid.UUID) (*AgentMemoryExtractionJob, error) {
+	job := f.jobs[id]
+	if job == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	copy := *job
+	return &copy, nil
+}
+func (f *fakeStore) GetExtractionJobByIdempotency(ctx context.Context, key string) (*AgentMemoryExtractionJob, error) {
+	for _, job := range f.jobs {
+		if job.IdempotencyKey == key {
+			copy := *job
+			return &copy, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
+}
+func (f *fakeStore) SupersedeConversationJobs(ctx context.Context, current *AgentMemoryExtractionJob) error {
+	for _, job := range f.jobs {
+		if job.ID != current.ID && job.ConversationID == current.ConversationID && (job.Status == ExtractionJobPending || job.Status == ExtractionJobQueued || job.Status == ExtractionJobFailed) {
+			job.Status = ExtractionJobCancelled
+		}
+	}
+	return nil
+}
+func (f *fakeStore) EarliestConversationForceAt(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID, conversationID uuid.UUID) (*time.Time, error) {
+	var earliest *time.Time
+	for _, job := range f.jobs {
+		if job.WorkspaceID == workspaceID && job.AgentID == agentID && job.UserScope == userScope && job.UserID == userID && job.ConversationID == conversationID && (job.Status == ExtractionJobPending || job.Status == ExtractionJobQueued || job.Status == ExtractionJobFailed) {
+			if earliest == nil || job.ForceAt.Before(*earliest) {
+				value := job.ForceAt
+				earliest = &value
+			}
+		}
+	}
+	if earliest == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return earliest, nil
+}
+func (f *fakeStore) ClaimExtractionJob(ctx context.Context, id uuid.UUID, epoch int64) (*AgentMemoryExtractionJob, error) {
+	job := f.jobs[id]
+	if job == nil || job.MemoryEpoch != epoch {
+		return nil, ErrConflict
+	}
+	job.Status = ExtractionJobRunning
+	job.AttemptCount++
+	copy := *job
+	return &copy, nil
+}
+func (f *fakeStore) FinishExtractionJob(ctx context.Context, id uuid.UUID, status, errorCode string) error {
+	job := f.jobs[id]
+	if job == nil {
+		return gorm.ErrRecordNotFound
+	}
+	job.Status = status
+	job.ErrorCode = errorCode
+	return nil
+}
+func (f *fakeStore) RescheduleExtractionJob(ctx context.Context, id uuid.UUID, errorCode string, scheduledAt time.Time) error {
+	job := f.jobs[id]
+	if job == nil {
+		return gorm.ErrRecordNotFound
+	}
+	job.Status = ExtractionJobFailed
+	job.ErrorCode = errorCode
+	job.ScheduledAt = scheduledAt
+	return nil
+}
+func (f *fakeStore) ListDueExtractionJobs(ctx context.Context, limit int) ([]*AgentMemoryExtractionJob, error) {
+	out := []*AgentMemoryExtractionJob{}
+	now := time.Now()
+	for _, job := range f.jobs {
+		if (job.Status == ExtractionJobPending || job.Status == ExtractionJobFailed) && !job.ScheduledAt.After(now) {
+			copy := *job
+			out = append(out, &copy)
+		}
+	}
+	return out, nil
+}
+func (f *fakeStore) DeleteTerminalExtractionJobs(ctx context.Context, finishedBefore time.Time, limit int) (int64, error) {
+	var deleted int64
+	for id, job := range f.jobs {
+		if limit > 0 && deleted >= int64(limit) {
+			break
+		}
+		terminal := job.Status == ExtractionJobCompleted || job.Status == ExtractionJobCancelled || job.Status == ExtractionJobExhausted
+		if terminal && job.FinishedAt != nil && job.FinishedAt.Before(finishedBefore) {
+			delete(f.jobs, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+func (f *fakeStore) CreateEvent(ctx context.Context, event *AgentMemoryEvent) error {
+	if event.OperationID != nil {
+		for _, existing := range f.events {
+			if existing.OperationID != nil && *existing.OperationID == *event.OperationID {
+				return gorm.ErrDuplicatedKey
+			}
+		}
+	}
+	copy := *event
+	f.events = append(f.events, &copy)
+	return nil
+}
+
+func (f *fakeStore) GetEventByOperationID(ctx context.Context, operationID uuid.UUID) (*AgentMemoryEvent, error) {
+	for _, event := range f.events {
+		if event.OperationID != nil && *event.OperationID == operationID {
+			copy := *event
+			return &copy, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func valueKey(workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID) string {
 	return workspaceID.String() + ":" + agentID.String() + ":" + slotKey + ":" + userScope + ":" + userID.String()
+}
+
+func TestMutateValuesAppliesAtomicMultiSlotBatch(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID, messageID := uuid.New(), uuid.New(), uuid.New()
+	slots := []RuntimeSlot{
+		{Key: "profile", Enabled: true, MaxChars: 500},
+		{Key: "preferences", Enabled: true, MaxChars: 500},
+	}
+	response, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, MutateValuesRequest{Operations: []ValueMutation{
+		{Action: MutationActionUpsert, Key: "profile", Content: "Name is Ada.", Mode: MutationModeExplicit, OperationID: uuid.New()},
+		{Action: MutationActionUpsert, Key: "preferences", Content: "Prefers concise replies.", Mode: MutationModeExplicit, OperationID: uuid.New()},
+	}}, MutationMetadata{ActorType: EventActorModel, Source: EventSourceAgent, SourceMessageID: &messageID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Operations) != 2 || len(store.values) != 2 || len(store.events) != 2 {
+		t.Fatalf("response=%#v values=%d events=%d", response, len(store.values), len(store.events))
+	}
+}
+
+func TestMutateValuesConflictLeavesEntireBatchUnchanged(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	slots := []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 500}, {Key: "preferences", Enabled: true, MaxChars: 500}}
+	for _, key := range []string{"profile", "preferences"} {
+		_ = store.CreateValue(context.Background(), &AgentMemoryValue{WorkspaceID: store.workspaceID, AgentID: agentID, SlotKey: key, UserScope: UserScopeAccount, UserID: userID, Content: "before-" + key, Revision: 1})
+	}
+	_, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, MutateValuesRequest{Operations: []ValueMutation{
+		{Action: MutationActionUpsert, Key: "profile", Content: "after-profile", Mode: MutationModeExplicit, ExpectedRevision: 1, OperationID: uuid.New()},
+		{Action: MutationActionUpsert, Key: "preferences", Content: "after-preferences", Mode: MutationModeExplicit, ExpectedRevision: 0, OperationID: uuid.New()},
+	}}, MutationMetadata{})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("error = %v, want conflict", err)
+	}
+	for _, key := range []string{"profile", "preferences"} {
+		value := store.values[valueKey(store.workspaceID, agentID, key, UserScopeAccount, userID)]
+		if value.Content != "before-"+key || value.Revision != 1 {
+			t.Fatalf("%s changed after rollback: %#v", key, value)
+		}
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d after rollback", len(store.events))
+	}
+}
+
+func TestMutateValuesSameContentIsIdempotentWithoutRevision(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID, operationID := uuid.New(), uuid.New(), uuid.New()
+	slots := []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 500}}
+	_ = store.CreateValue(context.Background(), &AgentMemoryValue{WorkspaceID: store.workspaceID, AgentID: agentID, SlotKey: "profile", UserScope: UserScopeAccount, UserID: userID, Content: "same", Revision: 4})
+	response, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, MutateValuesRequest{Operations: []ValueMutation{{
+		Action: MutationActionUpsert, Key: "profile", Content: "same", Mode: MutationModeExplicit, ExpectedRevision: 4, OperationID: operationID,
+	}}}, MutationMetadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Operations[0].Status != MutationStatusUnchanged || response.Operations[0].Revision != 4 {
+		t.Fatalf("response = %#v", response)
+	}
+	replayed, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, MutateValuesRequest{Operations: []ValueMutation{{
+		Action: MutationActionUpsert, Key: "profile", Content: "same", Mode: MutationModeExplicit, ExpectedRevision: 4, OperationID: operationID,
+	}}}, MutationMetadata{})
+	if err != nil || replayed.Operations[0].Status != MutationStatusUnchanged || len(store.events) != 1 {
+		t.Fatalf("replay=%#v err=%v events=%d", replayed, err, len(store.events))
+	}
+}
+
+func TestMutateValuesClearMissingAdvancesCutoffOnce(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	staleUndoID := uuid.New()
+	store.undos[staleUndoID] = &AgentMemoryUndoRecord{
+		OperationID: staleUndoID, WorkspaceID: store.workspaceID, AgentID: agentID,
+		UserScope: UserScopeAccount, UserID: userID, SlotKey: "profile",
+	}
+	cutoff := time.Now().Add(-time.Minute)
+	slots := []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 500}, {Key: "preferences", Enabled: true, MaxChars: 500}}
+	response, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, MutateValuesRequest{Operations: []ValueMutation{
+		{Action: MutationActionClear, Key: "profile", Mode: MutationModeExplicit, OperationID: uuid.New()},
+		{Action: MutationActionClear, Key: "preferences", Mode: MutationModeExplicit, OperationID: uuid.New()},
+	}}, MutationMetadata{SourceCompletedAt: &cutoff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
+	if state.MemoryEpoch != 1 || state.ExtractionCutoffAt == nil || !state.ExtractionCutoffAt.Equal(cutoff) {
+		t.Fatalf("subject state = %#v", state)
+	}
+	if len(response.Operations) != 2 || response.Operations[0].Status != MutationStatusUnchanged || response.Operations[1].Status != MutationStatusUnchanged {
+		t.Fatalf("response = %#v", response)
+	}
+	if store.undos[staleUndoID] != nil {
+		t.Fatal("missing-value clear did not remove stale undo record")
+	}
+}
+
+func TestMutateValuesProactiveCreatesUndoReceipt(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID, operationID := uuid.New(), uuid.New(), uuid.New()
+	epoch := int64(0)
+	response, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 500}}, UserScopeAccount, userID, MutateValuesRequest{Operations: []ValueMutation{{
+		Action: MutationActionUpsert, Key: "profile", Content: "Prefers diagrams.", Mode: MutationModeProactive, OperationID: operationID,
+	}}}, MutationMetadata{MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Operations[0].SourceKind != SourceKindAutomatic || response.Operations[0].UndoableUntil == nil || store.undos[operationID] == nil {
+		t.Fatalf("response=%#v undo=%#v", response, store.undos[operationID])
+	}
+}
+
+func TestMutateValuesProactiveRequiresCurrentEpoch(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	slots := []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 500}}
+	request := MutateValuesRequest{Operations: []ValueMutation{{
+		Action: MutationActionUpsert, Key: "profile", Content: "Prefers diagrams.", Mode: MutationModeProactive, OperationID: uuid.New(),
+	}}}
+	if _, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, request, MutationMetadata{}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("missing epoch error = %v, want ErrInvalidInput", err)
+	}
+	epoch, err := svc.ReadRuntimeFence(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID, ConfigScopeDraft, "draft-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, request, MutationMetadata{MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}); err != nil {
+		t.Fatalf("initial proactive mutation error = %v", err)
+	}
+	if err := svc.ClearAllValues(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID, MutationMetadata{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.MutateValues(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, request, MutationMetadata{MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale epoch error = %v, want ErrConflict", err)
+	}
+	if len(store.values) != 0 {
+		t.Fatalf("stale proactive mutation recreated values: %#v", store.values)
+	}
+}
+
+func TestAgentConfigRevisionCancelsOlderJobsWithoutAdvancingSubjectEpoch(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	actorID := uuid.New()
+	if _, err := svc.ReplaceSlots(context.Background(), agentID, actorID, ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}, {Key: "preferences"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetAgentConfigRevision(context.Background(), store.workspaceID, agentID, ConfigScopeDraft, "draft-v1"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.LockSubjectState(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID := uuid.New()
+	store.jobs[jobID] = &AgentMemoryExtractionJob{ID: jobID, WorkspaceID: store.workspaceID, AgentID: agentID, UserScope: UserScopeAccount, UserID: userID, Status: ExtractionJobPending, MemoryEpoch: state.MemoryEpoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}
+	profileID := uuid.Nil
+	for _, slot := range store.slots {
+		if slot.AgentID == agentID && slot.Key == "profile" {
+			profileID = slot.ID
+			break
+		}
+	}
+	if profileID == uuid.Nil {
+		t.Fatal("profile slot was not created")
+	}
+	if _, err := svc.ReplaceSlots(context.Background(), agentID, actorID, ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{ID: profileID.String(), Key: "profile"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetAgentConfigRevision(context.Background(), store.workspaceID, agentID, ConfigScopeDraft, "draft-v2"); err != nil {
+		t.Fatal(err)
+	}
+	updatedState := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
+	if updatedState.MemoryEpoch != state.MemoryEpoch || store.jobs[jobID].Status != ExtractionJobCancelled {
+		t.Fatalf("subject/job = %#v/%#v, want unchanged epoch and cancelled job", updatedState, store.jobs[jobID])
+	}
 }
 
 func TestReplaceSlotsValidatesDuplicateKeys(t *testing.T) {
@@ -340,7 +849,7 @@ func TestUpdateValueRejectsContentOverSlotLimit(t *testing.T) {
 	}
 }
 
-func TestClearValueRedactsClearedContentInEventSnapshots(t *testing.T) {
+func TestClearValueDoesNotPersistContentInAuditEvent(t *testing.T) {
 	store := newFakeStore(uuid.New())
 	svc := &Service{repo: store}
 	agentID := uuid.New()
@@ -369,18 +878,34 @@ func TestClearValueRedactsClearedContentInEventSnapshots(t *testing.T) {
 	if event.Action != EventActionValueClear {
 		t.Fatalf("last event action = %s, want %s", event.Action, EventActionValueClear)
 	}
-	var before map[string]interface{}
-	if err := json.Unmarshal(event.BeforeSnapshot, &before); err != nil {
-		t.Fatalf("unmarshal before snapshot: %v", err)
+	if len(event.BeforeSnapshot) != 0 || len(event.AfterSnapshot) != 0 {
+		t.Fatalf("audit event persisted memory content snapshots")
 	}
-	if _, ok := before["content"]; ok {
-		t.Fatalf("before snapshot leaks cleared content: %#v", before)
+}
+
+func TestClearMissingValueRemovesUndoAndAdvancesCutoff(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID, operationID := uuid.New(), uuid.New(), uuid.New()
+	store.undos[operationID] = &AgentMemoryUndoRecord{
+		OperationID: operationID, WorkspaceID: store.workspaceID, AgentID: agentID,
+		UserScope: UserScopeAccount, UserID: userID, SlotKey: "profile",
 	}
-	if before["content_redacted"] != true {
-		t.Fatalf("before snapshot content_redacted = %#v, want true", before["content_redacted"])
+
+	_, err := svc.ClearValue(
+		context.Background(), store.workspaceID, agentID,
+		[]RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 500}},
+		UserScopeAccount, userID, "profile", MutationMetadata{},
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if before["content_length"] == nil {
-		t.Fatalf("before snapshot missing content_length: %#v", before)
+	if store.undos[operationID] != nil {
+		t.Fatal("missing-value clear did not remove stale undo record")
+	}
+	state := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
+	if state == nil || state.MemoryEpoch != 1 || state.ExtractionCutoffAt == nil {
+		t.Fatalf("subject state = %#v", state)
 	}
 }
 
@@ -406,7 +931,199 @@ func TestClearValuesNotInKeysClearsRemovedMemoryValues(t *testing.T) {
 	if got := store.values[valueKey(store.workspaceID, agentID, "profile", UserScopeAccount, userID)].Content; got != "keep me" {
 		t.Fatalf("profile content = %q, want keep me", got)
 	}
-	if got := store.values[valueKey(store.workspaceID, agentID, "preference", UserScopeAccount, userID)].Content; got != "" {
-		t.Fatalf("preference content = %q, want empty", got)
+	if _, ok := store.values[valueKey(store.workspaceID, agentID, "preference", UserScopeAccount, userID)]; ok {
+		t.Fatal("preference value still exists after permanent clear")
+	}
+}
+
+func TestAutomaticUpdateHonorsEnabledSlotsRevisionAndSourceTime(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	runtimeSlots := []RuntimeSlot{
+		{Key: "profile", MaxChars: 2000, Enabled: true},
+		{Key: "standing_instructions", MaxChars: 2000, Enabled: true},
+	}
+	expectedZero := int64(0)
+	epoch := int64(0)
+	if _, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, runtimeSlots, UserScopeAccount, userID, UpdateValueRequest{
+		Key: "standing_instructions", Content: "always lead with the conclusion", ExpectedRevision: &expectedZero,
+	}, MutationMetadata{SourceKind: SourceKindAutomatic, MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}); err != nil {
+		t.Fatalf("automatic standing-instructions update error = %v", err)
+	}
+
+	managerValue, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, runtimeSlots, UserScopeAccount, userID, UpdateValueRequest{
+		Key: "profile", Content: "manager correction", ExpectedRevision: &expectedZero,
+	}, MutationMetadata{SourceKind: SourceKindManager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := store.values[valueKey(store.workspaceID, agentID, "profile", UserScopeAccount, userID)]
+	stored.UpdatedAt = time.Now()
+	olderSource := stored.UpdatedAt.Add(-time.Minute)
+	expected := managerValue.Revision
+	if _, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, runtimeSlots, UserScopeAccount, userID, UpdateValueRequest{
+		Key: "profile", Content: "stale automatic value", ExpectedRevision: &expected,
+	}, MutationMetadata{SourceKind: SourceKindAutomatic, SourceCompletedAt: &olderSource, MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale automatic update error = %v, want ErrConflict", err)
+	}
+	wrongRevision := expected + 1
+	if _, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, runtimeSlots, UserScopeAccount, userID, UpdateValueRequest{
+		Key: "profile", Content: "wrong revision", ExpectedRevision: &wrongRevision,
+	}, MutationMetadata{SourceKind: SourceKindExplicit}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("CAS update error = %v, want ErrConflict", err)
+	}
+}
+
+func TestAutomaticUpdateCanBeUndoneOnlyAtItsResultingRevision(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	slots := []RuntimeSlot{{Key: "profile", MaxChars: 2000, Enabled: true}}
+	expectedZero := int64(0)
+	base, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, UpdateValueRequest{
+		Key: "profile", Content: "original", ExpectedRevision: &expectedZero,
+	}, MutationMetadata{SourceKind: SourceKindManager})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationID := uuid.New()
+	epoch := int64(0)
+	expected := base.Revision
+	automatic, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, slots, UserScopeAccount, userID, UpdateValueRequest{
+		Key: "profile", Content: "automatic", ExpectedRevision: &expected,
+	}, MutationMetadata{SourceKind: SourceKindAutomatic, OperationID: &operationID, MemoryEpoch: &epoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if automatic.LastOperationID != operationID.String() || len(store.undos) != 1 {
+		t.Fatalf("automatic value/undo = %#v / %#v", automatic, store.undos)
+	}
+	undone, err := svc.UndoAutomaticOperation(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID, operationID, slots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if undone.Value == nil || undone.Value.Content != "original" || undone.Value.Revision != automatic.Revision+1 {
+		t.Fatalf("undo response = %#v", undone)
+	}
+	if _, err := svc.UndoAutomaticOperation(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID, operationID, slots); err == nil {
+		t.Fatal("second undo unexpectedly succeeded")
+	}
+}
+
+func TestClearAllAdvancesEpochAndCancelsPendingJobs(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID, conversationID := uuid.New(), uuid.New(), uuid.New()
+	job, err := svc.ScheduleExtraction(context.Background(), ScheduleExtractionRequest{
+		WorkspaceID: store.workspaceID.String(), AgentID: agentID.String(), UserScope: UserScopeAccount,
+		UserID: userID.String(), ConversationID: conversationID.String(), MessageWatermarkID: uuid.New().String(), ExtractorVersion: "test-v1",
+		ConfigScope: ConfigScopePublished, ConfigRevision: "published-v1", Slots: []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 2000}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ClearAllValues(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID, MutationMetadata{SourceKind: SourceKindManager}); err != nil {
+		t.Fatal(err)
+	}
+	if store.jobs[job.ID].Status != ExtractionJobCancelled {
+		t.Fatalf("job status = %q, want cancelled", store.jobs[job.ID].Status)
+	}
+	state := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
+	if state == nil || state.MemoryEpoch != 1 || state.ExtractionCutoffAt == nil {
+		t.Fatalf("subject state = %#v, want epoch 1 with extraction cutoff", state)
+	}
+	if _, err := svc.ClaimExtractionJob(context.Background(), job.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("claim old job error = %v, want ErrConflict", err)
+	}
+	staleEpoch, expectedZero := int64(0), int64(0)
+	if _, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{
+		Key: "profile", MaxChars: 2000, Enabled: true,
+	}}, UserScopeAccount, userID, UpdateValueRequest{Key: "profile", Content: "must not return", ExpectedRevision: &expectedZero}, MutationMetadata{
+		SourceKind: SourceKindAutomatic, MemoryEpoch: &staleEpoch, ConfigScope: ConfigScopePublished, ConfigRevision: "published-v1",
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale running worker write error = %v, want ErrConflict", err)
+	}
+	if _, exists := store.values[valueKey(store.workspaceID, agentID, "profile", UserScopeAccount, userID)]; exists {
+		t.Fatal("stale running worker recreated memory after delete-all")
+	}
+}
+
+func TestScheduleExtractionIsIdempotentAndKeepsOriginalForceDeadline(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	request := ScheduleExtractionRequest{
+		WorkspaceID: store.workspaceID.String(), AgentID: uuid.New().String(), UserScope: UserScopeAccount,
+		UserID: uuid.New().String(), ConversationID: uuid.New().String(), MessageWatermarkID: uuid.New().String(), ExtractorVersion: "test-v1",
+		ConfigScope: ConfigScopePublished, ConfigRevision: "published-v1", Slots: []RuntimeSlot{{Key: "profile", Enabled: true, MaxChars: 2000}},
+	}
+	first, err := svc.ScheduleExtraction(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := svc.ScheduleExtraction(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate.ID != first.ID || len(store.jobs) != 1 {
+		t.Fatalf("duplicate job = %s, first = %s, count = %d", duplicate.ID, first.ID, len(store.jobs))
+	}
+	request.MessageWatermarkID = uuid.New().String()
+	next, err := svc.ScheduleExtraction(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.ForceAt.Equal(first.ForceAt) {
+		t.Fatalf("next force_at = %v, want original %v", next.ForceAt, first.ForceAt)
+	}
+	if store.jobs[first.ID].Status != ExtractionJobCancelled {
+		t.Fatalf("superseded status = %q, want cancelled", store.jobs[first.ID].Status)
+	}
+}
+
+func TestPrivacySlotsUsePublishedMetadataAndRetainedValuesOnly(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	draftOnlyID := uuid.New()
+	store.slots[draftOnlyID] = &AgentMemorySlot{ID: draftOnlyID, WorkspaceID: store.workspaceID, AgentID: agentID, Key: "draft_only", Name: "Unpublished name", Enabled: true}
+	store.values[valueKey(store.workspaceID, agentID, "legacy_value", UserScopeAccount, userID)] = &AgentMemoryValue{
+		ID: uuid.New(), WorkspaceID: store.workspaceID, AgentID: agentID, SlotKey: "legacy_value", UserScope: UserScopeAccount, UserID: userID, Content: "retained",
+	}
+
+	slots, err := svc.PrivacySlots(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{Key: "profile", Name: "Published profile", Enabled: true, MaxChars: 500}}, UserScopeAccount, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 2 || slots[0].Key != "profile" || slots[0].Name != "Published profile" || slots[1].Key != "legacy_value" {
+		t.Fatalf("privacy slots = %#v", slots)
+	}
+	for _, slot := range slots {
+		if slot.Key == "draft_only" || slot.Name == "Unpublished name" {
+			t.Fatalf("privacy slots exposed draft metadata: %#v", slots)
+		}
+	}
+}
+
+func TestRuntimeFenceRejectsStaleConfigurationWithoutTouchingSubjectEpoch(t *testing.T) {
+	store := newFakeStore(uuid.New())
+	svc := &Service{repo: store}
+	agentID, userID := uuid.New(), uuid.New()
+	epoch, err := svc.ReadRuntimeFence(context.Background(), store.workspaceID, agentID, UserScopeAccount, userID, ConfigScopePublished, "published-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetAgentConfigRevision(context.Background(), store.workspaceID, agentID, ConfigScopePublished, "published-v2"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.MutateValues(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{Key: "removed", Enabled: true, MaxChars: 500}}, UserScopeAccount, userID, MutateValuesRequest{Operations: []ValueMutation{{
+		Action: MutationActionUpsert, Key: "removed", Content: "must not return", Mode: MutationModeExplicit, OperationID: uuid.New(),
+	}}}, MutationMetadata{MemoryEpoch: &epoch, ConfigScope: ConfigScopePublished, ConfigRevision: "published-v1"})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale configuration error = %v, want ErrConflict", err)
+	}
+	state := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
+	if state == nil || state.MemoryEpoch != epoch || len(store.values) != 0 {
+		t.Fatalf("subject/value state = %#v/%#v", state, store.values)
 	}
 }

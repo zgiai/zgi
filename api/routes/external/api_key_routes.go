@@ -92,6 +92,30 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	externalGroup := r.Group("/v1")
 	externalGroup.Use(middleware.APIKeyAuthMiddleware(db))
 	externalGroup.Use(middleware.APIKeyUsageLoggingMiddleware(db)) // Log API key usage
+	withAgentAPIKeyContext := func(handler gin.HandlerFunc) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			value, exists := c.Get("api_key_info")
+			keyInfo, ok := value.(*middleware.APIKeyInfo)
+			if !exists || !ok || keyInfo == nil {
+				c.AbortWithStatus(401)
+				return
+			}
+			util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
+			c.Set("workspace_id", keyInfo.TenantID.String())
+			if enterpriseService != nil {
+				if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
+					util.SetOrganizationID(c, org.ID)
+				} else {
+					util.SetOrganizationID(c, keyInfo.TenantID.String())
+				}
+			} else {
+				util.SetOrganizationID(c, keyInfo.TenantID.String())
+			}
+			c.Set("account_id", keyInfo.ID.String())
+			c.Set("agent_id", keyInfo.AgentID.String())
+			handler(c)
+		}
+	}
 	{
 		// Workflow execution endpoint: delegate to internal handler RunPublishedWorkflow
 		externalGroup.POST("/workflows/run", func(c *gin.Context) {
@@ -167,6 +191,12 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 			}
 			agentHandler.ChatAPIKeyAgent(c)
 		})
+		externalGroup.GET("/agents/memory", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemory))
+		externalGroup.GET("/agents/memory/export", withAgentAPIKeyContext(agentHandler.ExportAPIKeyAgentMemory))
+		externalGroup.PUT("/agents/memory/:key", withAgentAPIKeyContext(agentHandler.PutAPIKeyAgentMemory))
+		externalGroup.DELETE("/agents/memory/:key", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentMemoryValue))
+		externalGroup.DELETE("/agents/memory", withAgentAPIKeyContext(agentHandler.DeleteAllAPIKeyAgentMemory))
+		externalGroup.POST("/agents/memory/operations/:operation_id/undo", withAgentAPIKeyContext(agentHandler.UndoAPIKeyAgentMemoryOperation))
 		externalGroup.GET("/agents/conversations/:conversation_id/events", func(c *gin.Context) {
 			if v, exists := c.Get("api_key_info"); exists {
 				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {

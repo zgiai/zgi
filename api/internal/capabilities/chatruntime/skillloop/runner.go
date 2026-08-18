@@ -133,7 +133,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	if resolved == nil {
 		resolved = &skills.ResolvedSkills{}
 	}
-	if len(resolved.Skills) == 0 && !req.ProtocolToolsOnly && !req.TerminalOnly {
+	if len(resolved.Skills) == 0 && len(req.RuntimeTools) == 0 && !req.ProtocolToolsOnly && !req.TerminalOnly {
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 	if len(resolved.Skills) > 0 && r.SkillRuntime == nil {
@@ -272,7 +272,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Messages = messages
 		planningReq.Stream = false
 		if req.NativeAgentLoop {
-			planningReq.Tools = nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession)
+			planningReq.Tools = nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession, req.RuntimeTools)
 		} else {
 			planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, false)
 		}
@@ -547,10 +547,16 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		for _, call := range toolCalls {
 			stepCount++
 			executionCall := call
-			if req.NativeAgentLoop {
+			runtimeTool, runtimeCall := runtimeToolForCall(req.RuntimeTools, call)
+			if req.NativeAgentLoop && !runtimeCall {
 				executionCall = nativeExecutionCall(call, nativeToolSet)
 			}
 			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, executionCall)
+			if runtimeCall {
+				callSkillID = strings.TrimSpace(runtimeTool.SkillID)
+				callToolName = strings.TrimSpace(runtimeTool.Definition.Function.Name)
+				failedCallKey = ""
+			}
 			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			callEvidence[runtimeStateAllowPlanUpdateKey] = req.NativeAgentLoop || planRevisionRequired || operationPlanModelRevisionRequired(req, callEvidence)
 			callEvidence[runtimeStateAllowIntermediateAnswerKey] = !fileDeliveryRequiresArtifactOnly(req, callEvidence)
@@ -572,6 +578,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if req.NativeAgentLoop && nativeForbiddenProtocolTool(call.Function.Name) {
 				result = nativeForbiddenProtocolToolStep(call.ID, call.Function.Name)
+			}
+			if result.trace.Kind == "" && runtimeCall {
+				result = handleRuntimeToolCall(ctx, call, runtimeTool)
 			}
 			if result.trace.Kind == "" && userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
 				result = pendingUserInputPlanRevisionStep(executionCall.ID, callSkillID, callToolName, callToolArgs, resolved)

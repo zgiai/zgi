@@ -23,6 +23,7 @@ import type {
   AgentMemoryValuesResponse,
   UpdateAgentMemoryValueRequest,
   AgentMemoryValue,
+  AgentMemoryConfigResponse,
   PublishAgentResponse,
   PublishAgentRequest,
   AgentPublishedVersionsResponse,
@@ -300,6 +301,20 @@ class AgentService extends BaseService {
         headers: { 'Content-Type': 'application/json' },
       }
     );
+  }
+
+  updateAgentMemoryConfig(
+    agentId: string,
+    payload: {
+      enabled: boolean;
+      auto_extraction_enabled: boolean;
+      slots: AgentMemorySlotConfig[];
+      config_revision?: string;
+    }
+  ): Promise<ApiResponseData<AgentMemoryConfigResponse>> {
+    return this.request('put', `/agents/${agentId}/memory/config`, payload, {
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   getAgentMemoryValues(agentId: string): Promise<ApiResponseData<AgentMemoryValuesResponse>> {

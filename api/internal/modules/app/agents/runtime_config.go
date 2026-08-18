@@ -49,6 +49,7 @@ func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID s
 	resp := agentConfigResponse(ag.ID.String(), cfg)
 	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
 	rows, bindingRevision, bindingHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
 	if err != nil {
 		return nil, err
@@ -67,6 +68,7 @@ func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID,
 	resp := agentConfigResponse(ag.ID.String(), cfg)
 	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
 	rows, bindingRevision, bindingHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
 	if err != nil {
 		return nil, err
@@ -146,6 +148,10 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	}
 	runtimeReq.WorkflowBindings = s.hydrateAgentWorkflowBindingTypes(ctx, ag.TenantID.String(), runtimeReq.WorkflowBindings)
 	previous := agentConfigResponse(ag.ID.String(), cfg)
+	if runtimeReq.AgentMemorySlots != nil {
+		previous.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+		previous.AgentMemoryConfigRevision = agentMemoryConfigRevision(previous.AgentMemoryEnabled, previous.AgentMemoryAutoExtractionEnabled, previous.AgentMemorySlots)
+	}
 	previousRows, currentRevision, currentHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
 	if err != nil {
 		return nil, err
@@ -174,6 +180,9 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 			return nil, err
 		}
 	} else {
+		if runtimeReq.AgentMemorySlots != nil {
+			return nil, fmt.Errorf("database is required for atomic agent memory configuration updates")
+		}
 		if _, err := applyAgentConfigRequestToDraft(cfg, runtimeReq, accountID); err != nil {
 			return nil, err
 		}
@@ -193,6 +202,7 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	resp.BindingRevision = agentBindingRevision(rows)
 	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, rows)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
 	if removedBindings := removedAgentBindingAuditItems(previousRows, rows); len(removedBindings) > 0 {
 		logger.InfoContext(ctx, "agent draft resource bindings removed",
 			"log_type", "audit",
@@ -250,6 +260,13 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {
 			return err
 		}
+		if req.AgentMemorySlots != nil {
+			var lockedAgent struct{ ID uuid.UUID }
+			if err := tx.WithContext(ctx).Table("agents").Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ? AND deleted_at IS NULL", ag.ID).Select("id").Take(&lockedAgent).Error; err != nil {
+				return err
+			}
+		}
 		if err := ensureAgentWorkspaceUnchanged(ctx, tx, ag); err != nil {
 			return err
 		}
@@ -264,6 +281,28 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 			return err
 		}
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		var memoryService *agentmemory.Service
+		if s.agentMemoryService != nil || req.AgentMemorySlots != nil {
+			memoryService = agentmemory.NewService(tx)
+		}
+		if req.AgentMemorySlots != nil {
+			currentSlots, memoryErr := memoryService.ListSlots(ctx, ag.ID)
+			if memoryErr != nil {
+				return memoryErr
+			}
+			currentConfig.AgentMemorySlots = agentMemorySlotConfigsFromResponses(currentSlots)
+			currentConfig.AgentMemoryConfigRevision = agentMemoryConfigRevision(
+				currentConfig.AgentMemoryEnabled,
+				currentConfig.AgentMemoryAutoExtractionEnabled,
+				currentConfig.AgentMemorySlots,
+			)
+			if expected := strings.TrimSpace(req.AgentMemoryConfigRevision); expected != "" && expected != currentConfig.AgentMemoryConfigRevision {
+				return &agentBindingAPIError{
+					Code: agentMemoryConfigRevisionConflictCode, Message: "agent memory configuration has changed",
+					Data: map[string]interface{}{"config_revision": currentConfig.AgentMemoryConfigRevision, "current_config": currentConfig},
+				}
+			}
+		}
 		currentRows, err := s.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
 		if err != nil {
 			return err
@@ -309,6 +348,30 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		}
 		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, nextRows); err != nil {
 			return err
+		}
+		if req.AgentMemorySlots != nil {
+			actorID, parseErr := uuid.Parse(strings.TrimSpace(accountID))
+			if parseErr != nil || actorID == uuid.Nil {
+				return fmt.Errorf("account id is invalid")
+			}
+			if _, replaceErr := memoryService.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(*req.AgentMemorySlots, true)); replaceErr != nil {
+				return replaceErr
+			}
+		}
+		if memoryService != nil {
+			updatedSlots, memoryErr := memoryService.ListSlots(ctx, ag.ID)
+			if memoryErr != nil {
+				return memoryErr
+			}
+			nextMemoryConfig := agentConfigResponse(ag.ID.String(), &current)
+			nextRevision := agentMemoryConfigRevision(
+				nextMemoryConfig.AgentMemoryEnabled,
+				nextMemoryConfig.AgentMemoryAutoExtractionEnabled,
+				agentMemorySlotConfigsFromResponses(updatedSlots),
+			)
+			if err := memoryService.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, nextRevision); err != nil {
+				return err
+			}
 		}
 		saved = &current
 		savedRows = nextRows
@@ -434,6 +497,17 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, nextRows); err != nil {
 			return err
 		}
+		if s.agentMemoryService != nil {
+			memorySvc := agentmemory.NewService(tx)
+			currentSlots, err := memorySvc.ListSlots(ctx, ag.ID)
+			if err != nil {
+				return err
+			}
+			revision := agentMemoryConfigRevision(nextConfig.AgentMemoryEnabled, nextConfig.AgentMemoryAutoExtractionEnabled, agentMemorySlotConfigsFromResponses(currentSlots))
+			if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, revision); err != nil {
+				return err
+			}
+		}
 		saved = &current
 		savedRows = nextRows
 		return nil
@@ -445,6 +519,7 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 	resp.BindingRevision = agentBindingRevision(savedRows)
 	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, savedRows)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
 	return resp, nil
 }
 
@@ -463,6 +538,8 @@ func mergeAgentConfigRequestedFields(current dto.AgentConfigRequest, requested d
 			current.EnabledSkillIDs = requested.EnabledSkillIDs
 		case "agent_memory_enabled":
 			current.AgentMemoryEnabled = requested.AgentMemoryEnabled
+		case "agent_memory_auto_extraction_enabled":
+			current.AgentMemoryAutoExtractionEnabled = requested.AgentMemoryAutoExtractionEnabled
 		case "file_upload_enabled":
 			current.FileUpload = requested.FileUpload
 		case "home_title":
@@ -793,6 +870,15 @@ func (s *agentsService) createAgentPublishedVersion(
 		txService.db = tx
 		txService.agentBindings = bindingRepo
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		var memoryService *agentmemory.Service
+		if s.agentMemoryService != nil {
+			memoryService = agentmemory.NewService(tx)
+			lockedSlots, memoryErr := memoryService.ListSlots(ctx, ag.ID)
+			if memoryErr != nil {
+				return fmt.Errorf("reload agent memory slots for publish: %w", memoryErr)
+			}
+			currentMemorySlots = agentMemorySlotConfigsFromResponses(lockedSlots)
+		}
 		rows, err := txService.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
 		if err != nil {
 			return err
@@ -849,6 +935,12 @@ func (s *agentsService) createAgentPublishedVersion(
 			snapshotMemorySlots = agentMemorySnapshotSlots(enabledAgentMemorySlots(currentMemorySlots))
 		}
 		snapshot["agent_memory_slots"] = snapshotMemorySlots
+		publishedMemoryRevision := agentMemoryConfigRevision(
+			currentConfig.AgentMemoryEnabled,
+			currentConfig.AgentMemoryAutoExtractionEnabled,
+			snapshotMemorySlots,
+		)
+		snapshot["agent_memory_config_revision"] = publishedMemoryRevision
 		version.ConfigSnapshot = snapshot
 		if err := tx.Create(version).Error; err != nil {
 			return fmt.Errorf("failed to create agent published version: %w", err)
@@ -867,11 +959,17 @@ func (s *agentsService) createAgentPublishedVersion(
 		}, publishedBindings); err != nil {
 			return err
 		}
-		if s.agentMemoryService == nil {
+		if memoryService == nil {
 			return nil
 		}
-		memoryService := agentmemory.NewService(tx)
-		if err := memoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(currentMemorySlots)); err != nil {
+		if err := memoryService.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopePublished, publishedMemoryRevision); err != nil {
+			return fmt.Errorf("advance published agent memory configuration: %w", err)
+		}
+		keepMemorySlots := currentMemorySlots
+		if currentConfig.AgentMemoryEnabled {
+			keepMemorySlots = snapshotMemorySlots
+		}
+		if err := memoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(keepMemorySlots)); err != nil {
 			return fmt.Errorf("clear removed agent memory values: %w", err)
 		}
 		return nil
@@ -971,6 +1069,7 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 		return nil, err
 	}
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
 	return resp, nil
 }
 
@@ -1091,8 +1190,14 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 			return err
 		}
 		if s.agentMemoryService != nil {
-			if _, err := agentmemory.NewService(tx).ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(snapshot.AgentMemorySlots, false)); err != nil {
+			memorySvc := agentmemory.NewService(tx)
+			updatedSlots, err := memorySvc.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(snapshot.AgentMemorySlots, false))
+			if err != nil {
 				return fmt.Errorf("replace agent memory slots during rollback: %w", err)
+			}
+			revision := agentMemoryConfigRevision(snapshot.AgentMemoryEnabled, snapshot.AgentMemoryAutoExtractionEnabled, agentMemorySlotConfigsFromResponses(updatedSlots))
+			if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, revision); err != nil {
+				return fmt.Errorf("advance draft agent memory configuration during rollback: %w", err)
 			}
 		}
 		result = agentConfigResponse(ag.ID.String(), &current)
@@ -1127,31 +1232,32 @@ func (s *agentsService) agentRollbackImpact(ctx context.Context, ag *Agent, acco
 
 func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentConfigRequest {
 	return dto.AgentConfigRequest{
-		SystemPrompt:              config.SystemPrompt,
-		ModelProvider:             config.ModelProvider,
-		Model:                     config.Model,
-		ModelParameters:           config.ModelParameters,
-		EnabledSkillIDs:           config.EnabledSkillIDs,
-		UseMemory:                 false,
-		AgentMemoryEnabled:        config.AgentMemoryEnabled,
-		FileUpload:                config.FileUpload,
-		HomeTitle:                 config.HomeTitle,
-		OpeningStatement:          config.OpeningStatement,
-		InputPlaceholder:          config.InputPlaceholder,
-		ThemeColor:                config.ThemeColor,
-		SuggestedQuestions:        config.SuggestedQuestions,
-		KnowledgeDatasetIDs:       config.KnowledgeDatasetIDs,
-		KnowledgeBoundByAccountID: config.KnowledgeBoundByAccountID,
-		KnowledgeBoundAtUnix:      config.KnowledgeBoundAtUnix,
-		KnowledgeRetrievalConfig:  config.KnowledgeRetrievalConfig,
-		DatabaseBindings:          config.DatabaseBindings,
-		DatabaseBoundByAccountID:  config.DatabaseBoundByAccountID,
-		DatabaseBoundAtUnix:       config.DatabaseBoundAtUnix,
-		WorkflowBindings:          config.WorkflowBindings,
-		WorkflowBoundByAccountID:  config.WorkflowBoundByAccountID,
-		WorkflowBoundAtUnix:       config.WorkflowBoundAtUnix,
-		IntegrationBindings:       config.IntegrationBindings,
-		BindingAuthorizations:     config.BindingAuthorizations,
+		SystemPrompt:                     config.SystemPrompt,
+		ModelProvider:                    config.ModelProvider,
+		Model:                            config.Model,
+		ModelParameters:                  config.ModelParameters,
+		EnabledSkillIDs:                  config.EnabledSkillIDs,
+		UseMemory:                        false,
+		AgentMemoryEnabled:               config.AgentMemoryEnabled,
+		AgentMemoryAutoExtractionEnabled: config.AgentMemoryAutoExtractionEnabled,
+		FileUpload:                       config.FileUpload,
+		HomeTitle:                        config.HomeTitle,
+		OpeningStatement:                 config.OpeningStatement,
+		InputPlaceholder:                 config.InputPlaceholder,
+		ThemeColor:                       config.ThemeColor,
+		SuggestedQuestions:               config.SuggestedQuestions,
+		KnowledgeDatasetIDs:              config.KnowledgeDatasetIDs,
+		KnowledgeBoundByAccountID:        config.KnowledgeBoundByAccountID,
+		KnowledgeBoundAtUnix:             config.KnowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:         config.KnowledgeRetrievalConfig,
+		DatabaseBindings:                 config.DatabaseBindings,
+		DatabaseBoundByAccountID:         config.DatabaseBoundByAccountID,
+		DatabaseBoundAtUnix:              config.DatabaseBoundAtUnix,
+		WorkflowBindings:                 config.WorkflowBindings,
+		WorkflowBoundByAccountID:         config.WorkflowBoundByAccountID,
+		WorkflowBoundAtUnix:              config.WorkflowBoundAtUnix,
+		IntegrationBindings:              config.IntegrationBindings,
+		BindingAuthorizations:            config.BindingAuthorizations,
 	}
 }
 
@@ -1273,27 +1379,28 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	params := string(paramsJSON)
 	cfg.Configs = &params
 	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
-		EnabledSkillIDs:           runtimeCfg.EnabledSkillIDs,
-		UseMemory:                 false,
-		AgentMemoryEnabled:        runtimeCfg.AgentMemoryEnabled,
-		FileUploadEnabled:         runtimeCfg.FileUpload,
-		HomeTitle:                 runtimeCfg.HomeTitle,
-		OpeningStatement:          runtimeCfg.OpeningStatement,
-		InputPlaceholder:          runtimeCfg.InputPlaceholder,
-		ThemeColor:                runtimeCfg.ThemeColor,
-		SuggestedQuestions:        runtimeCfg.SuggestedQuestions,
-		KnowledgeDatasetIDs:       runtimeCfg.KnowledgeDatasetIDs,
-		KnowledgeBoundByAccountID: knowledgeBoundByAccountID,
-		KnowledgeBoundAtUnix:      knowledgeBoundAtUnix,
-		KnowledgeRetrievalConfig:  runtimeCfg.KnowledgeRetrievalConfig,
-		DatabaseBindings:          runtimeCfg.DatabaseBindings,
-		DatabaseBoundByAccountID:  databaseBoundByAccountID,
-		DatabaseBoundAtUnix:       databaseBoundAtUnix,
-		WorkflowBindings:          runtimeCfg.WorkflowBindings,
-		WorkflowBoundByAccountID:  workflowBoundByAccountID,
-		WorkflowBoundAtUnix:       workflowBoundAtUnix,
-		IntegrationBindings:       runtimeCfg.IntegrationBindings,
-		BindingAuthorizations:     bindingAuthorizations,
+		EnabledSkillIDs:                  runtimeCfg.EnabledSkillIDs,
+		UseMemory:                        false,
+		AgentMemoryEnabled:               runtimeCfg.AgentMemoryEnabled,
+		AgentMemoryAutoExtractionEnabled: runtimeCfg.AgentMemoryAutoExtractionEnabled,
+		FileUploadEnabled:                runtimeCfg.FileUpload,
+		HomeTitle:                        runtimeCfg.HomeTitle,
+		OpeningStatement:                 runtimeCfg.OpeningStatement,
+		InputPlaceholder:                 runtimeCfg.InputPlaceholder,
+		ThemeColor:                       runtimeCfg.ThemeColor,
+		SuggestedQuestions:               runtimeCfg.SuggestedQuestions,
+		KnowledgeDatasetIDs:              runtimeCfg.KnowledgeDatasetIDs,
+		KnowledgeBoundByAccountID:        knowledgeBoundByAccountID,
+		KnowledgeBoundAtUnix:             knowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:         runtimeCfg.KnowledgeRetrievalConfig,
+		DatabaseBindings:                 runtimeCfg.DatabaseBindings,
+		DatabaseBoundByAccountID:         databaseBoundByAccountID,
+		DatabaseBoundAtUnix:              databaseBoundAtUnix,
+		WorkflowBindings:                 runtimeCfg.WorkflowBindings,
+		WorkflowBoundByAccountID:         workflowBoundByAccountID,
+		WorkflowBoundAtUnix:              workflowBoundAtUnix,
+		IntegrationBindings:              runtimeCfg.IntegrationBindings,
+		BindingAuthorizations:            bindingAuthorizations,
 	})
 	if err != nil {
 		return dto.AgentConfigRequest{}, fmt.Errorf("failed to marshal agent mode: %w", err)
@@ -1310,30 +1417,31 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 	}
 	mode := agentRuntimeModeFromConfig(cfg)
 	resp := &dto.AgentConfigResponse{
-		AgentID:                   agentID,
-		ModelParameters:           params,
-		EnabledSkillIDs:           normalizeAgentEnabledSkillIDs(mode.EnabledSkillIDs),
-		UseMemory:                 false,
-		AgentMemoryEnabled:        mode.AgentMemoryEnabled,
-		AgentMemorySlots:          normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
-		FileUpload:                mode.FileUploadEnabled,
-		HomeTitle:                 normalizeAgentHomeTitle(mode.HomeTitle),
-		OpeningStatement:          normalizeAgentOpeningStatement(mode.OpeningStatement),
-		InputPlaceholder:          normalizeAgentInputPlaceholder(mode.InputPlaceholder),
-		ThemeColor:                normalizeAgentThemeColor(mode.ThemeColor),
-		SuggestedQuestions:        normalizeSuggestedQuestions(mode.SuggestedQuestions),
-		KnowledgeDatasetIDs:       normalizeStringIDs(mode.KnowledgeDatasetIDs),
-		KnowledgeBoundByAccountID: strings.TrimSpace(mode.KnowledgeBoundByAccountID),
-		KnowledgeBoundAtUnix:      mode.KnowledgeBoundAtUnix,
-		KnowledgeRetrievalConfig:  normalizeAgentKnowledgeRetrievalConfig(mode.KnowledgeRetrievalConfig),
-		DatabaseBindings:          normalizeAgentDatabaseBindings(mode.DatabaseBindings),
-		DatabaseBoundByAccountID:  strings.TrimSpace(mode.DatabaseBoundByAccountID),
-		DatabaseBoundAtUnix:       mode.DatabaseBoundAtUnix,
-		WorkflowBindings:          normalizeAgentWorkflowBindings(mode.WorkflowBindings),
-		WorkflowBoundByAccountID:  strings.TrimSpace(mode.WorkflowBoundByAccountID),
-		WorkflowBoundAtUnix:       mode.WorkflowBoundAtUnix,
-		IntegrationBindings:       normalizeAgentIntegrationBindings(mode.IntegrationBindings),
-		BindingAuthorizations:     bindingAuthorizationsForRuntimeMode(mode),
+		AgentID:                          agentID,
+		ModelParameters:                  params,
+		EnabledSkillIDs:                  normalizeAgentEnabledSkillIDs(mode.EnabledSkillIDs),
+		UseMemory:                        false,
+		AgentMemoryEnabled:               mode.AgentMemoryEnabled,
+		AgentMemoryAutoExtractionEnabled: mode.AgentMemoryAutoExtractionEnabled,
+		AgentMemorySlots:                 normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
+		FileUpload:                       mode.FileUploadEnabled,
+		HomeTitle:                        normalizeAgentHomeTitle(mode.HomeTitle),
+		OpeningStatement:                 normalizeAgentOpeningStatement(mode.OpeningStatement),
+		InputPlaceholder:                 normalizeAgentInputPlaceholder(mode.InputPlaceholder),
+		ThemeColor:                       normalizeAgentThemeColor(mode.ThemeColor),
+		SuggestedQuestions:               normalizeSuggestedQuestions(mode.SuggestedQuestions),
+		KnowledgeDatasetIDs:              normalizeStringIDs(mode.KnowledgeDatasetIDs),
+		KnowledgeBoundByAccountID:        strings.TrimSpace(mode.KnowledgeBoundByAccountID),
+		KnowledgeBoundAtUnix:             mode.KnowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:         normalizeAgentKnowledgeRetrievalConfig(mode.KnowledgeRetrievalConfig),
+		DatabaseBindings:                 normalizeAgentDatabaseBindings(mode.DatabaseBindings),
+		DatabaseBoundByAccountID:         strings.TrimSpace(mode.DatabaseBoundByAccountID),
+		DatabaseBoundAtUnix:              mode.DatabaseBoundAtUnix,
+		WorkflowBindings:                 normalizeAgentWorkflowBindings(mode.WorkflowBindings),
+		WorkflowBoundByAccountID:         strings.TrimSpace(mode.WorkflowBoundByAccountID),
+		WorkflowBoundAtUnix:              mode.WorkflowBoundAtUnix,
+		IntegrationBindings:              normalizeAgentIntegrationBindings(mode.IntegrationBindings),
+		BindingAuthorizations:            bindingAuthorizationsForRuntimeMode(mode),
 	}
 	if cfg != nil {
 		resp.SystemPrompt = stringPtrValue(cfg.PrePrompt)
@@ -1348,34 +1456,36 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface{} {
 	resp := agentConfigResponse(agentID, cfg)
 	return map[string]interface{}{
-		"agent_id":                      resp.AgentID,
-		"system_prompt":                 resp.SystemPrompt,
-		"model_provider":                resp.ModelProvider,
-		"model":                         resp.Model,
-		"supports_vision":               resp.SupportsVision,
-		"model_parameters":              resp.ModelParameters,
-		"enabled_skill_ids":             resp.EnabledSkillIDs,
-		"use_memory":                    false,
-		"agent_memory_enabled":          resp.AgentMemoryEnabled,
-		"agent_memory_slots":            normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
-		"file_upload_enabled":           resp.FileUpload,
-		"home_title":                    resp.HomeTitle,
-		"opening_statement":             resp.OpeningStatement,
-		"input_placeholder":             resp.InputPlaceholder,
-		"theme_color":                   resp.ThemeColor,
-		"suggested_questions":           resp.SuggestedQuestions,
-		"knowledge_dataset_ids":         resp.KnowledgeDatasetIDs,
-		"knowledge_bound_by_account_id": resp.KnowledgeBoundByAccountID,
-		"knowledge_bound_at_unix":       resp.KnowledgeBoundAtUnix,
-		"knowledge_retrieval_config":    resp.KnowledgeRetrievalConfig,
-		"database_bindings":             normalizeAgentDatabaseBindings(resp.DatabaseBindings),
-		"database_bound_by_account_id":  resp.DatabaseBoundByAccountID,
-		"database_bound_at_unix":        resp.DatabaseBoundAtUnix,
-		"workflow_bindings":             normalizeAgentWorkflowBindings(resp.WorkflowBindings),
-		"workflow_bound_by_account_id":  resp.WorkflowBoundByAccountID,
-		"workflow_bound_at_unix":        resp.WorkflowBoundAtUnix,
-		"integration_bindings":          normalizeAgentIntegrationBindings(resp.IntegrationBindings),
-		"binding_authorizations":        normalizeAgentBindingAuthorizations(resp.BindingAuthorizations),
+		"agent_id":                             resp.AgentID,
+		"system_prompt":                        resp.SystemPrompt,
+		"model_provider":                       resp.ModelProvider,
+		"model":                                resp.Model,
+		"supports_vision":                      resp.SupportsVision,
+		"model_parameters":                     resp.ModelParameters,
+		"enabled_skill_ids":                    resp.EnabledSkillIDs,
+		"use_memory":                           false,
+		"agent_memory_enabled":                 resp.AgentMemoryEnabled,
+		"agent_memory_auto_extraction_enabled": resp.AgentMemoryAutoExtractionEnabled,
+		"agent_memory_slots":                   normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
+		"agent_memory_config_revision":         resp.AgentMemoryConfigRevision,
+		"file_upload_enabled":                  resp.FileUpload,
+		"home_title":                           resp.HomeTitle,
+		"opening_statement":                    resp.OpeningStatement,
+		"input_placeholder":                    resp.InputPlaceholder,
+		"theme_color":                          resp.ThemeColor,
+		"suggested_questions":                  resp.SuggestedQuestions,
+		"knowledge_dataset_ids":                resp.KnowledgeDatasetIDs,
+		"knowledge_bound_by_account_id":        resp.KnowledgeBoundByAccountID,
+		"knowledge_bound_at_unix":              resp.KnowledgeBoundAtUnix,
+		"knowledge_retrieval_config":           resp.KnowledgeRetrievalConfig,
+		"database_bindings":                    normalizeAgentDatabaseBindings(resp.DatabaseBindings),
+		"database_bound_by_account_id":         resp.DatabaseBoundByAccountID,
+		"database_bound_at_unix":               resp.DatabaseBoundAtUnix,
+		"workflow_bindings":                    normalizeAgentWorkflowBindings(resp.WorkflowBindings),
+		"workflow_bound_by_account_id":         resp.WorkflowBoundByAccountID,
+		"workflow_bound_at_unix":               resp.WorkflowBoundAtUnix,
+		"integration_bindings":                 normalizeAgentIntegrationBindings(resp.IntegrationBindings),
+		"binding_authorizations":               normalizeAgentBindingAuthorizations(resp.BindingAuthorizations),
 	}
 }
 
@@ -1405,7 +1515,14 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	if enabled, ok := snapshot["agent_memory_enabled"].(bool); ok {
 		resp.AgentMemoryEnabled = enabled
 	}
+	if enabled, ok := snapshot["agent_memory_auto_extraction_enabled"].(bool); ok {
+		resp.AgentMemoryAutoExtractionEnabled = enabled
+	}
 	resp.AgentMemorySlots = agentMemorySlotConfigsFromSnapshot(snapshot["agent_memory_slots"])
+	resp.AgentMemoryConfigRevision = strings.TrimSpace(stringFromSnapshot(snapshot, "agent_memory_config_revision"))
+	if resp.AgentMemoryConfigRevision == "" {
+		resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
+	}
 	if fileUpload, ok := snapshot["file_upload_enabled"].(bool); ok {
 		resp.FileUpload = fileUpload
 	}

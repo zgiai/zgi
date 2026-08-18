@@ -28,6 +28,13 @@ func agentRuntimeEventInput(event map[string]interface{}) interface{} {
 		}
 	case "intermediate_answer":
 		return map[string]interface{}{"answer_id": runtimeString(event["answer_id"])}
+	case "memory_mutation":
+		return compactAgentRuntimeMap(map[string]interface{}{
+			"memory_scope": runtimeString(event["memory_scope"]),
+			"action":       runtimeString(event["action"]),
+			"key":          runtimeString(event["key"]),
+			"display_name": runtimeString(event["display_name"]),
+		})
 	case "workflow_run":
 		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["inputs"]))
 	case "workflow_node":
@@ -114,6 +121,15 @@ func agentRuntimeEventOutput(event map[string]interface{}) interface{} {
 			"status":   runtimeString(event["status"]),
 		}))
 	}
+	if agentRuntimeEventType(event) == "memory_mutation" {
+		return compactAgentRuntimeMap(map[string]interface{}{
+			"status":         runtimeString(event["mutation_status"]),
+			"source_kind":    runtimeString(event["source_kind"]),
+			"revision":       event["revision"],
+			"operation_id":   runtimeString(event["operation_id"]),
+			"undoable_until": event["undoable_until"],
+		})
+	}
 	output := map[string]interface{}{}
 	if result := runtimeMap(event["result"]); len(result) > 0 {
 		output["result"] = sanitizeAgentRuntimeResultValue(result)
@@ -152,31 +168,40 @@ func agentRuntimeEventProcess(event map[string]interface{}) map[string]interface
 		})
 	}
 	return compactAgentRuntimeMap(map[string]interface{}{
-		"event_type":        agentRuntimeEventType(event),
-		"kind":              runtimeString(event["kind"]),
-		"phase":             runtimeString(event["phase"]),
-		"round":             event["round"],
-		"streaming":         event["streaming"],
-		"model":             runtimeString(event["model"]),
-		"provider":          runtimeString(event["provider"]),
-		"usage":             event["usage"],
-		"prompt_tokens":     event["prompt_tokens"],
-		"completion_tokens": event["completion_tokens"],
-		"total_tokens":      event["total_tokens"],
-		"runtime_id":        runtimeString(event["runtime_id"]),
-		"skill_id":          runtimeString(event["skill_id"]),
-		"tool_name":         runtimeString(event["tool_name"]),
-		"path":              runtimeString(event["path"]),
-		"answer_id":         runtimeString(event["answer_id"]),
-		"workflow_run_id":   runtimeString(event["workflow_run_id"]),
-		"workflow_id":       runtimeString(event["workflow_id"]),
-		"binding_id":        runtimeString(event["binding_id"]),
-		"node_id":           runtimeString(event["node_id"]),
-		"node_type":         runtimeString(event["node_type"]),
-		"approval_form_id":  runtimeString(event["approval_form_id"]),
-		"approval_url":      runtimeString(event["approval_url"]),
-		"version":           event["version"],
-		"raw_event":         sanitizeAgentRuntimeRawEvent(event),
+		"event_type":          agentRuntimeEventType(event),
+		"kind":                runtimeString(event["kind"]),
+		"phase":               runtimeString(event["phase"]),
+		"round":               event["round"],
+		"streaming":           event["streaming"],
+		"model":               runtimeString(event["model"]),
+		"provider":            runtimeString(event["provider"]),
+		"usage":               event["usage"],
+		"prompt_tokens":       event["prompt_tokens"],
+		"completion_tokens":   event["completion_tokens"],
+		"total_tokens":        event["total_tokens"],
+		"runtime_id":          runtimeString(event["runtime_id"]),
+		"skill_id":            runtimeString(event["skill_id"]),
+		"tool_name":           runtimeString(event["tool_name"]),
+		"path":                runtimeString(event["path"]),
+		"answer_id":           runtimeString(event["answer_id"]),
+		"memory_scope":        runtimeString(event["memory_scope"]),
+		"memory_action":       runtimeString(event["action"]),
+		"memory_key":          runtimeString(event["key"]),
+		"memory_display_name": runtimeString(event["display_name"]),
+		"memory_status":       runtimeString(event["mutation_status"]),
+		"source_kind":         runtimeString(event["source_kind"]),
+		"operation_id":        runtimeString(event["operation_id"]),
+		"revision":            event["revision"],
+		"undoable_until":      event["undoable_until"],
+		"workflow_run_id":     runtimeString(event["workflow_run_id"]),
+		"workflow_id":         runtimeString(event["workflow_id"]),
+		"binding_id":          runtimeString(event["binding_id"]),
+		"node_id":             runtimeString(event["node_id"]),
+		"node_type":           runtimeString(event["node_type"]),
+		"approval_form_id":    runtimeString(event["approval_form_id"]),
+		"approval_url":        runtimeString(event["approval_url"]),
+		"version":             event["version"],
+		"raw_event":           sanitizeAgentRuntimeRawEvent(event),
 	})
 }
 

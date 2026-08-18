@@ -54,11 +54,15 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 	if prepared == nil || prepared.Message == nil {
 		return
 	}
+	suppressContent := prepared.parts != nil && prepared.parts.AgentMemoryEnabled
+	if suppressContent {
+		trace = modelInvocationTraceWithoutContent(trace)
+	}
 	invocation := modelInvocationFromTrace(trace, runtimeUserSystemPrompt(prepared), shouldRedactModelInvocationRequest(prepared))
 	if len(invocation) == 0 {
 		return
 	}
-	if shouldPersistAgentLogContext(prepared) {
+	if shouldPersistAgentLogContext(prepared) && !suppressContent {
 		invocation["log_context"] = modelInvocationLogContext(trace.Request, runtimeUserSystemPrompt(prepared))
 	}
 	metadata := mergeModelInvocationMetadata(prepared.Message.Metadata, invocation)
@@ -87,6 +91,18 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		logger.WarnContext(ctx, "failed to persist aichat model invocation metadata", "message_id", prepared.Message.ID.String(), err)
 	}
+}
+
+func modelInvocationTraceWithoutContent(trace skillloop.ModelInvocationTrace) skillloop.ModelInvocationTrace {
+	if trace.Request != nil {
+		trace.Request = &adapter.ChatRequest{
+			Provider: trace.Request.Provider,
+			Model:    trace.Request.Model,
+			Stream:   trace.Request.Stream,
+		}
+	}
+	trace.Response = nil
+	return trace
 }
 
 func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
@@ -1959,6 +1975,7 @@ func applySkillInvocationSummary(metadata map[string]interface{}, invocations []
 	loadedSeen := map[string]struct{}{}
 	toolSeen := map[string]struct{}{}
 	toolCallCount := 0
+	memoryOperationCount := 0
 	guardrailCount := 0
 	addConfiguredSkillIDs(metadata, selectedSeen, &selected)
 
@@ -1989,6 +2006,9 @@ func applySkillInvocationSummary(metadata map[string]interface{}, invocations []
 				toolsUsed = append(toolsUsed, toolName)
 			}
 		}
+		if kind == "memory_mutation" {
+			memoryOperationCount++
+		}
 		if kind == "guardrail" {
 			guardrailCount++
 		}
@@ -2001,6 +2021,7 @@ func applySkillInvocationSummary(metadata map[string]interface{}, invocations []
 	metadata["skill_step_count"] = actionTraceCount
 	metadata["skill_call_count"] = actionTraceCount
 	metadata["tool_call_count"] = toolCallCount
+	metadata["memory_operation_count"] = memoryOperationCount
 	metadata["guardrail_count"] = guardrailCount
 	metadata["skill_names"] = selected
 	metadata["tool_names"] = toolsUsed
@@ -2930,7 +2951,7 @@ func countSkillActionInvocations(invocations []map[string]interface{}) int {
 
 func visibleSkillInvocationKind(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "skill_load", "skill_load_attempt", "reference_read", "tool_call", "tool_governance", "client_action", "intermediate_answer", "user_input_request", "guardrail":
+	case "skill_load", "skill_load_attempt", "reference_read", "tool_call", "tool_governance", "client_action", "intermediate_answer", "user_input_request", "guardrail", "memory_mutation":
 		return true
 	default:
 		return false

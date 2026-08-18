@@ -80,6 +80,13 @@ const EMPTY_PUBLISH_VERSION_DETAILS: AgentPublishVersionDetails = {
   description: '',
 };
 
+class AgentMemoryRevisionChangedError extends Error {
+  constructor() {
+    super('Agent memory configuration changed during binding conflict recovery');
+    this.name = 'AgentMemoryRevisionChangedError';
+  }
+}
+
 function describeBindingChanges(
   local: UpdateAgentRuntimeConfigRequest,
   server: Partial<AgentRuntimeConfig>,
@@ -345,6 +352,8 @@ export function useAgentRuntimePageModel(agentId: string) {
   });
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [agentMemoryEnabled, setAgentMemoryEnabled] = useState(false);
+  const [agentMemoryAutoExtractionEnabled, setAgentMemoryAutoExtractionEnabled] = useState(false);
+  const [agentMemoryConfigRevision, setAgentMemoryConfigRevision] = useState('');
   const [agentMemorySlots, setAgentMemorySlots] = useState<AgentMemorySlotConfig[]>([]);
   const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
   const [homeTitle, setHomeTitle] = useState(defaultHomeTitle);
@@ -550,6 +559,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       enabled_skill_ids: normalizedSelectedSkillIds,
       use_memory: false,
       agent_memory_enabled: agentMemoryEnabled,
+      agent_memory_auto_extraction_enabled: agentMemoryAutoExtractionEnabled,
       agent_memory_slots: agentMemorySlots.slice(0, 5).map((slot, index) => ({
         ...slot,
         description: slot.description.slice(0, 200),
@@ -577,6 +587,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       defaultInputPlaceholder,
       fileUploadEnabled,
       agentMemoryEnabled,
+      agentMemoryAutoExtractionEnabled,
       agentMemorySlots,
       homeTitle,
       openingStatement,
@@ -616,6 +627,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     });
     setSelectedSkillIds(payload.enabled_skill_ids);
     setAgentMemoryEnabled(payload.agent_memory_enabled ?? false);
+    setAgentMemoryAutoExtractionEnabled(payload.agent_memory_auto_extraction_enabled ?? false);
     setAgentMemorySlots(payload.agent_memory_slots ?? []);
     setFileUploadEnabled(payload.file_upload_enabled);
     setHomeTitle(payload.home_title);
@@ -640,6 +652,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       enabled_skill_ids: runtimeConfig.enabled_skill_ids ?? [],
       use_memory: runtimeConfig.use_memory ?? false,
       agent_memory_enabled: runtimeConfig.agent_memory_enabled ?? false,
+      agent_memory_auto_extraction_enabled:
+        runtimeConfig.agent_memory_auto_extraction_enabled ?? false,
       agent_memory_slots: runtimeConfig.agent_memory_slots ?? [],
       file_upload_enabled: runtimeConfig.file_upload_enabled ?? false,
       home_title:
@@ -687,18 +701,14 @@ export function useAgentRuntimePageModel(agentId: string) {
 
   const saveRuntimePayload = useCallback(
     async (payload: UpdateAgentRuntimeConfigRequest) => {
-      let slotsResponse: Awaited<ReturnType<typeof agentService.updateAgentMemorySlots>> | null =
-        null;
       const payloadMemorySlotErrors = validateAgentMemorySlots(
         payload.agent_memory_slots ?? []
       ).some(Boolean);
-      if (payload.agent_memory_enabled || !payloadMemorySlotErrors) {
-        slotsResponse = await agentService.updateAgentMemorySlots(
-          agentId,
-          payload.agent_memory_slots ?? []
-        );
-      }
-      let configPayload = payload;
+      if (payloadMemorySlotErrors) throw new Error('Invalid Agent Memory slot configuration');
+      let configPayload: UpdateAgentRuntimeConfigRequest = {
+        ...payload,
+        agent_memory_config_revision: agentMemoryConfigRevision || undefined,
+      };
       let wasBindingRevisionRebased = false;
       let rebasedBindingHealth: AgentBindingHealth | undefined;
       let response: Awaited<ReturnType<typeof agentService.updateAgentConfig>>;
@@ -709,6 +719,11 @@ export function useAgentRuntimePageModel(agentId: string) {
         if (conflict?.bindingHealth) setBindingHealth(conflict.bindingHealth);
         const serverConfig = conflict?.currentConfig;
         if (!serverConfig?.binding_revision) throw error;
+        const serverMemoryRevision = serverConfig.agent_memory_config_revision?.trim() ?? '';
+        const submittedMemoryRevision = configPayload.agent_memory_config_revision?.trim() ?? '';
+        if (serverMemoryRevision && serverMemoryRevision !== submittedMemoryRevision) {
+          throw new AgentMemoryRevisionChangedError();
+        }
         const changedBindings = describeBindingChanges(payload, serverConfig, {
           skill: t('bindingHealth.types.skill'),
           knowledge: t('bindingHealth.types.knowledge_dataset'),
@@ -736,6 +751,8 @@ export function useAgentRuntimePageModel(agentId: string) {
             serverConfig.integration_bindings ?? []
           ),
           binding_revision: serverConfig.binding_revision,
+          agent_memory_config_revision:
+            serverConfig.agent_memory_config_revision ?? configPayload.agent_memory_config_revision,
         };
         wasBindingRevisionRebased = true;
         rebasedBindingHealth = conflict?.bindingHealth;
@@ -745,18 +762,23 @@ export function useAgentRuntimePageModel(agentId: string) {
       const savedPayload = {
         ...configPayload,
         binding_revision: response.data.binding_revision ?? configPayload.binding_revision,
-        agent_memory_slots:
-          slotsResponse?.data.slots ??
-          response.data.agent_memory_slots ??
-          payload.agent_memory_slots,
+        agent_memory_slots: response.data.agent_memory_slots ?? payload.agent_memory_slots,
+        agent_memory_config_revision:
+          response.data.agent_memory_config_revision ??
+          configPayload.agent_memory_config_revision,
       };
+      setAgentMemoryConfigRevision(savedPayload.agent_memory_config_revision ?? '');
 
       queryClient.setQueryData(AGENT_KEYS.config(agentId), {
         ...response,
         data: {
           ...response.data,
           agent_memory_enabled: payload.agent_memory_enabled,
+          agent_memory_auto_extraction_enabled:
+            response.data.agent_memory_auto_extraction_enabled ??
+            payload.agent_memory_auto_extraction_enabled,
           agent_memory_slots: savedPayload.agent_memory_slots,
+          agent_memory_config_revision: savedPayload.agent_memory_config_revision,
         },
       });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
@@ -768,7 +790,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         bindingHealth: response.data.binding_health ?? rebasedBindingHealth,
       };
     },
-    [agentId, queryClient, t]
+    [agentId, agentMemoryConfigRevision, queryClient, t]
   );
 
   const {
@@ -813,7 +835,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       if (!options.silent) {
         const bindingConflict = getAgentBindingConflict(error);
         toast.error(
-          bindingConflict?.code === 'agent_bindings_invalid'
+          error instanceof AgentMemoryRevisionChangedError
+            ? t('toasts.memoryRevisionChanged')
+            : bindingConflict?.code === 'agent_bindings_invalid'
             ? t('toasts.saveBindingsInvalid')
             : t('toasts.saveFailedDraftKept')
         );
@@ -834,6 +858,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (!canApplyServerConfig) return;
 
     applyRuntimePayload(nextPayload);
+    setAgentMemoryConfigRevision(config.agent_memory_config_revision ?? '');
     setBindingHealth(config.binding_health);
     setIsAbnormalSkillCleanupPending(false);
     hydratedAgentIdRef.current = agentId;
@@ -1091,6 +1116,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       });
       const nextPayload = payloadFromRuntimeConfig(response.data);
       applyRuntimePayload(nextPayload);
+      setAgentMemoryConfigRevision(response.data.agent_memory_config_revision ?? '');
       markServerSaved(nextPayload, response.data.updated_at ?? Math.floor(Date.now() / 1000));
       setBindingHealth(response.data.binding_health);
       setIsAbnormalSkillCleanupPending(false);
@@ -1535,6 +1561,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       isGeneratingSuggestions,
       fileUploadEnabled,
       agentMemoryEnabled,
+      agentMemoryAutoExtractionEnabled,
       agentMemorySlots,
       agentMemorySlotValidationErrors,
       defaultHomeTitle,
@@ -1612,6 +1639,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       onChangeAgentMemoryEnabled: (value: boolean) => {
         if (isRuntimeConfigReadOnly) return;
         setAgentMemoryEnabled(value);
+      },
+      onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => {
+        if (isRuntimeConfigReadOnly) return;
+        setAgentMemoryAutoExtractionEnabled(value);
       },
       onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => {
         if (isRuntimeConfigReadOnly) return;

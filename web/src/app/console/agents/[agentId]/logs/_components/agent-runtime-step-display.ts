@@ -155,6 +155,23 @@ export function getAgentRuntimeStepDisplay(
         title: translate(t, 'appLogs.runtimeEventTitles.guardrail'),
         subtitle: rawTitle || type,
       };
+    case 'memory_mutation': {
+      const action = stringValue(process.memory_action);
+      const memoryKey = fallbackName(
+        stringValue(process.memory_display_name) || stringValue(process.memory_key),
+        translate(t, 'appLogs.runtimeFallbacks.memory')
+      );
+      return {
+        title: translate(
+          t,
+          action === 'clear'
+            ? 'appLogs.runtimeEventTitles.memoryCleared'
+            : 'appLogs.runtimeEventTitles.memoryUpdated',
+          { name: memoryKey }
+        ),
+        subtitle: stringValue(process.source_kind) || type,
+      };
+    }
     case 'workflow_run':
       return {
         title: translate(t, 'appLogs.runtimeEventTitles.workflowRun'),
@@ -182,10 +199,7 @@ export function getAgentRuntimeStepDisplay(
     case 'workflow_approval':
       return {
         title: translate(t, 'appLogs.runtimeEventTitles.workflowApproval'),
-        subtitle:
-          stringValue(process.workflow_run_id) ||
-          rawTitle ||
-          type,
+        subtitle: stringValue(process.workflow_run_id) || rawTitle || type,
       };
     case 'model_answer':
       return {

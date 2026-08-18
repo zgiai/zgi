@@ -271,6 +271,34 @@ function upsertMemoryTimelineItem(
 ): AIChatAgenticTimelineItem[] {
   const baseTimeline = removeTransientProgressItems(timeline);
   const presentationPosition = presentationPositionFromPayload(payload);
+  const isAutomaticAgentMemory =
+    payload.memory_scope === 'agent' && payload.source_kind === 'automatic';
+  if (isAutomaticAgentMemory) {
+    const itemId = `memory-auto-${payload.message_id}`;
+    const existingIndex = baseTimeline.findIndex(
+      item => item.type === 'memory_event' && item.id === itemId
+    );
+    const existing = existingIndex >= 0 ? baseTimeline[existingIndex] : undefined;
+    const existingKeys = existing?.type === 'memory_event' ? existing.event.keys ?? [] : [];
+    const keys = Array.from(
+      new Set([...existingKeys, ...(payload.key ? [payload.key] : [])].filter(Boolean))
+    );
+    const merged: AIChatAgenticTimelineItem = {
+      id: itemId,
+      type: 'memory_event',
+      event: {
+        ...(existing?.type === 'memory_event' ? existing.event : {}),
+        ...payload,
+        keys,
+        operation_count: keys.length,
+      },
+      created_at: payload.created_at ?? existing?.created_at,
+      event_id: eventId ?? (existing && 'event_id' in existing ? existing.event_id : null),
+      ...presentationPosition,
+    };
+    if (existingIndex < 0) return [...baseTimeline, merged];
+    return baseTimeline.map((item, index) => (index === existingIndex ? merged : item));
+  }
   const itemId =
     eventId ??
     `memory-${payload.action}-${payload.entry_id ?? 'entry'}-${payload.created_at ?? Date.now()}`;

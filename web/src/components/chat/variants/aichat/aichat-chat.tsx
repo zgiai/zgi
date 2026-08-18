@@ -190,6 +190,7 @@ interface AIChatShellProps {
   enableToolGovernance?: boolean;
   voiceTranscriber?: AIChatVoiceTranscriber;
   speechSynthesizer?: AIChatSpeechSynthesizer;
+  headerRightAction?: React.ReactNode;
 }
 
 const CHAT_THEME_PRIMARY: Record<string, string> = {
@@ -322,6 +323,7 @@ export function AIChatShell({
   enableToolGovernance = false,
   voiceTranscriber,
   speechSynthesizer,
+  headerRightAction,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
@@ -1448,8 +1450,11 @@ export function AIChatShell({
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
-                assetAuditButton ? (
-                  <div className="flex items-center justify-end gap-1">{assetAuditButton}</div>
+                assetAuditButton || headerRightAction ? (
+                  <div className="flex items-center justify-end gap-1">
+                    {assetAuditButton}
+                    {headerRightAction}
+                  </div>
                 ) : undefined
               }
             />

@@ -2,13 +2,24 @@ package agents
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
-	"sort"
-	"strings"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+const (
+	agentMemoryConfigRevisionConflictCode = "agent_memory_config_revision_conflict"
+	agentMemoryValueRevisionConflictCode  = "agent_memory_revision_conflict"
+	agentMemoryRevisionConflictMessage    = "Agent memory has changed. Refresh and try again."
 )
 
 func (s *agentsService) ListAgentMemorySlots(ctx context.Context, agentID, accountID string) ([]dto.AgentMemorySlotConfig, error) {
@@ -20,22 +31,40 @@ func (s *agentsService) ListAgentMemorySlots(ctx context.Context, agentID, accou
 }
 
 func (s *agentsService) ReplaceAgentMemorySlots(ctx context.Context, agentID, accountID string, slots []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error) {
-	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
 	if err != nil {
 		return nil, err
 	}
-	if s.agentMemoryService == nil {
-		return nil, fmt.Errorf("agent memory service is not configured")
+	if s.db == nil || s.agentMemoryService == nil {
+		return nil, fmt.Errorf("database and agent memory service are required")
 	}
 	actorID, err := uuid.Parse(accountID)
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
 	}
-	updated, err := s.agentMemoryService.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(slots, true))
-	if err != nil {
-		return nil, err
-	}
-	return agentMemorySlotConfigsFromResponses(updated), nil
+	var result []dto.AgentMemorySlotConfig
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current AgentsConfig
+		query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("deleted_at IS NULL")
+		if cfg != nil && cfg.ID != uuid.Nil {
+			query = query.Where("id = ?", cfg.ID)
+		} else {
+			query = query.Where("agents_id = ?", ag.ID).Order("updated_at DESC")
+		}
+		if err := query.Take(&current).Error; err != nil {
+			return err
+		}
+		memorySvc := agentmemory.NewService(tx)
+		updated, err := memorySvc.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(slots, true))
+		if err != nil {
+			return err
+		}
+		result = agentMemorySlotConfigsFromResponses(updated)
+		config := agentConfigResponse(ag.ID.String(), &current)
+		revision := agentMemoryConfigRevision(config.AgentMemoryEnabled, config.AgentMemoryAutoExtractionEnabled, result)
+		return memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, revision)
+	})
+	return result, err
 }
 
 func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, accountID string) (*dto.AgentMemoryValuesResponse, error) {
@@ -74,8 +103,9 @@ func (s *agentsService) UpdateAgentMemoryValue(ctx context.Context, agentID, acc
 		return nil, fmt.Errorf("account id is invalid")
 	}
 	value, err := s.agentMemoryService.UpdateOrganizerValue(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID, agentmemory.UpdateValueRequest{
-		Key:     req.Key,
-		Content: req.Content,
+		Key:              req.Key,
+		Content:          req.Content,
+		ExpectedRevision: req.ExpectedRevision,
 	})
 	if err != nil {
 		return nil, err
@@ -159,6 +189,14 @@ func agentMemoryValueConfigFromResponse(value agentmemory.SlotValueResponse) dto
 	return dto.AgentMemoryValueResponse{
 		AgentMemorySlotConfig: agentMemorySlotConfigFromResponse(value.SlotResponse),
 		Content:               value.Content,
+		Revision:              value.Revision,
+		SourceKind:            value.SourceKind,
+		SourceConversationID:  value.SourceConversationID,
+		SourceMessageID:       value.SourceMessageID,
+		SourceCompletedAt:     value.SourceCompletedAt,
+		ExtractorVersion:      value.ExtractorVersion,
+		LastOperationID:       value.LastOperationID,
+		UndoableUntil:         value.UndoableUntil,
 	}
 }
 
@@ -195,7 +233,7 @@ func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig, pres
 			Key:         strings.TrimSpace(slot.Key),
 			Name:        strings.TrimSpace(slot.Name),
 			Description: strings.TrimSpace(slot.Description),
-			MaxChars:    2000,
+			MaxChars:    slot.MaxChars,
 			Enabled:     &enabled,
 			SortOrder:   firstNonZeroInt(slot.SortOrder, i),
 		})
@@ -267,6 +305,9 @@ func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.Ag
 		}
 		seen[key] = struct{}{}
 		maxChars := 2000
+		if slot.MaxChars > 0 && slot.MaxChars <= 2000 {
+			maxChars = slot.MaxChars
+		}
 		sortOrder := slot.SortOrder
 		if sortOrder == 0 {
 			sortOrder = i
@@ -290,6 +331,98 @@ func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.Ag
 		return out[i].Key < out[j].Key
 	})
 	return out
+}
+
+func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, accountID string, req dto.AgentMemoryConfigRequest) (*dto.AgentMemoryConfigResponse, error) {
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	if err != nil {
+		return nil, err
+	}
+	if s.db == nil || s.agentMemoryService == nil {
+		return nil, fmt.Errorf("database and agent memory service are required")
+	}
+	actorID, err := uuid.Parse(strings.TrimSpace(accountID))
+	if err != nil {
+		return nil, fmt.Errorf("account id is invalid")
+	}
+	var result *dto.AgentMemoryConfigResponse
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Table("agents").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND deleted_at IS NULL", ag.ID).Select("id").Take(&struct{ ID uuid.UUID }{}).Error; err != nil {
+			return err
+		}
+		var current AgentsConfig
+		query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("deleted_at IS NULL")
+		if cfg != nil && cfg.ID != uuid.Nil {
+			query = query.Where("id = ?", cfg.ID)
+		} else {
+			query = query.Where("agents_id = ?", ag.ID).Order("updated_at DESC")
+		}
+		if err := query.Take(&current).Error; err != nil {
+			return err
+		}
+		memorySvc := agentmemory.NewService(tx)
+		currentSlots, err := memorySvc.ListSlots(ctx, ag.ID)
+		if err != nil {
+			return err
+		}
+		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		currentRevision := agentMemoryConfigRevision(currentConfig.AgentMemoryEnabled, currentConfig.AgentMemoryAutoExtractionEnabled, agentMemorySlotConfigsFromResponses(currentSlots))
+		if expected := strings.TrimSpace(req.ConfigRevision); expected != "" && expected != currentRevision {
+			return &agentBindingAPIError{Code: agentMemoryConfigRevisionConflictCode, Message: "agent memory configuration has changed", Data: map[string]interface{}{"config_revision": currentRevision}}
+		}
+		configReq := agentConfigRequestFromResponse(*currentConfig)
+		configReq.AgentMemoryEnabled = req.Enabled
+		configReq.AgentMemoryAutoExtractionEnabled = req.AutoExtractionEnabled
+		if _, err := applyAgentConfigRequestToDraft(&current, configReq, accountID); err != nil {
+			return err
+		}
+		current.UpdatedBy = &actorID
+		if err := NewAgentsRepository(tx).UpdateAgentsConfig(ctx, &current); err != nil {
+			return err
+		}
+		updatedSlots, err := memorySvc.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(req.Slots, true))
+		if err != nil {
+			return err
+		}
+		slots := agentMemorySlotConfigsFromResponses(updatedSlots)
+		result = &dto.AgentMemoryConfigResponse{Enabled: req.Enabled, AutoExtractionEnabled: req.AutoExtractionEnabled, Slots: slots, ConfigRevision: agentMemoryConfigRevision(req.Enabled, req.AutoExtractionEnabled, slots)}
+		if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, result.ConfigRevision); err != nil {
+			return err
+		}
+		return nil
+	})
+	return result, err
+}
+
+func agentMemoryConfigRevision(enabled, automatic bool, slots []dto.AgentMemorySlotConfig) string {
+	type revisionSlot struct {
+		Key         string `json:"key"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		MaxChars    int    `json:"max_chars"`
+		Enabled     bool   `json:"enabled"`
+		SortOrder   int    `json:"sort_order"`
+	}
+	normalizedSlots := normalizeAgentMemorySlotConfigs(slots)
+	revisionSlots := make([]revisionSlot, 0, len(normalizedSlots))
+	for _, slot := range normalizedSlots {
+		revisionSlots = append(revisionSlots, revisionSlot{
+			Key:         slot.Key,
+			Name:        slot.Name,
+			Description: slot.Description,
+			MaxChars:    slot.MaxChars,
+			Enabled:     slot.Enabled,
+			SortOrder:   slot.SortOrder,
+		})
+	}
+	payload := struct {
+		Enabled   bool           `json:"enabled"`
+		Automatic bool           `json:"automatic"`
+		Slots     []revisionSlot `json:"slots"`
+	}{enabled, automatic, revisionSlots}
+	raw, _ := json.Marshal(payload)
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
 }
 
 func agentMemorySlotConfigsFromSnapshot(raw interface{}) []dto.AgentMemorySlotConfig {

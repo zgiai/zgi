@@ -83,16 +83,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			return nil, newFinalizedStreamError(err)
 		}
 	}
-	agentMemoryUsage, err := s.runNativeAgentMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
-	preflightUsage := mergeUsage(userMemoryUsage, agentMemoryUsage)
-	if err != nil {
-		if s.isStoppedContext(runCtx, prepared.Message.ID) {
-			_ = s.persistStoppedAnswer(persistCtx, prepared, "", preflightUsage)
-			return nil, ErrMessageStopped
-		}
-		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-		return nil, newFinalizedStreamError(err)
-	}
+	preflightUsage := userMemoryUsage
 
 	if prepared.toolLoopEnabled() {
 		answer, usage, err := s.runPreparedToolStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
@@ -517,6 +508,9 @@ func newBillingAppContext(prepared *PreparedChat) *llmclient.AppContext {
 		ConversationID:     prepared.Conversation.ID.String(),
 		ModelUseCase:       preparedModelUseCase(prepared),
 	}
+	if prepared.parts != nil && prepared.parts.AgentMemoryEnabled {
+		appCtx.SuppressInvocationContent = true
+	}
 	if prepared.Conversation.WorkspaceID != nil {
 		appCtx.WorkspaceID = prepared.Conversation.WorkspaceID.String()
 	}
@@ -716,6 +710,7 @@ func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedCh
 		}
 	}
 	prepared.Message.Answer = answer
+	s.scheduleAgentMemoryExtractionBestEffort(ctx, prepared)
 	return nil
 }
 

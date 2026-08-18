@@ -9,6 +9,9 @@ import type {
   WebAppConversationSearchResponse,
   WebAppPrecheckResult,
   WebAppRuntimeCapability,
+  WebAppAgentMemoryExport,
+  WebAppAgentMemoryUndoResponse,
+  WebAppAgentMemoryValue,
 } from './types/webapp';
 import type { AIChatModelPrecheckResponse } from './types/aichat';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
@@ -129,6 +132,62 @@ export class WebAppService {
     return webappHttp.post<AIChatModelPrecheckResponse>(
       `/console/api/webapps/${webAppId}/runtime/model-precheck`,
       undefined
+    );
+  }
+
+  static async getAgentMemory(
+    webAppId: string
+  ): Promise<WebAppApiResponseData<WebAppAgentMemoryExport>> {
+    return webappHttp.get<WebAppApiResponseData<WebAppAgentMemoryExport>>(
+      `/console/api/webapps/${webAppId}/memory`
+    );
+  }
+
+  static async updateAgentMemory(
+    webAppId: string,
+    key: string,
+    content: string,
+    expectedRevision: number
+  ): Promise<WebAppApiResponseData<WebAppAgentMemoryValue>> {
+    return webappHttp.put<WebAppApiResponseData<WebAppAgentMemoryValue>>(
+      `/console/api/webapps/${webAppId}/memory/${encodeURIComponent(key)}`,
+      { content, expected_revision: expectedRevision }
+    );
+  }
+
+  static async deleteAgentMemory(
+    webAppId: string,
+    key: string,
+    expectedRevision: number
+  ): Promise<WebAppApiResponseData<WebAppAgentMemoryValue>> {
+    return webappHttp.delete<WebAppApiResponseData<WebAppAgentMemoryValue>>(
+      `/console/api/webapps/${webAppId}/memory/${encodeURIComponent(key)}`,
+      { params: { expected_revision: expectedRevision } }
+    );
+  }
+
+  static async deleteAllAgentMemory(
+    webAppId: string
+  ): Promise<WebAppApiResponseData<{ deleted: boolean }>> {
+    return webappHttp.delete<WebAppApiResponseData<{ deleted: boolean }>>(
+      `/console/api/webapps/${webAppId}/memory`
+    );
+  }
+
+  static async exportAgentMemory(
+    webAppId: string
+  ): Promise<WebAppApiResponseData<WebAppAgentMemoryExport>> {
+    return webappHttp.get<WebAppApiResponseData<WebAppAgentMemoryExport>>(
+      `/console/api/webapps/${webAppId}/memory/export`
+    );
+  }
+
+  static async undoAgentMemoryOperation(
+    webAppId: string,
+    operationId: string
+  ): Promise<WebAppApiResponseData<WebAppAgentMemoryUndoResponse>> {
+    return webappHttp.post<WebAppApiResponseData<WebAppAgentMemoryUndoResponse>>(
+      `/console/api/webapps/${webAppId}/memory/operations/${encodeURIComponent(operationId)}/undo`
     );
   }
 
