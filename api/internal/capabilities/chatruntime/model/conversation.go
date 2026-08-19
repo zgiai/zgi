@@ -18,8 +18,9 @@ const (
 	ConversationSourceExternalAPI = "external-api"
 	ConversationSourceMigration   = "migration"
 
-	ConversationCallerAIChat = "aichat"
-	ConversationCallerAgent  = "agent"
+	ConversationCallerAIChat       = "aichat"
+	ConversationCallerAgent        = "agent"
+	ConversationCallerDigitalHuman = "digital_human"
 
 	ConversationTypeChat  = "chat"
 	ConversationTypeImage = "image"

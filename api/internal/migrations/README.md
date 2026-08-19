@@ -68,9 +68,10 @@ ZGI follows Laravel's production-safety ideas but adapts them to PostgreSQL:
 - Disabling the migration lock requires `ZGI_UNSAFE_NO_MIGRATION_LOCK=1`.
 - `migrate --pretend` / `up -pretend` prints migration status without applying changes.
 - `migrate:status` / `status` shows which migrations are already applied.
-- `go run ./cmd/migrate check` validates migration IDs, filenames, duplicate IDs, source safety, baseline safety, and, when `-db` or `ZGI_MIGRATION_CHECK_DSN` is provided, executes the full chain against a fresh PostgreSQL database.
+- `go run ./cmd/migrate check` validates migration IDs, filenames, duplicate IDs, source safety, baseline safety, and, when `-db` or `ZGI_MIGRATION_CHECK_DSN` is provided, executes the full chain against a fresh PostgreSQL database. Source safety follows only the registered `up`/`Migrate` call graph, so destructive rollback code does not create false positives.
 - `internal/migrations/schema` blocks destructive statements such as `DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `DELETE`, and `UPDATE` unless `AllowDestructive` is explicitly enabled.
 - Rollbacks created through `registerSchemaMigration` run with `AllowDestructive`, because rollback is the only normal path where dropping a newly created table or column is expected.
+- Data backfills and repairs are valid `up` operations when intentional. Prefer a separately described `schema.DataFix`; source safety continues to reject destructive schema DDL and `AllowDestructive` in every registered `up` path.
 - Rollback commands require the exact latest migration ID via `--confirm`, so AI agents and operators cannot accidentally roll back with a short command.
 - The initial public baseline refuses to run on a non-empty public schema, so existing deployments are not silently overwritten.
 - Recognized legacy databases are bridged into the public migration chain only after schema-shape checks pass.

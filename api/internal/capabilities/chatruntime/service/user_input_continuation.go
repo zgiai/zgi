@@ -495,7 +495,7 @@ func (s *service) prepareUserInputContinuationChat(
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
 	restoreCurrentPageContextFromMetadata(parts, message.Metadata)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
-	if normalizeCallerType(caller.Type) != runtimemodel.ConversationCallerAgent {
+	if !isAutonomousSubjectCaller(caller.Type) {
 		if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 			parts.ConfiguredSkillIDs = configured
 		}
@@ -504,7 +504,7 @@ func (s *service) prepareUserInputContinuationChat(
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
-	applyManagedUserMemoryPolicy(caller, parts)
+	applyCallerMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}

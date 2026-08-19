@@ -375,7 +375,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
 		return nil, err
 	}
-	applyManagedUserMemoryPolicy(caller, parts)
+	applyCallerMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}

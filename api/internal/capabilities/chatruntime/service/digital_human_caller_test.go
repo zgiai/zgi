@@ -1,0 +1,141 @@
+package service
+
+import (
+	"context"
+	"testing"
+
+	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
+	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
+)
+
+type digitalHumanBindingReaderStub struct {
+	wantRef   resourcebindings.SnapshotRef
+	wantMatch resourcebindings.Match
+	allowed   bool
+}
+
+func (s digitalHumanBindingReaderStub) ListSnapshot(context.Context, resourcebindings.SnapshotRef) ([]resourcebindings.Binding, error) {
+	return nil, nil
+}
+
+func (s digitalHumanBindingReaderStub) Verify(_ context.Context, ref resourcebindings.SnapshotRef, match resourcebindings.Match) (resourcebindings.Decision, error) {
+	if ref != s.wantRef || match != s.wantMatch {
+		return resourcebindings.Decision{Reason: "mismatch"}, nil
+	}
+	if !s.allowed {
+		return resourcebindings.Decision{Reason: "resource_not_bound"}, nil
+	}
+	return resourcebindings.Decision{Allowed: true}, nil
+}
+
+func TestDigitalHumanCallerIsNotNormalizedToAIChat(t *testing.T) {
+	if got := normalizeCallerType(runtimemodel.ConversationCallerDigitalHuman); got != runtimemodel.ConversationCallerDigitalHuman {
+		t.Fatalf("normalizeCallerType() = %q", got)
+	}
+	if !isAutonomousSubjectCaller(runtimemodel.ConversationCallerDigitalHuman) || !isDigitalHumanCaller(runtimemodel.ConversationCallerDigitalHuman) {
+		t.Fatal("DigitalHuman caller is not classified as an autonomous subject")
+	}
+}
+
+func TestDigitalHumanCallerForcesUserAndAgentMemoryOff(t *testing.T) {
+	parts := &chatRequestParts{
+		UseMemory: true, AgentMemoryEnabled: true, AgentMemoryAutoExtractionEnabled: true,
+		AgentMemoryToolsEnabled: true, AgentMemorySlots: []AgentMemorySlotConfig{{Key: "profile", Enabled: true}},
+		AgentMemoryUserScope: "user", AgentMemoryConfigScope: "agent-user", AgentMemoryConfigRevision: "r1",
+		AgentMemoryAgentID: uuid.NewString(), AgentMemoryRuntimeState: &AgentMemoryRuntimeState{}, AgentMemoryContext: "secret context",
+	}
+	caller := Caller{Type: runtimemodel.ConversationCallerDigitalHuman}
+	applyCallerMemoryPolicy(caller, parts)
+	applyAgentMemoryToolsPolicy(parts)
+
+	if parts.UseMemory || parts.AgentMemoryEnabled || parts.AgentMemoryAutoExtractionEnabled || parts.AgentMemoryToolsEnabled ||
+		len(parts.AgentMemorySlots) != 0 || parts.AgentMemoryUserScope != "" || parts.AgentMemoryConfigScope != "" ||
+		parts.AgentMemoryConfigRevision != "" || parts.AgentMemoryAgentID != "" || parts.AgentMemoryRuntimeState != nil || parts.AgentMemoryContext != "" {
+		t.Fatalf("memory state was not cleared: %#v", parts)
+	}
+	if runConfigAllowsUserMemory(RunConfig{UseMemory: true, BillingAppType: runtimemodel.ConversationCallerDigitalHuman}) {
+		t.Fatal("DigitalHuman RunConfig enabled account memory")
+	}
+}
+
+func TestDigitalHumanSkillProfileDeniesAgentAndUserMemoryManagement(t *testing.T) {
+	got := filterDigitalHumanSkillIDs([]string{
+		"calculator", skills.SkillAgentManagement, skills.SkillAgentMemory, skills.SkillUserMemory, skills.SkillAgentWorkflow,
+	})
+	want := map[string]bool{"calculator": false, skills.SkillAgentWorkflow: false}
+	for _, id := range got {
+		if _, ok := want[id]; ok {
+			want[id] = true
+		}
+		if id == skills.SkillAgentManagement || id == skills.SkillAgentMemory || id == skills.SkillUserMemory {
+			t.Fatalf("forbidden skill survived: %q", id)
+		}
+	}
+	for id, present := range want {
+		if !present {
+			t.Fatalf("allowed skill missing: %q; got %#v", id, got)
+		}
+	}
+}
+
+func TestDigitalHumanUsesPinnedBindingVerifierAndAutonomousToolProfile(t *testing.T) {
+	digitalHumanID, versionID := uuid.New(), uuid.New()
+	ref := resourcebindings.SnapshotRef{Subject: runtimeidentity.SubjectRef{
+		Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: uuid.New(), WorkspaceID: uuid.New(),
+	}, Phase: resourcebindings.PhasePublished, VersionID: &versionID}
+	match := resourcebindings.Match{
+		Type: resourcebindings.BindingTypeIntegrationConnection, ResourceID: "connection-1", ParentResourceID: "feishu",
+		AccessMode: resourcebindings.AccessModeExecute, ActionID: "message.send",
+	}
+	prepared := &PreparedChat{
+		Scope:        Scope{OrganizationID: ref.Subject.OrganizationID, AccountID: uuid.New(), WorkspaceID: &ref.Subject.WorkspaceID},
+		Caller:       Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID},
+		RunConfig:    RunConfig{BindingReader: digitalHumanBindingReaderStub{wantRef: ref, wantMatch: match, allowed: true}, BindingSnapshot: ref},
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()}, Message: &runtimemodel.Message{ID: uuid.New()},
+	}
+	var runtime *service
+	verifier := runtime.currentAgentBindingVerifier(prepared)
+	if verifier == nil {
+		t.Fatal("DigitalHuman binding verifier = nil")
+	}
+	allowed, err := verifier(t.Context(), skills.AgentBindingCheck{
+		BindingType: string(match.Type), ResourceID: match.ResourceID, ParentResourceID: match.ParentResourceID,
+		AccessMode: string(match.AccessMode), ActionID: match.ActionID,
+	})
+	if err != nil || !allowed {
+		t.Fatalf("binding verifier = %v, %v", allowed, err)
+	}
+	execution := runtime.skillExecutionContext(prepared)
+	if execution.InvokeFrom != tools.ToolInvokeFromAgent {
+		t.Fatalf("InvokeFrom = %q, want compatibility autonomous profile", execution.InvokeFrom)
+	}
+}
+
+func TestDigitalHumanBindingVerifierRejectsUnboundResourceBeforeProvider(t *testing.T) {
+	digitalHumanID, versionID := uuid.New(), uuid.New()
+	ref := resourcebindings.SnapshotRef{Subject: runtimeidentity.SubjectRef{
+		Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: uuid.New(), WorkspaceID: uuid.New(),
+	}, Phase: resourcebindings.PhasePublished, VersionID: &versionID}
+	match := resourcebindings.Match{
+		Type: resourcebindings.BindingTypeSkill, ResourceID: "unbound-skill", AccessMode: resourcebindings.AccessModeExecute,
+	}
+	prepared := &PreparedChat{
+		Caller:    Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID},
+		RunConfig: RunConfig{BindingReader: digitalHumanBindingReaderStub{wantRef: ref, wantMatch: match}, BindingSnapshot: ref},
+	}
+	var runtime *service
+	verifier := runtime.currentAgentBindingVerifier(prepared)
+	if verifier == nil {
+		t.Fatal("DigitalHuman binding verifier = nil")
+	}
+	allowed, err := verifier(t.Context(), skills.AgentBindingCheck{
+		BindingType: string(match.Type), ResourceID: match.ResourceID, AccessMode: string(match.AccessMode),
+	})
+	if err != nil || allowed {
+		t.Fatalf("unbound resource verifier = %v, %v; provider must not run", allowed, err)
+	}
+}

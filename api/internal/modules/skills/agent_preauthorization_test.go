@@ -350,6 +350,38 @@ func TestPolicyToolGovernanceAgentWorkflowBinding(t *testing.T) {
 	assertAgentGovernanceDecision(t, unbound, toolgovernance.DecisionStatusDenied, agentResourceNotBoundCode)
 }
 
+func TestPolicyToolGovernanceDigitalHumanWorkflowBinding(t *testing.T) {
+	params := agentGovernanceRuntimeParameters(map[string]interface{}{
+		"workflow_binding_grant": true,
+		"workflow_bindings": []map[string]interface{}{{
+			"binding_id":  "binding-1",
+			"agent_id":    "workflow-agent-1",
+			"workflow_id": "workflow-1",
+		}},
+		"agent_binding_authorizations": []map[string]interface{}{{
+			"binding_type": "workflow", "parent_resource_id": "workflow-agent-1",
+			"resource_id": "binding-1", "access_mode": "execute",
+			"bound_by_account_id": "binder-1", "bound_at_unix": int64(1_720_000_000),
+		}},
+	})
+	params[governanceRuntimeParametersKey].(map[string]interface{})["caller_type"] = SkillCallerDigitalHuman
+
+	allowed := decideSystemSkillToolForTest(t, SkillAgentWorkflow, "run_agent_workflow", map[string]interface{}{
+		"binding_id": "binding-1",
+		"inputs":     map[string]interface{}{"input": "workflow-ok"},
+	}, params)
+	assertAgentGovernanceDecision(t, allowed, toolgovernance.DecisionStatusAllowed, "")
+	if allowed.Preauthorization == nil || allowed.Preauthorization.AuthorizedBy != "binder-1" {
+		t.Fatalf("preauthorization = %#v, want DigitalHuman binding evidence", allowed.Preauthorization)
+	}
+
+	unbound := decideSystemSkillToolForTest(t, SkillAgentWorkflow, "run_agent_workflow", map[string]interface{}{
+		"binding_id": "binding-2",
+		"inputs":     map[string]interface{}{"input": "workflow-ok"},
+	}, params)
+	assertAgentGovernanceDecision(t, unbound, toolgovernance.DecisionStatusDenied, agentResourceNotBoundCode)
+}
+
 func TestPolicyToolGovernanceRechecksCurrentAgentBindingBeforeInvocation(t *testing.T) {
 	params := agentGovernanceRuntimeParameters(map[string]interface{}{
 		"database_binding_grant":       true,

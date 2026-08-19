@@ -63,6 +63,36 @@ func (tm *TaskManager) ResetArchivedTask(queueName, taskID string) (bool, error)
 	}
 }
 
+// CancelTask best-effort accelerates cancellation of a durable domain run.
+// Domain state remains authoritative: queue cancellation can race with a worker.
+func (tm *TaskManager) CancelTask(queueName, taskID string) error {
+	if tm == nil || tm.inspector == nil {
+		return fmt.Errorf("task inspector is not configured")
+	}
+	info, err := tm.inspector.GetTaskInfo(queueName, taskID)
+	if err != nil {
+		if errors.Is(err, asynq.ErrTaskNotFound) || errors.Is(err, asynq.ErrQueueNotFound) {
+			return nil
+		}
+		return fmt.Errorf("inspect task %s in queue %s: %w", taskID, queueName, err)
+	}
+	switch info.State {
+	case asynq.TaskStateActive:
+		if err := tm.inspector.CancelProcessing(taskID); err != nil && !errors.Is(err, asynq.ErrTaskNotFound) {
+			return fmt.Errorf("cancel active task %s: %w", taskID, err)
+		}
+	case asynq.TaskStatePending, asynq.TaskStateScheduled, asynq.TaskStateRetry, asynq.TaskStateArchived, asynq.TaskStateAggregating:
+		if err := tm.inspector.DeleteTask(queueName, taskID); err != nil && !errors.Is(err, asynq.ErrTaskNotFound) {
+			return fmt.Errorf("delete queued task %s in queue %s: %w", taskID, queueName, err)
+		}
+	case asynq.TaskStateCompleted:
+		return nil
+	default:
+		return fmt.Errorf("task %s in queue %s has unsupported state %s", taskID, queueName, info.State)
+	}
+	return nil
+}
+
 // EnqueueTask enqueues a task with given type and payload
 func (tm *TaskManager) EnqueueTask(task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error) {
 	if tm.config != nil && tm.config.TaskQueue.Retention > 0 {

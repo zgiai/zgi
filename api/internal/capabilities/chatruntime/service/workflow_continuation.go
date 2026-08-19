@@ -632,7 +632,7 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 		return nil, err
 	}
 	applyProtocolToolsPolicy(continuation.Caller, parts)
-	applyManagedUserMemoryPolicy(continuation.Caller, parts)
+	applyCallerMemoryPolicy(continuation.Caller, parts)
 	if err := s.applySkillConfig(ctx, scope, continuation.Caller, &continuation.RunConfig, parts); err != nil {
 		return nil, err
 	}

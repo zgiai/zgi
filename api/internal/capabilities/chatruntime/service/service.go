@@ -13,6 +13,8 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -160,6 +162,11 @@ type RunConfig struct {
 	AgentMemoryConfigRevision        string
 	BillingAppID                     string
 	BillingAppType                   string
+	BindingReader                    resourcebindings.Reader
+	BindingSnapshot                  resourcebindings.SnapshotRef
+	// RuntimeTools are caller-scoped first-party capabilities supplied by a
+	// subject adapter. They remain separate from installable Skills.
+	RuntimeTools []skillloop.RuntimeTool
 }
 
 // ResourceBindingAuthorization is the runtime authorization evidence for one
@@ -563,6 +570,8 @@ type chatRequestParts struct {
 	AgentMemoryAgentID               string
 	AgentMemoryRuntimeState          *AgentMemoryRuntimeState
 	AgentMemoryContext               string
+	RuntimeTools                     []skillloop.RuntimeTool
+	SourceMessageID                  *uuid.UUID
 	BillingSource                    string
 	ModelTurnIntent                  *AIChatModelTurnIntent
 	ModelTurnIntentError             string

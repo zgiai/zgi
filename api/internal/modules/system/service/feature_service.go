@@ -55,6 +55,8 @@ func (s *featureService) IsFeatureEnabled(featureName string) bool {
 		return s.isEnterpriseEnabled()
 	case "marketplace":
 		return s.isMarketplaceEnabled()
+	case "digital_human":
+		return features.DigitalHumanEnabled
 	default:
 		return false
 	}
@@ -70,6 +72,7 @@ func (s *featureService) fillFromEnv(sf *model.SystemFeature) {
 	sf.IsAllowRegister = features.AllowRegister
 	sf.IsAllowCreateWorkspace = features.AllowCreateWorkspace
 	sf.EnableExternalIntegrations = cfg.ExternalIntegrations.Enabled
+	sf.EnableDigitalHuman = features.DigitalHumanEnabled
 
 	sf.IsEmailSetup = config.HasEmailDeliveryConfig(cfg)
 	sf.IsPublicDeployment = s.IsPublicDeployment()

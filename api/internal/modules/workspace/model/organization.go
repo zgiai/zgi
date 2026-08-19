@@ -120,6 +120,16 @@ const (
 	WorkspacePermissionAgentRuntimeAccessManage WorkspacePermissionCode = "agent.runtime_access.manage"
 	WorkspacePermissionAgentLogsView            WorkspacePermissionCode = "agent.logs.view"
 
+	WorkspacePermissionDigitalHumanView         WorkspacePermissionCode = "digital_human.view"
+	WorkspacePermissionDigitalHumanCreate       WorkspacePermissionCode = "digital_human.create"
+	WorkspacePermissionDigitalHumanUpdate       WorkspacePermissionCode = "digital_human.update"
+	WorkspacePermissionDigitalHumanDelete       WorkspacePermissionCode = "digital_human.delete"
+	WorkspacePermissionDigitalHumanPublish      WorkspacePermissionCode = "digital_human.publish"
+	WorkspacePermissionDigitalHumanRun          WorkspacePermissionCode = "digital_human.run"
+	WorkspacePermissionDigitalHumanLogsView     WorkspacePermissionCode = "digital_human.logs.view"
+	WorkspacePermissionDigitalHumanMemoryView   WorkspacePermissionCode = "digital_human.memory.view"
+	WorkspacePermissionDigitalHumanMemoryManage WorkspacePermissionCode = "digital_human.memory.manage"
+
 	WorkspacePermissionWorkflowView                WorkspacePermissionCode = "workflow.view"
 	WorkspacePermissionWorkflowCreate              WorkspacePermissionCode = "workflow.create"
 	WorkspacePermissionWorkflowUpdate              WorkspacePermissionCode = "workflow.update"
@@ -200,6 +210,15 @@ func AllWorkspacePermissionCodes() []WorkspacePermissionCode {
 		WorkspacePermissionAgentPublish,
 		WorkspacePermissionAgentRuntimeAccessManage,
 		WorkspacePermissionAgentLogsView,
+		WorkspacePermissionDigitalHumanView,
+		WorkspacePermissionDigitalHumanCreate,
+		WorkspacePermissionDigitalHumanUpdate,
+		WorkspacePermissionDigitalHumanDelete,
+		WorkspacePermissionDigitalHumanPublish,
+		WorkspacePermissionDigitalHumanRun,
+		WorkspacePermissionDigitalHumanLogsView,
+		WorkspacePermissionDigitalHumanMemoryView,
+		WorkspacePermissionDigitalHumanMemoryManage,
 		WorkspacePermissionWorkflowView,
 		WorkspacePermissionWorkflowCreate,
 		WorkspacePermissionWorkflowUpdate,
@@ -509,6 +528,15 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 		return AllWorkspacePermissionCodes()
 	case WorkspaceBuiltinRoleAdminID:
 		return ExpandWorkspacePermissionCodesForCompatibility([]WorkspacePermissionCode{
+			WorkspacePermissionDigitalHumanView,
+			WorkspacePermissionDigitalHumanCreate,
+			WorkspacePermissionDigitalHumanUpdate,
+			WorkspacePermissionDigitalHumanDelete,
+			WorkspacePermissionDigitalHumanPublish,
+			WorkspacePermissionDigitalHumanRun,
+			WorkspacePermissionDigitalHumanLogsView,
+			WorkspacePermissionDigitalHumanMemoryView,
+			WorkspacePermissionDigitalHumanMemoryManage,
 			WorkspacePermissionAgentView,
 			WorkspacePermissionAgentLogsView,
 			WorkspacePermissionAgentManage,
@@ -534,6 +562,10 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 		})
 	case WorkspaceBuiltinRoleMemberID:
 		return ExpandWorkspacePermissionCodesForCompatibility([]WorkspacePermissionCode{
+			WorkspacePermissionDigitalHumanView,
+			WorkspacePermissionDigitalHumanRun,
+			WorkspacePermissionDigitalHumanLogsView,
+			WorkspacePermissionDigitalHumanMemoryView,
 			WorkspacePermissionAgentView,
 			WorkspacePermissionAgentLogsView,
 			WorkspacePermissionWorkflowView,
@@ -551,6 +583,9 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 		})
 	case WorkspaceBuiltinRoleViewerID:
 		return ExpandWorkspacePermissionCodesForCompatibility([]WorkspacePermissionCode{
+			WorkspacePermissionDigitalHumanView,
+			WorkspacePermissionDigitalHumanLogsView,
+			WorkspacePermissionDigitalHumanMemoryView,
 			WorkspacePermissionAgentView,
 			WorkspacePermissionAgentLogsView,
 			WorkspacePermissionWorkflowView,
@@ -750,6 +785,13 @@ func advancedWorkspaceMemberPermissionStrings() []string {
 
 func basicWorkspaceMemberPermissionStrings() []string {
 	return CanonicalAssignableWorkspacePermissionSnapshotStrings([]string{
+		string(WorkspacePermissionDigitalHumanView),
+		string(WorkspacePermissionDigitalHumanCreate),
+		string(WorkspacePermissionDigitalHumanUpdate),
+		string(WorkspacePermissionDigitalHumanRun),
+		string(WorkspacePermissionDigitalHumanLogsView),
+		string(WorkspacePermissionDigitalHumanMemoryView),
+		string(WorkspacePermissionDigitalHumanMemoryManage),
 		string(WorkspacePermissionAgentView),
 		string(WorkspacePermissionAgentCreate),
 		string(WorkspacePermissionAgentUpdate),
@@ -779,6 +821,9 @@ func basicWorkspaceMemberPermissionStrings() []string {
 
 func readonlyWorkspaceMemberPermissionStrings() []string {
 	return CanonicalAssignableWorkspacePermissionSnapshotStrings([]string{
+		string(WorkspacePermissionDigitalHumanView),
+		string(WorkspacePermissionDigitalHumanLogsView),
+		string(WorkspacePermissionDigitalHumanMemoryView),
 		string(WorkspacePermissionAgentView),
 		string(WorkspacePermissionAgentLogsView),
 		string(WorkspacePermissionWorkflowView),

@@ -255,7 +255,7 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 }
 
 func runConfigHasAgentIntegrationBindings(runConfig *RunConfig) bool {
-	if runConfig == nil || !strings.EqualFold(strings.TrimSpace(runConfig.BillingAppType), runtimemodel.ConversationCallerAgent) {
+	if runConfig == nil || !isAutonomousSubjectCaller(runConfig.BillingAppType) {
 		return false
 	}
 	for integrationID, connectionID := range runConfig.IntegrationConnectionIDs {
@@ -277,6 +277,22 @@ func runConfigHasAgentIntegrationBindings(runConfig *RunConfig) bool {
 		}
 	}
 	return false
+}
+
+func filterDigitalHumanSkillIDs(input []string) []string {
+	forbidden := map[string]struct{}{
+		skills.SkillAgentManagement: {},
+		skills.SkillAgentMemory:     {},
+		skills.SkillUserMemory:      {},
+	}
+	out := make([]string, 0, len(input))
+	for _, id := range input {
+		id = strings.ToLower(strings.TrimSpace(id))
+		if _, denied := forbidden[id]; id != "" && !denied {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func runtimeManagedSkillAvailableForCaller(catalog []skills.SkillDiscoveryMetadata, skillID string, callerType string) bool {

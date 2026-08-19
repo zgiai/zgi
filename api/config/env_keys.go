@@ -210,6 +210,8 @@ const (
 	envEnterpriseEnabled = "ENTERPRISE_ENABLED"
 	// envMarketplaceEnabled exposes marketplace features to the frontend. Default: true.
 	envMarketplaceEnabled = "MARKETPLACE_ENABLED"
+	// envDigitalHumanEnabled gates the DigitalHuman domain and routes. Default: false.
+	envDigitalHumanEnabled = "DIGITAL_HUMAN_ENABLED"
 	// envPluginMaxPackageSize overrides the plugin package size returned by the system feature API. Default: 0.
 	envPluginMaxPackageSize = "PLUGIN_MAX_PACKAGE_SIZE"
 

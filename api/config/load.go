@@ -491,6 +491,7 @@ func loadFeatureConfig(cfg *Config, source *envSource) {
 		AllowCreateWorkspace:     mustBool(source.bool(false, envAllowCreateWorkspace)),
 		EnterpriseEnabled:        mustBool(source.bool(false, envEnterpriseEnabled)),
 		MarketplaceEnabled:       mustBool(source.bool(true, envMarketplaceEnabled)),
+		DigitalHumanEnabled:      mustBool(source.bool(false, envDigitalHumanEnabled)),
 		PluginMaxPackageSize:     pluginMaxPackageSize,
 	}
 }

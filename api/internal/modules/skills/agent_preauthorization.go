@@ -92,7 +92,7 @@ func governanceAgentAuthorization(
 	arguments map[string]interface{},
 ) (toolgovernance.ApprovalMode, *toolgovernance.Preauthorization) {
 	callerType := governanceString(params, governance, "tool_governance_caller_type", "caller_type")
-	if !strings.EqualFold(callerType, SkillCallerAgent) {
+	if !bindingGovernedAutonomousCaller(callerType) {
 		return toolgovernance.ApprovalModeInteractive, nil
 	}
 
@@ -123,6 +123,11 @@ func governanceAgentAuthorization(
 			Reason: "the current Agent does not have persistent authorization for this tool action",
 		}
 	}
+}
+
+func bindingGovernedAutonomousCaller(callerType string) bool {
+	return strings.EqualFold(callerType, SkillCallerAgent) ||
+		strings.EqualFold(callerType, SkillCallerDigitalHuman)
 }
 
 func agentIntegrationPreauthorization(

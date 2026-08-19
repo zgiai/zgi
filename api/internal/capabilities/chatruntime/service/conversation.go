@@ -26,13 +26,16 @@ func (s *service) CreateConversation(ctx context.Context, scope Scope, title str
 
 func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error) {
 	surface := aiChatSurfaceWorkChat
-	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(caller.Type) {
 		surface = aiChatSurfaceExternalPageChat
 	}
 	return s.createConversationForCaller(ctx, scope, caller, title, surface)
 }
 
 func (s *service) createConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string, surface string) (*runtimemodel.Conversation, error) {
+	if isAutonomousSubjectCaller(caller.Type) && normalizeCallerID(caller.ID) == nil {
+		return nil, fmt.Errorf("%w: caller_id is required for autonomous subjects", ErrInvalidInput)
+	}
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -72,9 +75,24 @@ func normalizeCallerType(value string) string {
 	switch strings.TrimSpace(value) {
 	case runtimemodel.ConversationCallerAgent:
 		return runtimemodel.ConversationCallerAgent
+	case runtimemodel.ConversationCallerDigitalHuman:
+		return runtimemodel.ConversationCallerDigitalHuman
 	default:
 		return runtimemodel.ConversationCallerAIChat
 	}
+}
+
+func isAutonomousSubjectCaller(value string) bool {
+	switch normalizeCallerType(value) {
+	case runtimemodel.ConversationCallerAgent, runtimemodel.ConversationCallerDigitalHuman:
+		return true
+	default:
+		return false
+	}
+}
+
+func isDigitalHumanCaller(value string) bool {
+	return normalizeCallerType(value) == runtimemodel.ConversationCallerDigitalHuman
 }
 
 func normalizeConversationSource(value string) string {

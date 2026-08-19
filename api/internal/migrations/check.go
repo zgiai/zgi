@@ -2,10 +2,14 @@ package migrations
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/zgiai/zgi/api/internal/migrations/baseline"
@@ -137,22 +141,200 @@ func checkMigrationSourceSafety(files []string) error {
 		if err != nil {
 			return fmt.Errorf("read migration file %s: %w", file, err)
 		}
-		normalized := strings.ToUpper(string(data))
-		for _, forbidden := range []string{
-			"ALLOWDESTRUCTIVE()",
-			"DROP TABLE",
-			"DROP COLUMN",
-			"DROP SCHEMA",
-			"TRUNCATE ",
-			"DELETE FROM ",
-			"UPDATE ",
-		} {
-			if strings.Contains(normalized, forbidden) {
-				return fmt.Errorf("migration file %s contains forbidden token %q", filepath.Base(file), forbidden)
+
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, file, data, 0)
+		if err != nil {
+			return fmt.Errorf("parse migration file %s: %w", file, err)
+		}
+		inspector := newMigrationUpInspector(fset, parsed)
+		roots, err := migrationUpRoots(parsed)
+		if err != nil {
+			return fmt.Errorf("inspect migration file %s: %w", filepath.Base(file), err)
+		}
+		if len(roots) == 0 {
+			return fmt.Errorf("migration file %s does not register an up migration", filepath.Base(file))
+		}
+		for _, root := range roots {
+			if err := inspector.check(root); err != nil {
+				return fmt.Errorf("migration file %s: %w", filepath.Base(file), err)
 			}
 		}
 	}
 	return nil
+}
+
+// migrationUpInspector follows only declarations reachable from the function
+// registered as Migrate/up. Rollbacks are intentionally destructive and are
+// protected separately by the exact-ID rollback confirmation and the schema
+// builder's AllowDestructive gate.
+type migrationUpInspector struct {
+	fset       *token.FileSet
+	objects    map[*ast.Object]ast.Node
+	visited    map[ast.Node]struct{}
+	inspectErr error
+}
+
+func newMigrationUpInspector(fset *token.FileSet, file *ast.File) *migrationUpInspector {
+	inspector := &migrationUpInspector{
+		fset:    fset,
+		objects: make(map[*ast.Object]ast.Node),
+		visited: make(map[ast.Node]struct{}),
+	}
+	for _, declaration := range file.Decls {
+		switch declaration := declaration.(type) {
+		case *ast.FuncDecl:
+			if declaration.Name.Obj != nil {
+				inspector.objects[declaration.Name.Obj] = declaration
+			}
+		case *ast.GenDecl:
+			for _, spec := range declaration.Specs {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for index, name := range valueSpec.Names {
+					if name.Obj == nil || len(valueSpec.Values) == 0 {
+						continue
+					}
+					valueIndex := index
+					if valueIndex >= len(valueSpec.Values) {
+						valueIndex = len(valueSpec.Values) - 1
+					}
+					inspector.objects[name.Obj] = valueSpec.Values[valueIndex]
+				}
+			}
+		}
+	}
+	return inspector
+}
+
+func migrationUpRoots(file *ast.File) ([]ast.Node, error) {
+	var roots []ast.Node
+	var rootErr error
+	ast.Inspect(file, func(node ast.Node) bool {
+		if rootErr != nil {
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name, ok := call.Fun.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		switch name.Name {
+		case "registerSchemaMigration":
+			if len(call.Args) < 2 {
+				rootErr = fmt.Errorf("registerSchemaMigration is missing its up function")
+				return false
+			}
+			roots = append(roots, call.Args[1])
+		case "registerMigration":
+			if len(call.Args) != 1 {
+				rootErr = fmt.Errorf("registerMigration must receive one migration")
+				return false
+			}
+			migrate, err := registeredMigrateExpression(call.Args[0])
+			if err != nil {
+				rootErr = err
+				return false
+			}
+			roots = append(roots, migrate)
+		}
+		return true
+	})
+	return roots, rootErr
+}
+
+func registeredMigrateExpression(expression ast.Expr) (ast.Expr, error) {
+	if unary, ok := expression.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+		expression = unary.X
+	}
+	composite, ok := expression.(*ast.CompositeLit)
+	if !ok {
+		return nil, fmt.Errorf("registerMigration must use an inline migration literal")
+	}
+	for _, element := range composite.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := field.Key.(*ast.Ident)
+		if ok && key.Name == "Migrate" {
+			return field.Value, nil
+		}
+	}
+	return nil, fmt.Errorf("registered migration literal has no Migrate function")
+}
+
+func (i *migrationUpInspector) check(root ast.Node) error {
+	i.inspect(root)
+	return i.inspectErr
+}
+
+func (i *migrationUpInspector) inspect(root ast.Node) {
+	if root == nil || i.inspectErr != nil {
+		return
+	}
+	if _, seen := i.visited[root]; seen {
+		return
+	}
+	i.visited[root] = struct{}{}
+
+	ast.Inspect(root, func(node ast.Node) bool {
+		if node == nil || i.inspectErr != nil {
+			return false
+		}
+		switch node := node.(type) {
+		case *ast.Ident:
+			if declaration, ok := i.objects[node.Obj]; ok {
+				i.inspect(declaration)
+			}
+		case *ast.CallExpr:
+			if methodName(node.Fun) == "AllowDestructive" {
+				i.inspectErr = i.forbidden(node, "AllowDestructive")
+				return false
+			}
+			if name := methodName(node.Fun); name == "DropIfExists" || name == "DropColumn" {
+				i.inspectErr = i.forbidden(node, name)
+				return false
+			}
+		case *ast.BasicLit:
+			if node.Kind != token.STRING {
+				break
+			}
+			value, err := strconv.Unquote(node.Value)
+			if err != nil {
+				i.inspectErr = fmt.Errorf("decode string literal at %s: %w", i.fset.Position(node.Pos()), err)
+				return false
+			}
+			normalized := strings.ToUpper(strings.Join(strings.Fields(value), " "))
+			for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "DROP SCHEMA", "TRUNCATE "} {
+				if strings.Contains(normalized, forbidden) {
+					i.inspectErr = i.forbidden(node, forbidden)
+					return false
+				}
+			}
+		}
+		return true
+	})
+}
+
+func (i *migrationUpInspector) forbidden(node ast.Node, operation string) error {
+	return fmt.Errorf("up migration contains forbidden operation %q at %s", operation, i.fset.Position(node.Pos()))
+}
+
+func methodName(expression ast.Expr) string {
+	switch expression := expression.(type) {
+	case *ast.Ident:
+		return expression.Name
+	case *ast.SelectorExpr:
+		return expression.Sel.Name
+	default:
+		return ""
+	}
 }
 
 func checkBaselineStatementSafety() error {

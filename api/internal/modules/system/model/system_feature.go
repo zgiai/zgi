@@ -13,6 +13,7 @@ type SystemFeature struct {
 	EnableWebSSOSwitchComponent bool `json:"enable_web_sso_switch_component"`
 	EnableMarketplace           bool `json:"enable_marketplace"`
 	EnableExternalIntegrations  bool `json:"enable_external_integrations"`
+	EnableDigitalHuman          bool `json:"enable_digital_human"`
 	MaxPluginPackageSize        int  `json:"max_plugin_package_size"`
 	NotificationSMS             any  `json:"notification_sms,omitempty"`
 	WorkflowNodes               any  `json:"workflow_nodes,omitempty"`
@@ -33,6 +34,7 @@ func NewDefaultSystemFeature() *SystemFeature {
 		EnableWebSSOSwitchComponent: false,
 		EnableMarketplace:           true,
 		EnableExternalIntegrations:  false,
+		EnableDigitalHuman:          false,
 		MaxPluginPackageSize:        0,
 	}
 }

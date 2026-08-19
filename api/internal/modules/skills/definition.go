@@ -40,6 +40,7 @@ const (
 	SkillAgentDatabase          = "agent-database"
 	SkillAgentWorkflow          = "agent-workflow"
 	SkillAgentMemory            = "agent-memory"
+	SkillDigitalHumanMemory     = "digital-human-memory"
 	SkillUserMemory             = "user-memory"
 	SkillExternalApps           = "external-apps"
 
@@ -55,9 +56,10 @@ const (
 
 	SkillScriptToolRun = "run_script"
 
-	SkillCallerAIChat   = "aichat"
-	SkillCallerAgent    = "agent"
-	SkillCallerWorkflow = "workflow"
+	SkillCallerAIChat       = "aichat"
+	SkillCallerAgent        = "agent"
+	SkillCallerDigitalHuman = "digital_human"
+	SkillCallerWorkflow     = "workflow"
 
 	SkillRequiredConfigAgentKnowledge = "agent_knowledge"
 	SkillRequiredConfigAgentDatabase  = "agent_database"

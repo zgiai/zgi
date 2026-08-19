@@ -15,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -51,7 +52,8 @@ func (s *service) runPreparedToolLoop(
 		return "", nil, fmt.Errorf("llm client is not configured")
 	}
 	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
-	runtimeTools := s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)
+	runtimeTools := append([]skillloop.RuntimeTool(nil), prepared.parts.RuntimeTools...)
+	runtimeTools = append(runtimeTools, s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)...)
 	resolved := &skills.ResolvedSkills{}
 	if chatPartsBusinessSkillsEnabled(prepared.parts) {
 		if s.skillRuntime == nil {
@@ -647,7 +649,7 @@ func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(c
 		organizationID = prepared.Scope.OrganizationID
 	}
 	organizationAuthorizer := s.currentOrganizationSkillStepAuthorizer(organizationID)
-	if prepared == nil || normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent {
+	if prepared == nil || !isAutonomousSubjectCaller(prepared.Caller.Type) {
 		return organizationAuthorizer
 	}
 	bindingVerifier := s.currentAgentBindingVerifier(prepared)
@@ -797,7 +799,7 @@ func skillLoopPrefersExplicitFinalAnswer(prepared *PreparedChat) bool {
 	if prepared.parts != nil && prepared.parts.ExecutionMode == executionModeLegacyToolChat {
 		return false
 	}
-	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(prepared.Caller.Type) {
 		return false
 	}
 	return skillLoopHasOperationPlan(prepared)
@@ -1798,7 +1800,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		appID = strings.TrimSpace(prepared.RunConfig.BillingAppID)
 	}
 	invokeFrom := tools.ToolInvokeFromAIChat
-	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(prepared.Caller.Type) {
 		invokeFrom = tools.ToolInvokeFromAgent
 	}
 	runtimeParameters := skillRuntimeParametersForPrepared(prepared)
@@ -1866,9 +1868,24 @@ func (s *service) consoleNavigationRouteAuthorizer(prepared *PreparedChat) conso
 }
 
 func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.AgentBindingVerifier {
-	if s == nil || s.repos == nil || s.repos.DB == nil || prepared == nil ||
-		normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent ||
-		prepared.Caller.ID == nil || *prepared.Caller.ID == uuid.Nil {
+	if prepared == nil || prepared.Caller.ID == nil || *prepared.Caller.ID == uuid.Nil {
+		return nil
+	}
+	if isDigitalHumanCaller(prepared.Caller.Type) {
+		if prepared.RunConfig.BindingReader == nil {
+			return nil
+		}
+		reader := prepared.RunConfig.BindingReader
+		ref := prepared.RunConfig.BindingSnapshot
+		return func(ctx context.Context, check skills.AgentBindingCheck) (bool, error) {
+			decision, err := reader.Verify(ctx, ref, resourcebindings.Match{
+				Type: resourcebindings.BindingType(check.BindingType), ResourceID: check.ResourceID,
+				ParentResourceID: check.ParentResourceID, AccessMode: resourcebindings.AccessMode(check.AccessMode), ActionID: check.ActionID,
+			})
+			return decision.Allowed, err
+		}
+	}
+	if s == nil || s.repos == nil || s.repos.DB == nil || normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent {
 		return nil
 	}
 	agentID := *prepared.Caller.ID

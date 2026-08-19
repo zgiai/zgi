@@ -1,0 +1,148 @@
+package v1
+
+import (
+	"net/http"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+)
+
+type digitalHumanRoutesService struct{ digitalhuman.HandlerService }
+type digitalHumanRoutesRuntime struct {
+	digitalhuman.RuntimeHandlerService
+}
+
+func TestDigitalHumanPermissionForRequest(t *testing.T) {
+	tests := []struct {
+		method, path string
+		want         workspacemodel.WorkspacePermissionCode
+	}{
+		{http.MethodGet, "/console/api/digital-humans", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPost, "/console/api/digital-humans", workspacemodel.WorkspacePermissionDigitalHumanCreate},
+		{http.MethodPatch, "/console/api/digital-humans/:id/draft", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodDelete, "/console/api/digital-humans/:id", workspacemodel.WorkspacePermissionDigitalHumanDelete},
+		{http.MethodPost, "/console/api/digital-humans/:id/publish", workspacemodel.WorkspacePermissionDigitalHumanPublish},
+		{http.MethodPost, "/console/api/digital-humans/:id/invocations", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/draft/binding-candidates", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodGet, "/console/api/digital-humans/:id/runs/:run_id", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
+		{http.MethodGet, "/console/api/digital-humans/:id/memory", workspacemodel.WorkspacePermissionDigitalHumanMemoryView},
+		{http.MethodPost, "/console/api/digital-humans/:id/memory/proposals", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
+		{http.MethodPatch, "/console/api/digital-humans/:id/memory/state", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
+		{http.MethodPost, "/console/api/digital-humans/:id/memory/operations/:operation_id/undo", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
+		{http.MethodPost, "/console/api/digital-humans/:id/runs/:run_id/cancel", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/runtime/conversations", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/runtime/conversations/:conversation_id/messages", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodPatch, "/console/api/digital-humans/:id/runtime/conversations/:conversation_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodDelete, "/console/api/digital-humans/:id/runtime/conversations/:conversation_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
+	}
+	for _, test := range tests {
+		if got := digitalHumanPermissionForRequest(test.method, test.path); got != test.want {
+			t.Errorf("permission(%s %s) = %s, want %s", test.method, test.path, got, test.want)
+		}
+	}
+}
+
+type digitalHumanRoutesAccountService struct{ interfaces.AccountService }
+type digitalHumanRoutesOrganizationService struct{ interfaces.OrganizationService }
+
+func TestRegisterDigitalHumanRoutesDisabledDoesNotRequireDependencies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	group := router.Group("/console/api")
+
+	RegisterDigitalHumanRoutes(group, DigitalHumanRouteDeps{Enabled: false})
+
+	if got := len(router.Routes()); got != 0 {
+		t.Fatalf("registered route count = %d, want 0", got)
+	}
+}
+
+func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	group := router.Group("/console/api")
+
+	RegisterDigitalHumanRoutes(group, DigitalHumanRouteDeps{
+		Enabled:                 true,
+		Service:                 digitalHumanRoutesService{},
+		Runtime:                 digitalHumanRoutesRuntime{},
+		AccountService:          digitalHumanRoutesAccountService{},
+		OrganizationService:     digitalHumanRoutesOrganizationService{},
+		ApplicationErrorCatalog: digitalHumanRoutesCatalog(t),
+	})
+
+	routes := router.Routes()
+	if got, want := len(routes), 37; got != want {
+		t.Fatalf("registered route count = %d, want %d", got, want)
+	}
+	want := map[string]bool{
+		"POST /console/api/digital-humans":                                                    false,
+		"GET /console/api/digital-humans":                                                     false,
+		"GET /console/api/digital-humans/:id":                                                 false,
+		"PATCH /console/api/digital-humans/:id":                                               false,
+		"GET /console/api/digital-humans/:id/draft":                                           false,
+		"PATCH /console/api/digital-humans/:id/draft":                                         false,
+		"POST /console/api/digital-humans/:id/publish":                                        false,
+		"GET /console/api/digital-humans/:id/versions":                                        false,
+		"GET /console/api/digital-humans/:id/delete-impact":                                   false,
+		"DELETE /console/api/digital-humans/:id":                                              false,
+		"GET /console/api/digital-humans/:id/draft/roles":                                     false,
+		"PUT /console/api/digital-humans/:id/draft/roles":                                     false,
+		"GET /console/api/digital-humans/:id/draft/bindings":                                  false,
+		"PUT /console/api/digital-humans/:id/draft/bindings":                                  false,
+		"POST /console/api/digital-humans/:id/invocations":                                    false,
+		"GET /console/api/digital-humans/:id/memory":                                          false,
+		"POST /console/api/digital-humans/:id/memory/proposals":                               false,
+		"PATCH /console/api/digital-humans/:id/memory/state":                                  false,
+		"POST /console/api/digital-humans/:id/memory/operations/:operation_id/undo":           false,
+		"GET /console/api/digital-humans/:id/draft/binding-candidates":                        false,
+		"GET /console/api/digital-humans/:id/runs":                                            false,
+		"GET /console/api/digital-humans/:id/runs/:run_id":                                    false,
+		"POST /console/api/digital-humans/:id/runs/:run_id/cancel":                            false,
+		"GET /console/api/digital-humans/:id/runtime/conversations":                           false,
+		"GET /console/api/digital-humans/:id/runtime/search":                                  false,
+		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/messages": false,
+		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/events":   false,
+		"POST /console/api/digital-human-role-templates":                                      false,
+		"GET /console/api/digital-human-role-templates":                                       false,
+		"GET /console/api/digital-human-role-templates/:id":                                   false,
+		"PATCH /console/api/digital-human-role-templates/:id":                                 false,
+		"PATCH /console/api/digital-human-role-templates/:id/draft":                           false,
+		"POST /console/api/digital-human-role-templates/:id/publish":                          false,
+	}
+	for _, route := range routes {
+		key := route.Method + " " + route.Path
+		if _, ok := want[key]; ok {
+			want[key] = true
+		}
+	}
+	for route, registered := range want {
+		if !registered {
+			t.Errorf("route %s was not registered", route)
+		}
+	}
+}
+
+func TestRegisterDigitalHumanRoutesEnabledFailsFastOnMissingDependencies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("RegisterDigitalHumanRoutes() did not panic")
+		}
+	}()
+	RegisterDigitalHumanRoutes(gin.New().Group("/console/api"), DigitalHumanRouteDeps{Enabled: true})
+}
+
+func digitalHumanRoutesCatalog(t *testing.T) *appcatalog.Catalog {
+	t.Helper()
+	definitions := append(appcatalog.DefaultDefinitions(), digitalhuman.CatalogDefinitions()...)
+	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalog
+}

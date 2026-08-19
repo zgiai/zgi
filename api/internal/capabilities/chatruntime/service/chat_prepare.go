@@ -50,7 +50,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
-	applyManagedUserMemoryPolicy(caller, parts)
+	applyCallerMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
@@ -160,7 +160,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
-	applyManagedUserMemoryPolicy(caller, parts)
+	applyCallerMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
@@ -325,11 +325,11 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 }
 
 func conversationTitleAppContext(caller Caller, conversationID uuid.UUID) (string, string) {
-	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(caller.Type) {
 		if caller.ID != nil && *caller.ID != uuid.Nil {
-			return caller.ID.String(), runtimemodel.ConversationCallerAgent
+			return caller.ID.String(), normalizeCallerType(caller.Type)
 		}
-		return conversationID.String(), runtimemodel.ConversationCallerAgent
+		return conversationID.String(), normalizeCallerType(caller.Type)
 	}
 	return conversationID.String(), runtimemodel.MessageBillingReasonSourceAIChat
 }
@@ -552,7 +552,7 @@ func executionModeForModel(caller Caller, parts *chatRequestParts) string {
 	if parts == nil || !parts.ModelSupportsFunctionCalling {
 		return executionModeDirectChat
 	}
-	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(caller.Type) {
 		return executionModeNativeAgentLoop
 	}
 	if len(parts.SkillIDs) == 0 && !parts.AgentMemoryToolsEnabled {
@@ -634,11 +634,29 @@ func applyManagedUserMemoryPolicy(_ Caller, parts *chatRequestParts) {
 	parts.UseMemory = false
 }
 
+func applyCallerMemoryPolicy(caller Caller, parts *chatRequestParts) {
+	applyManagedUserMemoryPolicy(caller, parts)
+	if parts == nil || !isDigitalHumanCaller(caller.Type) {
+		return
+	}
+	parts.UseMemory = false
+	parts.AgentMemoryEnabled = false
+	parts.AgentMemoryAutoExtractionEnabled = false
+	parts.AgentMemoryToolsEnabled = false
+	parts.AgentMemorySlots = nil
+	parts.AgentMemoryUserScope = ""
+	parts.AgentMemoryConfigScope = ""
+	parts.AgentMemoryConfigRevision = ""
+	parts.AgentMemoryAgentID = ""
+	parts.AgentMemoryRuntimeState = nil
+	parts.AgentMemoryContext = ""
+}
+
 func applyProtocolToolsPolicy(caller Caller, parts *chatRequestParts) {
 	if parts == nil {
 		return
 	}
-	parts.ProtocolToolsEnabled = normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent &&
+	parts.ProtocolToolsEnabled = isAutonomousSubjectCaller(caller.Type) &&
 		parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling && !parts.FunctionCallingAssumed
 }
 
@@ -698,8 +716,11 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	}
 	callerType := normalizeCallerType(caller.Type)
 	var enabled []string
-	if callerType == runtimemodel.ConversationCallerAgent {
+	if isAutonomousSubjectCaller(callerType) {
 		enabled = effectiveAgentSkillIDs(parts.ConfiguredSkillIDs, catalog, orgEnabled, config)
+		if callerType == runtimemodel.ConversationCallerDigitalHuman {
+			enabled = filterDigitalHumanSkillIDs(enabled)
+		}
 	} else {
 		if parts.ConfiguredSkillIDs == nil {
 			defaultEnabled, _, err := s.effectiveAccountSkillPreferenceIDs(ctx, scope, callerType, catalog, orgEnabled)

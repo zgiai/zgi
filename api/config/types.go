@@ -169,6 +169,7 @@ type FeatureConfig struct {
 	AllowCreateWorkspace     bool `json:"allow_create_workspace"`
 	EnterpriseEnabled        bool `json:"enterprise_enabled"`
 	MarketplaceEnabled       bool `json:"marketplace_enabled"`
+	DigitalHumanEnabled      bool `json:"digital_human_enabled"`
 	PluginMaxPackageSize     int  `json:"plugin_max_package_size"`
 }
 

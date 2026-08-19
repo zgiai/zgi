@@ -30,6 +30,7 @@ import (
 	dataset_service "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/repository"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	file_repo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 	file_service "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
@@ -280,6 +281,7 @@ type ServiceContainer struct {
 	automationWorkflowRunner    automationaction.AutomationWorkflowRunner
 	notificationSMSService      notificationsms.Service
 	shortLinkService            shortlinkcap.Service
+	digitalHumanService         *digitalhuman.Service
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
@@ -1731,6 +1733,14 @@ func (c *ServiceContainer) GetShortLinkService() shortlinkcap.Service {
 		c.shortLinkService = shortlinkcap.NewServiceWithDB(c.db)
 	}
 	return c.shortLinkService
+}
+
+// GetDigitalHumanService returns the workspace-scoped DigitalHuman service.
+func (c *ServiceContainer) GetDigitalHumanService() *digitalhuman.Service {
+	if c.digitalHumanService == nil {
+		c.digitalHumanService = digitalhuman.NewService(digitalhuman.NewRepository(c.db))
+	}
+	return c.digitalHumanService
 }
 
 func (c *ServiceContainer) SetAutomationWorkflowRunner(runner automationaction.AutomationWorkflowRunner) {

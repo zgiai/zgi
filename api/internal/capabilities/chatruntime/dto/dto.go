@@ -1,5 +1,7 @@
 package dto
 
+import "github.com/google/uuid"
+
 const (
 	RuntimeSurfaceWorkChat          = "work_chat"
 	RuntimeSurfaceContextualSidebar = "contextual_sidebar"
@@ -30,6 +32,8 @@ type ChatRequest struct {
 	ResponseMode     string                 `json:"response_mode,omitempty"`
 	Parameters       map[string]interface{} `json:"parameters,omitempty"`
 	UseMemory        bool                   `json:"use_memory,omitempty"`
+	// SourceMessageID is a server-owned idempotency link. HTTP decoders never populate it.
+	SourceMessageID *uuid.UUID `json:"-"`
 }
 
 type RegenerateMessageRequest struct {
