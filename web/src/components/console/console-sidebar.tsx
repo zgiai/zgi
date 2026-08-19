@@ -20,6 +20,7 @@ import {
   ChevronDown,
   PlugZap,
   Workflow,
+  ContactRound,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
@@ -143,6 +144,7 @@ export function ConsoleSidebar({
   const isWorkspaceRequired = contextStatus === 'workspace_required';
   const systemFeatures = useSystemFeatures();
   const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
+  const digitalHumanEnabled = Boolean(systemFeatures.data?.enable_digital_human);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
@@ -227,6 +229,15 @@ export function ConsoleSidebar({
         key: 'resources',
         title: t('resources'),
         items: [
+          ...(digitalHumanEnabled
+            ? [
+                {
+                  title: t('digitalHumans'),
+                  href: '/console/digital-humans',
+                  icon: ContactRound,
+                },
+              ]
+            : []),
           {
             title: t('agents'),
             href: '/console/agents',
@@ -291,7 +302,7 @@ export function ConsoleSidebar({
         ],
       },
     ],
-    [externalIntegrationsEnabled, t]
+    [digitalHumanEnabled, externalIntegrationsEnabled, t]
   );
 
   // Filter groups and items
@@ -512,9 +523,7 @@ export function ConsoleSidebar({
     return null;
   }
   return (
-    <aside
-      className={cn('relative hidden shrink-0 md:block', layoutIsCollapsed ? 'w-12' : 'w-44')}
-    >
+    <aside className={cn('relative hidden shrink-0 md:block', layoutIsCollapsed ? 'w-12' : 'w-44')}>
       <div
         className={cn(
           'absolute inset-y-0 left-0 z-40 flex flex-col overflow-hidden border-r border-border/60 bg-background text-sidebar-foreground',
@@ -576,6 +585,7 @@ export function ConsoleMobileSidebar({
   const isWorkspaceRequired = contextStatus === 'workspace_required';
   const systemFeatures = useSystemFeatures();
   const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
+  const digitalHumanEnabled = Boolean(systemFeatures.data?.enable_digital_human);
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
     work: true,
     resources: true,
@@ -620,6 +630,15 @@ export function ConsoleMobileSidebar({
         key: 'resources',
         title: t('resources'),
         items: [
+          ...(digitalHumanEnabled
+            ? [
+                {
+                  title: t('digitalHumans'),
+                  href: '/console/digital-humans',
+                  icon: ContactRound,
+                },
+              ]
+            : []),
           {
             title: t('agents'),
             href: '/console/agents',
@@ -686,7 +705,7 @@ export function ConsoleMobileSidebar({
     ];
 
     return filterConsoleNavGroups(groups, isWorkspaceRequired, hasAnyPermission);
-  }, [externalIntegrationsEnabled, hasAnyPermission, isWorkspaceRequired, t]);
+  }, [digitalHumanEnabled, externalIntegrationsEnabled, hasAnyPermission, isWorkspaceRequired, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));

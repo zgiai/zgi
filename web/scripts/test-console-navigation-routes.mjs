@@ -8,7 +8,12 @@ import {
 
 const siteMapRoutes = new Set(ZGI_CONSOLE_SITE_MAP.map(route => route.href));
 
-for (const href of ['/console/workflows', '/console/skills', '/console/integrations']) {
+for (const href of [
+  '/console/workflows',
+  '/console/digital-humans',
+  '/console/skills',
+  '/console/integrations',
+]) {
   assert.equal(siteMapRoutes.has(href), true, `site map must include ${href}`);
   assert.equal(normalizeZGIConsoleNavigationHref(href), href, `${href} must be navigable`);
 }
@@ -20,14 +25,17 @@ for (const href of [
   '/console/workflows/workflow-1/api/keys',
   '/console/workflows/workflow-1/api/docs',
   '/console/workflows/workflow-1/batch-test',
+  '/console/digital-humans/digital-human-1',
+  '/console/digital-humans/digital-human-1/settings',
+  '/console/digital-humans/digital-human-1/capabilities',
+  '/console/digital-humans/digital-human-1/chat',
+  '/console/digital-humans/digital-human-1/runs',
+  '/console/digital-humans/digital-human-1/memory',
 ]) {
   assert.equal(normalizeZGIConsoleNavigationHref(href), href, `${href} must be navigable`);
 }
 
-for (const href of [
-  '/console/agents/agent-1/api',
-  '/console/workflows/workflow-1/api',
-]) {
+for (const href of ['/console/agents/agent-1/api', '/console/workflows/workflow-1/api']) {
   assert.equal(
     normalizeZGIConsoleNavigationHref(href),
     `${href}/keys`,
@@ -103,6 +111,29 @@ assert.equal(
 const workflowEditor = { ...readyContext, permissions: ['workflow.update'] };
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows/workflow-1', workflowEditor).status,
+  'allowed'
+);
+
+const digitalHumanViewer = { ...readyContext, permissions: ['digital_human.view'] };
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans', digitalHumanViewer).status,
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/digital-human-1', digitalHumanViewer)
+    .status,
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/digital-human-1/chat', digitalHumanViewer)
+    .status,
+  'permission_denied'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/digital-humans/digital-human-1/runs', {
+    ...readyContext,
+    permissions: ['digital_human.logs.view'],
+  }).status,
   'allowed'
 );
 assert.equal(

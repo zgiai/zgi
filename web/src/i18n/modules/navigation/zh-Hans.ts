@@ -20,6 +20,7 @@ const messages: NavigationMessages = {
   products: '产品',
   datasets: '知识库',
   agents: '智能体',
+  digitalHumans: '数字人',
   workflows: '工作流',
   workflowAgents: '工作流',
   prompts: '提示词',

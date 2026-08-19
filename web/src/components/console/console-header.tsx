@@ -44,6 +44,10 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
       { match: path => path === '/console', title: tNav('personalSpace') },
       { match: path => path.startsWith('/console/workflows'), title: tNav('workflows') },
       { match: path => path.startsWith('/console/agents'), title: tNav('agents') },
+      {
+        match: path => path.startsWith('/console/digital-humans'),
+        title: tNav('digitalHumans'),
+      },
       { match: path => path.startsWith('/console/dataset'), title: tNav('datasets') },
       { match: path => path.startsWith('/console/files'), title: tNav('files') },
       { match: path => path.startsWith('/console/db'), title: tNav('dbs') },

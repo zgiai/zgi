@@ -164,7 +164,8 @@ interface AIChatVariantProps {
   onStartNewConversation?: () => void;
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
-  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  enableMessageReplay?: boolean;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
@@ -415,6 +416,10 @@ export {
   createAgentDraftTransport,
   createAgentWebAppTransport,
 } from '@/components/chat/transports/agent-runtime-transport';
+export {
+  DigitalHumanRuntimeTransport,
+  createDigitalHumanRuntimeTransport,
+} from '@/components/chat/transports/digital-human-runtime-transport';
 export {
   useAIChatController,
   useChatRuntimeController,

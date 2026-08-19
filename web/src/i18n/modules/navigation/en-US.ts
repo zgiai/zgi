@@ -18,6 +18,7 @@ const messages = {
   products: 'Products',
   datasets: 'Datasets',
   agents: 'Agents',
+  digitalHumans: 'Digital Humans',
   workflows: 'Workflows',
   workflowAgents: 'Workflows',
   prompts: 'Prompts',

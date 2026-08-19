@@ -165,6 +165,7 @@ export interface SystemFeatures {
   enable_web_sso_switch_component: boolean;
   enable_marketplace: boolean;
   enable_external_integrations: boolean;
+  enable_digital_human: boolean;
   max_plugin_package_size: number;
   enable_email_code_login: boolean;
   enable_email_password_login: boolean;

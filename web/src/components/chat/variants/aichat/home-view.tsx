@@ -18,7 +18,7 @@ interface AIChatHomeViewProps {
   title?: string;
   description?: string;
   composerHeight?: number;
-  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
 }
 
 /**

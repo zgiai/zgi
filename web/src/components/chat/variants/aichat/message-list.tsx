@@ -32,12 +32,12 @@ interface AIChatMessageListProps {
   scrollViewportRef: Ref<HTMLDivElement>;
   bottomSpacerHeight: number;
   onScroll: (event: UIEvent<HTMLDivElement>) => void;
-  onRegenerate: (message: AIChatMessage) => void;
+  onRegenerate?: (message: AIChatMessage) => void;
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
   onSwitchBranch: (messageId: string) => void;
-  onEditStart: (message: AIChatMessage) => void;
+  onEditStart?: (message: AIChatMessage) => void;
   onEditChange: (value: string) => void;
   onEditCancel: () => void;
   onEditSubmit: (message: AIChatMessage) => void;

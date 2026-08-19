@@ -92,6 +92,25 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.detail(agentId), 'model-precheck', provider, model] as const,
 } as const;
 
+export const DIGITAL_HUMAN_KEYS = {
+  all: ['digital-humans'] as const,
+  lists: () => [...DIGITAL_HUMAN_KEYS.all, 'list'] as const,
+  list: (params: unknown) => [...DIGITAL_HUMAN_KEYS.lists(), params] as const,
+  details: () => [...DIGITAL_HUMAN_KEYS.all, 'detail'] as const,
+  detail: (id: string) => [...DIGITAL_HUMAN_KEYS.details(), id] as const,
+  roleTemplates: () => [...DIGITAL_HUMAN_KEYS.all, 'role-templates'] as const,
+  roleTemplate: (id: string) => [...DIGITAL_HUMAN_KEYS.roleTemplates(), id] as const,
+  draftRoles: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'draft-roles'] as const,
+  draftBindings: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'draft-bindings'] as const,
+  bindingCandidates: (id: string, params: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'binding-candidates', params] as const,
+  runs: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'runs', params].filter(Boolean),
+  run: (id: string, runId: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'run', runId] as const,
+  memories: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'memory', params].filter(Boolean),
+} as const;
+
 export const INTEGRATION_KEYS = {
   all: ['integrations'] as const,
   catalog: () => [...INTEGRATION_KEYS.all, 'catalog'] as const,

@@ -37,6 +37,7 @@ import { MEMORY_KEYS } from '@/hooks/query-keys';
 export function useChatRuntimeController(options?: {
   transport?: AIChatRuntimeTransport;
   requireModel?: boolean;
+  memoryMutationMode?: 'account' | 'disabled';
 }): AIChatController {
   const queryClient = useQueryClient();
   const requireModel = options?.requireModel ?? true;
@@ -92,9 +93,10 @@ export function useChatRuntimeController(options?: {
 
   const refreshAccountMemoryAfterMemoryMutation = useCallback(
     (_payload: AIChatMemoryMutationEventData) => {
+      if (options?.memoryMutationMode === 'disabled') return;
       void queryClient.invalidateQueries({ queryKey: MEMORY_KEYS.me() });
     },
-    [queryClient]
+    [options?.memoryMutationMode, queryClient]
   );
 
   const markSelectionTarget = useCallback((conversationId: string | null) => {

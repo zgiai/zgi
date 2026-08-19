@@ -4,6 +4,7 @@ export type WorkflowApprovalSurface =
   | 'aichat'
   | 'agent-draft'
   | 'agent-webapp'
+  | 'digital-human'
   | 'workflow-debug'
   | 'workflow-webapp';
 

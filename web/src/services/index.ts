@@ -32,6 +32,7 @@ export * from './content-parse.service';
 export * from './prompt.service';
 export * from './shortlink.service';
 export * from './integration.service';
+export * from './digital-human.service';
 // LLM management services
 export * from './provider.service';
 export * from './model.service';
@@ -84,6 +85,7 @@ export type * from './types/workspace-quota';
 export type * from './types/tool';
 export type * from './types/content-parse';
 export type * from './types/prompt';
+export type * from './types/digital-human';
 
 // Legacy exports for backward compatibility
 export { default as authServiceDefault } from './auth.service';

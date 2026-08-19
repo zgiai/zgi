@@ -51,6 +51,16 @@ const AGENT_EDITOR_PERMISSIONS = [
   'agent.runtime_access.manage',
 ] as const satisfies readonly PermissionCode[];
 
+const DIGITAL_HUMAN_PAGE_PERMISSIONS = [
+  'digital_human.view',
+  'digital_human.create',
+  'digital_human.update',
+  'digital_human.delete',
+  'digital_human.publish',
+  'digital_human.run',
+  'digital_human.logs.view',
+] as const satisfies readonly PermissionCode[];
+
 const WORKFLOW_PAGE_PERMISSIONS = [
   'workflow.create',
   'workflow.import',
@@ -189,6 +199,13 @@ export const ZGI_CONSOLE_SITE_MAP = [
     permissions: AGENT_PAGE_PERMISSIONS,
   },
   {
+    href: '/console/digital-humans',
+    label: 'Digital Humans',
+    purpose: 'create, configure, publish, and run digital humans',
+    scope: 'workspace',
+    permissions: DIGITAL_HUMAN_PAGE_PERMISSIONS,
+  },
+  {
     href: '/console/workflows',
     label: 'Workflows',
     purpose: 'create, configure, debug, and publish workflows',
@@ -278,6 +295,60 @@ const ZGI_CONSOLE_EXACT_ROUTES: ReadonlyMap<string, ZGIConsoleRouteDefinition> =
 );
 
 const ZGI_CONSOLE_DYNAMIC_ROUTES: readonly ZGIConsoleDynamicRouteDefinition[] = [
+  {
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/settings$/,
+    route: {
+      label: 'Digital Human Settings',
+      purpose: 'configure digital human identity and behavior',
+      scope: 'workspace',
+      permissions: ['digital_human.view', 'digital_human.update'],
+    },
+  },
+  {
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/capabilities$/,
+    route: {
+      label: 'Digital Human Capabilities',
+      purpose: 'configure digital human roles and resource bindings',
+      scope: 'workspace',
+      permissions: ['digital_human.view', 'digital_human.update'],
+    },
+  },
+  {
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/chat$/,
+    route: {
+      label: 'Digital Human Chat',
+      purpose: 'run a published digital human',
+      scope: 'workspace',
+      permissions: ['digital_human.run'],
+    },
+  },
+  {
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/runs$/,
+    route: {
+      label: 'Digital Human Runs',
+      purpose: 'inspect digital human execution history',
+      scope: 'workspace',
+      permissions: ['digital_human.logs.view'],
+    },
+  },
+  {
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/memory$/,
+    route: {
+      label: 'Digital Human Memory',
+      purpose: 'inspect subject-owned long-term memory and evidence',
+      scope: 'workspace',
+      permissions: ['digital_human.memory.view'],
+    },
+  },
+  {
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+$/,
+    route: {
+      label: 'Digital Human Detail',
+      purpose: 'configure and publish a digital human',
+      scope: 'workspace',
+      permissions: ['digital_human.view', 'digital_human.update', 'digital_human.publish'],
+    },
+  },
   {
     pattern: /^\/console\/integrations\/oauth\/result$/,
     route: {

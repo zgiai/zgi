@@ -48,6 +48,7 @@ const CONSOLE_MODULES: ModuleName[] = [
   'settings',
   'integrations',
   'music',
+  'digitalHumans',
 ];
 
 const DASHBOARD_MODULES: ModuleName[] = [

@@ -184,7 +184,8 @@ interface AIChatShellProps {
   onStartNewConversation?: () => void;
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
-  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  enableMessageReplay?: boolean;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
@@ -317,6 +318,7 @@ export function AIChatShell({
   onStartNewConversation,
   defaultSidebarOpen = true,
   showAssistantModelMeta = true,
+  enableMessageReplay = true,
   surface = 'aichat',
   runtimeSurface = 'work_chat',
   themeColor,
@@ -332,7 +334,9 @@ export function AIChatShell({
   const isMobile = useIsMobile();
   const isEmbedded = variant === 'embedded';
   const chatSurfaceBackground =
-    isEmbedded && surface !== 'agent-draft' ? 'bg-bg-canvas' : 'bg-background';
+    isEmbedded && surface !== 'agent-draft' && surface !== 'digital-human'
+      ? 'bg-bg-canvas'
+      : 'bg-background';
   const toolGovernanceApprovalScopeId = useId();
   const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
   const themeStyle = useMemo<CSSProperties | undefined>(() => {
@@ -342,8 +346,9 @@ export function AIChatShell({
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingQuery, setEditingQuery] = useState('');
-  const [selectedModelProps, setSelectedModelProps] =
-    useState<ModelSelectorModelProps | null>(null);
+  const [selectedModelProps, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(
+    null
+  );
   const [pendingVisionReplayAction, setPendingVisionReplayAction] =
     useState<PendingVisionReplayAction | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen);
@@ -413,7 +418,9 @@ export function AIChatShell({
   const enableAIChatConnectedApps =
     enableAIChatSkillPreference && Boolean(systemFeatures.data?.enable_external_integrations);
   const effectiveRuntimeSurface: AIChatRuntimeSurface =
-    surface === 'agent-draft' || surface === 'agent-webapp' ? 'external_page_chat' : runtimeSurface;
+    surface === 'agent-draft' || surface === 'agent-webapp' || surface === 'digital-human'
+      ? 'external_page_chat'
+      : runtimeSurface;
   const matchingModelProps = useMemo(() => {
     const matchesSelection = (candidate: ModelSelectorModelProps | null | undefined) =>
       Boolean(
@@ -611,7 +618,8 @@ export function AIChatShell({
   const activeUserInputRequest = activeUserInputMessage?.metadata?.user_input_request ?? null;
   const activeWorkflowApprovalRequest = useMemo(
     () =>
-      !isRecoveringMessages && (surface === 'agent-draft' || surface === 'agent-webapp')
+      !isRecoveringMessages &&
+      (surface === 'agent-draft' || surface === 'agent-webapp' || surface === 'digital-human')
         ? resolveActiveWorkflowApprovalRequest(
             activeConversation,
             activeMessages,
@@ -668,9 +676,9 @@ export function AIChatShell({
   const matchingRuntimeErrorMessage = useMemo(
     () =>
       error
-        ? [...activeMessages]
+        ? ([...activeMessages]
             .reverse()
-            .find(message => message.status === 'error' && message.error === error) ?? null
+            .find(message => message.status === 'error' && message.error === error) ?? null)
         : null,
     [activeMessages, error]
   );
@@ -679,21 +687,11 @@ export function AIChatShell({
     const errorInput = matchingRuntimeErrorMessage
       ? getAIChatMessageErrorInput(matchingRuntimeErrorMessage)
       : { message: error };
-    return resolveAIChatErrorMessage(
-      (key, values) => tGlobal(key as never, values),
-      errorInput,
-      {
-        isAdmin: isBillingAdmin,
-        workspaceId: currentWorkspace?.id,
-      }
-    );
-  }, [
-    currentWorkspace?.id,
-    error,
-    isBillingAdmin,
-    matchingRuntimeErrorMessage,
-    tGlobal,
-  ]);
+    return resolveAIChatErrorMessage((key, values) => tGlobal(key as never, values), errorInput, {
+      isAdmin: isBillingAdmin,
+      workspaceId: currentWorkspace?.id,
+    });
+  }, [currentWorkspace?.id, error, isBillingAdmin, matchingRuntimeErrorMessage, tGlobal]);
   const showInlineRuntimeError =
     resolvedRuntimeError?.kind === 'billing' ||
     resolvedRuntimeError?.kind === 'server' ||
@@ -718,9 +716,7 @@ export function AIChatShell({
     lastErrorToastRef.current = toastKey;
     const toastFn = resolvedRuntimeError.isBilling ? toast.warning : toast.error;
     toastFn(resolvedRuntimeError.title || resolvedRuntimeError.description, {
-      id: resolvedRuntimeError.code
-        ? `aichat-billing-${resolvedRuntimeError.code}`
-        : undefined,
+      id: resolvedRuntimeError.code ? `aichat-billing-${resolvedRuntimeError.code}` : undefined,
       description: resolvedRuntimeError.title ? resolvedRuntimeError.description : undefined,
       classNames: resolvedRuntimeError.isBilling ? workflowBillingToastClassNames : undefined,
       action:
@@ -731,13 +727,7 @@ export function AIChatShell({
             })
           : undefined,
     });
-  }, [
-    error,
-    isBillingAdmin,
-    resolvedRuntimeError,
-    router,
-    showInlineRuntimeError,
-  ]);
+  }, [error, isBillingAdmin, resolvedRuntimeError, router, showInlineRuntimeError]);
 
   useEffect(() => {
     if (!pendingUserMessage) return;
@@ -1035,9 +1025,7 @@ export function AIChatShell({
         isBilling={resolvedRuntimeError.isBilling}
         canRetry={canRetryRuntimeError}
         onRetry={handleRetryRuntimeError}
-        onConfigure={
-          runtimeErrorActionHref ? () => router.push(runtimeErrorActionHref) : undefined
-        }
+        onConfigure={runtimeErrorActionHref ? () => router.push(runtimeErrorActionHref) : undefined}
       />
     ) : null;
   const composerTopAccessory = runtimeErrorNotice || inputTopNotice;
@@ -1495,7 +1483,7 @@ export function AIChatShell({
                 : Math.max(inputAreaHeight + 72, 180)
             }
             onScroll={handleMessagesScroll}
-            onRegenerate={handleRegenerate}
+            onRegenerate={enableMessageReplay ? handleRegenerate : undefined}
             onToolGovernanceDecision={
               enableToolGovernanceApprovals && !isRecoveringMessages
                 ? handleToolGovernanceDecision
@@ -1504,13 +1492,13 @@ export function AIChatShell({
             enableToolGovernanceApprovals={enableToolGovernanceApprovals}
             suppressPendingToolGovernanceApprovals={isRecoveringMessages}
             onSwitchBranch={handleSwitchBranch}
-            onEditStart={handleEditStart}
+            onEditStart={enableMessageReplay ? handleEditStart : undefined}
             onEditChange={setEditingQuery}
             onEditCancel={handleEditCancel}
             onEditSubmit={handleEditSubmit}
             showAssistantModelMeta={showAssistantModelMeta}
             layout={isEmbedded ? 'embedded' : 'full'}
-            showMemoryKey={surface !== 'agent-webapp'}
+            showMemoryKey={surface !== 'agent-webapp' && surface !== 'digital-human'}
             showSkillEventDetails={surface !== 'agent-webapp'}
             showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
             showPlanningPlaceholder={showPlanningPlaceholder}
@@ -1746,9 +1734,7 @@ export function AIChatShell({
                   : 0,
               })}
             </p>
-            <p>
-              {t('consoleChat.attachments.visionReplayWarning.recommendation')}
-            </p>
+            <p>{t('consoleChat.attachments.visionReplayWarning.recommendation')}</p>
           </div>
         }
         cancelText={t('consoleChat.attachments.visionReplayWarning.cancel')}
@@ -1764,7 +1750,7 @@ function resolveActiveWorkflowApprovalRequest(
   messages: AIChatMessage[],
   isSending: boolean,
   hasActiveStreamingMessage: boolean,
-  surface: 'aichat' | 'agent-draft' | 'agent-webapp'
+  surface: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human'
 ): AIChatWorkflowApprovalRequest | null {
   if (
     !conversation ||
