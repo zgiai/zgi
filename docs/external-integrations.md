@@ -722,6 +722,79 @@ supported read-permission alternatives for the selected authentication method.
 Calendar-event reads require an explicit calendar and time range. Neither
 capability bypasses Feishu application availability or resource-level access.
 
+### DigitalHuman Feishu channel
+
+The DigitalHuman channel gateway requires both `DIGITAL_HUMAN_ENABLED=true`
+and `EXTERNAL_INTEGRATIONS_ENABLED=true`. Restart the API after changing either
+flag. Configure an organization-owned **Feishu tenant app** Connection with its
+App ID, App Secret, event Verification Token, and Encrypt Key. The Connection
+must have a current organization or workspace write grant for
+`feishu.message.send_bot`, and the organization Action policy must enable that
+Action with data egress allowed.
+
+From a published DigitalHuman's **Channels** page:
+
+1. Select the active Feishu tenant-app Connection and name the installation.
+   ZGI verifies the tenant and bot identity through Feishu and stores the
+   discovered routing identifiers with the Connection reference. The current
+   DigitalHuman becomes the installation's default subject; callback secrets
+   remain in the encrypted Connection vault.
+2. Copy the generated webhook URL into the Feishu application's event
+   subscription configuration, enable encrypted callbacks, and subscribe to
+   `im.message.receive_v1`.
+3. Publish the Feishu application version and enable bot capability. The first
+   direct message atomically creates a binding to the installation's default
+   DigitalHuman, reserves one stable local ChatRuntime conversation, and is
+   processed immediately. No discovery-only direct-message turn is required.
+4. Add the bot to a test group and mention it once. The explicit mention
+   atomically assigns the group to the installation's default DigitalHuman and
+   processes that first mention. Ordinary group messages neither create a route
+   nor invoke the model. Installations created before default subjects were
+   introduced retain a safe discovery fallback until an owner is configured.
+
+Direct-message bindings may use **Direct message or explicit mention**. Group
+bindings always require an explicit mention of the configured bot, regardless
+of the selected label; ordinary group messages are audited as ignored and do
+not create a model run. Feishu event/message identifiers form the durable
+idempotency key, so provider retries reuse one DigitalHuman run.
+
+The provider conversation ID maps to a server-owned local conversation ID when
+the binding is created, including the automatic binding performed by the first
+direct message. ChatRuntime creates that reserved conversation idempotently
+before the first accepted run. This prevents concurrent first messages from
+creating separate histories. Provider message lists are reserved for explicit
+history import or gap repair; they are not the runtime source of truth and are
+not fetched on every turn.
+
+The DigitalHuman run outbox and the channel delivery outbox are intentionally
+separate. A model run commits one reply intent; a channel worker then sends it
+through the governed Integration Action. A definitely failed delivery may be
+retried from the Channels page without rerunning the model. An `unknown`
+provider outcome cannot be retried automatically: verify the Feishu group
+first to avoid a duplicate reply.
+
+Long-running turns can emit transient channel feedback. Each DigitalHuman has
+independent published switches for the processing acknowledgement and coherent
+user-visible progress that ChatRuntime finalizes before a tool call or as an
+intermediate answer. Progress has no message-count limit. Token deltas,
+reasoning, tool arguments, and discarded candidate text are never sent to the
+channel.
+
+Acknowledgements and progress are best-effort UX messages carried by a
+short-lived queue. They are not written to the durable channel delivery outbox,
+are not retried, and may be discarded if the run has already finished. The
+final answer and generated-file links remain durable, auditable, and retryable.
+Draft switch changes take effect only after publishing the DigitalHuman.
+
+When the published DigitalHuman binds the `file-generator` Skill, generated
+files remain structured ChatRuntime artifacts. The console renders the normal
+preview/download card. Channel delivery stores only the stable tool-file
+identity, then signs a fresh download URL immediately before sending the Feishu
+reply; expiring signed URLs are never persisted in run history or the delivery
+outbox. Self-hosted deployments must expose the file endpoint publicly. Set
+`FILES_PUBLIC_URL` to the HTTPS gateway or tunnel that serves ZGI (for example,
+`https://zgi.example.com`) when `PUBLIC_URL` remains a local-only console URL.
+
 Lark global is intentionally not presented as a region selector. Its endpoints,
 application registration, and governance destination differ; add it later as
 an independently reviewed Provider rather than switching domains through a
