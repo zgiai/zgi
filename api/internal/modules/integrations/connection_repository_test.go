@@ -139,6 +139,9 @@ func TestGormConnectionRepositoryDeleteIsOrganizationScopedAndSoft(t *testing.T)
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "agent_resource_bindings" WHERE organization_id = \$1 AND binding_type = \$2 AND resource_id = \$3`).
 		WithArgs(organizationID, "integration_connection", connectionID.String()).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "channel_installations" WHERE organization_id = \$1 AND connection_id = \$2 AND deleted_at IS NULL`).
+		WithArgs(organizationID, connectionID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec(`UPDATE "integration_connections" SET .*"encrypted_credentials"=\$[0-9]+.*"updated_by"=\$[0-9]+.*WHERE .*organization_id = \$[0-9]+ AND id = \$[0-9]+`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE "integration_connections" SET "deleted_at"=\$1 WHERE .*organization_id = \$2 AND id = \$3.*"deleted_at" IS NULL`).
@@ -163,6 +166,29 @@ func TestGormConnectionRepositoryDeleteRejectsBoundAgentInsideTransaction(t *tes
 			AddRow(connectionID, organizationID, IntegrationWebSearch, ConnectionCredentialSourceOrganization, ConnectionStatusActive))
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "agent_resource_bindings" WHERE organization_id = \$1 AND binding_type = \$2 AND resource_id = \$3`).
 		WithArgs(organizationID, "integration_connection", connectionID.String()).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectRollback()
+	err := repository.DeleteAs(context.Background(), organizationID, connectionID, nil)
+	if !errors.Is(err, ErrConnectionInUse) {
+		t.Fatalf("DeleteAs() error = %v, want ErrConnectionInUse", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("database expectations: %v", err)
+	}
+}
+
+func TestGormConnectionRepositoryDeleteRejectsChannelInstallationInsideTransaction(t *testing.T) {
+	db, mock := openIntegrationRepositoryMock(t)
+	repository := NewGormConnectionRepository(db)
+	organizationID := uuid.New()
+	connectionID := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT \* FROM "integration_connections" WHERE .*organization_id = \$1 AND id = \$2.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "integration_id", "credential_source", "status"}).
+			AddRow(connectionID, organizationID, IntegrationWebSearch, ConnectionCredentialSourceOrganization, ConnectionStatusActive))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "agent_resource_bindings"`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "channel_installations"`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectRollback()
 	err := repository.DeleteAs(context.Background(), organizationID, connectionID, nil)
@@ -227,6 +253,8 @@ func TestGormConnectionRepositoryAtomicallyPersistsOAuthRevocationBeforeDelete(t
 		))
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "agent_resource_bindings"`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "channel_installations"`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec(`INSERT INTO "integration_oauth_recovery_operations"`).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(`UPDATE "integration_connections" SET .*"encrypted_credentials"=`).
@@ -283,6 +311,8 @@ func TestGormConnectionRepositoryOAuthOutboxFailureRollsBackDeletion(t *testing.
 			"github_oauth", connectionEnvelope, 2, ConnectionStatusActive, 1,
 		))
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "agent_resource_bindings"`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "channel_installations"`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec(`INSERT INTO "integration_oauth_recovery_operations"`).
 		WillReturnError(errors.New("database unavailable"))

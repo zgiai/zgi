@@ -443,6 +443,20 @@ func tenantAppAuthMethod() integrations.AuthMethodDefinition {
 				Placeholder:     "Enter the app secret",
 				PlaceholderI18n: integrations.LocalizedText{integrations.LocaleEnglishUS: "Enter the app secret", integrations.LocaleSimplifiedChinese: "请输入 App Secret"},
 			},
+			{
+				Key: "verification_token", Label: "Event verification token",
+				LabelI18n: integrations.LocalizedText{integrations.LocaleEnglishUS: "Event verification token", integrations.LocaleSimplifiedChinese: "事件 Verification Token"},
+				Input:     integrations.CredentialFieldInputPassword, Required: false, Secret: true,
+				Placeholder:     "Required for webhook event subscriptions",
+				PlaceholderI18n: integrations.LocalizedText{integrations.LocaleEnglishUS: "Required for webhook event subscriptions", integrations.LocaleSimplifiedChinese: "使用 webhook 事件订阅时必填"},
+			},
+			{
+				Key: "encrypt_key", Label: "Event encrypt key",
+				LabelI18n: integrations.LocalizedText{integrations.LocaleEnglishUS: "Event encrypt key", integrations.LocaleSimplifiedChinese: "事件 Encrypt Key"},
+				Input:     integrations.CredentialFieldInputPassword, Required: false, Secret: true,
+				Placeholder:     "Recommended for signed encrypted callbacks",
+				PlaceholderI18n: integrations.LocalizedText{integrations.LocaleEnglishUS: "Recommended for signed encrypted callbacks", integrations.LocaleSimplifiedChinese: "建议配置，用于签名和加密回调"},
+			},
 		},
 	}
 }
@@ -795,6 +809,7 @@ func Actions() []integrations.ActionDefinition {
 			actions[index].RequiredAnyScopes = []string{ScopeSendAsBot, ScopeMessage}
 			actions[index].PreferredScopes = []string{ScopeSendAsBot}
 			actions[index].SupportedAuthMethodIDs = []string{TenantAppAuthMethodID}
+			actions[index].SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAPI}
 			actions[index].PreparationHints = feishuMessagePreparationHints(false)
 		case ActionGetAccount, ActionSearchContacts, ActionSendUserMessage:
 			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOAuthMethods...)

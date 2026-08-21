@@ -18,7 +18,7 @@ var (
 	ErrConnectionNotFound     = errors.New("integration connection not found")
 	ErrConnectionChanged      = errors.New("integration connection changed concurrently")
 	ErrConnectionNameConflict = errors.New("integration connection name already exists")
-	ErrConnectionInUse        = errors.New("integration connection is bound to an Agent")
+	ErrConnectionInUse        = errors.New("integration connection is still in use")
 )
 
 type ConnectionListFilter struct {
@@ -476,6 +476,15 @@ func deleteIntegrationConnectionTx(
 		return nil, fmt.Errorf("check Agent integration connection bindings: %w", err)
 	}
 	if boundAgentCount > 0 {
+		return nil, ErrConnectionInUse
+	}
+	var channelInstallationCount int64
+	if err := tx.Table("channel_installations").
+		Where("organization_id = ? AND connection_id = ? AND deleted_at IS NULL", organizationID, connectionID).
+		Count(&channelInstallationCount).Error; err != nil {
+		return nil, fmt.Errorf("check channel installation connection references: %w", err)
+	}
+	if channelInstallationCount > 0 {
 		return nil, ErrConnectionInUse
 	}
 	if recoveryTask != nil {

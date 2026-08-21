@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	maxManualQueryRunes   = 32_000
-	defaultOutboxBatch    = 50
-	defaultOutboxLease    = 2 * time.Minute
-	defaultStaleRunWindow = 10 * time.Minute
+	maxManualQueryRunes        = 32_000
+	defaultOutboxBatch         = 50
+	defaultOutboxLease         = 2 * time.Minute
+	completedRunRecoveryWindow = 30 * time.Second
+	defaultStaleRunWindow      = 10 * time.Minute
 )
 
 // ExecutionResolver seals the configuration used by one invocation.
@@ -38,8 +39,10 @@ type BrainRuntimeAdapter interface {
 
 // ChatRuntime is the narrow shared execution boundary used by DigitalHuman.
 type ChatRuntime interface {
+	EnsureConversationForCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID, string) (*runtimemodel.Conversation, error)
 	PrepareConfiguredChat(context.Context, chatruntime.Scope, chatruntime.Caller, chatruntime.RunConfig, runtimedto.ChatRequest) (*chatruntime.PreparedChat, error)
 	RunPreparedStream(context.Context, *chatruntime.PreparedChat, func(string) error, ...func(chatruntime.StreamEvent) error) (*chatruntime.ChatResult, error)
+	GetMessageByCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error)
 	StopMessage(context.Context, chatruntime.Scope, uuid.UUID) (*runtimemodel.Message, error)
 }
 
@@ -57,6 +60,7 @@ type RuntimeService struct {
 	brain      BrainRuntimeAdapter
 	chat       ChatRuntime
 	dispatcher RunDispatcher
+	transient  ChannelTransientDispatcher
 	memory     MemoryRuntimeProvider
 	now        func() time.Time
 }
@@ -83,6 +87,12 @@ type RuntimeServiceOption func(*RuntimeService)
 // WithMemoryRuntime attaches DigitalHuman memory without enabling legacy memory.
 func WithMemoryRuntime(provider MemoryRuntimeProvider) RuntimeServiceOption {
 	return func(service *RuntimeService) { service.memory = provider }
+}
+
+// WithChannelTransientDispatcher enables UX-only channel messages without
+// adding them to the durable DigitalHuman delivery outbox.
+func WithChannelTransientDispatcher(dispatcher ChannelTransientDispatcher) RuntimeServiceOption {
+	return func(service *RuntimeService) { service.transient = dispatcher }
 }
 
 func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
@@ -251,9 +261,18 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		chatRequest.ConversationID = run.ConversationID.String()
 	}
 	callerID := run.DigitalHumanID
-	prepared, err := s.chat.PrepareConfiguredChat(ctx, runtimeScope(run), chatruntime.Caller{
+	caller := chatruntime.Caller{
 		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSource,
-	}, config, chatRequest)
+	}
+	if event.Origin.Kind == invocation.OriginChannel && run.ConversationID != nil {
+		if _, err := s.chat.EnsureConversationForCaller(
+			ctx, runtimeScope(run), caller, *run.ConversationID, "Channel conversation",
+		); err != nil {
+			_ = s.store.FailRun(ctx, run.ID, "digital_human.run.conversation_prepare_failed", "The channel conversation could not be prepared.", s.now())
+			return err
+		}
+	}
+	prepared, err := s.chat.PrepareConfiguredChat(ctx, runtimeScope(run), caller, config, chatRequest)
 	if err != nil {
 		_ = s.store.FailRun(ctx, run.ID, "digital_human.run.prepare_failed", "The DigitalHuman could not prepare this execution.", s.now())
 		return err
@@ -269,7 +288,18 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		_ = s.store.CompleteRun(ctx, run.ID, "", datatypes.JSON(`{}`), s.now())
 		return err
 	}
-	result, err := s.chat.RunPreparedStream(ctx, prepared, nil)
+	var eventCallbacks []func(chatruntime.StreamEvent) error
+	policy := defaultChannelResponsePolicy()
+	if resolved.Snapshot.ChannelResponsePolicy != nil {
+		policy = *resolved.Snapshot.ChannelResponsePolicy
+	}
+	if event.Origin.Kind == invocation.OriginChannel && policy.IntermediateMessagesEnabled && s.transient != nil {
+		progress := newChannelProgressCollector(s.transient, run.ID)
+		eventCallbacks = append(eventCallbacks, func(streamEvent chatruntime.StreamEvent) error {
+			return progress.Handle(ctx, streamEvent)
+		})
+	}
+	result, err := s.chat.RunPreparedStream(ctx, prepared, nil, eventCallbacks...)
 	if err != nil {
 		_ = s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", "The DigitalHuman execution did not complete.", s.now())
 		return err
@@ -280,7 +310,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			return err
 		}
 	}
-	return s.store.CompleteRun(ctx, run.ID, result.Answer, executionTraceFromMetadata(result.Metadata), s.now())
+	return s.store.CompleteRunWithDelivery(ctx, run.ID, result.Answer, executionTraceFromMetadata(result.Metadata), s.now())
 }
 
 func executionTraceFromMetadata(metadata map[string]interface{}) datatypes.JSON {
@@ -292,8 +322,8 @@ func executionTraceFromMetadata(metadata map[string]interface{}) datatypes.JSON 
 		{key: "runtime_timeline", allowed: allowedTraceFields("runtime_id", "kind", "source", "source_id", "sequence", "created_at", "created_at_ms")},
 		{key: "skill_invocations", allowed: allowedTraceFields("runtime_id", "invocation_id", "skill_id", "tool_name", "title", "kind", "status", "duration_ms", "created_at", "created_at_ms", "error_code", "approval_status", "workflow_run_id")},
 		{key: "workflow_runs", allowed: allowedTraceFields("workflow_run_id", "task_id", "id", "workflow_id", "agent_id", "version", "status", "elapsed_time", "created_at", "created_at_ms")},
-		{key: "conversation_artifacts", allowed: allowedTraceFields("artifact_id", "artifact_type", "invocation_id", "skill_id", "tool_name", "file_id", "filename", "extension", "mime_type", "created_at")},
-		{key: "generated_files", allowed: allowedTraceFields("artifact_id", "artifact_type", "invocation_id", "skill_id", "tool_name", "file_id", "filename", "extension", "mime_type", "created_at")},
+		{key: "conversation_artifacts", allowed: allowedTraceFields("artifact_id", "artifact_type", "invocation_id", "skill_id", "tool_name", "file_id", "tool_file_id", "upload_file_id", "filename", "extension", "mime_type", "transfer_method", "target", "lifecycle", "expires_at", "availability", "created_at")},
+		{key: "generated_files", allowed: allowedTraceFields("artifact_id", "artifact_type", "invocation_id", "skill_id", "tool_name", "file_id", "tool_file_id", "upload_file_id", "filename", "extension", "mime_type", "transfer_method", "target", "lifecycle", "expires_at", "availability", "created_at")},
 	} {
 		items := traceMapSlice(metadata[section.key], section.allowed, 100)
 		if len(items) > 0 {
@@ -381,8 +411,42 @@ func (s *RuntimeService) Reconcile(ctx context.Context) error {
 	return errors.Join(
 		s.store.RequeueStaleRunOutbox(ctx, now.Add(-defaultOutboxLease), now),
 		s.DispatchPending(ctx, defaultOutboxBatch),
+		s.recoverCompletedRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
 		s.store.MarkStaleRunsUnknown(ctx, now.Add(-defaultStaleRunWindow), now),
 	)
+}
+
+// recoverCompletedRuns closes the crash window after ChatRuntime has persisted
+// a completed answer but before the DigitalHuman run and channel delivery are
+// committed. It reuses that stored answer and never invokes the model again.
+func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore time.Time, limit int) error {
+	runs, err := s.store.ListRecoverableRuns(ctx, updatedBefore, limit)
+	if err != nil {
+		return err
+	}
+	var combined error
+	for _, run := range runs {
+		if run == nil || run.MessageID == nil || *run.MessageID == uuid.Nil || run.ActorID == nil || *run.ActorID == uuid.Nil {
+			continue
+		}
+		callerID := run.DigitalHumanID
+		message, _, loadErr := s.chat.GetMessageByCaller(ctx, runtimeScope(run), chatruntime.Caller{
+			Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSource,
+		}, *run.MessageID)
+		if loadErr != nil {
+			combined = errors.Join(combined, loadErr)
+			continue
+		}
+		if message == nil || message.Status != runtimemodel.MessageStatusCompleted {
+			continue
+		}
+		if completeErr := s.store.CompleteRunWithDelivery(
+			ctx, run.ID, message.Answer, executionTraceFromMetadata(message.Metadata), s.now(),
+		); completeErr != nil && !errors.Is(completeErr, ErrRunConflict) {
+			combined = errors.Join(combined, completeErr)
+		}
+	}
+	return combined
 }
 
 func marshalRunSnapshots(event invocation.Event, resolved *ResolvedExecution) (datatypes.JSON, datatypes.JSON, datatypes.JSON, error) {

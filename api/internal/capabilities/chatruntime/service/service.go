@@ -231,6 +231,7 @@ type CreateConversationWithCompletedMessageRequest struct {
 type Service interface {
 	CreateConversation(ctx context.Context, scope Scope, title string) (*runtimemodel.Conversation, error)
 	CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error)
+	EnsureConversationForCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, title string) (*runtimemodel.Conversation, error)
 	ListConversations(ctx context.Context, scope Scope, page, limit int) ([]*runtimemodel.Conversation, int64, error)
 	ListConversationsByCaller(ctx context.Context, scope Scope, caller Caller, page, limit int) ([]*runtimemodel.Conversation, int64, error)
 	ListConversationsBySurface(ctx context.Context, scope Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error)

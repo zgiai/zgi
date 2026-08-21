@@ -155,6 +155,26 @@ func (c *client) getTenant(ctx context.Context, region, tenantToken string, targ
 	return c.doEnvelope(ctx, region, http.MethodGet, "/open-apis/tenant/v2/tenant/query", nil, nil, tenantToken, true, target)
 }
 
+func (c *client) getBotInfo(ctx context.Context, region, tenantToken string, target *feishuBotData) (responseMeta, error) {
+	var response struct {
+		Code int           `json:"code"`
+		Msg  string        `json:"msg"`
+		Bot  feishuBotData `json:"bot"`
+	}
+	meta, err := c.doRawJSON(ctx, region, http.MethodGet, "/open-apis/bot/v3/info", nil, nil, tenantToken, true, &response)
+	if err != nil {
+		return meta, err
+	}
+	if response.Code != 0 {
+		meta.Diagnostics.ErrorCode = strconv.Itoa(response.Code)
+		return meta, withFeishuDiagnostics(mapFeishuBusinessCode(response.Code), meta)
+	}
+	if target != nil {
+		*target = response.Bot
+	}
+	return meta, nil
+}
+
 func (c *client) doEnvelope(
 	ctx context.Context,
 	region, method, path string,

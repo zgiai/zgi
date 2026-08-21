@@ -54,7 +54,8 @@ func TestResolverSealsPinnedMemoryFreeExecution(t *testing.T) {
 		version: &Version{
 			ID: versionID, DigitalHumanID: subject.ID, State: VersionStatePublished, VersionNumber: 3,
 			Persona: "Be evidence-led", Rules: datatypes.JSON(`["Cite sources"]`), DefaultModel: "gpt-5",
-			Revision: "sha256:identity",
+			TriggerPolicy: datatypes.JSON(`{"channel_response":{"intermediate_messages_enabled":false,"acknowledgement_enabled":true}}`),
+			Revision:      "sha256:identity",
 		},
 		assignments: []*RoleAssignment{{
 			ID: uuid.New(), DigitalHumanID: subject.ID, DigitalHumanVersionID: versionID,
@@ -91,6 +92,10 @@ func TestResolverSealsPinnedMemoryFreeExecution(t *testing.T) {
 	}
 	if resolved.Snapshot.UseUserMemory || resolved.Snapshot.UseAgentMemory || resolved.Snapshot.Revision == "" {
 		t.Fatalf("execution snapshot memory/revision = %#v", resolved.Snapshot)
+	}
+	if resolved.Snapshot.ChannelResponsePolicy == nil || resolved.Snapshot.ChannelResponsePolicy.IntermediateMessagesEnabled ||
+		!resolved.Snapshot.ChannelResponsePolicy.AcknowledgementEnabled {
+		t.Fatalf("execution snapshot channel policy = %#v", resolved.Snapshot.ChannelResponsePolicy)
 	}
 	if _, err := runspec.Seal(resolved.Spec); err != nil {
 		t.Fatalf("sealed RunSpec cannot be verified: %v", err)

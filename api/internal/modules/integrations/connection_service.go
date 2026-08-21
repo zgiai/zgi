@@ -991,7 +991,7 @@ func mapConnectionLookupError(err error) error {
 		return NewError(ErrorCodeConnectionConflict, "an integration connection with this name already exists", err)
 	}
 	if errors.Is(err, ErrConnectionInUse) {
-		return NewError(ErrorCodeConnectionInUse, "connection is still bound to an Agent", err)
+		return NewError(ErrorCodeConnectionInUse, "connection is still used by a published resource or channel", err)
 	}
 	return err
 }

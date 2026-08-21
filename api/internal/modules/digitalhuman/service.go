@@ -703,6 +703,20 @@ func applicationError(err error, operation string) error {
 		code = AppCodeMemoryPolicyRejected
 	case errors.Is(err, ErrMemoryUndoUnavailable):
 		code = AppCodeMemoryUndoUnavailable
+	case errors.Is(err, ErrChannelInstallationNotFound):
+		code = AppCodeChannelInstallationNotFound
+	case errors.Is(err, ErrChannelBindingNotFound):
+		code = AppCodeChannelBindingNotFound
+	case errors.Is(err, ErrChannelInstallationInUse):
+		code = AppCodeChannelInstallationInUse
+	case errors.Is(err, ErrChannelConflict):
+		code = AppCodeChannelConflict
+	case errors.Is(err, ErrChannelNotReady):
+		code = AppCodeChannelNotReady
+	case errors.Is(err, ErrChannelDeliveryNotFound):
+		code = AppCodeChannelDeliveryNotFound
+	case errors.Is(err, ErrChannelDeliveryConflict):
+		code = AppCodeChannelDeliveryConflict
 	default:
 		return fmt.Errorf("%s: %w", operation, err)
 	}

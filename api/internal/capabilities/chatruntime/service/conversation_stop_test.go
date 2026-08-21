@@ -74,6 +74,36 @@ func TestStopConversationStopsWaitingLeafMessage(t *testing.T) {
 	}
 }
 
+func TestEnsureConversationForCallerIsIdempotentAndCallerScoped(t *testing.T) {
+	organizationID, workspaceID, accountID := uuid.New(), uuid.New(), uuid.New()
+	digitalHumanID, conversationID := uuid.New(), uuid.New()
+	db := openStopConversationTestDB(t)
+	repos := repository.NewRepositories(db)
+	repos.Access = stopConversationAccessRepo{}
+	svc := &service{repos: repos}
+	scope := Scope{OrganizationID: organizationID, WorkspaceID: &workspaceID, AccountID: accountID}
+	caller := Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID}
+
+	first, err := svc.EnsureConversationForCaller(t.Context(), scope, caller, conversationID, "Feishu direct chat")
+	if err != nil {
+		t.Fatalf("EnsureConversationForCaller(first) error = %v", err)
+	}
+	second, err := svc.EnsureConversationForCaller(t.Context(), scope, caller, conversationID, "ignored replacement title")
+	if err != nil {
+		t.Fatalf("EnsureConversationForCaller(second) error = %v", err)
+	}
+	if first.ID != conversationID || second.ID != conversationID || second.Title != first.Title {
+		t.Fatalf("ensured conversations = first %#v, second %#v", first, second)
+	}
+	var count int64
+	if err := db.Model(&runtimemodel.Conversation{}).Where("id = ?", conversationID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("conversation rows = %d, want 1", count)
+	}
+}
+
 func TestStopConversationIgnoresCompletedLeafMessage(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()

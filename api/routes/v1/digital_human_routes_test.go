@@ -15,6 +15,9 @@ type digitalHumanRoutesService struct{ digitalhuman.HandlerService }
 type digitalHumanRoutesRuntime struct {
 	digitalhuman.RuntimeHandlerService
 }
+type digitalHumanRoutesChannels struct {
+	digitalhuman.ChannelHandlerService
+}
 
 func TestDigitalHumanPermissionForRequest(t *testing.T) {
 	tests := []struct {
@@ -38,6 +41,13 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodGet, "/console/api/digital-humans/:id/runtime/conversations/:conversation_id/messages", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPatch, "/console/api/digital-humans/:id/runtime/conversations/:conversation_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodDelete, "/console/api/digital-humans/:id/runtime/conversations/:conversation_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/channels/installations", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodGet, "/console/api/digital-humans/:id/channels/discoveries", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodPost, "/console/api/digital-humans/:id/channels/installations", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodDelete, "/console/api/digital-humans/:id/channels/bindings/:binding_id", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodGet, "/console/api/digital-humans/:id/channels/events", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
+		{http.MethodGet, "/console/api/digital-humans/:id/channels/deliveries", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
+		{http.MethodPost, "/console/api/digital-humans/:id/channels/deliveries/:delivery_id/retry", workspacemodel.WorkspacePermissionDigitalHumanRun},
 	}
 	for _, test := range tests {
 		if got := digitalHumanPermissionForRequest(test.method, test.path); got != test.want {
@@ -70,13 +80,14 @@ func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
 		Enabled:                 true,
 		Service:                 digitalHumanRoutesService{},
 		Runtime:                 digitalHumanRoutesRuntime{},
+		Channels:                digitalHumanRoutesChannels{},
 		AccountService:          digitalHumanRoutesAccountService{},
 		OrganizationService:     digitalHumanRoutesOrganizationService{},
 		ApplicationErrorCatalog: digitalHumanRoutesCatalog(t),
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 37; got != want {
+	if got, want := len(routes), 49; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -107,6 +118,18 @@ func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
 		"GET /console/api/digital-humans/:id/runtime/search":                                  false,
 		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/messages": false,
 		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/events":   false,
+		"POST /console/api/webhooks/channels/feishu/:installation_id":                         false,
+		"POST /console/api/digital-humans/:id/channels/installations":                         false,
+		"GET /console/api/digital-humans/:id/channels/installations":                          false,
+		"PATCH /console/api/digital-humans/:id/channels/installations/:installation_id":       false,
+		"DELETE /console/api/digital-humans/:id/channels/installations/:installation_id":      false,
+		"POST /console/api/digital-humans/:id/channels/bindings":                              false,
+		"GET /console/api/digital-humans/:id/channels/bindings":                               false,
+		"GET /console/api/digital-humans/:id/channels/discoveries":                            false,
+		"DELETE /console/api/digital-humans/:id/channels/bindings/:binding_id":                false,
+		"GET /console/api/digital-humans/:id/channels/events":                                 false,
+		"GET /console/api/digital-humans/:id/channels/deliveries":                             false,
+		"POST /console/api/digital-humans/:id/channels/deliveries/:delivery_id/retry":         false,
 		"POST /console/api/digital-human-role-templates":                                      false,
 		"GET /console/api/digital-human-role-templates":                                       false,
 		"GET /console/api/digital-human-role-templates/:id":                                   false,

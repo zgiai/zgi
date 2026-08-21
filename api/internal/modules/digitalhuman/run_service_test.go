@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -17,6 +18,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"github.com/zgiai/zgi/api/internal/capabilities/runspec"
+	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/datatypes"
@@ -69,6 +71,42 @@ func TestRuntimeServiceReconcilesFailedQueueDelivery(t *testing.T) {
 	}
 }
 
+func TestRuntimeServiceReconcilesCompletedChatMessageWithoutRerunningModel(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	chat := &fakeDigitalHumanChat{recoveryMessage: &runtimemodel.Message{
+		Status: runtimemodel.MessageStatusCompleted,
+		Answer: "stored completed answer",
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{map[string]interface{}{
+				"skill_id": "calculator", "status": "succeeded", "arguments": "must-not-persist",
+			}},
+		},
+	}}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	now := time.Date(2026, 8, 18, 6, 1, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	run, _, err := service.SubmitManual(t.Context(), testRunScope(), uuid.New(), ManualInvocationRequest{RequestID: uuid.New(), Query: "recover me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messageID, conversationID := uuid.New(), uuid.New()
+	run.Status, run.MessageID, run.ConversationID = RunStatusRunning, &messageID, &conversationID
+	run.UpdatedAt = now.Add(-completedRunRecoveryWindow - time.Second)
+
+	if err := service.Reconcile(t.Context()); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if run.Status != RunStatusSucceeded || run.ResultSummary != "stored completed answer" {
+		t.Fatalf("recovered run = status %s, summary %q", run.Status, run.ResultSummary)
+	}
+	if chat.prepareCalls != 0 || chat.runCalls != 0 || chat.getMessageCalls != 1 {
+		t.Fatalf("recovery unexpectedly reran model: prepares=%d runs=%d gets=%d", chat.prepareCalls, chat.runCalls, chat.getMessageCalls)
+	}
+	if bytes.Contains(run.ExecutionTrace, []byte("must-not-persist")) || !bytes.Contains(run.ExecutionTrace, []byte(`"skill_id":"calculator"`)) {
+		t.Fatalf("recovered trace was not safely projected: %s", run.ExecutionTrace)
+	}
+}
+
 func TestRuntimeServiceExecuteUsesDigitalHumanCallerAndNoLegacyMemory(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)
@@ -94,9 +132,151 @@ func TestRuntimeServiceExecuteUsesDigitalHumanCallerAndNoLegacyMemory(t *testing
 		t.Fatalf("completed run = %#v", stored)
 	}
 	if !bytes.Contains(stored.ExecutionTrace, []byte(`"skill_id":"calculator"`)) ||
+		!bytes.Contains(stored.ExecutionTrace, []byte(`"tool_file_id":"tool-file-1"`)) ||
 		bytes.Contains(stored.ExecutionTrace, []byte("must-not-persist")) ||
+		bytes.Contains(stored.ExecutionTrace, []byte("stale.example")) ||
 		bytes.Contains(stored.ExecutionTrace, []byte("arguments")) {
 		t.Fatalf("execution trace was not safely projected: %s", stored.ExecutionTrace)
+	}
+}
+
+func TestRuntimeServiceEnsuresReservedConversationForChannelInvocation(t *testing.T) {
+	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID, conversationID := testRunScope(), uuid.New(), uuid.New()
+	installationID := uuid.NewString()
+	event := invocation.Event{
+		ID: "feishu-channel-event", Type: invocation.EventTypeChannelMessage,
+		Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: "feishu", InstallationID: installationID},
+		Target: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
+			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		},
+		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: "ou_private_sender"},
+		OccurredAt: time.Now().UTC(),
+		ReplyTo: &invocation.ReplyAddress{
+			Provider: "feishu", InstallationID: installationID, ConversationID: "oc_private",
+		},
+	}
+	run, created, err := service.SubmitInvocation(t.Context(), scope, event, "continue the private chat", &conversationID)
+	if err != nil || !created {
+		t.Fatalf("SubmitInvocation() = created %v, err %v", created, err)
+	}
+	if err := service.Execute(t.Context(), run.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if chat.ensureCalls != 1 || chat.ensuredConversationID != conversationID {
+		t.Fatalf("ensured conversation = %s after %d calls, want %s", chat.ensuredConversationID, chat.ensureCalls, conversationID)
+	}
+	if chat.request.ConversationID != conversationID.String() {
+		t.Fatalf("prepared conversation = %q, want %s", chat.request.ConversationID, conversationID)
+	}
+}
+
+func TestRuntimeServicePublishesSafeChannelProgressBeforeFinalAnswer(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	chat := &fakeDigitalHumanChat{events: []chatruntime.StreamEvent{
+		{EventType: channelEventMessageRetract, CreatedAtMS: 1_000, Sequence: 1, Payload: map[string]any{
+			"content": "我先整理数据，再生成文件。", "presentation_disposition": "process", "segment_id": "segment-1",
+		}},
+		{EventType: channelEventMessageRetract, CreatedAtMS: 1_001, Sequence: 1, Payload: map[string]any{
+			"content": "这段候选内容不应发送。", "presentation_disposition": "discard", "segment_id": "segment-discarded",
+		}},
+		{EventType: channelEventIntermediateAnswer, CreatedAtMS: 1_002, Sequence: 1, Payload: map[string]any{
+			"answer_id": "draft-1", "content": "阶段结果", "delta": true, "done": false,
+		}},
+		{EventType: channelEventIntermediateAnswer, CreatedAtMS: 1_003, Sequence: 1, Payload: map[string]any{
+			"answer_id": "draft-1", "content": " 已经准备好。", "delta": true, "done": true,
+		}},
+		{EventType: channelEventMessageRetract, CreatedAtMS: 1_004, Sequence: 1, Payload: map[string]any{
+			"content": "继续检查第三个阶段。", "presentation_disposition": "process", "segment_id": "segment-3",
+		}},
+		{EventType: channelEventMessageRetract, CreatedAtMS: 1_005, Sequence: 1, Payload: map[string]any{
+			"content": "继续检查第四个阶段。", "presentation_disposition": "process", "segment_id": "segment-4",
+		}},
+		{EventType: channelEventMessageRetract, CreatedAtMS: 1_006, Sequence: 1, Payload: map[string]any{
+			"content": "继续检查第五个阶段。", "presentation_disposition": "process", "segment_id": "segment-5",
+		}},
+	}}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID, conversationID := testRunScope(), uuid.New(), uuid.New()
+	installationID := uuid.NewString()
+	event := invocation.Event{
+		ID: "feishu-progress-event", Type: invocation.EventTypeChannelMessage,
+		Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: "feishu", InstallationID: installationID},
+		Target: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
+			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		},
+		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: "ou_progress_sender"},
+		OccurredAt: time.Now().UTC(),
+		ReplyTo: &invocation.ReplyAddress{
+			Provider: "feishu", InstallationID: installationID, ConversationID: "oc_progress",
+		},
+	}
+	run, created, err := service.SubmitInvocation(t.Context(), scope, event, "生成一份文件", &conversationID)
+	if err != nil || !created {
+		t.Fatalf("SubmitInvocation() = created %v, err %v", created, err)
+	}
+	if err := service.Execute(t.Context(), run.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	progress := service.transient.(*channelTransientDispatcherStub).requests
+	if len(progress) != 5 {
+		t.Fatalf("progress deliveries = %#v, want 5", progress)
+	}
+	if progress[0].Text != "我先整理数据，再生成文件。" || progress[1].Text != "阶段结果 已经准备好。" {
+		t.Fatalf("progress texts = %#v", progress)
+	}
+	for _, item := range progress {
+		if item.Kind != channelruntime.DeliveryKindProgress || strings.Contains(item.Text, "候选内容") {
+			t.Fatalf("unsafe progress delivery = %#v", item)
+		}
+	}
+	if len(store.progress) != 0 {
+		t.Fatalf("durable progress deliveries = %#v, want none", store.progress)
+	}
+}
+
+func TestRuntimeServiceDoesNotPublishChannelProgressWhenDisabled(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	chat := &fakeDigitalHumanChat{events: []chatruntime.StreamEvent{{
+		EventType: channelEventMessageRetract, Payload: map[string]any{
+			"content": "不应发送", "presentation_disposition": "process", "segment_id": "disabled",
+		},
+	}}}
+	now := time.Date(2026, 8, 21, 6, 0, 0, 0, time.UTC)
+	transient := &channelTransientDispatcherStub{}
+	service := NewRuntimeService(
+		store,
+		fakeExecutionResolver{now: now, channelPolicy: &ChannelResponsePolicy{
+			IntermediateMessagesEnabled: false, AcknowledgementEnabled: true,
+		}},
+		fakeBrainAdapter{}, chat, dispatcher, WithChannelTransientDispatcher(transient),
+	)
+	service.now = func() time.Time { return now }
+	scope, digitalHumanID, conversationID := testRunScope(), uuid.New(), uuid.New()
+	installationID := uuid.NewString()
+	event := invocation.Event{
+		ID: "feishu-progress-disabled", Type: invocation.EventTypeChannelMessage,
+		Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: "feishu", InstallationID: installationID},
+		Target: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
+			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		},
+		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: "ou_sender"},
+		OccurredAt: now,
+		ReplyTo:    &invocation.ReplyAddress{Provider: "feishu", InstallationID: installationID, ConversationID: "oc_disabled"},
+	}
+	run, created, err := service.SubmitInvocation(t.Context(), scope, event, "测试", &conversationID)
+	if err != nil || !created {
+		t.Fatalf("SubmitInvocation() = created %v, err %v", created, err)
+	}
+	if err := service.Execute(t.Context(), run.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(transient.requests) != 0 {
+		t.Fatalf("transient requests = %#v, want none", transient.requests)
 	}
 }
 
@@ -185,6 +365,15 @@ type fakeRunStore struct {
 	runs       map[uuid.UUID]*Run
 	outbox     []*RunOutbox
 	candidates []ResourceCandidate
+	progress   []fakeChannelProgress
+}
+
+type fakeChannelProgress struct {
+	RunID       uuid.UUID
+	Kind        channelruntime.DeliveryKind
+	DeliveryKey string
+	Sequence    int64
+	Text        string
 }
 
 func newFakeRunStore() *fakeRunStore { return &fakeRunStore{runs: make(map[uuid.UUID]*Run)} }
@@ -259,6 +448,19 @@ func (s *fakeRunStore) LinkRunMessage(_ context.Context, runID, conversationID, 
 	return nil
 }
 
+func (s *fakeRunStore) ListRecoverableRuns(_ context.Context, updatedBefore time.Time, limit int) ([]*Run, error) {
+	items := make([]*Run, 0, limit)
+	for _, run := range s.runs {
+		if len(items) == limit {
+			break
+		}
+		if (run.Status == RunStatusRunning || run.Status == RunStatusCanceling) && run.MessageID != nil && run.ActorID != nil && run.UpdatedAt.Before(updatedBefore) {
+			items = append(items, run)
+		}
+	}
+	return items, nil
+}
+
 func (s *fakeRunStore) CompleteRun(_ context.Context, runID uuid.UUID, summary string, trace datatypes.JSON, now time.Time) error {
 	run := s.runs[runID]
 	if run == nil {
@@ -272,6 +474,17 @@ func (s *fakeRunStore) CompleteRun(_ context.Context, runID uuid.UUID, summary s
 		return ErrRunConflict
 	}
 	run.ResultSummary, run.ExecutionTrace, run.CompletedAt, run.UpdatedAt = summary, trace, &now, now
+	return nil
+}
+
+func (s *fakeRunStore) CompleteRunWithDelivery(ctx context.Context, runID uuid.UUID, summary string, trace datatypes.JSON, now time.Time) error {
+	return s.CompleteRun(ctx, runID, summary, trace, now)
+}
+
+func (s *fakeRunStore) EnqueueRunChannelDelivery(_ context.Context, runID uuid.UUID, kind channelruntime.DeliveryKind, deliveryKey string, sequence int64, text string, _ time.Time) error {
+	s.progress = append(s.progress, fakeChannelProgress{
+		RunID: runID, Kind: kind, DeliveryKey: deliveryKey, Sequence: sequence, Text: text,
+	})
 	return nil
 }
 
@@ -380,23 +593,48 @@ func (d *fakeRunDispatcher) CancelRun(_ context.Context, id uuid.UUID) error {
 }
 
 type fakeDigitalHumanChat struct {
-	caller       chatruntime.Caller
-	config       chatruntime.RunConfig
-	request      runtimedto.ChatRequest
-	prepareCalls int
-	skills       []skills.SkillDiscoveryMetadata
+	caller                chatruntime.Caller
+	config                chatruntime.RunConfig
+	request               runtimedto.ChatRequest
+	prepareCalls          int
+	ensureCalls           int
+	ensuredConversationID uuid.UUID
+	skills                []skills.SkillDiscoveryMetadata
+	events                []chatruntime.StreamEvent
+	recoveryMessage       *runtimemodel.Message
+	getMessageCalls       int
+	runCalls              int
+}
+
+func (c *fakeDigitalHumanChat) EnsureConversationForCaller(_ context.Context, _ chatruntime.Scope, caller chatruntime.Caller, id uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
+	c.caller = caller
+	c.ensureCalls++
+	c.ensuredConversationID = id
+	return &runtimemodel.Conversation{ID: id}, nil
 }
 
 func (c *fakeDigitalHumanChat) PrepareConfiguredChat(_ context.Context, _ chatruntime.Scope, caller chatruntime.Caller, config chatruntime.RunConfig, request runtimedto.ChatRequest) (*chatruntime.PreparedChat, error) {
 	c.prepareCalls++
 	c.caller, c.config, c.request = caller, config, request
+	conversationID := uuid.New()
+	if request.ConversationID != "" {
+		if parsed, err := uuid.Parse(request.ConversationID); err == nil {
+			conversationID = parsed
+		}
+	}
 	return &chatruntime.PreparedChat{
-		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Conversation: &runtimemodel.Conversation{ID: conversationID},
 		Message:      &runtimemodel.Message{ID: uuid.New()},
 	}, nil
 }
 
-func (c *fakeDigitalHumanChat) RunPreparedStream(context.Context, *chatruntime.PreparedChat, func(string) error, ...func(chatruntime.StreamEvent) error) (*chatruntime.ChatResult, error) {
+func (c *fakeDigitalHumanChat) RunPreparedStream(ctx context.Context, _ *chatruntime.PreparedChat, _ func(string) error, callbacks ...func(chatruntime.StreamEvent) error) (*chatruntime.ChatResult, error) {
+	c.runCalls++
+	if len(callbacks) > 0 && callbacks[0] != nil {
+		for _, event := range c.events {
+			_ = callbacks[0](event)
+		}
+	}
 	return &chatruntime.ChatResult{
 		Answer: "completed answer", Status: runtimemodel.MessageStatusCompleted,
 		Metadata: map[string]interface{}{
@@ -404,8 +642,21 @@ func (c *fakeDigitalHumanChat) RunPreparedStream(context.Context, *chatruntime.P
 				"runtime_id": "skill:1", "skill_id": "calculator", "tool_name": "calculate", "status": "succeeded",
 				"arguments": map[string]interface{}{"api_key": "must-not-persist"}, "result": "must-not-persist",
 			}},
+			"generated_files": []interface{}{map[string]interface{}{
+				"artifact_id": "tool_file:tool-file-1", "file_id": "tool-file-1", "tool_file_id": "tool-file-1",
+				"filename": "report.pdf", "extension": ".pdf", "transfer_method": "tool_file",
+				"download_url": "https://stale.example/download?secret=must-not-persist",
+			}},
 		},
 	}, nil
+}
+
+func (c *fakeDigitalHumanChat) GetMessageByCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
+	c.getMessageCalls++
+	if c.recoveryMessage == nil {
+		return nil, nil, errors.New("message not found")
+	}
+	return c.recoveryMessage, &runtimemodel.Conversation{}, nil
 }
 
 func (c *fakeDigitalHumanChat) StopMessage(context.Context, chatruntime.Scope, uuid.UUID) (*runtimemodel.Message, error) {
@@ -416,13 +667,19 @@ func (c *fakeDigitalHumanChat) ListSkills(context.Context, chatruntime.Scope) ([
 	return append([]skills.SkillDiscoveryMetadata(nil), c.skills...), nil
 }
 
-type fakeExecutionResolver struct{ now time.Time }
+type fakeExecutionResolver struct {
+	now           time.Time
+	channelPolicy *ChannelResponsePolicy
+}
 
 func (r fakeExecutionResolver) Resolve(_ context.Context, event invocation.Event, _ *uuid.UUID) (*ResolvedExecution, error) {
 	snapshot := ExecutionSnapshot{
 		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: uuid.New(),
 		Name: "Atlas", Persona: "Researcher", Rules: []string{"cite evidence"}, Model: "test-model",
 		UseUserMemory: false, UseAgentMemory: false, ResolvedAt: r.now,
+	}
+	if r.channelPolicy != nil {
+		snapshot.ChannelResponsePolicy = channelResponsePolicyPointer(*r.channelPolicy)
 	}
 	var err error
 	snapshot.Revision, err = executionSnapshotRevision(snapshot)
@@ -468,7 +725,10 @@ func (p *fakeMemoryRuntimeProvider) Finalize(context.Context, *Run, *chatruntime
 func newTestRuntimeService(t *testing.T, store *fakeRunStore, dispatcher *fakeRunDispatcher, chat *fakeDigitalHumanChat) *RuntimeService {
 	t.Helper()
 	now := time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC)
-	service := NewRuntimeService(store, fakeExecutionResolver{now: now}, fakeBrainAdapter{}, chat, dispatcher)
+	service := NewRuntimeService(
+		store, fakeExecutionResolver{now: now}, fakeBrainAdapter{}, chat, dispatcher,
+		WithChannelTransientDispatcher(&channelTransientDispatcherStub{}),
+	)
 	service.now = func() time.Time { return now }
 	return service
 }

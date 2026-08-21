@@ -59,7 +59,7 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				method.AcquisitionStrategy != integrations.AuthAcquisitionStrategyManualForm ||
 				method.LifecycleStrategy != integrations.AuthLifecycleStrategyExchangeOnDemand ||
 				method.RequestAuthStrategy != integrations.RequestAuthStrategyBearerHeader ||
-				len(method.Fields) != 2 ||
+				len(method.Fields) != 4 ||
 				method.SetupGuide == nil || len(method.SetupGuide.Steps) != 4 ||
 				!strings.HasPrefix(method.SetupGuide.ConsoleURL, "https://") ||
 				!strings.HasPrefix(method.SetupGuide.DocumentationURL, "https://") {
@@ -68,6 +68,10 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 			if len(method.SetupGuide.Notices) != 3 ||
 				!strings.Contains(method.SetupGuide.Notices[2].Text, "bot capability") {
 				t.Fatalf("tenant setup notices = %#v", method.SetupGuide.Notices)
+			}
+			if method.Fields[2].Key != "verification_token" || method.Fields[2].Required || !method.Fields[2].Secret ||
+				method.Fields[3].Key != "encrypt_key" || method.Fields[3].Required || !method.Fields[3].Secret {
+				t.Fatalf("tenant webhook credential fields = %#v", method.Fields)
 			}
 			if method.SetupGuide.Steps[0].Action != integrations.AuthSetupStepActionOpenConsole ||
 				method.SetupGuide.Steps[1].Action != integrations.AuthSetupStepActionOpenDocumentation {
@@ -106,7 +110,11 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				!slices.Equal(action.SuccessDeduplication.TargetArgumentPaths, []string{"recipient_id", "recipient_type"}) {
 				t.Fatalf("unsafe send defaults = %#v", action)
 			}
-			if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
+			wantCallers := []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}
+			if action.ID == ActionSendBotMessage {
+				wantCallers = append(wantCallers, tools.ToolInvokeFromAPI)
+			}
+			if !slices.Equal(action.SupportedCallers, wantCallers) {
 				t.Fatalf("send action callers = %#v", action.SupportedCallers)
 			}
 		} else if action.ID == ActionCreateEvent {
@@ -283,6 +291,71 @@ func TestProviderDefinitionRegisters(t *testing.T) {
 	}
 	if _, ok := registry.OAuthProvider(IntegrationID, DriverID); !ok {
 		t.Fatal("OAuth provider was not registered")
+	}
+}
+
+func TestResolveChannelIdentityUsesValidatedTenantAndDiscoversBot(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		switch request.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = io.WriteString(writer, `{"code":0,"msg":"success","tenant_access_token":"tenant-token","expire":7200}`)
+		case "/open-apis/bot/v3/info":
+			if request.Method != http.MethodGet || request.Header.Get("Authorization") != "Bearer tenant-token" {
+				t.Errorf("request = %s, authorization = %q", request.Method, request.Header.Get("Authorization"))
+			}
+			_, _ = io.WriteString(writer, `{"code":0,"msg":"success","bot":{"open_id":"ou_bot","app_name":"ZGI bot"}}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantID, botID, err := adapter.ResolveChannelIdentity(t.Context(), &integrations.ResolvedConnection{
+		IntegrationID: IntegrationID, DriverID: DriverID, AuthMethodID: TenantAppAuthMethodID,
+		AccountID: "tenant-key", Credentials: map[string]string{"app_id": "cli_app", "app_secret": "secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tenantID != "tenant-key" || botID != "ou_bot" || calls.Load() != 2 {
+		t.Fatalf("identity = (%q, %q), calls = %d", tenantID, botID, calls.Load())
+	}
+}
+
+func TestResolveChannelIdentityFallsBackToTenantLookup(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		switch request.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = io.WriteString(writer, `{"code":0,"msg":"success","tenant_access_token":"tenant-token","expire":7200}`)
+		case "/open-apis/tenant/v2/tenant/query":
+			_, _ = io.WriteString(writer, `{"code":0,"msg":"success","data":{"tenant":{"tenant_key":"tenant-key","name":"Tenant"}}}`)
+		case "/open-apis/bot/v3/info":
+			_, _ = io.WriteString(writer, `{"code":0,"msg":"success","bot":{"open_id":"ou_bot","app_name":"ZGI bot"}}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantID, botID, err := adapter.ResolveChannelIdentity(t.Context(), &integrations.ResolvedConnection{
+		IntegrationID: IntegrationID, DriverID: DriverID, AuthMethodID: TenantAppAuthMethodID,
+		Credentials: map[string]string{"app_id": "cli_app", "app_secret": "secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tenantID != "tenant-key" || botID != "ou_bot" || calls.Load() != 3 {
+		t.Fatalf("identity = (%q, %q), calls = %d", tenantID, botID, calls.Load())
 	}
 }
 

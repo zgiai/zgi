@@ -7,9 +7,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -30,6 +33,7 @@ type DigitalHumanRouteDeps struct {
 	Enabled                 bool
 	Service                 digitalhuman.HandlerService
 	Runtime                 digitalhuman.RuntimeHandlerService
+	Channels                digitalhuman.ChannelHandlerService
 	AccountService          interfaces.AccountService
 	OrganizationService     interfaces.OrganizationService
 	ApplicationErrorCatalog *appcatalog.Catalog
@@ -38,17 +42,28 @@ type DigitalHumanRouteDeps struct {
 // DigitalHumanRuntimeDeps contains the shared bottom-layer runtime and durable
 // worker dependencies. It is initialized only when the feature is enabled.
 type DigitalHumanRuntimeDeps struct {
-	DB                  *gorm.DB
-	LLMClient           llmclient.LLMClient
-	FileService         interfaces.FileService
-	ContentExtractor    runtimeservice.ContentExtractionService
-	OrganizationService interfaces.OrganizationService
-	ToolEngine          *tools.ToolEngine
-	ToolManager         *tools.ToolManager
-	TaskManager         *queue.TaskManager
-	TaskRegistry        digitalhuman.RunTaskRegistry
-	Scheduler           *pkgscheduler.Scheduler
-	ManifestResolver    skills.ToolGovernanceManifestResolver
+	DB                   *gorm.DB
+	LLMClient            llmclient.LLMClient
+	FileService          interfaces.FileService
+	ContentExtractor     runtimeservice.ContentExtractionService
+	OrganizationService  interfaces.OrganizationService
+	ToolEngine           *tools.ToolEngine
+	ToolManager          *tools.ToolManager
+	TaskManager          *queue.TaskManager
+	TaskRegistry         digitalhuman.RunTaskRegistry
+	Scheduler            *pkgscheduler.Scheduler
+	ManifestResolver     skills.ToolGovernanceManifestResolver
+	IntegrationExecutor  *integrations.Executor
+	IntegrationRegistry  *integrations.Registry
+	ConnectionRepository integrations.ConnectionRepository
+	ConnectionResolver   integrations.ConnectionResolver
+}
+
+// DigitalHumanRuntimeBundle keeps the model runtime and channel application
+// service on the same repository and invocation pipeline.
+type DigitalHumanRuntimeBundle struct {
+	Runtime  *digitalhuman.RuntimeService
+	Channels *digitalhuman.ChannelService
 }
 
 // RegisterDigitalHumanRoutes exposes the module only when its feature flag is enabled.
@@ -56,13 +71,15 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	if !deps.Enabled {
 		return
 	}
-	if router == nil || deps.Service == nil || deps.Runtime == nil || deps.AccountService == nil || deps.OrganizationService == nil {
-		panic("digital human routes require lifecycle, runtime, account, and permission services")
+	if router == nil || deps.Service == nil || deps.Runtime == nil || deps.Channels == nil || deps.AccountService == nil || deps.OrganizationService == nil {
+		panic("digital human routes require lifecycle, runtime, channel, account, and permission services")
 	}
 	errorProjector, err := apptransport.NewProjector(deps.ApplicationErrorCatalog)
 	if err != nil {
 		panic("digital human routes require application error catalog")
 	}
+	channelHandler := digitalhuman.NewChannelHandler(deps.Channels, errorProjector)
+	channelHandler.RegisterPublicRoutes(router)
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
@@ -70,6 +87,7 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	group.Use(digitalHumanPermissionMiddleware(deps.OrganizationService, errorProjector))
 	digitalhuman.NewHandler(deps.Service, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector).RegisterRoutes(group)
+	channelHandler.RegisterAuthenticatedRoutes(group)
 }
 
 func digitalHumanPermissionMiddleware(organizationService interfaces.OrganizationService, projector *apptransport.Projector) gin.HandlerFunc {
@@ -117,6 +135,31 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 		}
 		return ""
 	}
+	if strings.Contains(path, "/channels/") {
+		if strings.Contains(path, "/discoveries") {
+			if method == http.MethodGet {
+				return workspacemodel.WorkspacePermissionDigitalHumanUpdate
+			}
+			return ""
+		}
+		if strings.Contains(path, "/events") || strings.Contains(path, "/deliveries") {
+			if method == http.MethodGet {
+				return workspacemodel.WorkspacePermissionDigitalHumanLogsView
+			}
+			if method == http.MethodPost && strings.HasSuffix(path, "/retry") {
+				return workspacemodel.WorkspacePermissionDigitalHumanRun
+			}
+			return ""
+		}
+		switch method {
+		case http.MethodGet:
+			return workspacemodel.WorkspacePermissionDigitalHumanView
+		case http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete:
+			return workspacemodel.WorkspacePermissionDigitalHumanUpdate
+		default:
+			return ""
+		}
+	}
 	if strings.Contains(path, "/runtime/") {
 		switch method {
 		case http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete:
@@ -152,13 +195,29 @@ func writeDigitalHumanRouteError(c *gin.Context, projector *apptransport.Project
 	})
 }
 
-func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *digitalhuman.RuntimeService {
+func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRuntimeBundle {
 	if deps.DB == nil || deps.LLMClient == nil || deps.FileService == nil || deps.ContentExtractor == nil ||
 		deps.OrganizationService == nil || deps.ToolEngine == nil || deps.ToolManager == nil || deps.TaskManager == nil ||
-		deps.TaskRegistry == nil || deps.Scheduler == nil {
-		panic("DigitalHuman runtime requires database, model, tool, queue, and scheduler dependencies")
+		deps.TaskRegistry == nil || deps.Scheduler == nil || deps.IntegrationExecutor == nil || deps.IntegrationRegistry == nil || deps.ConnectionRepository == nil || deps.ConnectionResolver == nil {
+		panic("DigitalHuman runtime requires database, model, tool, queue, scheduler, and integration dependencies")
 	}
 	repository := digitalhuman.NewRepository(deps.DB)
+	channelAdapters, err := channelruntime.NewRegistry(feishu.NewChannelAdapter(deps.IntegrationExecutor))
+	if err != nil {
+		panic("register DigitalHuman channel adapters: " + err.Error())
+	}
+	registration, ok := deps.IntegrationRegistry.Registration(feishu.IntegrationID)
+	if !ok {
+		panic("DigitalHuman channel runtime requires the Feishu integration adapter")
+	}
+	identityResolver, ok := registration.Adapter.(digitalhuman.ChannelIdentityResolver)
+	if !ok {
+		panic("Feishu integration adapter does not support channel identity discovery")
+	}
+	channelCredentials := digitalhuman.NewIntegrationChannelCredentialResolver(
+		deps.ConnectionRepository, deps.ConnectionResolver, identityResolver,
+	)
+	transientDispatcher := digitalhuman.NewAsynqChannelTransientDispatcher(deps.TaskManager)
 	chatRuntime := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(deps.DB),
 		deps.LLMClient,
@@ -189,6 +248,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *digitalhuman.R
 		chatRuntime,
 		dispatcher,
 		digitalhuman.WithMemoryRuntime(memoryProvider),
+		digitalhuman.WithChannelTransientDispatcher(transientDispatcher),
 	)
 	digitalhuman.RegisterRunTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)
 	if err := deps.Scheduler.RegisterTask(&digitalhuman.ReconcileTask{}, digitalhuman.NewReconcileHandler(runtime)); err != nil {
@@ -202,5 +262,14 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *digitalhuman.R
 	); err != nil {
 		panic("register DigitalHuman memory extraction sweep: " + err.Error())
 	}
-	return runtime
+	channels := digitalhuman.NewChannelService(
+		repository, repository, runtime, channelAdapters, channelCredentials, transientDispatcher,
+	)
+	digitalhuman.RegisterChannelTransientTaskHandler(deps.TaskRegistry, deps.TaskManager, channels)
+	if err := deps.Scheduler.RegisterTask(
+		&digitalhuman.ChannelDeliverySweepTask{}, digitalhuman.NewChannelDeliverySweepHandler(channels),
+	); err != nil {
+		panic("register DigitalHuman channel delivery sweep: " + err.Error())
+	}
+	return &DigitalHumanRuntimeBundle{Runtime: runtime, Channels: channels}
 }

@@ -1402,6 +1402,20 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 	}
 }
 
+func TestFileGeneratorSupportsDigitalHumanCaller(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(t.Context(), []string{SkillFileGenerator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	if len(resolved.Skills) != 1 {
+		t.Fatalf("resolved skills = %d, want 1", len(resolved.Skills))
+	}
+	if !SkillSupportsCaller(resolved.Skills[0].Metadata.SupportedCallers, SkillCallerDigitalHuman) {
+		t.Fatalf("supported callers = %#v, want digital_human", resolved.Skills[0].Metadata.SupportedCallers)
+	}
+}
+
 func TestAgentManagementUsesUnifiedConfigBindingTool(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentManagement})

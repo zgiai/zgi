@@ -49,6 +49,7 @@ type ExecutionSnapshot struct {
 	Bindings            []resourcebindings.Binding `json:"bindings,omitempty"`
 	UseUserMemory       bool                       `json:"use_user_memory"`
 	UseAgentMemory      bool                       `json:"use_agent_memory"`
+	ChannelResponsePolicy *ChannelResponsePolicy    `json:"channel_response_policy,omitempty"`
 	ResolvedAt          time.Time                  `json:"resolved_at"`
 }
 
@@ -127,7 +128,9 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: version.ID,
 		Name: definition.Name, Avatar: definition.Avatar, Description: definition.Description,
 		Persona: version.Persona, Rules: rules, Model: version.DefaultModel, Roles: roles, Bindings: bindings,
-		UseUserMemory: false, UseAgentMemory: false, ResolvedAt: now,
+		UseUserMemory: false, UseAgentMemory: false,
+		ChannelResponsePolicy: channelResponsePolicyPointer(channelResponsePolicyFromTriggerPolicy(version.TriggerPolicy)),
+		ResolvedAt: now,
 	}
 	snapshot.Revision, err = executionSnapshotRevision(snapshot)
 	if err != nil {

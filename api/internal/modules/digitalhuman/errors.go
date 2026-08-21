@@ -43,4 +43,19 @@ var (
 	ErrMemoryPolicyRejected = errors.New("digital human memory proposal rejected")
 	// ErrMemoryUndoUnavailable indicates an expired, consumed, or stale undo record.
 	ErrMemoryUndoUnavailable = errors.New("digital human memory undo unavailable")
+	// ErrChannelInstallationNotFound indicates a missing scoped channel installation.
+	ErrChannelInstallationNotFound = errors.New("digital human channel installation not found")
+	// ErrChannelBindingNotFound indicates a missing scoped channel binding.
+	ErrChannelBindingNotFound = errors.New("digital human channel binding not found")
+	// ErrChannelInstallationInUse indicates that live conversation bindings
+	// still reference a workspace-shared channel installation.
+	ErrChannelInstallationInUse = errors.New("digital human channel installation is in use")
+	// ErrChannelConflict indicates a duplicate channel identity or stale revision.
+	ErrChannelConflict = errors.New("digital human channel conflict")
+	// ErrChannelNotReady indicates an invalid or incomplete provider connection.
+	ErrChannelNotReady = errors.New("digital human channel is not ready")
+	// ErrChannelDeliveryNotFound indicates a missing scoped delivery record.
+	ErrChannelDeliveryNotFound = errors.New("digital human channel delivery not found")
+	// ErrChannelDeliveryConflict indicates an unsafe delivery state transition.
+	ErrChannelDeliveryConflict = errors.New("digital human channel delivery conflict")
 )

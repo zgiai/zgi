@@ -173,6 +173,40 @@ func (adapter *Adapter) ValidateConnection(ctx context.Context, connection *inte
 	}, nil
 }
 
+// ResolveChannelIdentity discovers the immutable tenant and bot identifiers
+// used to route DigitalHuman channel events. Credentials remain request-scoped
+// and the caller is responsible for destroying the resolved connection.
+func (adapter *Adapter) ResolveChannelIdentity(ctx context.Context, connection *integrations.ResolvedConnection) (string, string, error) {
+	region, err := feishuRegion(connection)
+	if err != nil {
+		return "", "", err
+	}
+	if !isTenantAppConnection(connection) {
+		return "", "", integrations.NewError(integrations.ErrorCodeConnectionInvalid, "Feishu tenant app connection is required", nil)
+	}
+	token, _, err := adapter.tenantAccessToken(ctx, connection, region)
+	if err != nil {
+		return "", "", err
+	}
+	tenantID := strings.TrimSpace(connection.AccountID)
+	if tenantID == "" {
+		var tenant feishuTenantData
+		if _, err = adapter.client.getTenant(ctx, region, token, &tenant); err != nil {
+			return "", "", err
+		}
+		tenantID = strings.TrimSpace(firstNonEmpty(tenant.Tenant.TenantKey, tenant.Tenant.DisplayID))
+	}
+	var bot feishuBotData
+	if _, err = adapter.client.getBotInfo(ctx, region, token, &bot); err != nil {
+		return "", "", err
+	}
+	botID := strings.TrimSpace(bot.OpenID)
+	if !validFeishuToken(tenantID) || !validFeishuToken(botID) {
+		return "", "", integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu channel identity response is incomplete", nil)
+	}
+	return tenantID, botID, nil
+}
+
 func (adapter *Adapter) ProbeConnection(ctx context.Context, connection *integrations.ResolvedConnection) (*integrations.HealthProbeReport, error) {
 	profile, err := adapter.ValidateConnection(ctx, connection)
 	if err != nil {
@@ -971,6 +1005,11 @@ type feishuTenantData struct {
 		Name      string `json:"name"`
 		DisplayID string `json:"display_id"`
 	} `json:"tenant"`
+}
+
+type feishuBotData struct {
+	OpenID  string `json:"open_id"`
+	AppName string `json:"app_name"`
 }
 
 func bounded(value string, limit int) string {

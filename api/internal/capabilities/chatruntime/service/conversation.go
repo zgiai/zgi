@@ -32,6 +32,44 @@ func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, 
 	return s.createConversationForCaller(ctx, scope, caller, title, surface)
 }
 
+// EnsureConversationForCaller creates the exact server-owned conversation ID
+// once and otherwise returns the existing caller-scoped conversation. It is
+// intended for durable external routing keys, not client-selected IDs.
+func (s *service) EnsureConversationForCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, title string) (*runtimemodel.Conversation, error) {
+	if id == uuid.Nil {
+		return nil, fmt.Errorf("%w: conversation_id is required", ErrInvalidInput)
+	}
+	if isAutonomousSubjectCaller(caller.Type) && normalizeCallerID(caller.ID) == nil {
+		return nil, fmt.Errorf("%w: caller_id is required for autonomous subjects", ErrInvalidInput)
+	}
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, err
+	}
+	workspaceID, err := s.resolveWorkspaceID(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	source := normalizeConversationSource(caller.Source)
+	sourceWebAppID := normalizeCallerID(caller.SourceWebAppID)
+	if source == runtimemodel.ConversationSourceWebApp && sourceWebAppID == nil {
+		return nil, fmt.Errorf("%w: source_web_app_id is required for webapp conversations", ErrInvalidInput)
+	}
+	conversation := &runtimemodel.Conversation{
+		ID: id, OrganizationID: scope.OrganizationID, WorkspaceID: workspaceID, AccountID: scope.AccountID,
+		CallerType: normalizeCallerType(caller.Type), CallerID: normalizeCallerID(caller.ID),
+		ConversationType: normalizeConversationType(caller.ConversationType), Title: normalizeTitle(title, defaultConversationTitle),
+		Status: runtimemodel.ConversationStatusNormal, RuntimeStatus: runtimemodel.ConversationRuntimeStatusIdle,
+		Source: source, SourceWebAppID: sourceWebAppID,
+		Metadata: map[string]interface{}{"surface": aiChatSurfaceExternalPageChat},
+	}
+	if err := s.repos.DB.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "id"}}, DoNothing: true,
+	}).Create(conversation).Error; err != nil {
+		return nil, fmt.Errorf("ensure chat runtime conversation: %w", err)
+	}
+	return s.getConversationByCallerScoped(ctx, scope, caller, id)
+}
+
 func (s *service) createConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string, surface string) (*runtimemodel.Conversation, error) {
 	if isAutonomousSubjectCaller(caller.Type) && normalizeCallerID(caller.ID) == nil {
 		return nil, fmt.Errorf("%w: caller_id is required for autonomous subjects", ErrInvalidInput)

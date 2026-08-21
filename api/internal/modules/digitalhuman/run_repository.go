@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -21,7 +22,9 @@ type RunStore interface {
 	ListRuns(context.Context, Scope, uuid.UUID, ListQuery) ([]*Run, int64, error)
 	ClaimRun(context.Context, uuid.UUID, time.Time) (*Run, bool, error)
 	LinkRunMessage(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error
+	ListRecoverableRuns(context.Context, time.Time, int) ([]*Run, error)
 	CompleteRun(context.Context, uuid.UUID, string, datatypes.JSON, time.Time) error
+	CompleteRunWithDelivery(context.Context, uuid.UUID, string, datatypes.JSON, time.Time) error
 	FailRun(context.Context, uuid.UUID, string, string, time.Time) error
 	RequestRunCancel(context.Context, Scope, uuid.UUID, uuid.UUID, time.Time) (*Run, error)
 	ClaimRunOutboxBatch(context.Context, int, time.Time) ([]*RunOutbox, error)
@@ -138,7 +141,21 @@ func (r *GormRepository) LinkRunMessage(ctx context.Context, runID, conversation
 	if result.RowsAffected != 1 {
 		return ErrRunConflict
 	}
-	return nil
+	return r.LinkChannelRunConversation(ctx, runID, conversationID, now)
+}
+
+func (r *GormRepository) ListRecoverableRuns(ctx context.Context, updatedBefore time.Time, limit int) ([]*Run, error) {
+	if limit <= 0 {
+		limit = defaultOutboxBatch
+	}
+	items := make([]*Run, 0, limit)
+	if err := r.db.WithContext(ctx).Where(
+		"status IN ? AND message_id IS NOT NULL AND actor_id IS NOT NULL AND updated_at < ?",
+		[]RunStatus{RunStatusRunning, RunStatusCanceling}, updatedBefore,
+	).Order("updated_at ASC, id ASC").Limit(limit).Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("list recoverable DigitalHuman runs: %w", err)
+	}
+	return items, nil
 }
 
 func (r *GormRepository) CompleteRun(ctx context.Context, runID uuid.UUID, summary string, trace datatypes.JSON, now time.Time) error {
@@ -253,6 +270,8 @@ func (r *GormRepository) RequeueStaleRunOutbox(ctx context.Context, claimedBefor
 func (r *GormRepository) MarkStaleRunsUnknown(ctx context.Context, updatedBefore, now time.Time) error {
 	return r.db.WithContext(ctx).Model(&Run{}).
 		Where("status IN ? AND updated_at < ?", []RunStatus{RunStatusRunning, RunStatusCanceling}, updatedBefore).
+		Where("message_id IS NULL OR NOT EXISTS (?)", r.db.Model(&runtimemodel.Message{}).
+			Select("1").Where("chat_runtime_messages.id = digital_human_runs.message_id AND chat_runtime_messages.status = ?", runtimemodel.MessageStatusCompleted)).
 		Updates(map[string]any{
 			"status": RunStatusUnknown, "error_code": "digital_human.run.interrupted",
 			"error_message": "Execution was interrupted and its external side effects may be unknown.",

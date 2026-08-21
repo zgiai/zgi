@@ -21,19 +21,26 @@ var (
 	// AppCodePublishInvalid identifies a draft that is not ready for publication.
 	AppCodePublishInvalid = apperror.MustCode("digital_human.publish.invalid")
 	// AppCodeDeleteBlocked identifies deletion prevented by durable references.
-	AppCodeDeleteBlocked          = apperror.MustCode("digital_human.delete.blocked")
-	AppCodeRoleTemplateNotFound   = apperror.MustCode("digital_human.role_template.not_found")
-	AppCodeRoleVersionNotFound    = apperror.MustCode("digital_human.role_template_version.not_found")
-	AppCodeRoleNameConflict       = apperror.MustCode("digital_human.role_template.name.conflict")
-	AppCodeRolePublishInvalid     = apperror.MustCode("digital_human.role_template.publish.invalid")
-	AppCodeResourceBindingInvalid = apperror.MustCode("digital_human.resource_binding.invalid")
-	AppCodeRunNotFound            = apperror.MustCode("digital_human.run.not_found")
-	AppCodeRunConflict            = apperror.MustCode("digital_human.run.conflict")
-	AppCodeConversationNotFound   = apperror.MustCode("digital_human.conversation.not_found")
-	AppCodeMemoryNotFound         = apperror.MustCode("digital_human.memory.not_found")
-	AppCodeMemoryConflict         = apperror.MustCode("digital_human.memory.conflict")
-	AppCodeMemoryPolicyRejected   = apperror.MustCode("digital_human.memory.policy_rejected")
-	AppCodeMemoryUndoUnavailable  = apperror.MustCode("digital_human.memory.undo_unavailable")
+	AppCodeDeleteBlocked               = apperror.MustCode("digital_human.delete.blocked")
+	AppCodeRoleTemplateNotFound        = apperror.MustCode("digital_human.role_template.not_found")
+	AppCodeRoleVersionNotFound         = apperror.MustCode("digital_human.role_template_version.not_found")
+	AppCodeRoleNameConflict            = apperror.MustCode("digital_human.role_template.name.conflict")
+	AppCodeRolePublishInvalid          = apperror.MustCode("digital_human.role_template.publish.invalid")
+	AppCodeResourceBindingInvalid      = apperror.MustCode("digital_human.resource_binding.invalid")
+	AppCodeRunNotFound                 = apperror.MustCode("digital_human.run.not_found")
+	AppCodeRunConflict                 = apperror.MustCode("digital_human.run.conflict")
+	AppCodeConversationNotFound        = apperror.MustCode("digital_human.conversation.not_found")
+	AppCodeMemoryNotFound              = apperror.MustCode("digital_human.memory.not_found")
+	AppCodeMemoryConflict              = apperror.MustCode("digital_human.memory.conflict")
+	AppCodeMemoryPolicyRejected        = apperror.MustCode("digital_human.memory.policy_rejected")
+	AppCodeMemoryUndoUnavailable       = apperror.MustCode("digital_human.memory.undo_unavailable")
+	AppCodeChannelInstallationNotFound = apperror.MustCode("digital_human.channel.installation.not_found")
+	AppCodeChannelBindingNotFound      = apperror.MustCode("digital_human.channel.binding.not_found")
+	AppCodeChannelInstallationInUse    = apperror.MustCode("digital_human.channel.installation.in_use")
+	AppCodeChannelConflict             = apperror.MustCode("digital_human.channel.conflict")
+	AppCodeChannelNotReady             = apperror.MustCode("digital_human.channel.not_ready")
+	AppCodeChannelDeliveryNotFound     = apperror.MustCode("digital_human.channel.delivery.not_found")
+	AppCodeChannelDeliveryConflict     = apperror.MustCode("digital_human.channel.delivery.conflict")
 )
 
 // CatalogDefinitions returns public application errors owned by DigitalHuman.
@@ -87,6 +94,20 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The memory proposal was rejected by evidence, privacy, or sensitivity policy.", "该记忆提议未通过证据、隐私或敏感信息策略。"),
 		digitalHumanDefinition(AppCodeMemoryUndoUnavailable, appcatalog.CategoryConflict, 409,
 			"This memory change can no longer be undone.", "该记忆变更已无法撤销。"),
+		digitalHumanDefinition(AppCodeChannelInstallationNotFound, appcatalog.CategoryNotFound, 404,
+			"The channel installation was not found.", "未找到该渠道安装。"),
+		digitalHumanDefinition(AppCodeChannelBindingNotFound, appcatalog.CategoryNotFound, 404,
+			"The channel binding was not found.", "未找到该渠道绑定。"),
+		digitalHumanDefinition(AppCodeChannelInstallationInUse, appcatalog.CategoryConflict, 409,
+			"Remove every conversation binding that uses this installation before deleting it.", "该安装仍被会话使用，请先移除所有相关会话绑定。"),
+		digitalHumanDefinition(AppCodeChannelConflict, appcatalog.CategoryConflict, 409,
+			"The channel configuration changed or is already in use.", "渠道配置已变化或已被占用。"),
+		digitalHumanDefinition(AppCodeChannelNotReady, appcatalog.CategoryValidation, 400,
+			"The channel connection, webhook security, or bot identity could not be verified.", "无法验证渠道连接、Webhook 安全配置或机器人身份。"),
+		digitalHumanDefinition(AppCodeChannelDeliveryNotFound, appcatalog.CategoryNotFound, 404,
+			"The channel delivery was not found.", "未找到该渠道投递记录。"),
+		digitalHumanDefinition(AppCodeChannelDeliveryConflict, appcatalog.CategoryConflict, 409,
+			"The channel delivery cannot be retried from its current state.", "该渠道投递无法从当前状态重试。"),
 	}
 }
 

@@ -168,6 +168,11 @@ func normalizeSkillCallers(id string, source string, callers []string) []string 
 				seen[SkillCallerAgent] = struct{}{}
 				out = append(out, SkillCallerAgent)
 			}
+		case SkillCallerDigitalHuman:
+			if _, ok := seen[SkillCallerDigitalHuman]; !ok {
+				seen[SkillCallerDigitalHuman] = struct{}{}
+				out = append(out, SkillCallerDigitalHuman)
+			}
 		case SkillCallerWorkflow:
 			if _, ok := seen[SkillCallerWorkflow]; !ok {
 				seen[SkillCallerWorkflow] = struct{}{}
