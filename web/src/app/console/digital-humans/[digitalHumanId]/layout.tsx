@@ -10,6 +10,7 @@ import {
   BrainCircuit,
   LayoutDashboard,
   MessageSquare,
+  RadioTower,
   Settings2,
   Wrench,
 } from 'lucide-react';
@@ -55,6 +56,11 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
       href: `/console/digital-humans/${id}/capabilities`,
       label: t('tabs.capabilities'),
       icon: Wrench,
+    },
+    {
+      href: `/console/digital-humans/${id}/channels`,
+      label: t('tabs.channels'),
+      icon: RadioTower,
     },
     { href: `/console/digital-humans/${id}/chat`, label: t('tabs.chat'), icon: MessageSquare },
     { href: `/console/digital-humans/${id}/runs`, label: t('tabs.runs'), icon: Activity },

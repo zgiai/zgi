@@ -109,6 +109,15 @@ export const DIGITAL_HUMAN_KEYS = {
   run: (id: string, runId: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'run', runId] as const,
   memories: (id: string, params?: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'memory', params].filter(Boolean),
+  channelInstallations: (id: string) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-installations'] as const,
+  channelBindings: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-bindings'] as const,
+  channelDiscoveries: (id: string) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-discoveries'] as const,
+  channelEvents: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-events', params].filter(Boolean),
+  channelDeliveries: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-deliveries', params].filter(Boolean),
 } as const;
 
 export const INTEGRATION_KEYS = {

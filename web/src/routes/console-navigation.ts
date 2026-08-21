@@ -314,6 +314,15 @@ const ZGI_CONSOLE_DYNAMIC_ROUTES: readonly ZGIConsoleDynamicRouteDefinition[] = 
     },
   },
   {
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/channels$/,
+    route: {
+      label: 'Digital Human Channels',
+      purpose: 'configure channel installations and inspect delivery activity',
+      scope: 'workspace',
+      permissions: ['digital_human.view'],
+    },
+  },
+  {
     pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/chat$/,
     route: {
       label: 'Digital Human Chat',

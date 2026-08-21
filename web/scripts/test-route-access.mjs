@@ -1415,6 +1415,7 @@ const expectedWorkspaceConsolePageRoutes = [
   '/console/digital-humans',
   '/console/digital-humans/:digitalHumanId',
   '/console/digital-humans/:digitalHumanId/capabilities',
+  '/console/digital-humans/:digitalHumanId/channels',
   '/console/digital-humans/:digitalHumanId/chat',
   '/console/digital-humans/:digitalHumanId/memory',
   '/console/digital-humans/:digitalHumanId/runs',

@@ -59,6 +59,7 @@ const messages = {
     overview: 'Overview',
     settings: 'Identity',
     capabilities: 'Capabilities',
+    channels: 'Channels',
     chat: 'Chat',
     runs: 'Runs',
     memory: 'Memory',
@@ -107,6 +108,15 @@ const messages = {
       'Describe its expertise, communication style, and how it should introduce itself.',
     rulesPlaceholder:
       'One rule per line. For example: Never use a resource that is not explicitly bound.',
+    channelResponseTitle: 'Channel response experience',
+    channelResponseDescription:
+      'Control temporary feedback sent while this digital human works in Feishu or another chat channel.',
+    intermediateMessages: 'Send intermediate messages',
+    intermediateMessagesDescription:
+      'Send each useful in-progress explanation as a separate message, with no quantity limit. These messages are best effort and are not written to ZGI’s durable delivery history.',
+    acknowledgement: 'Send processing acknowledgement',
+    acknowledgementDescription:
+      'Send “Received, processing…” when a channel request is accepted. This can be enabled independently of intermediate messages.',
     unsaved: 'You have unsaved changes',
     saved: 'All settings are saved',
     saveHint: 'Saved changes remain in the draft until you publish a new version.',
@@ -338,6 +348,160 @@ const messages = {
       unnamedWorkflow: 'Workflow invocation',
       unnamedArtifact: 'Generated artifact',
       resultPending: 'The final result is not available yet.',
+    },
+  },
+  channels: {
+    title: 'Channels',
+    description:
+      'Connect this digital human to Feishu conversations. Group messages wake it only when the configured bot is explicitly mentioned.',
+    loadErrorTitle: 'Channel data could not be loaded',
+    loadErrorDescription: 'Check your connection and permissions, then try again.',
+    summary: {
+      installations: 'Active installations',
+      conversations: 'Bound conversations',
+      pending: 'Pending deliveries',
+    },
+    installations: {
+      title: 'Feishu installations',
+      description:
+        'The bot belongs to this digital human by default, so new direct messages can be answered from the first turn.',
+      add: 'Connect Feishu',
+      addShort: 'Add installation',
+      empty: 'No Feishu installation',
+      emptyDescription: 'Connect an active Feishu integration before binding a conversation.',
+      defaultName: 'Feishu bot',
+      status: { active: 'Active', disabled: 'Disabled' },
+      defaultForCurrent: 'Default bot for this digital human',
+      directAutoRoute:
+        'New Feishu direct messages create a conversation automatically and process the first message.',
+      boundCount: '{count} conversations',
+      usedBy: 'Used by {names}',
+      unknownOwner: 'another digital human',
+      deleteInUse:
+        'This installation is still used by {names}. Continuing removes {count} conversation bindings and deletes the installation; historical events and deliveries remain auditable.',
+      removeBindingsAndDelete: 'Unbind and delete',
+      disable: 'Disable',
+      enable: 'Enable',
+      delete: 'Delete',
+      deleteTitle: 'Delete this installation?',
+      deleteDescription:
+        'Existing conversation bindings must be removed first. Historical events and deliveries remain auditable.',
+      tenant: 'Tenant ID',
+      bot: 'Bot open ID',
+      webhook: 'Webhook URL',
+      copy: 'Copy',
+      webhookLoading: 'Webhook URL is being prepared…',
+      dialogTitle: 'Connect a Feishu bot',
+      dialogDescription:
+        'Choose an existing connection. ZGI verifies the bot identity and makes it the default bot for this digital human.',
+      connectionPrerequisite: 'An active Feishu integration connection is required',
+      connectionHint:
+        'The connection owns and encrypts the credentials. ZGI uses it to identify the tenant and bot without asking for internal IDs.',
+      openIntegrations: 'Open integrations',
+      connection: 'Feishu connection',
+      selectConnection: 'Select an active connection',
+      loadingConnections: 'Loading Feishu connections…',
+      connectionLoadError:
+        'Feishu connections could not be loaded. Close this dialog and try again.',
+      noConnections: 'No active Feishu connection is available.',
+      name: 'Installation name',
+      create: 'Connect',
+    },
+    bindings: {
+      title: 'Connected conversations',
+      description:
+        'The system assigns the first direct message or explicit group mention automatically and keeps reusing the same conversation.',
+      add: 'Bind conversation',
+      pendingCount: '{count} pending',
+      empty: 'No conversations yet',
+      emptyDescription:
+        'Message the bot directly or mention it in a group. The conversation appears here automatically.',
+      autoAssigned: 'Assigned automatically',
+      type: { group: 'Group', direct: 'Direct message' },
+      unknownInstallation: 'Unknown installation',
+      wake: {
+        direct_and_mention: 'Direct message or explicit mention',
+        mention_only: 'Explicit mention only',
+      },
+      conversationReady: 'Ready to receive events',
+      delete: 'Remove',
+      deleteTitle: 'Remove this conversation binding?',
+      deleteDescription:
+        'New messages from this conversation will no longer reach the digital human.',
+      securityHint:
+        'No manual binding is required. Direct messages connect automatically; groups connect and invoke the model only when this bot is explicitly mentioned.',
+      dialogTitle: 'Bind a Feishu conversation',
+      dialogDescription:
+        'Choose a group or direct conversation ZGI discovered from verified Feishu events. No internal ID is required.',
+      installation: 'Installation',
+      selectInstallation: 'Select an active installation',
+      conversationType: 'Conversation type',
+      conversationId: 'Conversation ID',
+      discoveredConversation: 'Unassigned Feishu conversations',
+      discoveredSender: 'Latest sender: {sender}',
+      noDiscoveries: 'No new conversation discovered',
+      noDiscoveriesDescription:
+        'Send the bot a direct message, or mention it in a group, then return here to assign that conversation.',
+      groupWakeTitle: 'Explicit mentions only',
+      groupWakeDescription:
+        'The digital human wakes only when this bot is explicitly mentioned in the group.',
+      directWakeTitle: 'Direct messages are accepted',
+      directWakeDescription: 'Messages in this direct conversation wake the digital human.',
+      create: 'Bind conversation',
+    },
+    activity: {
+      title: 'Channel activity',
+      description: 'Inspect inbound events and the independent delivery queue.',
+      permissionTitle: 'Runtime log permission required',
+      permissionDescription:
+        'You can configure channels, but your workspace role cannot inspect event or delivery history.',
+      viewRun: 'View run',
+    },
+    events: {
+      title: 'Events ({count})',
+      empty: 'No channel events yet',
+      emptyDescription: 'Signed Feishu events will appear here after the webhook is connected.',
+      noRun: 'No model run',
+      status: { received: 'Received', ignored: 'Ignored', accepted: 'Accepted', failed: 'Failed' },
+    },
+    deliveries: {
+      title: 'Deliveries ({count})',
+      empty: 'No delivery attempts yet',
+      emptyDescription: 'A successful channel run creates one auditable delivery intent.',
+      attempts: '{count} attempts',
+      noText: 'No response text',
+      unknownHint:
+        'The provider result is uncertain. Verify Feishu before retrying to avoid a duplicate reply.',
+      retry: 'Retry delivery',
+      failure: {
+        generic: 'Feishu rejected or could not complete this delivery.',
+        outcomeUnknown: 'The provider outcome could not be confirmed; automatic retry stopped.',
+        interrupted: 'Delivery was interrupted after provider execution may have started.',
+        payloadInvalid: 'The committed response could not be prepared for delivery.',
+      },
+      status: {
+        pending: 'Pending',
+        processing: 'Sending',
+        succeeded: 'Delivered',
+        failed: 'Failed',
+        unknown: 'Unknown',
+      },
+    },
+    messages: {
+      installationCreated: 'Feishu installation connected.',
+      installationUpdated: 'Installation updated.',
+      installationDeleted: 'Installation deleted.',
+      bindingCreated: 'Conversation bound.',
+      bindingDeleted: 'Conversation binding removed.',
+      deliveryRetried: 'Delivery queued for retry.',
+      webhookCopied: 'Webhook URL copied.',
+    },
+    errors: {
+      installation: 'Could not save the Feishu installation.',
+      installationDelete: 'Could not delete the Feishu installation.',
+      binding: 'Could not bind this conversation.',
+      bindingDelete: 'Could not remove this conversation binding.',
+      deliveryRetry: 'Could not retry this delivery.',
     },
   },
   memory: {

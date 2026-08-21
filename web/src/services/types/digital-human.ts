@@ -9,6 +9,16 @@ export type DigitalHumanRunStatus =
   | 'canceled'
   | 'unknown';
 
+export interface DigitalHumanChannelResponsePolicy {
+  intermediate_messages_enabled?: boolean;
+  acknowledgement_enabled?: boolean;
+}
+
+export interface DigitalHumanTriggerPolicy extends Record<string, unknown> {
+  manual?: boolean;
+  channel_response?: DigitalHumanChannelResponsePolicy;
+}
+
 export interface DigitalHumanDefinition {
   id: string;
   organization_id: string;
@@ -37,7 +47,7 @@ export interface DigitalHumanVersion {
   rules: string[];
   default_model: string;
   memory_policy?: Record<string, unknown>;
-  trigger_policy?: Record<string, unknown>;
+  trigger_policy?: DigitalHumanTriggerPolicy;
   published_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -67,7 +77,7 @@ export interface CreateDigitalHumanRequest {
   rules: string[];
   default_model: string;
   memory_policy?: Record<string, unknown>;
-  trigger_policy?: Record<string, unknown>;
+  trigger_policy?: DigitalHumanTriggerPolicy;
 }
 
 export interface UpdateDigitalHumanRequest {
@@ -85,7 +95,7 @@ export interface UpdateDigitalHumanDraftRequest {
   rules?: string[];
   default_model?: string;
   memory_policy?: Record<string, unknown>;
-  trigger_policy?: Record<string, unknown>;
+  trigger_policy?: DigitalHumanTriggerPolicy;
 }
 
 export interface PublishDigitalHumanRequest {
@@ -371,4 +381,151 @@ export interface DigitalHumanMemoryMutationResult {
   memory?: DigitalHumanMemory;
   event: { operation_id: string; action: string; result: string; reason_code?: string };
   replayed: boolean;
+}
+
+export type DigitalHumanChannelInstallationStatus = 'active' | 'disabled';
+export type DigitalHumanChannelConversationType = 'direct' | 'group';
+export type DigitalHumanChannelWakePolicy = 'direct_and_mention' | 'mention_only';
+export type DigitalHumanChannelEventStatus = 'received' | 'ignored' | 'accepted' | 'failed';
+export type DigitalHumanChannelDeliveryStatus =
+  | 'pending'
+  | 'processing'
+  | 'succeeded'
+  | 'failed'
+  | 'unknown';
+
+export interface DigitalHumanChannelInstallationUsage {
+  digital_human_id: string;
+  digital_human_name: string;
+  binding_count: number;
+}
+
+export interface DigitalHumanChannelInstallation {
+  id: string;
+  organization_id: string;
+  workspace_id: string;
+  provider: 'feishu' | (string & {});
+  connection_id: string;
+  name: string;
+  external_tenant_id?: string;
+  external_bot_id?: string;
+  default_subject_type?: 'digital_human';
+  default_subject_id?: string;
+  status: DigitalHumanChannelInstallationStatus;
+  revision: number;
+  binding_count?: number;
+  used_by?: DigitalHumanChannelInstallationUsage[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateDigitalHumanChannelInstallationRequest {
+  provider: 'feishu';
+  connection_id: string;
+  name: string;
+}
+
+export interface UpdateDigitalHumanChannelInstallationRequest {
+  expected_revision: number;
+  name?: string;
+  status?: DigitalHumanChannelInstallationStatus;
+}
+
+export interface DigitalHumanExternalConversationMapping {
+  id: string;
+  installation_id: string;
+  external_conversation_id: string;
+  conversation_type: DigitalHumanChannelConversationType;
+  local_conversation_id?: string | null;
+  last_event_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DigitalHumanChannelBinding {
+  id: string;
+  installation_id: string;
+  conversation_mapping_id: string;
+  subject_type: 'digital_human';
+  subject_id: string;
+  wake_policy: DigitalHumanChannelWakePolicy;
+  enabled: boolean;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DigitalHumanChannelBindingView {
+  binding: DigitalHumanChannelBinding;
+  mapping: DigitalHumanExternalConversationMapping;
+}
+
+export interface DigitalHumanChannelConversationDiscovery {
+  installation_id: string;
+  external_conversation_id: string;
+  conversation_type: DigitalHumanChannelConversationType;
+  sender_external_id: string;
+  event_count: number;
+  last_event_at: string;
+}
+
+export interface CreateDigitalHumanChannelBindingRequest {
+  installation_id: string;
+  external_conversation_id: string;
+  conversation_type: DigitalHumanChannelConversationType;
+  wake_policy: DigitalHumanChannelWakePolicy;
+}
+
+export interface DigitalHumanChannelInboundEvent {
+  id: string;
+  installation_id: string;
+  binding_id?: string | null;
+  provider_event_id: string;
+  provider_message_id: string;
+  external_conversation_id: string;
+  sender_external_id: string;
+  event_type: string;
+  payload_digest: string;
+  status: DigitalHumanChannelEventStatus;
+  reason_code?: string;
+  invocation_run_id?: string | null;
+  received_at: string;
+  processed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DigitalHumanChannelDelivery {
+  id: string;
+  installation_id: string;
+  binding_id: string;
+  inbound_event_id: string;
+  run_id: string;
+  provider: string;
+  connection_id: string;
+  subject_type: 'digital_human';
+  subject_id: string;
+  external_conversation_id: string;
+  external_thread_id?: string;
+  payload: { text?: string };
+  payload_digest: string;
+  status: DigitalHumanChannelDeliveryStatus;
+  attempt_count: number;
+  available_at: string;
+  claimed_at?: string | null;
+  delivered_at?: string | null;
+  provider_message_id?: string;
+  provider_request_id?: string;
+  error_code?: string;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DigitalHumanChannelPage<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
 }

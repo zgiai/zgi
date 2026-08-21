@@ -4,6 +4,12 @@ import type {
   CreateDigitalHumanRequest,
   CreateDigitalHumanRoleTemplateRequest,
   DigitalHumanDetail,
+  DigitalHumanChannelBindingView,
+  DigitalHumanChannelDelivery,
+  DigitalHumanChannelConversationDiscovery,
+  DigitalHumanChannelInboundEvent,
+  DigitalHumanChannelInstallation,
+  DigitalHumanChannelPage,
   DigitalHumanList,
   DigitalHumanRoleAssignmentInput,
   DigitalHumanRoleTemplateDetail,
@@ -21,8 +27,11 @@ import type {
   DraftRoleAssignments,
   ManualDigitalHumanInvocationRequest,
   ManualDigitalHumanInvocationResponse,
+  CreateDigitalHumanChannelBindingRequest,
+  CreateDigitalHumanChannelInstallationRequest,
   PublishDigitalHumanRequest,
   UpdateDigitalHumanDraftRequest,
+  UpdateDigitalHumanChannelInstallationRequest,
   UpdateDigitalHumanRequest,
 } from './types/digital-human';
 
@@ -178,11 +187,9 @@ class DigitalHumanService extends BaseService {
     operationId: string,
     expectedRevision: number
   ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
-    return this.request(
-      'post',
-      `/digital-humans/${id}/memory/operations/${operationId}/undo`,
-      { expected_revision: expectedRevision }
-    );
+    return this.request('post', `/digital-humans/${id}/memory/operations/${operationId}/undo`, {
+      expected_revision: expectedRevision,
+    });
   }
 
   updateMemoryState(
@@ -194,6 +201,88 @@ class DigitalHumanService extends BaseService {
       expected_memory_epoch: expectedMemoryEpoch,
       auto_extraction_enabled: autoExtractionEnabled,
     });
+  }
+
+  listChannelInstallations(
+    id: string
+  ): Promise<ApiResponseData<DigitalHumanChannelInstallation[]>> {
+    return this.request('get', `/digital-humans/${id}/channels/installations`);
+  }
+
+  createChannelInstallation(
+    id: string,
+    data: CreateDigitalHumanChannelInstallationRequest
+  ): Promise<ApiResponseData<DigitalHumanChannelInstallation>> {
+    return this.request('post', `/digital-humans/${id}/channels/installations`, data);
+  }
+
+  updateChannelInstallation(
+    id: string,
+    installationId: string,
+    data: UpdateDigitalHumanChannelInstallationRequest
+  ): Promise<ApiResponseData<DigitalHumanChannelInstallation>> {
+    return this.request(
+      'patch',
+      `/digital-humans/${id}/channels/installations/${installationId}`,
+      data
+    );
+  }
+
+  deleteChannelInstallation(
+    id: string,
+    installationId: string,
+    removeBindings = false
+  ): Promise<ApiResponseData<unknown>> {
+    const query = removeBindings ? '?remove_bindings=true' : '';
+    return this.request(
+      'delete',
+      `/digital-humans/${id}/channels/installations/${installationId}${query}`
+    );
+  }
+
+  listChannelBindings(id: string): Promise<ApiResponseData<DigitalHumanChannelBindingView[]>> {
+    return this.request('get', `/digital-humans/${id}/channels/bindings`);
+  }
+
+  listChannelDiscoveries(
+    id: string
+  ): Promise<ApiResponseData<DigitalHumanChannelConversationDiscovery[]>> {
+    return this.request('get', `/digital-humans/${id}/channels/discoveries`);
+  }
+
+  createChannelBinding(
+    id: string,
+    data: CreateDigitalHumanChannelBindingRequest
+  ): Promise<ApiResponseData<DigitalHumanChannelBindingView>> {
+    return this.request('post', `/digital-humans/${id}/channels/bindings`, data);
+  }
+
+  deleteChannelBinding(id: string, bindingId: string): Promise<ApiResponseData<unknown>> {
+    return this.request('delete', `/digital-humans/${id}/channels/bindings/${bindingId}`);
+  }
+
+  listChannelEvents(
+    id: string,
+    params?: { page?: number; page_size?: number }
+  ): Promise<ApiResponseData<DigitalHumanChannelPage<DigitalHumanChannelInboundEvent>>> {
+    return this.request('get', `/digital-humans/${id}/channels/events`, undefined, { params });
+  }
+
+  listChannelDeliveries(
+    id: string,
+    params?: { page?: number; page_size?: number }
+  ): Promise<ApiResponseData<DigitalHumanChannelPage<DigitalHumanChannelDelivery>>> {
+    return this.request('get', `/digital-humans/${id}/channels/deliveries`, undefined, {
+      params,
+    });
+  }
+
+  retryChannelDelivery(id: string, deliveryId: string): Promise<ApiResponseData<unknown>> {
+    return this.request(
+      'post',
+      `/digital-humans/${id}/channels/deliveries/${deliveryId}/retry`,
+      {}
+    );
   }
 }
 

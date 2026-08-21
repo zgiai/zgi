@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useDigitalHuman,
@@ -92,6 +93,12 @@ function IdentityCard({ id }: { id: string }) {
   const [persona, setPersona] = useState(detail?.draft.persona ?? '');
   const [rules, setRules] = useState((detail?.draft.rules ?? []).join('\n'));
   const [model, setModel] = useState(detail?.draft.default_model ?? '');
+  const [intermediateMessagesEnabled, setIntermediateMessagesEnabled] = useState(
+    detail?.draft.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true
+  );
+  const [acknowledgementEnabled, setAcknowledgementEnabled] = useState(
+    detail?.draft.trigger_policy?.channel_response?.acknowledgement_enabled ?? true
+  );
   // `useAvailableModels` returns a compact, already-filtered response whose
   // entries do not include the full model catalog's `callable` projection.
   const models = availableModels.models;
@@ -107,7 +114,11 @@ function IdentityCard({ id }: { id: string }) {
     description.trim() !== (detail.definition.description ?? '') ||
     persona.trim() !== detail.draft.persona ||
     normalizedRules.join('\n') !== (detail.draft.rules ?? []).join('\n') ||
-    model !== detail.draft.default_model;
+    model !== detail.draft.default_model ||
+    intermediateMessagesEnabled !==
+      (detail.draft.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true) ||
+    acknowledgementEnabled !==
+      (detail.draft.trigger_policy?.channel_response?.acknowledgement_enabled ?? true);
   const save = async () => {
     if (!name.trim() || !persona.trim() || !model.trim()) {
       toast.error(t('errors.required'));
@@ -128,8 +139,19 @@ function IdentityCard({ id }: { id: string }) {
         persona: persona.trim(),
         rules: normalizedRules,
         default_model: model,
-        memory_policy: { enabled: false, ownership: 'digital_human' },
-        trigger_policy: { manual: true },
+        memory_policy: detail.draft.memory_policy ?? {
+          enabled: false,
+          ownership: 'digital_human',
+        },
+        trigger_policy: {
+          ...(detail.draft.trigger_policy ?? {}),
+          manual: detail.draft.trigger_policy?.manual ?? true,
+          channel_response: {
+            ...(detail.draft.trigger_policy?.channel_response ?? {}),
+            intermediate_messages_enabled: intermediateMessagesEnabled,
+            acknowledgement_enabled: acknowledgementEnabled,
+          },
+        },
       },
     });
     toast.success(t('configuration.saved'));
@@ -200,6 +222,42 @@ function IdentityCard({ id }: { id: string }) {
               ))}
             </select>
           </Field>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('settings.channelResponseTitle')}</CardTitle>
+          <CardDescription>{t('settings.channelResponseDescription')}</CardDescription>
+        </CardHeader>
+        <CardContent className="divide-y rounded-lg border px-4">
+          <div className="flex items-start justify-between gap-6 py-4">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{t('settings.intermediateMessages')}</div>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t('settings.intermediateMessagesDescription')}
+              </p>
+            </div>
+            <Switch
+              checked={intermediateMessagesEnabled}
+              onCheckedChange={setIntermediateMessagesEnabled}
+              disabled={!canUpdate}
+              aria-label={t('settings.intermediateMessages')}
+            />
+          </div>
+          <div className="flex items-start justify-between gap-6 py-4">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{t('settings.acknowledgement')}</div>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {t('settings.acknowledgementDescription')}
+              </p>
+            </div>
+            <Switch
+              checked={acknowledgementEnabled}
+              onCheckedChange={setAcknowledgementEnabled}
+              disabled={!canUpdate}
+              aria-label={t('settings.acknowledgement')}
+            />
+          </div>
         </CardContent>
       </Card>
       {canUpdate ? (

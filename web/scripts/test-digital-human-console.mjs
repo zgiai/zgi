@@ -50,6 +50,18 @@ const memory = await readFile(
   new URL('../src/components/digital-human/digital-human-memory.tsx', import.meta.url),
   'utf8'
 );
+const channels = await readFile(
+  new URL('../src/components/digital-human/digital-human-channels.tsx', import.meta.url),
+  'utf8'
+);
+const channelHooks = await readFile(
+  new URL('../src/hooks/digital-human/use-digital-human-channels.ts', import.meta.url),
+  'utf8'
+);
+const channelPage = await readFile(
+  new URL('../src/app/console/digital-humans/[digitalHumanId]/channels/page.tsx', import.meta.url),
+  'utf8'
+);
 
 for (const [name, source] of [
   ['list', list],
@@ -120,8 +132,8 @@ assert.match(
 );
 assert.match(
   layout,
-  /tabs\.overview[\s\S]*tabs\.settings[\s\S]*tabs\.capabilities[\s\S]*tabs\.chat[\s\S]*tabs\.runs/,
-  'DigitalHuman detail navigation must separate overview, identity, capabilities, chat, and runs'
+  /tabs\.overview[\s\S]*tabs\.settings[\s\S]*tabs\.capabilities[\s\S]*tabs\.channels[\s\S]*tabs\.chat[\s\S]*tabs\.runs/,
+  'DigitalHuman detail navigation must separate overview, identity, capabilities, channels, chat, and runs'
 );
 assert.match(
   resourceBindings,
@@ -184,6 +196,71 @@ assert.doesNotMatch(
   `${runs}\n${runDetail}`,
   /JSON\.stringify\(run\.(run_spec|execution_snapshot)/,
   'Run details must not dump raw execution snapshots into the console'
+);
+assert.match(
+  service,
+  /\/digital-humans\/\$\{id\}\/channels\/installations[\s\S]*\/digital-humans\/\$\{id\}\/channels\/bindings[\s\S]*\/digital-humans\/\$\{id\}\/channels\/events[\s\S]*\/digital-humans\/\$\{id\}\/channels\/deliveries/,
+  'DigitalHuman service must expose channel configuration and audit endpoints'
+);
+assert.match(
+  channelPage,
+  /DigitalHumanFeatureGate permission="digital_human\.view"[\s\S]*DigitalHumanChannels/,
+  'DigitalHuman channel page must use the feature and view-permission gate'
+);
+assert.doesNotMatch(
+  channels,
+  /CreateBindingDialog|createBinding|deleteBinding/,
+  'DigitalHuman primary UI must not expose manual conversation assignment'
+);
+assert.match(
+  channels,
+  /useDigitalHumanChannels\(id,\s*canViewActivity,\s*false\)/,
+  'DigitalHuman primary UI must not poll conversation discoveries for manual assignment'
+);
+assert.match(
+  channels,
+  /channels\.bindings\.autoAssigned/,
+  'DigitalHuman channels must present conversation routes as automatically assigned'
+);
+assert.match(
+  channels,
+  /credential_source === 'organization'[\s\S]*auth_method_id === FEISHU_TENANT_APP_AUTH_METHOD/,
+  'DigitalHuman channels must offer only organization-owned Feishu tenant-app connections'
+);
+assert.match(
+  channels,
+  /const wasOpen = useRef\(false\)[\s\S]*open && !wasOpen\.current[\s\S]*SelectContent className="z-\[100\]"/,
+  'DigitalHuman channel selects must preserve a selected value and render above modal dialogs'
+);
+assert.doesNotMatch(
+  channels,
+  /SelectContent container=\{dialogContainer\}/,
+  'DigitalHuman channel selects must not portal into a transformed dialog container'
+);
+assert.match(
+  channels,
+  /installation\.binding_count[\s\S]*installation\.used_by[\s\S]*removeBindingsAndDelete[\s\S]*onDelete\(installation\.id, bindingCount > 0\)/,
+  'Workspace-shared installations must explain usage and explicitly clean up bindings before deletion'
+);
+assert.match(
+  service,
+  /removeBindings \? '\?remove_bindings=true'/,
+  'Installation cleanup must opt into removing conversation bindings explicitly'
+);
+assert.match(
+  channels,
+  /configurationError[\s\S]*activityError[\s\S]*LoadFailure/,
+  'DigitalHuman channels must distinguish load failures from empty states'
+);
+assert.match(
+  channels,
+  /delivery\.status === 'failed' && canRetry/,
+  'DigitalHuman channel UI must retry only known failed deliveries'
+);
+assert.doesNotMatch(
+  `${channels}\n${channelHooks}\n${channelPage}`,
+  /MEMORY_KEYS\.me|\/console\/api\/agents\/|wake_policy:\s*'ambient'/,
+  'DigitalHuman channels must not use account memory, Agent endpoints, or ambient wake policies'
 );
 
 console.log('DigitalHuman console contract checks passed.');
