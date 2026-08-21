@@ -302,6 +302,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			LLMClient:       serviceContainer.GetLLMClient(),
 			ChatService:     chatService,
 			AccountService:  accountService,
+			FileService:     serviceContainer.GetFileService(),
 		})
 		RegisterVideoRuntimeRoutes(v1, VideoRuntimeRouteDeps{
 			DB:              db,

@@ -110,6 +110,8 @@ async function sendImageRuntimeMessage(
   const provider = stringValue(modelConfig?.provider);
   const model = stringValue(modelConfig?.model);
   const imageOptions = objectValue(payload.inputs?.image_gen_config);
+  const imageReference = objectValue(payload.inputs?.image_reference);
+  const referenceImageFileId = stringValue(imageReference?.file_id);
 
   try {
     const resp = await ImageRuntimeService.generate(
@@ -124,6 +126,16 @@ async function sendImageRuntimeMessage(
           max_images: numberValue(imageOptions?.max_images),
         },
         conversation_id: payload.conversationId || undefined,
+        ...(referenceImageFileId
+          ? {
+              reference_image: {
+                file_id: referenceImageFileId,
+                url: optionalStringValue(imageReference?.url),
+                filename: optionalStringValue(imageReference?.filename),
+                mime_type: optionalStringValue(imageReference?.mime_type),
+              },
+            }
+          : {}),
       },
       abortSignal
     );

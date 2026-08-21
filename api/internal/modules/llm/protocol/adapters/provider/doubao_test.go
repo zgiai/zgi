@@ -238,6 +238,47 @@ func TestDoubaoAdapterCreateImage_UsesArkImagesAndSeedreamNormalization(t *testi
 	}
 }
 
+func TestDoubaoAdapterCreateImage_AddsReferenceImageURLsForSeedream(t *testing.T) {
+	t.Helper()
+
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"created":1732083164,
+			"data":[{"url":"https://cdn.example.com/image.png"}]
+		}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:             doubaoSeedreamLiteTestModel,
+		Prompt:            "change the style",
+		Size:              "1024x1024",
+		ReferenceImageURL: "https://files.example.com/reference.png?sign=1",
+	})
+	if err != nil {
+		t.Fatalf("CreateImage() error = %v", err)
+	}
+	urls, ok := gotPayload["image_urls"].([]any)
+	if !ok || len(urls) != 1 || urls[0] != "https://files.example.com/reference.png?sign=1" {
+		t.Fatalf("payload.image_urls = %#v, want reference url", gotPayload["image_urls"])
+	}
+}
+
 func TestDoubaoAdapterCreateImage_SeedreamMultiImageUsesSequentialOptions(t *testing.T) {
 	t.Helper()
 

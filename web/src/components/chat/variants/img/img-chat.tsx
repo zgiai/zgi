@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useChatStore } from '@/components/chat/store';
-import { InputArea } from './input-area';
+import { InputArea, type ImageReferenceAttachment } from './input-area';
 import { ImageHomeView } from './home-view';
 import { Sidebar } from '../common/sidebar';
 import { Loader2, PanelLeft, Plus } from 'lucide-react';
@@ -25,6 +25,7 @@ import type { ImageRuntimeModel } from '@/services/types/image-runtime';
 
 const LONG_IMAGE_GENERATION_NOTICE_DELAY_MS = 30000;
 const LONG_IMAGE_GENERATION_NOTICE_TEXT = '图像仍在生成中，高清或竖版图片可能需要几分钟，请稍候。';
+const DEFAULT_REFERENCE_IMAGE_PROMPT = '请基于参考图生成一张新图片。';
 
 export interface ImgChatProps {
   controller: ChatController;
@@ -62,6 +63,7 @@ export function ImgChat({
   }, [currentConversation]);
 
   const [input, setInput] = React.useState('');
+  const [referenceImage, setReferenceImage] = React.useState<ImageReferenceAttachment | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = React.useState(false);
   const [showLongGenerationNotice, setShowLongGenerationNotice] = React.useState(false);
@@ -160,16 +162,23 @@ export function ImgChat({
   }, [pendingPrompt, clearPendingPrompt, setInput, settings, currentRuntimeModel]);
 
   const handleSendAction = React.useCallback(
-    (prompt: string) => {
-      if (!prompt.trim() || isSending || !modelSelectorValue?.provider || !modelSelectorValue.model) {
+    (prompt: string, reference: ImageReferenceAttachment | null) => {
+      const trimmedPrompt = prompt.trim();
+      if (
+        (!trimmedPrompt && !reference) ||
+        isSending ||
+        !modelSelectorValue?.provider ||
+        !modelSelectorValue.model
+      ) {
         return;
       }
+      const outgoingPrompt = trimmedPrompt || DEFAULT_REFERENCE_IMAGE_PROMPT;
 
       // Optimistically mark as started to prevent home view flicker
       setHasStartedChat(true);
 
       controller.send({
-        query: prompt,
+        query: outgoingPrompt,
         inputs: {
           model_config: {
             provider: modelSelectorValue.provider,
@@ -182,15 +191,26 @@ export function ImgChat({
             generation_mode: settings.generationMode,
             max_images: settings.maxImages,
           },
+          ...(reference
+            ? {
+                image_reference: {
+                  file_id: reference.fileId,
+                  url: reference.url,
+                  filename: reference.filename,
+                  mime_type: reference.mimeType,
+                },
+              }
+            : {}),
         },
       });
       setInput('');
+      setReferenceImage(null);
     },
     [controller, isSending, settings, modelSelectorValue]
   );
 
   const handleSend = () => {
-    handleSendAction(input);
+    handleSendAction(input, referenceImage);
   };
 
   const handleNewChat = () => {
@@ -341,6 +361,8 @@ export function ImgChat({
               imageRuntimeModels={imageRuntimeModels}
               currentRuntimeModel={currentRuntimeModel}
               topNotice={inputTopNotice}
+              referenceImage={referenceImage}
+              onReferenceImageChange={setReferenceImage}
             />
           </div>
         </div>

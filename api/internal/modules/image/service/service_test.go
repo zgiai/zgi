@@ -12,6 +12,7 @@ import (
 	chatruntimerepository "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/imageasset"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/image/registry"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -308,6 +309,26 @@ func (f *fakeImageAssetService) DeleteGeneratedImage(_ context.Context, fileID s
 	return nil
 }
 
+type fakeImageReferenceFileService struct {
+	file *dto.UploadFile
+	url  string
+	err  error
+}
+
+func (f *fakeImageReferenceFileService) GetFileByID(context.Context, string) (*dto.UploadFile, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.file, nil
+}
+
+func (f *fakeImageReferenceFileService) GetFileURL(context.Context, string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.url, nil
+}
+
 func TestGenerateUsesAppCreateImageWithOrganizationBillingContext(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -380,6 +401,88 @@ func TestGenerateUsesAppCreateImageWithOrganizationBillingContext(t *testing.T) 
 	}
 	if chat.atomicCreateCalls != 1 {
 		t.Fatalf("CreateConversationWithCompletedMessage calls = %d, want 1", chat.atomicCreateCalls)
+	}
+}
+
+func TestGeneratePassesReferenceImageURLToLLM(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	fileID := uuid.New().String()
+	workspaceIDText := workspaceID.String()
+	llm := &fakeImageLLMClient{}
+	chat := &fakeImageChatService{}
+	files := &fakeImageReferenceFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: organizationID.String(),
+			TenantID:       organizationID.String(),
+			WorkspaceID:    &workspaceIDText,
+			Name:           "reference.png",
+			Extension:      "png",
+			MimeType:       "image/png",
+		},
+		url: "https://files.example.com/reference.png?sign=1",
+	}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "doubao", Name: "doubao-seedream-4-0-250828"}}},
+		fakeRouteLister{routes: map[string][]*channelmodel.RouteQueryResult{
+			"doubao-seedream-4-0-250828": {
+				{RouteID: uuid.New(), ChannelProvider: "doubao", Models: []string{"doubao-seedream-4-0-250828"}},
+			},
+		}},
+		llm,
+		chat,
+		&fakeImageAssetService{},
+		files,
+	)
+
+	result, err := svc.Generate(t.Context(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &workspaceID,
+	}, GenerateRequest{
+		Prompt:   "换成赛博朋克风",
+		Provider: "doubao",
+		Model:    "doubao-seedream-4-0-250828",
+		Options:  GenerateOptions{Size: "1024x1024"},
+		ReferenceImage: &ReferenceImage{
+			FileID: fileID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if llm.lastImageReq == nil {
+		t.Fatal("image request is nil")
+	}
+	if llm.lastImageReq.ReferenceImageURL != files.url {
+		t.Fatalf("ReferenceImageURL = %q, want %q", llm.lastImageReq.ReferenceImageURL, files.url)
+	}
+	if result.ImageGeneration.ReferenceImage == nil {
+		t.Fatal("result reference image is nil")
+	}
+	if result.ImageGeneration.ReferenceImage.FileID != fileID {
+		t.Fatalf("reference file id = %q, want %q", result.ImageGeneration.ReferenceImage.FileID, fileID)
+	}
+}
+
+func TestFileBelongsToScopeAllowsOwnedTemporaryZeroOrganizationFile(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	file := &dto.UploadFile{
+		OrganizationID: "00000000-0000-0000-0000-000000000000",
+		IsTemporary:    true,
+		CreatedByRole:  dto.CreatedByRoleAccount,
+		CreatedBy:      accountID.String(),
+	}
+
+	if !fileBelongsToScope(file, Scope{OrganizationID: organizationID, AccountID: accountID}) {
+		t.Fatal("temporary zero-organization file owned by account should be accepted")
+	}
+	if fileBelongsToScope(file, Scope{OrganizationID: organizationID, AccountID: uuid.New()}) {
+		t.Fatal("temporary zero-organization file owned by another account should be rejected")
 	}
 }
 

@@ -1,13 +1,33 @@
 import * as React from 'react';
-import { ArrowUp } from 'lucide-react';
+import { ArrowUp, FolderOpen, Loader2, Paperclip, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/translations';
 import { SettingsToolbar, type ImageSettings, type ImageSettingsPatch } from './settings-toolbar';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import type { ImageRuntimeModel } from '@/services/types/image-runtime';
 import type { ModelItem } from '@/services/types/model';
+import FileSelectorDialog from '@/components/files/file-selector-dialog';
+import type { FileItem } from '@/services/types/file';
+import { fileManageService, uploadService } from '@/services';
+import type { UploadResponse } from '@/services/upload.service';
+import { toast } from 'sonner';
+
+const IMAGE_REFERENCE_ACCEPT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+
+export interface ImageReferenceAttachment {
+  fileId: string;
+  url: string;
+  filename: string;
+  mimeType: string;
+}
 
 interface InputAreaProps {
   input: string;
@@ -21,6 +41,8 @@ interface InputAreaProps {
   imageRuntimeModels?: ImageRuntimeModel[];
   currentRuntimeModel?: ImageRuntimeModel;
   topNotice?: React.ReactNode;
+  referenceImage?: ImageReferenceAttachment | null;
+  onReferenceImageChange?: (image: ImageReferenceAttachment | null) => void;
 }
 
 export function InputArea({
@@ -35,9 +57,14 @@ export function InputArea({
   imageRuntimeModels,
   currentRuntimeModel,
   topNotice,
+  referenceImage,
+  onReferenceImageChange,
 }: InputAreaProps) {
   const t = useT('webapp');
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [isReferenceUploading, setIsReferenceUploading] = React.useState(false);
+  const [isFileSelectorOpen, setIsFileSelectorOpen] = React.useState(false);
   const imageRuntimeModelItems = React.useMemo(
     () => imageRuntimeModels?.map(mapImageRuntimeModelToModelItem),
     [imageRuntimeModels]
@@ -73,6 +100,28 @@ export function InputArea({
   return (
     <div className="relative border border-border rounded-[24px] p-2 shadow-sm bg-background hover:border-primary/20 focus-within:border-primary/20 transition-colors w-full">
       {topNotice}
+      {referenceImage ? (
+        <div className="px-2 pt-1">
+          <div className="group relative inline-flex h-16 max-w-full items-center rounded-[4px] border bg-muted/30 p-1 pr-8">
+            <img
+              src={referenceImage.url}
+              alt={referenceImage.filename || t('chat.imageInput.referenceImage')}
+              className="h-14 max-w-[112px] rounded-[3px] object-contain"
+            />
+            <Button
+              type="button"
+              isIcon
+              variant="ghost"
+              className="absolute right-1 top-1 h-6 w-6 rounded-full bg-background/80"
+              onClick={() => onReferenceImageChange?.(null)}
+              disabled={isSending || isReferenceUploading}
+              aria-label={t('chat.imageInput.removeReference')}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <Textarea
         ref={textareaRef}
         value={input}
@@ -119,23 +168,150 @@ export function InputArea({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={event => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) {
+                void uploadReferenceFile(file);
+              }
+            }}
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                isIcon
+                className="h-8 w-8 rounded-full text-muted-foreground hover:bg-muted"
+                disabled={isSending || isReferenceUploading}
+                aria-label={
+                  referenceImage
+                    ? t('chat.imageInput.replaceReference')
+                    : t('chat.imageInput.attachReference')
+                }
+              >
+                {isReferenceUploading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Paperclip className="h-4 w-4" />
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                <Upload className="h-4 w-4" />
+                {t('chat.imageInput.uploadImage')}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setIsFileSelectorOpen(true)}>
+                <FolderOpen className="h-4 w-4" />
+                {t('chat.imageInput.selectFromFiles')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             isIcon
             className={cn(
               'h-8 w-8 rounded-full ml-1 transition-all',
-              input.trim()
+              input.trim() || referenceImage
                 ? 'bg-primary text-white hover:bg-primary-hover'
                 : 'bg-muted text-muted-foreground'
             )}
             onClick={onSend}
-            disabled={!input.trim() || isSending || !modelSelectorValue?.model}
+            disabled={
+              (!input.trim() && !referenceImage) ||
+              isSending ||
+              isReferenceUploading ||
+              !modelSelectorValue?.model
+            }
           >
             <ArrowUp className="h-4 w-4" />
           </Button>
         </div>
       </div>
+      <FileSelectorDialog
+        open={isFileSelectorOpen}
+        onOpenChange={setIsFileSelectorOpen}
+        maxCount={1}
+        acceptExt={IMAGE_REFERENCE_ACCEPT_EXTENSIONS}
+        initSelectedFiles={[]}
+        onConfirm={files => {
+          const file = files[0];
+          if (file) {
+            void selectManagedReferenceFile(file);
+          }
+        }}
+      />
     </div>
   );
+
+  async function uploadReferenceFile(file: File) {
+    if (!file.type.startsWith('image/')) {
+      toast.error(t('chat.imageInput.imageOnly'));
+      return;
+    }
+    setIsReferenceUploading(true);
+    try {
+      const uploaded = await uploadService.uploadSingle(file, {
+        is_temporary: true,
+        processing_mode: 'store_only',
+      });
+      const previewURL = await resolveUploadedImageURL(uploaded);
+      onReferenceImageChange?.({
+        fileId: uploaded.id,
+        url: previewURL,
+        filename: uploaded.name || file.name,
+        mimeType: uploaded.mime_type || file.type,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('chat.imageInput.uploadFailed'));
+    } finally {
+      setIsReferenceUploading(false);
+    }
+  }
+
+  async function selectManagedReferenceFile(file: FileItem) {
+    if (!isImageFile(file.mime_type, file.extension)) {
+      toast.error(t('chat.imageInput.imageOnly'));
+      return;
+    }
+    setIsReferenceUploading(true);
+    try {
+      const preview = await fileManageService.getOriginalPreviewUrl(file.id);
+      const previewURL = preview.data?.url?.trim();
+      if (!previewURL) {
+        throw new Error(t('chat.imageInput.previewUrlMissing'));
+      }
+      onReferenceImageChange?.({
+        fileId: file.id,
+        url: previewURL,
+        filename: file.name,
+        mimeType: file.mime_type,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('chat.imageInput.selectFailed'));
+    } finally {
+      setIsReferenceUploading(false);
+    }
+  }
+
+  async function resolveUploadedImageURL(uploaded: UploadResponse): Promise<string> {
+    const directURL = uploaded.source_url?.trim() || uploaded.url?.trim() || uploaded.download_url?.trim();
+    if (directURL) return directURL;
+    const preview = await fileManageService.getOriginalPreviewUrl(uploaded.id);
+    const previewURL = preview.data?.url?.trim();
+    if (previewURL) return previewURL;
+    throw new Error(t('chat.imageInput.previewUrlMissing'));
+  }
+}
+
+function isImageFile(mimeType: string, extension: string): boolean {
+  if (mimeType.trim().toLowerCase().startsWith('image/')) return true;
+  return IMAGE_REFERENCE_ACCEPT_EXTENSIONS.includes(extension.trim().toLowerCase().replace(/^\./, ''));
 }
 
 function mapImageRuntimeModelToModelItem(item: ImageRuntimeModel): ModelItem {

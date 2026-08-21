@@ -16,8 +16,12 @@ type Module struct {
 	Service imageservice.Service
 }
 
-func NewModule(availableModels llmmodelsvc.AvailableModelsService, routes imageservice.RouteLister, llmClient llmclient.LLMClient, chatService service.Service) *Module {
-	svc := imageservice.NewService(registry.NewRegistry(), availableModels, routes, llmClient, chatService, imageasset.NewService())
+func NewModule(availableModels llmmodelsvc.AvailableModelsService, routes imageservice.RouteLister, llmClient llmclient.LLMClient, chatService service.Service, fileServices ...imageservice.ReferenceFileService) *Module {
+	var fileService imageservice.ReferenceFileService
+	if len(fileServices) > 0 {
+		fileService = fileServices[0]
+	}
+	svc := imageservice.NewService(registry.NewRegistry(), availableModels, routes, llmClient, chatService, imageasset.NewService(), fileService)
 	return &Module{
 		Handler: handler.NewHandler(svc),
 		Service: svc,

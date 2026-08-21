@@ -19,6 +19,10 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+}
+
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
@@ -89,6 +93,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const hasAddon = Boolean(messageAddon);
   const generatedImages = useMemo(() => message.generatedImages || [], [message.generatedImages]);
   const hasImages = generatedImages.length > 0;
+  const referenceImage = useMemo(() => getMessageReferenceImage(message), [message]);
   const imageModelLabel =
     stringValue(message.messageData?.model_label) ||
     stringValue(message.model?.modelName) ||
@@ -192,7 +197,16 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       {isUser && (
         <div className="flex justify-end">
           <div className="max-w-[80%] rounded-2xl px-3 py-2 bg-muted/80 text-sm whitespace-pre-wrap">
-            <div className="whitespace-pre-wrap">{message.query}</div>
+            {referenceImage ? (
+              <div className="mb-2 overflow-hidden rounded-lg bg-background/60">
+                <img
+                  src={referenceImage.url}
+                  alt={referenceImage.filename || 'Reference image'}
+                  className="max-h-52 max-w-full object-contain"
+                />
+              </div>
+            ) : null}
+            {message.query ? <div className="whitespace-pre-wrap">{message.query}</div> : null}
           </div>
         </div>
       )}
@@ -358,6 +372,8 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
       next.message.messageData?.questionAnswerTranscript &&
     prev.message.messageData?.metadata === next.message.messageData?.metadata;
   const sameImages = prev.message.generatedImages === next.message.generatedImages;
+  const sameReferenceInput =
+    prev.message.inputs?.image_reference === next.message.inputs?.image_reference;
   const sameImageHeader =
     prev.message.model === next.message.model &&
     prev.message.messageData?.model_label === next.message.messageData?.model_label &&
@@ -379,6 +395,7 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
     sameSensitiveBlocked &&
     sameQuestionAnswerTranscript &&
     sameImageHeader &&
+    sameReferenceInput &&
     sameNodeLen &&
     sameNodesTail &&
     sameImages &&
@@ -391,5 +408,20 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
     prev.messageAddon === next.messageAddon
   );
 });
+
+function getMessageReferenceImage(message: Message): { url: string; filename: string } | null {
+  const inputReference = objectValue(message.inputs?.image_reference);
+  const metadata = objectValue(message.messageData?.metadata);
+  const imageGeneration =
+    objectValue(message.messageData?.image_generation) || objectValue(metadata?.image_generation);
+  const persistedReference = objectValue(imageGeneration?.reference_image);
+  const reference = inputReference || persistedReference;
+  const url = stringValue(reference?.url);
+  if (!url) return null;
+  return {
+    url,
+    filename: stringValue(reference?.filename),
+  };
+}
 
 export default MessageItem;

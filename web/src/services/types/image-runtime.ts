@@ -37,6 +37,14 @@ export interface ImageRuntimeGenerateRequest {
   model: string;
   options: ImageRuntimeGenerateOptions;
   conversation_id?: string;
+  reference_image?: ImageRuntimeReferenceImage;
+}
+
+export interface ImageRuntimeReferenceImage {
+  file_id: string;
+  url?: string;
+  filename?: string;
+  mime_type?: string;
 }
 
 export interface ImageRuntimeFile {
@@ -55,6 +63,7 @@ export interface ImageRuntimeGeneration {
   size: string;
   count: number;
   files: ImageRuntimeFile[];
+  reference_image?: ImageRuntimeReferenceImage;
   status: 'succeeded';
 }
 

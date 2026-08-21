@@ -17,4 +17,7 @@ var (
 	ErrBillingContextRequired    = errors.New("BILLING_CONTEXT_REQUIRED")
 	ErrUpstreamFailed            = errors.New("UPSTREAM_FAILED")
 	ErrImageSaveFailed           = errors.New("IMAGE_SAVE_FAILED")
+	ErrReferenceImageRequired    = errors.New("REFERENCE_IMAGE_REQUIRED")
+	ErrReferenceImageInvalid     = errors.New("REFERENCE_IMAGE_INVALID")
+	ErrReferenceImageUnsupported = errors.New("REFERENCE_IMAGE_UNSUPPORTED")
 )

@@ -14,6 +14,7 @@ type GenerateRequest struct {
 	Model          string          `json:"model"`
 	Options        GenerateOptions `json:"options"`
 	ConversationID string          `json:"conversation_id"`
+	ReferenceImage *ReferenceImage `json:"reference_image,omitempty"`
 }
 
 type GenerateOptions struct {
@@ -21,6 +22,13 @@ type GenerateOptions struct {
 	Count          *int   `json:"count,omitempty"`
 	GenerationMode string `json:"generation_mode,omitempty"`
 	MaxImages      *int   `json:"max_images,omitempty"`
+}
+
+type ReferenceImage struct {
+	FileID   string `json:"file_id"`
+	URL      string `json:"url,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
 }
 
 type ImageFile struct {
@@ -37,15 +45,16 @@ type ImageFile struct {
 }
 
 type ImageGenerationMetadata struct {
-	Provider       string      `json:"provider"`
-	Model          string      `json:"model"`
-	ModelLabel     string      `json:"model_label"`
-	Size           string      `json:"size"`
-	Count          int         `json:"count"`
-	GenerationMode string      `json:"generation_mode,omitempty"`
-	MaxImages      *int        `json:"max_images,omitempty"`
-	Files          []ImageFile `json:"files"`
-	Status         string      `json:"status"`
+	Provider       string          `json:"provider"`
+	Model          string          `json:"model"`
+	ModelLabel     string          `json:"model_label"`
+	Size           string          `json:"size"`
+	Count          int             `json:"count"`
+	GenerationMode string          `json:"generation_mode,omitempty"`
+	MaxImages      *int            `json:"max_images,omitempty"`
+	Files          []ImageFile     `json:"files"`
+	ReferenceImage *ReferenceImage `json:"reference_image,omitempty"`
+	Status         string          `json:"status"`
 }
 
 type GenerateResult struct {

@@ -10,6 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/imageasset"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	"github.com/zgiai/zgi/api/internal/modules/image/registry"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -20,9 +21,10 @@ import (
 )
 
 const (
-	maxPromptRunes      = 4000
-	imageRuntimeAppType = "image-runtime"
-	successMessage      = "已生成图片"
+	maxPromptRunes         = 4000
+	imageRuntimeAppType    = "image-runtime"
+	successMessage         = "已生成图片"
+	defaultReferencePrompt = "请基于参考图生成一张新图片。"
 )
 
 type Service interface {
@@ -34,6 +36,11 @@ type RouteLister interface {
 	GetRoutesForModel(ctx context.Context, organizationID uuid.UUID, modelName string) ([]*channelmodel.RouteQueryResult, error)
 }
 
+type ReferenceFileService interface {
+	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
+	GetFileURL(ctx context.Context, fileID string) (string, error)
+}
+
 type service struct {
 	registry        *registry.Registry
 	availableModels llmmodelsvc.AvailableModelsService
@@ -41,6 +48,7 @@ type service struct {
 	llmClient       llmclient.LLMClient
 	chatService     chatruntime.Service
 	imageAssets     imageasset.Service
+	fileService     ReferenceFileService
 }
 
 type generationConversation struct {
@@ -50,7 +58,11 @@ type generationConversation struct {
 	ShouldCreate bool
 }
 
-func NewService(reg *registry.Registry, availableModels llmmodelsvc.AvailableModelsService, routes RouteLister, llmClient llmclient.LLMClient, chatService chatruntime.Service, imageAssets imageasset.Service) Service {
+func NewService(reg *registry.Registry, availableModels llmmodelsvc.AvailableModelsService, routes RouteLister, llmClient llmclient.LLMClient, chatService chatruntime.Service, imageAssets imageasset.Service, fileServices ...ReferenceFileService) Service {
+	var fileService ReferenceFileService
+	if len(fileServices) > 0 {
+		fileService = fileServices[0]
+	}
 	return &service{
 		registry:        reg,
 		availableModels: availableModels,
@@ -58,6 +70,7 @@ func NewService(reg *registry.Registry, availableModels llmmodelsvc.AvailableMod
 		llmClient:       llmClient,
 		chatService:     chatService,
 		imageAssets:     imageAssets,
+		fileService:     fileService,
 	}
 }
 
@@ -91,11 +104,19 @@ func (s *service) ListModels(ctx context.Context, scope Scope) ([]registry.Image
 
 func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest) (*GenerateResult, error) {
 	prompt := strings.TrimSpace(req.Prompt)
-	if prompt == "" {
+	referenceImage, err := s.resolveReferenceImage(ctx, scope, req.ReferenceImage)
+	if err != nil {
+		return nil, err
+	}
+	if prompt == "" && referenceImage == nil {
 		return nil, ErrPromptRequired
 	}
 	if len([]rune(prompt)) > maxPromptRunes {
 		return nil, ErrPromptTooLong
+	}
+	effectivePrompt := prompt
+	if effectivePrompt == "" {
+		effectivePrompt = defaultReferencePrompt
 	}
 	availableModel, err := s.findAvailableModel(ctx, scope.OrganizationID, req.Provider, req.Model)
 	if err != nil {
@@ -127,7 +148,7 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		AccountID:      scope.AccountID,
 		WorkspaceID:    scope.WorkspaceID,
 	}
-	conversation, err := s.resolveGenerationConversation(ctx, chatScope, strings.TrimSpace(req.ConversationID), prompt)
+	conversation, err := s.resolveGenerationConversation(ctx, chatScope, strings.TrimSpace(req.ConversationID), effectivePrompt)
 	if err != nil {
 		return nil, ErrConversationNotAccessible
 	}
@@ -139,12 +160,15 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	imageReq := &adapter.ImageRequest{
 		Provider:       modelSpec.Provider,
 		Model:          modelSpec.Model,
-		Prompt:         prompt,
+		Prompt:         effectivePrompt,
 		N:              options.Count,
 		Size:           options.Size,
 		User:           scope.AccountID.String(),
 		GenerationMode: options.GenerationMode,
 		MaxImages:      options.MaxImages,
+	}
+	if referenceImage != nil {
+		imageReq.ReferenceImageURL = referenceImage.URL
 	}
 	resp, err := s.llmClient.AppCreateImage(ctx, appCtx, imageReq)
 	if err != nil {
@@ -184,11 +208,12 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 		GenerationMode: options.GenerationMode,
 		MaxImages:      options.MaxImages,
 		Files:          files,
+		ReferenceImage: referenceImage,
 		Status:         "succeeded",
 	}
 	messageReq := chatruntime.CreateCompletedMessageRequest{
 		ConversationID: conversation.ID,
-		Query:          prompt,
+		Query:          effectivePrompt,
 		Answer:         successMessage,
 		ModelProvider:  modelSpec.Provider,
 		ModelName:      modelSpec.Model,
@@ -300,6 +325,72 @@ func (s *service) resolveGenerationConversation(ctx context.Context, scope chatr
 		Title:    conversation.Title,
 		Existing: conversation,
 	}, nil
+}
+
+func (s *service) resolveReferenceImage(ctx context.Context, scope Scope, input *ReferenceImage) (*ReferenceImage, error) {
+	if input == nil || strings.TrimSpace(input.FileID) == "" {
+		return nil, nil
+	}
+	if s.fileService == nil {
+		return nil, ErrReferenceImageUnsupported
+	}
+	fileID := strings.TrimSpace(input.FileID)
+	file, err := s.fileService.GetFileByID(ctx, fileID)
+	if err != nil || file == nil {
+		return nil, ErrReferenceImageInvalid
+	}
+	if !fileBelongsToScope(file, scope) {
+		return nil, ErrReferenceImageInvalid
+	}
+	if scope.WorkspaceID != nil && file.WorkspaceID != nil && strings.TrimSpace(*file.WorkspaceID) != "" && strings.TrimSpace(*file.WorkspaceID) != scope.WorkspaceID.String() {
+		return nil, ErrReferenceImageInvalid
+	}
+	if !isSupportedReferenceImage(file.MimeType, file.Extension) {
+		return nil, ErrReferenceImageUnsupported
+	}
+	url, err := s.fileService.GetFileURL(ctx, fileID)
+	if err != nil || strings.TrimSpace(url) == "" {
+		return nil, ErrReferenceImageInvalid
+	}
+	return &ReferenceImage{
+		FileID:   file.ID,
+		URL:      strings.TrimSpace(url),
+		Filename: strings.TrimSpace(file.Name),
+		MimeType: strings.TrimSpace(file.MimeType),
+	}, nil
+}
+
+func fileBelongsToScope(file *dto.UploadFile, scope Scope) bool {
+	if file == nil {
+		return false
+	}
+	scopeOrganizationID := strings.TrimSpace(scope.OrganizationID.String())
+	if strings.TrimSpace(file.OrganizationID) == scopeOrganizationID || strings.TrimSpace(file.TenantID) == scopeOrganizationID {
+		return true
+	}
+	if !file.IsTemporary || !isZeroUUIDString(file.OrganizationID) {
+		return false
+	}
+	return strings.TrimSpace(string(file.CreatedByRole)) == string(dto.CreatedByRoleAccount) &&
+		strings.TrimSpace(file.CreatedBy) == strings.TrimSpace(scope.AccountID.String())
+}
+
+func isZeroUUIDString(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed == "" || trimmed == "00000000-0000-0000-0000-000000000000"
+}
+
+func isSupportedReferenceImage(mimeType, extension string) bool {
+	normalizedMime := strings.ToLower(strings.TrimSpace(mimeType))
+	if strings.HasPrefix(normalizedMime, "image/") {
+		return true
+	}
+	switch strings.ToLower(strings.Trim(strings.TrimSpace(extension), ".")) {
+	case "jpg", "jpeg", "png", "webp", "gif":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *service) cleanupGeneratedFiles(ctx context.Context, files []ImageFile) error {
@@ -468,6 +559,9 @@ func ErrorCode(err error) string {
 		ErrBillingContextRequired,
 		ErrUpstreamFailed,
 		ErrImageSaveFailed,
+		ErrReferenceImageRequired,
+		ErrReferenceImageInvalid,
+		ErrReferenceImageUnsupported,
 	} {
 		if errors.Is(err, candidate) {
 			return candidate.Error()

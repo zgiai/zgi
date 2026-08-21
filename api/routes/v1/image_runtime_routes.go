@@ -18,6 +18,7 @@ type ImageRuntimeRouteDeps struct {
 	LLMClient       llmclient.LLMClient
 	ChatService     chatruntime.Service
 	AccountService  interfaces.AccountService
+	FileService     interfaces.FileService
 }
 
 func RegisterImageRuntimeRoutes(router *gin.RouterGroup, deps ImageRuntimeRouteDeps) {
@@ -36,7 +37,10 @@ func RegisterImageRuntimeRoutes(router *gin.RouterGroup, deps ImageRuntimeRouteD
 	if deps.AccountService == nil {
 		panic("image runtime routes require account service")
 	}
-	module := imagemodule.NewModule(deps.AvailableModels, deps.Routes, deps.LLMClient, deps.ChatService)
+	if deps.FileService == nil {
+		panic("image runtime routes require file service")
+	}
+	module := imagemodule.NewModule(deps.AvailableModels, deps.Routes, deps.LLMClient, deps.ChatService, deps.FileService)
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
