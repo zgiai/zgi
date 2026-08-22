@@ -197,6 +197,35 @@ func TestApplyCurrentAssetProductStatusFilterUsesTextComparisonForPostgres(t *te
 	}
 }
 
+func TestApplyVisibleFolderAccessFilterUsesAuthorizedWorkspaceScopeForPartialTeam(t *testing.T) {
+	db := openFileFolderPostgresMockDB(t)
+
+	query := db.Session(&gorm.Session{DryRun: true}).Model(&file_model.FileFolder{}).
+		Where("organization_id = ?", "org-1").
+		Where("workspace_id = ?", "workspace-a")
+	query = applyVisibleFolderAccessFilter(query, []string{"workspace-a", "workspace-b"}, "organization-owner")
+	query.Find(&[]file_model.FileFolder{})
+
+	sql := query.Statement.SQL.String()
+	if !strings.Contains(sql, "ffp.workspace_id::text = ANY(string_to_array(") {
+		t.Fatalf("expected partial-team filter to use the authorized workspace scope, got SQL: %s", sql)
+	}
+	if strings.Contains(sql, "workspace_members") {
+		t.Fatalf("partial-team filter must not require a direct workspace membership, got SQL: %s", sql)
+	}
+
+	var foundAuthorizedScope bool
+	for _, value := range query.Statement.Vars {
+		if value == "workspace-a,workspace-b" {
+			foundAuthorizedScope = true
+			break
+		}
+	}
+	if !foundAuthorizedScope {
+		t.Fatalf("query vars = %#v, want the full authorized workspace scope", query.Statement.Vars)
+	}
+}
+
 func TestFileFolderRepositoryFolderNameExistsScopesToSiblingDirectory(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
