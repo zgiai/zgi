@@ -182,6 +182,10 @@ interface AIChatShellProps {
   }) => React.ReactNode;
   onSelectConversation?: (id: string) => void;
   onStartNewConversation?: () => void;
+  routeConversationId?: string | null;
+  isConversationTransitioning?: boolean;
+  conversationListTitle?: string;
+  conversationListDescription?: string;
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
   enableMessageReplay?: boolean;
@@ -195,12 +199,12 @@ interface AIChatShellProps {
 }
 
 const CHAT_THEME_PRIMARY: Record<string, string> = {
-  blue: '217 91% 60%',
-  emerald: '160 84% 39%',
-  violet: '262 83% 58%',
-  rose: '346 77% 50%',
-  amber: '38 92% 50%',
-  slate: '215 20% 45%',
+  blue: 'hsl(217 91% 60%)',
+  emerald: 'hsl(160 84% 39%)',
+  violet: 'hsl(262 83% 58%)',
+  rose: 'hsl(346 77% 50%)',
+  amber: 'hsl(38 92% 50%)',
+  slate: 'hsl(215 20% 45%)',
 };
 const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
 const TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY = 'zgi:aichat:tool-governance-permission-tier';
@@ -316,6 +320,10 @@ export function AIChatShell({
   renderEmbeddedConversationControls,
   onSelectConversation,
   onStartNewConversation,
+  routeConversationId,
+  isConversationTransitioning = false,
+  conversationListTitle,
+  conversationListDescription,
   defaultSidebarOpen = true,
   showAssistantModelMeta = true,
   enableMessageReplay = true,
@@ -386,6 +394,9 @@ export function AIChatShell({
   const activeMessages = useStore(controller.store, selectActiveMessages);
   const activeMessagePagination = useStore(controller.store, selectActiveMessagePagination);
   const isLoadingMessages = useStore(controller.store, state => state.isLoadingMessages);
+  const selectedConversationId =
+    routeConversationId === undefined ? activeConversationId : routeConversationId;
+  const effectiveIsLoadingMessages = isLoadingMessages || isConversationTransitioning;
   const isLoadingConversationList = useStore(controller.store, state => state.isLoadingList);
   const isLoadingOlderMessages = useStore(controller.store, selectIsLoadingOlderMessages);
   const isRecoveringMessages = useStore(controller.store, selectIsRecoveringMessages);
@@ -407,7 +418,7 @@ export function AIChatShell({
     synthesizer: speechSynthesizer,
     messages: activeMessages,
     conversationId: activeConversationId,
-    isLoadingMessages,
+    isLoadingMessages: effectiveIsLoadingMessages,
     playbackErrorMessages: speechPlaybackErrorMessages,
   });
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
@@ -564,7 +575,8 @@ export function AIChatShell({
     () => selectBranchNavigationByMessageId(displayMessageIds, messageTopology),
     [displayMessageIds, messageTopology]
   );
-  const isHome = !activeConversationId && messages.length === 0 && !isSending;
+  const isHome =
+    !isConversationTransitioning && !activeConversationId && messages.length === 0 && !isSending;
   const modelMissing = requireModel && !isModelInitializing && !modelSelectorValue.model;
   const {
     bottomRef,
@@ -575,7 +587,7 @@ export function AIChatShell({
   } = useAIChatScroll({
     messages,
     activeMessagePagination,
-    isLoadingMessages,
+    isLoadingMessages: effectiveIsLoadingMessages,
     isLoadingOlderMessages,
     isSending,
     bottomInsetHeight: inputAreaHeight,
@@ -642,7 +654,9 @@ export function AIChatShell({
       (activeUserInputMessage?.status === 'waiting_question' &&
         activeUserInputRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE)
   );
-  const messageActionsLocked = Boolean(activeWorkflowApprovalRequest);
+  const messageActionsLocked = Boolean(
+    activeWorkflowApprovalRequest || isConversationTransitioning
+  );
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
   const visiblePendingUserMessage =
     pendingUserMessage && isSending && !hasActiveStreamingMessage ? pendingUserMessage : null;
@@ -1404,7 +1418,7 @@ export function AIChatShell({
       {!isEmbedded ? (
         <div className="hidden md:block">
           <Sidebar
-            activeId={activeConversationId}
+            activeId={selectedConversationId}
             conversations={conversationSummaries}
             isOpen={sidebarOpen}
             isHome={isHome}
@@ -1418,6 +1432,8 @@ export function AIChatShell({
             pagination={conversationPagination}
             isLoadingList={isLoadingConversationList}
             onLoadMore={handleLoadMoreConversations}
+            title={conversationListTitle}
+            description={conversationListDescription}
           />
         </div>
       ) : null}
@@ -1468,7 +1484,7 @@ export function AIChatShell({
             activeConversation={activeConversation}
             activeMessageCount={activeMessages.length}
             branchNavigationByMessageId={branchNavigationByMessageId}
-            isLoadingMessages={isLoadingMessages}
+            isLoadingMessages={effectiveIsLoadingMessages}
             isLoadingOlderMessages={isLoadingOlderMessages}
             isSending={isSending || messageActionsLocked}
             streamingByMessageId={streamingByMessageId}
@@ -1507,7 +1523,7 @@ export function AIChatShell({
           />
 
           <AIChatHomeView
-            isVisible={isHome && !isLoadingMessages}
+            isVisible={isHome && !effectiveIsLoadingMessages}
             suggestions={suggestions}
             onSelectSuggestion={setInput}
             brand={homeBrand}
@@ -1559,7 +1575,7 @@ export function AIChatShell({
           <AIChatInputArea
             isEmbedded={isEmbedded}
             isHome={isHome}
-            isLoadingMessages={isLoadingMessages}
+            isLoadingMessages={effectiveIsLoadingMessages}
             input={input}
             modelSelectorValue={modelSelectorValue}
             modelSelectorWarning={modelSelectorWarning}
@@ -1633,7 +1649,7 @@ export function AIChatShell({
           )}
         >
           <Sidebar
-            activeId={activeConversationId}
+            activeId={selectedConversationId}
             conversations={conversationSummaries}
             isOpen
             isHome={isHome}
@@ -1647,6 +1663,8 @@ export function AIChatShell({
             useBackNavigation
             search={searchConversations}
             searchKey={conversationSearchKey}
+            title={conversationListTitle}
+            description={conversationListDescription}
           />
         </div>
       ) : embeddedAssetAuditOverlayOpen ? (
@@ -1666,13 +1684,19 @@ export function AIChatShell({
 
       {!isEmbedded ? (
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-          <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
-            <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>
+          <SheetContent
+            side="left"
+            className="w-screen max-w-none p-0 sm:w-96 sm:max-w-sm"
+            showClose={false}
+          >
+            <SheetTitle className="sr-only">
+              {conversationListTitle || t('chat.conversations')}
+            </SheetTitle>
             <SheetDescription className="sr-only">
-              {t('consoleChat.conversationListDescription')}
+              {conversationListDescription || t('consoleChat.conversationListDescription')}
             </SheetDescription>
             <Sidebar
-              activeId={activeConversationId}
+              activeId={selectedConversationId}
               conversations={conversationSummaries}
               isOpen
               isHome={isHome}
@@ -1689,6 +1713,8 @@ export function AIChatShell({
               pagination={conversationPagination}
               isLoadingList={isLoadingConversationList}
               onLoadMore={handleLoadMoreConversations}
+              title={conversationListTitle}
+              description={conversationListDescription}
             />
           </SheetContent>
         </Sheet>

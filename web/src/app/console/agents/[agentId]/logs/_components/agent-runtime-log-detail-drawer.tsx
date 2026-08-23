@@ -43,6 +43,7 @@ interface AgentRuntimeLogDetailDrawerProps {
   isLoading: boolean;
   error?: string | null;
   sourceLabel?: string | null;
+  footer?: ReactNode;
 }
 
 const AGENT_RUNTIME_HIDDEN_SKILL_INSTRUCTIONS = '__ZGI_HIDDEN_SKILL_INSTRUCTIONS__';
@@ -582,6 +583,7 @@ export function AgentRuntimeLogDetailDrawer({
   isLoading,
   error,
   sourceLabel,
+  footer,
 }: AgentRuntimeLogDetailDrawerProps) {
   const t = useT('webapp');
   const tAgents = useT('agents');
@@ -830,6 +832,7 @@ export function AgentRuntimeLogDetailDrawer({
             )}
           </main>
         </div>
+        {footer ? <div className="shrink-0 border-t px-5 py-4">{footer}</div> : null}
       </SheetContent>
     </Sheet>
   );

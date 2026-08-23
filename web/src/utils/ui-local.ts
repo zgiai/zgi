@@ -87,6 +87,7 @@ export interface UiLocal {
   sidebar?: {
     consoleCollapsed?: boolean;
     agentCollapsed?: boolean;
+    digitalHumanCollapsed?: boolean;
     dbCollapsed?: boolean;
     datasetCollapsed?: boolean;
     appCollapsed?: boolean;
@@ -250,7 +251,14 @@ export function clearAiModelSelections(accountId?: string): void {
   }
 }
 
-export type SidebarId = 'console' | 'agent' | 'db' | 'dataset' | 'app' | 'dashboard';
+export type SidebarId =
+  | 'console'
+  | 'agent'
+  | 'digitalHuman'
+  | 'db'
+  | 'dataset'
+  | 'app'
+  | 'dashboard';
 
 export function getSidebarCollapsed(id: SidebarId, fallback: boolean): boolean {
   const ui = readFromStorage();
@@ -261,6 +269,9 @@ export function getSidebarCollapsed(id: SidebarId, fallback: boolean): boolean {
       break;
     case 'agent':
       v = ui.sidebar?.agentCollapsed;
+      break;
+    case 'digitalHuman':
+      v = ui.sidebar?.digitalHumanCollapsed;
       break;
     case 'dataset':
       v = ui.sidebar?.datasetCollapsed;
@@ -285,13 +296,15 @@ export function saveSidebarCollapsed(id: SidebarId, collapsed: boolean): void {
       ? 'consoleCollapsed'
       : id === 'agent'
         ? 'agentCollapsed'
-        : id === 'dataset'
-          ? 'datasetCollapsed'
-          : id === 'app'
-            ? 'appCollapsed'
-            : id === 'dashboard'
-              ? 'dashboardCollapsed'
-              : 'dbCollapsed';
+        : id === 'digitalHuman'
+          ? 'digitalHumanCollapsed'
+          : id === 'dataset'
+            ? 'datasetCollapsed'
+            : id === 'app'
+              ? 'appCollapsed'
+              : id === 'dashboard'
+                ? 'dashboardCollapsed'
+                : 'dbCollapsed';
   const current = readFromStorage();
   const next: UiLocal = {
     ...current,

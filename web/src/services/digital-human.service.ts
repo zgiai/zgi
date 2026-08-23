@@ -2,20 +2,19 @@ import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from './types/common';
 import type {
   CreateDigitalHumanRequest,
-  CreateDigitalHumanRoleTemplateRequest,
+  CreateDigitalHumanPersonaTemplateRequest,
   DigitalHumanDetail,
-  DigitalHumanChannelBindingView,
   DigitalHumanChannelDelivery,
-  DigitalHumanChannelConversationDiscovery,
   DigitalHumanChannelInboundEvent,
   DigitalHumanChannelInstallation,
   DigitalHumanChannelPage,
   DigitalHumanList,
-  DigitalHumanRoleAssignmentInput,
-  DigitalHumanRoleTemplateDetail,
-  DigitalHumanRoleTemplateList,
+  DigitalHumanPersonaTemplate,
+  DigitalHumanPersonaTemplateList,
   DigitalHumanRun,
   DigitalHumanRunList,
+  DigitalHumanRunRuntimeLog,
+  DigitalHumanVersionList,
   DigitalHumanMemoryList,
   DigitalHumanMemoryListParams,
   DigitalHumanMemoryMutationResult,
@@ -24,15 +23,17 @@ import type {
   DigitalHumanResourceBindingInput,
   DigitalHumanResourceCandidateList,
   DraftResourceBindings,
-  DraftRoleAssignments,
   ManualDigitalHumanInvocationRequest,
   ManualDigitalHumanInvocationResponse,
-  CreateDigitalHumanChannelBindingRequest,
   CreateDigitalHumanChannelInstallationRequest,
   PublishDigitalHumanRequest,
+  RestoreDigitalHumanVersionRequest,
+  DigitalHumanVersionRestorePreview,
   UpdateDigitalHumanDraftRequest,
   UpdateDigitalHumanChannelInstallationRequest,
+  UpdateDigitalHumanChannelCredentialRequest,
   UpdateDigitalHumanRequest,
+  UpdateDigitalHumanPersonaTemplateRequest,
 } from './types/digital-human';
 
 class DigitalHumanService extends BaseService {
@@ -77,43 +78,58 @@ class DigitalHumanService extends BaseService {
     return this.request('post', `/digital-humans/${id}/publish`, data);
   }
 
-  listRoleTemplates(params?: {
+  listVersions(
+    id: string,
+    params?: { page?: number; page_size?: number }
+  ): Promise<ApiResponseData<DigitalHumanVersionList>> {
+    return this.request('get', `/digital-humans/${id}/versions`, undefined, { params });
+  }
+
+  previewVersionRestore(
+    id: string,
+    versionId: string
+  ): Promise<ApiResponseData<DigitalHumanVersionRestorePreview>> {
+    return this.request('get', `/digital-humans/${id}/versions/${versionId}/restore-preview`);
+  }
+
+  restoreVersion(
+    id: string,
+    data: RestoreDigitalHumanVersionRequest
+  ): Promise<ApiResponseData<DigitalHumanDetail>> {
+    return this.request('post', `/digital-humans/${id}/versions/restore`, data);
+  }
+
+  listPersonaTemplates(params?: {
     page?: number;
     page_size?: number;
     search?: string;
-  }): Promise<ApiResponseData<DigitalHumanRoleTemplateList>> {
-    return this.request('get', '/digital-human-role-templates', undefined, { params });
+  }): Promise<ApiResponseData<DigitalHumanPersonaTemplateList>> {
+    return this.request('get', '/digital-human-persona-templates', undefined, { params });
   }
 
-  getRoleTemplate(id: string): Promise<ApiResponseData<DigitalHumanRoleTemplateDetail>> {
-    return this.request('get', `/digital-human-role-templates/${id}`);
+  getPersonaTemplate(id: string): Promise<ApiResponseData<DigitalHumanPersonaTemplate>> {
+    return this.request('get', `/digital-human-persona-templates/${id}`);
   }
 
-  createRoleTemplate(
-    data: CreateDigitalHumanRoleTemplateRequest
-  ): Promise<ApiResponseData<DigitalHumanRoleTemplateDetail>> {
-    return this.request('post', '/digital-human-role-templates', data);
+  createPersonaTemplate(
+    data: CreateDigitalHumanPersonaTemplateRequest
+  ): Promise<ApiResponseData<DigitalHumanPersonaTemplate>> {
+    return this.request('post', '/digital-human-persona-templates', data);
   }
 
-  publishRoleTemplate(
+  updatePersonaTemplate(
     id: string,
-    data: PublishDigitalHumanRequest
-  ): Promise<ApiResponseData<DigitalHumanRoleTemplateDetail>> {
-    return this.request('post', `/digital-human-role-templates/${id}/publish`, data);
+    data: UpdateDigitalHumanPersonaTemplateRequest
+  ): Promise<ApiResponseData<DigitalHumanPersonaTemplate>> {
+    return this.request('patch', `/digital-human-persona-templates/${id}`, data);
   }
 
-  getDraftRoles(id: string): Promise<ApiResponseData<DraftRoleAssignments>> {
-    return this.request('get', `/digital-humans/${id}/draft/roles`);
-  }
-
-  replaceDraftRoles(
+  deletePersonaTemplate(
     id: string,
-    expectedDraftLockVersion: number,
-    items: DigitalHumanRoleAssignmentInput[]
-  ): Promise<ApiResponseData<DraftRoleAssignments>> {
-    return this.request('put', `/digital-humans/${id}/draft/roles`, {
-      expected_draft_lock_version: expectedDraftLockVersion,
-      items,
+    expectedRevision: number
+  ): Promise<ApiResponseData<{ deleted: true }>> {
+    return this.request('delete', `/digital-human-persona-templates/${id}`, undefined, {
+      params: { expected_revision: expectedRevision },
     });
   }
 
@@ -162,6 +178,10 @@ class DigitalHumanService extends BaseService {
 
   getRun(id: string, runId: string): Promise<ApiResponseData<DigitalHumanRun>> {
     return this.request('get', `/digital-humans/${id}/runs/${runId}`);
+  }
+
+  getRunRuntimeLog(id: string, runId: string): Promise<ApiResponseData<DigitalHumanRunRuntimeLog>> {
+    return this.request('get', `/digital-humans/${id}/runs/${runId}/runtime-log`);
   }
 
   cancelRun(id: string, runId: string): Promise<ApiResponseData<{ run: DigitalHumanRun }>> {
@@ -228,37 +248,20 @@ class DigitalHumanService extends BaseService {
     );
   }
 
-  deleteChannelInstallation(
+  updateChannelInstallationCredential(
     id: string,
     installationId: string,
-    removeBindings = false
-  ): Promise<ApiResponseData<unknown>> {
-    const query = removeBindings ? '?remove_bindings=true' : '';
+    data: UpdateDigitalHumanChannelCredentialRequest
+  ): Promise<ApiResponseData<DigitalHumanChannelInstallation>> {
     return this.request(
-      'delete',
-      `/digital-humans/${id}/channels/installations/${installationId}${query}`
+      'put',
+      `/digital-humans/${id}/channels/installations/${installationId}/credential`,
+      data
     );
   }
 
-  listChannelBindings(id: string): Promise<ApiResponseData<DigitalHumanChannelBindingView[]>> {
-    return this.request('get', `/digital-humans/${id}/channels/bindings`);
-  }
-
-  listChannelDiscoveries(
-    id: string
-  ): Promise<ApiResponseData<DigitalHumanChannelConversationDiscovery[]>> {
-    return this.request('get', `/digital-humans/${id}/channels/discoveries`);
-  }
-
-  createChannelBinding(
-    id: string,
-    data: CreateDigitalHumanChannelBindingRequest
-  ): Promise<ApiResponseData<DigitalHumanChannelBindingView>> {
-    return this.request('post', `/digital-humans/${id}/channels/bindings`, data);
-  }
-
-  deleteChannelBinding(id: string, bindingId: string): Promise<ApiResponseData<unknown>> {
-    return this.request('delete', `/digital-humans/${id}/channels/bindings/${bindingId}`);
+  deleteChannelInstallation(id: string, installationId: string): Promise<ApiResponseData<unknown>> {
+    return this.request('delete', `/digital-humans/${id}/channels/installations/${installationId}`);
   }
 
   listChannelEvents(

@@ -8,16 +8,17 @@ import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
 import type {
   CreateDigitalHumanRequest,
-  CreateDigitalHumanRoleTemplateRequest,
+  CreateDigitalHumanPersonaTemplateRequest,
   DigitalHumanBindingType,
   DigitalHumanMemoryListParams,
   DigitalHumanMemoryProposalRequest,
   DigitalHumanResourceBindingInput,
-  DigitalHumanRoleAssignmentInput,
   ManualDigitalHumanInvocationRequest,
   PublishDigitalHumanRequest,
+  RestoreDigitalHumanVersionRequest,
   UpdateDigitalHumanDraftRequest,
   UpdateDigitalHumanRequest,
+  UpdateDigitalHumanPersonaTemplateRequest,
 } from '@/services/types/digital-human';
 import { getErrorMessage } from '@/utils/error-notifications';
 
@@ -49,29 +50,42 @@ export function useDigitalHuman(id: string, enabled = true) {
   });
 }
 
-export function useDigitalHumanRoleTemplates(enabled = true) {
+export function useDigitalHumanVersions(id: string, enabled = true) {
   return useQuery({
-    queryKey: DIGITAL_HUMAN_KEYS.roleTemplates(),
-    queryFn: () => digitalHumanService.listRoleTemplates({ page: 1, page_size: 100 }),
-    enabled,
-    staleTime: 15_000,
-  });
-}
-
-export function useDigitalHumanRoleTemplate(id: string, enabled = true) {
-  return useQuery({
-    queryKey: DIGITAL_HUMAN_KEYS.roleTemplate(id),
-    queryFn: () => digitalHumanService.getRoleTemplate(id),
+    queryKey: DIGITAL_HUMAN_KEYS.versions(id),
+    queryFn: () => digitalHumanService.listVersions(id, { page: 1, page_size: 100 }),
     enabled: enabled && Boolean(id),
     staleTime: 10_000,
   });
 }
 
-export function useDigitalHumanDraftRoles(id: string, enabled = true) {
+export function useDigitalHumanVersionRestorePreview(
+  id: string,
+  versionId: string,
+  enabled = true
+) {
   return useQuery({
-    queryKey: DIGITAL_HUMAN_KEYS.draftRoles(id),
-    queryFn: () => digitalHumanService.getDraftRoles(id),
-    enabled: enabled && Boolean(id),
+    queryKey: DIGITAL_HUMAN_KEYS.versionRestorePreview(id, versionId),
+    queryFn: () => digitalHumanService.previewVersionRestore(id, versionId),
+    enabled: enabled && Boolean(id) && Boolean(versionId),
+    staleTime: 0,
+  });
+}
+
+export function useDigitalHumanPersonaTemplates(
+  params: { page: number; pageSize: number; search?: string },
+  enabled = true
+) {
+  const queryParams = {
+    page: params.page,
+    page_size: params.pageSize,
+    search: params.search?.trim() || undefined,
+  };
+  return useQuery({
+    queryKey: DIGITAL_HUMAN_KEYS.personaTemplates(queryParams),
+    queryFn: () => digitalHumanService.listPersonaTemplates(queryParams),
+    enabled,
+    staleTime: 15_000,
   });
 }
 
@@ -130,6 +144,25 @@ export function useDigitalHumanRun(id: string, runId: string, enabled = true) {
   });
 }
 
+export function useDigitalHumanRunRuntimeLog(
+  id: string,
+  runId: string,
+  enabled = true,
+  pollWhilePending = false
+) {
+  return useQuery({
+    queryKey: DIGITAL_HUMAN_KEYS.runRuntimeLog(id, runId),
+    queryFn: () => digitalHumanService.getRunRuntimeLog(id, runId),
+    enabled: enabled && Boolean(id) && Boolean(runId),
+    refetchInterval: query => {
+      const status = query.state.data?.data?.detail?.status;
+      return pollWhilePending || (status && ['queued', 'running', 'canceling'].includes(status))
+        ? 1_500
+        : false;
+    },
+  });
+}
+
 export function useDigitalHumanMemories(
   id: string,
   params: DigitalHumanMemoryListParams = {},
@@ -150,7 +183,6 @@ export function useDigitalHumanMutations(id?: string) {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.detail(digitalHumanId) }),
       queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.lists() }),
-      queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.draftRoles(digitalHumanId) }),
       queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.draftBindings(digitalHumanId) }),
     ]);
   };
@@ -204,38 +236,68 @@ export function useDigitalHumanMutations(id?: string) {
     onError: (error, variables) =>
       handleConflict(error, variables.digitalHumanId, t('errors.publish')),
   });
-  const createRole = useMutation({
-    mutationFn: (request: CreateDigitalHumanRoleTemplateRequest) =>
-      digitalHumanService.createRoleTemplate(request),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.roleTemplates() }),
-    onError: error => mutationError(error, t('errors.role')),
-  });
-  const publishRole = useMutation({
-    mutationFn: ({ roleId, request }: { roleId: string; request: PublishDigitalHumanRequest }) =>
-      digitalHumanService.publishRoleTemplate(roleId, request),
-    onSuccess: (_, variables) =>
-      Promise.all([
-        queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.roleTemplates() }),
-        queryClient.invalidateQueries({
-          queryKey: DIGITAL_HUMAN_KEYS.roleTemplate(variables.roleId),
-        }),
-      ]),
-    onError: error => mutationError(error, t('errors.role')),
-  });
-  const replaceRoles = useMutation({
+  const restoreVersion = useMutation({
     mutationFn: ({
       digitalHumanId,
-      expectedDraftLockVersion,
-      items,
+      request,
     }: {
       digitalHumanId: string;
-      expectedDraftLockVersion: number;
-      items: DigitalHumanRoleAssignmentInput[];
-    }) => digitalHumanService.replaceDraftRoles(digitalHumanId, expectedDraftLockVersion, items),
-    onSuccess: (_, variables) => invalidateDetail(variables.digitalHumanId),
-    onError: (error, variables) =>
-      handleConflict(error, variables.digitalHumanId, t('errors.role')),
+      request: RestoreDigitalHumanVersionRequest;
+    }) => digitalHumanService.restoreVersion(digitalHumanId, request),
+    onSuccess: (_, variables) =>
+      Promise.all([
+        invalidateDetail(variables.digitalHumanId),
+        queryClient.invalidateQueries({
+          queryKey: DIGITAL_HUMAN_KEYS.versions(variables.digitalHumanId),
+        }),
+      ]),
+    onError: (error, variables) => {
+      const code = isAxiosError(error)
+        ? (error.response?.data as { code?: string } | undefined)?.code
+        : undefined;
+      if (code === 'digital_human.version.restore_impact_changed') {
+        toast.error(t('versionHistory.impactChanged'));
+        void queryClient.invalidateQueries({
+          queryKey: DIGITAL_HUMAN_KEYS.versionRestorePreview(
+            variables.digitalHumanId,
+            variables.request.version_id
+          ),
+        });
+        return;
+      }
+      handleConflict(error, variables.digitalHumanId, t('versionHistory.restoreFailed'));
+    },
+  });
+  const createPersonaTemplate = useMutation({
+    mutationFn: (request: CreateDigitalHumanPersonaTemplateRequest) =>
+      digitalHumanService.createPersonaTemplate(request),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.personaTemplates() }),
+    onError: error => mutationError(error, t('errors.role')),
+  });
+  const updatePersonaTemplate = useMutation({
+    mutationFn: ({
+      templateId,
+      request,
+    }: {
+      templateId: string;
+      request: UpdateDigitalHumanPersonaTemplateRequest;
+    }) => digitalHumanService.updatePersonaTemplate(templateId, request),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.personaTemplates() }),
+    onError: error => mutationError(error, t('errors.role')),
+  });
+  const deletePersonaTemplate = useMutation({
+    mutationFn: ({
+      templateId,
+      expectedRevision,
+    }: {
+      templateId: string;
+      expectedRevision: number;
+    }) => digitalHumanService.deletePersonaTemplate(templateId, expectedRevision),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.personaTemplates() }),
+    onError: error => mutationError(error, t('errors.role')),
   });
   const replaceBindings = useMutation({
     mutationFn: ({
@@ -337,9 +399,10 @@ export function useDigitalHumanMutations(id?: string) {
     update,
     updateDraft,
     publish,
-    createRole,
-    publishRole,
-    replaceRoles,
+    restoreVersion,
+    createPersonaTemplate,
+    updatePersonaTemplate,
+    deletePersonaTemplate,
     replaceBindings,
     invoke,
     cancelRun,

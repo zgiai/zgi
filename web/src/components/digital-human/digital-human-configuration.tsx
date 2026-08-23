@@ -1,11 +1,35 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
-import { AlertTriangle, Check, CheckCircle2, Loader2, Plus, Trash2 } from 'lucide-react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ChevronRight,
+  CircleHelp,
+  Loader2,
+  MessageSquareText,
+  Pencil,
+  Plus,
+  Search,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import { DigitalHumanResourceBindings } from '@/components/digital-human/digital-human-resource-bindings';
+import { useDigitalHumanDraftPersistence } from '@/components/digital-human/use-digital-human-draft-persistence';
+import {
+  useDigitalHumanDraftStore,
+  useRegisterDigitalHumanDraftEditor,
+} from '@/components/digital-human/digital-human-draft-store';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogBody,
@@ -15,83 +39,95 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
+import { Pagination } from '@/components/ui/pagination';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   useDigitalHuman,
-  useDigitalHumanDraftBindings,
-  useDigitalHumanDraftRoles,
   useDigitalHumanMutations,
-  useDigitalHumanRoleTemplates,
+  useDigitalHumanPersonaTemplates,
 } from '@/hooks/digital-human/use-digital-humans';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
-import type { DigitalHumanRoleAssignmentInput } from '@/services/types/digital-human';
+import { cn } from '@/lib/utils';
+import type {
+  DigitalHumanPersonaTemplate,
+  UpdateDigitalHumanDraftRequest,
+} from '@/services/types/digital-human';
 
-export function DigitalHumanSettings({ id }: { id: string }) {
-  const t = useT('digitalHumans');
+export type DigitalHumanConfigurationPanel = 'response';
+
+export function DigitalHumanConfigurationEditor({
+  id,
+  initialPanel,
+}: {
+  id: string;
+  initialPanel?: DigitalHumanConfigurationPanel | null;
+}) {
   const detailQuery = useDigitalHuman(id);
   const detail = detailQuery.data?.data;
+  const resetVersion = useDigitalHumanDraftStore(state => state.resetVersions[id] ?? 0);
   if (detailQuery.isLoading || !detail) {
     return <DigitalHumanConfigurationLoading />;
   }
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 md:px-8">
-      <PageIntroduction title={t('settings.title')} description={t('settings.description')} />
-      <IdentityCard id={id} key={`${detail.definition.revision}:${detail.draft.lock_version}`} />
-    </div>
-  );
-}
-
-export function DigitalHumanCapabilities({ id }: { id: string }) {
-  const t = useT('digitalHumans');
-  const detailQuery = useDigitalHuman(id);
-  if (detailQuery.isLoading || !detailQuery.data?.data) {
-    return <DigitalHumanConfigurationLoading />;
-  }
-  return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 md:px-8">
-      <PageIntroduction
-        title={t('capabilities.title')}
-        description={t('capabilities.description')}
-      />
-      <div className="grid gap-6 lg:grid-cols-[minmax(300px,0.75fr)_minmax(0,1.25fr)]">
-        <RolesCard id={id} />
-        <DigitalHumanResourceBindings id={id} />
-      </div>
-    </div>
+    <ConfigurationEditor
+      id={id}
+      initialPanel={initialPanel}
+      key={`${id}:${initialPanel ?? 'root'}:${resetVersion}`}
+    />
   );
 }
 
 function DigitalHumanConfigurationLoading() {
   return (
-    <div className="mx-auto max-w-5xl p-8">
-      <div className="h-72 animate-pulse rounded-xl bg-muted/40" />
+    <div className="grid min-h-full lg:grid-cols-2 lg:divide-x">
+      <div className="space-y-3 p-5">
+        <div className="h-5 w-28 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-64 animate-pulse rounded bg-muted/70" />
+        <div className="mt-5 h-56 animate-pulse rounded-xl bg-muted/50" />
+      </div>
+      <div className="p-5">
+        <div className="h-[420px] animate-pulse rounded-xl bg-muted/40" />
+      </div>
     </div>
   );
 }
 
-function PageIntroduction({ title, description }: { title: string; description: string }) {
-  return (
-    <div>
-      <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-    </div>
-  );
+type EditableDigitalHumanDraft = Omit<UpdateDigitalHumanDraftRequest, 'expected_lock_version'>;
+
+interface IdentityEditorSnapshot {
+  draft: EditableDigitalHumanDraft;
 }
 
-function IdentityCard({ id }: { id: string }) {
+function ConfigurationEditor({
+  id,
+  initialPanel,
+}: {
+  id: string;
+  initialPanel?: DigitalHumanConfigurationPanel | null;
+}) {
   const t = useT('digitalHumans');
   const permissions = useAccountPermissions();
   const detail = useDigitalHuman(id).data?.data;
   const mutations = useDigitalHumanMutations(id);
   const availableModels = useAvailableModels({ use_case: 'agent-runtime' });
-  const [name, setName] = useState(detail?.definition.name ?? '');
-  const [description, setDescription] = useState(detail?.definition.description ?? '');
+  const [identityName, setIdentityName] = useState(
+    detail?.draft.identity_name || detail?.definition.name || ''
+  );
   const [persona, setPersona] = useState(detail?.draft.persona ?? '');
-  const [rules, setRules] = useState((detail?.draft.rules ?? []).join('\n'));
+  const [goals, setGoals] = useState<string[]>(() => {
+    const initialGoals = (detail?.draft.goals ?? []).map(item => item.trim()).filter(Boolean);
+    return initialGoals.length > 0 ? initialGoals : [''];
+  });
+  const [rules, setRules] = useState<string[]>(() => {
+    const initialRules = (detail?.draft.rules ?? []).map(item => item.trim()).filter(Boolean);
+    return initialRules.length > 0 ? initialRules : [''];
+  });
   const [model, setModel] = useState(detail?.draft.default_model ?? '');
   const [intermediateMessagesEnabled, setIntermediateMessagesEnabled] = useState(
     detail?.draft.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true
@@ -99,512 +135,931 @@ function IdentityCard({ id }: { id: string }) {
   const [acknowledgementEnabled, setAcknowledgementEnabled] = useState(
     detail?.draft.trigger_policy?.channel_response?.acknowledgement_enabled ?? true
   );
-  // `useAvailableModels` returns a compact, already-filtered response whose
-  // entries do not include the full model catalog's `callable` projection.
+  const [activePanel, setActivePanel] = useState<DigitalHumanConfigurationPanel | null>(
+    initialPanel ?? null
+  );
   const models = availableModels.models;
   const canUpdate = permissions.hasPermission('digital_human.update');
+  const normalizedGoals = goals.map(item => item.trim()).filter(Boolean);
+  const normalizedRules = rules.map(item => item.trim()).filter(Boolean);
+  const draftLockVersionRef = useRef(detail?.draft.lock_version ?? 0);
+  const initialSnapshotRef = useRef<IdentityEditorSnapshot>({
+    draft: {
+      identity_name: detail?.draft.identity_name || detail?.definition.name || '',
+      persona: detail?.draft.persona ?? '',
+      goals: detail?.draft.goals ?? [],
+      rules: detail?.draft.rules ?? [],
+      default_model: detail?.draft.default_model ?? '',
+      memory_policy: detail?.draft.memory_policy ?? {
+        enabled: false,
+        ownership: 'digital_human',
+      },
+      trigger_policy: {
+        ...(detail?.draft.trigger_policy ?? {}),
+        manual: detail?.draft.trigger_policy?.manual ?? true,
+        channel_response: {
+          ...(detail?.draft.trigger_policy?.channel_response ?? {}),
+          intermediate_messages_enabled: intermediateMessagesEnabled,
+          acknowledgement_enabled: acknowledgementEnabled,
+        },
+      },
+    },
+  });
+  const savedDraftSignatureRef = useRef(serializeEditorPart(initialSnapshotRef.current.draft));
+
+  useEffect(() => {
+    if (!detail) return;
+    draftLockVersionRef.current = detail.draft.lock_version;
+  }, [detail]);
+
+  const currentSnapshot: IdentityEditorSnapshot = {
+    draft: {
+      identity_name: identityName.trim(),
+      persona: persona.trim(),
+      goals: normalizedGoals,
+      rules: normalizedRules,
+      default_model: model,
+      memory_policy: detail?.draft.memory_policy ?? {
+        enabled: false,
+        ownership: 'digital_human',
+      },
+      trigger_policy: {
+        ...(detail?.draft.trigger_policy ?? {}),
+        manual: detail?.draft.trigger_policy?.manual ?? true,
+        channel_response: {
+          ...(detail?.draft.trigger_policy?.channel_response ?? {}),
+          intermediate_messages_enabled: intermediateMessagesEnabled,
+          acknowledgement_enabled: acknowledgementEnabled,
+        },
+      },
+    },
+  };
+  const persistence = useDigitalHumanDraftPersistence({
+    currentPayload: currentSnapshot,
+    initialPayload: initialSnapshotRef.current,
+    enabled: canUpdate && Boolean(detail),
+    canSave: () => Boolean(identityName.trim() && persona.trim() && model.trim()),
+    savePayload: async snapshot => {
+      const draftSignature = serializeEditorPart(snapshot.draft);
+      const draftChanged = draftSignature !== savedDraftSignatureRef.current;
+      if (draftChanged) {
+        const draftResult = await mutations.updateDraft.mutateAsync({
+          digitalHumanId: id,
+          request: {
+            expected_lock_version: draftLockVersionRef.current,
+            ...snapshot.draft,
+          },
+        });
+        draftLockVersionRef.current = draftResult.data.lock_version;
+        savedDraftSignatureRef.current = draftSignature;
+      }
+      return { savedPayload: snapshot, updatedAt: Date.now() };
+    },
+  });
+
+  const manualSave = async () => {
+    if (!identityName.trim() || !persona.trim() || !model.trim()) {
+      toast.error(t('errors.required'));
+      return false;
+    }
+    return persistence.saveNow({ force: true });
+  };
+  useRegisterDigitalHumanDraftEditor(id, {
+    canUpdate,
+    saveState: persistence.saveState,
+    lastSavedAt: persistence.lastSavedAt,
+    isDirty: persistence.isDirty,
+    isSaving: persistence.isSaving,
+    saveNow: manualSave,
+  });
 
   if (!detail) return null;
-  const normalizedRules = rules
-    .split('\n')
-    .map(item => item.trim())
-    .filter(Boolean);
-  const dirty =
-    name.trim() !== detail.definition.name ||
-    description.trim() !== (detail.definition.description ?? '') ||
-    persona.trim() !== detail.draft.persona ||
-    normalizedRules.join('\n') !== (detail.draft.rules ?? []).join('\n') ||
-    model !== detail.draft.default_model ||
-    intermediateMessagesEnabled !==
-      (detail.draft.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true) ||
-    acknowledgementEnabled !==
-      (detail.draft.trigger_policy?.channel_response?.acknowledgement_enabled ?? true);
-  const save = async () => {
-    if (!name.trim() || !persona.trim() || !model.trim()) {
-      toast.error(t('errors.required'));
-      return;
-    }
-    await mutations.update.mutateAsync({
-      digitalHumanId: id,
-      request: {
-        expected_revision: detail.definition.revision,
-        name: name.trim(),
-        description: description.trim(),
-      },
-    });
-    await mutations.updateDraft.mutateAsync({
-      digitalHumanId: id,
-      request: {
-        expected_lock_version: detail.draft.lock_version,
-        persona: persona.trim(),
-        rules: normalizedRules,
-        default_model: model,
-        memory_policy: detail.draft.memory_policy ?? {
-          enabled: false,
-          ownership: 'digital_human',
-        },
-        trigger_policy: {
-          ...(detail.draft.trigger_policy ?? {}),
-          manual: detail.draft.trigger_policy?.manual ?? true,
-          channel_response: {
-            ...(detail.draft.trigger_policy?.channel_response ?? {}),
-            intermediate_messages_enabled: intermediateMessagesEnabled,
-            acknowledgement_enabled: acknowledgementEnabled,
-          },
-        },
-      },
-    });
-    toast.success(t('configuration.saved'));
+  const selectedModel = models.find(item => item.model === model);
+  const modelValue: ModelSelectorValue = {
+    provider: selectedModel?.provider ?? '',
+    model: selectedModel?.model ?? '',
   };
+  const modelUnavailable = Boolean(model && !selectedModel && !availableModels.isLoading);
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.identityTitle')}</CardTitle>
-          <CardDescription>{t('settings.identityDescription')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Field label={t('fields.name')}>
-            <Input
-              value={name}
-              onChange={event => setName(event.target.value)}
-              disabled={!canUpdate}
-            />
-          </Field>
-          <Field label={t('fields.description')}>
-            <Textarea
-              value={description}
-              onChange={event => setDescription(event.target.value)}
-              disabled={!canUpdate}
-            />
-          </Field>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.behaviorTitle')}</CardTitle>
-          <CardDescription>{t('settings.behaviorDescription')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Field label={t('fields.persona')}>
-            <Textarea
-              rows={7}
-              value={persona}
-              onChange={event => setPersona(event.target.value)}
-              disabled={!canUpdate}
-              placeholder={t('settings.personaPlaceholder')}
-            />
-          </Field>
-          <Field label={t('fields.rules')}>
-            <Textarea
-              rows={6}
-              value={rules}
-              onChange={event => setRules(event.target.value)}
-              disabled={!canUpdate}
-              placeholder={t('settings.rulesPlaceholder')}
-            />
-          </Field>
-          <Field label={t('fields.model')}>
-            <select
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-              value={model}
-              onChange={event => setModel(event.target.value)}
-              disabled={!canUpdate}
-            >
-              {model && !models.some(item => item.model === model) ? (
-                <option value={model}>{model}</option>
+    <div className="grid min-h-full min-w-0 bg-background lg:h-full lg:min-h-0 lg:grid-cols-2 lg:divide-x">
+      <section className="min-h-0 min-w-0 border-b lg:h-full lg:overflow-y-auto lg:border-b-0">
+        {activePanel === null ? (
+          <div className="min-w-0">
+            <section id="configuration-model" className="border-b p-4 md:p-5">
+              <h2 className="mb-3 text-sm font-semibold">{t('settings.modelTitle')}</h2>
+              <ModelSelector
+                modelType="text-chat"
+                availabilityUseCase="agent-runtime"
+                preferredUseCase="agent"
+                capabilityFilter={{ features_tool_call: true }}
+                modelsOverride={models}
+                value={modelValue}
+                onChange={value => setModel(value.model)}
+                placeholder={t('settings.modelPlaceholder')}
+                disabled={!canUpdate || availableModels.isLoading}
+                hasError={modelUnavailable}
+                className="w-full"
+              />
+              {modelUnavailable ? (
+                <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                  <span>{t('settings.modelUnavailable')}</span>
+                </div>
               ) : null}
-              <option value="">—</option>
-              {models.map(item => (
-                <option key={`${item.provider}:${item.model}`} value={item.model}>
-                  {item.model_name || item.model}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.channelResponseTitle')}</CardTitle>
-          <CardDescription>{t('settings.channelResponseDescription')}</CardDescription>
-        </CardHeader>
-        <CardContent className="divide-y rounded-lg border px-4">
-          <div className="flex items-start justify-between gap-6 py-4">
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{t('settings.intermediateMessages')}</div>
-              <p className="text-xs leading-5 text-muted-foreground">
-                {t('settings.intermediateMessagesDescription')}
-              </p>
+            </section>
+
+            <section id="configuration-identity" className="space-y-5 border-b p-4 md:p-5">
+              <div>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold">{t('settings.behaviorTitle')}</h3>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {t('settings.behaviorDescription')}
+                    </p>
+                  </div>
+                  {canUpdate ? (
+                    <PersonaTemplateActions
+                      identityName={identityName}
+                      persona={persona}
+                      goals={normalizedGoals}
+                      rules={normalizedRules}
+                      onApply={(nextIdentityName, nextPersona, nextGoals, nextRules) => {
+                        setIdentityName(nextIdentityName);
+                        setPersona(nextPersona);
+                        setGoals(nextGoals.length > 0 ? nextGoals : ['']);
+                        setRules(nextRules.length > 0 ? nextRules : ['']);
+                      }}
+                    />
+                  ) : null}
+                </div>
+                <div className="space-y-4">
+                  <Field
+                    label={t('fields.identityName')}
+                    description={t('settings.identityNameDescription')}
+                    required
+                  >
+                    <Input
+                      value={identityName}
+                      onChange={event => setIdentityName(event.target.value)}
+                      disabled={!canUpdate}
+                      placeholder={t('settings.identityNamePlaceholder')}
+                      aria-label={t('fields.identityName')}
+                      aria-required="true"
+                    />
+                  </Field>
+                  <Field
+                    label={t('fields.persona')}
+                    description={t('settings.personaDescription')}
+                    required
+                  >
+                    <Textarea
+                      rows={5}
+                      value={persona}
+                      onChange={event => setPersona(event.target.value)}
+                      disabled={!canUpdate}
+                      placeholder={t('settings.personaPlaceholder')}
+                      aria-label={t('fields.persona')}
+                      aria-required="true"
+                    />
+                  </Field>
+                  <Field
+                    label={t('fields.rules')}
+                    description={t('settings.rulesDescription')}
+                    required
+                    action={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 shrink-0 gap-1.5 px-2.5"
+                        onClick={() => setRules([...rules, ''])}
+                        disabled={!canUpdate}
+                      >
+                        <Plus className="size-3.5" />
+                        {t('settings.addRule')}
+                      </Button>
+                    }
+                  >
+                    <RulesEditor
+                      rules={rules}
+                      onChange={setRules}
+                      disabled={!canUpdate}
+                      required
+                      removeLabel={t('settings.removeRule')}
+                      placeholder={t('settings.rulesPlaceholder')}
+                    />
+                  </Field>
+                  <Field
+                    label={t('fields.goals')}
+                    description={t('settings.goalsDescription')}
+                    action={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 shrink-0 gap-1.5 px-2.5"
+                        onClick={() => setGoals([...goals, ''])}
+                        disabled={!canUpdate}
+                      >
+                        <Plus className="size-3.5" />
+                        {t('settings.addGoal')}
+                      </Button>
+                    }
+                  >
+                    <RulesEditor
+                      rules={goals}
+                      onChange={setGoals}
+                      disabled={!canUpdate}
+                      removeLabel={t('settings.removeGoal')}
+                      placeholder={t('settings.goalsPlaceholder')}
+                    />
+                  </Field>
+                </div>
+              </div>
+            </section>
+
+            <div className="p-4 md:p-5">
+              <div className="overflow-hidden rounded-xl border bg-card">
+                <ConfigurationMenuItem
+                  id="configuration-behavior"
+                  icon={<MessageSquareText className="size-4" />}
+                  title={t('preferences.channelResponseTitle')}
+                  description={t('preferences.channelResponseDescription')}
+                  summary={t('configurationHub.responseEnabledCount', {
+                    count: Number(intermediateMessagesEnabled) + Number(acknowledgementEnabled),
+                  })}
+                  onClick={() => setActivePanel('response')}
+                  last
+                />
+              </div>
             </div>
-            <Switch
-              checked={intermediateMessagesEnabled}
-              onCheckedChange={setIntermediateMessagesEnabled}
-              disabled={!canUpdate}
-              aria-label={t('settings.intermediateMessages')}
+          </div>
+        ) : (
+          <div className="min-w-0">
+            <ConfigurationPanelHeader
+              title={t('preferences.channelResponseTitle')}
+              onBack={() => setActivePanel(null)}
+              backLabel={t('configurationHub.backToSettings')}
             />
+            {activePanel === 'response' ? (
+              <div className="p-4 md:p-5">
+                <p className="mb-4 text-xs leading-5 text-muted-foreground">
+                  {t('preferences.channelResponseDescription')}
+                </p>
+                <div className="min-w-0 divide-y rounded-lg border px-4">
+                  <PreferenceSwitch
+                    title={t('preferences.intermediateMessages')}
+                    description={t('preferences.intermediateMessagesDescription')}
+                    checked={intermediateMessagesEnabled}
+                    onCheckedChange={setIntermediateMessagesEnabled}
+                    disabled={!canUpdate}
+                  />
+                  <PreferenceSwitch
+                    title={t('preferences.acknowledgement')}
+                    description={t('preferences.acknowledgementDescription')}
+                    checked={acknowledgementEnabled}
+                    onCheckedChange={setAcknowledgementEnabled}
+                    disabled={!canUpdate}
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
-          <div className="flex items-start justify-between gap-6 py-4">
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{t('settings.acknowledgement')}</div>
-              <p className="text-xs leading-5 text-muted-foreground">
-                {t('settings.acknowledgementDescription')}
-              </p>
-            </div>
-            <Switch
-              checked={acknowledgementEnabled}
-              onCheckedChange={setAcknowledgementEnabled}
-              disabled={!canUpdate}
-              aria-label={t('settings.acknowledgement')}
-            />
-          </div>
-        </CardContent>
-      </Card>
-      {canUpdate ? (
-        <div className="sticky bottom-4 z-10 flex flex-col gap-3 rounded-xl border bg-background/95 p-4 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="text-sm font-medium">
-              {dirty ? t('settings.unsaved') : t('settings.saved')}
-            </div>
-            <p className="text-xs text-muted-foreground">{t('settings.saveHint')}</p>
-          </div>
-          <Button
-            onClick={() => void save()}
-            disabled={!dirty || mutations.update.isPending || mutations.updateDraft.isPending}
-          >
-            {mutations.update.isPending || mutations.updateDraft.isPending
-              ? t('configuration.saving')
-              : t('configuration.save')}
-          </Button>
+        )}
+      </section>
+
+      <section
+        id="configuration-capabilities"
+        className="min-h-0 min-w-0 scroll-mt-14 bg-muted/[0.08] lg:h-full lg:overflow-y-auto"
+      >
+        <div className="flex h-12 items-center border-b bg-background px-4 md:px-5">
+          <h2 className="text-sm font-semibold">{t('capabilities.title')}</h2>
         </div>
-      ) : null}
+        <div className="p-4 md:p-5">
+          <DigitalHumanResourceBindings id={id} />
+        </div>
+      </section>
     </div>
   );
 }
 
-export function DigitalHumanPublishPanel({ id }: { id: string }) {
-  const t = useT('digitalHumans');
-  const permissions = useAccountPermissions();
-  const detail = useDigitalHuman(id).data?.data;
-  const rolesQuery = useDigitalHumanDraftRoles(id);
-  const bindingsQuery = useDigitalHumanDraftBindings(id);
-  const mutations = useDigitalHumanMutations(id);
-  if (!detail) return null;
-  const rules = detail.draft.rules ?? [];
-  const checks = [
-    {
-      label: t('configuration.preflight.identity'),
-      ready: Boolean(detail.definition.name.trim() && detail.draft.persona.trim()),
-      blocking: true,
-    },
-    {
-      label: t('configuration.preflight.rules'),
-      ready: rules.some(rule => rule.trim()),
-      blocking: true,
-    },
-    {
-      label: t('configuration.preflight.model'),
-      ready: Boolean(detail.draft.default_model.trim()),
-      blocking: true,
-    },
-    {
-      label: t('configuration.preflight.roles'),
-      ready: Boolean(rolesQuery.data?.data?.items.length),
-      blocking: false,
-    },
-    {
-      label: t('configuration.preflight.bindings'),
-      ready: Boolean(bindingsQuery.data?.data?.items.length),
-      blocking: false,
-    },
-  ];
-  const preflightLoading = rolesQuery.isLoading || bindingsQuery.isLoading;
-  const blockingIssues = checks.filter(check => check.blocking && !check.ready);
-  const warningCount = checks.filter(check => !check.blocking && !check.ready).length;
-  const publish = async () => {
-    await mutations.publish.mutateAsync({
-      digitalHumanId: id,
-      request: {
-        expected_revision: detail.definition.revision,
-        expected_draft_lock_version: detail.draft.lock_version,
-      },
-    });
-    toast.success(t('configuration.publishedSuccess'));
-  };
+function ConfigurationMenuItem({
+  id,
+  icon,
+  title,
+  description,
+  summary,
+  onClick,
+  last = false,
+}: {
+  id: string;
+  icon: ReactNode;
+  title: string;
+  description: string;
+  summary: string;
+  onClick: () => void;
+  last?: boolean;
+}) {
   return (
-    <Card id="publish">
-      <CardHeader>
-        <CardTitle>{t('configuration.publish')}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2 rounded-lg border p-3">
-          <div className="text-sm font-medium">{t('configuration.preflight.title')}</div>
-          {preflightLoading ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" />
-              {t('configuration.preflight.loading')}
-            </div>
-          ) : (
-            checks.map(check => (
-              <div key={check.label} className="flex items-center gap-2 text-xs">
-                {check.ready ? (
-                  <CheckCircle2 className="size-4 text-emerald-600" />
-                ) : (
-                  <AlertTriangle
-                    className={check.blocking ? 'size-4 text-destructive' : 'size-4 text-amber-500'}
-                  />
-                )}
-                <span className={check.ready ? 'text-foreground' : 'text-muted-foreground'}>
-                  {check.label}
-                </span>
-              </div>
-            ))
-          )}
-          {!preflightLoading && warningCount > 0 && blockingIssues.length === 0 ? (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              {t('configuration.preflight.warning', { count: warningCount })}
-            </p>
-          ) : null}
-        </div>
-        {detail.published ? (
-          <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2 text-foreground">
-              <Check className="size-4 text-emerald-600" />
-              {t('configuration.publishedVersion', {
-                version: detail.published.version_number ?? 1,
-              })}
-            </div>
-            <details className="mt-2">
-              <summary className="cursor-pointer text-xs">{t('common.technicalDetails')}</summary>
-              <code className="mt-2 block break-all">{detail.published.revision}</code>
-            </details>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">{t('configuration.notPublished')}</p>
-        )}
-        {permissions.hasPermission('digital_human.publish') ? (
-          <Button
-            className="w-full"
-            onClick={() => void publish()}
-            disabled={mutations.publish.isPending || preflightLoading || blockingIssues.length > 0}
-          >
-            {mutations.publish.isPending
-              ? t('configuration.publishing')
-              : detail.published
-                ? t('configuration.publishChanges')
-                : t('configuration.publish')}
-          </Button>
-        ) : null}
-      </CardContent>
-    </Card>
+    <button
+      id={id}
+      type="button"
+      className={cn(
+        'group flex w-full items-start gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+        !last && 'border-b'
+      )}
+      onClick={onClick}
+    >
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-background text-primary">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
+          {description}
+        </span>
+        <span className="mt-1.5 block truncate text-xs font-medium text-foreground/80">
+          {summary}
+        </span>
+      </span>
+      <ChevronRight className="mt-2 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+    </button>
   );
 }
 
-function RolesCard({ id }: { id: string }) {
-  const t = useT('digitalHumans');
-  const permissions = useAccountPermissions();
-  const templatesQuery = useDigitalHumanRoleTemplates();
-  const rolesQuery = useDigitalHumanDraftRoles(id);
-  const mutations = useDigitalHumanMutations(id);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selected, setSelected] = useState('');
-  const assignments = rolesQuery.data?.data?.items ?? [];
-  const templates = templatesQuery.data?.data?.items ?? [];
-  const publishedTemplates = templates.filter(item => item.published_version_id);
-  const assignedIDs = new Set(assignments.map(item => item.role_template_version_id));
-  const canUpdate = permissions.hasPermission('digital_human.update');
+function ConfigurationPanelHeader({
+  title,
+  onBack,
+  backLabel,
+}: {
+  title: string;
+  onBack: () => void;
+  backLabel: string;
+}) {
+  return (
+    <div className="flex h-12 items-center gap-2 border-b px-3">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        isIcon
+        interactive="subtle"
+        className="size-8"
+        aria-label={backLabel}
+        onClick={onBack}
+      >
+        <ArrowLeft className="size-4" />
+      </Button>
+      <h2 className="truncate text-sm font-semibold">{title}</h2>
+    </div>
+  );
+}
 
-  const assign = async () => {
-    if (!selected || !rolesQuery.data?.data) {
-      return;
-    }
-    const items: DigitalHumanRoleAssignmentInput[] = [
-      ...assignments.map(item => ({
-        role_template_version_id: item.role_template_version_id,
-        parameters: item.parameters ?? {},
-        override_policy: item.override_policy ?? {},
-      })),
-      { role_template_version_id: selected, parameters: {}, override_policy: {} },
-    ];
-    await mutations.replaceRoles.mutateAsync({
-      digitalHumanId: id,
-      expectedDraftLockVersion: rolesQuery.data.data.draft_lock_version,
-      items,
+function RulesEditor({
+  rules,
+  onChange,
+  disabled,
+  required,
+  removeLabel,
+  placeholder,
+}: {
+  rules: string[];
+  onChange: (rules: string[]) => void;
+  disabled: boolean;
+  required?: boolean;
+  removeLabel: string;
+  placeholder: string;
+}) {
+  const focusRule = (editor: HTMLElement | null, index: number) => {
+    requestAnimationFrame(() => {
+      editor?.querySelectorAll<HTMLInputElement>('input[data-rule-input]')[index]?.focus();
     });
-    setSelected('');
-    toast.success(t('roles.saved'));
   };
-  const remove = async (roleTemplateVersionID: string) => {
-    if (!rolesQuery.data?.data) {
+  const updateRule = (index: number, value: string) => {
+    onChange(rules.map((rule, ruleIndex) => (ruleIndex === index ? value : rule)));
+  };
+  const addRule = (afterIndex = rules.length - 1) => {
+    const nextRules = [...rules];
+    nextRules.splice(afterIndex + 1, 0, '');
+    onChange(nextRules);
+  };
+  const removeRule = (index: number) => {
+    const nextRules = rules.filter((_, ruleIndex) => ruleIndex !== index);
+    onChange(nextRules.length > 0 ? nextRules : ['']);
+  };
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>, index: number) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const editor = event.currentTarget.closest<HTMLElement>('[data-rules-editor]');
+      addRule(index);
+      focusRule(editor, index + 1);
       return;
     }
-    await mutations.replaceRoles.mutateAsync({
-      digitalHumanId: id,
-      expectedDraftLockVersion: rolesQuery.data.data.draft_lock_version,
-      items: assignments
-        .filter(item => item.role_template_version_id !== roleTemplateVersionID)
-        .map(item => ({
-          role_template_version_id: item.role_template_version_id,
-          parameters: item.parameters ?? {},
-          override_policy: item.override_policy ?? {},
-        })),
-    });
-    toast.success(t('roles.saved'));
+    if (event.key === 'Backspace' && !rules[index] && rules.length > 1) {
+      event.preventDefault();
+      const editor = event.currentTarget.closest<HTMLElement>('[data-rules-editor]');
+      removeRule(index);
+      focusRule(editor, Math.max(0, index - 1));
+    }
+  };
+  const handlePaste = (event: ClipboardEvent<HTMLInputElement>, index: number) => {
+    const pastedRules = event.clipboardData
+      .getData('text')
+      .split(/\r?\n/)
+      .map(item => item.trim())
+      .filter(Boolean);
+    if (pastedRules.length <= 1) return;
+    event.preventDefault();
+    const editor = event.currentTarget.closest<HTMLElement>('[data-rules-editor]');
+    const nextRules = [...rules];
+    nextRules.splice(index, 1, ...pastedRules);
+    onChange(nextRules);
+    focusRule(editor, index + pastedRules.length - 1);
+  };
+
+  return (
+    <div
+      className="space-y-3"
+      data-rules-editor
+      role="group"
+      aria-required={required || undefined}
+    >
+      <div className="space-y-2">
+        {rules.map((rule, index) => (
+          <div
+            key={index}
+            className="group flex min-w-0 items-center gap-2 rounded-lg border bg-background p-1.5 transition-colors focus-within:border-primary hover:border-border-strong"
+          >
+            <span
+              className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/70 text-xs font-medium text-muted-foreground"
+              aria-hidden="true"
+            >
+              {index + 1}
+            </span>
+            <Input
+              data-rule-input
+              containerClassName="min-w-0 flex-1"
+              className="h-8 border-0 bg-transparent px-1 shadow-none hover:border-0 focus-visible:border-0"
+              value={rule}
+              onChange={event => updateRule(index, event.target.value)}
+              onKeyDown={event => handleKeyDown(event, index)}
+              onPaste={event => handlePaste(event, index)}
+              disabled={disabled}
+              placeholder={placeholder}
+              aria-label={`${index + 1}. ${placeholder}`}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              isIcon
+              className="size-8 shrink-0 text-muted-foreground opacity-70 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
+              onClick={() => removeRule(index)}
+              disabled={disabled}
+              aria-label={`${removeLabel} ${index + 1}`}
+              title={removeLabel}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function serializeEditorPart(value: unknown) {
+  return JSON.stringify(value);
+}
+
+function PreferenceSwitch({
+  title,
+  description,
+  checked,
+  onCheckedChange,
+  disabled,
+}: {
+  title: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-6 py-5">
+      <div className="max-w-3xl space-y-1">
+        <div className="text-sm font-medium">{title}</div>
+        <p className="text-xs leading-5 text-muted-foreground">{description}</p>
+      </div>
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        disabled={disabled}
+        aria-label={title}
+      />
+    </div>
+  );
+}
+
+function PersonaTemplateActions({
+  identityName,
+  persona,
+  goals,
+  rules,
+  onApply,
+}: {
+  identityName: string;
+  persona: string;
+  goals: string[];
+  rules: string[];
+  onApply: (identityName: string, persona: string, goals: string[], rules: string[]) => void;
+}) {
+  const t = useT('digitalHumans');
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  return (
+    <div className="flex shrink-0 gap-2">
+      <Button type="button" variant="outline" size="sm" onClick={() => setLibraryOpen(true)}>
+        <Sparkles className="size-4" />
+        {t('personaTemplates.use')}
+      </Button>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setCreateOpen(true)}>
+        {t('personaTemplates.save')}
+      </Button>
+      <PersonaTemplateLibrary
+        open={libraryOpen}
+        onOpenChange={setLibraryOpen}
+        onApply={onApply}
+        onCreate={() => setCreateOpen(true)}
+      />
+      <PersonaTemplateEditor
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        initialIdentityName={identityName}
+        initialPersona={persona}
+        initialGoals={goals}
+        initialRules={rules}
+      />
+    </div>
+  );
+}
+
+function PersonaTemplateLibrary({
+  open,
+  onOpenChange,
+  onApply,
+  onCreate,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onApply: (identityName: string, persona: string, goals: string[], rules: string[]) => void;
+  onCreate: () => void;
+}) {
+  const pageSize = 4;
+  const t = useT('digitalHumans');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const templatesQuery = useDigitalHumanPersonaTemplates(
+    { page, pageSize, search: search.trim() },
+    open
+  );
+  const mutations = useDigitalHumanMutations();
+  const [editingTemplate, setEditingTemplate] = useState<DigitalHumanPersonaTemplate | null>(null);
+  const templates = templatesQuery.data?.data?.items ?? [];
+  const total = templatesQuery.data?.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  useEffect(() => {
+    if (templatesQuery.data && !templatesQuery.isLoading && page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, templatesQuery.data, templatesQuery.isLoading, totalPages]);
+  const apply = (template: DigitalHumanPersonaTemplate) => {
+    onApply(template.name, template.persona, template.goals ?? [], template.rules ?? []);
+    onOpenChange(false);
   };
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t('roles.title')}</CardTitle>
-        <CardDescription>{t('roles.description')}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <div className="text-sm font-medium">{t('roles.assigned')}</div>
-          {assignments.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('roles.empty')}</p>
-          ) : (
-            assignments.map(item => {
-              const template = templates.find(
-                candidate => candidate.published_version_id === item.role_template_version_id
-              );
-              return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="h-[min(640px,calc(100vh-2rem))] max-w-3xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{t('personaTemplates.title')}</DialogTitle>
+            <DialogDescription>{t('personaTemplates.description')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden pb-6 pt-2">
+            <Input
+              value={search}
+              onChange={event => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+              placeholder={t('personaTemplates.search')}
+              leftIcon={<Search className="size-4" />}
+            />
+            <div className="grid min-h-0 flex-1 auto-rows-[minmax(176px,1fr)] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+              {templates.map(template => (
                 <div
-                  key={item.id}
-                  className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
+                  key={template.id}
+                  className="flex min-h-44 flex-col rounded-xl border bg-card p-4 transition-colors hover:border-border-strong"
                 >
-                  <span className="min-w-0 truncate">
-                    {template?.name ?? item.role_template_version_id}
-                  </span>
-                  {canUpdate ? (
+                  <div className="font-medium">{template.name}</div>
+                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                    {template.goals?.[0] || template.persona}
+                  </p>
+                  <div className="mt-3 line-clamp-3 text-sm">{template.persona}</div>
+                  <div className="mt-auto flex justify-end gap-1 pt-4">
+                    <ConfirmDialog
+                      title={t('personaTemplates.deleteTitle')}
+                      description={t('personaTemplates.deleteDescription', { name: template.name })}
+                      confirmText={t('common.delete')}
+                      cancelText={t('common.cancel')}
+                      variant="danger"
+                      loading={mutations.deletePersonaTemplate.isPending}
+                      onConfirm={() =>
+                        void mutations.deletePersonaTemplate.mutateAsync({
+                          templateId: template.id,
+                          expectedRevision: template.revision,
+                        })
+                      }
+                      trigger={
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 className="size-4" />
+                          {t('common.delete')}
+                        </Button>
+                      }
+                    />
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="size-8 p-0"
-                      aria-label={t('roles.remove')}
-                      disabled={mutations.replaceRoles.isPending}
-                      onClick={() => void remove(item.role_template_version_id)}
+                      onClick={() => {
+                        setEditingTemplate(template);
+                        onOpenChange(false);
+                      }}
                     >
-                      <Trash2 className="size-4" />
+                      <Pencil className="size-4" />
+                      {t('common.edit')}
+                    </Button>
+                    <ConfirmDialog
+                      title={t('personaTemplates.applyTitle')}
+                      description={t('personaTemplates.applyDescription', { name: template.name })}
+                      confirmText={t('personaTemplates.apply')}
+                      cancelText={t('common.cancel')}
+                      onConfirm={() => apply(template)}
+                      trigger={
+                        <Button type="button" size="sm">
+                          {t('personaTemplates.apply')}
+                        </Button>
+                      }
+                    />
+                  </div>
+                </div>
+              ))}
+              {templatesQuery.isLoading ? (
+                <div className="col-span-full flex min-h-full items-center justify-center text-sm text-muted-foreground">
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  {t('personaTemplates.loading')}
+                </div>
+              ) : null}
+              {!templatesQuery.isLoading && templates.length === 0 ? (
+                <div className="col-span-full flex min-h-full flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/20 px-6 py-12 text-center">
+                  <span className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                    <Sparkles className="size-5" />
+                  </span>
+                  <p className="mt-4 text-sm font-medium text-foreground">
+                    {search.trim()
+                      ? t('personaTemplates.noResultsTitle')
+                      : t('personaTemplates.emptyTitle')}
+                  </p>
+                  <p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
+                    {search.trim()
+                      ? t('personaTemplates.noResultsDescription')
+                      : t('personaTemplates.emptyDescription')}
+                  </p>
+                  {!search.trim() && total === 0 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="mt-5"
+                      onClick={() => {
+                        onOpenChange(false);
+                        onCreate();
+                      }}
+                    >
+                      <Plus className="size-4" />
+                      {t('personaTemplates.createFirst')}
                     </Button>
                   ) : null}
                 </div>
-              );
-            })
-          )}
-        </div>
-        {canUpdate ? (
-          <div className="flex gap-2">
-            <select
-              className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
-              value={selected}
-              onChange={event => setSelected(event.target.value)}
-            >
-              <option value="">{t('roles.assign')}</option>
-              {publishedTemplates
-                .filter(
-                  item => item.published_version_id && !assignedIDs.has(item.published_version_id)
-                )
-                .map(item => (
-                  <option key={item.id} value={item.published_version_id ?? ''}>
-                    {item.name}
-                  </option>
-                ))}
-            </select>
-            <Button
-              variant="outline"
-              onClick={() => void assign()}
-              disabled={!selected || mutations.replaceRoles.isPending}
-            >
-              {t('roles.assign')}
-            </Button>
-          </div>
-        ) : null}
-        {canUpdate ? (
-          <Button variant="secondary" className="w-full" onClick={() => setDialogOpen(true)}>
-            <Plus className="mr-2 size-4" />
-            {t('roles.create')}
-          </Button>
-        ) : null}
-        <CreateRoleDialog open={dialogOpen} onOpenChange={setDialogOpen} />
-      </CardContent>
-    </Card>
+              ) : null}
+            </div>
+            {!templatesQuery.isLoading && totalPages > 1 ? (
+              <div className="shrink-0 border-t pt-4">
+                <Pagination
+                  currentPage={page}
+                  totalPages={totalPages}
+                  total={total}
+                  pageSize={pageSize}
+                  onPageChange={setPage}
+                  showJump={false}
+                  renderInfo={(start, end, totalItems) =>
+                    t('personaTemplates.paginationInfo', {
+                      start,
+                      end,
+                      total: totalItems,
+                    })
+                  }
+                />
+              </div>
+            ) : null}
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+      <PersonaTemplateEditor
+        open={Boolean(editingTemplate)}
+        onOpenChange={nextOpen => {
+          if (!nextOpen) setEditingTemplate(null);
+        }}
+        template={editingTemplate}
+        initialIdentityName={editingTemplate?.name ?? ''}
+        initialPersona={editingTemplate?.persona ?? ''}
+        initialGoals={editingTemplate?.goals ?? []}
+        initialRules={editingTemplate?.rules ?? []}
+      />
+    </>
   );
 }
 
-function CreateRoleDialog({
+function PersonaTemplateEditor({
   open,
   onOpenChange,
+  initialIdentityName,
+  initialPersona,
+  initialGoals,
+  initialRules,
+  template,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialIdentityName: string;
+  initialPersona: string;
+  initialGoals: string[];
+  initialRules: string[];
+  template?: DigitalHumanPersonaTemplate | null;
 }) {
   const t = useT('digitalHumans');
   const mutations = useDigitalHumanMutations();
-  const [name, setName] = useState('');
-  const [goals, setGoals] = useState('');
-  const [responsibilities, setResponsibilities] = useState('');
-  const create = async () => {
-    if (!name.trim() || !goals.trim() || !responsibilities.trim()) {
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState(initialIdentityName);
+  const [persona, setPersona] = useState(initialPersona);
+  const [goals, setGoals] = useState<string[]>(initialGoals.length > 0 ? initialGoals : ['']);
+  const [rules, setRules] = useState<string[]>(initialRules.length > 0 ? initialRules : ['']);
+  useEffect(() => {
+    if (!open) return;
+    setName(template?.name ?? initialIdentityName);
+    setPersona(template?.persona ?? initialPersona);
+    const nextGoals = template?.goals ?? initialGoals;
+    setGoals(nextGoals.length > 0 ? nextGoals : ['']);
+    const nextRules = template?.rules ?? initialRules;
+    setRules(nextRules.length > 0 ? nextRules : ['']);
+  }, [initialGoals, initialIdentityName, initialPersona, initialRules, open, template]);
+  const save = async () => {
+    if (!name.trim() || !persona.trim()) {
       toast.error(t('errors.required'));
       return;
     }
-    const created = await mutations.createRole.mutateAsync({
+    const payload = {
       name: name.trim(),
-      description: '',
-      goals: splitLines(goals),
-      responsibilities: splitLines(responsibilities),
-      capabilities: [],
-      sop_refs: [],
-      knowledge_refs: [],
-      policy: {},
-      evaluation_refs: [],
-    });
-    const role = created.data;
-    if (role) {
-      await mutations.publishRole.mutateAsync({
-        roleId: role.template.id,
-        request: {
-          expected_revision: role.template.revision,
-          expected_draft_lock_version: role.draft.lock_version,
-        },
+      persona: persona.trim(),
+      goals: goals.map(item => item.trim()).filter(Boolean),
+      rules: rules.map(item => item.trim()).filter(Boolean),
+    };
+    if (template) {
+      await mutations.updatePersonaTemplate.mutateAsync({
+        templateId: template.id,
+        request: { expected_revision: template.revision, ...payload },
       });
+    } else {
+      await mutations.createPersonaTemplate.mutateAsync(payload);
     }
     onOpenChange(false);
   };
+  const pending = template
+    ? mutations.updatePersonaTemplate.isPending
+    : mutations.createPersonaTemplate.isPending;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent
+        onOpenAutoFocus={event => {
+          event.preventDefault();
+          requestAnimationFrame(() => nameInputRef.current?.focus());
+        }}
+      >
         <DialogHeader>
-          <DialogTitle>{t('roles.create')}</DialogTitle>
-          <DialogDescription>{t('roles.createDescription')}</DialogDescription>
+          <DialogTitle>
+            {template ? t('personaTemplates.editTitle') : t('personaTemplates.save')}
+          </DialogTitle>
+          <DialogDescription>
+            {template
+              ? t('personaTemplates.editDescription')
+              : t('personaTemplates.saveDescription')}
+          </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
-          <Field label={t('fields.roleName')}>
-            <Input value={name} onChange={event => setName(event.target.value)} />
-          </Field>
-          <Field label={t('fields.goals')}>
-            <Textarea rows={4} value={goals} onChange={event => setGoals(event.target.value)} />
-          </Field>
-          <Field label={t('fields.responsibilities')}>
-            <Textarea
-              rows={4}
-              value={responsibilities}
-              onChange={event => setResponsibilities(event.target.value)}
+          <Field
+            label={t('fields.identityName')}
+            description={t('settings.identityNameDescription')}
+            required
+          >
+            <Input
+              ref={nameInputRef}
+              value={name}
+              onChange={event => setName(event.target.value)}
+              aria-label={t('fields.identityName')}
+              aria-required="true"
             />
           </Field>
+          <Field
+            label={t('fields.persona')}
+            description={t('settings.personaDescription')}
+            required
+          >
+            <Textarea
+              rows={5}
+              value={persona}
+              onChange={event => setPersona(event.target.value)}
+              aria-label={t('fields.persona')}
+              aria-required="true"
+            />
+          </Field>
+          <Field
+            label={t('fields.rules')}
+            description={t('settings.rulesDescription')}
+            required
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 shrink-0 gap-1.5 px-2.5"
+                onClick={() => setRules([...rules, ''])}
+              >
+                <Plus className="size-3.5" />
+                {t('settings.addRule')}
+              </Button>
+            }
+          >
+            <RulesEditor
+              rules={rules}
+              onChange={setRules}
+              disabled={false}
+              required
+              removeLabel={t('settings.removeRule')}
+              placeholder={t('settings.rulesPlaceholder')}
+            />
+          </Field>
+          <Field
+            label={t('fields.goals')}
+            description={t('settings.goalsDescription')}
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 shrink-0 gap-1.5 px-2.5"
+                onClick={() => setGoals([...goals, ''])}
+              >
+                <Plus className="size-3.5" />
+                {t('settings.addGoal')}
+              </Button>
+            }
+          >
+            <RulesEditor
+              rules={goals}
+              onChange={setGoals}
+              disabled={false}
+              removeLabel={t('settings.removeGoal')}
+              placeholder={t('settings.goalsPlaceholder')}
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            {t('personaTemplates.snapshotHint', {
+              goalCount: goals.filter(item => item.trim()).length,
+              ruleCount: rules.filter(item => item.trim()).length,
+            })}
+          </p>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('common.cancel')}
           </Button>
-          <Button
-            onClick={() => void create()}
-            disabled={mutations.createRole.isPending || mutations.publishRole.isPending}
-          >
-            {mutations.createRole.isPending || mutations.publishRole.isPending
-              ? t('roles.creating')
-              : t('roles.create')}
+          <Button onClick={() => void save()} disabled={pending}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : null}
+            {template ? t('common.save') : t('personaTemplates.save')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -612,18 +1067,45 @@ function CreateRoleDialog({
   );
 }
 
-function splitLines(value: string) {
-  return value
-    .split('\n')
-    .map(item => item.trim())
-    .filter(Boolean);
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+  label,
+  description,
+  required,
+  action,
+  children,
+}: {
+  label: string;
+  description: string;
+  required?: boolean;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <label className="block space-y-1.5 text-sm font-medium">
-      <span>{label}</span>
+    <div className="space-y-1.5 text-sm font-medium">
+      <div className="flex min-h-7 items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span>{label}</span>
+          {required ? (
+            <span className="self-start text-sm leading-none text-destructive" aria-hidden="true">
+              *
+            </span>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={description}
+              >
+                <CircleHelp className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-72 leading-5">{description}</TooltipContent>
+          </Tooltip>
+        </div>
+        {action}
+      </div>
       {children}
-    </label>
+    </div>
   );
 }

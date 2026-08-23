@@ -21,6 +21,7 @@ interface ResourceBindingSectionProps {
   onToggle: () => void;
   onAdd: () => void;
   addTooltip?: string;
+  showAddLabel?: boolean;
   readOnly?: boolean;
   children: ReactNode;
 }
@@ -48,6 +49,7 @@ export function ResourceBindingSection({
   onToggle,
   onAdd,
   addTooltip,
+  showAddLabel = false,
   readOnly = false,
   children,
 }: ResourceBindingSectionProps) {
@@ -56,8 +58,8 @@ export function ResourceBindingSection({
       type="button"
       variant="outline"
       size="sm"
-      isIcon
-      className="size-8"
+      isIcon={!showAddLabel}
+      className={cn('h-8', showAddLabel ? 'gap-1.5 px-2.5' : 'size-8')}
       aria-label={addLabel}
       disabled={readOnly}
       onClick={event => {
@@ -66,6 +68,7 @@ export function ResourceBindingSection({
       }}
     >
       <Plus className="size-4" />
+      {showAddLabel ? <span>{addLabel}</span> : null}
     </Button>
   );
 

@@ -1,9 +1,10 @@
-'use client';
+import { redirect } from 'next/navigation';
 
-import { useParams } from 'next/navigation';
-import { DigitalHumanOverview } from '@/components/digital-human/digital-human-overview';
+interface DigitalHumanDetailPageProps {
+  params: Promise<{ digitalHumanId: string }>;
+}
 
-export default function DigitalHumanOverviewPage() {
-  const params = useParams<{ digitalHumanId: string }>();
-  return <DigitalHumanOverview id={params.digitalHumanId} />;
+export default async function DigitalHumanDetailPage({ params }: DigitalHumanDetailPageProps) {
+  const { digitalHumanId } = await params;
+  redirect(`/console/digital-humans/${digitalHumanId}/configuration`);
 }

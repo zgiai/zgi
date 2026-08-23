@@ -88,6 +88,8 @@ interface SidebarProps {
   pagination?: SidebarPagination;
   isLoadingList?: boolean;
   onLoadMore?: (page: number) => void | Promise<void>;
+  title?: string;
+  description?: string;
 }
 
 export function Sidebar({
@@ -109,6 +111,8 @@ export function Sidebar({
   pagination,
   isLoadingList = false,
   onLoadMore,
+  title,
+  description,
 }: SidebarProps) {
   const t = useT();
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -262,9 +266,14 @@ export function Sidebar({
               <ArrowLeft className="h-4 w-4" />
             </Button>
           ) : null}
-          <h2 className={cn('min-w-0 flex-1 truncate text-base font-semibold text-foreground')}>
-            {t('webapp.chat.conversations')}
-          </h2>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-base font-semibold text-foreground">
+              {title || t('webapp.chat.conversations')}
+            </h2>
+            {description ? (
+              <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{description}</p>
+            ) : null}
+          </div>
           {alwaysShowHeader ? (
             <Button
               variant="ghost"
@@ -347,29 +356,18 @@ export function Sidebar({
                     <ContextMenu key={conv.id}>
                       <ContextMenuTrigger asChild>
                         <div
-                          onClick={() => {
-                            if (!isEditing) {
-                              onSelect(conv.id);
-                            }
-                          }}
-                          onDoubleClick={event => {
-                            if (!onRename || isEditing) return;
-                            event.preventDefault();
-                            event.stopPropagation();
-                            startEditing(conv);
-                          }}
                           className={cn(
-                            'group flex items-center justify-between p-2 rounded-md text-sm cursor-pointer hover:bg-muted transition-colors',
+                            'group flex items-center justify-between rounded-md p-1 text-sm transition-colors hover:bg-muted focus-within:bg-muted',
                             activeId === conv.id && 'bg-muted font-medium'
                           )}
                         >
-                          <div className="flex items-center w-full gap-2 overflow-hidden">
-                            {isRunning ? (
-                              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-                            ) : (
-                              <History className="h-4 w-4 shrink-0 text-muted-foreground" />
-                            )}
-                            {isEditing ? (
+                          {isEditing ? (
+                            <div className="flex min-w-0 flex-1 items-center gap-2 p-1">
+                              {isRunning ? (
+                                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                              ) : (
+                                <History className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              )}
                               <form
                                 className="flex min-w-0 grow items-center gap-1"
                                 onClick={event => event.stopPropagation()}
@@ -407,14 +405,32 @@ export function Sidebar({
                                   )}
                                 </Button>
                               </form>
-                            ) : (
-                              <div className="flex w-0 grow flex-col gap-0.5 overflow-hidden">
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 items-center gap-2 rounded-sm p-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={() => onSelect(conv.id)}
+                              onDoubleClick={event => {
+                                if (!onRename) return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                startEditing(conv);
+                              }}
+                              aria-pressed={activeId === conv.id}
+                            >
+                              {isRunning ? (
+                                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                              ) : (
+                                <History className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              )}
+                              <span className="flex w-0 grow flex-col gap-0.5 overflow-hidden">
                                 <span className="truncate">
                                   {conv.title || t('webapp.chat.newConversation')}
                                 </span>
-                              </div>
-                            )}
-                          </div>
+                              </span>
+                            </button>
+                          )}
                           <div
                             className="flex shrink-0 items-center"
                             onClick={e => e.stopPropagation()}
@@ -423,7 +439,7 @@ export function Sidebar({
                               <Button
                                 variant="ghost"
                                 isIcon
-                                className="h-6 w-6 sm:opacity-0 group-hover:opacity-100"
+                                className="h-6 w-6 sm:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
                                 onClick={event => {
                                   event.stopPropagation();
                                   startEditing(conv);
@@ -447,7 +463,7 @@ export function Sidebar({
                                   <Button
                                     variant="ghost"
                                     isIcon
-                                    className="h-6 w-6 sm:opacity-0 group-hover:opacity-100"
+                                    className="h-6 w-6 sm:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
                                     onClick={e => e.stopPropagation()}
                                     aria-label={t('webapp.chat.deleteTitle')}
                                   >

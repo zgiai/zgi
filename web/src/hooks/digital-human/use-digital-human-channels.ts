@@ -5,8 +5,8 @@ import { toast } from 'sonner';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
+import { integrationService } from '@/services/integration.service';
 import type {
-  CreateDigitalHumanChannelBindingRequest,
   CreateDigitalHumanChannelInstallationRequest,
   UpdateDigitalHumanChannelInstallationRequest,
 } from '@/services/types/digital-human';
@@ -16,28 +16,13 @@ function channelMutationError(error: unknown, fallback: string) {
   toast.error(getErrorMessage(error) || fallback);
 }
 
-export function useDigitalHumanChannels(
-  id: string,
-  auditEnabled = true,
-  discoveryEnabled = true
-) {
+export function useDigitalHumanChannels(id: string, auditEnabled = true) {
   const installations = useQuery({
     queryKey: DIGITAL_HUMAN_KEYS.channelInstallations(id),
     queryFn: () => digitalHumanService.listChannelInstallations(id),
     enabled: Boolean(id),
     staleTime: 10_000,
-  });
-  const bindings = useQuery({
-    queryKey: DIGITAL_HUMAN_KEYS.channelBindings(id),
-    queryFn: () => digitalHumanService.listChannelBindings(id),
-    enabled: Boolean(id),
-    staleTime: 10_000,
-  });
-  const discoveries = useQuery({
-    queryKey: DIGITAL_HUMAN_KEYS.channelDiscoveries(id),
-    queryFn: () => digitalHumanService.listChannelDiscoveries(id),
-    enabled: Boolean(id) && discoveryEnabled,
-    refetchInterval: 3_000,
+    refetchInterval: 5_000,
   });
   const events = useQuery({
     queryKey: DIGITAL_HUMAN_KEYS.channelEvents(id),
@@ -56,18 +41,14 @@ export function useDigitalHumanChannels(
       return active ? 2_000 : 5_000;
     },
   });
-  return { installations, bindings, discoveries, events, deliveries };
+  return { installations, events, deliveries };
 }
 
 export function useDigitalHumanChannelMutations(id: string) {
   const t = useT('digitalHumans');
   const queryClient = useQueryClient();
   const invalidateConfiguration = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.channelInstallations(id) }),
-      queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.channelBindings(id) }),
-      queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.channelDiscoveries(id) }),
-    ]);
+    queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.channelInstallations(id) });
   const invalidateActivity = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.channelEvents(id) }),
@@ -97,36 +78,31 @@ export function useDigitalHumanChannelMutations(id: string) {
     },
     onError: error => channelMutationError(error, t('channels.errors.installation')),
   });
-  const deleteInstallation = useMutation({
+  const updateCredential = useMutation({
     mutationFn: ({
       installationId,
-      removeBindings,
+      expectedRevision,
+      credentials,
     }: {
       installationId: string;
-      removeBindings: boolean;
-    }) => digitalHumanService.deleteChannelInstallation(id, installationId, removeBindings),
+      expectedRevision: number;
+      credentials: Record<string, string>;
+    }) =>
+      digitalHumanService.updateChannelInstallationCredential(id, installationId, {
+        expected_revision: expectedRevision,
+        credentials,
+      }),
+    onSuccess: () => invalidateConfiguration(),
+    onError: error => channelMutationError(error, t('channels.errors.installation')),
+  });
+  const deleteInstallation = useMutation({
+    mutationFn: (installationId: string) =>
+      digitalHumanService.deleteChannelInstallation(id, installationId),
     onSuccess: () => {
       toast.success(t('channels.messages.installationDeleted'));
       return invalidateConfiguration();
     },
     onError: error => channelMutationError(error, t('channels.errors.installationDelete')),
-  });
-  const createBinding = useMutation({
-    mutationFn: (request: CreateDigitalHumanChannelBindingRequest) =>
-      digitalHumanService.createChannelBinding(id, request),
-    onSuccess: () => {
-      toast.success(t('channels.messages.bindingCreated'));
-      return invalidateConfiguration();
-    },
-    onError: error => channelMutationError(error, t('channels.errors.binding')),
-  });
-  const deleteBinding = useMutation({
-    mutationFn: (bindingId: string) => digitalHumanService.deleteChannelBinding(id, bindingId),
-    onSuccess: () => {
-      toast.success(t('channels.messages.bindingDeleted'));
-      return invalidateConfiguration();
-    },
-    onError: error => channelMutationError(error, t('channels.errors.bindingDelete')),
   });
   const retryDelivery = useMutation({
     mutationFn: (deliveryId: string) => digitalHumanService.retryChannelDelivery(id, deliveryId),
@@ -140,9 +116,26 @@ export function useDigitalHumanChannelMutations(id: string) {
   return {
     createInstallation,
     updateInstallation,
+    updateCredential,
     deleteInstallation,
-    createBinding,
-    deleteBinding,
     retryDelivery,
   };
+}
+
+export function useDigitalHumanChannelCredentials(integrationIDs: string[], enabled = true) {
+  const normalizedIntegrationIDs = [...new Set(integrationIDs)].sort();
+  return useQuery({
+    queryKey: [...DIGITAL_HUMAN_KEYS.all, 'channel-credentials', normalizedIntegrationIDs],
+    queryFn: async () => {
+      const responses = await Promise.all(
+        normalizedIntegrationIDs.map(integrationID =>
+          integrationService.getAllConnections({ integration_id: integrationID })
+        )
+      );
+      return responses.flatMap(response => response.data.items ?? response.data.data ?? []);
+    },
+    staleTime: 30_000,
+    retry: false,
+    enabled: enabled && normalizedIntegrationIDs.length > 0,
+  });
 }

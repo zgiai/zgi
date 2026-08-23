@@ -14,11 +14,13 @@ import {
   RotateCcw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import {
@@ -79,6 +81,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
   const [scopeType, setScopeType] = useState<typeof all | DigitalHumanMemoryScopeType>(all);
   const [scopeId, setScopeId] = useState('');
   const [source, setSource] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [selected, setSelected] = useState<DigitalHumanMemoryRecord | null>(null);
   const params = useMemo<DigitalHumanMemoryListParams>(
     () => ({
@@ -170,7 +173,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
   };
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-6 md:px-8">
+    <div className="mx-auto flex max-w-[1600px] flex-col gap-5 px-4 py-6 md:px-8 xl:py-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -211,11 +214,6 @@ export function DigitalHumanMemory({ id }: { id: string }) {
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
-            <div className="flex gap-2 font-mono text-[11px] text-muted-foreground">
-              <span>epoch {data.state.memory_epoch}</span>
-              <span>·</span>
-              <span className="max-w-44 truncate">{data.state.config_revision}</span>
-            </div>
             {canManage ? (
               <Button
                 variant="outline"
@@ -240,71 +238,83 @@ export function DigitalHumanMemory({ id }: { id: string }) {
       ) : null}
 
       <section className="overflow-hidden rounded-xl border bg-background">
-        <div className="grid gap-2 border-b p-4 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_minmax(180px,auto)_minmax(160px,auto)_repeat(4,minmax(130px,auto))_auto]">
-          <Input
-            value={search}
-            onChange={event => setSearch(event.target.value)}
-            placeholder={t('memory.searchPlaceholder')}
-            leftIcon={<Search />}
-          />
-          <Input
-            value={source}
-            onChange={event => setSource(event.target.value)}
-            placeholder={t('memory.sourcePlaceholder')}
-          />
-          <Input
-            value={scopeId}
-            onChange={event => setScopeId(event.target.value)}
-            placeholder={t('memory.scopeIdPlaceholder')}
-          />
-          <MemorySelect
-            value={memoryClass}
-            onValueChange={value => setMemoryClass(value as typeof memoryClass)}
-            placeholder={t('memory.allClasses')}
-          >
-            <SelectItem value={all}>{t('memory.allClasses')}</SelectItem>
-            <SelectItem value="self">{t('memory.class.self')}</SelectItem>
-            <SelectItem value="business">{t('memory.class.business')}</SelectItem>
-          </MemorySelect>
-          <MemorySelect
-            value={memoryType}
-            onValueChange={value => setMemoryType(value as typeof memoryType)}
-            placeholder={t('memory.allTypes')}
-          >
-            <SelectItem value={all}>{t('memory.allTypes')}</SelectItem>
-            {memoryTypes.map(type => (
-              <SelectItem key={type} value={type}>
-                {t(`memory.type.${type}`)}
-              </SelectItem>
-            ))}
-          </MemorySelect>
-          <MemorySelect
-            value={scopeType}
-            onValueChange={value => setScopeType(value as typeof scopeType)}
-            placeholder={t('memory.allScopes')}
-          >
-            <SelectItem value={all}>{t('memory.allScopes')}</SelectItem>
-            {scopeTypes.map(type => (
-              <SelectItem key={type} value={type}>
-                {t(`memory.scope.${type}`)}
-              </SelectItem>
-            ))}
-          </MemorySelect>
-          <MemorySelect
-            value={status}
-            onValueChange={value => setStatus(value as typeof status)}
-            placeholder={t('memory.allStatuses')}
-          >
-            <SelectItem value={all}>{t('memory.allStatuses')}</SelectItem>
-            <SelectItem value="active">{t('memory.status.active')}</SelectItem>
-            <SelectItem value="invalidated">{t('memory.status.invalidated')}</SelectItem>
-            <SelectItem value="archived">{t('memory.status.archived')}</SelectItem>
-          </MemorySelect>
-          <Button variant="ghost" size="sm" onClick={clearFilters} disabled={!hasFilters}>
-            <FilterX className="size-4" />
-            {t('memory.clearFilters')}
-          </Button>
-        </div>
+        <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-b p-4">
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_repeat(3,minmax(160px,0.45fr))_auto]">
+            <Input
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+              placeholder={t('memory.searchPlaceholder')}
+              leftIcon={<Search />}
+            />
+            <MemorySelect
+              value={memoryClass}
+              onValueChange={value => setMemoryClass(value as typeof memoryClass)}
+              placeholder={t('memory.allClasses')}
+            >
+              <SelectItem value={all}>{t('memory.allClasses')}</SelectItem>
+              <SelectItem value="self">{t('memory.class.self')}</SelectItem>
+              <SelectItem value="business">{t('memory.class.business')}</SelectItem>
+            </MemorySelect>
+            <MemorySelect
+              value={memoryType}
+              onValueChange={value => setMemoryType(value as typeof memoryType)}
+              placeholder={t('memory.allTypes')}
+            >
+              <SelectItem value={all}>{t('memory.allTypes')}</SelectItem>
+              {memoryTypes.map(type => (
+                <SelectItem key={type} value={type}>
+                  {t(`memory.type.${type}`)}
+                </SelectItem>
+              ))}
+            </MemorySelect>
+            <MemorySelect
+              value={status}
+              onValueChange={value => setStatus(value as typeof status)}
+              placeholder={t('memory.allStatuses')}
+            >
+              <SelectItem value={all}>{t('memory.allStatuses')}</SelectItem>
+              <SelectItem value="active">{t('memory.status.active')}</SelectItem>
+              <SelectItem value="invalidated">{t('memory.status.invalidated')}</SelectItem>
+              <SelectItem value="archived">{t('memory.status.archived')}</SelectItem>
+            </MemorySelect>
+            <CollapsibleTrigger asChild>
+              <Button variant="outline" size="sm" className="justify-start xl:justify-center">
+                <SlidersHorizontal className="size-4" />
+                {advancedOpen ? t('memory.hideAdvancedFilters') : t('memory.showAdvancedFilters')}
+              </Button>
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent>
+            <div className="mt-3 grid gap-2 rounded-lg bg-muted/30 p-3 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_minmax(180px,1fr)_auto]">
+              <Input
+                value={source}
+                onChange={event => setSource(event.target.value)}
+                placeholder={t('memory.sourcePlaceholder')}
+              />
+              <Input
+                value={scopeId}
+                onChange={event => setScopeId(event.target.value)}
+                placeholder={t('memory.scopeIdPlaceholder')}
+              />
+              <MemorySelect
+                value={scopeType}
+                onValueChange={value => setScopeType(value as typeof scopeType)}
+                placeholder={t('memory.allScopes')}
+              >
+                <SelectItem value={all}>{t('memory.allScopes')}</SelectItem>
+                {scopeTypes.map(type => (
+                  <SelectItem key={type} value={type}>
+                    {t(`memory.scope.${type}`)}
+                  </SelectItem>
+                ))}
+              </MemorySelect>
+              <Button variant="ghost" size="sm" onClick={clearFilters} disabled={!hasFilters}>
+                <FilterX className="size-4" />
+                {t('memory.clearFilters')}
+              </Button>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
 
         <MemoryBody
           loading={query.isLoading}
@@ -414,7 +424,6 @@ function MemoryBody({
         >
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{memory.memory_key}</span>
               <Badge variant={memory.memory_class === 'self' ? 'info' : 'secondary'}>
                 {t(`memory.class.${memory.memory_class}`)}
               </Badge>
@@ -423,7 +432,7 @@ function MemoryBody({
             </div>
             <p
               className={cn(
-                'mt-2 line-clamp-2 text-sm leading-6',
+                'line-clamp-2 text-sm font-medium leading-6',
                 memory.status !== 'active' && 'text-muted-foreground line-through'
               )}
             >
@@ -432,21 +441,20 @@ function MemoryBody({
           </div>
           <div className="text-xs text-muted-foreground">
             <div className="font-medium text-foreground">{t(memoryScopeKey(memory))}</div>
-            {memory.scope_id ? (
-              <div className="mt-1 max-w-48 truncate font-mono">{memory.scope_id}</div>
-            ) : null}
             <div className="mt-1">
               {t('memory.confidence', { value: Math.round(memory.confidence * 100) })}
+            </div>
+            <div className="mt-1">
+              {t('memory.sourceSummary', {
+                source: maskMemorySource(memory.source_principal_id),
+              })}
             </div>
           </div>
           <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground md:justify-end">
             <div className="text-right">
-              <div>{t('memory.revision', { revision: memory.revision })}</div>
-              <div className="mt-1">
-                {t('memory.updated', { date: formatDate(memory.updated_at) })}
-              </div>
+              <div>{t('memory.updated', { date: formatDate(memory.updated_at) })}</div>
             </div>
-            <ExternalLink className="size-4 opacity-0 transition-opacity group-hover:opacity-100" />
+            <ExternalLink className="size-4 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
           </div>
         </button>
       ))}
@@ -650,4 +658,11 @@ function memoryScopeKey(memory: DigitalHumanMemoryRecord) {
 function formatDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function maskMemorySource(value?: string | null) {
+  const normalized = value?.trim();
+  if (!normalized) return '—';
+  if (normalized.length <= 8) return normalized;
+  return `${normalized.slice(0, 3)}…${normalized.slice(-4)}`;
 }

@@ -67,7 +67,12 @@ export function AIChatHomeView({
           className={cn('h-full overflow-y-auto', surface === 'agent-webapp' ? 'pt-20' : 'pt-4')}
           style={{ paddingBottom: composerHeightPx + 24 }}
         >
-          <div className="mx-auto flex min-h-full w-full min-w-0 max-w-6xl flex-col items-center justify-center overflow-hidden px-4 py-8">
+          <div
+            className={cn(
+              'mx-auto flex min-h-full w-full min-w-0 flex-col items-center justify-center overflow-hidden px-4 py-8',
+              surface === 'digital-human' ? 'max-w-[1440px]' : 'max-w-6xl'
+            )}
+          >
             <ChatOpeningGuideView
               title={title || t('chat.startConversation')}
               message={resolvedDescription}

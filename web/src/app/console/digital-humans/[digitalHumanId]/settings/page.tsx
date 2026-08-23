@@ -1,9 +1,12 @@
-'use client';
+import { redirect } from 'next/navigation';
 
-import { useParams } from 'next/navigation';
-import { DigitalHumanSettings } from '@/components/digital-human/digital-human-configuration';
+interface LegacyDigitalHumanSettingsPageProps {
+  params: Promise<{ digitalHumanId: string }>;
+}
 
-export default function DigitalHumanSettingsPage() {
-  const params = useParams<{ digitalHumanId: string }>();
-  return <DigitalHumanSettings id={params.digitalHumanId} />;
+export default async function LegacyDigitalHumanSettingsPage({
+  params,
+}: LegacyDigitalHumanSettingsPageProps) {
+  const { digitalHumanId } = await params;
+  redirect(`/console/digital-humans/${digitalHumanId}/configuration?section=identity`);
 }

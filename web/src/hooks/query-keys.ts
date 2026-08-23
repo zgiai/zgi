@@ -98,22 +98,25 @@ export const DIGITAL_HUMAN_KEYS = {
   list: (params: unknown) => [...DIGITAL_HUMAN_KEYS.lists(), params] as const,
   details: () => [...DIGITAL_HUMAN_KEYS.all, 'detail'] as const,
   detail: (id: string) => [...DIGITAL_HUMAN_KEYS.details(), id] as const,
-  roleTemplates: () => [...DIGITAL_HUMAN_KEYS.all, 'role-templates'] as const,
-  roleTemplate: (id: string) => [...DIGITAL_HUMAN_KEYS.roleTemplates(), id] as const,
-  draftRoles: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'draft-roles'] as const,
+  versions: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'versions'] as const,
+  versionRestorePreview: (id: string, versionId: string) =>
+    [...DIGITAL_HUMAN_KEYS.versions(id), versionId, 'restore-preview'] as const,
+  personaTemplates: (params?: unknown) =>
+    params === undefined
+      ? ([...DIGITAL_HUMAN_KEYS.all, 'persona-templates'] as const)
+      : ([...DIGITAL_HUMAN_KEYS.all, 'persona-templates', params] as const),
   draftBindings: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'draft-bindings'] as const,
   bindingCandidates: (id: string, params: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'binding-candidates', params] as const,
   runs: (id: string, params?: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'runs', params].filter(Boolean),
   run: (id: string, runId: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'run', runId] as const,
+  runRuntimeLog: (id: string, runId: string) =>
+    [...DIGITAL_HUMAN_KEYS.run(id, runId), 'runtime-log'] as const,
   memories: (id: string, params?: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'memory', params].filter(Boolean),
   channelInstallations: (id: string) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-installations'] as const,
-  channelBindings: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-bindings'] as const,
-  channelDiscoveries: (id: string) =>
-    [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-discoveries'] as const,
   channelEvents: (id: string, params?: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'channel-events', params].filter(Boolean),
   channelDeliveries: (id: string, params?: unknown) =>

@@ -1,3 +1,5 @@
+import type { AgentRuntimeRunDetail, AgentRuntimeStep } from './agent-runtime-log';
+
 export type DigitalHumanStatus = 'draft' | 'active' | 'disabled';
 export type DigitalHumanVersionState = 'draft' | 'published';
 export type DigitalHumanRunStatus =
@@ -25,6 +27,9 @@ export interface DigitalHumanDefinition {
   workspace_id: string;
   name: string;
   avatar?: string;
+  icon_type: 'text' | 'image';
+  icon: string;
+  icon_url?: string;
   description?: string;
   status: DigitalHumanStatus;
   autonomy_level: 'assisted' | 'supervised' | 'autonomous';
@@ -43,7 +48,9 @@ export interface DigitalHumanVersion {
   version_number?: number | null;
   lock_version: number;
   revision: string;
+  identity_name: string;
   persona: string;
+  goals: string[];
   rules: string[];
   default_model: string;
   memory_policy?: Record<string, unknown>;
@@ -59,6 +66,41 @@ export interface DigitalHumanDetail {
   published?: DigitalHumanVersion | null;
 }
 
+export interface DigitalHumanVersionList {
+  items: DigitalHumanVersion[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
+export type DigitalHumanVersionRestoreBindingChange = 'added' | 'removed' | 'updated';
+
+export interface DigitalHumanVersionRestoreBindingImpact {
+  change: DigitalHumanVersionRestoreBindingChange;
+  type: DigitalHumanBindingType;
+  resource_id: string;
+  parent_resource_id?: string;
+  display_name?: string;
+}
+
+export interface DigitalHumanVersionRestorePreview {
+  version_id: string;
+  version_number: number;
+  is_current: boolean;
+  will_discard_unpublished_changes: boolean;
+  changed_fields: string[];
+  binding_changes: DigitalHumanVersionRestoreBindingImpact[];
+  impact_token: string;
+}
+
+export interface RestoreDigitalHumanVersionRequest {
+  version_id: string;
+  expected_revision: number;
+  expected_draft_lock_version: number;
+  impact_token: string;
+}
+
 export interface DigitalHumanList {
   items: DigitalHumanDefinition[];
   total: number;
@@ -70,10 +112,14 @@ export interface DigitalHumanList {
 export interface CreateDigitalHumanRequest {
   name: string;
   avatar?: string;
+  icon_type?: 'text' | 'image';
+  icon?: string;
   description?: string;
   autonomy_level: DigitalHumanDefinition['autonomy_level'];
   visibility: DigitalHumanDefinition['visibility'];
+  identity_name?: string;
   persona: string;
+  goals?: string[];
   rules: string[];
   default_model: string;
   memory_policy?: Record<string, unknown>;
@@ -84,6 +130,8 @@ export interface UpdateDigitalHumanRequest {
   expected_revision: number;
   name?: string;
   avatar?: string;
+  icon_type?: 'text' | 'image';
+  icon?: string;
   description?: string;
   autonomy_level?: DigitalHumanDefinition['autonomy_level'];
   visibility?: DigitalHumanDefinition['visibility'];
@@ -91,7 +139,9 @@ export interface UpdateDigitalHumanRequest {
 
 export interface UpdateDigitalHumanDraftRequest {
   expected_lock_version: number;
+  identity_name?: string;
   persona?: string;
+  goals?: string[];
   rules?: string[];
   default_model?: string;
   memory_policy?: Record<string, unknown>;
@@ -103,84 +153,38 @@ export interface PublishDigitalHumanRequest {
   expected_draft_lock_version: number;
 }
 
-export interface VersionRef {
-  kind: string;
-  id: string;
-  version?: string;
-  revision?: string;
-}
-
-export interface DigitalHumanRoleTemplate {
+export interface DigitalHumanPersonaTemplate {
   id: string;
   name: string;
-  description?: string;
-  draft_version_id: string;
-  published_version_id?: string | null;
+  persona: string;
+  goals: string[];
+  rules: string[];
   revision: number;
   created_at: string;
   updated_at: string;
 }
 
-export interface DigitalHumanRoleTemplateVersion {
-  id: string;
-  role_template_id: string;
-  state: DigitalHumanVersionState;
-  version_number?: number | null;
-  lock_version: number;
-  revision: string;
-  goals: string[];
-  responsibilities: string[];
-  capabilities: VersionRef[];
-  sop_refs: VersionRef[];
-  knowledge_refs: VersionRef[];
-  policy: Record<string, unknown>;
-  evaluation_refs: VersionRef[];
-}
-
-export interface DigitalHumanRoleTemplateDetail {
-  template: DigitalHumanRoleTemplate;
-  draft: DigitalHumanRoleTemplateVersion;
-  published?: DigitalHumanRoleTemplateVersion | null;
-}
-
-export interface DigitalHumanRoleTemplateList {
-  items: DigitalHumanRoleTemplate[];
+export interface DigitalHumanPersonaTemplateList {
+  items: DigitalHumanPersonaTemplate[];
   total: number;
   page: number;
   page_size: number;
   has_more: boolean;
 }
 
-export interface CreateDigitalHumanRoleTemplateRequest {
+export interface CreateDigitalHumanPersonaTemplateRequest {
   name: string;
-  description?: string;
+  persona: string;
   goals: string[];
-  responsibilities: string[];
-  capabilities: VersionRef[];
-  sop_refs: VersionRef[];
-  knowledge_refs: VersionRef[];
-  policy: Record<string, unknown>;
-  evaluation_refs: VersionRef[];
+  rules: string[];
 }
 
-export interface DigitalHumanRoleAssignmentInput {
-  role_template_version_id: string;
-  parameters: Record<string, unknown>;
-  override_policy: Record<string, unknown>;
-  effective_from?: string;
-  effective_to?: string;
-}
-
-export interface DigitalHumanRoleAssignment {
-  id: string;
-  role_template_version_id: string;
-  parameters: Record<string, unknown>;
-  override_policy: Record<string, unknown>;
-}
-
-export interface DraftRoleAssignments {
-  draft_lock_version: number;
-  items: DigitalHumanRoleAssignment[];
+export interface UpdateDigitalHumanPersonaTemplateRequest {
+  expected_revision: number;
+  name?: string;
+  persona?: string;
+  goals?: string[];
+  rules?: string[];
 }
 
 export type DigitalHumanBindingType =
@@ -263,6 +267,11 @@ export interface DigitalHumanRunList {
   page: number;
   page_size: number;
   has_more: boolean;
+}
+
+export interface DigitalHumanRunRuntimeLog {
+  detail?: AgentRuntimeRunDetail | null;
+  steps: AgentRuntimeStep[];
 }
 
 export interface ManualDigitalHumanInvocationRequest {
@@ -384,8 +393,6 @@ export interface DigitalHumanMemoryMutationResult {
 }
 
 export type DigitalHumanChannelInstallationStatus = 'active' | 'disabled';
-export type DigitalHumanChannelConversationType = 'direct' | 'group';
-export type DigitalHumanChannelWakePolicy = 'direct_and_mention' | 'mention_only';
 export type DigitalHumanChannelEventStatus = 'received' | 'ignored' | 'accepted' | 'failed';
 export type DigitalHumanChannelDeliveryStatus =
   | 'pending'
@@ -394,35 +401,51 @@ export type DigitalHumanChannelDeliveryStatus =
   | 'failed'
   | 'unknown';
 
-export interface DigitalHumanChannelInstallationUsage {
-  digital_human_id: string;
-  digital_human_name: string;
-  binding_count: number;
-}
-
 export interface DigitalHumanChannelInstallation {
   id: string;
   organization_id: string;
   workspace_id: string;
   provider: 'feishu' | (string & {});
   connection_id: string;
+  credential_mode: 'embedded' | 'connection';
   name: string;
   external_tenant_id?: string;
   external_bot_id?: string;
+  webhook_url?: string;
+  receiver?: {
+    mode: 'stream' | 'webhook' | (string & {});
+    state: 'not_applicable' | 'pending' | 'connecting' | 'connected' | 'disconnected' | 'error';
+    error_code?: string;
+    updated_at?: string;
+  };
   default_subject_type?: 'digital_human';
   default_subject_id?: string;
   status: DigitalHumanChannelInstallationStatus;
   revision: number;
-  binding_count?: number;
-  used_by?: DigitalHumanChannelInstallationUsage[];
   created_at: string;
   updated_at: string;
+  channel_context?: {
+    status:
+      | 'ready'
+      | 'runtime_verification'
+      | 'missing_message_history'
+      | 'missing_member_names'
+      | 'temporarily_unavailable';
+    message_history_available: boolean;
+    member_names_available: boolean;
+  };
 }
 
 export interface CreateDigitalHumanChannelInstallationRequest {
-  provider: 'feishu';
-  connection_id: string;
+  provider: string;
+  connection_id?: string;
+  credentials?: Record<string, string>;
   name: string;
+}
+
+export interface UpdateDigitalHumanChannelCredentialRequest {
+  expected_revision: number;
+  credentials: Record<string, string>;
 }
 
 export interface UpdateDigitalHumanChannelInstallationRequest {
@@ -431,59 +454,18 @@ export interface UpdateDigitalHumanChannelInstallationRequest {
   status?: DigitalHumanChannelInstallationStatus;
 }
 
-export interface DigitalHumanExternalConversationMapping {
-  id: string;
-  installation_id: string;
-  external_conversation_id: string;
-  conversation_type: DigitalHumanChannelConversationType;
-  local_conversation_id?: string | null;
-  last_event_at?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DigitalHumanChannelBinding {
-  id: string;
-  installation_id: string;
-  conversation_mapping_id: string;
-  subject_type: 'digital_human';
-  subject_id: string;
-  wake_policy: DigitalHumanChannelWakePolicy;
-  enabled: boolean;
-  revision: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DigitalHumanChannelBindingView {
-  binding: DigitalHumanChannelBinding;
-  mapping: DigitalHumanExternalConversationMapping;
-}
-
-export interface DigitalHumanChannelConversationDiscovery {
-  installation_id: string;
-  external_conversation_id: string;
-  conversation_type: DigitalHumanChannelConversationType;
-  sender_external_id: string;
-  event_count: number;
-  last_event_at: string;
-}
-
-export interface CreateDigitalHumanChannelBindingRequest {
-  installation_id: string;
-  external_conversation_id: string;
-  conversation_type: DigitalHumanChannelConversationType;
-  wake_policy: DigitalHumanChannelWakePolicy;
-}
-
 export interface DigitalHumanChannelInboundEvent {
   id: string;
   installation_id: string;
+  provider?: string;
   binding_id?: string | null;
   provider_event_id: string;
   provider_message_id: string;
   external_conversation_id: string;
   sender_external_id: string;
+  conversation_type?: 'direct' | 'group' | '';
+  content_preview?: string;
+  mention_only?: boolean;
   event_type: string;
   payload_digest: string;
   status: DigitalHumanChannelEventStatus;

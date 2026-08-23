@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, Copy, Filter, History, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, Filter, History, RefreshCw, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { StickyDataTable, type StickyDataTableColumn } from '@/components/common/sticky-data-table';
 import { DigitalHumanRunDetailDrawer } from '@/components/digital-human/digital-human-run-detail-drawer';
@@ -29,6 +29,7 @@ const runParam = 'run';
 const activeStatuses = new Set<DigitalHumanRunStatus>(['queued', 'running', 'canceling']);
 
 type StatusFilter = 'all' | 'active' | 'succeeded' | 'failed' | 'canceled';
+type SourceFilter = 'all' | 'manual' | 'channel' | 'scheduled' | 'email' | 'external';
 
 export function DigitalHumanRuns({ id }: { id: string }) {
   const t = useT('digitalHumans');
@@ -46,6 +47,7 @@ export function DigitalHumanRuns({ id }: { id: string }) {
   const mutations = useDigitalHumanMutations(id);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
   const runItems = query.data?.data?.items;
   const selectedRunId = searchParams.get(runParam) ?? '';
 
@@ -53,26 +55,21 @@ export function DigitalHumanRuns({ id }: { id: string }) {
     const normalized = search.trim().toLowerCase();
     return (runItems ?? []).filter(run => {
       if (!matchesStatus(run.status, statusFilter)) return false;
+      if (sourceFilter !== 'all' && normalizedRunSource(run) !== sourceFilter) return false;
       if (!normalized) return true;
       return [run.id, run.query, run.conversation_id, run.result_summary, run.error_code]
         .filter(Boolean)
         .some(value => String(value).toLowerCase().includes(normalized));
     });
-  }, [runItems, search, statusFilter]);
+  }, [runItems, search, sourceFilter, statusFilter]);
 
   const columns: StickyDataTableColumn[] = [
-    { key: 'run', header: t('runs.columns.run'), className: 'min-w-[150px] pl-4' },
-    { key: 'source', header: t('runs.columns.source'), className: 'min-w-[110px]' },
-    { key: 'query', header: t('runs.columns.trigger'), className: 'min-w-[260px]' },
-    { key: 'status', header: t('runs.columns.status'), className: 'min-w-[120px]' },
-    { key: 'steps', header: t('runs.columns.steps'), className: 'min-w-[90px]' },
-    { key: 'duration', header: t('runs.columns.duration'), className: 'min-w-[110px]' },
-    { key: 'created', header: t('runs.columns.created'), className: 'min-w-[170px]' },
-    {
-      key: 'conversation',
-      header: t('runs.columns.conversation'),
-      className: 'min-w-[150px] pr-4',
-    },
+    { key: 'source', header: t('runs.columns.source'), className: 'w-[110px]' },
+    { key: 'query', header: t('runs.columns.trigger'), className: 'min-w-[240px] pl-4' },
+    { key: 'result', header: t('runs.columns.result'), className: 'min-w-[260px]' },
+    { key: 'status', header: t('runs.columns.status'), className: 'w-[110px]' },
+    { key: 'duration', header: t('runs.columns.duration'), className: 'w-[100px]' },
+    { key: 'created', header: t('runs.columns.created'), className: 'w-[170px]' },
   ];
 
   const setSelectedRun = (runId?: string | null) => {
@@ -88,15 +85,18 @@ export function DigitalHumanRuns({ id }: { id: string }) {
     toast.success(t('runs.cancelRequested'));
   };
 
-  const copy = async (value: string, successMessage: string) => {
-    await navigator.clipboard.writeText(value);
-    toast.success(successMessage);
-  };
-
-  const hasFilters = Boolean(search.trim() || statusFilter !== 'all');
+  const hasFilters = Boolean(search.trim() || statusFilter !== 'all' || sourceFilter !== 'all');
+  const sourceTabs: Array<{ value: SourceFilter; label: string }> = [
+    { value: 'all', label: t('runs.filters.allSources') },
+    { value: 'manual', label: sourceLabels.manual },
+    { value: 'channel', label: sourceLabels.channel },
+    { value: 'scheduled', label: sourceLabels.scheduled },
+    { value: 'email', label: sourceLabels.email },
+    { value: 'external', label: sourceLabels.external },
+  ];
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-13rem)] min-h-[620px] max-w-7xl flex-col px-4 py-5 md:px-8">
+    <div className="mx-auto flex h-full min-h-0 max-w-[1600px] flex-col px-4 py-5 md:px-8">
       <div className="mb-4 flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xl font-semibold">
@@ -117,51 +117,72 @@ export function DigitalHumanRuns({ id }: { id: string }) {
       </div>
 
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-background">
-        <div className="flex shrink-0 flex-col gap-3 border-b px-4 py-3">
-          <div>
-            <div className="text-sm font-semibold">{t('runs.recent')}</div>
-            <div className="text-xs text-muted-foreground">{t('runs.selectHint')}</div>
-          </div>
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-            <Input
-              value={search}
-              onChange={event => setSearch(event.target.value)}
-              placeholder={t('runs.filters.searchPlaceholder')}
-              leftIcon={<Search />}
-              className="h-9"
-              containerClassName="min-w-0 lg:w-[420px]"
-            />
-            <Select
-              value={statusFilter}
-              onValueChange={value => setStatusFilter(value as StatusFilter)}
-            >
-              <SelectTrigger className="lg:w-[190px]" aria-label={t('runs.filters.statusLabel')}>
-                <div className="flex items-center gap-2">
-                  <Filter className="size-4 text-muted-foreground" />
-                  <SelectValue />
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('runs.filters.all')}</SelectItem>
-                <SelectItem value="active">{t('runs.filters.active')}</SelectItem>
-                <SelectItem value="succeeded">{t('status.succeeded')}</SelectItem>
-                <SelectItem value="failed">{t('status.failed')}</SelectItem>
-                <SelectItem value="canceled">{t('status.canceled')}</SelectItem>
-              </SelectContent>
-            </Select>
-            {hasFilters ? (
-              <Button
+        <div className="flex shrink-0 flex-col border-b">
+          <div className="flex gap-1 overflow-x-auto border-b px-4 pt-2" role="tablist">
+            {sourceTabs.map(tab => (
+              <button
+                key={tab.value}
                 type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setSearch('');
-                  setStatusFilter('all');
-                }}
+                role="tab"
+                aria-selected={sourceFilter === tab.value}
+                className={cn(
+                  'relative h-10 shrink-0 px-3 text-sm text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+                  sourceFilter === tab.value &&
+                    'font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary'
+                )}
+                onClick={() => setSourceFilter(tab.value)}
               >
-                {t('runs.filters.clear')}
-              </Button>
-            ) : null}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-col gap-3 px-4 py-3">
+            <div>
+              <div className="text-sm font-semibold">{t('runs.recent')}</div>
+              <div className="text-xs text-muted-foreground">{t('runs.selectHint')}</div>
+            </div>
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+              <Input
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder={t('runs.filters.searchPlaceholder')}
+                leftIcon={<Search />}
+                className="h-9"
+                containerClassName="min-w-0 lg:w-[420px]"
+              />
+              <Select
+                value={statusFilter}
+                onValueChange={value => setStatusFilter(value as StatusFilter)}
+              >
+                <SelectTrigger className="lg:w-[190px]" aria-label={t('runs.filters.statusLabel')}>
+                  <div className="flex items-center gap-2">
+                    <Filter className="size-4 text-muted-foreground" />
+                    <SelectValue />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('runs.filters.all')}</SelectItem>
+                  <SelectItem value="active">{t('runs.filters.active')}</SelectItem>
+                  <SelectItem value="succeeded">{t('status.succeeded')}</SelectItem>
+                  <SelectItem value="failed">{t('status.failed')}</SelectItem>
+                  <SelectItem value="canceled">{t('status.canceled')}</SelectItem>
+                </SelectContent>
+              </Select>
+              {hasFilters ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setSearch('');
+                    setStatusFilter('all');
+                    setSourceFilter('all');
+                  }}
+                >
+                  {t('runs.filters.clear')}
+                </Button>
+              ) : null}
+            </div>
           </div>
         </div>
 
@@ -179,120 +200,139 @@ export function DigitalHumanRuns({ id }: { id: string }) {
               }
             />
           ) : (
-            <StickyDataTable<DigitalHumanRun>
-              className="h-full"
-              columns={columns}
-              data={filteredRuns}
-              getRowKey={run => run.id}
-              isLoading={query.isLoading}
-              emptyState={
-                <RunListState
-                  icon={hasFilters ? <Search className="size-5" /> : <History className="size-5" />}
-                  title={hasFilters ? t('runs.noMatches') : t('runs.empty')}
-                  description={
-                    hasFilters ? t('runs.noMatchesDescription') : t('runs.emptyDescription')
-                  }
-                  action={
-                    hasFilters ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setSearch('');
-                          setStatusFilter('all');
-                        }}
+            <>
+              <div className="h-full overflow-y-auto p-3 md:hidden">
+                {query.isLoading ? (
+                  <div className="space-y-3">
+                    {[0, 1, 2].map(item => (
+                      <div key={item} className="h-36 animate-pulse rounded-xl bg-muted/40" />
+                    ))}
+                  </div>
+                ) : filteredRuns.length === 0 ? (
+                  <RunListState
+                    icon={
+                      hasFilters ? <Search className="size-5" /> : <History className="size-5" />
+                    }
+                    title={hasFilters ? t('runs.noMatches') : t('runs.empty')}
+                    description={
+                      hasFilters ? t('runs.noMatchesDescription') : t('runs.emptyDescription')
+                    }
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {filteredRuns.map(run => (
+                      <button
+                        key={run.id}
+                        type="button"
+                        className={cn(
+                          'w-full rounded-xl border p-4 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring',
+                          run.id === selectedRunId && 'border-primary/40 bg-primary/5'
+                        )}
+                        onClick={() => setSelectedRun(run.id)}
                       >
-                        {t('runs.filters.clear')}
-                      </Button>
-                    ) : undefined
-                  }
-                />
-              }
-            >
-              {filteredRuns.map(run => {
-                const selected = run.id === selectedRunId;
-                const conversationID = run.conversation_id;
-                return (
-                  <TableRow
-                    key={run.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-pressed={selected}
-                    className={cn(
-                      'group cursor-pointer border-b border-border/10 transition-colors interactive-subtle',
-                      selected ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-bg-canvas/40'
-                    )}
-                    onClick={() => setSelectedRun(run.id)}
-                    onKeyDown={event => {
-                      if (event.key !== 'Enter' && event.key !== ' ') return;
-                      event.preventDefault();
-                      setSelectedRun(run.id);
-                    }}
-                  >
-                    <TableCell className="py-4 pl-4">
-                      <div className="flex items-center gap-1">
-                        <span className="font-medium" title={run.id}>
-                          {shortID(run.id)}
-                        </span>
+                        <div className="flex items-start justify-between gap-3">
+                          <SourceBadge label={runSourceLabel(run, sourceLabels)} />
+                          <RunStatusBadge status={run.status} label={t(`status.${run.status}`)} />
+                        </div>
+                        <p className="mt-3 line-clamp-2 text-sm font-medium leading-6">
+                          {run.query}
+                        </p>
+                        {run.result_summary ? (
+                          <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                            {run.result_summary}
+                          </p>
+                        ) : null}
+                        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                          <span>{formatRunDuration(run)}</span>
+                          <span>{new Date(run.created_at).toLocaleString()}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <StickyDataTable<DigitalHumanRun>
+                className="hidden h-full md:block"
+                columns={columns}
+                data={filteredRuns}
+                getRowKey={run => run.id}
+                isLoading={query.isLoading}
+                emptyState={
+                  <RunListState
+                    icon={
+                      hasFilters ? <Search className="size-5" /> : <History className="size-5" />
+                    }
+                    title={hasFilters ? t('runs.noMatches') : t('runs.empty')}
+                    description={
+                      hasFilters ? t('runs.noMatchesDescription') : t('runs.emptyDescription')
+                    }
+                    action={
+                      hasFilters ? (
                         <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          isIcon
-                          className="opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
-                          aria-label={t('runs.copyRun')}
-                          onClick={event => {
-                            event.stopPropagation();
-                            void copy(run.id, t('runs.runCopied'));
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setSearch('');
+                            setStatusFilter('all');
+                            setSourceFilter('all');
                           }}
                         >
-                          <Copy className="size-3.5" />
+                          {t('runs.filters.clear')}
                         </Button>
-                      </div>
-                    </TableCell>
-                    <TableCell className="py-4">
-                      <SourceBadge label={runSourceLabel(run, sourceLabels)} />
-                    </TableCell>
-                    <TableCell className="max-w-[360px] py-4">
-                      <div className="line-clamp-2 text-xs leading-5" title={run.query}>
-                        {run.query}
-                      </div>
-                    </TableCell>
-                    <TableCell className="py-4">
-                      <RunStatusBadge status={run.status} label={t(`status.${run.status}`)} />
-                    </TableCell>
-                    <TableCell className="py-4">{runStepCount(run)}</TableCell>
-                    <TableCell className="py-4">{formatRunDuration(run)}</TableCell>
-                    <TableCell className="py-4">
-                      {new Date(run.created_at).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="py-4 pr-4">
-                      <div className="flex items-center gap-1">
-                        <span className="truncate" title={run.conversation_id ?? ''}>
-                          {shortID(conversationID)}
+                      ) : undefined
+                    }
+                  />
+                }
+              >
+                {filteredRuns.map(run => {
+                  const selected = run.id === selectedRunId;
+                  return (
+                    <TableRow
+                      key={run.id}
+                      className={cn(
+                        'group cursor-pointer border-b border-border/10 transition-colors',
+                        selected ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-bg-canvas/40'
+                      )}
+                      tabIndex={0}
+                      onClick={() => setSelectedRun(run.id)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedRun(run.id);
+                        }
+                      }}
+                    >
+                      <TableCell className="py-4">
+                        <SourceBadge label={runSourceLabel(run, sourceLabels)} />
+                      </TableCell>
+                      <TableCell className="max-w-[420px] py-4 pl-4">
+                        <span
+                          className="line-clamp-2 text-left text-xs leading-5"
+                          title={run.query}
+                        >
+                          {run.query || t('runs.details')}
                         </span>
-                        {conversationID ? (
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="ghost"
-                            isIcon
-                            className="opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
-                            aria-label={t('runs.copyConversation')}
-                            onClick={event => {
-                              event.stopPropagation();
-                              void copy(conversationID, t('runs.conversationCopied'));
-                            }}
-                          >
-                            <Copy className="size-3.5" />
-                          </Button>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </StickyDataTable>
+                      </TableCell>
+                      <TableCell className="max-w-[360px] py-4">
+                        <span
+                          className="line-clamp-2 text-xs leading-5 text-muted-foreground"
+                          title={run.result_summary || undefined}
+                        >
+                          {run.result_summary || t('runs.resultPending')}
+                        </span>
+                      </TableCell>
+                      <TableCell className="py-4">
+                        <RunStatusBadge status={run.status} label={t(`status.${run.status}`)} />
+                      </TableCell>
+                      <TableCell className="py-4">{formatRunDuration(run)}</TableCell>
+                      <TableCell className="py-4">
+                        {new Date(run.created_at).toLocaleString()}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </StickyDataTable>
+            </>
           )}
         </div>
       </section>
@@ -356,22 +396,6 @@ function matchesStatus(status: DigitalHumanRunStatus, filter: StatusFilter) {
   return status === filter;
 }
 
-function shortID(value?: string | null) {
-  if (!value) return '—';
-  if (value.length <= 13) return value;
-  return `${value.slice(0, 8)}…${value.slice(-4)}`;
-}
-
-function runStepCount(run: DigitalHumanRun) {
-  return (
-    3 +
-    recordArray(run.execution_trace?.skill_invocations).length +
-    recordArray(run.execution_trace?.workflow_runs).length +
-    recordArray(run.execution_trace?.conversation_artifacts).length +
-    recordArray(run.execution_trace?.generated_files).length
-  );
-}
-
 function formatRunDuration(run: DigitalHumanRun) {
   const start = Date.parse(run.started_at ?? run.created_at);
   const end = Date.parse(run.completed_at ?? run.updated_at);
@@ -391,18 +415,18 @@ interface RunSourceLabels {
 }
 
 function runSourceLabel(run: DigitalHumanRun, labels: RunSourceLabels) {
-  const origin = recordValue(run.invocation_event?.origin);
-  const source = stringValue(origin?.kind) ?? stringValue(run.invocation_event?.type) ?? 'manual';
-  if (source === 'manual') return labels.manual;
-  if (source === 'schedule' || source === 'scheduled') return labels.scheduled;
-  if (source === 'email') return labels.email;
-  if (source === 'channel' || source === 'chat') return labels.channel;
-  if (source === 'webhook' || source === 'external') return labels.external;
-  return source;
+  const source = normalizedRunSource(run);
+  return labels[source];
 }
 
-function recordArray(value: unknown): Array<Record<string, unknown>> {
-  return Array.isArray(value) ? value.filter(isRecord) : [];
+function normalizedRunSource(run: DigitalHumanRun): Exclude<SourceFilter, 'all'> {
+  const origin = recordValue(run.invocation_event?.origin);
+  const source = stringValue(origin?.kind) ?? stringValue(run.invocation_event?.type) ?? 'manual';
+  if (source === 'manual') return 'manual';
+  if (source === 'schedule' || source === 'scheduled') return 'scheduled';
+  if (source === 'email') return 'email';
+  if (source === 'channel' || source === 'chat') return 'channel';
+  return 'external';
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {

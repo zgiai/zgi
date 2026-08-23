@@ -1238,9 +1238,11 @@ export function AIChatInputArea({
               ? 'max-w-full'
               : surface === 'agent-draft'
                 ? 'max-w-[560px]'
-                : isHome && !isLoadingMessages
-                  ? 'max-w-3xl'
-                  : 'max-w-4xl'
+                : surface === 'digital-human' && isHome && !isLoadingMessages
+                  ? 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'
+                  : isHome && !isLoadingMessages
+                    ? 'max-w-3xl'
+                    : 'max-w-4xl'
           )}
         >
           {modelMissing && !hasBlockingApproval && !hasActiveUserInputRequest ? (
