@@ -14,7 +14,8 @@ import {
   formatBillingDisplayAmountFromNormalizedCredits,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
-import { formatNumber, formatTokenCount } from '@/utils/format';
+import { formatNumber } from '@/utils/format';
+import { formatTokenCount } from '@/utils/token-format';
 
 interface TokenTrendChartProps {
   dailyData: ModelUsageDailyItem[];

@@ -24,8 +24,9 @@ import {
   formatBillingDisplayAmountFromNormalizedCredits,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
-import { formatNumber, formatTokenCount } from '@/utils/format';
+import { formatNumber } from '@/utils/format';
 import { resolveProviderCanonicalKey, resolveProviderDisplayInfo } from '@/utils/provider/meta';
+import { formatTokenCount } from '@/utils/token-format';
 
 const CHART_COLORS = [
   '#3B82F6',

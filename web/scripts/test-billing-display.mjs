@@ -12,7 +12,7 @@ import {
   normalizedAiCreditsToUSD,
 } from '../src/utils/billing-display.ts';
 import { normalizeAiCreditValue, normalizeModelUsageData } from '../src/utils/ai-credits.ts';
-import { formatTokenCount } from '../src/utils/format.ts';
+import { formatTokenCount } from '../src/utils/token-format.ts';
 
 const usdSettings = {
   currency: 'USD',

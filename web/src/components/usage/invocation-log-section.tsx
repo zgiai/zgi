@@ -44,8 +44,9 @@ import {
   formatBillingDisplayAmountFromNormalizedCredits,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
-import { formatNumber, formatTokenCount } from '@/utils/format';
+import { formatNumber } from '@/utils/format';
 import { normalizeModelUsageAppType } from '@/utils/model-usage-app-type';
+import { formatTokenCount } from '@/utils/token-format';
 
 type SourceFilter = 'all' | Exclude<InvocationSource, 'unknown'>;
 
