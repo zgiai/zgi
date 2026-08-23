@@ -42,8 +42,10 @@ import type {
 import {
   formatBillingDisplayAmountFromUSD,
   formatBillingDisplayAmountFromNormalizedCredits,
+  DEFAULT_BILLING_DISPLAY,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
+import { formatAiCreditValue } from '@/utils/ai-credits';
 import { formatNumber } from '@/utils/format';
 import { normalizeModelUsageAppType } from '@/utils/model-usage-app-type';
 import { formatTokenCount } from '@/utils/token-format';
@@ -218,6 +220,7 @@ export function InvocationLogSection({
                 <TableHead className="min-w-[180px]">
                   {t('usage.invocations.table.model')}
                 </TableHead>
+                <TableHead>{t('usage.invocations.table.channel')}</TableHead>
                 <TableHead>{t('usage.invocations.table.business')}</TableHead>
                 <TableHead>{t('usage.invocations.table.status')}</TableHead>
                 <TableHead>{t('usage.invocations.table.content')}</TableHead>
@@ -235,14 +238,14 @@ export function InvocationLogSection({
               {query.isLoading ? (
                 Array.from({ length: 5 }).map((_, index) => (
                   <TableRow key={index}>
-                    <TableCell colSpan={10} className="px-6 py-3">
+                    <TableCell colSpan={11} className="px-6 py-3">
                       <Skeleton className="h-8 w-full" />
                     </TableCell>
                   </TableRow>
                 ))
               ) : items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-28 text-center text-muted-foreground">
+                  <TableCell colSpan={11} className="h-28 text-center text-muted-foreground">
                     {t('usage.invocations.empty')}
                   </TableCell>
                 </TableRow>
@@ -275,6 +278,7 @@ export function InvocationLogSection({
                       <div className="font-medium">{item.model_name}</div>
                       <div className="text-xs text-muted-foreground">{item.provider_name}</div>
                     </TableCell>
+                    <TableCell>{item.channel_name || '-'}</TableCell>
                     <TableCell>{t(`usage.appTypes.${knownAppType(item.app_type)}`)}</TableCell>
                     <TableCell>
                       <StatusBadge status={item.status} attempts={item.attempt_count} />
@@ -372,7 +376,6 @@ export function InvocationLogSection({
       </CardContent>
       <InvocationDetailSheet
         item={selectedInvocation}
-        billingDisplay={billingDisplay}
         canViewContent={canViewContent}
         onOpenChange={open => {
           if (!open) setSelectedInvocation(null);
@@ -384,12 +387,10 @@ export function InvocationLogSection({
 
 function InvocationDetailSheet({
   item,
-  billingDisplay,
   onOpenChange,
   canViewContent,
 }: {
   item: InvocationLogItem | null;
-  billingDisplay: BillingDisplaySettings;
   onOpenChange: (open: boolean) => void;
   canViewContent: boolean;
 }) {
@@ -403,8 +404,6 @@ function InvocationDetailSheet({
       : item.invocation_source === 'product'
         ? t('usage.invocations.details.sourceProduct')
         : t('usage.invocations.details.sourceUnknown');
-  const formatCost = (value: number) =>
-    formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
@@ -433,6 +432,7 @@ function InvocationDetailSheet({
                 [t('usage.invocations.details.appId'), item.app_id],
                 [t('usage.invocations.details.model'), item.model_name],
                 [t('usage.invocations.details.provider'), item.provider_name],
+                [t('usage.invocations.details.channel'), item.channel_name || '-'],
                 [
                   t('usage.invocations.details.startedAt'),
                   new Date(item.started_at).toLocaleString(locale),
@@ -471,10 +471,20 @@ function InvocationDetailSheet({
                   formatTokenCount(item.total_tokens, locale),
                 ],
                 [
-                  t('usage.invocations.details.cost'),
-                  item.total_cost_usd
-                    ? formatBillingDisplayAmountFromUSD(item.total_cost_usd, billingDisplay)
-                    : formatCost(item.total_points),
+                  t('usage.invocations.details.pointsAndPrice'),
+                  t('usage.invocations.details.pointsAndPriceValue', {
+                    points: formatAiCreditValue(item.total_points, { locale }),
+                    price: item.total_cost_usd
+                      ? formatBillingDisplayAmountFromUSD(
+                          item.total_cost_usd,
+                          DEFAULT_BILLING_DISPLAY
+                        )
+                      : formatBillingDisplayAmountFromNormalizedCredits(
+                          item.total_points,
+                          DEFAULT_BILLING_DISPLAY,
+                          { locale }
+                        ),
+                  }),
                 ],
               ]}
             />

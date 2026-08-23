@@ -34,7 +34,7 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { FileItem } from '@/services/types/file';
 import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types/aichat';
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
-import type { ModelUseCase } from '@/services/types/model';
+import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
 import {
   IMAGE_EXTENSIONS,
   buildFileInputAcceptAttribute,
@@ -226,6 +226,7 @@ interface AIChatInputAreaProps {
   onHeightChange?: (height: number) => void;
   showModelSelector?: boolean;
   modelUseCase?: ModelUseCase;
+  modelAvailabilityUseCase?: AvailableModelUseCase;
   preferredModelUseCase?: ModelUseCase;
   showMemoryToggle?: boolean;
   enableUpload?: boolean;
@@ -319,6 +320,7 @@ export function AIChatInputArea({
   onHeightChange,
   showModelSelector = true,
   modelUseCase = 'agent',
+  modelAvailabilityUseCase,
   preferredModelUseCase,
   showMemoryToggle = true,
   enableUpload = true,
@@ -1500,6 +1502,7 @@ export function AIChatInputArea({
                 imageExtensions={imageExtensions}
                 showModelSelector={showModelSelector}
                 modelUseCase={modelUseCase}
+                modelAvailabilityUseCase={modelAvailabilityUseCase}
                 preferredModelUseCase={preferredModelUseCase}
                 showMemoryToggle={showMemoryToggle}
                 showComposerExpandButton={!hasActiveUserInputRequest && showComposerExpandButton}

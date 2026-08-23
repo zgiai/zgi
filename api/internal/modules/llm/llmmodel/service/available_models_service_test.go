@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodeldto "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -31,6 +32,16 @@ type availableModelRepoFake struct {
 	listAvailableByNames  int
 	listAvailableFiltered int
 	lastUseCase           string
+}
+
+type availablePlatformChannelProviderFake struct {
+	channels  []*platformchannel.OfficialChannel
+	callCount int
+}
+
+func (f *availablePlatformChannelProviderFake) ListChannels(context.Context, string) ([]*platformchannel.OfficialChannel, error) {
+	f.callCount++
+	return f.channels, nil
 }
 
 func (f *availableModelRepoFake) Create(context.Context, *llmmodel.LLMModel) error {
@@ -327,6 +338,35 @@ func TestAvailableModels_ReturnsMusicGenerationCapability(t *testing.T) {
 	}
 	if !models[0].Endpoints.MusicGeneration {
 		t.Fatal("Endpoints.MusicGeneration = false, want true")
+	}
+}
+
+func TestAvailableModels_CloudOfficialRouteUsesPlatformChannelCatalog(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "gpt-cloud"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID: uuid.New(), Provider: "openai", Model: modelName, ModelName: "GPT Cloud",
+		IsActive: true, UseCases: types.StringArray{"text-chat"},
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type: shared.RouteTypeZGICloud, IsOfficial: true, IsEnabled: true,
+		Models: []string{}, OfficialProviderModels: []channelmodel.ProviderModel{},
+	}}}
+	platformProvider := &availablePlatformChannelProviderFake{channels: []*platformchannel.OfficialChannel{{
+		Provider: "openai", Models: []string{modelName},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
+	svc.(*availableModelsService).SetChannelProvider(platformProvider)
+
+	models, err := svc.ListAvailable(t.Context(), organizationID, "", "text-chat")
+	if err != nil {
+		t.Fatalf("ListAvailable() error = %v", err)
+	}
+	if len(models) != 1 || models[0].Provider != "openai" || models[0].Name != modelName {
+		t.Fatalf("available models = %#v, want openai/%s", models, modelName)
+	}
+	if platformProvider.callCount != 1 {
+		t.Fatalf("platform ListChannels calls = %d, want 1", platformProvider.callCount)
 	}
 }
 

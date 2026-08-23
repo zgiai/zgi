@@ -34,10 +34,19 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
+		channel_id TEXT,
 		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_routes (id TEXT PRIMARY KEY, name TEXT NOT NULL)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Table("llm_routes").Create(map[string]any{
+		"id": "channel-1", "name": "Official Cloud A",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	createInvocationContentAvailabilityTable(t, db)
@@ -53,7 +62,7 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Table(usageBillTable).Where("request_id = ?", "req-product").Updates(map[string]any{
-		"app_type": "agent", "model_name": "agent-model",
+		"app_type": "agent", "model_name": "agent-model", "channel_id": "channel-1",
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +96,7 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if retried == nil || retried.AttemptCount != 2 || retried.Status != "success" || retried.TotalTokens != 30 {
 		t.Fatalf("unexpected retried invocation: %#v", retried)
 	}
-	if product == nil || !product.ContentAvailable || product.ContentExpiresAt == nil || retried.ContentAvailable {
+	if product == nil || product.ChannelName != "Official Cloud A" || !product.ContentAvailable || product.ContentExpiresAt == nil || retried.ContentAvailable {
 		t.Fatalf("unexpected content availability: product=%#v retried=%#v", product, retried)
 	}
 

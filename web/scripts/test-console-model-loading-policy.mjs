@@ -11,6 +11,10 @@ const modelHookSource = fs.readFileSync(
   path.join(root, 'src/hooks/model/use-model.ts'),
   'utf8'
 );
+const workChatSource = fs.readFileSync(
+  path.join(root, 'src/app/console/work/chat/page.tsx'),
+  'utf8'
+);
 
 assert.doesNotMatch(
   consoleShellSource,
@@ -31,6 +35,16 @@ assert.match(
   modelHookSource,
   /id:\s*`available-models-load-failed:\$\{use_case\}`/,
   'available-model error toasts should be deduplicated per use case'
+);
+assert.match(
+  workChatSource,
+  /useCase:\s*'text-chat'/,
+  'the general work chat should list text-chat models'
+);
+assert.doesNotMatch(
+  workChatSource,
+  /availabilityUseCase:\s*'agent-runtime'|modelAvailabilityUseCase="agent-runtime"/,
+  'the general work chat must not hide text-chat models behind agent-runtime eligibility'
 );
 
 console.log('Console model loading policy checks passed.');

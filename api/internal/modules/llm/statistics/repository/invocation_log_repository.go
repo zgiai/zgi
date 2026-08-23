@@ -77,6 +77,7 @@ type invocationBillRow struct {
 	InvocationSource string         `gorm:"column:invocation_source"`
 	ModelName        string         `gorm:"column:model_name"`
 	ProviderName     string         `gorm:"column:provider_name"`
+	ChannelName      string         `gorm:"column:channel_name"`
 	Status           string         `gorm:"column:status"`
 	PromptTokens     int64          `gorm:"column:prompt_tokens"`
 	CacheReadTokens  int64          `gorm:"column:cache_read_tokens"`
@@ -231,11 +232,21 @@ func (r *statisticsRepositoryImpl) queryInvocationBills(ctx context.Context, fil
 	if r.db.Migrator().HasColumn(usageBillTable, "pricing_snapshot") {
 		pricingSnapshotColumn = "b.pricing_snapshot"
 	}
+	channelNameColumn := "'' AS channel_name"
+	joinChannel := r.db.Migrator().HasColumn(usageBillTable, "channel_id") &&
+		r.db.Migrator().HasTable("llm_routes") &&
+		r.db.Migrator().HasColumn("llm_routes", "name")
+	if joinChannel {
+		channelNameColumn = "COALESCE(r.name, '') AS channel_name"
+	}
 	query := r.db.WithContext(ctx).Table(usageBillTable+" b").
 		Select(fmt.Sprintf(`b.request_id, b.app_id, b.app_type, b.invocation_source, b.model_name, b.provider_name,
 			b.status, b.prompt_tokens, b.cache_read_tokens, b.cache_write_tokens, b.completion_tokens, b.total_tokens, b.total_points,
-			b.error_code, b.request_created_at, b.settled_at, %s`, pricingSnapshotColumn)).
+			b.error_code, b.request_created_at, b.settled_at, %s, %s`, pricingSnapshotColumn, channelNameColumn)).
 		Where("b.request_id IN ?", requestIDs)
+	if joinChannel {
+		query = query.Joins("LEFT JOIN llm_routes r ON r.id = b.channel_id")
+	}
 	query = applyInvocationLogFilters(query, "b", filters)
 	err := query.Order("b.request_created_at ASC").Scan(&rows).Error
 	return rows, err
@@ -298,6 +309,7 @@ func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRo
 		if bill.Status == "success" || !acc.hasSuccess {
 			acc.item.ModelName = bill.ModelName
 			acc.item.ProviderName = bill.ProviderName
+			acc.item.ChannelName = bill.ChannelName
 			acc.item.InvocationSource = normalizedInvocationSource(bill.InvocationSource)
 			acc.item.AppType = normalizedAppType(bill.AppType)
 			acc.item.AppID = bill.AppID

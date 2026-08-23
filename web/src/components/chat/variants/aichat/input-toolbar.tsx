@@ -40,7 +40,7 @@ import { formatExtensionsForDisplay } from '@/utils/file-helpers';
 import { AIChatMemoryModule } from '@/components/chat/variants/aichat/memory-module';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
-import type { ModelUseCase } from '@/services/types/model';
+import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
 import {
   imageAttachmentHintTranslationKey,
   type ScopedTranslatorWithHas,
@@ -72,6 +72,7 @@ interface AIChatInputToolbarProps {
   imageExtensions: string[];
   showModelSelector?: boolean;
   modelUseCase?: ModelUseCase;
+  modelAvailabilityUseCase?: AvailableModelUseCase;
   preferredModelUseCase?: ModelUseCase;
   showMemoryToggle?: boolean;
   showComposerExpandButton?: boolean;
@@ -181,6 +182,7 @@ export function AIChatInputToolbar({
   imageExtensions,
   showModelSelector = true,
   modelUseCase = 'agent',
+  modelAvailabilityUseCase,
   preferredModelUseCase,
   showMemoryToggle = true,
   showComposerExpandButton = false,
@@ -226,6 +228,7 @@ export function AIChatInputToolbar({
             ) : (
               <ModelSelector
                 modelType={modelUseCase}
+                availabilityUseCase={modelAvailabilityUseCase}
                 preferredUseCase={preferredModelUseCase}
                 value={modelSelectorValue}
                 onChange={onModelChange}

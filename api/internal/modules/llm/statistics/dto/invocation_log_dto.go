@@ -28,6 +28,7 @@ type InvocationLogItem struct {
 	AppType          string  `json:"app_type"`
 	ModelName        string  `json:"model_name"`
 	ProviderName     string  `json:"provider_name"`
+	ChannelName      string  `json:"channel_name"`
 	Status           string  `json:"status"`
 	AttemptCount     int64   `json:"attempt_count"`
 	PromptTokens     int64   `json:"prompt_tokens"`

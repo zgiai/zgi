@@ -217,12 +217,16 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 		logger.ErrorContext(logCtx, "failed to load enabled LLM routes", err)
 		return nil, fmt.Errorf("failed to get enabled routes: %w", err)
 	}
+	routes, err = platformchannel.HydrateOfficialRoutes(ctx, r.channelProvider, organizationID, routes)
+	if err != nil {
+		logger.ErrorContext(logCtx, "failed to load platform channel models", err)
+		return nil, fmt.Errorf("failed to get platform channel models: %w", err)
+	}
 	logger.DebugContext(logCtx, "enabled LLM routes loaded",
 		zap.Int("route_count", len(routes)),
 	)
-	// Note: Official channels are now persisted in llm_routes (is_official=true)
-	// via InitOfficialChannel, so they are included in GetEnabledRoutes above.
-	// The previous cloud.go virtual route injection has been removed.
+	// Official channel settings are persisted in llm_routes, while their current
+	// provider/model catalog is hydrated from the cloud channel source above.
 
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("%w: no enabled routes found for organizationID %s. Please configure at least one active channel in your workspace", llmerrors.DomainErrRouteNotFound, organizationID)

@@ -131,7 +131,7 @@ import type {
   AIChatOperationContext,
   AIChatToolGovernancePermissionTier,
 } from '@/components/aichat/contextual/types';
-import type { ModelUseCase } from '@/services/types/model';
+import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
 import { messageFilesForReplay } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 import {
   isImageExtension,
@@ -157,6 +157,7 @@ interface AIChatShellProps {
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
   modelUseCase?: ModelUseCase;
+  modelAvailabilityUseCase?: AvailableModelUseCase;
   preferredModelUseCase?: ModelUseCase;
   requireModel?: boolean;
   showMemoryToggle?: boolean;
@@ -294,6 +295,7 @@ export function AIChatShell({
   variant = 'full',
   showModelSelector = true,
   modelUseCase = 'agent',
+  modelAvailabilityUseCase,
   preferredModelUseCase,
   requireModel = true,
   showMemoryToggle = true,
@@ -1594,6 +1596,7 @@ export function AIChatShell({
             onHeightChange={setInputAreaHeight}
             showModelSelector={showModelSelector}
             modelUseCase={modelUseCase}
+            modelAvailabilityUseCase={modelAvailabilityUseCase}
             preferredModelUseCase={preferredModelUseCase}
             showMemoryToggle={showMemoryToggle}
             enableUpload={enableUpload}
