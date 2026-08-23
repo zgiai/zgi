@@ -8,7 +8,14 @@ import { useLocale } from 'next-intl';
 import { useT } from '@/i18n';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { useProviders } from '@/hooks/provider/use-provider';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import type { ProviderItem } from '@/services/types/provider';
@@ -17,10 +24,21 @@ import {
   formatBillingDisplayAmountFromNormalizedCredits,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
-import { formatNumber } from '@/utils/format';
+import { formatNumber, formatTokenCount } from '@/utils/format';
 import { resolveProviderCanonicalKey, resolveProviderDisplayInfo } from '@/utils/provider/meta';
 
-const CHART_COLORS = ['#3B82F6', '#F59E0B', '#22C55E', '#EF4444', '#8B5CF6', '#06B6D4', '#EC4899', '#84CC16', '#FF4500', '#7E57C2'];
+const CHART_COLORS = [
+  '#3B82F6',
+  '#F59E0B',
+  '#22C55E',
+  '#EF4444',
+  '#8B5CF6',
+  '#06B6D4',
+  '#EC4899',
+  '#84CC16',
+  '#FF4500',
+  '#7E57C2',
+];
 
 interface ModelDetailsSectionProps {
   models: ModelUsageByModelItem[];
@@ -179,10 +197,26 @@ export function ModelDetailsSection({
             })}
           </span>
           <div className="flex flex-wrap gap-4">
-            <span>{t('usage.modelDetails.inputTotal', { tokens: formatNumber(promptTokens, 0) })}</span>
-            <span>{t('usage.modelDetails.cacheReadTotal', { tokens: formatNumber(cacheReadTokens, 0) })}</span>
-            <span>{t('usage.modelDetails.cacheWriteTotal', { tokens: formatNumber(cacheWriteTokens, 0) })}</span>
-            <span>{t('usage.modelDetails.outputTotal', { tokens: formatNumber(completionTokens, 0) })}</span>
+            <span>
+              {t('usage.modelDetails.inputTotal', {
+                tokens: formatTokenCount(promptTokens, locale),
+              })}
+            </span>
+            <span>
+              {t('usage.modelDetails.cacheReadTotal', {
+                tokens: formatTokenCount(cacheReadTokens, locale),
+              })}
+            </span>
+            <span>
+              {t('usage.modelDetails.cacheWriteTotal', {
+                tokens: formatTokenCount(cacheWriteTokens, locale),
+              })}
+            </span>
+            <span>
+              {t('usage.modelDetails.outputTotal', {
+                tokens: formatTokenCount(completionTokens, locale),
+              })}
+            </span>
           </div>
         </div>
       </CardContent>
@@ -236,21 +270,43 @@ function TableView({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="min-w-[200px] px-6 text-left">{t('usage.modelDetails.model')}</TableHead>
-            <TableHead className="min-w-[120px] px-3 text-center">{t('usage.modelDetails.provider')}</TableHead>
-            <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.attempts')}</TableHead>
-            <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.inputTokens')}</TableHead>
-            <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.cacheReadTokens')}</TableHead>
-            <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.cacheWriteTokens')}</TableHead>
-            <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.outputTokens')}</TableHead>
+            <TableHead className="min-w-[200px] px-6 text-left">
+              {t('usage.modelDetails.model')}
+            </TableHead>
+            <TableHead className="min-w-[120px] px-3 text-center">
+              {t('usage.modelDetails.provider')}
+            </TableHead>
+            <TableHead className={centeredHeadClassName}>
+              {t('usage.modelDetails.attempts')}
+            </TableHead>
+            <TableHead className={centeredHeadClassName}>
+              {t('usage.modelDetails.inputTokens')}
+            </TableHead>
+            <TableHead className={centeredHeadClassName}>
+              {t('usage.modelDetails.cacheReadTokens')}
+            </TableHead>
+            <TableHead className={centeredHeadClassName}>
+              {t('usage.modelDetails.cacheWriteTokens')}
+            </TableHead>
+            <TableHead className={centeredHeadClassName}>
+              {t('usage.modelDetails.outputTokens')}
+            </TableHead>
             {showSourceBreakdown ? (
               <>
-                <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.officialPoints')}</TableHead>
-                <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.privatePoints')}</TableHead>
-                <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.totalPoints')}</TableHead>
+                <TableHead className={centeredHeadClassName}>
+                  {t('usage.modelDetails.officialPoints')}
+                </TableHead>
+                <TableHead className={centeredHeadClassName}>
+                  {t('usage.modelDetails.privatePoints')}
+                </TableHead>
+                <TableHead className={centeredHeadClassName}>
+                  {t('usage.modelDetails.totalPoints')}
+                </TableHead>
               </>
             ) : (
-              <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.pointsConsumption')}</TableHead>
+              <TableHead className={centeredHeadClassName}>
+                {t('usage.modelDetails.pointsConsumption')}
+              </TableHead>
             )}
             <TableHead className="px-6 text-center">{t('usage.modelDetails.share')}</TableHead>
           </TableRow>
@@ -277,7 +333,11 @@ function TableView({
                 <TableCell className={centeredCellClassName}>
                   {
                     resolveProviderDisplayInfo(
-                      resolveMatchedProvider(model, providerIdentifierLookup, providerNameLookup) ?? {
+                      resolveMatchedProvider(
+                        model,
+                        providerIdentifierLookup,
+                        providerNameLookup
+                      ) ?? {
                         provider: model.provider_id,
                         provider_name: model.provider_name,
                       },
@@ -285,21 +345,41 @@ function TableView({
                     ).name
                   }
                 </TableCell>
-                <TableCell className={centeredCellClassName}>{formatNumber(model.attempt_count)}</TableCell>
-                <TableCell className={centeredCellClassName}>{formatNumber(model.prompt_tokens, 0)}</TableCell>
-                <TableCell className={centeredCellClassName}>{formatNumber(model.cache_read_tokens, 0)}</TableCell>
-                <TableCell className={centeredCellClassName}>{formatNumber(model.cache_write_tokens, 0)}</TableCell>
-                <TableCell className={centeredCellClassName}>{formatNumber(model.completion_tokens, 0)}</TableCell>
+                <TableCell className={centeredCellClassName}>
+                  {formatNumber(model.attempt_count)}
+                </TableCell>
+                <TableCell className={centeredCellClassName}>
+                  {formatTokenCount(model.prompt_tokens, locale)}
+                </TableCell>
+                <TableCell className={centeredCellClassName}>
+                  {formatTokenCount(model.cache_read_tokens, locale)}
+                </TableCell>
+                <TableCell className={centeredCellClassName}>
+                  {formatTokenCount(model.cache_write_tokens, locale)}
+                </TableCell>
+                <TableCell className={centeredCellClassName}>
+                  {formatTokenCount(model.completion_tokens, locale)}
+                </TableCell>
                 {showSourceBreakdown ? (
                   <>
-                    <TableCell className={centeredCellClassName}>{formatCost(model.official_points)}</TableCell>
-                    <TableCell className={centeredCellClassName}>{formatCost(model.private_points)}</TableCell>
-                    <TableCell className={centeredCellClassName}>{formatCost(model.total_points)}</TableCell>
+                    <TableCell className={centeredCellClassName}>
+                      {formatCost(model.official_points)}
+                    </TableCell>
+                    <TableCell className={centeredCellClassName}>
+                      {formatCost(model.private_points)}
+                    </TableCell>
+                    <TableCell className={centeredCellClassName}>
+                      {formatCost(model.total_points)}
+                    </TableCell>
                   </>
                 ) : (
-                  <TableCell className={centeredCellClassName}>{formatCost(model.total_points)}</TableCell>
+                  <TableCell className={centeredCellClassName}>
+                    {formatCost(model.total_points)}
+                  </TableCell>
                 )}
-                <TableCell className="px-6 text-center font-medium">{formatShare(model.points_share)}</TableCell>
+                <TableCell className="px-6 text-center font-medium">
+                  {formatShare(model.points_share)}
+                </TableCell>
               </TableRow>
             ))
           )}
@@ -340,9 +420,9 @@ function ChartView({
         data: tokensData,
         title: t('usage.chart.tokenDistribution'),
         totalLabel: t('usage.chart.totalTokens'),
-        totalValue: formatNumber(totalTokens, 0),
+        totalValue: formatTokenCount(totalTokens, locale),
         unitLabel: t('usage.chart.tokens'),
-        formatValue: (value: number) => formatNumber(value, 0),
+        formatValue: (value: number) => formatTokenCount(value, locale),
       };
     }
 
@@ -404,16 +484,16 @@ function ChartView({
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-sm font-medium">{activeChart.title}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t('usage.modelDetails.subtitle')}
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{t('usage.modelDetails.subtitle')}</p>
         </div>
         <div className="inline-flex w-fit rounded-lg border p-1">
-          {([
-            ['points', t('usage.chart.totalPoints')],
-            ['attempts', t('usage.chart.totalAttempts')],
-            ['tokens', t('usage.chart.totalTokens')],
-          ] as const).map(([nextMetric, label]) => (
+          {(
+            [
+              ['points', t('usage.chart.totalPoints')],
+              ['attempts', t('usage.chart.totalAttempts')],
+              ['tokens', t('usage.chart.totalTokens')],
+            ] as const
+          ).map(([nextMetric, label]) => (
             <button
               key={nextMetric}
               type="button"
@@ -435,13 +515,21 @@ function ChartView({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
         <div className="space-y-3">
           {rankedItems.map(item => (
-            <div key={`${metric}-${item.name}`} className="rounded-lg border border-border/70 bg-muted/10 px-4 py-3">
+            <div
+              key={`${metric}-${item.name}`}
+              className="rounded-lg border border-border/70 bg-muted/10 px-4 py-3"
+            >
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+                  <span
+                    className="h-3 w-3 shrink-0 rounded-full"
+                    style={{ backgroundColor: item.color }}
+                  />
                   <span className="truncate text-sm font-medium text-foreground">{item.name}</span>
                 </div>
-                <span className="shrink-0 text-xs font-medium text-muted-foreground">{item.percentage}</span>
+                <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                  {item.percentage}
+                </span>
               </div>
               <Progress value={Number(item.percentage.replace('%', ''))} className="h-2.5" />
               <div className="mt-2 text-xs text-muted-foreground">

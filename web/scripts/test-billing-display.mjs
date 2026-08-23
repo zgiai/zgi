@@ -12,6 +12,7 @@ import {
   normalizedAiCreditsToUSD,
 } from '../src/utils/billing-display.ts';
 import { normalizeAiCreditValue, normalizeModelUsageData } from '../src/utils/ai-credits.ts';
+import { formatTokenCount } from '../src/utils/format.ts';
 
 const usdSettings = {
   currency: 'USD',
@@ -22,6 +23,13 @@ const cnySettings = {
   currency: 'CNY',
   usdToCnyRate: 7,
 };
+
+assert.equal(
+  formatTokenCount(1_056, 'en-US'),
+  '1,056',
+  'usage token counts must use grouping separators without K/M abbreviation'
+);
+assert.equal(formatTokenCount(0, 'en-US'), '0', 'zero token usage must remain visible');
 
 assert.deepEqual(
   getBillingDisplaySettings(),

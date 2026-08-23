@@ -44,7 +44,7 @@ import {
   formatBillingDisplayAmountFromNormalizedCredits,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
-import { formatNumber } from '@/utils/format';
+import { formatNumber, formatTokenCount } from '@/utils/format';
 import { normalizeModelUsageAppType } from '@/utils/model-usage-app-type';
 
 type SourceFilter = 'all' | Exclude<InvocationSource, 'unknown'>;
@@ -193,7 +193,7 @@ export function InvocationLogSection({
             />
             <SummaryMetric
               label={t('usage.invocations.metrics.tokensAndCost')}
-              value={formatNumber(summary?.total_tokens ?? 0, 0)}
+              value={formatTokenCount(summary?.total_tokens ?? 0, locale)}
               detail={formatCost(summary?.total_points ?? 0)}
             />
           </div>
@@ -288,7 +288,7 @@ export function InvocationLogSection({
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatNumber(item.total_tokens, 0)}
+                      {formatTokenCount(item.total_tokens, locale)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatDuration(item.duration_ms)}
@@ -449,20 +449,26 @@ function InvocationDetailSheet({
           <DetailSection title={t('usage.invocations.details.usage')}>
             <DetailValues
               values={[
-                [t('usage.invocations.details.promptTokens'), formatNumber(item.prompt_tokens, 0)],
+                [
+                  t('usage.invocations.details.promptTokens'),
+                  formatTokenCount(item.prompt_tokens, locale),
+                ],
                 [
                   t('usage.invocations.details.cacheReadTokens'),
-                  formatNumber(item.cache_read_tokens ?? 0, 0),
+                  formatTokenCount(item.cache_read_tokens ?? 0, locale),
                 ],
                 [
                   t('usage.invocations.details.cacheWriteTokens'),
-                  formatNumber(item.cache_write_tokens ?? 0, 0),
+                  formatTokenCount(item.cache_write_tokens ?? 0, locale),
                 ],
                 [
                   t('usage.invocations.details.completionTokens'),
-                  formatNumber(item.completion_tokens, 0),
+                  formatTokenCount(item.completion_tokens, locale),
                 ],
-                [t('usage.invocations.details.totalTokens'), formatNumber(item.total_tokens, 0)],
+                [
+                  t('usage.invocations.details.totalTokens'),
+                  formatTokenCount(item.total_tokens, locale),
+                ],
                 [
                   t('usage.invocations.details.cost'),
                   item.total_cost_usd

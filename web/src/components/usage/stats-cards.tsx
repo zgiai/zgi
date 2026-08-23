@@ -10,7 +10,7 @@ import {
   formatBillingDisplayAmountFromNormalizedCredits,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
-import { formatNumber } from '@/utils/format';
+import { formatNumber, formatTokenCount } from '@/utils/format';
 
 const CHART_COLORS = ['#3B82F6', '#F59E0B', '#22C55E'];
 
@@ -25,7 +25,11 @@ function formatShare(share: number): string {
   return `${formatNumber(share * 100, 2)}%`;
 }
 
-function TopModelsList({ models }: { models: Array<{ color: string; name: string; share: string }> }) {
+function TopModelsList({
+  models,
+}: {
+  models: Array<{ color: string; name: string; share: string }>;
+}) {
   const t = useT('dashboard');
 
   return (
@@ -33,7 +37,10 @@ function TopModelsList({ models }: { models: Array<{ color: string; name: string
       {models.length > 0 ? (
         models.map(model => (
           <div key={model.name} className="flex items-center gap-2 text-xs">
-            <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: model.color }} />
+            <span
+              className="size-2 shrink-0 rounded-full"
+              style={{ backgroundColor: model.color }}
+            />
             <span className="truncate">{model.name}</span>
             <span className="ml-auto text-muted-foreground">{model.share}</span>
           </div>
@@ -65,7 +72,9 @@ export function StatsCards({
   }, [models]);
 
   return (
-    <div className={`grid gap-4 md:grid-cols-2 ${showSourceBreakdown ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
+    <div
+      className={`grid gap-4 md:grid-cols-2 ${showSourceBreakdown ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}
+    >
       <Card>
         <CardContent className="space-y-1.5 p-5">
           <div className="text-base">{t('usage.cards.attemptCount')}</div>
@@ -87,19 +96,21 @@ export function StatsCards({
       <Card>
         <CardContent className="space-y-1.5 p-5">
           <div className="text-base">{t('usage.cards.totalTokens')}</div>
-          <div className="text-3xl font-bold">{formatNumber(summary.total_tokens, 0)}</div>
+          <div className="text-3xl font-bold">{formatTokenCount(summary.total_tokens, locale)}</div>
           <div className="space-y-0.5 text-sm text-muted-foreground">
             <div>
-              {t('usage.cards.inputTokens')}: {formatNumber(summary.prompt_tokens, 0)}
+              {t('usage.cards.inputTokens')}: {formatTokenCount(summary.prompt_tokens, locale)}
             </div>
             <div>
-              {t('usage.cards.cacheReadTokens')}: {formatNumber(summary.cache_read_tokens, 0)}
+              {t('usage.cards.cacheReadTokens')}:{' '}
+              {formatTokenCount(summary.cache_read_tokens, locale)}
             </div>
             <div>
-              {t('usage.cards.cacheWriteTokens')}: {formatNumber(summary.cache_write_tokens, 0)}
+              {t('usage.cards.cacheWriteTokens')}:{' '}
+              {formatTokenCount(summary.cache_write_tokens, locale)}
             </div>
             <div>
-              {t('usage.cards.outputTokens')}: {formatNumber(summary.completion_tokens, 0)}
+              {t('usage.cards.outputTokens')}: {formatTokenCount(summary.completion_tokens, locale)}
             </div>
           </div>
         </CardContent>
@@ -111,7 +122,9 @@ export function StatsCards({
             <CardContent className="space-y-1.5 p-5">
               <div className="text-base">{t('usage.cards.officialPoints')}</div>
               <div className="text-3xl font-bold">{formatCost(summary.official_points)}</div>
-              <div className="text-sm text-muted-foreground">{t('usage.cards.officialPointsHint')}</div>
+              <div className="text-sm text-muted-foreground">
+                {t('usage.cards.officialPointsHint')}
+              </div>
             </CardContent>
           </Card>
 
@@ -119,7 +132,9 @@ export function StatsCards({
             <CardContent className="space-y-1.5 p-5">
               <div className="text-base">{t('usage.cards.privatePoints')}</div>
               <div className="text-3xl font-bold">{formatCost(summary.private_points)}</div>
-              <div className="text-sm text-muted-foreground">{t('usage.cards.privatePointsHint')}</div>
+              <div className="text-sm text-muted-foreground">
+                {t('usage.cards.privatePointsHint')}
+              </div>
             </CardContent>
           </Card>
 
