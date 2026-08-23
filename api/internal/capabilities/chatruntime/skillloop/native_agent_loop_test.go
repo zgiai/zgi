@@ -855,3 +855,211 @@ func TestNativeExecutionCallWrapsActionArgumentsUnderFixedIdentity(t *testing.T)
 		t.Fatalf("business arguments escaped their envelope: %#v", execution)
 	}
 }
+
+func TestRunnerRetriesPendingExternalActionAfterDifferentActionSucceeded(t *testing.T) {
+	toolCall := func(callID string, actionID string) adapter.ToolCall {
+		arguments, err := json.Marshal(map[string]interface{}{
+			"integration_id": "wecom",
+			"action_id":      actionID,
+		})
+		if err != nil {
+			t.Fatalf("marshal tool arguments: %v", err)
+		}
+		return adapter.ToolCall{
+			ID:   callID,
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      "execute_action",
+				Arguments: string(arguments),
+			},
+		}
+	}
+
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{
+			Role: "assistant", ToolCalls: []adapter.ToolCall{toolCall("execute-search", "wecom.contact.search")},
+		}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "查询和发送都已完成。"}, FinishReason: "stop"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{
+			Role: "assistant", ToolCalls: []adapter.ToolCall{toolCall("execute-send", "wecom.message.send")},
+		}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
+	}}
+
+	executedActions := make([]string, 0, 2)
+	runtimeTool := RuntimeTool{
+		Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "execute_action"}},
+		SkillID:    skills.SkillExternalApps,
+		Handler: func(_ context.Context, call adapter.ToolCall) RuntimeToolResult {
+			arguments := map[string]interface{}{}
+			if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
+				t.Fatalf("decode runtime tool arguments: %v", err)
+			}
+			actionID, _ := arguments["action_id"].(string)
+			executedActions = append(executedActions, actionID)
+			return RuntimeToolResult{
+				Status: "success",
+				Arguments: map[string]interface{}{
+					"integration_id": "wecom",
+					"action_id":      actionID,
+				},
+				Result: map[string]interface{}{
+					"integration_id":   "wecom",
+					"action_id":        actionID,
+					"operation_status": "completed",
+				},
+			}
+		},
+	}
+
+	runner := &Runner{LLMClient: fakeLLM, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-external-sequence", "msg-external-sequence", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "查询企业微信成员并给他发送消息"}},
+	})
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:        prepared,
+		Resolved:        &skills.ResolvedSkills{},
+		NativeAgentLoop: true,
+		RuntimeTools:    []RuntimeTool{runtimeTool},
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			invocations := []interface{}{map[string]interface{}{
+				"invocation_id": "guide-search", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "effect": "read", "can_execute": true,
+				},
+			}}
+			if len(executedActions) > 0 {
+				invocations = append(invocations, map[string]interface{}{
+					"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+					"result": map[string]interface{}{
+						"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+					},
+				})
+			}
+			return map[string]interface{}{
+				"latest_user_request": "查询企业微信成员并给他发送消息",
+				"skill_invocations":   invocations,
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "消息已发送。" {
+		t.Fatalf("answer = %q", answer)
+	}
+	if !reflect.DeepEqual(executedActions, []string{"wecom.contact.search", "wecom.message.send"}) {
+		t.Fatalf("executed actions = %#v, want search then send exactly once", executedActions)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want query, rejected final, corrected send, final", fakeLLM.appChatCalls)
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], `action_id="wecom.message.send"`) {
+		t.Fatal("external-action correction did not target the latest pending send action")
+	}
+}
+
+func TestRunnerAcceptsTruthfulNonExecutionAfterEmptyExternalQuery(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "查询和发送都已完成。"}, FinishReason: "stop"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "没有找到目标成员，因此未发送消息。"}, FinishReason: "stop"}}},
+	}}
+	runtimeState := map[string]interface{}{
+		"latest_user_request": "查询企业微信成员并给他发送消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search",
+				},
+				"result": map[string]interface{}{"operation_status": "completed", "result_count": 0},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
+				},
+			},
+		},
+	}
+
+	runner := &Runner{LLMClient: fakeLLM, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-external-empty", "msg-external-empty", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "查询企业微信成员并给他发送消息"}},
+	})
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:        prepared,
+		Resolved:        &skills.ResolvedSkills{},
+		NativeAgentLoop: true,
+		RuntimeTools:    []RuntimeTool{runnerTestUnusedExternalActionTool(t)},
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			return runtimeState
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "没有找到目标成员，因此未发送消息。" {
+		t.Fatalf("answer = %q", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want one correction and a truthful terminal answer", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerReturnsSafeTerminalAnswerWhenExternalRetryIsExhausted(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已经发送。"}, FinishReason: "stop"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息确实已经发送。"}, FinishReason: "stop"}}},
+	}}
+	runtimeState := map[string]interface{}{
+		"latest_user_request": "发送企业微信消息",
+		"skill_invocations": []interface{}{map[string]interface{}{
+			"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+			"result": map[string]interface{}{
+				"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
+			},
+		}},
+	}
+
+	runner := &Runner{LLMClient: fakeLLM, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-external-exhausted", "msg-external-exhausted", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "发送企业微信消息"}},
+	})
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:        prepared,
+		Resolved:        &skills.ResolvedSkills{},
+		NativeAgentLoop: true,
+		RuntimeTools:    []RuntimeTool{runnerTestUnusedExternalActionTool(t)},
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			return runtimeState
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() exposed terminal guard error after retry exhaustion: %v", err)
+	}
+	if !strings.Contains(answer, "外部操作未完成") || !strings.Contains(answer, "不能视为已发送或已完成") {
+		t.Fatalf("answer = %q, want safe non-execution terminal answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want exactly one retry for the pending guide", fakeLLM.appChatCalls)
+	}
+}
+
+func runnerTestUnusedExternalActionTool(t *testing.T) RuntimeTool {
+	t.Helper()
+	return RuntimeTool{
+		Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "execute_action"}},
+		SkillID:    skills.SkillExternalApps,
+		Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult {
+			t.Fatal("unexpected external action execution")
+			return RuntimeToolResult{}
+		},
+	}
+}

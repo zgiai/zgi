@@ -309,8 +309,12 @@ func TestTerminalStateGuardDoesNotRepeatSuccessfulRedactedExternalWrite(t *testi
 	}
 
 	decision := terminalStateGuardEvaluate(evidence, "通知已发送。")
-	if decision.Path != terminalStateGuardAccepted {
-		t.Fatalf("redacted successful write was incorrectly scheduled for repetition: %#v", decision)
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil {
+		t.Fatalf("redacted execution was incorrectly attributed to an identified action: %#v", decision)
+	}
+	if decision.PendingExternalAction.RetryAllowed ||
+		terminalStateGuardCanRetryPendingExternalAction(decision.PendingExternalAction, map[string]int{}) {
+		t.Fatalf("redacted write could be repeated: %#v", decision.PendingExternalAction)
 	}
 }
 
@@ -375,6 +379,525 @@ func TestTerminalStateGuardDoesNotRepeatWriteAfterRedundantLaterGuide(t *testing
 	decision := terminalStateGuardEvaluate(evidence, "通知已发送。")
 	if decision.Path != terminalStateGuardAccepted {
 		t.Fatalf("redundant guide caused an already completed write to repeat: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardTracksLatestPendingActionAfterDifferentActionSucceeded(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询企业微信成员并给他发送消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"invocation_id": "guide-search", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "effect": "read", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"invocation_id": "execute-search", "skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "result_count": 1,
+				},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "已经处理完成。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil {
+		t.Fatalf("latest pending action was not blocked independently: %#v", decision)
+	}
+	pending := decision.PendingExternalAction
+	if pending.IntegrationID != "wecom" || pending.ActionID != "wecom.message.send" || pending.RetryKey != "guide:guide-send" {
+		t.Fatalf("pending action = %#v, want WeCom send guide", pending)
+	}
+}
+
+func TestTerminalStateGuardDoesNotLetEarlierUnkeyedExecutionSatisfyLaterActionGuide(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询企业微信成员并给他发送消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"result_summary": map[string]interface{}{"operation_status": "completed"},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "已经处理完成。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil ||
+		decision.PendingExternalAction.ActionID != "wecom.message.send" {
+		t.Fatalf("earlier unkeyed execution suppressed later action: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardDoesNotLetCompletedLaterActionHideEarlierPendingAction(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询企业微信成员并发送消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"invocation_id": "guide-search", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send",
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "已经完成。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil ||
+		decision.PendingExternalAction.ActionID != "wecom.contact.search" {
+		t.Fatalf("later completed action hid an earlier pending action: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardDistinguishesRepeatedActionByPlanPhase(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "先给甲发送消息，再给乙发送消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"invocation_id": "guide-send-a", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "plan_phase_id": "send-a", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "plan_phase_id": "send-a",
+				},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-send-b", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "plan_phase_id": "send-b", "can_execute": true,
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "两条消息都已发送。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil ||
+		decision.PendingExternalAction.PlanPhaseID != "send-b" ||
+		decision.PendingExternalAction.RetryKey != "guide:guide-send-b" {
+		t.Fatalf("second phase was not tracked independently: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardUnkeyedExecutionCannotCompleteEitherIdentifiedGuide(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询企业微信成员并发送消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"result_summary": map[string]interface{}{"operation_status": "completed"},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "已经全部完成。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil {
+		t.Fatalf("unkeyed execution completed an identified guide: %#v", decision)
+	}
+	if decision.PendingExternalAction.RetryAllowed ||
+		terminalStateGuardCanRetryPendingExternalAction(decision.PendingExternalAction, map[string]int{}) {
+		t.Fatalf("ambiguous external write could be replayed: %#v", decision.PendingExternalAction)
+	}
+}
+
+func TestTerminalStateGuardAcceptsTruthfulNonExecutionAfterEmptyPrerequisite(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询企业微信成员并给他发送消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search",
+				},
+				"result": map[string]interface{}{"result_count": 0, "operation_status": "completed"},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "没有找到目标成员，因此未发送消息。")
+	if decision.Path != terminalStateGuardAccepted || decision.FinalAnswer != "没有找到目标成员，因此未发送消息。" {
+		t.Fatalf("truthful non-execution after empty prerequisite was rejected: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardEmptyPrerequisiteWaivesOnlyDependentWrite(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询成员，给他发送消息，再列出部门",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search",
+				},
+				"result": map[string]interface{}{"result_count": 0, "operation_status": "completed"},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-departments", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.department.list", "effect": "read", "can_execute": true,
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "没有找到目标成员，因此未发送消息。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil ||
+		decision.PendingExternalAction.ActionID != "wecom.department.list" {
+		t.Fatalf("empty prerequisite waived an unrelated pending action: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardEmptyPrerequisiteDoesNotWaiveUnrelatedWrite(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询企业微信成员、发送消息并创建日历事件",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.contact.search"},
+				"result":    map[string]interface{}{"result_count": 0, "operation_status": "completed"},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-create", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "calendar", "action_id": "calendar.event.create", "effect": "create", "can_execute": true,
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "没有找到目标成员，因此未发送消息。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil ||
+		decision.PendingExternalAction.ActionID != "calendar.event.create" {
+		t.Fatalf("empty member search waived an unrelated create action: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardWaiverDoesNotHideDifferentUnknownAction(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询成员，发送消息，并创建日历事件",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search",
+				},
+				"result": map[string]interface{}{"result_count": 0, "operation_status": "completed"},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.calendar.event.create", "effect": "write", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.calendar.event.create",
+				},
+				"result": map[string]interface{}{"operation_status": "outcome_unknown"},
+			},
+		},
+	}
+	candidate := "查询已完成，但未发送消息；日历事件已创建。"
+
+	decision := terminalStateGuardEvaluate(evidence, candidate)
+	if decision.Path != terminalStateGuardAccepted || decision.FinalAnswer == candidate ||
+		!strings.Contains(decision.FinalAnswer, "不能视为已发送") {
+		t.Fatalf("dependent-action waiver hid a different unknown action: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardCategorySpecificSuccessAllowsTruthfulMixedAnswer(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询成员并发送消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search",
+				},
+				"result": map[string]interface{}{"result_count": 0, "operation_status": "completed"},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+				},
+			},
+		},
+	}
+	candidate := "查询已完成，但没有找到目标，因此未发送消息。"
+
+	decision := terminalStateGuardEvaluate(evidence, candidate)
+	if decision.Path != terminalStateGuardAccepted || decision.FinalAnswer != candidate {
+		t.Fatalf("read success marker rejected a truthful send non-execution answer: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardRejectsContradictoryNonExecutionClaim(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询企业微信成员并发送消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.contact.search"},
+				"result":    map[string]interface{}{"result_count": 0, "operation_status": "completed"},
+			},
+			map[string]interface{}{
+				"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "并非未发送，实际已经发送。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil {
+		t.Fatalf("contradictory non-execution claim was accepted: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardRetryExhaustionProducesSafeTerminalAnswer(t *testing.T) {
+	decision := terminalStateGuardSafeExternalNonExecutionDecision(
+		map[string]interface{}{"latest_user_request": "发送企业微信消息"},
+		"并非未发送，实际已经发送。",
+	)
+	if decision.Path != terminalStateGuardAccepted || decision.FinalAnswer == "并非未发送，实际已经发送。" ||
+		!strings.Contains(decision.FinalAnswer, "未完成") || !strings.Contains(decision.FinalAnswer, "不能视为已发送") {
+		t.Fatalf("retry exhaustion did not produce a safe terminal answer: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardDoesNotRetryAttemptedExternalWriteWithUnknownOutcome(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "给成员发送企业微信消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "operation_status": "outcome_unknown", "retry_safe": false,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "消息已经发送。")
+	if decision.Path != terminalStateGuardAccepted || decision.PendingExternalAction != nil {
+		t.Fatalf("unknown write outcome was scheduled for replay: %#v", decision)
+	}
+	if !strings.Contains(decision.FinalAnswer, "不能视为已发送") {
+		t.Fatalf("unknown write outcome was not replaced safely: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardKeepsUnconfirmedOutcomePerAction(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "发送消息并创建日历事件",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send",
+				},
+				"result": map[string]interface{}{"operation_status": "outcome_unknown"},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.calendar.event.create",
+				},
+				"result": map[string]interface{}{"operation_status": "completed"},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "消息已发送，日历事件已创建。")
+	if decision.Path != terminalStateGuardAccepted || !strings.Contains(decision.FinalAnswer, "不能视为已发送") {
+		t.Fatalf("later successful action hid an earlier unknown outcome: %#v", decision)
+	}
+	if terminalStateGuardCanStream(evidence) {
+		t.Fatal("terminal stream was allowed while one action outcome remained unknown")
+	}
+}
+
+func TestTerminalStateGuardLaterSuccessOverridesEarlierFailureForSameAction(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "发送企业微信消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send",
+				},
+				"result": map[string]interface{}{"operation_status": "failed_safe"},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send",
+				},
+				"result": map[string]interface{}{"operation_status": "completed"},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "消息已发送。")
+	if decision.Path != terminalStateGuardAccepted || decision.FinalAnswer != "消息已发送。" {
+		t.Fatalf("later success did not supersede the same action's earlier failure: %#v", decision)
+	}
+	if !terminalStateGuardCanStream(evidence) {
+		t.Fatal("terminal stream remained blocked after the same action later completed")
+	}
+}
+
+func TestTerminalStateGuardDoesNotClaimPartialExternalWriteCompleted(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "批量发送企业微信消息",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.message.send",
+				},
+				"result": map[string]interface{}{"operation_status": "partially_succeeded", "retry_safe": false},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "全部消息均已发送。")
+	if decision.Path != terminalStateGuardAccepted || decision.PendingExternalAction != nil ||
+		!strings.Contains(decision.FinalAnswer, "不能视为已发送") {
+		t.Fatalf("partial external write was treated as complete or replayable: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardDoesNotForceDisabledExternalGuide(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "发送企业微信消息",
+		"skill_invocations": []interface{}{map[string]interface{}{
+			"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+			"result": map[string]interface{}{
+				"integration_id": "wecom", "action_id": "wecom.message.send",
+				"availability": "scope_upgrade_required", "can_execute": false,
+			},
+		}},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "当前授权范围不支持发送消息。")
+	if decision.Path != terminalStateGuardAccepted || decision.PendingExternalAction != nil {
+		t.Fatalf("disabled guide was incorrectly forced to execute: %#v", decision)
 	}
 }
 
