@@ -329,7 +329,7 @@ func createDoubaoArkImage(
 		if !isSeedream {
 			return nil, fmt.Errorf("%w: reference image is only supported for doubao seedream image models", adapter.ErrCapabilityUnsupported)
 		}
-		payload["image_urls"] = []string{referenceImageURL}
+		payload["image"] = referenceImageURL
 	}
 	if size != "" {
 		payload[doubaoImagePayloadKeySize] = size

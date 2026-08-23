@@ -238,7 +238,7 @@ func TestDoubaoAdapterCreateImage_UsesArkImagesAndSeedreamNormalization(t *testi
 	}
 }
 
-func TestDoubaoAdapterCreateImage_AddsReferenceImageURLsForSeedream(t *testing.T) {
+func TestDoubaoAdapterCreateImage_AddsReferenceImageForSeedream(t *testing.T) {
 	t.Helper()
 
 	var gotPayload map[string]any
@@ -273,9 +273,11 @@ func TestDoubaoAdapterCreateImage_AddsReferenceImageURLsForSeedream(t *testing.T
 	if err != nil {
 		t.Fatalf("CreateImage() error = %v", err)
 	}
-	urls, ok := gotPayload["image_urls"].([]any)
-	if !ok || len(urls) != 1 || urls[0] != "https://files.example.com/reference.png?sign=1" {
-		t.Fatalf("payload.image_urls = %#v, want reference url", gotPayload["image_urls"])
+	if got := gotPayload["image"]; got != "https://files.example.com/reference.png?sign=1" {
+		t.Fatalf("payload.image = %#v, want reference url", got)
+	}
+	if _, exists := gotPayload["image_urls"]; exists {
+		t.Fatalf("payload.image_urls must not be sent for Ark Seedream image generation: %#v", gotPayload["image_urls"])
 	}
 }
 
