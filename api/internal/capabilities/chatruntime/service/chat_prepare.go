@@ -426,7 +426,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			return nil, err
 		}
 		if !shouldIsolateHistoryForCurrentTurn(parts) {
-			for _, item := range branch {
+			for _, item := range supplementalHistoryBranch(branch, parts) {
 				if item == nil {
 					continue
 				}

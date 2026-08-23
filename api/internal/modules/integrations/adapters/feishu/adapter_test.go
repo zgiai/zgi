@@ -43,6 +43,9 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				!strings.HasPrefix(method.OAuth.ProviderSetupURL, "https://") {
 				t.Fatalf("OAuth method = %#v", method)
 			}
+			if integrations.AuthMethodScopeEvidence(definition, method.ID) != integrations.AuthScopeEvidenceProviderReported {
+				t.Fatalf("OAuth method scope evidence = %q", method.ScopeEvidence)
+			}
 			if len(method.SetupGuide.Notices) != 3 ||
 				!strings.Contains(method.SetupGuide.Notices[0].Text, "user_profile") {
 				t.Fatalf("OAuth setup notices = %#v", method.SetupGuide.Notices)
@@ -64,6 +67,12 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				!strings.HasPrefix(method.SetupGuide.ConsoleURL, "https://") ||
 				!strings.HasPrefix(method.SetupGuide.DocumentationURL, "https://") {
 				t.Fatalf("tenant method = %#v", method)
+			}
+			if integrations.AuthMethodScopeEvidence(definition, method.ID) != integrations.AuthScopeEvidenceConnectorDeclared ||
+				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeMessageRead) ||
+				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeGroupMessageRead) ||
+				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeChatMembersRead) {
+				t.Fatalf("tenant app scope guidance = %#v", method)
 			}
 			if len(method.SetupGuide.Notices) != 3 ||
 				!strings.Contains(method.SetupGuide.Notices[2].Text, "bot capability") {
@@ -91,7 +100,7 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 			if !userOAuthSupported || tenantAppSupported {
 				t.Fatalf("user OAuth action authentication compatibility = %#v", action)
 			}
-		case ActionListDriveFiles, ActionReadDocument, ActionListChats, ActionListMessages,
+		case ActionListDriveFiles, ActionReadDocument, ActionListChats, ActionListMessages, ActionGetMessage, ActionListChatMembers,
 			ActionListCalendars, ActionListEvents, ActionCreateEvent:
 			if !userOAuthSupported || !tenantAppSupported {
 				t.Fatalf("shared user/application action authentication compatibility = %#v", action)
@@ -126,7 +135,11 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				!slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat}) {
 				t.Fatalf("unsafe calendar create defaults = %#v", action)
 			}
-		} else if !slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
+		} else if (action.ID == ActionListMessages || action.ID == ActionGetMessage || action.ID == ActionListChatMembers) &&
+			!slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromAPI}) {
+			t.Fatalf("channel context read action callers = %#v", action.SupportedCallers)
+		} else if action.ID != ActionListMessages && action.ID != ActionGetMessage && action.ID != ActionListChatMembers &&
+			!slices.Equal(action.SupportedCallers, []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent}) {
 			t.Fatalf("read action callers = %#v", action.SupportedCallers)
 		}
 		if action.ID == ActionGetAccount && len(action.RequiredScopes) != 0 {
@@ -173,11 +186,15 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				!slices.Equal(action.PreferredScopes, []string{ScopeCalendarRead}) {
 				t.Fatalf("calendar scope alternatives = %#v", action)
 			}
-		case ActionListMessages:
+		case ActionListMessages, ActionGetMessage:
 			if len(action.RequiredScopes) != 0 ||
 				!slices.Equal(action.RequiredAnyScopes, []string{ScopeMessageRead, ScopeMessageLegacy, ScopeMessage}) ||
 				!slices.Equal(action.PreferredScopes, []string{ScopeMessageRead}) {
 				t.Fatalf("message-read scope alternatives = %#v", action)
+			}
+		case ActionListChatMembers:
+			if !slices.Equal(action.RequiredScopes, []string{ScopeChatMembersRead}) {
+				t.Fatalf("chat-member scopes = %#v", action)
 			}
 		case ActionListEvents:
 			if len(action.RequiredScopes) != 0 ||

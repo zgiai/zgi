@@ -143,6 +143,24 @@ func (r *GormRepository) Published(ctx context.Context, scope Scope, definition 
 	return &version, nil
 }
 
+// PublishedVersion returns one immutable publication under the scoped aggregate.
+func (r *GormRepository) PublishedVersion(ctx context.Context, scope Scope, definitionID, versionID uuid.UUID) (*Version, error) {
+	if !validScope(scope) || definitionID == uuid.Nil || versionID == uuid.Nil {
+		return nil, ErrInvalidRequest
+	}
+	var version Version
+	err := r.scopedVersions(ctx, scope, definitionID).
+		Where("id = ? AND state = ?", versionID, VersionStatePublished).
+		Take(&version).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrVersionNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get published digital human version: %w", err)
+	}
+	return &version, nil
+}
+
 // ListDefinitions returns one newest-first workspace page.
 func (r *GormRepository) ListDefinitions(ctx context.Context, scope Scope, query ListQuery) ([]*Definition, int64, error) {
 	if !validScope(scope) || query.Page < 1 || query.PageSize < 1 {
@@ -214,7 +232,9 @@ func (r *GormRepository) UpdateDraftCAS(ctx context.Context, scope Scope, versio
 		Where("id = ? AND digital_human_id = ? AND organization_id = ? AND workspace_id = ? AND state = ? AND lock_version = ?",
 			version.ID, version.DigitalHumanID, scope.OrganizationID, scope.WorkspaceID, VersionStateDraft, expectedLockVersion).
 		Updates(map[string]any{
+			"identity_name":  version.IdentityName,
 			"persona":        version.Persona,
+			"goals":          version.Goals,
 			"rules":          version.Rules,
 			"default_model":  version.DefaultModel,
 			"memory_policy":  version.MemoryPolicy,

@@ -1,72 +1,28 @@
 package digitalhuman
 
-import (
-	"time"
+import "github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 
-	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
-	"github.com/zgiai/zgi/api/internal/capabilities/runspec"
-)
-
-type CreateRoleTemplateRequest struct {
-	Name             string               `json:"name"`
-	Description      string               `json:"description"`
-	Goals            []string             `json:"goals"`
-	Responsibilities []string             `json:"responsibilities"`
-	Capabilities     []runspec.VersionRef `json:"capabilities"`
-	SOPRefs          []runspec.VersionRef `json:"sop_refs"`
-	KnowledgeRefs    []runspec.VersionRef `json:"knowledge_refs"`
-	Policy           map[string]any       `json:"policy"`
-	EvaluationRefs   []runspec.VersionRef `json:"evaluation_refs"`
+type CreatePersonaTemplateRequest struct {
+	Name    string   `json:"name"`
+	Persona string   `json:"persona"`
+	Goals   []string `json:"goals"`
+	Rules   []string `json:"rules"`
 }
 
-type UpdateRoleTemplateRequest struct {
-	ExpectedRevision int64   `json:"expected_revision"`
-	Name             *string `json:"name,omitempty"`
-	Description      *string `json:"description,omitempty"`
+type UpdatePersonaTemplateRequest struct {
+	ExpectedRevision int64     `json:"expected_revision"`
+	Name             *string   `json:"name,omitempty"`
+	Persona          *string   `json:"persona,omitempty"`
+	Goals            *[]string `json:"goals,omitempty"`
+	Rules            *[]string `json:"rules,omitempty"`
 }
 
-type UpdateRoleTemplateDraftRequest struct {
-	ExpectedLockVersion int64                 `json:"expected_lock_version"`
-	Goals               *[]string             `json:"goals,omitempty"`
-	Responsibilities    *[]string             `json:"responsibilities,omitempty"`
-	Capabilities        *[]runspec.VersionRef `json:"capabilities,omitempty"`
-	SOPRefs             *[]runspec.VersionRef `json:"sop_refs,omitempty"`
-	KnowledgeRefs       *[]runspec.VersionRef `json:"knowledge_refs,omitempty"`
-	Policy              *map[string]any       `json:"policy,omitempty"`
-	EvaluationRefs      *[]runspec.VersionRef `json:"evaluation_refs,omitempty"`
-}
-
-type PublishRoleTemplateRequest struct {
-	ExpectedRevision         int64 `json:"expected_revision"`
-	ExpectedDraftLockVersion int64 `json:"expected_draft_lock_version"`
-}
-
-type RoleTemplateDetail struct {
-	Template  *RoleTemplate        `json:"template"`
-	Draft     *RoleTemplateVersion `json:"draft"`
-	Published *RoleTemplateVersion `json:"published,omitempty"`
-}
-
-type RoleTemplateListResult struct {
-	Items    []*RoleTemplate `json:"items"`
-	Total    int64           `json:"total"`
-	Page     int             `json:"page"`
-	PageSize int             `json:"page_size"`
-	HasMore  bool            `json:"has_more"`
-}
-
-type RoleAssignmentInput struct {
-	RoleTemplateVersionID uuid.UUID      `json:"role_template_version_id"`
-	Parameters            map[string]any `json:"parameters"`
-	OverridePolicy        map[string]any `json:"override_policy"`
-	EffectiveFrom         *time.Time     `json:"effective_from,omitempty"`
-	EffectiveTo           *time.Time     `json:"effective_to,omitempty"`
-}
-
-type ReplaceRoleAssignmentsRequest struct {
-	ExpectedDraftLockVersion int64                 `json:"expected_draft_lock_version"`
-	Items                    []RoleAssignmentInput `json:"items"`
+type PersonaTemplateListResult struct {
+	Items    []*PersonaTemplate `json:"items"`
+	Total    int64              `json:"total"`
+	Page     int                `json:"page"`
+	PageSize int                `json:"page_size"`
+	HasMore  bool               `json:"has_more"`
 }
 
 type ResourceBindingInput struct {
@@ -83,11 +39,6 @@ type ResourceBindingInput struct {
 type ReplaceResourceBindingsRequest struct {
 	ExpectedDraftLockVersion int64                  `json:"expected_draft_lock_version"`
 	Items                    []ResourceBindingInput `json:"items"`
-}
-
-type DraftRoleAssignments struct {
-	DraftLockVersion int64             `json:"draft_lock_version"`
-	Items            []*RoleAssignment `json:"items"`
 }
 
 type DraftResourceBindings struct {

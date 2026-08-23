@@ -11,8 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -33,20 +35,102 @@ type channelActionExecutor interface {
 	Execute(context.Context, integrations.ActionRequest) (*integrations.ActionResult, error)
 }
 
-// ChannelAdapter implements the transport-neutral channel contract while
-// delegating outbound side effects to the governed integrations executor.
+// ChannelAdapter implements the transport-neutral channel contract. DigitalHuman
+// production traffic resolves request-scoped credentials and calls Feishu
+// directly; executor is retained only for compatibility with legacy callers.
 type ChannelAdapter struct {
-	executor channelActionExecutor
-	now      func() time.Time
+	executor      channelActionExecutor
+	provider      *Adapter
+	connections   integrations.ConnectionResolver
+	now           func() time.Time
+	memberCacheMu sync.Mutex
+	memberCache   map[string]feishuMemberCacheEntry
 }
 
 func NewChannelAdapter(executor channelActionExecutor) *ChannelAdapter {
-	return &ChannelAdapter{executor: executor, now: func() time.Time { return time.Now().UTC() }}
+	return &ChannelAdapter{
+		executor:    executor,
+		now:         func() time.Time { return time.Now().UTC() },
+		memberCache: make(map[string]feishuMemberCacheEntry),
+	}
+}
+
+// NewDirectChannelAdapter creates the DigitalHuman channel adapter without the
+// generic integration executor. The connection resolver is used only as a
+// request-scoped credential store; provider calls, retries, and failures are
+// handled directly by the Feishu adapter.
+func NewDirectChannelAdapter(provider *Adapter, connections integrations.ConnectionResolver) (*ChannelAdapter, error) {
+	if provider == nil || provider.client == nil || connections == nil {
+		return nil, fmt.Errorf("initialize direct Feishu channel adapter: provider and credential resolver are required")
+	}
+	return &ChannelAdapter{
+		provider:    provider,
+		connections: connections,
+		now:         func() time.Time { return time.Now().UTC() },
+		memberCache: make(map[string]feishuMemberCacheEntry),
+	}, nil
 }
 
 func (*ChannelAdapter) Provider() string { return IntegrationID }
 
-func (adapter *ChannelAdapter) Verify(_ context.Context, request channelruntime.WebhookRequest, material channelruntime.SecurityMaterial) (*channelruntime.VerifiedWebhook, error) {
+func (*ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
+	return channelruntime.ProviderCapabilities{ContextRead: true}
+}
+
+func (*ChannelAdapter) ConnectionSpec() channelruntime.ConnectionSpec {
+	return channelruntime.ConnectionSpec{
+		IntegrationID: IntegrationID,
+		DriverID:      DriverID,
+		AuthMethodID:  TenantAppAuthMethodID,
+	}
+}
+
+func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (map[string]string, error) {
+	prepared := make(map[string]string, len(current)+len(updates))
+	for key, value := range current {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if !isChannelCredentialKey(key) {
+			destroyCredentialValues(prepared)
+			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unsupported Feishu channel credential field", nil)
+		}
+		if value = strings.TrimSpace(value); value != "" {
+			prepared[key] = value
+		}
+	}
+	for key, value := range updates {
+		key = strings.ToLower(strings.TrimSpace(key))
+		if !isChannelCredentialKey(key) {
+			destroyCredentialValues(prepared)
+			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unsupported Feishu channel credential field", nil)
+		}
+		if value = strings.TrimSpace(value); value != "" {
+			prepared[key] = value
+		}
+	}
+	if prepared["app_id"] == "" || prepared["app_secret"] == "" || prepared["verification_token"] == "" {
+		destroyCredentialValues(prepared)
+		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu App ID, App Secret, and Verification Token are required", nil)
+	}
+	return prepared, nil
+}
+
+func (adapter *ChannelAdapter) ResolveIdentity(ctx context.Context, credential channelruntime.ResolvedChannelCredential) (channelruntime.InstallationIdentity, error) {
+	if adapter == nil || adapter.provider == nil || len(credential.Values) == 0 {
+		return channelruntime.InstallationIdentity{}, integrations.NewError(integrations.ErrorCodeConnectionInvalid, "Feishu channel credentials are unavailable", nil)
+	}
+	connection := resolvedConnectionFromChannelCredential(credential)
+	defer connection.Destroy()
+	tenantID, selfID, err := adapter.provider.ResolveChannelIdentity(ctx, connection)
+	if err != nil {
+		return channelruntime.InstallationIdentity{}, err
+	}
+	return channelruntime.InstallationIdentity{
+		ExternalTenantID: strings.TrimSpace(tenantID),
+		ExternalSelfID:   strings.TrimSpace(selfID),
+	}, nil
+}
+
+func (adapter *ChannelAdapter) Verify(_ context.Context, request channelruntime.WebhookRequest, credential channelruntime.ResolvedChannelCredential) (*channelruntime.VerifiedWebhook, error) {
 	if adapter == nil || len(request.Body) == 0 || len(request.Body) > maxWebhookBodyBytes || !json.Valid(request.Body) {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
@@ -55,9 +139,11 @@ func (adapter *ChannelAdapter) Verify(_ context.Context, request channelruntime.
 		return nil, channelruntime.ErrInvalidWebhook
 	}
 	isChallenge := strings.EqualFold(strings.TrimSpace(envelope.Type), "url_verification") || strings.TrimSpace(envelope.Challenge) != ""
-	encryptKey := strings.TrimSpace(material.EncryptKey)
+	encryptKey := strings.TrimSpace(credential.Values["encrypt_key"])
 	if encryptKey != "" {
-		hasSignature := strings.TrimSpace(request.Timestamp) != "" || strings.TrimSpace(request.Nonce) != "" || strings.TrimSpace(request.Signature) != ""
+		hasSignature := strings.TrimSpace(request.Headers.Get("X-Lark-Request-Timestamp")) != "" ||
+			strings.TrimSpace(request.Headers.Get("X-Lark-Request-Nonce")) != "" ||
+			strings.TrimSpace(request.Headers.Get("X-Lark-Signature")) != ""
 		if hasSignature {
 			if err := adapter.verifySignature(request, encryptKey); err != nil {
 				return nil, err
@@ -78,28 +164,34 @@ func (adapter *ChannelAdapter) Verify(_ context.Context, request channelruntime.
 			}
 			isChallenge = strings.EqualFold(strings.TrimSpace(envelope.Type), "url_verification") || strings.TrimSpace(envelope.Challenge) != ""
 		}
-	} else if strings.TrimSpace(request.Signature) != "" {
+	} else if strings.TrimSpace(request.Headers.Get("X-Lark-Signature")) != "" {
 		return nil, channelruntime.ErrWebhookUnauthorized
 	}
 
-	verificationToken := strings.TrimSpace(material.VerificationToken)
+	verificationToken := strings.TrimSpace(credential.Values["verification_token"])
 	if verificationToken == "" || !secureEqual(verificationToken, webhookVerificationToken(request.Body)) {
 		return nil, channelruntime.ErrWebhookUnauthorized
 	}
 	verified := &channelruntime.VerifiedWebhook{Body: append([]byte(nil), request.Body...)}
 	if isChallenge {
-		verified.Challenge = strings.TrimSpace(envelope.Challenge)
-		if verified.Challenge == "" {
+		challenge := strings.TrimSpace(envelope.Challenge)
+		if challenge == "" {
 			return nil, channelruntime.ErrInvalidWebhook
 		}
+		body, err := json.Marshal(map[string]string{"challenge": challenge})
+		if err != nil {
+			return nil, channelruntime.ErrInvalidWebhook
+		}
+		response := jsonWebhookResponse(body)
+		verified.ImmediateResponse = &response
 	}
 	return verified, nil
 }
 
 func (adapter *ChannelAdapter) verifySignature(request channelruntime.WebhookRequest, encryptKey string) error {
-	timestamp := strings.TrimSpace(request.Timestamp)
-	nonce := strings.TrimSpace(request.Nonce)
-	signature := strings.ToLower(strings.TrimSpace(request.Signature))
+	timestamp := strings.TrimSpace(request.Headers.Get("X-Lark-Request-Timestamp"))
+	nonce := strings.TrimSpace(request.Headers.Get("X-Lark-Request-Nonce"))
+	signature := strings.ToLower(strings.TrimSpace(request.Headers.Get("X-Lark-Signature")))
 	if timestamp == "" || nonce == "" || len(signature) != sha256.Size*2 {
 		return channelruntime.ErrWebhookUnauthorized
 	}
@@ -124,8 +216,8 @@ func (adapter *ChannelAdapter) verifySignature(request channelruntime.WebhookReq
 	return nil
 }
 
-func (*ChannelAdapter) Normalize(_ context.Context, verified *channelruntime.VerifiedWebhook) (*channelruntime.InboundMessage, error) {
-	if verified == nil || verified.Challenge != "" || len(verified.Body) == 0 || len(verified.Body) > maxWebhookBodyBytes {
+func (*ChannelAdapter) Normalize(_ context.Context, verified *channelruntime.VerifiedWebhook, normalization channelruntime.NormalizationContext) (*channelruntime.InboundMessage, error) {
+	if verified == nil || verified.ImmediateResponse != nil || len(verified.Body) == 0 || len(verified.Body) > maxWebhookBodyBytes {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
 	var event feishuEventV2
@@ -166,7 +258,8 @@ func (*ChannelAdapter) Normalize(_ context.Context, verified *channelruntime.Ver
 		}
 	}
 	text = strings.TrimSpace(text)
-	if text == "" || utf8.RuneCountInString(text) > maxInboundTextRunes {
+	mentionOnly := text == "" && len(mentions) > 0
+	if (!mentionOnly && text == "") || utf8.RuneCountInString(text) > maxInboundTextRunes {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
 	occurredAt, err := feishuEventTime(message.CreateTime, event.Header.CreateTime)
@@ -177,20 +270,41 @@ func (*ChannelAdapter) Normalize(_ context.Context, verified *channelruntime.Ver
 	if senderID == "" {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
+	wakeReason := channelruntime.WakeReasonNone
+	if conversationType == channelruntime.ConversationTypeDirect {
+		wakeReason = channelruntime.WakeReasonDirectMessage
+	} else {
+		selfID := strings.TrimSpace(normalization.Identity.ExternalSelfID)
+		for _, mention := range mentions {
+			if selfID != "" && mention.ExternalID == selfID {
+				wakeReason = channelruntime.WakeReasonMention
+				break
+			}
+		}
+	}
 	return &channelruntime.InboundMessage{
 		Provider: IntegrationID, ProviderEventID: strings.TrimSpace(event.Header.EventID),
 		ProviderMessageID: strings.TrimSpace(message.MessageID), ExternalTenantID: strings.TrimSpace(event.Header.TenantKey),
 		ExternalConversationID: strings.TrimSpace(message.ChatID), ExternalThreadID: firstChannelValue(message.ThreadID, message.RootID, message.ParentID),
+		RootMessageID: strings.TrimSpace(message.RootID), ParentMessageID: strings.TrimSpace(message.ParentID),
+		ThreadID:         strings.TrimSpace(message.ThreadID),
 		ConversationType: conversationType, SenderExternalID: senderID, Text: text,
-		Mentions: mentions, OccurredAt: occurredAt,
+		Mentions: mentions, WakeReason: wakeReason, MentionOnly: mentionOnly, OccurredAt: occurredAt,
 	}, nil
 }
 
+func (*ChannelAdapter) Acknowledgement() channelruntime.WebhookResponse {
+	return jsonWebhookResponse([]byte(`{"code":0}`))
+}
+
 func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelruntime.DeliveryRequest) (*channelruntime.DeliveryReceipt, error) {
-	if adapter == nil || adapter.executor == nil || request.OrganizationID == uuid.Nil || request.WorkspaceID == uuid.Nil ||
+	if adapter == nil || (adapter.executor == nil && !adapter.directProviderAvailable()) || request.OrganizationID == uuid.Nil || request.WorkspaceID == uuid.Nil ||
 		request.ActorID == uuid.Nil || request.ConnectionID == uuid.Nil || request.RunID == uuid.Nil ||
 		request.DeliveryID == uuid.Nil || strings.TrimSpace(request.ExternalConversationID) == "" || strings.TrimSpace(request.Text) == "" {
 		return nil, channelruntime.ErrInvalidWebhook
+	}
+	if adapter.directProviderAvailable() {
+		return adapter.deliverDirect(ctx, request)
 	}
 	result, err := adapter.executor.Execute(ctx, integrations.ActionRequest{
 		OrganizationID: request.OrganizationID.String(), WorkspaceID: request.WorkspaceID.String(), UserID: request.ActorID.String(),
@@ -215,6 +329,75 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 		return nil, channelruntime.ErrDeliveryOutcomeUnknown
 	}
 	return &channelruntime.DeliveryReceipt{ProviderMessageID: messageID, ProviderRequestID: result.ProviderRequestID, Replayed: result.Replayed}, nil
+}
+
+func (adapter *ChannelAdapter) deliverDirect(ctx context.Context, request channelruntime.DeliveryRequest) (*channelruntime.DeliveryReceipt, error) {
+	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.ConnectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	region, err := feishuRegion(connection)
+	if err != nil {
+		return nil, err
+	}
+	token, tokenMeta, err := adapter.provider.tenantAccessToken(ctx, connection, region)
+	if err != nil {
+		return nil, err
+	}
+	output, meta, err := adapter.provider.sendMessage(ctx, region, token, connection, map[string]interface{}{
+		"recipient_type": "chat_id",
+		"recipient_id":   strings.TrimSpace(request.ExternalConversationID),
+		"text":           strings.TrimSpace(request.Text),
+	}, false)
+	meta.Attempts += tokenMeta.Attempts
+	if err != nil {
+		// The Feishu send API has no idempotency key. Once a network request has
+		// started, retrying an ambiguous timeout or transport failure could send
+		// a duplicate message, so leave the durable delivery in unknown state.
+		switch integrations.ErrorCode(err) {
+		case integrations.ErrorCodeTimeout, integrations.ErrorCodeUpstream:
+			return nil, errors.Join(channelruntime.ErrDeliveryOutcomeUnknown, err)
+		default:
+			return nil, err
+		}
+	}
+	messageID := nestedString(output, "message", "message_id")
+	if messageID == "" {
+		return nil, channelruntime.ErrDeliveryOutcomeUnknown
+	}
+	requestID := firstNonEmpty(meta.RequestID, tokenMeta.RequestID)
+	return &channelruntime.DeliveryReceipt{ProviderMessageID: messageID, ProviderRequestID: requestID}, nil
+}
+
+func (adapter *ChannelAdapter) directProviderAvailable() bool {
+	return adapter != nil && adapter.provider != nil && adapter.provider.client != nil && adapter.connections != nil
+}
+
+func (adapter *ChannelAdapter) resolveDirectConnection(ctx context.Context, organizationID, connectionID uuid.UUID) (*integrations.ResolvedConnection, func(), error) {
+	if !adapter.directProviderAvailable() || organizationID == uuid.Nil || connectionID == uuid.Nil {
+		return nil, func() {}, channelruntime.ErrInvalidWebhook
+	}
+	connection, err := adapter.connections.Resolve(ctx, integrations.ConnectionResolveRequest{
+		OrganizationID:            organizationID.String(),
+		IntegrationID:             IntegrationID,
+		DriverID:                  DriverID,
+		ConnectionID:              connectionID.String(),
+		DisallowAccountCredential: true,
+	})
+	if err != nil {
+		return nil, func() {}, err
+	}
+	cleanup := func() { connection.Destroy() }
+	if !isTenantAppConnection(connection) {
+		cleanup()
+		return nil, func() {}, integrations.NewError(
+			integrations.ErrorCodeConnectionInvalid,
+			"Feishu tenant app credentials are required for a DigitalHuman channel",
+			nil,
+		)
+	}
+	return connection, cleanup, nil
 }
 
 func (*ChannelAdapter) Edit(context.Context, channelruntime.DeliveryRequest, string) (*channelruntime.DeliveryReceipt, error) {
@@ -361,6 +544,52 @@ func firstChannelValue(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func isChannelCredentialKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "app_id", "app_secret", "verification_token", "encrypt_key":
+		return true
+	default:
+		return false
+	}
+}
+
+func destroyCredentialValues(values map[string]string) {
+	for key := range values {
+		values[key] = ""
+		delete(values, key)
+	}
+}
+
+func resolvedConnectionFromChannelCredential(credential channelruntime.ResolvedChannelCredential) *integrations.ResolvedConnection {
+	return &integrations.ResolvedConnection{
+		IntegrationID:     IntegrationID,
+		DriverID:          DriverID,
+		CredentialSource:  integrations.ConnectionCredentialSourceOrganization,
+		AuthType:          integrations.ConnectionAuthTypeCustomCredential,
+		AuthMethodID:      TenantAppAuthMethodID,
+		Credentials:       cloneCredentialValues(credential.Values),
+		Config:            map[string]any{},
+		CredentialVersion: credential.Version,
+		Revision:          credential.Version,
+	}
+}
+
+func cloneCredentialValues(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func jsonWebhookResponse(body []byte) channelruntime.WebhookResponse {
+	return channelruntime.WebhookResponse{
+		StatusCode: http.StatusOK,
+		Headers:    http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+		Body:       append([]byte(nil), body...),
+	}
 }
 
 func nestedString(value map[string]interface{}, path ...string) string {

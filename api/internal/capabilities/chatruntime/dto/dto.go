@@ -34,6 +34,25 @@ type ChatRequest struct {
 	UseMemory        bool                   `json:"use_memory,omitempty"`
 	// SourceMessageID is a server-owned idempotency link. HTTP decoders never populate it.
 	SourceMessageID *uuid.UUID `json:"-"`
+	// HistoryPolicy is supplied only by trusted subject adapters. It cannot be
+	// selected through the public Chat API and is not persisted in message
+	// metadata. It lets channel callers keep durable formal turns as bounded
+	// supplemental context while the provider conversation remains primary.
+	HistoryPolicy *ConversationHistoryPolicy `json:"-"`
+}
+
+const (
+	ConversationHistoryModeSupplemental = "supplemental"
+	ConversationHistoryModeIsolated     = "isolated"
+)
+
+// ConversationHistoryPolicy controls only the durable ChatRuntime branch used
+// to prepare one model turn. ExcludedTexts is transient and should contain
+// provider context already supplied elsewhere in the same request.
+type ConversationHistoryPolicy struct {
+	Mode          string
+	MaxTurns      int
+	ExcludedTexts []string
 }
 
 type RegenerateMessageRequest struct {

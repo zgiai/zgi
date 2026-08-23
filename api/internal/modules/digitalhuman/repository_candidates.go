@@ -111,13 +111,17 @@ func (r *GormRepository) listDatabaseCandidates(ctx context.Context, scope Scope
 }
 
 func (r *GormRepository) listDatabaseTableCandidates(ctx context.Context, scope Scope, dataSourceID string) ([]ResourceCandidate, error) {
-	var sourceCount int64
-	if err := r.db.WithContext(ctx).Table("data_sources").
-		Where("id = ? AND organization_id = ? AND workspace_id = ?", dataSourceID, scope.OrganizationID, scope.WorkspaceID).
-		Count(&sourceCount).Error; err != nil {
-		return nil, fmt.Errorf("verify digital human database candidate: %w", err)
+	var source struct {
+		Name string
 	}
-	if sourceCount != 1 {
+	sourceQuery := r.db.WithContext(ctx).Table("data_sources").
+		Select("name").
+		Where("id = ? AND organization_id = ? AND workspace_id = ?", dataSourceID, scope.OrganizationID, scope.WorkspaceID).
+		Scan(&source)
+	if sourceQuery.Error != nil {
+		return nil, fmt.Errorf("verify digital human database candidate: %w", sourceQuery.Error)
+	}
+	if sourceQuery.RowsAffected != 1 {
 		return nil, ErrResourceBindingInvalid
 	}
 	var rows []struct {
@@ -149,7 +153,10 @@ func (r *GormRepository) listDatabaseTableCandidates(ctx context.Context, scope 
 			ParentResourceID: strings.ToLower(dataSourceID), DisplayName: strings.TrimSpace(row.Name),
 			Description: strings.TrimSpace(row.Description), ResourceRevision: revision,
 			AccessModes: []resourcebindings.AccessMode{resourcebindings.AccessModeRead, resourcebindings.AccessModeWrite},
-			Metadata:    map[string]any{"physical_table_name": strings.TrimSpace(row.TableName)}, Status: "ready", Available: true,
+			Metadata: map[string]any{
+				"physical_table_name": strings.TrimSpace(row.TableName),
+				"parent_display_name": strings.TrimSpace(source.Name),
+			}, Status: "ready", Available: true,
 		})
 	}
 	return items, nil
@@ -161,13 +168,14 @@ func (r *GormRepository) listWorkflowCandidates(ctx context.Context, scope Scope
 		WorkflowID  string
 		VersionUUID string
 		Version     string
+		AgentType   string
 		Name        string
 		Description string
 		UpdatedAt   time.Time
 	}
 	err := r.db.WithContext(ctx).Table("workflows").
 		Select(`workflows.agent_id, workflows.id AS workflow_id, workflows.version_uuid, workflows.version,
-			agents.name, COALESCE(agents.description, '') AS description, workflows.created_at AS updated_at`).
+			agents.agent_type, agents.name, COALESCE(agents.description, '') AS description, workflows.created_at AS updated_at`).
 		Joins("JOIN agents ON agents.id = workflows.agent_id").
 		Where("workflows.tenant_id = ? AND workflows.version != ?", scope.WorkspaceID, "draft").
 		Where("agents.deleted_at IS NULL AND agents.web_app_status = ?", "active").
@@ -193,6 +201,8 @@ func (r *GormRepository) listWorkflowCandidates(ctx context.Context, scope Scope
 			"workflow_id":       strings.ToLower(strings.TrimSpace(row.WorkflowID)),
 			"version_uuid":      versionUUID,
 			"version":           strings.TrimSpace(row.Version),
+			"agent_type":        strings.TrimSpace(row.AgentType),
+			"updated_at":        row.UpdatedAt.UTC().Format(time.RFC3339),
 		}
 		revision, err := hashRevision(metadata)
 		if err != nil {
@@ -217,13 +227,15 @@ func (r *GormRepository) listIntegrationCandidates(ctx context.Context, scope Sc
 		HealthStatus      string
 		AuthStatus        string
 		ScopeStatus       string
+		DriverID          string
+		AuthMethodID      string
 		Revision          int
 		CredentialVersion int
 		HealthRevision    int
 		VerifiedActionIDs datatypes.JSON
 	}
 	err := r.db.WithContext(ctx).Table("integration_connections").
-		Select(`id, integration_id, name, status, health_status, auth_status, scope_status,
+		Select(`id, integration_id, name, status, health_status, auth_status, scope_status, driver_id, auth_method_id,
 			revision, credential_version, health_revision, verified_action_ids`).
 		Where("organization_id = ? AND credential_source = ? AND deleted_at IS NULL", scope.OrganizationID, "organization").
 		Order("LOWER(name) ASC, id ASC").Scan(&rows).Error
@@ -236,7 +248,12 @@ func (r *GormRepository) listIntegrationCandidates(ctx context.Context, scope Sc
 		if len(row.VerifiedActionIDs) > 0 {
 			_ = json.Unmarshal(row.VerifiedActionIDs, &actions)
 		}
-		metadata := map[string]any{"allowed_action_ids": actions}
+		metadata := map[string]any{
+			"allowed_action_ids": actions,
+			"driver_id":          strings.ToLower(strings.TrimSpace(row.DriverID)),
+			"auth_method_id":     strings.ToLower(strings.TrimSpace(row.AuthMethodID)),
+			"health_status":      strings.ToLower(strings.TrimSpace(row.HealthStatus)),
+		}
 		revision, err := hashRevision(struct {
 			ID                string   `json:"id"`
 			Revision          int      `json:"revision"`

@@ -138,12 +138,49 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	RegisterVideoRuntimeTaskPollerLifecycle(lc, params.VideoTaskPoller, params.Logger)
 	RegisterTaskManagerLifecycle(lc, params.TaskManager, params.TaskHandlerRegistry, params.Logger)
 	RegisterSchedulerLifecycle(lc, params.Scheduler, params.Logger)
+	RegisterDigitalHumanChannelReceiverLifecycle(
+		lc,
+		params.ServiceContainer.GetDigitalHumanChannelReceiverManager(),
+		params.Logger,
+	)
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
 	RegisterHTTPServerLifecycle(lc, params.HTTPServer, params.HTTPListener, params.Logger)
 	RegisterSQLAuditRecorderLifecycle(lc, params.ServiceContainer, params.Logger)
 	registerZGIReporterLifecycle(lc, params.ZGIReporter, params.Logger)
 
 	return nil
+}
+
+type DigitalHumanChannelReceiverLifecycle interface {
+	Start(context.Context) error
+	Stop(context.Context) error
+}
+
+func RegisterDigitalHumanChannelReceiverLifecycle(
+	lc fx.Lifecycle,
+	manager DigitalHumanChannelReceiverLifecycle,
+	log *zap.Logger,
+) {
+	if manager == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := manager.Start(ctx); err != nil {
+				return err
+			}
+			log.Info("Started DigitalHuman channel receivers")
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			err := manager.Stop(ctx)
+			log.Info("Stopped DigitalHuman channel receivers")
+			return err
+		},
+	})
 }
 
 // IntegrationOAuthRecoveryRunner drains encrypted OAuth token recovery work.

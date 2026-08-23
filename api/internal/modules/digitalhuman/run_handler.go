@@ -18,6 +18,7 @@ import (
 type RuntimeHandlerService interface {
 	SubmitManual(context.Context, Scope, uuid.UUID, ManualInvocationRequest) (*Run, bool, error)
 	GetRun(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
+	GetRunRuntimeLog(context.Context, Scope, uuid.UUID, uuid.UUID) (*RunRuntimeLog, error)
 	ListRuns(context.Context, Scope, uuid.UUID, ListQuery) (*RunListResult, error)
 	CancelRun(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
 	ListResourceCandidates(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
@@ -52,6 +53,7 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/draft/binding-candidates", h.ListResourceCandidates)
 	group.GET("/runs", h.ListRuns)
 	group.GET("/runs/:run_id", h.GetRun)
+	group.GET("/runs/:run_id/runtime-log", h.GetRunRuntimeLog)
 	group.POST("/runs/:run_id/cancel", h.CancelRun)
 	group.GET("/runtime/conversations", h.ListConversations)
 	group.GET("/runtime/search", h.SearchConversations)
@@ -141,6 +143,19 @@ func (h *RuntimeHandler) GetRun(c *gin.Context) {
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, publicRun(run))
+}
+
+func (h *RuntimeHandler) GetRunRuntimeLog(c *gin.Context) {
+	scope, digitalHumanID, runID, ok := h.scopeAndRunID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.GetRunRuntimeLog(c.Request.Context(), scope, digitalHumanID, runID)
+	if err != nil {
+		h.base.writeError(c, applicationError(err, "digital_human.run.runtime_log"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
 func (h *RuntimeHandler) CancelRun(c *gin.Context) {

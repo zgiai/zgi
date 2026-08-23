@@ -29,6 +29,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/nyaruka/phonenumbers v1.2.2
+	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.0
 	github.com/openai/openai-go/v3 v3.35.0
 	github.com/pdfcpu/pdfcpu v0.12.1
 	github.com/qiniu/go-sdk/v7 v7.22.0
@@ -103,6 +104,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/gopherjs/gopherjs v1.17.2 // indirect
+	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.3 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 )
 
 // Scope is the authenticated organization, workspace, and actor boundary.
@@ -17,10 +18,14 @@ type Scope struct {
 type CreateRequest struct {
 	Name          string         `json:"name"`
 	Avatar        string         `json:"avatar"`
+	IconType      string         `json:"icon_type"`
+	Icon          string         `json:"icon"`
 	Description   string         `json:"description"`
 	AutonomyLevel AutonomyLevel  `json:"autonomy_level"`
 	Visibility    Visibility     `json:"visibility"`
+	IdentityName  string         `json:"identity_name"`
 	Persona       string         `json:"persona"`
+	Goals         []string       `json:"goals"`
 	Rules         []string       `json:"rules"`
 	DefaultModel  string         `json:"default_model"`
 	MemoryPolicy  map[string]any `json:"memory_policy"`
@@ -32,6 +37,8 @@ type UpdateRequest struct {
 	ExpectedRevision int64          `json:"expected_revision"`
 	Name             *string        `json:"name,omitempty"`
 	Avatar           *string        `json:"avatar,omitempty"`
+	IconType         *string        `json:"icon_type,omitempty"`
+	Icon             *string        `json:"icon,omitempty"`
 	Description      *string        `json:"description,omitempty"`
 	Status           *Status        `json:"status,omitempty"`
 	AutonomyLevel    *AutonomyLevel `json:"autonomy_level,omitempty"`
@@ -41,7 +48,9 @@ type UpdateRequest struct {
 // UpdateDraftRequest updates the mutable identity draft.
 type UpdateDraftRequest struct {
 	ExpectedLockVersion int64           `json:"expected_lock_version"`
+	IdentityName        *string         `json:"identity_name,omitempty"`
 	Persona             *string         `json:"persona,omitempty"`
+	Goals               *[]string       `json:"goals,omitempty"`
 	Rules               *[]string       `json:"rules,omitempty"`
 	DefaultModel        *string         `json:"default_model,omitempty"`
 	MemoryPolicy        *map[string]any `json:"memory_policy,omitempty"`
@@ -86,6 +95,34 @@ type PublishedVersionsResult struct {
 	HasMore  bool       `json:"has_more"`
 }
 
+// VersionRestoreBindingImpact describes one resource binding changed by restoring a publication.
+type VersionRestoreBindingImpact struct {
+	Change           string                       `json:"change"`
+	Type             resourcebindings.BindingType `json:"type"`
+	ResourceID       string                       `json:"resource_id"`
+	ParentResourceID string                       `json:"parent_resource_id,omitempty"`
+	DisplayName      string                       `json:"display_name,omitempty"`
+}
+
+// VersionRestorePreview is a point-in-time summary of restoring a publication to the draft.
+type VersionRestorePreview struct {
+	VersionID                     uuid.UUID                     `json:"version_id"`
+	VersionNumber                 int                           `json:"version_number"`
+	IsCurrent                     bool                          `json:"is_current"`
+	WillDiscardUnpublishedChanges bool                          `json:"will_discard_unpublished_changes"`
+	ChangedFields                 []string                      `json:"changed_fields"`
+	BindingChanges                []VersionRestoreBindingImpact `json:"binding_changes"`
+	ImpactToken                   string                        `json:"impact_token"`
+}
+
+// RestoreVersionRequest restores an immutable publication into the current mutable draft.
+type RestoreVersionRequest struct {
+	VersionID                uuid.UUID `json:"version_id"`
+	ExpectedRevision         int64     `json:"expected_revision"`
+	ExpectedDraftLockVersion int64     `json:"expected_draft_lock_version"`
+	ImpactToken              string    `json:"impact_token"`
+}
+
 // DeleteImpact explains whether deleting a DigitalHuman is currently safe.
 type DeleteImpact struct {
 	CanDelete             bool     `json:"can_delete"`
@@ -95,7 +132,9 @@ type DeleteImpact struct {
 
 // DraftConfig is the normalized, JSON-compatible version content used for hashing.
 type DraftConfig struct {
+	IdentityName  string          `json:"identity_name"`
 	Persona       string          `json:"persona"`
+	Goals         []string        `json:"goals"`
 	Rules         []string        `json:"rules"`
 	DefaultModel  string          `json:"default_model"`
 	MemoryPolicy  json.RawMessage `json:"memory_policy"`

@@ -16,6 +16,11 @@ import (
 
 const maxChannelWebhookRequestBytes int64 = 1 << 20
 
+const (
+	maxChannelWebhookMetadataEntries = 64
+	maxChannelWebhookMetadataBytes   = 32 << 10
+)
+
 // ChannelHandlerService is the authenticated channel configuration and public
 // webhook application surface. Implementations must keep provider credentials
 // request-scoped and out of returned models.
@@ -23,15 +28,13 @@ type ChannelHandlerService interface {
 	CreateInstallation(context.Context, Scope, uuid.UUID, CreateChannelInstallationRequest) (*channelruntime.Installation, error)
 	ListInstallations(context.Context, Scope, uuid.UUID) ([]*ChannelInstallationView, error)
 	UpdateInstallation(context.Context, Scope, uuid.UUID, uuid.UUID, UpdateChannelInstallationRequest) (*channelruntime.Installation, error)
-	DeleteInstallation(context.Context, Scope, uuid.UUID, uuid.UUID, DeleteChannelInstallationRequest) error
-	CreateBinding(context.Context, Scope, uuid.UUID, CreateChannelBindingRequest) (*ChannelBindingView, error)
-	ListBindings(context.Context, Scope, uuid.UUID) ([]*ChannelBindingView, error)
-	ListDiscoveries(context.Context, Scope, uuid.UUID) ([]*ChannelConversationDiscovery, error)
-	DeleteBinding(context.Context, Scope, uuid.UUID, uuid.UUID) error
+	UpdateInstallationCredential(context.Context, Scope, uuid.UUID, uuid.UUID, UpdateChannelInstallationCredentialRequest) (*channelruntime.Installation, error)
+	DeleteInstallation(context.Context, Scope, uuid.UUID, uuid.UUID) error
 	ListEvents(context.Context, Scope, uuid.UUID, ListQuery) (*ChannelEventListResult, error)
 	ListDeliveries(context.Context, Scope, uuid.UUID, ListQuery) (*ChannelDeliveryListResult, error)
 	RetryDelivery(context.Context, Scope, uuid.UUID, uuid.UUID) error
-	HandleWebhook(context.Context, uuid.UUID, channelruntime.WebhookRequest) (*ChannelWebhookResult, error)
+	ProbeWebhook(context.Context, string, uuid.UUID) error
+	HandleWebhook(context.Context, string, uuid.UUID, channelruntime.WebhookRequest) (*ChannelWebhookResult, error)
 }
 
 type ChannelHandler struct {
@@ -53,7 +56,8 @@ func NewChannelHandler(service ChannelHandlerService, projector *apptransport.Pr
 // The installation UUID is only an address; verification always uses the
 // request-scoped secret referenced by the installation connection.
 func (handler *ChannelHandler) RegisterPublicRoutes(router *gin.RouterGroup) {
-	router.POST("/webhooks/channels/feishu/:installation_id", handler.HandleFeishuWebhook)
+	router.GET("/webhooks/channels/:provider/:installation_id", handler.ProbeChannelWebhook)
+	router.POST("/webhooks/channels/:provider/:installation_id", handler.HandleChannelWebhook)
 }
 
 func (handler *ChannelHandler) RegisterAuthenticatedRoutes(router *gin.RouterGroup) {
@@ -61,11 +65,8 @@ func (handler *ChannelHandler) RegisterAuthenticatedRoutes(router *gin.RouterGro
 	group.POST("/installations", handler.CreateInstallation)
 	group.GET("/installations", handler.ListInstallations)
 	group.PATCH("/installations/:installation_id", handler.UpdateInstallation)
+	group.PUT("/installations/:installation_id/credential", handler.UpdateInstallationCredential)
 	group.DELETE("/installations/:installation_id", handler.DeleteInstallation)
-	group.POST("/bindings", handler.CreateBinding)
-	group.GET("/bindings", handler.ListBindings)
-	group.GET("/discoveries", handler.ListDiscoveries)
-	group.DELETE("/bindings/:binding_id", handler.DeleteBinding)
 	group.GET("/events", handler.ListEvents)
 	group.GET("/deliveries", handler.ListDeliveries)
 	group.POST("/deliveries/:delivery_id/retry", handler.RetryDelivery)
@@ -118,70 +119,29 @@ func (handler *ChannelHandler) UpdateInstallation(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
+func (handler *ChannelHandler) UpdateInstallationCredential(c *gin.Context) {
+	scope, digitalHumanID, installationID, ok := handler.scopeAndResourceID(c, "installation_id")
+	if !ok {
+		return
+	}
+	var request UpdateChannelInstallationCredentialRequest
+	if !handler.base.decode(c, &request) {
+		return
+	}
+	result, err := handler.service.UpdateInstallationCredential(c.Request.Context(), scope, digitalHumanID, installationID, request)
+	if err != nil {
+		handler.base.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
 func (handler *ChannelHandler) DeleteInstallation(c *gin.Context) {
 	scope, digitalHumanID, installationID, ok := handler.scopeAndResourceID(c, "installation_id")
 	if !ok {
 		return
 	}
-	request := DeleteChannelInstallationRequest{
-		RemoveBindings: strings.EqualFold(strings.TrimSpace(c.Query("remove_bindings")), "true"),
-	}
-	if err := handler.service.DeleteInstallation(c.Request.Context(), scope, digitalHumanID, installationID, request); err != nil {
-		handler.base.writeError(c, err)
-		return
-	}
-	writeDigitalHumanData(c, http.StatusOK, gin.H{"deleted": true})
-}
-
-func (handler *ChannelHandler) CreateBinding(c *gin.Context) {
-	scope, digitalHumanID, ok := handler.base.scopeAndID(c)
-	if !ok {
-		return
-	}
-	var request CreateChannelBindingRequest
-	if !handler.base.decode(c, &request) {
-		return
-	}
-	result, err := handler.service.CreateBinding(c.Request.Context(), scope, digitalHumanID, request)
-	if err != nil {
-		handler.base.writeError(c, err)
-		return
-	}
-	writeDigitalHumanData(c, http.StatusCreated, result)
-}
-
-func (handler *ChannelHandler) ListBindings(c *gin.Context) {
-	scope, digitalHumanID, ok := handler.base.scopeAndID(c)
-	if !ok {
-		return
-	}
-	result, err := handler.service.ListBindings(c.Request.Context(), scope, digitalHumanID)
-	if err != nil {
-		handler.base.writeError(c, err)
-		return
-	}
-	writeDigitalHumanData(c, http.StatusOK, result)
-}
-
-func (handler *ChannelHandler) ListDiscoveries(c *gin.Context) {
-	scope, digitalHumanID, ok := handler.base.scopeAndID(c)
-	if !ok {
-		return
-	}
-	result, err := handler.service.ListDiscoveries(c.Request.Context(), scope, digitalHumanID)
-	if err != nil {
-		handler.base.writeError(c, err)
-		return
-	}
-	writeDigitalHumanData(c, http.StatusOK, result)
-}
-
-func (handler *ChannelHandler) DeleteBinding(c *gin.Context) {
-	scope, digitalHumanID, bindingID, ok := handler.scopeAndResourceID(c, "binding_id")
-	if !ok {
-		return
-	}
-	if err := handler.service.DeleteBinding(c.Request.Context(), scope, digitalHumanID, bindingID); err != nil {
+	if err := handler.service.DeleteInstallation(c.Request.Context(), scope, digitalHumanID, installationID); err != nil {
 		handler.base.writeError(c, err)
 		return
 	}
@@ -212,9 +172,10 @@ func (handler *ChannelHandler) RetryDelivery(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusAccepted, gin.H{"queued": true})
 }
 
-func (handler *ChannelHandler) HandleFeishuWebhook(c *gin.Context) {
+func (handler *ChannelHandler) HandleChannelWebhook(c *gin.Context) {
+	provider := strings.ToLower(strings.TrimSpace(c.Param("provider")))
 	installationID, err := uuid.Parse(strings.TrimSpace(c.Param("installation_id")))
-	if err != nil || installationID == uuid.Nil {
+	if provider == "" || err != nil || installationID == uuid.Nil {
 		writeChannelWebhookError(c, http.StatusUnauthorized, "channel.webhook.unauthorized", "Webhook authentication failed.")
 		return
 	}
@@ -224,9 +185,13 @@ func (handler *ChannelHandler) HandleFeishuWebhook(c *gin.Context) {
 		writeChannelWebhookError(c, http.StatusBadRequest, "channel.webhook.invalid", "Invalid webhook request.")
 		return
 	}
-	result, err := handler.service.HandleWebhook(c.Request.Context(), installationID, channelruntime.WebhookRequest{
-		Body: body, Timestamp: c.GetHeader("X-Lark-Request-Timestamp"), Nonce: c.GetHeader("X-Lark-Request-Nonce"),
-		Signature: c.GetHeader("X-Lark-Signature"), ReceivedAt: time.Now().UTC(),
+	headers, query, ok := boundedWebhookMetadata(c.Request.Header, c.Request.URL.Query())
+	if !ok {
+		writeChannelWebhookError(c, http.StatusBadRequest, "channel.webhook.invalid", "Invalid webhook request.")
+		return
+	}
+	result, err := handler.service.HandleWebhook(c.Request.Context(), provider, installationID, channelruntime.WebhookRequest{
+		Body: body, Headers: headers, Query: query, ReceivedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		switch {
@@ -239,12 +204,32 @@ func (handler *ChannelHandler) HandleFeishuWebhook(c *gin.Context) {
 		}
 		return
 	}
-	if result != nil && result.Challenge != "" {
-		c.JSON(http.StatusOK, gin.H{"challenge": result.Challenge})
+	writeChannelWebhookResponse(c, result)
+}
+
+// ProbeChannelWebhook supports provider consoles that perform an unauthenticated
+// reachability check before saving a robot message-receiving address. It never
+// reads credentials or creates an inbound event.
+func (handler *ChannelHandler) ProbeChannelWebhook(c *gin.Context) {
+	provider := strings.ToLower(strings.TrimSpace(c.Param("provider")))
+	installationID, err := uuid.Parse(strings.TrimSpace(c.Param("installation_id")))
+	if provider == "" || err != nil || installationID == uuid.Nil {
+		writeChannelWebhookError(c, http.StatusUnauthorized, "channel.webhook.unauthorized", "Webhook authentication failed.")
 		return
 	}
-	// Provider-facing acknowledgements intentionally omit internal event/run IDs.
-	c.JSON(http.StatusOK, gin.H{"code": 0})
+	if err := handler.service.ProbeWebhook(c.Request.Context(), provider, installationID); err != nil {
+		switch {
+		case errors.Is(err, ErrChannelInstallationNotFound):
+			writeChannelWebhookError(c, http.StatusUnauthorized, "channel.webhook.unauthorized", "Webhook authentication failed.")
+		default:
+			writeChannelWebhookError(c, http.StatusServiceUnavailable, "channel.webhook.unavailable", "Webhook processing is temporarily unavailable.")
+		}
+		return
+	}
+	// Some provider consoles treat an empty 200 response as an unsuccessful
+	// reachability probe. Return an explicit acknowledgement while keeping the
+	// endpoint read-only.
+	c.String(http.StatusOK, "success")
 }
 
 func (handler *ChannelHandler) list(c *gin.Context, action func(context.Context, Scope, uuid.UUID, ListQuery) (any, error)) {
@@ -280,4 +265,60 @@ func (handler *ChannelHandler) scopeAndResourceID(c *gin.Context, parameter stri
 
 func writeChannelWebhookError(c *gin.Context, status int, code, message string) {
 	c.JSON(status, gin.H{"code": code, "message": message})
+}
+
+func writeChannelWebhookResponse(c *gin.Context, result *ChannelWebhookResult) {
+	if result == nil {
+		c.Status(http.StatusOK)
+		return
+	}
+	response := result.Response
+	status := response.StatusCode
+	if status < 100 || status > 599 {
+		status = http.StatusOK
+	}
+	for key, values := range response.Headers {
+		for _, value := range values {
+			c.Writer.Header().Add(key, value)
+		}
+	}
+	if len(response.Body) == 0 {
+		c.Status(status)
+		return
+	}
+	c.Status(status)
+	_, _ = c.Writer.Write(response.Body)
+}
+
+func boundedWebhookMetadata(headers http.Header, query map[string][]string) (http.Header, map[string][]string, bool) {
+	if len(headers)+len(query) > maxChannelWebhookMetadataEntries {
+		return nil, nil, false
+	}
+	resultHeaders := make(http.Header, len(headers))
+	resultQuery := make(map[string][]string, len(query))
+	total := 0
+	copyValues := func(target map[string][]string, key string, values []string) bool {
+		total += len(key)
+		cloned := make([]string, len(values))
+		for index, value := range values {
+			total += len(value)
+			if total > maxChannelWebhookMetadataBytes {
+				return false
+			}
+			cloned[index] = value
+		}
+		target[key] = cloned
+		return total <= maxChannelWebhookMetadataBytes
+	}
+	for key, values := range headers {
+		if !copyValues(resultHeaders, key, values) {
+			return nil, nil, false
+		}
+	}
+	for key, values := range query {
+		if !copyValues(resultQuery, key, values) {
+			return nil, nil, false
+		}
+	}
+	return resultHeaders, resultQuery, true
 }

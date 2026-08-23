@@ -73,8 +73,45 @@ func TestListMessagesUsesBoundedHistoryContract(t *testing.T) {
 	if len([]rune(first["text"].(string))) != 4000 || second["text"] != "" {
 		t.Fatalf("messages = %#v", messages)
 	}
+	if first["sender_is_self"] != false || second["sender_is_self"] != false {
+		t.Fatalf("user connection marked a message as self: %#v", messages)
+	}
 	if _, exposed := second["body"]; exposed {
 		t.Fatal("raw upstream message body was exposed")
+	}
+}
+
+func TestListMessagesMarksCurrentTenantApplicationAsSelf(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = io.WriteString(writer, `{"code":0,"msg":"success","tenant_access_token":"tenant-token","expire":7200}`)
+		case "/open-apis/im/v1/messages":
+			_, _ = io.WriteString(writer, `{"code":0,"msg":"success","data":{"items":[{"message_id":"om_self","chat_id":"oc_team","msg_type":"text","sender":{"id":"cli_app","sender_type":"app"},"body":{"content":"{\"text\":\"我此前回复过\"}"}},{"message_id":"om_user","chat_id":"oc_team","msg_type":"text","sender":{"id":"ou_user","sender_type":"user"},"body":{"content":"{\"text\":\"用户消息\"}"}}],"page_token":"","has_more":false}}`)
+		default:
+			t.Errorf("unexpected request = %s %s", request.Method, request.URL)
+		}
+	}))
+	defer server.Close()
+
+	adapter := newTestAdapter(t, server)
+	result, err := adapter.Execute(t.Context(), integrations.ActionRequest{
+		ActionID: ActionListMessages,
+		Connection: &integrations.ResolvedConnection{
+			IntegrationID: IntegrationID, DriverID: DriverID, AuthMethodID: TenantAppAuthMethodID,
+			Credentials: map[string]string{"app_id": "cli_app", "app_secret": "secret"},
+		},
+		Input: map[string]interface{}{"chat_id": "oc_team"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages, _ := result.Output["messages"].([]interface{})
+	if len(messages) != 2 {
+		t.Fatalf("messages = %#v", messages)
+	}
+	if messages[0].(map[string]interface{})["sender_is_self"] != true || messages[1].(map[string]interface{})["sender_is_self"] != false {
+		t.Fatalf("self attribution = %#v", messages)
 	}
 }
 

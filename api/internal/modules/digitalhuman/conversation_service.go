@@ -12,7 +12,10 @@ import (
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 )
 
-const digitalHumanConversationSource = "digital_human_manual"
+const (
+	digitalHumanConversationSource        = runtimemodel.ConversationSourceConsole
+	digitalHumanChannelConversationSource = runtimemodel.ConversationSourceExternalAPI
+)
 
 // ConversationRuntime is the caller-scoped history surface DigitalHuman uses
 // from the shared ChatRuntime. Execution remains owned by the durable run path.

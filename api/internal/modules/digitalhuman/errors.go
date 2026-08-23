@@ -17,16 +17,14 @@ var (
 	ErrPublishedImmutable = errors.New("published digital human version is immutable")
 	// ErrPublishInvalid indicates that the current draft cannot be published.
 	ErrPublishInvalid = errors.New("digital human draft is not publishable")
+	// ErrVersionRestoreImpactChanged indicates that a restore preview is stale or invalid.
+	ErrVersionRestoreImpactChanged = errors.New("digital human version restore impact changed")
 	// ErrDeleteBlocked indicates that durable references prevent deletion.
 	ErrDeleteBlocked = errors.New("digital human deletion is blocked")
-	// ErrRoleTemplateNotFound indicates that a scoped reusable role does not exist.
-	ErrRoleTemplateNotFound = errors.New("digital human role template not found")
-	// ErrRoleVersionNotFound indicates that a role version does not exist.
-	ErrRoleVersionNotFound = errors.New("digital human role template version not found")
-	// ErrRoleNameConflict indicates a duplicate reusable role name.
-	ErrRoleNameConflict = errors.New("digital human role template name conflict")
-	// ErrRolePublishInvalid indicates an incomplete reusable role draft.
-	ErrRolePublishInvalid = errors.New("digital human role template draft is not publishable")
+	// ErrPersonaTemplateNotFound indicates that a scoped editing preset does not exist.
+	ErrPersonaTemplateNotFound = errors.New("digital human persona template not found")
+	// ErrPersonaTemplateNameConflict indicates a duplicate workspace-scoped preset name.
+	ErrPersonaTemplateNameConflict = errors.New("digital human persona template name conflict")
 	// ErrResourceBindingInvalid indicates an unsafe or incomplete binding.
 	ErrResourceBindingInvalid = errors.New("digital human resource binding is invalid")
 	// ErrRunNotFound indicates that a scoped DigitalHuman run does not exist.
@@ -45,11 +43,11 @@ var (
 	ErrMemoryUndoUnavailable = errors.New("digital human memory undo unavailable")
 	// ErrChannelInstallationNotFound indicates a missing scoped channel installation.
 	ErrChannelInstallationNotFound = errors.New("digital human channel installation not found")
+	// ErrChannelCredentialNotFound indicates that an installation does not own
+	// an embedded credential and should be resolved through Connection Center.
+	ErrChannelCredentialNotFound = errors.New("digital human channel credential not found")
 	// ErrChannelBindingNotFound indicates a missing scoped channel binding.
 	ErrChannelBindingNotFound = errors.New("digital human channel binding not found")
-	// ErrChannelInstallationInUse indicates that live conversation bindings
-	// still reference a workspace-shared channel installation.
-	ErrChannelInstallationInUse = errors.New("digital human channel installation is in use")
 	// ErrChannelConflict indicates a duplicate channel identity or stale revision.
 	ErrChannelConflict = errors.New("digital human channel conflict")
 	// ErrChannelNotReady indicates an invalid or incomplete provider connection.

@@ -277,11 +277,12 @@ type ServiceContainer struct {
 	graphRuntimeHealth     *system_service.GraphRuntimeHealthService
 
 	// Automation definition service
-	automationDefinitionService automationdefinition.Service
-	automationWorkflowRunner    automationaction.AutomationWorkflowRunner
-	notificationSMSService      notificationsms.Service
-	shortLinkService            shortlinkcap.Service
-	digitalHumanService         *digitalhuman.Service
+	automationDefinitionService  automationdefinition.Service
+	automationWorkflowRunner     automationaction.AutomationWorkflowRunner
+	notificationSMSService       notificationsms.Service
+	shortLinkService             shortlinkcap.Service
+	digitalHumanService          *digitalhuman.Service
+	digitalHumanChannelReceivers *digitalhuman.ChannelReceiverManager
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
@@ -1739,8 +1740,17 @@ func (c *ServiceContainer) GetShortLinkService() shortlinkcap.Service {
 func (c *ServiceContainer) GetDigitalHumanService() *digitalhuman.Service {
 	if c.digitalHumanService == nil {
 		c.digitalHumanService = digitalhuman.NewService(digitalhuman.NewRepository(c.db))
+		c.digitalHumanService.SetIconResolver(c.GetFileService())
 	}
 	return c.digitalHumanService
+}
+
+func (c *ServiceContainer) SetDigitalHumanChannelReceiverManager(manager *digitalhuman.ChannelReceiverManager) {
+	c.digitalHumanChannelReceivers = manager
+}
+
+func (c *ServiceContainer) GetDigitalHumanChannelReceiverManager() *digitalhuman.ChannelReceiverManager {
+	return c.digitalHumanChannelReceivers
 }
 
 func (c *ServiceContainer) SetAutomationWorkflowRunner(runner automationaction.AutomationWorkflowRunner) {

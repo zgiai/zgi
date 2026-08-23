@@ -20,12 +20,12 @@ var (
 	AppCodePublishedImmutable = apperror.MustCode("digital_human.version.immutable")
 	// AppCodePublishInvalid identifies a draft that is not ready for publication.
 	AppCodePublishInvalid = apperror.MustCode("digital_human.publish.invalid")
+	// AppCodeVersionRestoreImpactChanged identifies a stale version restore preview.
+	AppCodeVersionRestoreImpactChanged = apperror.MustCode("digital_human.version.restore_impact_changed")
 	// AppCodeDeleteBlocked identifies deletion prevented by durable references.
 	AppCodeDeleteBlocked               = apperror.MustCode("digital_human.delete.blocked")
-	AppCodeRoleTemplateNotFound        = apperror.MustCode("digital_human.role_template.not_found")
-	AppCodeRoleVersionNotFound         = apperror.MustCode("digital_human.role_template_version.not_found")
-	AppCodeRoleNameConflict            = apperror.MustCode("digital_human.role_template.name.conflict")
-	AppCodeRolePublishInvalid          = apperror.MustCode("digital_human.role_template.publish.invalid")
+	AppCodePersonaTemplateNotFound     = apperror.MustCode("digital_human.persona_template.not_found")
+	AppCodePersonaTemplateNameConflict = apperror.MustCode("digital_human.persona_template.name.conflict")
 	AppCodeResourceBindingInvalid      = apperror.MustCode("digital_human.resource_binding.invalid")
 	AppCodeRunNotFound                 = apperror.MustCode("digital_human.run.not_found")
 	AppCodeRunConflict                 = apperror.MustCode("digital_human.run.conflict")
@@ -35,8 +35,6 @@ var (
 	AppCodeMemoryPolicyRejected        = apperror.MustCode("digital_human.memory.policy_rejected")
 	AppCodeMemoryUndoUnavailable       = apperror.MustCode("digital_human.memory.undo_unavailable")
 	AppCodeChannelInstallationNotFound = apperror.MustCode("digital_human.channel.installation.not_found")
-	AppCodeChannelBindingNotFound      = apperror.MustCode("digital_human.channel.binding.not_found")
-	AppCodeChannelInstallationInUse    = apperror.MustCode("digital_human.channel.installation.in_use")
 	AppCodeChannelConflict             = apperror.MustCode("digital_human.channel.conflict")
 	AppCodeChannelNotReady             = apperror.MustCode("digital_human.channel.not_ready")
 	AppCodeChannelDeliveryNotFound     = apperror.MustCode("digital_human.channel.delivery.not_found")
@@ -65,19 +63,18 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"Published DigitalHuman versions cannot be changed.",
 			"已发布的数字人版本不可修改。"),
 		digitalHumanDefinition(AppCodePublishInvalid, appcatalog.CategoryValidation, 400,
-			"Complete the persona, rules, and default model before publishing.",
-			"请先完善人设、规则和默认模型，再发布数字人。"),
+			"Complete the conversation name, persona, rules, and default model before publishing.",
+			"请先完善对话名称、人设、规则和默认模型，再发布数字人。"),
+		digitalHumanDefinition(AppCodeVersionRestoreImpactChanged, appcatalog.CategoryConflict, 409,
+			"The draft or restore impact changed. Review the latest impact and try again.",
+			"草稿或恢复影响已发生变化，请确认最新影响后重试。"),
 		digitalHumanDefinition(AppCodeDeleteBlocked, appcatalog.CategoryConflict, 409,
 			"This DigitalHuman has published or referenced configuration and cannot be deleted.",
 			"该数字人存在已发布或被引用的配置，暂时无法删除。"),
-		digitalHumanDefinition(AppCodeRoleTemplateNotFound, appcatalog.CategoryNotFound, 404,
-			"The DigitalHuman role template was not found.", "未找到该数字人岗位模板。"),
-		digitalHumanDefinition(AppCodeRoleVersionNotFound, appcatalog.CategoryNotFound, 404,
-			"The DigitalHuman role template version was not found.", "未找到该数字人岗位模板版本。"),
-		digitalHumanDefinition(AppCodeRoleNameConflict, appcatalog.CategoryConflict, 409,
-			"A role template with this name already exists in the workspace.", "当前工作空间中已存在同名岗位模板。"),
-		digitalHumanDefinition(AppCodeRolePublishInvalid, appcatalog.CategoryValidation, 400,
-			"Complete the role goals and responsibilities before publishing.", "请先完善岗位目标和职责，再发布岗位模板。"),
+		digitalHumanDefinition(AppCodePersonaTemplateNotFound, appcatalog.CategoryNotFound, 404,
+			"The persona template was not found or is no longer available.", "未找到该人设模板，它可能已被删除。"),
+		digitalHumanDefinition(AppCodePersonaTemplateNameConflict, appcatalog.CategoryConflict, 409,
+			"A persona template with this name already exists in the workspace.", "当前工作空间中已存在同名人设模板。"),
 		digitalHumanDefinition(AppCodeResourceBindingInvalid, appcatalog.CategoryValidation, 400,
 			"The resource binding is incomplete or contains unsafe credential material.", "资源绑定不完整或包含不安全的凭据内容。"),
 		digitalHumanDefinition(AppCodeRunNotFound, appcatalog.CategoryNotFound, 404,
@@ -96,10 +93,6 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"This memory change can no longer be undone.", "该记忆变更已无法撤销。"),
 		digitalHumanDefinition(AppCodeChannelInstallationNotFound, appcatalog.CategoryNotFound, 404,
 			"The channel installation was not found.", "未找到该渠道安装。"),
-		digitalHumanDefinition(AppCodeChannelBindingNotFound, appcatalog.CategoryNotFound, 404,
-			"The channel binding was not found.", "未找到该渠道绑定。"),
-		digitalHumanDefinition(AppCodeChannelInstallationInUse, appcatalog.CategoryConflict, 409,
-			"Remove every conversation binding that uses this installation before deleting it.", "该安装仍被会话使用，请先移除所有相关会话绑定。"),
 		digitalHumanDefinition(AppCodeChannelConflict, appcatalog.CategoryConflict, 409,
 			"The channel configuration changed or is already in use.", "渠道配置已变化或已被占用。"),
 		digitalHumanDefinition(AppCodeChannelNotReady, appcatalog.CategoryValidation, 400,

@@ -81,7 +81,7 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 	lifecycle.now = func() time.Time { return now }
 	scope := Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID}
 	detail, err := lifecycle.Create(t.Context(), scope, CreateRequest{
-		Name: "Channel subject", Persona: "Respond as a channel teammate.", Rules: []string{"Never disclose credentials."},
+		IdentityName: "Channel teammate", Persona: "Respond as a channel teammate.", Rules: []string{"Never disclose credentials."},
 		DefaultModel: "test-model", MemoryPolicy: map[string]any{"automatic_extraction": true}, TriggerPolicy: map[string]any{"channel": true},
 	})
 	if err != nil {
@@ -269,7 +269,9 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 		t.Fatalf("delivery intents = %d, delivery = %#v", deliveryCount, delivery)
 	}
 	deliveryAdapter := &channelAdapterStub{deliveryErr: errors.New("temporary provider failure")}
-	channelRegistry, err := channelruntime.NewRegistry(deliveryAdapter)
+	channelRegistry, err := channelruntime.NewRegistry(channelruntime.Provider{
+		Adapter: deliveryAdapter, Provisioner: channelProvisionerStub{},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,41 +315,12 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 	if err := db.Model(&channelruntime.Delivery{}).Where("id = ?", delivery.ID).Update("provider", "forged").Error; err == nil {
 		t.Fatal("database accepted a delivery provider that does not match its installation")
 	}
-	localConversationID := uuid.New()
-	lastEventAt := now.Add(4 * time.Second)
-	if err := db.Model(&channelruntime.ConversationMapping{}).Where("id = ?", mapping.ID).Updates(map[string]any{
-		"local_conversation_id": localConversationID, "last_event_at": lastEventAt,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := repository.DeleteChannelBinding(t.Context(), scope, detail.Definition.ID, binding.ID); err != nil {
-		t.Fatal(err)
-	}
-	var resetMapping channelruntime.ConversationMapping
-	if err := db.Where("id = ?", mapping.ID).Take(&resetMapping).Error; err != nil {
-		t.Fatal(err)
-	}
-	if resetMapping.LocalConversationID != nil || resetMapping.LastEventAt != nil {
-		t.Fatalf("conversation mapping retained prior subject state: %#v", resetMapping)
-	}
 	if err := integrations.NewGormConnectionRepository(db).DeleteAs(t.Context(), organizationID, connection.ID, &actorID); !errors.Is(err, integrations.ErrConnectionInUse) {
 		t.Fatalf("DeleteAs(bound channel connection) error = %v", err)
 	}
 
-	cascadeBinding := &channelruntime.Binding{
-		ID: uuid.New(), OrganizationID: organizationID, WorkspaceID: workspaceID, InstallationID: installation.ID,
-		ConversationMappingID: mapping.ID, SubjectType: runtimeidentity.SubjectTypeDigitalHuman, SubjectID: detail.Definition.ID,
-		WakePolicy: channelruntime.WakePolicyDirectAndMention, Enabled: true, Revision: 1,
-		CreatedBy: actorID, UpdatedBy: actorID, CreatedAt: now, UpdatedAt: now,
-	}
-	if err := repository.CreateChannelBinding(t.Context(), mapping, cascadeBinding); err != nil {
-		t.Fatalf("CreateChannelBinding(cascade fixture) error = %v", err)
-	}
-	if err := repository.DeleteChannelInstallation(t.Context(), scope, installation.ID, DeleteChannelInstallationRequest{}); !errors.Is(err, ErrChannelInstallationInUse) {
-		t.Fatalf("DeleteChannelInstallation(in use) error = %v, want ErrChannelInstallationInUse", err)
-	}
-	if err := repository.DeleteChannelInstallation(t.Context(), scope, installation.ID, DeleteChannelInstallationRequest{RemoveBindings: true}); err != nil {
-		t.Fatalf("DeleteChannelInstallation(remove bindings) error = %v", err)
+	if err := repository.DeleteChannelInstallation(t.Context(), scope, installation.ID); err != nil {
+		t.Fatalf("DeleteChannelInstallation() error = %v", err)
 	}
 	var deletedInstallation channelruntime.Installation
 	if err := db.Unscoped().Where("id = ?", installation.ID).Take(&deletedInstallation).Error; err != nil {
@@ -357,7 +330,7 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 		t.Fatal("channel installation deleted_at is not set")
 	}
 	var deletedBinding channelruntime.Binding
-	if err := db.Unscoped().Where("id = ?", cascadeBinding.ID).Take(&deletedBinding).Error; err != nil {
+	if err := db.Unscoped().Where("id = ?", binding.ID).Take(&deletedBinding).Error; err != nil {
 		t.Fatalf("load cascade-deleted channel binding: %v", err)
 	}
 	if !deletedBinding.DeletedAt.Valid {
@@ -383,7 +356,7 @@ type channelPostgresResolver struct {
 func (resolver channelPostgresResolver) Resolve(_ context.Context, event invocation.Event, _ *uuid.UUID) (*ResolvedExecution, error) {
 	snapshot := ExecutionSnapshot{
 		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: resolver.versionID,
-		Name: "Channel subject", Persona: "Respond as a channel teammate.", Rules: []string{"Never disclose credentials."},
+		IdentityName: "Channel teammate", Persona: "Respond as a channel teammate.", Rules: []string{"Never disclose credentials."},
 		Model: "test-model", ResolvedAt: resolver.now,
 	}
 	var err error
@@ -413,7 +386,7 @@ func cleanupChannelPostgresFixture(db *gorm.DB, organizationID, actorID uuid.UUI
 	for _, table := range []string{
 		"channel_delivery_outbox", "channel_inbound_events", "channel_bindings", "external_conversation_mappings", "channel_installations",
 		"digital_human_run_outbox", "digital_human_memory_jobs", "digital_human_action_ledger", "digital_human_memory_undo_records",
-		"digital_human_memory_events", "digital_human_memories", "digital_human_memory_states", "digital_human_resource_bindings", "digital_human_role_assignments",
+		"digital_human_memory_events", "digital_human_memories", "digital_human_memory_states", "digital_human_resource_bindings",
 		"digital_human_runs", "digital_human_versions", "digital_humans", "integration_connections", "workspaces", "organizations",
 	} {
 		column := "organization_id"

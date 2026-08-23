@@ -1,65 +1,50 @@
 package digitalhuman
 
 import (
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 )
 
+type ChannelContextReadinessStatus string
+
+const (
+	ChannelContextReadinessReady                 ChannelContextReadinessStatus = "ready"
+	ChannelContextReadinessRuntimeVerification   ChannelContextReadinessStatus = "runtime_verification"
+	ChannelContextReadinessMissingMessageHistory ChannelContextReadinessStatus = "missing_message_history"
+	ChannelContextReadinessMissingMemberNames    ChannelContextReadinessStatus = "missing_member_names"
+	ChannelContextReadinessUnavailable           ChannelContextReadinessStatus = "temporarily_unavailable"
+)
+
+type ChannelContextReadiness struct {
+	Status                  ChannelContextReadinessStatus `json:"status"`
+	MessageHistoryAvailable bool                          `json:"message_history_available"`
+	MemberNamesAvailable    bool                          `json:"member_names_available"`
+}
+
+type ChannelInstallationView struct {
+	*channelruntime.Installation
+	ChannelContext ChannelContextReadiness       `json:"channel_context"`
+	WebhookURL     string                        `json:"webhook_url,omitempty"`
+	CredentialMode string                        `json:"credential_mode"`
+	Receiver       channelruntime.ReceiverStatus `json:"receiver"`
+}
+
 type CreateChannelInstallationRequest struct {
-	Provider     string    `json:"provider"`
-	ConnectionID uuid.UUID `json:"connection_id"`
-	Name         string    `json:"name"`
+	Provider     string            `json:"provider"`
+	ConnectionID uuid.UUID         `json:"connection_id,omitempty"`
+	Credentials  map[string]string `json:"credentials,omitempty"`
+	Name         string            `json:"name"`
+}
+
+type UpdateChannelInstallationCredentialRequest struct {
+	ExpectedRevision int64             `json:"expected_revision"`
+	Credentials      map[string]string `json:"credentials"`
 }
 
 type UpdateChannelInstallationRequest struct {
 	ExpectedRevision int64                              `json:"expected_revision"`
 	Name             *string                            `json:"name,omitempty"`
 	Status           *channelruntime.InstallationStatus `json:"status,omitempty"`
-}
-
-// DeleteChannelInstallationRequest controls whether deleting a workspace
-// installation also removes its live conversation bindings. Historical events
-// and delivery records remain available for audit.
-type DeleteChannelInstallationRequest struct {
-	RemoveBindings bool `json:"remove_bindings" form:"remove_bindings"`
-}
-
-// ChannelInstallationUsage identifies a DigitalHuman that currently uses an
-// installation. Installations are workspace resources, so usage must not be
-// inferred from only the DigitalHuman whose page requested the list.
-type ChannelInstallationUsage struct {
-	DigitalHumanID   uuid.UUID `json:"digital_human_id"`
-	DigitalHumanName string    `json:"digital_human_name"`
-	BindingCount     int64     `json:"binding_count"`
-}
-
-// ChannelInstallationView exposes workspace-wide usage alongside the
-// installation so clients can explain and prevent unsafe deletion.
-type ChannelInstallationView struct {
-	*channelruntime.Installation
-	BindingCount int64                       `json:"binding_count"`
-	UsedBy       []*ChannelInstallationUsage `json:"used_by"`
-}
-
-// ChannelConversationDiscovery is a verified provider conversation observed
-// through an installation but not yet assigned to a DigitalHuman. It contains
-// routing identifiers only; inbound message bodies remain outside discovery.
-type ChannelConversationDiscovery struct {
-	InstallationID         uuid.UUID                       `json:"installation_id"`
-	ExternalConversationID string                          `json:"external_conversation_id"`
-	ConversationType       channelruntime.ConversationType `json:"conversation_type"`
-	SenderExternalID       string                          `json:"sender_external_id"`
-	EventCount             int64                           `json:"event_count"`
-	LastEventAt            time.Time                       `json:"last_event_at"`
-}
-
-type CreateChannelBindingRequest struct {
-	InstallationID         uuid.UUID                       `json:"installation_id"`
-	ExternalConversationID string                          `json:"external_conversation_id"`
-	ConversationType       channelruntime.ConversationType `json:"conversation_type"`
-	WakePolicy             channelruntime.WakePolicy       `json:"wake_policy"`
 }
 
 type ChannelEventListResult struct {
@@ -79,10 +64,10 @@ type ChannelDeliveryListResult struct {
 }
 
 type ChannelWebhookResult struct {
-	Challenge string     `json:"challenge,omitempty"`
-	Accepted  bool       `json:"accepted"`
-	Duplicate bool       `json:"duplicate"`
-	Ignored   bool       `json:"ignored"`
-	EventID   uuid.UUID  `json:"event_id,omitempty"`
-	RunID     *uuid.UUID `json:"run_id,omitempty"`
+	Response  channelruntime.WebhookResponse `json:"-"`
+	Accepted  bool                           `json:"accepted"`
+	Duplicate bool                           `json:"duplicate"`
+	Ignored   bool                           `json:"ignored"`
+	EventID   uuid.UUID                      `json:"event_id,omitempty"`
+	RunID     *uuid.UUID                     `json:"run_id,omitempty"`
 }

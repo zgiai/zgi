@@ -25,7 +25,7 @@ func TestChannelWebhookReplayedTenTimesCreatesOneInvocation(t *testing.T) {
 	}
 	request := channelruntime.WebhookRequest{Body: []byte(`{"safe":"fixture"}`), ReceivedAt: time.Now().UTC()}
 	for attempt := 0; attempt < 10; attempt++ {
-		result, err := service.HandleWebhook(t.Context(), installation.ID, request)
+		result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, request)
 		if err != nil {
 			t.Fatalf("HandleWebhook(attempt=%d) error = %v", attempt, err)
 		}
@@ -42,11 +42,27 @@ func TestChannelWebhookReplayedTenTimesCreatesOneInvocation(t *testing.T) {
 	if len(store.events) != 1 {
 		t.Fatalf("inbound events = %d, want 1", len(store.events))
 	}
+	for _, event := range store.events {
+		if event.ContentPreview != "请总结" || event.ConversationType != channelruntime.ConversationTypeGroup || event.MentionOnly {
+			t.Fatalf("inbound event display fields = %#v", event)
+		}
+	}
 	if len(service.transient.(*channelTransientDispatcherStub).requests) != 1 {
 		t.Fatalf("transient acknowledgement requests = %d, want 1", len(service.transient.(*channelTransientDispatcherStub).requests))
 	}
 	if len(store.deliveries) != 0 {
 		t.Fatalf("durable acknowledgement deliveries = %d, want 0", len(store.deliveries))
+	}
+}
+
+func TestChannelMessagePreviewIsBoundedAndWhitespaceNormalized(t *testing.T) {
+	message := &channelruntime.InboundMessage{Text: "  第一行\n\t第二行  " + strings.Repeat("长", maxChannelPreviewRunes)}
+	preview := channelMessagePreview(message)
+	if !strings.HasPrefix(preview, "第一行 第二行 ") {
+		t.Fatalf("preview = %q, want normalized whitespace", preview)
+	}
+	if got := len([]rune(preview)); got != maxChannelPreviewRunes {
+		t.Fatalf("preview runes = %d, want %d", got, maxChannelPreviewRunes)
 	}
 }
 
@@ -63,7 +79,7 @@ func TestChannelWebhookSkipsAcknowledgementWhenDisabled(t *testing.T) {
 		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_sender", Text: "请处理",
 		OccurredAt: time.Now().UTC(),
 	}
-	result, err := service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)})
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)})
 	if err != nil || !result.Accepted {
 		t.Fatalf("HandleWebhook() = %#v, %v", result, err)
 	}
@@ -106,11 +122,11 @@ func TestChannelWebhookSameMessageWithNewEventIDCreatesOneInvocation(t *testing.
 		ConversationType: channelruntime.ConversationTypeGroup, SenderExternalID: "ou_sender", Text: "请总结",
 		Mentions: []channelruntime.Mention{{ExternalID: installation.ExternalBotID}}, OccurredAt: occurredAt,
 	}
-	if _, err := service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"first"}`)}); err != nil {
+	if _, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"first"}`)}); err != nil {
 		t.Fatalf("first HandleWebhook() error = %v", err)
 	}
 	adapter.message.ProviderEventID = "event-message-retry"
-	result, err := service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"second"}`)})
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"second"}`)})
 	if err != nil {
 		t.Fatalf("replayed HandleWebhook() error = %v", err)
 	}
@@ -131,12 +147,139 @@ func TestChannelWebhookGroupMessageWithoutBotMentionIsIgnored(t *testing.T) {
 		ConversationType: channelruntime.ConversationTypeGroup, SenderExternalID: "ou_sender", Text: "普通消息",
 		OccurredAt: time.Now().UTC(),
 	}
-	result, err := service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"fixture"}`)})
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"fixture"}`)})
 	if err != nil {
 		t.Fatalf("HandleWebhook() error = %v", err)
 	}
 	if !result.Ignored || runtime.calls != 0 {
 		t.Fatalf("result = %#v, SubmitInvocation() calls = %d", result, runtime.calls)
+	}
+}
+
+func TestChannelWebhookStaleGroupMentionIsAuditedWithoutInvocation(t *testing.T) {
+	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
+	receivedAt := time.Now().UTC().Truncate(time.Second)
+	service.now = func() time.Time { return receivedAt }
+	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeGroup)
+	adapter.message = &channelruntime.InboundMessage{
+		Provider: "feishu", ProviderEventID: "event-stale-mention", ProviderMessageID: "message-stale-mention",
+		ExternalTenantID: "tenant-1", ExternalConversationID: binding.Mapping.ExternalConversationID,
+		ConversationType: channelruntime.ConversationTypeGroup, SenderExternalID: "ou_sender", Text: "请总结",
+		Mentions:   []channelruntime.Mention{{ExternalID: installation.ExternalBotID}},
+		OccurredAt: receivedAt.Add(-maxGroupMentionCallbackAge - time.Second),
+	}
+
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{
+		Body: []byte(`{"safe":"stale"}`), ReceivedAt: receivedAt,
+	})
+	if err != nil {
+		t.Fatalf("HandleWebhook() error = %v", err)
+	}
+	if !result.Ignored || result.Accepted || runtime.calls != 0 {
+		t.Fatalf("stale result = %#v, SubmitInvocation() calls = %d, want ignored without invocation", result, runtime.calls)
+	}
+	event := store.events[installation.ID.String()+":"+adapter.message.ProviderEventID]
+	if event == nil || event.Status != channelruntime.InboundEventIgnored || event.ReasonCode != "channel.callback.stale" {
+		t.Fatalf("stale inbound event = %#v, want ignored channel.callback.stale", event)
+	}
+	if requests := service.transient.(*channelTransientDispatcherStub).requests; len(requests) != 0 {
+		t.Fatalf("stale acknowledgement requests = %#v, want none", requests)
+	}
+}
+
+func TestChannelWebhookStaleGroupMentionDoesNotCreateAutomaticRoute(t *testing.T) {
+	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
+	receivedAt := time.Now().UTC().Truncate(time.Second)
+	service.now = func() time.Time { return receivedAt }
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu stale group",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter.message = &channelruntime.InboundMessage{
+		Provider: "feishu", ProviderEventID: "event-stale-unbound", ProviderMessageID: "message-stale-unbound",
+		ExternalTenantID: "tenant-1", ExternalConversationID: "oc_" + uuid.NewString(),
+		ConversationType: channelruntime.ConversationTypeGroup, SenderExternalID: "ou_sender", Text: "请加入群聊",
+		Mentions:   []channelruntime.Mention{{ExternalID: installation.ExternalBotID}},
+		OccurredAt: receivedAt.Add(-maxGroupMentionCallbackAge - time.Second),
+	}
+
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{
+		Body: []byte(`{"safe":"stale-unbound"}`), ReceivedAt: receivedAt,
+	})
+	if err != nil {
+		t.Fatalf("HandleWebhook() error = %v", err)
+	}
+	if !result.Ignored || runtime.calls != 0 {
+		t.Fatalf("stale unbound result = %#v, SubmitInvocation() calls = %d", result, runtime.calls)
+	}
+	if len(store.mappings) != 0 || len(store.bindings) != 0 {
+		t.Fatalf("stale automatic routes = mappings %d, bindings %d; want none", len(store.mappings), len(store.bindings))
+	}
+	event := store.events[installation.ID.String()+":"+adapter.message.ProviderEventID]
+	if event == nil || event.BindingID != nil || event.ReasonCode != "channel.callback.stale" {
+		t.Fatalf("stale unbound event = %#v, want unbound channel.callback.stale audit", event)
+	}
+}
+
+func TestStaleGroupMentionCallbackBoundary(t *testing.T) {
+	receivedAt := time.Now().UTC().Truncate(time.Second)
+	base := channelruntime.InboundMessage{
+		ConversationType: channelruntime.ConversationTypeGroup,
+		WakeReason:       channelruntime.WakeReasonMention,
+	}
+	tests := []struct {
+		name    string
+		message channelruntime.InboundMessage
+		want    bool
+	}{
+		{name: "at cutoff", message: base, want: false},
+		{name: "past cutoff", message: base, want: true},
+		{name: "direct message", message: base, want: false},
+		{name: "group without bot mention", message: base, want: false},
+		{name: "future provider timestamp", message: base, want: false},
+	}
+	tests[0].message.OccurredAt = receivedAt.Add(-maxGroupMentionCallbackAge)
+	tests[1].message.OccurredAt = receivedAt.Add(-maxGroupMentionCallbackAge - time.Nanosecond)
+	tests[2].message.ConversationType = channelruntime.ConversationTypeDirect
+	tests[2].message.OccurredAt = receivedAt.Add(-time.Hour)
+	tests[3].message.WakeReason = channelruntime.WakeReasonNone
+	tests[3].message.OccurredAt = receivedAt.Add(-time.Hour)
+	tests[4].message.OccurredAt = receivedAt.Add(time.Minute)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := staleGroupMentionCallback(&test.message, receivedAt); got != test.want {
+				t.Fatalf("staleGroupMentionCallback() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestChannelWebhookMentionOnlyCreatesContextDrivenInvocation(t *testing.T) {
+	service, _, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
+	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeGroup)
+	adapter.message = &channelruntime.InboundMessage{
+		Provider: "feishu", ProviderEventID: "event-mention-only", ProviderMessageID: "message-mention-only",
+		ExternalTenantID: "tenant-1", ExternalConversationID: binding.Mapping.ExternalConversationID,
+		ConversationType: channelruntime.ConversationTypeGroup, SenderExternalID: "ou_invoker",
+		Mentions:    []channelruntime.Mention{{ExternalID: installation.ExternalBotID, Name: "丁康源的智能助手"}},
+		MentionOnly: true, OccurredAt: time.Now().UTC(),
+	}
+
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)})
+	if err != nil {
+		t.Fatalf("HandleWebhook() error = %v", err)
+	}
+	if !result.Accepted || result.Ignored || runtime.calls != 1 {
+		t.Fatalf("result = %#v, SubmitInvocation() calls = %d", result, runtime.calls)
+	}
+	if runtime.lastQuery != "@丁康源的智能助手" {
+		t.Fatalf("invocation query = %q, want the provider-authored wake representation", runtime.lastQuery)
+	}
+	if mentionOnly, _ := runtime.lastEvent.Context["mention_only"].(bool); !mentionOnly {
+		t.Fatalf("invocation context = %#v, want mention_only=true", runtime.lastEvent.Context)
 	}
 }
 
@@ -159,33 +302,23 @@ func TestChannelDirectMessageAutoBindsDefaultSubjectAndUsesFirstMessage(t *testi
 		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_private_sender",
 		Text: "hello", OccurredAt: time.Now().UTC(),
 	}
-	result, err := service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"first"}`)})
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"first"}`)})
 	if err != nil {
 		t.Fatalf("HandleWebhook(first) error = %v", err)
 	}
 	if !result.Accepted || result.Ignored || runtime.calls != 1 || runtime.lastConversationID == nil {
 		t.Fatalf("first direct result = %#v, runtime = %#v", result, runtime)
 	}
-	discoveries, err := service.ListDiscoveries(t.Context(), scope, digitalHumanID)
-	if err != nil {
-		t.Fatalf("ListDiscoveries() error = %v", err)
-	}
-	if len(discoveries) != 0 {
-		t.Fatalf("discoveries = %#v, want no pending direct conversation", discoveries)
-	}
-	bindings, err := service.ListBindings(t.Context(), scope, digitalHumanID)
-	if err != nil {
-		t.Fatalf("ListBindings() error = %v", err)
-	}
-	if len(bindings) != 1 || bindings[0].Mapping.LocalConversationID == nil ||
-		*bindings[0].Mapping.LocalConversationID != *runtime.lastConversationID {
-		t.Fatalf("auto binding = %#v, runtime conversation = %v", bindings, runtime.lastConversationID)
+	route, err := service.store.ResolveChannelRoute(t.Context(), installation.ID, conversationID)
+	if err != nil || route.Mapping.LocalConversationID == nil ||
+		*route.Mapping.LocalConversationID != *runtime.lastConversationID {
+		t.Fatalf("automatic route = %#v, %v; runtime conversation = %v", route, err, runtime.lastConversationID)
 	}
 	firstConversationID := *runtime.lastConversationID
 	adapter.message.ProviderEventID = "event-private-follow-up"
 	adapter.message.ProviderMessageID = "message-private-follow-up"
 	adapter.message.Text = "follow up"
-	result, err = service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"follow-up"}`)})
+	result, err = service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"follow-up"}`)})
 	if err != nil {
 		t.Fatalf("HandleWebhook(follow-up) error = %v", err)
 	}
@@ -194,7 +327,7 @@ func TestChannelDirectMessageAutoBindsDefaultSubjectAndUsesFirstMessage(t *testi
 	}
 }
 
-func TestChannelDirectMessageWithoutDefaultSubjectRemainsDiscoverable(t *testing.T) {
+func TestChannelDirectMessageWithoutDefaultSubjectIsIgnored(t *testing.T) {
 	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
 	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
 		Provider: "feishu", ConnectionID: uuid.New(), Name: "Legacy Feishu installation",
@@ -211,24 +344,20 @@ func TestChannelDirectMessageWithoutDefaultSubjectRemainsDiscoverable(t *testing
 		Text: "hello", OccurredAt: time.Now().UTC(),
 	}
 
-	result, err := service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"legacy"}`)})
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"legacy"}`)})
 	if err != nil {
 		t.Fatalf("HandleWebhook() error = %v", err)
 	}
 	if !result.Ignored || result.Accepted || runtime.calls != 0 {
 		t.Fatalf("legacy result = %#v, runtime calls = %d", result, runtime.calls)
 	}
-	discoveries, err := service.ListDiscoveries(t.Context(), scope, digitalHumanID)
-	if err != nil {
-		t.Fatalf("ListDiscoveries() error = %v", err)
-	}
-	if len(discoveries) != 1 || discoveries[0].ConversationType != channelruntime.ConversationTypeDirect {
-		t.Fatalf("discoveries = %#v, want one pending direct conversation", discoveries)
+	if len(store.bindings) != 0 {
+		t.Fatalf("automatic routes = %#v, want none", store.bindings)
 	}
 }
 
 func TestChannelGroupConversationAutoBindsOnFirstBotMention(t *testing.T) {
-	service, _, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
+	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
 	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
 		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu group default",
 	})
@@ -243,69 +372,63 @@ func TestChannelGroupConversationAutoBindsOnFirstBotMention(t *testing.T) {
 		Text: "ordinary group message", OccurredAt: time.Now().UTC(),
 	}
 
-	result, err := service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"ordinary"}`)})
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"ordinary"}`)})
 	if err != nil {
 		t.Fatalf("HandleWebhook(ordinary) error = %v", err)
 	}
 	if !result.Ignored || runtime.calls != 0 {
 		t.Fatalf("ordinary group result = %#v, runtime calls = %d", result, runtime.calls)
 	}
-	bindings, err := service.ListBindings(t.Context(), scope, digitalHumanID)
-	if err != nil {
-		t.Fatalf("ListBindings(ordinary) error = %v", err)
-	}
-	if len(bindings) != 0 {
-		t.Fatalf("ordinary group bindings = %#v, want none", bindings)
+	if len(store.bindings) != 0 {
+		t.Fatalf("ordinary group routes = %#v, want none", store.bindings)
 	}
 
 	adapter.message.ProviderEventID = "event-group-mention"
 	adapter.message.ProviderMessageID = "message-group-mention"
 	adapter.message.Text = "please help"
 	adapter.message.Mentions = []channelruntime.Mention{{ExternalID: installation.ExternalBotID}}
-	result, err = service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"mention"}`)})
+	result, err = service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":"mention"}`)})
 	if err != nil {
 		t.Fatalf("HandleWebhook(mention) error = %v", err)
 	}
 	if !result.Accepted || runtime.calls != 1 {
 		t.Fatalf("group mention result = %#v, runtime calls = %d", result, runtime.calls)
 	}
-	bindings, err = service.ListBindings(t.Context(), scope, digitalHumanID)
-	if err != nil {
-		t.Fatalf("ListBindings(mention) error = %v", err)
-	}
-	if len(bindings) != 1 || bindings[0].Binding.WakePolicy != channelruntime.WakePolicyMentionOnly {
-		t.Fatalf("group mention bindings = %#v, want one mention-only route", bindings)
+	route, err := service.store.ResolveChannelRoute(t.Context(), installation.ID, conversationID)
+	if err != nil || route.Binding.WakePolicy != channelruntime.WakePolicyMentionOnly {
+		t.Fatalf("group mention route = %#v, %v; want one mention-only route", route, err)
 	}
 }
 
-func TestChannelInstallationUsageBlocksDeleteUntilBindingIsRemoved(t *testing.T) {
+func TestChannelInstallationDeleteRemovesAutomaticRoutes(t *testing.T) {
 	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
 	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeGroup)
 
-	items, err := service.ListInstallations(t.Context(), scope, digitalHumanID)
-	if err != nil {
-		t.Fatalf("ListInstallations() error = %v", err)
-	}
-	var listed *ChannelInstallationView
-	for _, item := range items {
-		if item.ID == installation.ID {
-			listed = item
-			break
-		}
-	}
-	if listed == nil || listed.BindingCount != 1 || len(listed.UsedBy) != 1 || listed.UsedBy[0].DigitalHumanID != digitalHumanID {
-		t.Fatalf("installation usage = %#v", listed)
-	}
-
-	err = service.DeleteInstallation(t.Context(), scope, digitalHumanID, installation.ID, DeleteChannelInstallationRequest{})
-	if !errors.Is(err, ErrChannelInstallationInUse) {
-		t.Fatalf("DeleteInstallation() error = %v, want ErrChannelInstallationInUse", err)
-	}
-	if err := service.DeleteInstallation(t.Context(), scope, digitalHumanID, installation.ID, DeleteChannelInstallationRequest{RemoveBindings: true}); err != nil {
-		t.Fatalf("DeleteInstallation(remove bindings) error = %v", err)
+	if err := service.DeleteInstallation(t.Context(), scope, digitalHumanID, installation.ID); err != nil {
+		t.Fatalf("DeleteInstallation() error = %v", err)
 	}
 	if _, exists := store.bindings[binding.Binding.ID]; exists {
 		t.Fatalf("binding %s still exists after installation cleanup", binding.Binding.ID)
+	}
+}
+
+func TestChannelInstallationViewUsesConfiguredAPIBaseURL(t *testing.T) {
+	service, _, _, _, scope, digitalHumanID := newChannelTestService(t)
+	service.WithAPIBaseURL("https://api.zgi.example.com/")
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu public webhook",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	views, err := service.ListInstallations(t.Context(), scope, digitalHumanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://api.zgi.example.com/console/api/webhooks/channels/feishu/" + installation.ID.String()
+	if len(views) != 1 || views[0].WebhookURL != want {
+		t.Fatalf("installation views = %#v, want webhook URL %q", views, want)
 	}
 }
 
@@ -320,10 +443,10 @@ func TestChannelWebhookReplayRepairsFailedInvocationSubmission(t *testing.T) {
 	}
 	runtime.remainingFailures = 1
 	request := channelruntime.WebhookRequest{Body: []byte(`{"safe":"fixture"}`), ReceivedAt: time.Now().UTC()}
-	if _, err := service.HandleWebhook(t.Context(), installation.ID, request); err == nil {
+	if _, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, request); err == nil {
 		t.Fatal("first HandleWebhook() error = nil")
 	}
-	result, err := service.HandleWebhook(t.Context(), installation.ID, request)
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, request)
 	if err != nil {
 		t.Fatalf("replayed HandleWebhook() error = %v", err)
 	}
@@ -344,7 +467,7 @@ func TestChannelWebhookRejectsReusedEventIDWithDifferentPayload(t *testing.T) {
 		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_sender", Text: "原始内容",
 		OccurredAt: time.Now().UTC(),
 	}
-	if _, err := service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"payload":"original"}`)}); err != nil {
+	if _, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"payload":"original"}`)}); err != nil {
 		t.Fatalf("first HandleWebhook() error = %v", err)
 	}
 	adapter.message = &channelruntime.InboundMessage{
@@ -353,7 +476,7 @@ func TestChannelWebhookRejectsReusedEventIDWithDifferentPayload(t *testing.T) {
 		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_sender", Text: "替换内容",
 		OccurredAt: time.Now().UTC(),
 	}
-	_, err := service.HandleWebhook(t.Context(), installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"payload":"changed"}`)})
+	_, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"payload":"changed"}`)})
 	if !errors.Is(err, channelruntime.ErrInvalidWebhook) {
 		t.Fatalf("reused event ID error = %v, want ErrInvalidWebhook", err)
 	}
@@ -465,7 +588,7 @@ func newChannelTestDelivery(
 	scope Scope,
 	digitalHumanID uuid.UUID,
 	installation *channelruntime.Installation,
-	binding *ChannelBindingView,
+	binding *ChannelRoute,
 	now time.Time,
 ) *channelruntime.Delivery {
 	t.Helper()
@@ -490,7 +613,7 @@ func newChannelTestService(t *testing.T) (*ChannelService, *channelStoreStub, *c
 	store := newChannelStoreStub()
 	runtime := &channelRuntimeStub{}
 	adapter := &channelAdapterStub{}
-	registry, err := channelruntime.NewRegistry(adapter)
+	registry, err := channelruntime.NewRegistry(channelruntime.Provider{Adapter: adapter, Provisioner: channelProvisionerStub{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +625,27 @@ func newChannelTestService(t *testing.T) (*ChannelService, *channelStoreStub, *c
 	return service, store, runtime, adapter, scope, digitalHumanID
 }
 
-func createChannelTestRoute(t *testing.T, service *ChannelService, scope Scope, digitalHumanID uuid.UUID, conversationType channelruntime.ConversationType) (*channelruntime.Installation, *ChannelBindingView) {
+func TestChannelWebhookProbeAcceptsOnlyActiveMatchingInstallation(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu probe",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProbeWebhook(t.Context(), "FEISHU", installation.ID); err != nil {
+		t.Fatalf("ProbeWebhook(active) error = %v", err)
+	}
+	if err := service.ProbeWebhook(t.Context(), "dingtalk", installation.ID); !errors.Is(err, ErrChannelInstallationNotFound) {
+		t.Fatalf("ProbeWebhook(provider mismatch) error = %v", err)
+	}
+	store.installations[installation.ID].Status = channelruntime.InstallationStatusDisabled
+	if err := service.ProbeWebhook(t.Context(), "feishu", installation.ID); !errors.Is(err, ErrChannelInstallationNotFound) {
+		t.Fatalf("ProbeWebhook(disabled) error = %v", err)
+	}
+}
+
+func createChannelTestRoute(t *testing.T, service *ChannelService, scope Scope, digitalHumanID uuid.UUID, conversationType channelruntime.ConversationType) (*channelruntime.Installation, *ChannelRoute) {
 	t.Helper()
 	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
 		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu test",
@@ -513,14 +656,24 @@ func createChannelTestRoute(t *testing.T, service *ChannelService, scope Scope, 
 	if installation.ExternalTenantID != "tenant-1" || installation.ExternalBotID != "ou_bot" {
 		t.Fatalf("resolved channel identity = (%q, %q)", installation.ExternalTenantID, installation.ExternalBotID)
 	}
-	binding, err := service.CreateBinding(t.Context(), scope, digitalHumanID, CreateChannelBindingRequest{
+	now := time.Now().UTC()
+	mapping := &channelruntime.ConversationMapping{
+		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		InstallationID: installation.ID, ExternalConversationID: "oc_" + uuid.NewString(),
-		ConversationType: conversationType, WakePolicy: channelruntime.WakePolicyDirectAndMention,
-	})
-	if err != nil {
+		ConversationType: conversationType, LocalConversationID: uuidPointer(uuid.New()),
+		CreatedAt: now, UpdatedAt: now,
+	}
+	binding := &channelruntime.Binding{
+		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		InstallationID: installation.ID, ConversationMappingID: mapping.ID,
+		SubjectType: runtimeidentity.SubjectTypeDigitalHuman, SubjectID: digitalHumanID,
+		WakePolicy: channelruntime.WakePolicyDirectAndMention, Enabled: true, Revision: 1,
+		CreatedBy: scope.ActorID, UpdatedBy: scope.ActorID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := service.store.CreateChannelBinding(t.Context(), mapping, binding); err != nil {
 		t.Fatal(err)
 	}
-	return installation, binding
+	return installation, &ChannelRoute{Installation: installation, Mapping: mapping, Binding: binding}
 }
 
 type channelSubjectStub struct{ definition *Definition }
@@ -536,6 +689,8 @@ type channelRuntimeStub struct {
 	calls              int
 	runID              uuid.UUID
 	lastEventID        string
+	lastEvent          invocation.Event
+	lastQuery          string
 	lastConversationID *uuid.UUID
 	remainingFailures  int
 	channelPolicy      *ChannelResponsePolicy
@@ -551,9 +706,11 @@ func (dispatcher *channelTransientDispatcherStub) EnqueueTransient(_ context.Con
 	return dispatcher.err
 }
 
-func (runtime *channelRuntimeStub) SubmitInvocation(_ context.Context, _ Scope, event invocation.Event, _ string, conversationID *uuid.UUID) (*Run, bool, error) {
+func (runtime *channelRuntimeStub) SubmitInvocation(_ context.Context, _ Scope, event invocation.Event, query string, conversationID *uuid.UUID) (*Run, bool, error) {
 	runtime.calls++
 	runtime.lastEventID = event.ID
+	runtime.lastEvent = event
+	runtime.lastQuery = query
 	runtime.lastConversationID = cloneUUIDPointer(conversationID)
 	if runtime.remainingFailures > 0 {
 		runtime.remainingFailures--
@@ -577,11 +734,16 @@ type channelCredentialStub struct{}
 func (channelCredentialStub) ResolveIdentity(context.Context, *channelruntime.Installation) (string, string, error) {
 	return "tenant-1", "ou_bot", nil
 }
-func (channelCredentialStub) ResolveSecurity(context.Context, *channelruntime.Installation) (channelruntime.SecurityMaterial, func(), error) {
-	return channelruntime.SecurityMaterial{VerificationToken: "safe"}, func() {}, nil
+func (channelCredentialStub) ResolveCredential(context.Context, *channelruntime.Installation) (*channelruntime.ResolvedChannelCredential, error) {
+	return &channelruntime.ResolvedChannelCredential{Values: map[string]string{"safe": "value"}}, nil
+}
+
+func (channelCredentialStub) ContextReadiness(context.Context, *channelruntime.Installation) ChannelContextReadiness {
+	return ChannelContextReadiness{Status: ChannelContextReadinessReady, MessageHistoryAvailable: true, MemberNamesAvailable: true}
 }
 
 type channelAdapterStub struct {
+	provider      string
 	message       *channelruntime.InboundMessage
 	receipt       *channelruntime.DeliveryReceipt
 	deliveryErr   error
@@ -589,12 +751,40 @@ type channelAdapterStub struct {
 	lastDelivery  channelruntime.DeliveryRequest
 }
 
-func (*channelAdapterStub) Provider() string { return "feishu" }
-func (*channelAdapterStub) Verify(_ context.Context, request channelruntime.WebhookRequest, _ channelruntime.SecurityMaterial) (*channelruntime.VerifiedWebhook, error) {
+func (adapter *channelAdapterStub) Provider() string {
+	if adapter.provider != "" {
+		return adapter.provider
+	}
+	return "feishu"
+}
+func (*channelAdapterStub) Capabilities() channelruntime.ProviderCapabilities {
+	return channelruntime.ProviderCapabilities{}
+}
+func (*channelAdapterStub) Verify(_ context.Context, request channelruntime.WebhookRequest, _ channelruntime.ResolvedChannelCredential) (*channelruntime.VerifiedWebhook, error) {
 	return &channelruntime.VerifiedWebhook{Body: append([]byte(nil), request.Body...)}, nil
 }
-func (adapter *channelAdapterStub) Normalize(context.Context, *channelruntime.VerifiedWebhook) (*channelruntime.InboundMessage, error) {
-	return adapter.message, nil
+func (adapter *channelAdapterStub) Normalize(context.Context, *channelruntime.VerifiedWebhook, channelruntime.NormalizationContext) (*channelruntime.InboundMessage, error) {
+	if adapter.message == nil {
+		return nil, nil
+	}
+	message := *adapter.message
+	if message.WakeReason == "" {
+		if message.ConversationType == channelruntime.ConversationTypeDirect {
+			message.WakeReason = channelruntime.WakeReasonDirectMessage
+		} else {
+			message.WakeReason = channelruntime.WakeReasonNone
+			for _, mention := range message.Mentions {
+				if mention.ExternalID == "ou_bot" {
+					message.WakeReason = channelruntime.WakeReasonMention
+					break
+				}
+			}
+		}
+	}
+	return &message, nil
+}
+func (*channelAdapterStub) Acknowledgement() channelruntime.WebhookResponse {
+	return channelruntime.WebhookResponse{StatusCode: 200}
 }
 func (adapter *channelAdapterStub) Deliver(_ context.Context, request channelruntime.DeliveryRequest) (*channelruntime.DeliveryReceipt, error) {
 	adapter.deliveryCalls++
@@ -606,6 +796,18 @@ func (*channelAdapterStub) Edit(context.Context, channelruntime.DeliveryRequest,
 }
 func (*channelAdapterStub) Retract(context.Context, channelruntime.DeliveryRequest, string) error {
 	return channelruntime.ErrUnsupportedEvent
+}
+
+type channelProvisionerStub struct{}
+
+func (channelProvisionerStub) PrepareCredentials(_, updates map[string]string) (map[string]string, error) {
+	return cloneChannelCredentials(updates), nil
+}
+func (channelProvisionerStub) ResolveIdentity(context.Context, channelruntime.ResolvedChannelCredential) (channelruntime.InstallationIdentity, error) {
+	return channelruntime.InstallationIdentity{ExternalTenantID: "tenant-1", ExternalSelfID: "ou_bot"}, nil
+}
+func (channelProvisionerStub) ConnectionSpec() channelruntime.ConnectionSpec {
+	return channelruntime.ConnectionSpec{IntegrationID: "feishu", DriverID: "test", AuthMethodID: "test"}
 }
 
 type channelStoreStub struct {
@@ -643,26 +845,10 @@ func (store *channelStoreStub) ScopedChannelInstallationByID(ctx context.Context
 	}
 	return installation, nil
 }
-func (store *channelStoreStub) ListChannelInstallations(context.Context, Scope) ([]*ChannelInstallationView, error) {
-	items := make([]*ChannelInstallationView, 0, len(store.installations))
+func (store *channelStoreStub) ListChannelInstallations(context.Context, Scope) ([]*channelruntime.Installation, error) {
+	items := make([]*channelruntime.Installation, 0, len(store.installations))
 	for _, installation := range store.installations {
-		item := &ChannelInstallationView{
-			Installation: cloneInstallation(installation),
-			UsedBy:       make([]*ChannelInstallationUsage, 0),
-		}
-		countsBySubject := make(map[uuid.UUID]int64)
-		for _, binding := range store.bindings {
-			if binding.InstallationID == installation.ID {
-				countsBySubject[binding.SubjectID]++
-			}
-		}
-		for subjectID, count := range countsBySubject {
-			item.BindingCount += count
-			item.UsedBy = append(item.UsedBy, &ChannelInstallationUsage{
-				DigitalHumanID: subjectID, BindingCount: count,
-			})
-		}
-		items = append(items, item)
+		items = append(items, cloneInstallation(installation))
 	}
 	return items, nil
 }
@@ -674,12 +860,7 @@ func (store *channelStoreStub) UpdateChannelInstallation(_ context.Context, _ Sc
 	store.installations[installation.ID] = cloneInstallation(installation)
 	return nil
 }
-func (store *channelStoreStub) DeleteChannelInstallation(_ context.Context, _ Scope, id uuid.UUID, request DeleteChannelInstallationRequest) error {
-	for _, binding := range store.bindings {
-		if binding.InstallationID == id && !request.RemoveBindings {
-			return ErrChannelInstallationInUse
-		}
-	}
+func (store *channelStoreStub) DeleteChannelInstallation(_ context.Context, _ Scope, id uuid.UUID) error {
 	for bindingID, binding := range store.bindings {
 		if binding.InstallationID == id {
 			delete(store.bindings, bindingID)
@@ -690,51 +871,6 @@ func (store *channelStoreStub) DeleteChannelInstallation(_ context.Context, _ Sc
 }
 func (store *channelStoreStub) CreateChannelBinding(_ context.Context, mapping *channelruntime.ConversationMapping, binding *channelruntime.Binding) error {
 	store.mappings[mapping.ID], store.bindings[binding.ID] = mapping, binding
-	return nil
-}
-func (store *channelStoreStub) ListChannelBindings(_ context.Context, _ Scope, subjectID uuid.UUID) ([]*ChannelBindingView, error) {
-	items := make([]*ChannelBindingView, 0)
-	for _, binding := range store.bindings {
-		if binding.SubjectID == subjectID {
-			items = append(items, &ChannelBindingView{Binding: binding, Mapping: store.mappings[binding.ConversationMappingID]})
-		}
-	}
-	return items, nil
-}
-func (store *channelStoreStub) ListDiscoveredChannelConversations(_ context.Context, _ Scope) ([]*ChannelConversationDiscovery, error) {
-	items := make([]*ChannelConversationDiscovery, 0)
-	for _, event := range store.events {
-		bound := false
-		for _, mapping := range store.mappings {
-			if mapping.InstallationID == event.InstallationID && mapping.ExternalConversationID == event.ExternalConversationID {
-				for _, binding := range store.bindings {
-					if binding.ConversationMappingID == mapping.ID {
-						bound = true
-						break
-					}
-				}
-			}
-		}
-		if bound {
-			continue
-		}
-		conversationType := channelruntime.ConversationTypeDirect
-		if event.EventType == "channel.mention" {
-			conversationType = channelruntime.ConversationTypeGroup
-		}
-		items = append(items, &ChannelConversationDiscovery{
-			InstallationID: event.InstallationID, ExternalConversationID: event.ExternalConversationID,
-			ConversationType: conversationType, SenderExternalID: event.SenderExternalID,
-			EventCount: 1, LastEventAt: event.ReceivedAt,
-		})
-	}
-	return items, nil
-}
-func (store *channelStoreStub) DeleteChannelBinding(_ context.Context, _ Scope, subjectID, bindingID uuid.UUID) error {
-	if binding := store.bindings[bindingID]; binding == nil || binding.SubjectID != subjectID {
-		return ErrChannelBindingNotFound
-	}
-	delete(store.bindings, bindingID)
 	return nil
 }
 func (store *channelStoreStub) ResolveChannelRoute(_ context.Context, installationID uuid.UUID, conversationID string) (*ChannelRoute, error) {

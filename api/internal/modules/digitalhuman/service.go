@@ -21,8 +21,11 @@ const (
 	maxPageSize           = 100
 	maxNameRunes          = 80
 	maxAvatarRunes        = 2_048
+	maxIconRunes          = 4_096
 	maxDescriptionRunes   = 4_000
 	maxPersonaRunes       = 16_000
+	maxGoals              = 64
+	maxGoalRunes          = 1_000
 	maxRules              = 128
 	maxRuleRunes          = 2_000
 	maxDefaultModelRunes  = 255
@@ -32,8 +35,18 @@ const (
 
 // Service owns DigitalHuman lifecycle and publication rules.
 type Service struct {
-	repo *GormRepository
-	now  func() time.Time
+	repo         *GormRepository
+	iconResolver interface {
+		GetFileURL(context.Context, string) (string, error)
+	}
+	now func() time.Time
+}
+
+// SetIconResolver enables Agent-compatible image icon URLs without coupling the domain to file storage.
+func (s *Service) SetIconResolver(resolver interface {
+	GetFileURL(context.Context, string) (string, error)
+}) {
+	s.iconResolver = resolver
 }
 
 // NewService constructs a DigitalHuman lifecycle service.
@@ -58,6 +71,10 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 		return nil, applicationError(ErrNameConflict, "digital_human.create")
 	}
 
+	goals, err := marshalStringList(request.Goals)
+	if err != nil {
+		return nil, applicationError(err, "digital_human.create")
+	}
 	rules, err := marshalRules(request.Rules)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.create")
@@ -76,13 +93,13 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	actorID := scope.ActorID
 	definition := &Definition{
 		ID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
-		Name: request.Name, Avatar: request.Avatar, Description: request.Description,
+		Name: request.Name, Avatar: request.Avatar, IconType: request.IconType, Icon: request.Icon, Description: request.Description,
 		Status: StatusDraft, AutonomyLevel: request.AutonomyLevel, Visibility: request.Visibility,
 		Revision: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 	}
 	draft := &Version{
 		ID: draftID, DigitalHumanID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
-		State: VersionStateDraft, Persona: request.Persona, Rules: rules, DefaultModel: request.DefaultModel,
+		State: VersionStateDraft, IdentityName: request.IdentityName, Persona: request.Persona, Goals: goals, Rules: rules, DefaultModel: request.DefaultModel,
 		MemoryPolicy: memoryPolicy, TriggerPolicy: triggerPolicy, IdentitySnapshot: datatypes.JSON([]byte(`{}`)),
 		LockVersion: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 	}
@@ -102,6 +119,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 		return nil, applicationError(err, "digital_human.create")
 	}
 	definition.DraftVersionID = &draftID
+	s.resolveDefinitionIcon(ctx, definition)
 	return &Detail{Definition: definition, Draft: draft}, nil
 }
 
@@ -114,6 +132,7 @@ func (s *Service) Get(ctx context.Context, scope Scope, id uuid.UUID) (*Detail, 
 	if err != nil {
 		return nil, applicationError(err, "digital_human.get")
 	}
+	s.resolveDefinitionIcon(ctx, definition)
 	draft, err := s.repo.Draft(ctx, scope, definition, false)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.get")
@@ -134,6 +153,9 @@ func (s *Service) List(ctx context.Context, scope Scope, query ListQuery) (*List
 	items, total, err := s.repo.ListDefinitions(ctx, scope, query)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.list")
+	}
+	for _, item := range items {
+		s.resolveDefinitionIcon(ctx, item)
 	}
 	return &ListResult{
 		Items: items, Total: total, Page: query.Page, PageSize: query.PageSize,
@@ -255,7 +277,7 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 		nextDraftID := uuid.New()
 		nextDraft := &Version{
 			ID: nextDraftID, DigitalHumanID: definition.ID, OrganizationID: definition.OrganizationID, WorkspaceID: definition.WorkspaceID,
-			State: VersionStateDraft, Persona: draft.Persona, Rules: cloneJSON(draft.Rules), DefaultModel: draft.DefaultModel,
+			State: VersionStateDraft, IdentityName: draft.IdentityName, Persona: draft.Persona, Goals: cloneJSON(draft.Goals), Rules: cloneJSON(draft.Rules), DefaultModel: draft.DefaultModel,
 			MemoryPolicy: cloneJSON(draft.MemoryPolicy), TriggerPolicy: cloneJSON(draft.TriggerPolicy),
 			IdentitySnapshot: datatypes.JSON([]byte(`{}`)), LockVersion: 1,
 			CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
@@ -356,7 +378,10 @@ func normalizeCreateRequest(scope Scope, request CreateRequest) (CreateRequest, 
 	}
 	request.Name = strings.TrimSpace(request.Name)
 	request.Avatar = strings.TrimSpace(request.Avatar)
+	request.IconType = strings.TrimSpace(request.IconType)
+	request.Icon = strings.TrimSpace(request.Icon)
 	request.Description = strings.TrimSpace(request.Description)
+	request.IdentityName = strings.TrimSpace(request.IdentityName)
 	request.Persona = strings.TrimSpace(request.Persona)
 	request.DefaultModel = strings.TrimSpace(request.DefaultModel)
 	if request.AutonomyLevel == "" {
@@ -365,9 +390,20 @@ func normalizeCreateRequest(scope Scope, request CreateRequest) (CreateRequest, 
 	if request.Visibility == "" {
 		request.Visibility = VisibilityWorkspace
 	}
+	if request.IdentityName == "" {
+		request.IdentityName = request.Name
+	}
+	if request.IconType == "" {
+		request.IconType = "text"
+	}
 	if request.Name == "" || !validRuneLength(request.Name, maxNameRunes) || !validRuneLength(request.Avatar, maxAvatarRunes) ||
-		!validRuneLength(request.Description, maxDescriptionRunes) || !validRuneLength(request.Persona, maxPersonaRunes) ||
+		!validIconType(request.IconType) || !validRuneLength(request.Icon, maxIconRunes) ||
+		!validRuneLength(request.Description, maxDescriptionRunes) || !validRuneLength(request.IdentityName, maxNameRunes) || !validRuneLength(request.Persona, maxPersonaRunes) ||
 		!validRuneLength(request.DefaultModel, maxDefaultModelRunes) || !validAutonomy(request.AutonomyLevel) || !validVisibility(request.Visibility) {
+		return CreateRequest{}, ErrInvalidRequest
+	}
+	request.Goals = normalizeStringList(request.Goals)
+	if !validStringList(request.Goals, maxGoals, maxGoalRunes) {
 		return CreateRequest{}, ErrInvalidRequest
 	}
 	request.Rules = normalizeRules(request.Rules)
@@ -397,6 +433,20 @@ func normalizeDefinitionUpdates(definition *Definition, request UpdateRequest) (
 			return nil, ErrInvalidRequest
 		}
 		updates["avatar"] = value
+	}
+	if request.IconType != nil {
+		value := strings.TrimSpace(*request.IconType)
+		if !validIconType(value) {
+			return nil, ErrInvalidRequest
+		}
+		updates["icon_type"] = value
+	}
+	if request.Icon != nil {
+		value := strings.TrimSpace(*request.Icon)
+		if !validRuneLength(value, maxIconRunes) {
+			return nil, ErrInvalidRequest
+		}
+		updates["icon"] = value
 	}
 	if request.Description != nil {
 		value := strings.TrimSpace(*request.Description)
@@ -431,12 +481,32 @@ func normalizeDefinitionUpdates(definition *Definition, request UpdateRequest) (
 
 func applyDraftUpdate(draft *Version, request UpdateDraftRequest) error {
 	changed := false
+	if request.IdentityName != nil {
+		value := strings.TrimSpace(*request.IdentityName)
+		if value == "" || !validRuneLength(value, maxNameRunes) {
+			return ErrInvalidRequest
+		}
+		draft.IdentityName = value
+		changed = true
+	}
 	if request.Persona != nil {
 		value := strings.TrimSpace(*request.Persona)
 		if !validRuneLength(value, maxPersonaRunes) {
 			return ErrInvalidRequest
 		}
 		draft.Persona = value
+		changed = true
+	}
+	if request.Goals != nil {
+		goals := normalizeStringList(*request.Goals)
+		if !validStringList(goals, maxGoals, maxGoalRunes) {
+			return ErrInvalidRequest
+		}
+		encoded, err := marshalStringList(goals)
+		if err != nil {
+			return err
+		}
+		draft.Goals = encoded
 		changed = true
 	}
 	if request.Rules != nil {
@@ -504,7 +574,7 @@ func normalizeListQuery(scope Scope, query ListQuery) (ListQuery, error) {
 }
 
 func validatePublishable(draft *Version) error {
-	if draft == nil || strings.TrimSpace(draft.Persona) == "" || strings.TrimSpace(draft.DefaultModel) == "" {
+	if draft == nil || strings.TrimSpace(draft.IdentityName) == "" || strings.TrimSpace(draft.Persona) == "" || strings.TrimSpace(draft.DefaultModel) == "" {
 		return ErrPublishInvalid
 	}
 	var rules []string
@@ -541,32 +611,79 @@ func validVisibility(value Visibility) bool {
 	return value == VisibilityPrivate || value == VisibilityWorkspace
 }
 
+func validIconType(value string) bool {
+	return value == "text" || value == "image"
+}
+
+func (s *Service) resolveDefinitionIcon(ctx context.Context, definition *Definition) {
+	if definition == nil {
+		return
+	}
+	definition.IconURL = ""
+	if definition.IconType == "image" && definition.Icon != "" {
+		if strings.HasPrefix(definition.Icon, "http://") || strings.HasPrefix(definition.Icon, "https://") {
+			definition.IconURL = definition.Icon
+			return
+		}
+		if s.iconResolver != nil {
+			if iconURL, err := s.iconResolver.GetFileURL(ctx, definition.Icon); err == nil {
+				definition.IconURL = iconURL
+				return
+			}
+		}
+	}
+	// Preserve display compatibility for local records created before Agent-style icons were added.
+	if definition.Avatar != "" {
+		definition.IconURL = definition.Avatar
+	}
+}
+
 func validRuneLength(value string, maxRunes int) bool {
 	return utf8.ValidString(value) && utf8.RuneCountInString(value) <= maxRunes
 }
 
 func normalizeRules(rules []string) []string {
-	seen := make(map[string]struct{}, len(rules))
-	normalized := make([]string, 0, len(rules))
-	for _, rule := range rules {
-		rule = strings.TrimSpace(rule)
-		if rule == "" {
+	return normalizeStringList(rules)
+}
+
+func normalizeStringList(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
 			continue
 		}
-		if _, ok := seen[rule]; ok {
+		if _, ok := seen[value]; ok {
 			continue
 		}
-		seen[rule] = struct{}{}
-		normalized = append(normalized, rule)
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
 	}
 	return normalized
 }
 
-func marshalRules(rules []string) (datatypes.JSON, error) {
-	if rules == nil {
-		rules = []string{}
+func validStringList(values []string, maxItems, maxRunes int) bool {
+	if len(values) > maxItems {
+		return false
 	}
-	encoded, err := json.Marshal(rules)
+	for _, value := range values {
+		if value == "" || !validRuneLength(value, maxRunes) {
+			return false
+		}
+	}
+	return true
+}
+
+func marshalRules(rules []string) (datatypes.JSON, error) {
+	return marshalStringList(rules)
+}
+
+func marshalStringList(values []string) (datatypes.JSON, error) {
+	if values == nil {
+		values = []string{}
+	}
+	encoded, err := json.Marshal(values)
 	if err != nil {
 		return nil, ErrInvalidRequest
 	}
@@ -586,13 +703,17 @@ func marshalPolicy(policy map[string]any) (datatypes.JSON, error) {
 
 func configRevision(version *Version) (string, error) {
 	payload := struct {
+		IdentityName  string          `json:"identity_name"`
 		Persona       string          `json:"persona"`
+		Goals         json.RawMessage `json:"goals"`
 		Rules         json.RawMessage `json:"rules"`
 		DefaultModel  string          `json:"default_model"`
 		MemoryPolicy  json.RawMessage `json:"memory_policy"`
 		TriggerPolicy json.RawMessage `json:"trigger_policy"`
 	}{
+		IdentityName:  version.IdentityName,
 		Persona:       version.Persona,
+		Goals:         json.RawMessage(cloneJSON(version.Goals)),
 		Rules:         json.RawMessage(cloneJSON(version.Rules)),
 		DefaultModel:  version.DefaultModel,
 		MemoryPolicy:  json.RawMessage(cloneJSON(version.MemoryPolicy)),
@@ -602,34 +723,25 @@ func configRevision(version *Version) (string, error) {
 }
 
 func publishedRevision(version *Version) (string, error) {
-	payload := struct {
-		Identity      json.RawMessage `json:"identity"`
-		Persona       string          `json:"persona"`
-		Rules         json.RawMessage `json:"rules"`
-		DefaultModel  string          `json:"default_model"`
-		MemoryPolicy  json.RawMessage `json:"memory_policy"`
-		TriggerPolicy json.RawMessage `json:"trigger_policy"`
-	}{
-		Identity:      json.RawMessage(cloneJSON(version.IdentitySnapshot)),
-		Persona:       version.Persona,
-		Rules:         json.RawMessage(cloneJSON(version.Rules)),
-		DefaultModel:  version.DefaultModel,
-		MemoryPolicy:  json.RawMessage(cloneJSON(version.MemoryPolicy)),
-		TriggerPolicy: json.RawMessage(cloneJSON(version.TriggerPolicy)),
-	}
-	return hashRevision(payload)
+	return configRevision(version)
+}
+
+type identitySnapshotPayload struct {
+	Name          string        `json:"name"`
+	Avatar        string        `json:"avatar"`
+	IconType      string        `json:"icon_type"`
+	Icon          string        `json:"icon"`
+	Description   string        `json:"description"`
+	AutonomyLevel AutonomyLevel `json:"autonomy_level"`
+	Visibility    Visibility    `json:"visibility"`
 }
 
 func identitySnapshot(definition *Definition) (datatypes.JSON, error) {
-	payload := struct {
-		Name          string        `json:"name"`
-		Avatar        string        `json:"avatar"`
-		Description   string        `json:"description"`
-		AutonomyLevel AutonomyLevel `json:"autonomy_level"`
-		Visibility    Visibility    `json:"visibility"`
-	}{
+	payload := identitySnapshotPayload{
 		Name:          definition.Name,
 		Avatar:        definition.Avatar,
+		IconType:      definition.IconType,
+		Icon:          definition.Icon,
 		Description:   definition.Description,
 		AutonomyLevel: definition.AutonomyLevel,
 		Visibility:    definition.Visibility,
@@ -677,16 +789,14 @@ func applicationError(err error, operation string) error {
 		code = AppCodePublishedImmutable
 	case errors.Is(err, ErrPublishInvalid):
 		code = AppCodePublishInvalid
+	case errors.Is(err, ErrVersionRestoreImpactChanged):
+		code = AppCodeVersionRestoreImpactChanged
 	case errors.Is(err, ErrDeleteBlocked):
 		code = AppCodeDeleteBlocked
-	case errors.Is(err, ErrRoleTemplateNotFound):
-		code = AppCodeRoleTemplateNotFound
-	case errors.Is(err, ErrRoleVersionNotFound):
-		code = AppCodeRoleVersionNotFound
-	case errors.Is(err, ErrRoleNameConflict):
-		code = AppCodeRoleNameConflict
-	case errors.Is(err, ErrRolePublishInvalid):
-		code = AppCodeRolePublishInvalid
+	case errors.Is(err, ErrPersonaTemplateNotFound):
+		code = AppCodePersonaTemplateNotFound
+	case errors.Is(err, ErrPersonaTemplateNameConflict):
+		code = AppCodePersonaTemplateNameConflict
 	case errors.Is(err, ErrResourceBindingInvalid):
 		code = AppCodeResourceBindingInvalid
 	case errors.Is(err, ErrRunNotFound):
@@ -705,10 +815,6 @@ func applicationError(err error, operation string) error {
 		code = AppCodeMemoryUndoUnavailable
 	case errors.Is(err, ErrChannelInstallationNotFound):
 		code = AppCodeChannelInstallationNotFound
-	case errors.Is(err, ErrChannelBindingNotFound):
-		code = AppCodeChannelBindingNotFound
-	case errors.Is(err, ErrChannelInstallationInUse):
-		code = AppCodeChannelInstallationInUse
 	case errors.Is(err, ErrChannelConflict):
 		code = AppCodeChannelConflict
 	case errors.Is(err, ErrChannelNotReady):

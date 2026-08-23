@@ -10,12 +10,15 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runspec"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/dto"
+	workflowapp "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"gorm.io/datatypes"
 )
 
@@ -25,6 +28,7 @@ const (
 	defaultOutboxLease         = 2 * time.Minute
 	completedRunRecoveryWindow = 30 * time.Second
 	defaultStaleRunWindow      = 10 * time.Minute
+	channelFormalHistoryTurns  = 4
 )
 
 // ExecutionResolver seals the configuration used by one invocation.
@@ -55,14 +59,15 @@ type RunDispatcher interface {
 
 // RuntimeService owns durable manual invocations and execution lifecycle.
 type RuntimeService struct {
-	store      RunStore
-	resolver   ExecutionResolver
-	brain      BrainRuntimeAdapter
-	chat       ChatRuntime
-	dispatcher RunDispatcher
-	transient  ChannelTransientDispatcher
-	memory     MemoryRuntimeProvider
-	now        func() time.Time
+	store          RunStore
+	resolver       ExecutionResolver
+	brain          BrainRuntimeAdapter
+	chat           ChatRuntime
+	dispatcher     RunDispatcher
+	transient      ChannelTransientDispatcher
+	memory         MemoryRuntimeProvider
+	channelContext ChannelContextRuntimeProvider
+	now            func() time.Time
 }
 
 func NewRuntimeService(store RunStore, resolver ExecutionResolver, brain BrainRuntimeAdapter, chat ChatRuntime, dispatcher RunDispatcher, options ...RuntimeServiceOption) *RuntimeService {
@@ -93,6 +98,12 @@ func WithMemoryRuntime(provider MemoryRuntimeProvider) RuntimeServiceOption {
 // adding them to the durable DigitalHuman delivery outbox.
 func WithChannelTransientDispatcher(dispatcher ChannelTransientDispatcher) RuntimeServiceOption {
 	return func(service *RuntimeService) { service.transient = dispatcher }
+}
+
+// WithChannelContextRuntime enables ephemeral provider-history preparation for
+// channel invocations without affecting other runtime surfaces.
+func WithChannelContextRuntime(provider ChannelContextRuntimeProvider) RuntimeServiceOption {
+	return func(service *RuntimeService) { service.channelContext = provider }
 }
 
 func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
@@ -181,6 +192,33 @@ func (s *RuntimeService) GetRun(ctx context.Context, scope Scope, digitalHumanID
 	return s.store.RunByID(ctx, scope, digitalHumanID, runID)
 }
 
+// GetRunRuntimeLog loads the ChatRuntime message linked to a durable run and
+// projects its model/tool events through the same sanitizer used by Agent logs.
+func (s *RuntimeService) GetRunRuntimeLog(ctx context.Context, scope Scope, digitalHumanID, runID uuid.UUID) (*RunRuntimeLog, error) {
+	run, err := s.store.RunByID(ctx, scope, digitalHumanID, runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.MessageID == nil || *run.MessageID == uuid.Nil {
+		return &RunRuntimeLog{Steps: channelContextRuntimeSteps(run, nil)}, nil
+	}
+	callerID := run.DigitalHumanID
+	message, conversation, err := s.chat.GetMessageByCaller(ctx, runtimeScope(run), chatruntime.Caller{
+		Type:   runtimemodel.ConversationCallerDigitalHuman,
+		ID:     &callerID,
+		Source: digitalHumanConversationSourceForRun(run),
+	}, *run.MessageID)
+	if err != nil {
+		return nil, mapConversationRuntimeError(err)
+	}
+	detail := workflowapp.BuildAgentRuntimeRunDetail(message, conversation)
+	steps := workflowapp.BuildAgentRuntimeSteps(message)
+	return &RunRuntimeLog{
+		Detail: &detail,
+		Steps:  channelContextRuntimeSteps(run, steps),
+	}, nil
+}
+
 func (s *RuntimeService) ListRuns(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, query ListQuery) (*RunListResult, error) {
 	if !validScope(scope) || digitalHumanID == uuid.Nil {
 		return nil, ErrInvalidRequest
@@ -235,6 +273,25 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "Stored execution configuration is not executable.", s.now())
 		return err
 	}
+	var channelContextPreparation *ChannelContextPreparation
+	if s.channelContext != nil {
+		channelContextPreparation, err = s.channelContext.Prepare(ctx, run, resolved, event, config.ModelProvider, config.Model)
+		if err != nil {
+			channelContextPreparation = &ChannelContextPreparation{
+				SystemPromptAddendum: strings.Join([]string{
+					"Channel conversation context is unavailable for this turn.",
+					"Do not guess missing source content. State that the referenced channel text could not be read and ask the user to quote or reply directly to it.",
+				}, "\n"),
+				Diagnostics: ChannelContextDiagnostics{Status: string(channelruntime.ContextStatusUnavailable), ErrorCode: "channel_context_unavailable"},
+			}
+		}
+		if channelContextPreparation != nil {
+			if addendum := strings.TrimSpace(channelContextPreparation.SystemPromptAddendum); addendum != "" {
+				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
+			}
+			config.RuntimeTools = append(config.RuntimeTools, channelContextPreparation.Tools...)
+		}
+	}
 	if s.memory != nil {
 		memoryPreparation, memoryErr := s.memory.Prepare(ctx, run, resolved, event)
 		if memoryErr != nil {
@@ -257,12 +314,22 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			"run_spec_revision": resolved.Spec.Revision, "execution_snapshot_revision": resolved.Snapshot.Revision,
 		},
 	}
+	if event.Origin.Kind == invocation.OriginChannel {
+		excludedTexts := []string{run.Query}
+		if channelContextPreparation != nil {
+			excludedTexts = append(excludedTexts, channelContextPreparation.ContextTexts...)
+		}
+		chatRequest.HistoryPolicy = &runtimedto.ConversationHistoryPolicy{
+			Mode: runtimedto.ConversationHistoryModeSupplemental, MaxTurns: channelFormalHistoryTurns,
+			ExcludedTexts: excludedTexts,
+		}
+	}
 	if run.ConversationID != nil {
 		chatRequest.ConversationID = run.ConversationID.String()
 	}
 	callerID := run.DigitalHumanID
 	caller := chatruntime.Caller{
-		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSource,
+		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSourceForEvent(event),
 	}
 	if event.Origin.Kind == invocation.OriginChannel && run.ConversationID != nil {
 		if _, err := s.chat.EnsureConversationForCaller(
@@ -304,6 +371,13 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		_ = s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", "The DigitalHuman execution did not complete.", s.now())
 		return err
 	}
+	if channelContextPreparation != nil {
+		if result.Metadata == nil {
+			result.Metadata = make(map[string]interface{})
+		}
+		result.Metadata["channel_context"] = []interface{}{channelContextPreparation.Diagnostics}
+		recordChannelContextMetrics(ctx, channelContextPreparation.Diagnostics)
+	}
 	if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok {
 		if err := finalizer.Finalize(ctx, run, prepared, result); err != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.memory.schedule_failed", "The DigitalHuman could not schedule its memory extraction task.", s.now())
@@ -324,6 +398,7 @@ func executionTraceFromMetadata(metadata map[string]interface{}) datatypes.JSON 
 		{key: "workflow_runs", allowed: allowedTraceFields("workflow_run_id", "task_id", "id", "workflow_id", "agent_id", "version", "status", "elapsed_time", "created_at", "created_at_ms")},
 		{key: "conversation_artifacts", allowed: allowedTraceFields("artifact_id", "artifact_type", "invocation_id", "skill_id", "tool_name", "file_id", "tool_file_id", "upload_file_id", "filename", "extension", "mime_type", "transfer_method", "target", "lifecycle", "expires_at", "availability", "created_at")},
 		{key: "generated_files", allowed: allowedTraceFields("artifact_id", "artifact_type", "invocation_id", "skill_id", "tool_name", "file_id", "tool_file_id", "upload_file_id", "filename", "extension", "mime_type", "transfer_method", "target", "lifecycle", "expires_at", "availability", "created_at")},
+		{key: "channel_context", allowed: allowedTraceFields("status", "message_count", "author_count", "estimated_tokens", "truncated", "truncated_reason", "duration_ms", "provider_request_ids", "error_code")},
 	} {
 		items := traceMapSlice(metadata[section.key], section.allowed, 100)
 		if len(items) > 0 {
@@ -379,6 +454,66 @@ func traceMapSlice(value interface{}, allowed map[string]struct{}, limit int) []
 	return items
 }
 
+func channelContextRuntimeSteps(run *Run, steps []dto.AgentRuntimeStep) []dto.AgentRuntimeStep {
+	if run == nil || len(run.ExecutionTrace) == 0 {
+		return steps
+	}
+	var trace map[string]interface{}
+	if json.Unmarshal(run.ExecutionTrace, &trace) != nil {
+		return steps
+	}
+	items := traceMapSlice(trace["channel_context"], allowedTraceFields(
+		"status", "message_count", "author_count", "estimated_tokens", "truncated",
+		"truncated_reason", "duration_ms", "provider_request_ids", "error_code",
+	), 1)
+	if len(items) == 0 {
+		return steps
+	}
+	status, _ := items[0]["status"].(string)
+	stepStatus := "success"
+	if status == string(channelruntime.ContextStatusUnavailable) {
+		stepStatus = "failed"
+	}
+	createdAt := run.CreatedAt.Unix()
+	contextStep := dto.AgentRuntimeStep{
+		ID: "channel-context-" + run.ID.String(), Index: 1, Type: "channel_context",
+		Title: "Channel context preparation", Status: stepStatus, Output: items[0], CreatedAt: &createdAt,
+	}
+	if duration, ok := numericTraceValue(items[0]["duration_ms"]); ok {
+		contextStep.ElapsedTime = duration
+	}
+	result := make([]dto.AgentRuntimeStep, 0, len(steps)+1)
+	inserted := false
+	for _, step := range steps {
+		if !inserted && step.Type != "user_input" {
+			result = append(result, contextStep)
+			inserted = true
+		}
+		step.Index = len(result) + 1
+		result = append(result, step)
+	}
+	if !inserted {
+		result = append(result, contextStep)
+	}
+	for index := range result {
+		result[index].Index = index + 1
+	}
+	return result
+}
+
+func numericTraceValue(value interface{}) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case int64:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
+}
+
 // DispatchPending leases durable outbox rows and sends deterministic queue
 // deliveries. Delivery errors leave rows retryable without exposing secrets.
 func (s *RuntimeService) DispatchPending(ctx context.Context, limit int) error {
@@ -431,7 +566,7 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 		}
 		callerID := run.DigitalHumanID
 		message, _, loadErr := s.chat.GetMessageByCaller(ctx, runtimeScope(run), chatruntime.Caller{
-			Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSource,
+			Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSourceForRun(run),
 		}, *run.MessageID)
 		if loadErr != nil {
 			combined = errors.Join(combined, loadErr)
@@ -447,6 +582,24 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 		}
 	}
 	return combined
+}
+
+func digitalHumanConversationSourceForEvent(event invocation.Event) string {
+	if event.Origin.Kind == invocation.OriginChannel {
+		return digitalHumanChannelConversationSource
+	}
+	return digitalHumanConversationSource
+}
+
+func digitalHumanConversationSourceForRun(run *Run) string {
+	if run == nil || len(run.InvocationEvent) == 0 {
+		return digitalHumanConversationSource
+	}
+	var event invocation.Event
+	if err := json.Unmarshal(run.InvocationEvent, &event); err != nil {
+		return digitalHumanConversationSource
+	}
+	return digitalHumanConversationSourceForEvent(event)
 }
 
 func marshalRunSnapshots(event invocation.Event, resolved *ResolvedExecution) (datatypes.JSON, datatypes.JSON, datatypes.JSON, error) {

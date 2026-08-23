@@ -100,6 +100,16 @@ func (c *client) listMessages(ctx context.Context, region, accessToken string, q
 	return c.doEnvelope(ctx, region, http.MethodGet, "/open-apis/im/v1/messages", query, nil, accessToken, true, target)
 }
 
+func (c *client) getMessage(ctx context.Context, region, accessToken, messageID string, target interface{}) (responseMeta, error) {
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
+	return c.doEnvelope(ctx, region, http.MethodGet, path, nil, nil, accessToken, true, target)
+}
+
+func (c *client) listChatMembers(ctx context.Context, region, accessToken, chatID string, query url.Values, target interface{}) (responseMeta, error) {
+	path := "/open-apis/im/v1/chats/" + url.PathEscape(chatID) + "/members"
+	return c.doEnvelope(ctx, region, http.MethodGet, path, query, nil, accessToken, true, target)
+}
+
 func (c *client) listCalendars(ctx context.Context, region, accessToken string, query url.Values, target interface{}) (responseMeta, error) {
 	return c.doEnvelope(ctx, region, http.MethodGet, "/open-apis/calendar/v4/calendars", query, nil, accessToken, true, target)
 }

@@ -16,9 +16,10 @@ const (
 	InstallationStatusDisabled InstallationStatus = "disabled"
 )
 
-// Installation binds one provider application connection to a workspace.
-// ConnectionID is a reference to encrypted integration credentials; secrets
-// never cross into this table.
+// Installation binds one provider application to a workspace. ConnectionID is
+// a credential locator: it equals the installation ID for installation-owned
+// credentials, or references Connection Center when an existing credential is
+// selected. Secret material never crosses into this table.
 type Installation struct {
 	ID                 uuid.UUID                    `gorm:"type:uuid;primaryKey" json:"id"`
 	OrganizationID     uuid.UUID                    `gorm:"type:uuid;not null" json:"organization_id"`
@@ -96,7 +97,8 @@ const (
 )
 
 // InboundEvent is the deduplicated audit record for one provider callback.
-// It stores identifiers and a digest, not the raw callback or provider secrets.
+// It stores a bounded display preview of the triggering message, identifiers,
+// and a digest, but never the raw callback, fetched channel history, or secrets.
 type InboundEvent struct {
 	ID                     uuid.UUID          `gorm:"type:uuid;primaryKey" json:"id"`
 	OrganizationID         uuid.UUID          `gorm:"type:uuid;not null" json:"organization_id"`
@@ -107,6 +109,9 @@ type InboundEvent struct {
 	ProviderMessageID      string             `gorm:"type:varchar(255);not null;uniqueIndex:idx_channel_inbound_events_provider_message,priority:2,where:provider_message_id <> ''" json:"provider_message_id"`
 	ExternalConversationID string             `gorm:"type:varchar(255);not null" json:"external_conversation_id"`
 	SenderExternalID       string             `gorm:"type:varchar(255);not null" json:"sender_external_id"`
+	ConversationType       ConversationType   `gorm:"type:varchar(16);not null" json:"conversation_type"`
+	ContentPreview         string             `gorm:"type:varchar(512);not null" json:"content_preview"`
+	MentionOnly            bool               `gorm:"not null" json:"mention_only"`
 	EventType              string             `gorm:"type:varchar(64);not null" json:"event_type"`
 	PayloadDigest          string             `gorm:"type:varchar(71);not null" json:"payload_digest"`
 	Status                 InboundEventStatus `gorm:"type:varchar(16);not null" json:"status"`
@@ -139,7 +144,8 @@ const (
 )
 
 // Delivery is the durable channel send intent. Payload contains bounded public
-// message content only; credentials are resolved from ConnectionID at execution.
+// message content only; credentials are resolved from the installation's
+// credential locator at execution.
 type Delivery struct {
 	ID                     uuid.UUID                   `gorm:"type:uuid;primaryKey" json:"id"`
 	OrganizationID         uuid.UUID                   `gorm:"type:uuid;not null" json:"organization_id"`

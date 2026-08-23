@@ -13,6 +13,8 @@ const createDigitalHumanFoundationSQL = `
 		workspace_id uuid NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
 		name varchar(80) NOT NULL,
 		avatar text NOT NULL DEFAULT '',
+		icon_type varchar(16) NOT NULL DEFAULT 'text',
+		icon text NOT NULL DEFAULT '',
 		description text NOT NULL DEFAULT '',
 		status varchar(16) NOT NULL DEFAULT 'draft',
 		autonomy_level varchar(16) NOT NULL DEFAULT 'supervised',
@@ -31,6 +33,8 @@ const createDigitalHumanFoundationSQL = `
 			CHECK (autonomy_level IN ('assistive', 'supervised', 'autonomous')),
 		CONSTRAINT digital_humans_visibility_check
 			CHECK (visibility IN ('private', 'workspace')),
+		CONSTRAINT digital_humans_icon_type_check
+			CHECK (icon_type IN ('text', 'image')),
 		CONSTRAINT digital_humans_revision_check CHECK (revision > 0)
 	);
 
@@ -48,7 +52,9 @@ const createDigitalHumanFoundationSQL = `
 		workspace_id uuid NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
 		state varchar(16) NOT NULL,
 		version_number integer NOT NULL DEFAULT 0,
+		identity_name varchar(80) NOT NULL DEFAULT '',
 		persona text NOT NULL DEFAULT '',
+		goals jsonb NOT NULL DEFAULT '[]'::jsonb,
 		rules jsonb NOT NULL DEFAULT '[]'::jsonb,
 		default_model varchar(255) NOT NULL DEFAULT '',
 		memory_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -67,7 +73,8 @@ const createDigitalHumanFoundationSQL = `
 		CONSTRAINT digital_human_versions_number_check
 			CHECK ((state = 'draft' AND version_number = 0 AND published_at IS NULL)
 				OR (state = 'published' AND version_number > 0 AND published_at IS NOT NULL)),
-		CONSTRAINT digital_human_versions_lock_check CHECK (lock_version > 0)
+		CONSTRAINT digital_human_versions_lock_check CHECK (lock_version > 0),
+		CONSTRAINT digital_human_versions_goals_check CHECK (jsonb_typeof(goals) = 'array')
 	);
 
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_digital_human_versions_one_draft

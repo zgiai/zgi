@@ -16,23 +16,13 @@ import (
 )
 
 type resolverStoreStub struct {
-	definition  *Definition
-	version     *Version
-	assignments []*RoleAssignment
-	role        *RoleTemplateVersion
-	bindings    []resourcebindings.Binding
+	definition *Definition
+	version    *Version
+	bindings   []resourcebindings.Binding
 }
 
 func (s *resolverStoreStub) RuntimePublishedVersion(context.Context, runtimeidentity.SubjectRef, *uuid.UUID) (*Definition, *Version, error) {
 	return s.definition, s.version, nil
-}
-
-func (s *resolverStoreStub) ListRoleAssignments(context.Context, Scope, uuid.UUID, uuid.UUID) ([]*RoleAssignment, error) {
-	return s.assignments, nil
-}
-
-func (s *resolverStoreStub) PublishedRoleTemplateVersion(context.Context, Scope, uuid.UUID) (*RoleTemplateVersion, error) {
-	return s.role, nil
 }
 
 func (s *resolverStoreStub) ListSnapshot(context.Context, resourcebindings.SnapshotRef) ([]resourcebindings.Binding, error) {
@@ -47,24 +37,16 @@ func TestResolverSealsPinnedMemoryFreeExecution(t *testing.T) {
 	subject := runtimeidentity.SubjectRef{
 		Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New(),
 	}
-	versionID, roleTemplateID, roleVersionID := uuid.New(), uuid.New(), uuid.New()
+	versionID := uuid.New()
 	now := time.Date(2026, time.August, 18, 12, 0, 0, 0, time.UTC)
 	store := &resolverStoreStub{
-		definition: &Definition{ID: subject.ID, Name: "Atlas", Description: "Research partner", Status: StatusActive},
+		definition: &Definition{ID: subject.ID, Name: "Live draft name", Description: "Live draft description", Status: StatusActive},
 		version: &Version{
 			ID: versionID, DigitalHumanID: subject.ID, State: VersionStatePublished, VersionNumber: 3,
-			Persona: "Be evidence-led", Rules: datatypes.JSON(`["Cite sources"]`), DefaultModel: "gpt-5",
-			TriggerPolicy: datatypes.JSON(`{"channel_response":{"intermediate_messages_enabled":false,"acknowledgement_enabled":true}}`),
-			Revision:      "sha256:identity",
-		},
-		assignments: []*RoleAssignment{{
-			ID: uuid.New(), DigitalHumanID: subject.ID, DigitalHumanVersionID: versionID,
-			RoleTemplateID: roleTemplateID, RoleTemplateVersionID: roleVersionID, Revision: "sha256:assignment",
-		}},
-		role: &RoleTemplateVersion{
-			ID: roleVersionID, RoleTemplateID: roleTemplateID, State: VersionStatePublished, VersionNumber: 2,
-			Revision: "sha256:role", Capabilities: datatypes.JSON(`[{"kind":"capability","id":"web-search","version":"1"}]`),
-			SOPRefs: datatypes.JSON(`[{"kind":"sop","id":"research","revision":"sop-r1"}]`), EvaluationRefs: datatypes.JSON(`[]`),
+			IdentityName: "Atlas Runtime", Persona: "Be evidence-led", Goals: datatypes.JSON(`["Track research risks"]`), Rules: datatypes.JSON(`["Cite sources"]`), DefaultModel: "gpt-5",
+			IdentitySnapshot: datatypes.JSON(`{"name":"Atlas","avatar":"avatar.png","description":"Published research partner","autonomy_level":"supervised","visibility":"workspace"}`),
+			TriggerPolicy:    datatypes.JSON(`{"channel_response":{"intermediate_messages_enabled":false,"acknowledgement_enabled":true}}`),
+			Revision:         "sha256:identity",
 		},
 		bindings: []resourcebindings.Binding{{
 			ID: uuid.New(), Type: resourcebindings.BindingTypeIntegrationConnection,
@@ -87,11 +69,14 @@ func TestResolverSealsPinnedMemoryFreeExecution(t *testing.T) {
 	if resolved.Spec.Subject != subject || resolved.Spec.Identity.ID != versionID.String() || resolved.Spec.Model.ID != "gpt-5" {
 		t.Fatalf("RunSpec = %#v", resolved.Spec)
 	}
-	if len(resolved.Spec.Roles) != 1 || len(resolved.Spec.Capabilities) != 1 || len(resolved.Spec.SOPs) != 1 || len(resolved.Spec.Bindings) != 1 {
+	if len(resolved.Spec.Roles) != 0 || len(resolved.Spec.Capabilities) != 0 || len(resolved.Spec.SOPs) != 0 || len(resolved.Spec.Bindings) != 1 {
 		t.Fatalf("RunSpec references = %#v", resolved.Spec)
 	}
 	if resolved.Snapshot.UseUserMemory || resolved.Snapshot.UseAgentMemory || resolved.Snapshot.Revision == "" {
 		t.Fatalf("execution snapshot memory/revision = %#v", resolved.Snapshot)
+	}
+	if resolved.Snapshot.IdentityName != "Atlas Runtime" || len(resolved.Snapshot.Goals) != 1 || resolved.Snapshot.Goals[0] != "Track research risks" {
+		t.Fatalf("execution snapshot runtime identity = %#v", resolved.Snapshot)
 	}
 	if resolved.Snapshot.ChannelResponsePolicy == nil || resolved.Snapshot.ChannelResponsePolicy.IntermediateMessagesEnabled ||
 		!resolved.Snapshot.ChannelResponsePolicy.AcknowledgementEnabled {
@@ -114,10 +99,6 @@ func TestResolverSealsPinnedMemoryFreeExecution(t *testing.T) {
 		}
 	}
 
-	store.role.Capabilities[0] = 'x'
-	if string(resolved.Snapshot.Roles[0].Version.Capabilities)[0] == 'x' {
-		t.Fatal("resolved snapshot aliases mutable role storage")
-	}
 }
 
 func TestResolverRejectsNonDigitalHumanTarget(t *testing.T) {
@@ -130,5 +111,32 @@ func TestResolverRejectsNonDigitalHumanTarget(t *testing.T) {
 	}
 	if _, err := resolver.Resolve(t.Context(), event, nil); err == nil {
 		t.Fatal("Resolve(Agent) error = nil")
+	}
+}
+
+func TestResolverAllowsIdentityWithoutRoleAssignment(t *testing.T) {
+	subject := runtimeidentity.SubjectRef{
+		Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New(),
+	}
+	versionID := uuid.New()
+	store := &resolverStoreStub{
+		definition: &Definition{ID: subject.ID, Name: "Atlas", Status: StatusActive},
+		version: &Version{
+			ID: versionID, DigitalHumanID: subject.ID, State: VersionStatePublished, VersionNumber: 1,
+			Persona: "Be direct", Rules: datatypes.JSON(`["Stay within scope"]`),
+			DefaultModel: "gpt-5", IdentitySnapshot: datatypes.JSON(`{"name":"Atlas"}`), Revision: "sha256:version",
+		},
+	}
+	resolver := NewResolver(store)
+	event := invocation.Event{
+		ID: "manual-identity", Type: invocation.EventTypeManual, Origin: invocation.Origin{Kind: invocation.OriginManual},
+		Target: subject, Sender: invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: uuid.NewString()}, OccurredAt: time.Now().UTC(),
+	}
+	resolved, err := resolver.Resolve(t.Context(), event, nil)
+	if err != nil {
+		t.Fatalf("Resolve(identity without role assignment) error = %v", err)
+	}
+	if len(resolved.Spec.Roles) != 0 {
+		t.Fatalf("resolved roles = %#v", resolved.Spec.Roles)
 	}
 }

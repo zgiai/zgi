@@ -191,7 +191,40 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 		Parameters:          params,
 		UseMemory:           req.UseMemory,
 		SourceMessageID:     cloneUUIDPointer(req.SourceMessageID),
+		HistoryPolicy:       normalizeConversationHistoryPolicy(req.HistoryPolicy),
 	}, nil
+}
+
+func normalizeConversationHistoryPolicy(policy *runtimedto.ConversationHistoryPolicy) *runtimedto.ConversationHistoryPolicy {
+	if policy == nil {
+		return nil
+	}
+	mode := strings.ToLower(strings.TrimSpace(policy.Mode))
+	if mode != runtimedto.ConversationHistoryModeSupplemental && mode != runtimedto.ConversationHistoryModeIsolated {
+		return nil
+	}
+	maxTurns := min(max(policy.MaxTurns, 0), maxContextCandidateMessages)
+	excluded := make([]string, 0, min(len(policy.ExcludedTexts), maxContextCandidateMessages))
+	seen := make(map[string]struct{}, cap(excluded))
+	for _, value := range policy.ExcludedTexts {
+		value = normalizedHistoryContent(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		excluded = append(excluded, value)
+		if len(excluded) >= maxContextCandidateMessages {
+			break
+		}
+	}
+	return &runtimedto.ConversationHistoryPolicy{Mode: mode, MaxTurns: maxTurns, ExcludedTexts: excluded}
+}
+
+func normalizedHistoryContent(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func normalizeRuntimeContext(value string) string {

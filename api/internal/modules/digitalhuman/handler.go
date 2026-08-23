@@ -29,16 +29,15 @@ type HandlerService interface {
 	UpdateDraft(context.Context, Scope, uuid.UUID, UpdateDraftRequest) (*Version, error)
 	Publish(context.Context, Scope, uuid.UUID, PublishRequest) (*Detail, error)
 	PublishedVersions(context.Context, Scope, uuid.UUID, ListQuery) (*PublishedVersionsResult, error)
+	PreviewVersionRestore(context.Context, Scope, uuid.UUID, uuid.UUID) (*VersionRestorePreview, error)
+	RestoreVersion(context.Context, Scope, uuid.UUID, RestoreVersionRequest) (*Detail, error)
 	DeleteImpact(context.Context, Scope, uuid.UUID) (*DeleteImpact, error)
 	Delete(context.Context, Scope, uuid.UUID, int64) error
-	CreateRoleTemplate(context.Context, Scope, CreateRoleTemplateRequest) (*RoleTemplateDetail, error)
-	GetRoleTemplate(context.Context, Scope, uuid.UUID) (*RoleTemplateDetail, error)
-	ListRoleTemplates(context.Context, Scope, ListQuery) (*RoleTemplateListResult, error)
-	UpdateRoleTemplate(context.Context, Scope, uuid.UUID, UpdateRoleTemplateRequest) (*RoleTemplateDetail, error)
-	UpdateRoleTemplateDraft(context.Context, Scope, uuid.UUID, UpdateRoleTemplateDraftRequest) (*RoleTemplateVersion, error)
-	PublishRoleTemplate(context.Context, Scope, uuid.UUID, PublishRoleTemplateRequest) (*RoleTemplateDetail, error)
-	ListDraftRoleAssignments(context.Context, Scope, uuid.UUID) (*DraftRoleAssignments, error)
-	ReplaceDraftRoleAssignments(context.Context, Scope, uuid.UUID, ReplaceRoleAssignmentsRequest) (*DraftRoleAssignments, error)
+	CreatePersonaTemplate(context.Context, Scope, CreatePersonaTemplateRequest) (*PersonaTemplate, error)
+	GetPersonaTemplate(context.Context, Scope, uuid.UUID) (*PersonaTemplate, error)
+	ListPersonaTemplates(context.Context, Scope, ListQuery) (*PersonaTemplateListResult, error)
+	UpdatePersonaTemplate(context.Context, Scope, uuid.UUID, UpdatePersonaTemplateRequest) (*PersonaTemplate, error)
+	DeletePersonaTemplate(context.Context, Scope, uuid.UUID, int64) error
 	ListDraftResourceBindings(context.Context, Scope, uuid.UUID) (*DraftResourceBindings, error)
 	ReplaceDraftResourceBindings(context.Context, Scope, uuid.UUID, ReplaceResourceBindingsRequest) (*DraftResourceBindings, error)
 	ListMemories(context.Context, Scope, uuid.UUID, MemoryListQuery) (*MemoryListResult, error)
@@ -75,10 +74,10 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.PATCH("/:id/draft", h.UpdateDraft)
 	group.POST("/:id/publish", h.Publish)
 	group.GET("/:id/versions", h.PublishedVersions)
+	group.GET("/:id/versions/:version_id/restore-preview", h.PreviewVersionRestore)
+	group.POST("/:id/versions/restore", h.RestoreVersion)
 	group.GET("/:id/delete-impact", h.DeleteImpact)
 	group.DELETE("/:id", h.Delete)
-	group.GET("/:id/draft/roles", h.ListDraftRoleAssignments)
-	group.PUT("/:id/draft/roles", h.ReplaceDraftRoleAssignments)
 	group.GET("/:id/draft/bindings", h.ListDraftResourceBindings)
 	group.PUT("/:id/draft/bindings", h.ReplaceDraftResourceBindings)
 	group.GET("/:id/memory", h.ListMemories)
@@ -86,13 +85,12 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/:id/memory/proposals", h.ApplyMemoryProposal)
 	group.POST("/:id/memory/operations/:operation_id/undo", h.UndoMemory)
 
-	roles := router.Group("/digital-human-role-templates")
-	roles.POST("", h.CreateRoleTemplate)
-	roles.GET("", h.ListRoleTemplates)
-	roles.GET("/:id", h.GetRoleTemplate)
-	roles.PATCH("/:id", h.UpdateRoleTemplate)
-	roles.PATCH("/:id/draft", h.UpdateRoleTemplateDraft)
-	roles.POST("/:id/publish", h.PublishRoleTemplate)
+	templates := router.Group("/digital-human-persona-templates")
+	templates.POST("", h.CreatePersonaTemplate)
+	templates.GET("", h.ListPersonaTemplates)
+	templates.GET("/:id", h.GetPersonaTemplate)
+	templates.PATCH("/:id", h.UpdatePersonaTemplate)
+	templates.DELETE("/:id", h.DeletePersonaTemplate)
 }
 
 // ListMemories returns operator-visible subject-owned memory.
@@ -301,6 +299,43 @@ func (h *Handler) PublishedVersions(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
+// PreviewVersionRestore returns the exact draft and binding impact before restoration.
+func (h *Handler) PreviewVersionRestore(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	versionID, err := uuid.Parse(strings.TrimSpace(c.Param("version_id")))
+	if err != nil || versionID == uuid.Nil {
+		h.writeError(c, applicationError(ErrInvalidRequest, "digital_human.version.restore_preview"))
+		return
+	}
+	result, err := h.service.PreviewVersionRestore(c.Request.Context(), scope, id, versionID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// RestoreVersion copies one immutable publication into the current draft.
+func (h *Handler) RestoreVersion(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	var request RestoreVersionRequest
+	if !h.decode(c, &request) {
+		return
+	}
+	result, err := h.service.RestoreVersion(c.Request.Context(), scope, id, request)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
 // DeleteImpact handles deletion preflight.
 func (h *Handler) DeleteImpact(c *gin.Context) {
 	h.withDetail(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
@@ -326,16 +361,16 @@ func (h *Handler) Delete(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusOK, gin.H{"deleted": true})
 }
 
-func (h *Handler) CreateRoleTemplate(c *gin.Context) {
+func (h *Handler) CreatePersonaTemplate(c *gin.Context) {
 	scope, ok := h.scope(c)
 	if !ok {
 		return
 	}
-	var request CreateRoleTemplateRequest
+	var request CreatePersonaTemplateRequest
 	if !h.decode(c, &request) {
 		return
 	}
-	result, err := h.service.CreateRoleTemplate(c.Request.Context(), scope, request)
+	result, err := h.service.CreatePersonaTemplate(c.Request.Context(), scope, request)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -343,17 +378,17 @@ func (h *Handler) CreateRoleTemplate(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusCreated, result)
 }
 
-func (h *Handler) ListRoleTemplates(c *gin.Context) {
+func (h *Handler) ListPersonaTemplates(c *gin.Context) {
 	scope, ok := h.scope(c)
 	if !ok {
 		return
 	}
 	query, err := parseListQuery(c)
 	if err != nil {
-		h.writeError(c, applicationError(err, "digital_human.role_template.list"))
+		h.writeError(c, applicationError(err, "digital_human.persona_template.list"))
 		return
 	}
-	result, err := h.service.ListRoleTemplates(c.Request.Context(), scope, query)
+	result, err := h.service.ListPersonaTemplates(c.Request.Context(), scope, query)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -361,56 +396,37 @@ func (h *Handler) ListRoleTemplates(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
-func (h *Handler) GetRoleTemplate(c *gin.Context) {
+func (h *Handler) GetPersonaTemplate(c *gin.Context) {
 	h.withScopedID(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
-		return h.service.GetRoleTemplate(ctx, scope, id)
+		return h.service.GetPersonaTemplate(ctx, scope, id)
 	})
 }
 
-func (h *Handler) UpdateRoleTemplate(c *gin.Context) {
-	h.withRoleTemplateRequest(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
-		var request UpdateRoleTemplateRequest
+func (h *Handler) UpdatePersonaTemplate(c *gin.Context) {
+	h.withRequest(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
+		var request UpdatePersonaTemplateRequest
 		if !h.decode(c, &request) {
 			return nil, nil
 		}
-		return h.service.UpdateRoleTemplate(ctx, scope, id, request)
+		return h.service.UpdatePersonaTemplate(ctx, scope, id, request)
 	})
 }
 
-func (h *Handler) UpdateRoleTemplateDraft(c *gin.Context) {
-	h.withRoleTemplateRequest(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
-		var request UpdateRoleTemplateDraftRequest
-		if !h.decode(c, &request) {
-			return nil, nil
-		}
-		return h.service.UpdateRoleTemplateDraft(ctx, scope, id, request)
-	})
-}
-
-func (h *Handler) PublishRoleTemplate(c *gin.Context) {
-	h.withRoleTemplateRequest(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
-		var request PublishRoleTemplateRequest
-		if !h.decode(c, &request) {
-			return nil, nil
-		}
-		return h.service.PublishRoleTemplate(ctx, scope, id, request)
-	})
-}
-
-func (h *Handler) ListDraftRoleAssignments(c *gin.Context) {
-	h.withScopedID(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
-		return h.service.ListDraftRoleAssignments(ctx, scope, id)
-	})
-}
-
-func (h *Handler) ReplaceDraftRoleAssignments(c *gin.Context) {
-	h.withDigitalHumanRequest(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
-		var request ReplaceRoleAssignmentsRequest
-		if !h.decode(c, &request) {
-			return nil, nil
-		}
-		return h.service.ReplaceDraftRoleAssignments(ctx, scope, id, request)
-	})
+func (h *Handler) DeletePersonaTemplate(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	expectedRevision, err := strconv.ParseInt(strings.TrimSpace(c.Query("expected_revision")), 10, 64)
+	if err != nil || expectedRevision < 1 {
+		h.writeError(c, applicationError(ErrInvalidRequest, "digital_human.persona_template.delete"))
+		return
+	}
+	if err := h.service.DeletePersonaTemplate(c.Request.Context(), scope, id, expectedRevision); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, gin.H{"deleted": true})
 }
 
 func (h *Handler) ListDraftResourceBindings(c *gin.Context) {
@@ -447,10 +463,6 @@ func (h *Handler) withScopedID(c *gin.Context, load func(context.Context, Scope,
 }
 
 func (h *Handler) withDigitalHumanRequest(c *gin.Context, action func(context.Context, Scope, uuid.UUID) (any, error)) {
-	h.withRequest(c, action)
-}
-
-func (h *Handler) withRoleTemplateRequest(c *gin.Context, action func(context.Context, Scope, uuid.UUID) (any, error)) {
 	h.withRequest(c, action)
 }
 

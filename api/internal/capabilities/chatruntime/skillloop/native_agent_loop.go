@@ -70,7 +70,11 @@ func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTo
 	if result.Error != nil {
 		trace.Error = status
 	}
-	message := skills.ToolResultMessage(call.ID, result.Result)
+	modelResult := result.Result
+	if result.ModelResult != nil {
+		modelResult = result.ModelResult
+	}
+	message := skills.ToolResultMessage(call.ID, modelResult)
 	step := successfulSkillStep(trace, message, false, true)
 	step.toolResult = result.Result
 	if result.Recoverable {

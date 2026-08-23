@@ -8,7 +8,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +28,7 @@ func TestChannelAdapterVerifiesEncryptedSignedEventAndNormalizesMention(t *testi
 	plain := []byte(`{
 		"schema":"2.0",
 		"header":{"event_id":"event-1","event_type":"im.message.receive_v1","create_time":"1787116200000","token":"verify-token","tenant_key":"tenant-1"},
-		"event":{"sender":{"sender_id":{"open_id":"ou_sender"}},"message":{"message_id":"message-1","root_id":"root-1","create_time":"1787116200000","chat_id":"oc_chat","chat_type":"group","message_type":"text","content":"{\"text\":\"@_user_1 帮我总结一下\"}","mentions":[{"key":"@_user_1","id":{"open_id":"ou_bot"},"name":"数字人"}]}}}`)
+		"event":{"sender":{"sender_id":{"open_id":"ou_sender"}},"message":{"message_id":"message-1","root_id":"root-1","parent_id":"parent-1","thread_id":"thread-1","create_time":"1787116200000","chat_id":"oc_chat","chat_type":"group","message_type":"text","content":"{\"text\":\"@_user_1 帮我总结一下\"}","mentions":[{"key":"@_user_1","id":{"open_id":"ou_bot"},"name":"数字人"}]}}}`)
 	encrypted := encryptWebhookFixture(t, plain, "encrypt-key")
 	body, err := json.Marshal(map[string]string{"encrypt": encrypted})
 	if err != nil {
@@ -35,30 +39,74 @@ func TestChannelAdapterVerifiesEncryptedSignedEventAndNormalizesMention(t *testi
 	adapter := NewChannelAdapter(nil)
 	adapter.now = func() time.Time { return now }
 	verified, err := adapter.Verify(t.Context(), channelruntime.WebhookRequest{
-		Body: body, Timestamp: timestamp, Nonce: nonce, Signature: signature, ReceivedAt: now,
-	}, channelruntime.SecurityMaterial{VerificationToken: "verify-token", EncryptKey: "encrypt-key"})
+		Body: body, Headers: http.Header{
+			"X-Lark-Request-Timestamp": []string{timestamp}, "X-Lark-Request-Nonce": []string{nonce},
+			"X-Lark-Signature": []string{signature},
+		}, ReceivedAt: now,
+	}, channelCredentialFixture("verify-token", "encrypt-key"))
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
-	message, err := adapter.Normalize(t.Context(), verified)
+	message, err := adapter.Normalize(t.Context(), verified, channelruntime.NormalizationContext{
+		Identity: channelruntime.InstallationIdentity{ExternalSelfID: "ou_bot"},
+	})
 	if err != nil {
 		t.Fatalf("Normalize() error = %v", err)
 	}
 	if message.ProviderEventID != "event-1" || message.ProviderMessageID != "message-1" ||
 		message.ConversationType != channelruntime.ConversationTypeGroup || message.Text != "帮我总结一下" ||
-		len(message.Mentions) != 1 || message.Mentions[0].ExternalID != "ou_bot" {
+		message.RootMessageID != "root-1" || message.ParentMessageID != "parent-1" || message.ThreadID != "thread-1" ||
+		len(message.Mentions) != 1 || message.Mentions[0].ExternalID != "ou_bot" || message.WakeReason != channelruntime.WakeReasonMention {
 		t.Fatalf("Normalize() = %#v", message)
+	}
+}
+
+func TestChannelAdapterNormalizesMentionOnlyAsWakeSignal(t *testing.T) {
+	body := []byte(`{
+		"schema":"2.0",
+		"header":{"event_id":"event-wake","event_type":"im.message.receive_v1","create_time":"1787116200000","tenant_key":"tenant-1"},
+		"event":{"sender":{"sender_id":{"open_id":"ou_sender"}},"message":{"message_id":"message-wake","create_time":"1787116200000","chat_id":"oc_chat","chat_type":"group","message_type":"text","content":"{\"text\":\"@_user_1\"}","mentions":[{"key":"@_user_1","id":{"open_id":"ou_bot"},"name":"丁康源的智能助手"}]}}}`)
+
+	message, err := NewChannelAdapter(nil).Normalize(t.Context(), &channelruntime.VerifiedWebhook{Body: body}, channelruntime.NormalizationContext{
+		Identity: channelruntime.InstallationIdentity{ExternalSelfID: "ou_bot"},
+	})
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if !message.MentionOnly || message.Text != "" || len(message.Mentions) != 1 || message.Mentions[0].ExternalID != "ou_bot" || message.WakeReason != channelruntime.WakeReasonMention {
+		t.Fatalf("Normalize() = %#v, want an attributed mention-only wake", message)
+	}
+}
+
+func TestChannelAdapterOwnsCredentialMergeAndRejectsUnknownFields(t *testing.T) {
+	adapter := NewChannelAdapter(nil)
+	current := map[string]string{
+		"app_id": "cli_existing", "app_secret": "existing-secret", "verification_token": "existing-token",
+	}
+	prepared, err := adapter.PrepareCredentials(current, map[string]string{
+		"app_secret": "", "encrypt_key": "new-encrypt-key",
+	})
+	if err != nil {
+		t.Fatalf("PrepareCredentials() error = %v", err)
+	}
+	if prepared["app_id"] != "cli_existing" || prepared["app_secret"] != "existing-secret" ||
+		prepared["verification_token"] != "existing-token" || prepared["encrypt_key"] != "new-encrypt-key" {
+		t.Fatalf("prepared credentials = %#v", prepared)
+	}
+	destroyCredentialValues(prepared)
+	if _, err := adapter.PrepareCredentials(current, map[string]string{"tenant_key": "not-a-credential"}); err == nil {
+		t.Fatal("PrepareCredentials() unknown field error = nil")
 	}
 }
 
 func TestChannelAdapterVerifiesPlainURLChallengeByToken(t *testing.T) {
 	body := []byte(`{"challenge":"challenge-1","token":"verify-token","type":"url_verification"}`)
-	verified, err := NewChannelAdapter(nil).Verify(t.Context(), channelruntime.WebhookRequest{Body: body}, channelruntime.SecurityMaterial{VerificationToken: "verify-token"})
+	verified, err := NewChannelAdapter(nil).Verify(t.Context(), channelruntime.WebhookRequest{Body: body}, channelCredentialFixture("verify-token", ""))
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
-	if verified.Challenge != "challenge-1" {
-		t.Fatalf("challenge = %q", verified.Challenge)
+	if verified.ImmediateResponse == nil || !strings.Contains(string(verified.ImmediateResponse.Body), "challenge-1") {
+		t.Fatalf("response = %#v", verified.ImmediateResponse)
 	}
 }
 
@@ -73,13 +121,13 @@ func TestChannelAdapterVerifiesEncryptedURLChallengeWithoutSignatureHeaders(t *t
 	verified, err := NewChannelAdapter(nil).Verify(
 		t.Context(),
 		channelruntime.WebhookRequest{Body: body},
-		channelruntime.SecurityMaterial{VerificationToken: "verify-token", EncryptKey: "encrypt-key"},
+		channelCredentialFixture("verify-token", "encrypt-key"),
 	)
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
-	if verified.Challenge != "challenge-1" {
-		t.Fatalf("challenge = %q", verified.Challenge)
+	if verified.ImmediateResponse == nil || !strings.Contains(string(verified.ImmediateResponse.Body), "challenge-1") {
+		t.Fatalf("response = %#v", verified.ImmediateResponse)
 	}
 }
 
@@ -94,7 +142,7 @@ func TestChannelAdapterRejectsEncryptedPayloadWithWrongTokenWithoutSignatureHead
 	if _, err := NewChannelAdapter(nil).Verify(
 		t.Context(),
 		channelruntime.WebhookRequest{Body: body},
-		channelruntime.SecurityMaterial{VerificationToken: "verify-token", EncryptKey: "encrypt-key"},
+		channelCredentialFixture("verify-token", "encrypt-key"),
 	); err == nil {
 		t.Fatal("Verify() invalid token error = nil")
 	}
@@ -105,11 +153,14 @@ func TestChannelAdapterRejectsInvalidSignatureAndToken(t *testing.T) {
 	adapter := NewChannelAdapter(nil)
 	adapter.now = func() time.Time { return time.Unix(100, 0).UTC() }
 	if _, err := adapter.Verify(t.Context(), channelruntime.WebhookRequest{
-		Body: body, Timestamp: "100", Nonce: "nonce", Signature: "invalid",
-	}, channelruntime.SecurityMaterial{VerificationToken: "verify-token", EncryptKey: "encrypt-key"}); err == nil {
+		Body: body, Headers: http.Header{
+			"X-Lark-Request-Timestamp": []string{"100"}, "X-Lark-Request-Nonce": []string{"nonce"},
+			"X-Lark-Signature": []string{"invalid"},
+		},
+	}, channelCredentialFixture("verify-token", "encrypt-key")); err == nil {
 		t.Fatal("Verify() invalid signature error = nil")
 	}
-	if _, err := adapter.Verify(t.Context(), channelruntime.WebhookRequest{Body: body}, channelruntime.SecurityMaterial{VerificationToken: "verify-token"}); err == nil {
+	if _, err := adapter.Verify(t.Context(), channelruntime.WebhookRequest{Body: body}, channelCredentialFixture("verify-token", "")); err == nil {
 		t.Fatal("Verify() invalid token error = nil")
 	}
 }
@@ -141,14 +192,243 @@ func TestChannelAdapterDeliverUsesGovernedExecutorAndStableIdentity(t *testing.T
 	}
 }
 
+func TestDirectChannelAdapterDeliversWithCredentialOnlyConnection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("X-Tt-Logid", "request-direct-send")
+		switch request.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","tenant_access_token":"tenant-token","expire":7200}`))
+		case "/open-apis/im/v1/messages":
+			if request.Method != http.MethodPost || request.URL.Query().Get("receive_id_type") != "chat_id" || request.Header.Get("Authorization") != "Bearer tenant-token" {
+				t.Errorf("unexpected direct send request: %s %s %#v", request.Method, request.URL.String(), request.Header)
+			}
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","data":{"message_id":"om_direct"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	connectionID := uuid.New()
+	resolver := &channelConnectionResolverStub{connection: directChannelConnection(connectionID)}
+	adapter, err := NewDirectChannelAdapter(newTestAdapter(t, server), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := adapter.Deliver(t.Context(), channelruntime.DeliveryRequest{
+		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New(), InstallationID: uuid.New(),
+		ConnectionID: connectionID, Subject: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New()},
+		RunID: uuid.New(), DeliveryID: uuid.New(), ExternalConversationID: "oc_direct", Text: "answer",
+	})
+	if err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if receipt.ProviderMessageID != "om_direct" || receipt.ProviderRequestID != "request-direct-send" || receipt.Replayed {
+		t.Fatalf("receipt = %#v", receipt)
+	}
+	resolved := resolver.lastRequest()
+	if resolved.ConnectionID != connectionID.String() || resolved.IntegrationID != IntegrationID || resolved.DriverID != DriverID || !resolved.DisallowAccountCredential {
+		t.Fatalf("credential request = %#v", resolved)
+	}
+}
+
+func TestChannelAdapterReadsBoundedAttributedContext(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	after := now.Add(-30 * time.Second)
+	executor := &channelExecutorStub{handler: func(request integrations.ActionRequest) (*integrations.ActionResult, error) {
+		switch request.ActionID {
+		case ActionListMessages:
+			if request.Input["chat_id"] != "oc_poem" || request.InvokeFrom != tools.ToolInvokeFromAPI {
+				t.Fatalf("message list request escaped bound chat: %#v", request)
+			}
+			if got, want := request.Input["start_time"], now.Add(-feishuContextLookback).Unix(); got != want {
+				t.Fatalf("message list start_time = %v, want %d; After must not be a hard query boundary", got, want)
+			}
+			return &integrations.ActionResult{ProviderRequestID: "req-list", Output: map[string]interface{}{
+				"messages": []interface{}{
+					contextMessageOutput("m3", "", "", "ou_c", "赏析一下这首诗", now),
+					contextMessageOutput("m2", "", "", "ou_b", "这首诗真棒", now.Add(-time.Minute)),
+					contextMessageOutput("m1", "", "", "ou_a", "我写了一首诗", now.Add(-2*time.Minute)),
+				}, "next_page_token": "older", "has_more": true,
+			}}, nil
+		case ActionGetMessage:
+			return &integrations.ActionResult{ProviderRequestID: "req-parent", Output: map[string]interface{}{
+				"messages": []interface{}{contextMessageOutput("m0", "", "", "ou_a", "诗的题目", now.Add(-3*time.Minute))},
+			}}, nil
+		case ActionListChatMembers:
+			return &integrations.ActionResult{ProviderRequestID: "req-members", Output: map[string]interface{}{
+				"members": []interface{}{
+					map[string]interface{}{"member_id": "ou_a", "name": "康源"},
+					map[string]interface{}{"member_id": "ou_b", "name": "小王"},
+					map[string]interface{}{"member_id": "ou_c", "name": "小李"},
+				}, "next_page_token": "", "has_more": false,
+			}}, nil
+		default:
+			t.Fatalf("unexpected context action: %s", request.ActionID)
+			return nil, nil
+		}
+	}}
+	adapter := NewChannelAdapter(executor)
+	pack, err := adapter.ReadContext(t.Context(), channelruntime.ChannelContextRequest{
+		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New(), InstallationID: uuid.New(), ConnectionID: uuid.New(),
+		Subject: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New()}, RunID: uuid.New(),
+		ExternalConversationID: "oc_poem", CurrentMessageID: "m3", ParentMessageID: "m0", CurrentSenderID: "ou_c",
+		OccurredAt: now, After: &after, Limit: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pack.Messages) != 3 || pack.Messages[0].MessageID != "m0" || pack.Messages[2].MessageID != "m2" {
+		t.Fatalf("context messages = %#v", pack.Messages)
+	}
+	if pack.Messages[0].Author.Label != "康源" || pack.Messages[2].Author.Label != "小王" || pack.CurrentAuthor.Label != "小李" {
+		t.Fatalf("author attribution = messages %#v current %#v", pack.Messages, pack.CurrentAuthor)
+	}
+	if len(pack.ProviderRequestIDs) != 3 || pack.NextPageToken != "older" {
+		t.Fatalf("context diagnostics = %#v", pack)
+	}
+}
+
+func TestDirectChannelAdapterReadsContextWithoutActionPolicy(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("X-Tt-Logid", "request-"+request.URL.Path)
+		switch request.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","tenant_access_token":"tenant-token","expire":7200}`))
+		case "/open-apis/im/v1/messages":
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","data":{"items":[` +
+				`{"message_id":"m3","chat_id":"oc_direct","msg_type":"text","create_time":"1787392800000","sender":{"id":"ou_c","sender_type":"user"},"body":{"content":"{\"text\":\"赏析一下\"}"}},` +
+				`{"message_id":"m2","chat_id":"oc_direct","msg_type":"text","create_time":"1787392740000","sender":{"id":"ou_b","sender_type":"user"},"body":{"content":"{\"text\":\"这首诗真棒\"}"}},` +
+				`{"message_id":"m1","chat_id":"oc_direct","msg_type":"text","create_time":"1787392680000","sender":{"id":"ou_a","sender_type":"user"},"body":{"content":"{\"text\":\"我写了一首诗\"}"}}` +
+				`],"page_token":"","has_more":false}}`))
+		case "/open-apis/im/v1/chats/oc_direct/members":
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","data":{"items":[` +
+				`{"member_id":"ou_a","name":"康源"},{"member_id":"ou_b","name":"小王"},{"member_id":"ou_c","name":"小李"}` +
+				`],"page_token":"","has_more":false}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	connectionID := uuid.New()
+	resolver := &channelConnectionResolverStub{connection: directChannelConnection(connectionID)}
+	adapter, err := NewDirectChannelAdapter(newTestAdapter(t, server), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack, err := adapter.ReadContext(t.Context(), channelruntime.ChannelContextRequest{
+		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New(), InstallationID: uuid.New(), ConnectionID: connectionID,
+		Subject: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New()}, RunID: uuid.New(),
+		ExternalConversationID: "oc_direct", CurrentMessageID: "m3", CurrentSenderID: "ou_c", OccurredAt: now, Limit: 50,
+	})
+	if err != nil {
+		t.Fatalf("ReadContext() error = %v", err)
+	}
+	if len(pack.Messages) != 2 || pack.Messages[0].Author.Label != "康源" || pack.Messages[1].Author.Label != "小王" || pack.CurrentAuthor.Label != "小李" {
+		t.Fatalf("context pack = %#v", pack)
+	}
+	if got := resolver.resolveCount(); got != 2 {
+		t.Fatalf("credential resolve count = %d, want 2 direct provider operations", got)
+	}
+}
+
+func TestContextMessagesPreserveConnectionSelfRelationship(t *testing.T) {
+	messages := contextMessagesFromOutput(map[string]interface{}{
+		"messages": []interface{}{map[string]interface{}{
+			"message_id": "m-self", "sender_id": "cli_app", "sender_is_self": true,
+			"message_type": "text", "text": "处理中", "create_time": "1787392800000",
+		}},
+	})
+	if len(messages) != 1 || !messages[0].Author.IsSelf {
+		t.Fatalf("messages = %#v, want provider-attributed self sender", messages)
+	}
+}
+
+func contextMessageOutput(id, rootID, parentID, senderID, text string, occurredAt time.Time) map[string]interface{} {
+	return map[string]interface{}{
+		"message_id": id, "root_id": rootID, "parent_id": parentID, "thread_id": "", "chat_id": "oc_poem",
+		"message_type": "text", "text": text, "sender_id": senderID, "sender_type": "user",
+		"create_time": strconv.FormatInt(occurredAt.UnixMilli(), 10), "update_time": "", "deleted": false, "updated": false,
+	}
+}
+
 type channelExecutorStub struct {
 	request integrations.ActionRequest
 	result  *integrations.ActionResult
 	err     error
+	handler func(integrations.ActionRequest) (*integrations.ActionResult, error)
+}
+
+type channelConnectionResolverStub struct {
+	mu         sync.Mutex
+	connection *integrations.ResolvedConnection
+	requests   []integrations.ConnectionResolveRequest
+	err        error
+}
+
+func (resolver *channelConnectionResolverStub) Resolve(_ context.Context, request integrations.ConnectionResolveRequest) (*integrations.ResolvedConnection, error) {
+	resolver.mu.Lock()
+	defer resolver.mu.Unlock()
+	resolver.requests = append(resolver.requests, request)
+	if resolver.err != nil {
+		return nil, resolver.err
+	}
+	if resolver.connection == nil {
+		return nil, integrations.NewError(integrations.ErrorCodeConnectionNotFound, "connection not found", nil)
+	}
+	clone := *resolver.connection
+	clone.Credentials = make(map[string]string, len(resolver.connection.Credentials))
+	for key, value := range resolver.connection.Credentials {
+		clone.Credentials[key] = value
+	}
+	clone.Config = make(map[string]interface{}, len(resolver.connection.Config))
+	for key, value := range resolver.connection.Config {
+		clone.Config[key] = value
+	}
+	clone.GrantedScopes = append([]string(nil), resolver.connection.GrantedScopes...)
+	return &clone, nil
+}
+
+func (resolver *channelConnectionResolverStub) lastRequest() integrations.ConnectionResolveRequest {
+	resolver.mu.Lock()
+	defer resolver.mu.Unlock()
+	if len(resolver.requests) == 0 {
+		return integrations.ConnectionResolveRequest{}
+	}
+	return resolver.requests[len(resolver.requests)-1]
+}
+
+func (resolver *channelConnectionResolverStub) resolveCount() int {
+	resolver.mu.Lock()
+	defer resolver.mu.Unlock()
+	return len(resolver.requests)
+}
+
+func directChannelConnection(id uuid.UUID) *integrations.ResolvedConnection {
+	return &integrations.ResolvedConnection{
+		ID: id.String(), IntegrationID: IntegrationID, DriverID: DriverID,
+		CredentialSource: integrations.ConnectionCredentialSourceOrganization,
+		AuthType:         integrations.ConnectionAuthTypeServiceAccount,
+		AuthMethodID:     TenantAppAuthMethodID,
+		Credentials: map[string]string{
+			"app_id": "cli_direct", "app_secret": "secret", "verification_token": "verify", "encrypt_key": "encrypt",
+		},
+		Config: map[string]interface{}{"region": RegionCN},
+		// No action grants or declared scopes are required. Feishu is the
+		// authority for capability checks when the request is made.
+		GrantedScopes: nil,
+	}
 }
 
 func (executor *channelExecutorStub) Execute(_ context.Context, request integrations.ActionRequest) (*integrations.ActionResult, error) {
 	executor.request = request
+	if executor.handler != nil {
+		return executor.handler(request)
+	}
 	return executor.result, executor.err
 }
 
@@ -177,4 +457,11 @@ func signatureFixture(timestamp, nonce, encryptKey string, body []byte) string {
 	_, _ = digest.Write([]byte(encryptKey))
 	_, _ = digest.Write(body)
 	return hex.EncodeToString(digest.Sum(nil))
+}
+
+func channelCredentialFixture(verificationToken, encryptKey string) channelruntime.ResolvedChannelCredential {
+	return channelruntime.ResolvedChannelCredential{Values: map[string]string{
+		"verification_token": verificationToken,
+		"encrypt_key":        encryptKey,
+	}}
 }

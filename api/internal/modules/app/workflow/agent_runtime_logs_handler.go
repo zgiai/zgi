@@ -294,6 +294,14 @@ func buildAgentRuntimeRunDetail(message *runtimemodel.Message, conversation *run
 	}
 }
 
+// BuildAgentRuntimeRunDetail projects a caller-scoped ChatRuntime message into
+// the same safe detail contract used by the Agent runtime log UI. Other
+// products backed by ChatRuntime can reuse the projection after enforcing
+// their own subject and workspace boundaries.
+func BuildAgentRuntimeRunDetail(message *runtimemodel.Message, conversation *runtimemodel.Conversation) dto.AgentRuntimeRunDetail {
+	return buildAgentRuntimeRunDetail(message, conversation)
+}
+
 func agentRuntimeControlMetrics(metadata map[string]interface{}) map[string]interface{} {
 	diagnostics, _ := metadata["skill_loop_control_diagnostics"].(map[string]interface{})
 	if len(diagnostics) == 0 {
@@ -332,6 +340,12 @@ func buildAgentRuntimeSteps(message *runtimemodel.Message) []dto.AgentRuntimeSte
 		steps = append(steps, buildAgentRuntimeAnswerStep(message, len(steps)+1, nextAgentRuntimeStepSequence(events)))
 	}
 	return steps
+}
+
+// BuildAgentRuntimeSteps projects the ordered, sanitized model/tool timeline
+// used by the Agent runtime log UI.
+func BuildAgentRuntimeSteps(message *runtimemodel.Message) []dto.AgentRuntimeStep {
+	return buildAgentRuntimeSteps(message)
 }
 
 func buildAgentRuntimeEventStep(message *runtimemodel.Message, event map[string]interface{}, index int) dto.AgentRuntimeStep {

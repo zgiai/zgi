@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/util"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
@@ -22,6 +23,7 @@ type runtimeHandlerServiceStub struct {
 	RuntimeHandlerService
 	submit            func(context.Context, Scope, uuid.UUID, ManualInvocationRequest) (*Run, bool, error)
 	get               func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
+	runtimeLog        func(context.Context, Scope, uuid.UUID, uuid.UUID) (*RunRuntimeLog, error)
 	cancel            func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
 	candidates        func(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
 	listConversations func(context.Context, Scope, uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error)
@@ -33,6 +35,10 @@ func (s runtimeHandlerServiceStub) SubmitManual(ctx context.Context, scope Scope
 
 func (s runtimeHandlerServiceStub) GetRun(ctx context.Context, scope Scope, id, runID uuid.UUID) (*Run, error) {
 	return s.get(ctx, scope, id, runID)
+}
+
+func (s runtimeHandlerServiceStub) GetRunRuntimeLog(ctx context.Context, scope Scope, id, runID uuid.UUID) (*RunRuntimeLog, error) {
+	return s.runtimeLog(ctx, scope, id, runID)
 }
 
 func (s runtimeHandlerServiceStub) CancelRun(ctx context.Context, scope Scope, id, runID uuid.UUID) (*Run, error) {
@@ -102,6 +108,24 @@ func TestRuntimeHandlerProjectsScopedRunNotFound(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	assertDigitalHumanError(t, recorder, http.StatusNotFound, AppCodeRunNotFound.String())
+}
+
+func TestRuntimeHandlerReturnsScopedRuntimeLogSteps(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope, digitalHumanID, runID := testScope(), uuid.New(), uuid.New()
+	service := runtimeHandlerServiceStub{runtimeLog: func(_ context.Context, gotScope Scope, gotID, gotRunID uuid.UUID) (*RunRuntimeLog, error) {
+		if gotScope != scope || gotID != digitalHumanID || gotRunID != runID {
+			t.Fatalf("runtime log scope = %#v, digital human = %s, run = %s", gotScope, gotID, gotRunID)
+		}
+		return &RunRuntimeLog{Steps: []dto.AgentRuntimeStep{{ID: "model-1", Type: "model_call", Status: "succeeded"}}}, nil
+	}}
+	router := digitalHumanRuntimeHandlerRouter(t, service, scope)
+	request := httptest.NewRequest(http.MethodGet, "/digital-humans/"+digitalHumanID.String()+"/runs/"+runID.String()+"/runtime-log", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte(`"type":"model_call"`)) {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestRuntimeHandlerRedactsCredentialReferences(t *testing.T) {

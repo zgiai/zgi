@@ -18,7 +18,7 @@ func TestBrainAdapterBuildsDigitalHumanRunConfigWithoutAgentIdentityOrMemory(t *
 	reader := &resolverStoreStub{}
 	resolved := &ResolvedExecution{Snapshot: ExecutionSnapshot{
 		SchemaVersion: executionSnapshotSchemaV1, Revision: "sha256:snapshot", Subject: subject, DigitalHumanVersion: versionID,
-		Name: "Atlas", Persona: "Be careful", Rules: []string{"Cite evidence"}, Model: "gpt-5",
+		IdentityName: "Atlas", Persona: "Be careful", Goals: []string{"Find reliable evidence"}, Rules: []string{"Cite evidence"}, Model: "gpt-5",
 		Bindings: []resourcebindings.Binding{
 			{Type: resourcebindings.BindingTypeSkill, ResourceID: "calculator", AccessMode: resourcebindings.AccessModeExecute, Revision: "sha256:skill"},
 			{Type: resourcebindings.BindingTypeKnowledgeDataset, ResourceID: "dataset-1", AccessMode: resourcebindings.AccessModeRead, Revision: "sha256:knowledge"},
@@ -47,7 +47,11 @@ func TestBrainAdapterBuildsDigitalHumanRunConfigWithoutAgentIdentityOrMemory(t *
 	if config.IntegrationConnectionIDs["feishu"] != "connection-1" || len(config.BindingAuthorizations) != 3 {
 		t.Fatalf("integration projection = %#v", config)
 	}
-	if strings.Contains(config.SystemPrompt, "agent_id") || !strings.Contains(config.SystemPrompt, "Do not use or modify account memory") {
+	if strings.Contains(config.SystemPrompt, "agent_id") ||
+		!strings.Contains(config.SystemPrompt, "Your name is Atlas.") ||
+		!strings.Contains(config.SystemPrompt, "Work goals:\n- Find reliable evidence") ||
+		!strings.Contains(config.SystemPrompt, "Rules:\n- Cite evidence") ||
+		!strings.Contains(config.SystemPrompt, "Do not use or modify account memory") {
 		t.Fatalf("system prompt = %q", config.SystemPrompt)
 	}
 }

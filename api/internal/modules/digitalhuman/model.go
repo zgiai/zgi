@@ -58,6 +58,9 @@ type Definition struct {
 	WorkspaceID        uuid.UUID     `gorm:"type:uuid;not null;column:workspace_id" json:"workspace_id"`
 	Name               string        `gorm:"type:varchar(80);not null" json:"name"`
 	Avatar             string        `gorm:"type:text;not null;default:''" json:"avatar"`
+	IconType           string        `gorm:"type:varchar(16);not null;default:'text';column:icon_type" json:"icon_type"`
+	Icon               string        `gorm:"type:text;not null;default:''" json:"icon"`
+	IconURL            string        `gorm:"-" json:"icon_url,omitempty"`
 	Description        string        `gorm:"type:text;not null;default:''" json:"description"`
 	Status             Status        `gorm:"type:varchar(16);not null;default:'draft'" json:"status"`
 	AutonomyLevel      AutonomyLevel `gorm:"type:varchar(16);not null;default:'supervised'" json:"autonomy_level"`
@@ -83,7 +86,9 @@ type Version struct {
 	WorkspaceID      uuid.UUID      `gorm:"type:uuid;not null;column:workspace_id" json:"workspace_id"`
 	State            VersionState   `gorm:"type:varchar(16);not null" json:"state"`
 	VersionNumber    int            `gorm:"not null;default:0;column:version_number" json:"version_number"`
+	IdentityName     string         `gorm:"type:varchar(80);not null;default:'';column:identity_name" json:"identity_name"`
 	Persona          string         `gorm:"type:text;not null;default:''" json:"persona"`
+	Goals            datatypes.JSON `gorm:"type:jsonb;not null;default:'[]';column:goals" json:"goals"`
 	Rules            datatypes.JSON `gorm:"type:jsonb;not null;default:'[]';column:rules" json:"rules"`
 	DefaultModel     string         `gorm:"type:varchar(255);not null;default:'';column:default_model" json:"default_model"`
 	MemoryPolicy     datatypes.JSON `gorm:"type:jsonb;not null;default:'{}';column:memory_policy" json:"memory_policy"`

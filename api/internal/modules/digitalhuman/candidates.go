@@ -172,8 +172,17 @@ func skillResourceCandidates(items []skills.SkillDiscoveryMetadata) ([]ResourceC
 			Type: resourcebindings.BindingTypeSkill, ResourceID: id, DisplayName: name,
 			Description: strings.TrimSpace(item.Description), ResourceRevision: revision,
 			AccessModes: []resourcebindings.AccessMode{resourcebindings.AccessModeExecute},
-			Metadata:    map[string]any{"source": item.Source, "runtime_type": item.RuntimeType},
-			Status:      strings.TrimSpace(item.Status), Available: true,
+			Metadata: map[string]any{
+				"source":            item.Source,
+				"runtime_type":      item.RuntimeType,
+				"when_to_use":       strings.TrimSpace(item.WhenToUse),
+				"display":           item.Display,
+				"has_tools":         item.HasTools,
+				"has_references":    item.HasReferences,
+				"has_scripts":       item.HasScripts,
+				"scripts_supported": item.ScriptsSupported,
+			},
+			Status: strings.TrimSpace(item.Status), Available: true,
 		})
 	}
 	return candidates, nil

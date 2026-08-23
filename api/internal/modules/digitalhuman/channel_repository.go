@@ -3,10 +3,12 @@ package digitalhuman
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"strings"
 	"time"
@@ -36,13 +38,10 @@ type ChannelStore interface {
 	CreateChannelInstallation(context.Context, *channelruntime.Installation) error
 	ChannelInstallationByID(context.Context, uuid.UUID) (*channelruntime.Installation, error)
 	ScopedChannelInstallationByID(context.Context, Scope, uuid.UUID) (*channelruntime.Installation, error)
-	ListChannelInstallations(context.Context, Scope) ([]*ChannelInstallationView, error)
+	ListChannelInstallations(context.Context, Scope) ([]*channelruntime.Installation, error)
 	UpdateChannelInstallation(context.Context, Scope, *channelruntime.Installation, int64) error
-	DeleteChannelInstallation(context.Context, Scope, uuid.UUID, DeleteChannelInstallationRequest) error
+	DeleteChannelInstallation(context.Context, Scope, uuid.UUID) error
 	CreateChannelBinding(context.Context, *channelruntime.ConversationMapping, *channelruntime.Binding) error
-	ListChannelBindings(context.Context, Scope, uuid.UUID) ([]*ChannelBindingView, error)
-	ListDiscoveredChannelConversations(context.Context, Scope) ([]*ChannelConversationDiscovery, error)
-	DeleteChannelBinding(context.Context, Scope, uuid.UUID, uuid.UUID) error
 	ResolveChannelRoute(context.Context, uuid.UUID, string) (*ChannelRoute, error)
 	EnsureChannelConversationID(context.Context, uuid.UUID, uuid.UUID, time.Time) (uuid.UUID, error)
 	RecordInboundEvent(context.Context, *channelruntime.InboundEvent) (*channelruntime.InboundEvent, bool, error)
@@ -57,6 +56,37 @@ type ChannelStore interface {
 	FailDelivery(context.Context, uuid.UUID, channelruntime.DeliveryStatus, string, string, time.Time) error
 	RequeueDelivery(context.Context, Scope, uuid.UUID, uuid.UUID, time.Time) error
 	MarkStaleDeliveriesUnknown(context.Context, time.Time, time.Time) error
+}
+
+// ChannelReceiverStore is the process-lifecycle persistence surface used by
+// long-lived channel transports. The lease prevents two API replicas from
+// opening competing receivers for the same installation.
+type ChannelReceiverStore interface {
+	ListActiveChannelInstallations(context.Context) ([]*channelruntime.Installation, error)
+	TryAcquireChannelReceiverLease(context.Context, uuid.UUID) (release func(), acquired bool, err error)
+}
+
+// ChannelCredentialStore is kept separate from ChannelStore so existing
+// provider-reference installations and test stores do not need to implement
+// credential persistence.
+type ChannelCredentialStore interface {
+	CreateChannelInstallationWithCredential(context.Context, *channelruntime.Installation, *ChannelInstallationCredential) error
+	ChannelInstallationCredentialByID(context.Context, uuid.UUID, uuid.UUID) (*ChannelInstallationCredential, error)
+	ReplaceChannelInstallationCredential(context.Context, Scope, *channelruntime.Installation, *ChannelInstallationCredential, int64) error
+}
+
+// ChannelContextStore is the narrow persistence surface consumed while
+// preparing provider context for a channel invocation.
+type ChannelContextStore interface {
+	ChannelInstallationByID(context.Context, uuid.UUID) (*channelruntime.Installation, error)
+	LastSuccessfulChannelDeliveryAt(context.Context, uuid.UUID, string, time.Time) (*time.Time, error)
+	SuccessfulChannelDeliveryKinds(
+		context.Context,
+		uuid.UUID,
+		string,
+		uuid.UUID,
+		[]string,
+	) (map[string]channelruntime.DeliveryKind, error)
 }
 
 // ChannelTransientTarget contains only the routing identifiers required for a
@@ -75,11 +105,6 @@ type ChannelTransientTarget struct {
 	ExternalThreadID       string
 }
 
-type ChannelBindingView struct {
-	Binding *channelruntime.Binding             `json:"binding"`
-	Mapping *channelruntime.ConversationMapping `json:"mapping"`
-}
-
 func (r *GormRepository) CreateChannelInstallation(ctx context.Context, installation *channelruntime.Installation) error {
 	if installation == nil || installation.ID == uuid.Nil || installation.OrganizationID == uuid.Nil || installation.WorkspaceID == uuid.Nil {
 		return ErrInvalidRequest
@@ -91,6 +116,93 @@ func (r *GormRepository) CreateChannelInstallation(ctx context.Context, installa
 		return fmt.Errorf("create channel installation: %w", err)
 	}
 	return nil
+}
+
+func (r *GormRepository) CreateChannelInstallationWithCredential(
+	ctx context.Context,
+	installation *channelruntime.Installation,
+	credential *ChannelInstallationCredential,
+) error {
+	if installation == nil || credential == nil || installation.ID == uuid.Nil ||
+		credential.InstallationID != installation.ID || installation.ConnectionID != installation.ID ||
+		credential.OrganizationID != installation.OrganizationID || credential.WorkspaceID != installation.WorkspaceID ||
+		!strings.EqualFold(credential.Provider, installation.Provider) {
+		return ErrInvalidRequest
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(installation).Error; err != nil {
+			if isUniqueViolation(err) {
+				return ErrChannelConflict
+			}
+			return fmt.Errorf("create channel installation: %w", err)
+		}
+		if err := tx.Create(credential).Error; err != nil {
+			return fmt.Errorf("create channel installation credential: %w", err)
+		}
+		return nil
+	})
+}
+
+func (r *GormRepository) ChannelInstallationCredentialByID(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	installationID uuid.UUID,
+) (*ChannelInstallationCredential, error) {
+	if organizationID == uuid.Nil || installationID == uuid.Nil {
+		return nil, ErrInvalidRequest
+	}
+	var credential ChannelInstallationCredential
+	err := r.db.WithContext(ctx).Where(
+		"installation_id = ? AND organization_id = ?", installationID, organizationID,
+	).Take(&credential).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrChannelCredentialNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get channel installation credential: %w", err)
+	}
+	return &credential, nil
+}
+
+func (r *GormRepository) ReplaceChannelInstallationCredential(
+	ctx context.Context,
+	scope Scope,
+	installation *channelruntime.Installation,
+	credential *ChannelInstallationCredential,
+	expectedRevision int64,
+) error {
+	if !validScope(scope) || installation == nil || credential == nil || expectedRevision < 1 ||
+		installation.ID == uuid.Nil || installation.ConnectionID != installation.ID ||
+		credential.InstallationID != installation.ID || credential.OrganizationID != scope.OrganizationID ||
+		credential.WorkspaceID != scope.WorkspaceID || !strings.EqualFold(credential.Provider, installation.Provider) {
+		return ErrInvalidRequest
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&channelruntime.Installation{}).Where(
+			"id = ? AND organization_id = ? AND workspace_id = ? AND revision = ? AND deleted_at IS NULL",
+			installation.ID, scope.OrganizationID, scope.WorkspaceID, expectedRevision,
+		).Updates(map[string]any{
+			"connection_id": installation.ID, "external_tenant_id": installation.ExternalTenantID,
+			"external_bot_id": installation.ExternalBotID, "updated_by": scope.ActorID,
+			"revision": gorm.Expr("revision + 1"), "updated_at": installation.UpdatedAt,
+		})
+		if result.Error != nil {
+			return fmt.Errorf("update channel installation credential reference: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return ErrChannelConflict
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "installation_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"encrypted_credentials", "credential_version", "updated_by", "updated_at",
+			}),
+		}).Create(credential).Error; err != nil {
+			return fmt.Errorf("replace channel installation credential: %w", err)
+		}
+		installation.Revision = expectedRevision + 1
+		return nil
+	})
 }
 
 func (r *GormRepository) ChannelInstallationByID(ctx context.Context, installationID uuid.UUID) (*channelruntime.Installation, error) {
@@ -125,7 +237,7 @@ func (r *GormRepository) ScopedChannelInstallationByID(ctx context.Context, scop
 	return &installation, nil
 }
 
-func (r *GormRepository) ListChannelInstallations(ctx context.Context, scope Scope) ([]*ChannelInstallationView, error) {
+func (r *GormRepository) ListChannelInstallations(ctx context.Context, scope Scope) ([]*channelruntime.Installation, error) {
 	if !validScopeBoundary(scope) {
 		return nil, ErrInvalidRequest
 	}
@@ -136,45 +248,136 @@ func (r *GormRepository) ListChannelInstallations(ctx context.Context, scope Sco
 		return nil, fmt.Errorf("list channel installations: %w", err)
 	}
 
-	type usageRow struct {
-		InstallationID   uuid.UUID `gorm:"column:installation_id"`
-		DigitalHumanID   uuid.UUID `gorm:"column:digital_human_id"`
-		DigitalHumanName string    `gorm:"column:digital_human_name"`
-		BindingCount     int64     `gorm:"column:binding_count"`
+	return installations, nil
+}
+
+func (r *GormRepository) ListActiveChannelInstallations(ctx context.Context) ([]*channelruntime.Installation, error) {
+	installations := make([]*channelruntime.Installation, 0)
+	if err := r.db.WithContext(ctx).Where("status = ?", channelruntime.InstallationStatusActive).
+		Order("created_at ASC, id ASC").Find(&installations).Error; err != nil {
+		return nil, fmt.Errorf("list active channel installations: %w", err)
 	}
-	usageRows := make([]usageRow, 0)
-	if err := r.db.WithContext(ctx).
-		Table("channel_bindings AS bindings").
-		Select("bindings.installation_id, bindings.subject_id AS digital_human_id, COALESCE(digital_humans.name, '') AS digital_human_name, COUNT(*) AS binding_count").
-		Joins("LEFT JOIN digital_humans ON digital_humans.id = bindings.subject_id AND digital_humans.organization_id = bindings.organization_id AND digital_humans.workspace_id = bindings.workspace_id AND digital_humans.deleted_at IS NULL").
-		Where("bindings.organization_id = ? AND bindings.workspace_id = ? AND bindings.subject_type = ? AND bindings.deleted_at IS NULL", scope.OrganizationID, scope.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman).
-		Group("bindings.installation_id, bindings.subject_id, digital_humans.name").
-		Order("digital_human_name ASC, digital_human_id ASC").
-		Scan(&usageRows).Error; err != nil {
-		return nil, fmt.Errorf("list channel installation usage: %w", err)
+	return installations, nil
+}
+
+func (r *GormRepository) TryAcquireChannelReceiverLease(
+	ctx context.Context,
+	installationID uuid.UUID,
+) (func(), bool, error) {
+	if installationID == uuid.Nil {
+		return nil, false, ErrInvalidRequest
+	}
+	// PostgreSQL advisory locks are bound to one physical connection and are
+	// released automatically if the API process exits. Other dialects are used
+	// only by local tests and run a single receiver manager.
+	if r.db.Dialector.Name() != "postgres" {
+		return func() {}, true, nil
+	}
+	database, err := r.db.DB()
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve channel receiver database: %w", err)
+	}
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("reserve channel receiver connection: %w", err)
+	}
+	key := channelReceiverLeaseKey(installationID)
+	var acquired bool
+	if err := connection.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
+		_ = connection.Close()
+		return nil, false, fmt.Errorf("acquire channel receiver lease: %w", err)
+	}
+	if !acquired {
+		_ = connection.Close()
+		return nil, false, nil
+	}
+	return func() { releaseChannelReceiverLease(connection, key) }, true, nil
+}
+
+func channelReceiverLeaseKey(installationID uuid.UUID) int64 {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte("digital-human-channel-receiver:" + installationID.String()))
+	return int64(hash.Sum64())
+}
+
+func releaseChannelReceiverLease(connection *sql.Conn, key int64) {
+	if connection == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = connection.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", key)
+	_ = connection.Close()
+}
+
+func (r *GormRepository) LastSuccessfulChannelDeliveryAt(
+	ctx context.Context,
+	installationID uuid.UUID,
+	externalConversationID string,
+	before time.Time,
+) (*time.Time, error) {
+	if installationID == uuid.Nil || strings.TrimSpace(externalConversationID) == "" || before.IsZero() {
+		return nil, ErrInvalidRequest
+	}
+	var delivery channelruntime.Delivery
+	err := r.db.WithContext(ctx).Select("delivered_at").Where(
+		"installation_id = ? AND external_conversation_id = ? AND delivery_kind = ? AND status = ? AND delivered_at IS NOT NULL AND delivered_at <= ?",
+		installationID, strings.TrimSpace(externalConversationID), channelruntime.DeliveryKindFinal, channelruntime.DeliverySucceeded, before,
+	).Order("delivered_at DESC").Take(&delivery).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get last successful channel delivery: %w", err)
+	}
+	return delivery.DeliveredAt, nil
+}
+
+func (r *GormRepository) SuccessfulChannelDeliveryKinds(
+	ctx context.Context,
+	installationID uuid.UUID,
+	externalConversationID string,
+	subjectID uuid.UUID,
+	providerMessageIDs []string,
+) (map[string]channelruntime.DeliveryKind, error) {
+	conversationID := strings.TrimSpace(externalConversationID)
+	messageIDs := normalizedUniqueStrings(providerMessageIDs)
+	if installationID == uuid.Nil || conversationID == "" || subjectID == uuid.Nil {
+		return nil, ErrInvalidRequest
+	}
+	if len(messageIDs) == 0 {
+		return map[string]channelruntime.DeliveryKind{}, nil
 	}
 
-	items := make([]*ChannelInstallationView, 0, len(installations))
-	itemsByID := make(map[uuid.UUID]*ChannelInstallationView, len(installations))
-	for _, installation := range installations {
-		item := &ChannelInstallationView{
-			Installation: installation,
-			UsedBy:       make([]*ChannelInstallationUsage, 0),
-		}
-		items = append(items, item)
-		itemsByID[installation.ID] = item
+	type deliveryKindRow struct {
+		ProviderMessageID string                      `gorm:"column:provider_message_id"`
+		Kind              channelruntime.DeliveryKind `gorm:"column:delivery_kind"`
 	}
-	for _, row := range usageRows {
-		item := itemsByID[row.InstallationID]
-		if item == nil {
-			continue
-		}
-		item.BindingCount += row.BindingCount
-		item.UsedBy = append(item.UsedBy, &ChannelInstallationUsage{
-			DigitalHumanID: row.DigitalHumanID, DigitalHumanName: row.DigitalHumanName, BindingCount: row.BindingCount,
-		})
+	rows := make([]deliveryKindRow, 0, len(messageIDs))
+	err := r.db.WithContext(ctx).Model(&channelruntime.Delivery{}).
+		Select("provider_message_id, delivery_kind").
+		Where(
+			"installation_id = ? AND external_conversation_id = ? AND subject_type = ? AND subject_id = ? AND status = ? AND provider_message_id IN ?",
+			installationID,
+			conversationID,
+			runtimeidentity.SubjectTypeDigitalHuman,
+			subjectID,
+			channelruntime.DeliverySucceeded,
+			messageIDs,
+		).
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list successful channel delivery kinds: %w", err)
 	}
-	return items, nil
+
+	kinds := make(map[string]channelruntime.DeliveryKind, len(rows))
+	for _, row := range rows {
+		messageID := strings.TrimSpace(row.ProviderMessageID)
+		if messageID != "" {
+			kinds[messageID] = row.Kind
+		}
+	}
+	return kinds, nil
 }
 
 func (r *GormRepository) UpdateChannelInstallation(ctx context.Context, scope Scope, installation *channelruntime.Installation, expectedRevision int64) error {
@@ -199,7 +402,7 @@ func (r *GormRepository) UpdateChannelInstallation(ctx context.Context, scope Sc
 	return nil
 }
 
-func (r *GormRepository) DeleteChannelInstallation(ctx context.Context, scope Scope, installationID uuid.UUID, request DeleteChannelInstallationRequest) error {
+func (r *GormRepository) DeleteChannelInstallation(ctx context.Context, scope Scope, installationID uuid.UUID) error {
 	if !validScope(scope) || installationID == uuid.Nil {
 		return ErrInvalidRequest
 	}
@@ -217,17 +420,8 @@ func (r *GormRepository) DeleteChannelInstallation(ctx context.Context, scope Sc
 
 		const bindingFilter = "organization_id = ? AND workspace_id = ? AND installation_id = ? AND deleted_at IS NULL"
 		bindingArgs := []any{scope.OrganizationID, scope.WorkspaceID, installationID}
-		var count int64
-		if err := tx.Model(&channelruntime.Binding{}).Where(bindingFilter, bindingArgs...).Count(&count).Error; err != nil {
-			return fmt.Errorf("count channel bindings before installation delete: %w", err)
-		}
-		if count > 0 && !request.RemoveBindings {
-			return ErrChannelInstallationInUse
-		}
-		if count > 0 {
-			if err := tx.Where(bindingFilter, bindingArgs...).Delete(&channelruntime.Binding{}).Error; err != nil {
-				return fmt.Errorf("delete channel installation bindings: %w", err)
-			}
+		if err := tx.Where(bindingFilter, bindingArgs...).Delete(&channelruntime.Binding{}).Error; err != nil {
+			return fmt.Errorf("delete channel installation routes: %w", err)
 		}
 		if err := tx.Delete(&installation).Error; err != nil {
 			return fmt.Errorf("delete channel installation: %w", err)
@@ -297,99 +491,6 @@ func (r *GormRepository) CreateChannelBinding(ctx context.Context, mapping *chan
 				return ErrChannelConflict
 			}
 			return fmt.Errorf("create channel binding: %w", err)
-		}
-		return nil
-	})
-}
-
-func (r *GormRepository) ListChannelBindings(ctx context.Context, scope Scope, subjectID uuid.UUID) ([]*ChannelBindingView, error) {
-	if !validScopeBoundary(scope) || subjectID == uuid.Nil {
-		return nil, ErrInvalidRequest
-	}
-	var bindings []*channelruntime.Binding
-	if err := r.db.WithContext(ctx).Where(
-		"organization_id = ? AND workspace_id = ? AND subject_type = ? AND subject_id = ?",
-		scope.OrganizationID, scope.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, subjectID,
-	).Order("created_at ASC, id ASC").Find(&bindings).Error; err != nil {
-		return nil, fmt.Errorf("list channel bindings: %w", err)
-	}
-	items := make([]*ChannelBindingView, 0, len(bindings))
-	for _, binding := range bindings {
-		var mapping channelruntime.ConversationMapping
-		if err := r.db.WithContext(ctx).Where("id = ?", binding.ConversationMappingID).Take(&mapping).Error; err != nil {
-			return nil, fmt.Errorf("load channel binding conversation: %w", err)
-		}
-		items = append(items, &ChannelBindingView{Binding: binding, Mapping: &mapping})
-	}
-	return items, nil
-}
-
-func (r *GormRepository) ListDiscoveredChannelConversations(ctx context.Context, scope Scope) ([]*ChannelConversationDiscovery, error) {
-	if !validScopeBoundary(scope) {
-		return nil, ErrInvalidRequest
-	}
-	items := make([]*ChannelConversationDiscovery, 0)
-	err := r.db.WithContext(ctx).
-		Table("channel_inbound_events AS events").
-		Select(`events.installation_id,
-			events.external_conversation_id,
-			CASE WHEN events.event_type = 'channel.mention' THEN 'group' ELSE 'direct' END AS conversation_type,
-			MAX(events.sender_external_id) AS sender_external_id,
-			COUNT(*) AS event_count,
-			MAX(events.received_at) AS last_event_at`).
-		Joins("JOIN channel_installations AS installations ON installations.id = events.installation_id AND installations.deleted_at IS NULL").
-		Where(`events.organization_id = ? AND events.workspace_id = ?
-			AND installations.status = ?
-			AND events.external_conversation_id <> ''
-			AND NOT EXISTS (
-				SELECT 1
-				FROM external_conversation_mappings AS mappings
-				JOIN channel_bindings AS bindings
-				  ON bindings.conversation_mapping_id = mappings.id
-				 AND bindings.deleted_at IS NULL
-				WHERE mappings.installation_id = events.installation_id
-				  AND mappings.external_conversation_id = events.external_conversation_id
-			)`, scope.OrganizationID, scope.WorkspaceID, channelruntime.InstallationStatusActive).
-		Group("events.installation_id, events.external_conversation_id, events.event_type").
-		Order("last_event_at DESC, events.external_conversation_id ASC").
-		Limit(100).
-		Scan(&items).Error
-	if err != nil {
-		return nil, fmt.Errorf("list discovered channel conversations: %w", err)
-	}
-	return items, nil
-}
-
-func (r *GormRepository) DeleteChannelBinding(ctx context.Context, scope Scope, subjectID, bindingID uuid.UUID) error {
-	if !validScope(scope) || subjectID == uuid.Nil || bindingID == uuid.Nil {
-		return ErrInvalidRequest
-	}
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var binding channelruntime.Binding
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-			"id = ? AND organization_id = ? AND workspace_id = ? AND subject_type = ? AND subject_id = ?",
-			bindingID, scope.OrganizationID, scope.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, subjectID,
-		).Take(&binding).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrChannelBindingNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("lock channel binding before delete: %w", err)
-		}
-		if err := tx.Delete(&binding).Error; err != nil {
-			return fmt.Errorf("delete channel binding: %w", err)
-		}
-		result := tx.Model(&channelruntime.ConversationMapping{}).Where(
-			"id = ? AND installation_id = ? AND organization_id = ? AND workspace_id = ?",
-			binding.ConversationMappingID, binding.InstallationID, scope.OrganizationID, scope.WorkspaceID,
-		).Updates(map[string]any{
-			"local_conversation_id": nil, "last_event_at": nil, "updated_at": time.Now().UTC(),
-		})
-		if result.Error != nil {
-			return fmt.Errorf("reset external conversation mapping: %w", result.Error)
-		}
-		if result.RowsAffected != 1 {
-			return ErrChannelConflict
 		}
 		return nil
 	})

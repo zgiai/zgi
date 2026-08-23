@@ -186,8 +186,9 @@ type RunRequest struct {
 }
 
 // RuntimeTool is a first-party capability owned by the chat runtime rather
-// than an installable Skill. Its handler must return only safe, content-free
-// arguments and results because they are persisted in traces.
+// than an installable Skill. Arguments and Result must be safe and
+// content-free because they are persisted in traces. ModelResult, when set, is
+// delivered to the current model turn only and is never retained in a trace.
 type RuntimeTool struct {
 	Definition adapter.Tool
 	SkillID    string
@@ -198,6 +199,7 @@ type RuntimeToolResult struct {
 	Status      string
 	Arguments   map[string]interface{}
 	Result      map[string]interface{}
+	ModelResult map[string]interface{}
 	Error       error
 	Recoverable bool
 }

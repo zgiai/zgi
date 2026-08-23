@@ -241,22 +241,21 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{Enabled: false})
 	} else {
 		digitalHumanRuntime := InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{
-			DB:                   db,
-			LLMClient:            serviceContainer.GetLLMClient(),
-			FileService:          serviceContainer.GetFileService(),
-			ContentExtractor:     serviceContainer.GetContentExtractor(),
-			OrganizationService:  serviceContainer.GetOrganizationService(),
-			ToolEngine:           serviceContainer.GetToolEngine(),
-			ToolManager:          serviceContainer.GetToolManager(),
-			TaskManager:          serviceContainer.GetTaskManager(),
-			TaskRegistry:         serviceContainer.GetTaskHandlerRegistry(),
-			Scheduler:            serviceContainer.GetScheduler(),
-			ManifestResolver:     integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
-			IntegrationExecutor:  serviceContainer.GetIntegrationExecutor(),
-			IntegrationRegistry:  serviceContainer.GetIntegrationRegistry(),
-			ConnectionRepository: serviceContainer.GetIntegrationConnectionRepository(),
-			ConnectionResolver:   serviceContainer.GetIntegrationRuntimeConnectionResolver(),
+			DB:                  db,
+			LLMClient:           serviceContainer.GetLLMClient(),
+			FileService:         serviceContainer.GetFileService(),
+			ContentExtractor:    serviceContainer.GetContentExtractor(),
+			OrganizationService: serviceContainer.GetOrganizationService(),
+			ToolEngine:          serviceContainer.GetToolEngine(),
+			ToolManager:         serviceContainer.GetToolManager(),
+			TaskManager:         serviceContainer.GetTaskManager(),
+			TaskRegistry:        serviceContainer.GetTaskHandlerRegistry(),
+			Scheduler:           serviceContainer.GetScheduler(),
+			ManifestResolver:    integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
+			ConnectionResolver:  serviceContainer.GetIntegrationRuntimeConnectionResolver(),
+			CredentialCipher:    serviceContainer.GetIntegrationCredentialCipher(),
 		})
+		serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
 		RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
 			Enabled: true, Service: serviceContainer.GetDigitalHumanService(), Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
 			AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),

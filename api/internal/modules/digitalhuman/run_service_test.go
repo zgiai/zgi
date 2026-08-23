@@ -3,6 +3,7 @@ package digitalhuman
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -107,6 +108,60 @@ func TestRuntimeServiceReconcilesCompletedChatMessageWithoutRerunningModel(t *te
 	}
 }
 
+func TestRuntimeServiceGetRunRuntimeLogProjectsModelAndToolSteps(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	messageID, conversationID := uuid.New(), uuid.New()
+	chat := &fakeDigitalHumanChat{recoveryMessage: &runtimemodel.Message{
+		ID:             messageID,
+		ConversationID: conversationID,
+		Query:          "calculate",
+		Answer:         "4",
+		Status:         runtimemodel.MessageStatusCompleted,
+		ModelName:      "test-model",
+		Metadata: map[string]interface{}{
+			"model_invocations": []interface{}{map[string]interface{}{
+				"kind": "model_call", "phase": "skill_planning", "status": "success",
+				"request":    map[string]interface{}{"model": "test-model", "messages": []interface{}{map[string]interface{}{"role": "user", "content": "calculate"}}},
+				"response":   map[string]interface{}{"message": map[string]interface{}{"role": "assistant", "content": "calling calculator"}},
+				"runtime_id": "model_call:skill_planning:0:1",
+			}},
+			"skill_invocations": []interface{}{map[string]interface{}{
+				"kind": "tool_call", "skill_id": "calculator", "tool_name": "calculate", "status": "success",
+				"arguments": map[string]interface{}{"expression": "2+2", "api_key": "must-not-leak"},
+				"result":    map[string]interface{}{"value": 4}, "runtime_id": "tool_call:calculator:calculate#1",
+			}},
+		},
+	}}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID := testRunScope(), uuid.New()
+	runID := uuid.New()
+	store.runs[runID] = &Run{
+		ID: runID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		DigitalHumanID: digitalHumanID, MessageID: &messageID, ConversationID: &conversationID,
+	}
+
+	log, err := service.GetRunRuntimeLog(t.Context(), scope, digitalHumanID, runID)
+	if err != nil {
+		t.Fatalf("GetRunRuntimeLog() error = %v", err)
+	}
+	if log.Detail == nil || log.Detail.ModelName != "test-model" || len(log.Steps) != 3 {
+		t.Fatalf("runtime log = %#v, want detail and model/tool/answer steps", log)
+	}
+	if log.Steps[0].Type != "model_call" || log.Steps[1].Type != "tool_call" || log.Steps[2].Type != "model_answer" {
+		t.Fatalf("runtime step order = %#v", log.Steps)
+	}
+	encoded, err := json.Marshal(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("must-not-leak")) {
+		t.Fatalf("runtime log leaked a credential: %s", encoded)
+	}
+	if chat.caller.Type != runtimemodel.ConversationCallerDigitalHuman || chat.caller.ID == nil || *chat.caller.ID != digitalHumanID {
+		t.Fatalf("runtime log caller = %#v", chat.caller)
+	}
+}
+
 func TestRuntimeServiceExecuteUsesDigitalHumanCallerAndNoLegacyMemory(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)
@@ -168,8 +223,16 @@ func TestRuntimeServiceEnsuresReservedConversationForChannelInvocation(t *testin
 	if chat.ensureCalls != 1 || chat.ensuredConversationID != conversationID {
 		t.Fatalf("ensured conversation = %s after %d calls, want %s", chat.ensuredConversationID, chat.ensureCalls, conversationID)
 	}
+	if chat.caller.Source != digitalHumanChannelConversationSource {
+		t.Fatalf("channel conversation source = %q, want %q", chat.caller.Source, digitalHumanChannelConversationSource)
+	}
 	if chat.request.ConversationID != conversationID.String() {
 		t.Fatalf("prepared conversation = %q, want %s", chat.request.ConversationID, conversationID)
+	}
+	if chat.request.HistoryPolicy == nil || chat.request.HistoryPolicy.Mode != runtimedto.ConversationHistoryModeSupplemental ||
+		chat.request.HistoryPolicy.MaxTurns != channelFormalHistoryTurns ||
+		len(chat.request.HistoryPolicy.ExcludedTexts) != 1 || chat.request.HistoryPolicy.ExcludedTexts[0] != "continue the private chat" {
+		t.Fatalf("channel history policy = %#v", chat.request.HistoryPolicy)
 	}
 }
 
@@ -343,7 +406,14 @@ func TestRuntimeServiceRejectsTamperedSnapshotBeforeChatRuntime(t *testing.T) {
 func TestRuntimeServiceListsOnlySafeDigitalHumanSkills(t *testing.T) {
 	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
 	chat := &fakeDigitalHumanChat{skills: []skills.SkillDiscoveryMetadata{
-		{ID: skills.SkillTime, Name: "Current time", Description: "Read the current time", Enabled: true, Status: skills.SkillStatusActive},
+		{
+			ID: skills.SkillTime, Name: "Current time", Description: "Read the current time",
+			Display: skills.SkillDisplayMetadata{
+				Icon: "clock", Label: map[string]string{"zh_Hans": "时间"},
+				Description: map[string]string{"zh_Hans": "查询当前时间。"},
+			},
+			Enabled: true, Status: skills.SkillStatusActive,
+		},
 		{ID: skills.SkillAgentMemory, Name: "Agent memory", Enabled: true, Status: skills.SkillStatusActive},
 		{ID: "broken", Name: "Broken", Enabled: true, Status: skills.SkillStatusInvalid},
 	}}
@@ -357,6 +427,10 @@ func TestRuntimeServiceListsOnlySafeDigitalHumanSkills(t *testing.T) {
 	if result.Total != 1 || len(result.Items) != 1 || result.Items[0].ResourceID != skills.SkillTime ||
 		result.Items[0].ResourceRevision == "" || !result.Items[0].Available {
 		t.Fatalf("skill candidates = %#v, want one safe time skill", result)
+	}
+	display, ok := result.Items[0].Metadata["display"].(skills.SkillDisplayMetadata)
+	if !ok || display.Icon != "clock" || display.Label["zh_Hans"] != "时间" {
+		t.Fatalf("skill candidate display = %#v, want localized display metadata", result.Items[0].Metadata["display"])
 	}
 }
 
@@ -651,12 +725,13 @@ func (c *fakeDigitalHumanChat) RunPreparedStream(ctx context.Context, _ *chatrun
 	}, nil
 }
 
-func (c *fakeDigitalHumanChat) GetMessageByCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
+func (c *fakeDigitalHumanChat) GetMessageByCaller(_ context.Context, _ chatruntime.Scope, caller chatruntime.Caller, _ uuid.UUID) (*runtimemodel.Message, *runtimemodel.Conversation, error) {
 	c.getMessageCalls++
+	c.caller = caller
 	if c.recoveryMessage == nil {
 		return nil, nil, errors.New("message not found")
 	}
-	return c.recoveryMessage, &runtimemodel.Conversation{}, nil
+	return c.recoveryMessage, &runtimemodel.Conversation{ID: c.recoveryMessage.ConversationID}, nil
 }
 
 func (c *fakeDigitalHumanChat) StopMessage(context.Context, chatruntime.Scope, uuid.UUID) (*runtimemodel.Message, error) {
@@ -675,7 +750,7 @@ type fakeExecutionResolver struct {
 func (r fakeExecutionResolver) Resolve(_ context.Context, event invocation.Event, _ *uuid.UUID) (*ResolvedExecution, error) {
 	snapshot := ExecutionSnapshot{
 		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: uuid.New(),
-		Name: "Atlas", Persona: "Researcher", Rules: []string{"cite evidence"}, Model: "test-model",
+		IdentityName: "Atlas", Persona: "Researcher", Rules: []string{"cite evidence"}, Model: "test-model",
 		UseUserMemory: false, UseAgentMemory: false, ResolvedAt: r.now,
 	}
 	if r.channelPolicy != nil {

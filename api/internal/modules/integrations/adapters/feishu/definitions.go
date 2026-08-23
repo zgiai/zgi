@@ -17,26 +17,28 @@ const (
 	OrganizationOAuthAuthMethodID = "organization_feishu_user_oauth"
 	TenantAppAuthMethodID         = "feishu_tenant_app"
 
-	ScopeOfflineAccess = "offline_access"
-	ScopeDriveRetrieve = "space:document:retrieve"
-	ScopeDriveRead     = "drive:drive:readonly"
-	ScopeDriveWrite    = "drive:drive"
-	ScopeDocumentRead  = "docx:document:readonly"
-	ScopeDocumentWrite = "docx:document"
-	ScopeMessage       = "im:message"
-	ScopeMessageRead   = "im:message:readonly"
-	ScopeMessageLegacy = "im:message.history:readonly"
-	ScopeSendAsUser    = "im:message.send_as_user"
-	ScopeSendAsBot     = "im:message:send_as_bot"
-	ScopeContactSearch = "contact:user:search"
-	ScopeChatRead      = "im:chat:read"
-	ScopeChatReadOnly  = "im:chat:readonly"
-	ScopeChat          = "im:chat"
-	ScopeCalendarRead  = "calendar:calendar:read"
-	ScopeCalendarRO    = "calendar:calendar:readonly"
-	ScopeCalendarWrite = "calendar:calendar"
-	ScopeEventRead     = "calendar:calendar.event:read"
-	ScopeEventCreate   = "calendar:calendar.event:create"
+	ScopeOfflineAccess    = "offline_access"
+	ScopeDriveRetrieve    = "space:document:retrieve"
+	ScopeDriveRead        = "drive:drive:readonly"
+	ScopeDriveWrite       = "drive:drive"
+	ScopeDocumentRead     = "docx:document:readonly"
+	ScopeDocumentWrite    = "docx:document"
+	ScopeMessage          = "im:message"
+	ScopeMessageRead      = "im:message:readonly"
+	ScopeMessageLegacy    = "im:message.history:readonly"
+	ScopeGroupMessageRead = "im:message.group_msg"
+	ScopeSendAsUser       = "im:message.send_as_user"
+	ScopeSendAsBot        = "im:message:send_as_bot"
+	ScopeContactSearch    = "contact:user:search"
+	ScopeChatRead         = "im:chat:read"
+	ScopeChatReadOnly     = "im:chat:readonly"
+	ScopeChat             = "im:chat"
+	ScopeChatMembersRead  = "im:chat.members:read"
+	ScopeCalendarRead     = "calendar:calendar:read"
+	ScopeCalendarRO       = "calendar:calendar:readonly"
+	ScopeCalendarWrite    = "calendar:calendar"
+	ScopeEventRead        = "calendar:calendar.event:read"
+	ScopeEventCreate      = "calendar:calendar.event:create"
 
 	ActionGetAccount      = "feishu.account.get"
 	ActionListDriveFiles  = "feishu.drive.list"
@@ -45,6 +47,8 @@ const (
 	ActionListChats       = "feishu.chat.list"
 	ActionListCalendars   = "feishu.calendar.list"
 	ActionListMessages    = "feishu.message.list"
+	ActionGetMessage      = "feishu.message.get"
+	ActionListChatMembers = "feishu.chat.members.list"
 	ActionListEvents      = "feishu.calendar.event.list"
 	ActionCreateEvent     = "feishu.calendar.event.create"
 	ActionSendUserMessage = "feishu.message.send_user"
@@ -177,6 +181,13 @@ func ProviderDefinition() integrations.ProviderDefinition {
 				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessRead, Broad: true,
 			},
 			{
+				ID: ScopeGroupMessageRead, Label: "Read group messages",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Read group messages", integrations.LocaleSimplifiedChinese: "读取群聊消息",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessRead,
+			},
+			{
 				ID: ScopeSendAsUser, Label: "Send messages as the user",
 				LabelI18n: integrations.LocalizedText{
 					integrations.LocaleEnglishUS: "Send messages as the user", integrations.LocaleSimplifiedChinese: "以用户身份发送消息",
@@ -217,6 +228,13 @@ func ProviderDefinition() integrations.ProviderDefinition {
 					integrations.LocaleEnglishUS: "Read and update chats", integrations.LocaleSimplifiedChinese: "读取与更新群聊",
 				},
 				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessWrite, Broad: true,
+			},
+			{
+				ID: ScopeChatMembersRead, Label: "Read chat member names",
+				LabelI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS: "Read chat member names", integrations.LocaleSimplifiedChinese: "读取群成员名称",
+				},
+				Category: integrations.ProviderScopeCategoryProvider, Access: integrations.ProviderScopeAccessRead,
 			},
 			{
 				ID: ScopeCalendarRead, Label: "Read calendar information",
@@ -416,6 +434,7 @@ func tenantAppAuthMethod() integrations.AuthMethodDefinition {
 		AcquisitionStrategy: integrations.AuthAcquisitionStrategyManualForm,
 		LifecycleStrategy:   integrations.AuthLifecycleStrategyExchangeOnDemand,
 		RequestAuthStrategy: integrations.RequestAuthStrategyBearerHeader,
+		ScopeEvidence:       integrations.AuthScopeEvidenceConnectorDeclared,
 		Label:               "Feishu tenant app",
 		LabelI18n: integrations.LocalizedText{
 			integrations.LocaleEnglishUS:         "Feishu tenant app",
@@ -498,10 +517,10 @@ func feishuTenantAppSetupGuide() *integrations.AuthSetupGuideDefinition {
 					integrations.LocaleEnglishUS:         "Enable only the required app permissions",
 					integrations.LocaleSimplifiedChinese: "仅开通所需应用身份权限",
 				},
-				Description: "Enable the application-identity permissions required by the bot actions you plan to use, then publish the app changes when Feishu requires it.",
+				Description: "For group context, enable im:message:readonly, im:message.group_msg, and im:chat.members:read for the application identity. Also enable the permissions required by the other bot actions you plan to use, then publish the app changes.",
 				DescriptionI18n: integrations.LocalizedText{
-					integrations.LocaleEnglishUS:         "Enable the application-identity permissions required by the bot actions you plan to use, then publish the app changes when Feishu requires it.",
-					integrations.LocaleSimplifiedChinese: "只开通计划使用的机器人操作所需应用身份权限，并在飞书要求时发布应用版本。",
+					integrations.LocaleEnglishUS:         "For group context, enable im:message:readonly, im:message.group_msg, and im:chat.members:read for the application identity. Also enable the permissions required by the other bot actions you plan to use, then publish the app changes.",
+					integrations.LocaleSimplifiedChinese: "群聊上下文需要为应用身份开通 im:message:readonly、im:message.group_msg 与 im:chat.members:read；其他能力按需开通，并在修改后发布应用版本。",
 				},
 			},
 			{
@@ -687,6 +706,48 @@ func Actions() []integrations.ActionDefinition {
 			},
 		),
 		readAction(
+			ActionGetMessage, "get_feishu_message", "Get Feishu message", "读取指定飞书消息",
+			"Read one Feishu message by its provider message ID.",
+			"按消息 ID 读取一条飞书消息。",
+			strictObjectSchema(map[string]interface{}{
+				"message_id": localizedSchema(boundedStringSchema(255), "Message ID", "消息 ID"),
+			}, []string{"message_id"}),
+			strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"messages": messageListOutputSchema()["properties"].(map[string]interface{})["messages"],
+			}, []string{"provider", "request_id", "messages"}),
+			[]string{ScopeMessageRead},
+			integrations.LocalizedLabelMap{
+				ScopeMessageRead:   {integrations.LocaleEnglishUS: "Read message history", integrations.LocaleSimplifiedChinese: "读取消息历史"},
+				ScopeMessageLegacy: {integrations.LocaleEnglishUS: "Read message history (legacy)", integrations.LocaleSimplifiedChinese: "读取消息历史（兼容权限）"},
+				ScopeMessage:       {integrations.LocaleEnglishUS: "Read and send messages", integrations.LocaleSimplifiedChinese: "读取与发送消息"},
+			},
+		),
+		readAction(
+			ActionListChatMembers, "list_feishu_chat_members", "List Feishu chat members", "读取飞书群成员",
+			"Read a bounded page of member names from one visible Feishu chat.",
+			"读取一个当前应用可见群聊中的一页成员名称。",
+			strictObjectSchema(map[string]interface{}{
+				"chat_id": localizedSchema(boundedStringSchema(255), "Chat ID", "群聊 ID"),
+				"page_size": localizedSchema(
+					map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 100, "default": 100},
+					"Results per page", "每页数量",
+				),
+				"page_token": localizedSchema(boundedStringSchema(1024), "Next page token", "下一页 Token"),
+			}, []string{"chat_id"}),
+			strictObjectSchema(map[string]interface{}{
+				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
+				"members": map[string]interface{}{"type": "array", "maxItems": 100, "items": strictObjectSchema(map[string]interface{}{
+					"member_id": boundedStringSchema(128), "name": boundedStringSchema(500),
+				}, []string{"member_id", "name"})},
+				"next_page_token": boundedStringSchema(1024), "has_more": map[string]interface{}{"type": "boolean"},
+			}, []string{"provider", "request_id", "members", "next_page_token", "has_more"}),
+			[]string{ScopeChatMembersRead},
+			integrations.LocalizedLabelMap{ScopeChatMembersRead: {
+				integrations.LocaleEnglishUS: "Read chat member names", integrations.LocaleSimplifiedChinese: "读取群成员名称",
+			}},
+		),
+		readAction(
 			ActionListCalendars, "list_feishu_calendars", "List Feishu calendars", "列出飞书日历",
 			"List calendars visible to the connected user or tenant application.",
 			"列出当前用户或企业应用可见的日历。",
@@ -786,12 +847,18 @@ func Actions() []integrations.ActionDefinition {
 			actions[index].RequiredAnyScopes = []string{ScopeCalendarRead, ScopeCalendarRO, ScopeCalendarWrite}
 			actions[index].PreferredScopes = []string{ScopeCalendarRead}
 			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOrTenantAppMethods...)
-		case ActionListMessages:
+		case ActionListMessages, ActionGetMessage:
 			actions[index].RequiredScopes = nil
 			actions[index].RequiredAnyScopes = []string{ScopeMessageRead, ScopeMessageLegacy, ScopeMessage}
 			actions[index].PreferredScopes = []string{ScopeMessageRead}
 			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOrTenantAppMethods...)
-			actions[index].PreparationHints = []integrations.ActionPreparationHint{feishuChatPreparationHint("chat_id")}
+			if actions[index].ID == ActionListMessages {
+				actions[index].PreparationHints = []integrations.ActionPreparationHint{feishuChatPreparationHint("chat_id")}
+			}
+			actions[index].SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromAPI}
+		case ActionListChatMembers:
+			actions[index].SupportedAuthMethodIDs = append([]string(nil), userOrTenantAppMethods...)
+			actions[index].SupportedCallers = []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromAgent, tools.ToolInvokeFromAPI}
 		case ActionListEvents:
 			actions[index].RequiredScopes = nil
 			actions[index].RequiredAnyScopes = []string{ScopeEventRead, ScopeCalendarRO, ScopeCalendarWrite}
@@ -1023,11 +1090,12 @@ func messageListOutputSchema() map[string]interface{} {
 				"chat_id": boundedStringSchema(255), "message_type": boundedStringSchema(64),
 				"text": boundedStringSchema(4000), "sender_id": boundedStringSchema(128),
 				"sender_type": boundedStringSchema(64), "create_time": boundedStringSchema(64),
-				"update_time": boundedStringSchema(64), "deleted": map[string]interface{}{"type": "boolean"},
+				"sender_is_self": map[string]interface{}{"type": "boolean"},
+				"update_time":    boundedStringSchema(64), "deleted": map[string]interface{}{"type": "boolean"},
 				"updated": map[string]interface{}{"type": "boolean"},
 			}, []string{
 				"message_id", "root_id", "parent_id", "thread_id", "chat_id", "message_type", "text",
-				"sender_id", "sender_type", "create_time", "update_time", "deleted", "updated",
+				"sender_id", "sender_type", "sender_is_self", "create_time", "update_time", "deleted", "updated",
 			}),
 		},
 		"next_page_token": boundedStringSchema(1024), "has_more": map[string]interface{}{"type": "boolean"},

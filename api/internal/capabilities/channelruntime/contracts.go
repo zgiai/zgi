@@ -4,6 +4,7 @@ package channelruntime
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,36 +22,73 @@ var (
 	ErrDeliveryOutcomeUnknown = errors.New("channel delivery outcome is unknown")
 )
 
-// SecurityMaterial is request-scoped provider secret material. It must never be
-// serialized, cached, logged, or persisted by channelruntime consumers.
-type SecurityMaterial struct {
-	VerificationToken string
-	EncryptKey        string
+// ResolvedChannelCredential is request-scoped provider secret material. Values
+// are owned by the recipient and must never be serialized, cached, logged, or
+// persisted by channelruntime consumers.
+type ResolvedChannelCredential struct {
+	Values  map[string]string
+	Version int
 }
 
-// Destroy clears request-scoped provider secret material after verification.
-func (material *SecurityMaterial) Destroy() {
-	if material == nil {
+// Destroy clears request-scoped provider secret material after use.
+func (credential *ResolvedChannelCredential) Destroy() {
+	if credential == nil {
 		return
 	}
-	material.VerificationToken = ""
-	material.EncryptKey = ""
+	for key := range credential.Values {
+		credential.Values[key] = ""
+		delete(credential.Values, key)
+	}
+	credential.Version = 0
 }
 
-// WebhookRequest contains the exact callback bytes and authentication headers.
+// WebhookRequest contains one bounded HTTP callback. Headers and Query are
+// request-scoped provider metadata and must not be persisted or logged.
 type WebhookRequest struct {
 	Body       []byte
-	Timestamp  string
-	Nonce      string
-	Signature  string
+	Headers    http.Header
+	Query      map[string][]string
 	ReceivedAt time.Time
 }
 
+// WebhookResponse is a provider-owned HTTP response. It is safe to send to the
+// provider and must not contain credentials or internal identifiers.
+type WebhookResponse struct {
+	StatusCode int
+	Headers    http.Header
+	Body       []byte
+}
+
 // VerifiedWebhook is owned by the caller and contains decrypted provider JSON.
-// Challenge is non-empty only for provider URL verification requests.
+// ImmediateResponse is set when the provider expects a verification response
+// and the callback must not enter the DigitalHuman runtime.
 type VerifiedWebhook struct {
-	Body      []byte
-	Challenge string
+	Body              []byte
+	ImmediateResponse *WebhookResponse
+}
+
+// WakeReason describes why a normalized message may wake a runtime subject.
+// Providers determine the reason; DigitalHuman orchestration only applies the
+// configured policy to this normalized value.
+type WakeReason string
+
+const (
+	WakeReasonNone          WakeReason = "none"
+	WakeReasonDirectMessage WakeReason = "direct_message"
+	WakeReasonMention       WakeReason = "mention"
+	WakeReasonReplyToSelf   WakeReason = "reply_to_self"
+)
+
+// InstallationIdentity is the provider-neutral identity of one installed bot.
+type InstallationIdentity struct {
+	ExternalTenantID string
+	ExternalSelfID   string
+}
+
+// NormalizationContext contains installation-owned identity required to
+// classify mentions and replies without leaking provider semantics upstream.
+type NormalizationContext struct {
+	Identity InstallationIdentity
 }
 
 // ConversationType is the provider-neutral shape of a channel conversation.
@@ -77,11 +115,175 @@ type InboundMessage struct {
 	ExternalTenantID       string
 	ExternalConversationID string
 	ExternalThreadID       string
+	RootMessageID          string
+	ParentMessageID        string
+	ThreadID               string
 	ConversationType       ConversationType
 	SenderExternalID       string
-	Text                   string
-	Mentions               []Mention
-	OccurredAt             time.Time
+	// SenderDisplayName is a bounded provider-supplied label for the sender of
+	// the current trigger. It is optional and must never be used as identity.
+	SenderDisplayName string
+	Text              string
+	Mentions          []Mention
+	WakeReason        WakeReason
+	// MentionOnly is true when the provider message contains one or more
+	// mentions but no remaining user-authored text after mention placeholders
+	// are removed. It is a wake signal, not an inferred user task.
+	MentionOnly bool
+	OccurredAt  time.Time
+}
+
+// ContextStatus describes how much provider context could be prepared for one
+// channel invocation. It is intentionally provider-neutral.
+type ContextStatus string
+
+const (
+	ContextStatusComplete    ContextStatus = "complete"
+	ContextStatusPartial     ContextStatus = "partial"
+	ContextStatusUnavailable ContextStatus = "unavailable"
+)
+
+// ChannelAuthor identifies one sender inside a single provider conversation.
+// ExternalID is for adapter-side correlation only and must not be rendered into
+// model prompts or persisted in run traces.
+type ChannelAuthor struct {
+	ExternalID string
+	Label      string
+	// IsSelf describes the sender's relationship to the DigitalHuman that owns
+	// the current run. It does not classify the sender as a person or a bot.
+	IsSelf bool
+}
+
+// ChannelContextMessage is one bounded, normalized historical message.
+type ChannelContextMessage struct {
+	MessageID       string
+	RootMessageID   string
+	ParentMessageID string
+	ThreadID        string
+	Author          ChannelAuthor
+	Text            string
+	MessageType     string
+	OccurredAt      time.Time
+	Edited          bool
+	Deleted         bool
+}
+
+// ChannelContextRequest is created by the server for one invocation. Provider
+// adapters must not accept conversation or installation identifiers supplied by
+// a model tool call.
+type ChannelContextRequest struct {
+	OrganizationID         uuid.UUID
+	WorkspaceID            uuid.UUID
+	ActorID                uuid.UUID
+	InstallationID         uuid.UUID
+	ConnectionID           uuid.UUID
+	Subject                runtimeidentity.SubjectRef
+	RunID                  uuid.UUID
+	ExternalConversationID string
+	CurrentMessageID       string
+	RootMessageID          string
+	ParentMessageID        string
+	ThreadID               string
+	CurrentSenderID        string
+	// MentionOnly tells the runtime that the current query is only a channel
+	// wake signal. The model must interpret the attributed conversation itself;
+	// the server must not synthesize or select a candidate task.
+	MentionOnly bool
+	OccurredAt  time.Time
+	// After is a selection-priority hint for messages sent after the previous
+	// successful channel delivery. Providers must not use it as a hard history
+	// query boundary because earlier nearby messages may still be relevant.
+	After     *time.Time
+	PageToken string
+	Limit     int
+}
+
+// ChannelContextPack contains historical context plus content-free diagnostics.
+// Request IDs may be persisted for diagnostics; Messages and author IDs must not.
+type ChannelContextPack struct {
+	Status             ContextStatus
+	CurrentAuthor      ChannelAuthor
+	Messages           []ChannelContextMessage
+	NextPageToken      string
+	TruncatedReason    string
+	ProviderRequestIDs []string
+	ErrorCode          string
+}
+
+// ContextReader is an optional provider capability. Adapters that do not
+// implement it continue to support inbound and outbound channel delivery.
+type ContextReader interface {
+	ReadContext(context.Context, ChannelContextRequest) (*ChannelContextPack, error)
+}
+
+// ConnectionSpec describes an optional Connection Center credential accepted
+// by a provider. DigitalHuman does not interpret provider-specific identifiers.
+type ConnectionSpec struct {
+	IntegrationID string
+	DriverID      string
+	AuthMethodID  string
+}
+
+// Provisioner owns provider-specific credential validation, merging, and
+// installation identity discovery. Returned maps are owned by the caller.
+type Provisioner interface {
+	PrepareCredentials(current, updates map[string]string) (map[string]string, error)
+	ResolveIdentity(context.Context, ResolvedChannelCredential) (InstallationIdentity, error)
+	ConnectionSpec() ConnectionSpec
+}
+
+// ProviderCapabilities declares optional channel behavior without requiring
+// provider-name branches in DigitalHuman orchestration.
+type ProviderCapabilities struct {
+	ContextRead bool
+	Edit        bool
+	Retract     bool
+}
+
+// ReceiverRequest contains one installation-scoped, request-owned credential
+// lease for a provider-managed inbound connection. Receiver implementations
+// must return when Context is cancelled and must not retain Credential after
+// Run returns.
+type ReceiverRequest struct {
+	InstallationID uuid.UUID
+	Identity       InstallationIdentity
+	Credential     ResolvedChannelCredential
+	OnConnected    func()
+}
+
+// InboundMessageHandler accepts a normalized provider message. Returning an
+// error asks transports with acknowledgement semantics to retry the message.
+type InboundMessageHandler func(context.Context, *InboundMessage) error
+
+// Receiver is an optional long-lived inbound transport. It is deliberately
+// independent from HTTP webhooks so providers can use WebSocket/Stream modes
+// without leaking transport details into DigitalHuman orchestration.
+type Receiver interface {
+	Mode(ResolvedChannelCredential) string
+	Run(context.Context, ReceiverRequest, InboundMessageHandler) error
+}
+
+// ReceiverConnectionState is the safe, credential-free state exposed to the
+// console for one channel installation.
+type ReceiverConnectionState string
+
+const (
+	ReceiverStateNotApplicable ReceiverConnectionState = "not_applicable"
+	ReceiverStatePending       ReceiverConnectionState = "pending"
+	ReceiverStateConnecting    ReceiverConnectionState = "connecting"
+	ReceiverStateConnected     ReceiverConnectionState = "connected"
+	ReceiverStateDisconnected  ReceiverConnectionState = "disconnected"
+	ReceiverStateError         ReceiverConnectionState = "error"
+)
+
+// ReceiverStatus contains only product-facing connection diagnostics. Error
+// codes are stable internal categories and never contain provider responses or
+// credentials.
+type ReceiverStatus struct {
+	Mode      string                  `json:"mode"`
+	State     ReceiverConnectionState `json:"state"`
+	ErrorCode string                  `json:"error_code,omitempty"`
+	UpdatedAt time.Time               `json:"updated_at,omitempty"`
 }
 
 // DeliveryRequest is the immutable intent passed to a provider adapter.
@@ -110,8 +312,10 @@ type DeliveryReceipt struct {
 // governed outbound delivery. Target resolution remains an application concern.
 type Adapter interface {
 	Provider() string
-	Verify(context.Context, WebhookRequest, SecurityMaterial) (*VerifiedWebhook, error)
-	Normalize(context.Context, *VerifiedWebhook) (*InboundMessage, error)
+	Capabilities() ProviderCapabilities
+	Verify(context.Context, WebhookRequest, ResolvedChannelCredential) (*VerifiedWebhook, error)
+	Normalize(context.Context, *VerifiedWebhook, NormalizationContext) (*InboundMessage, error)
+	Acknowledgement() WebhookResponse
 	Deliver(context.Context, DeliveryRequest) (*DeliveryReceipt, error)
 	Edit(context.Context, DeliveryRequest, string) (*DeliveryReceipt, error)
 	Retract(context.Context, DeliveryRequest, string) error

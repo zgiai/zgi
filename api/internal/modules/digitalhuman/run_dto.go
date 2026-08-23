@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"gorm.io/datatypes"
 )
 
@@ -24,6 +25,13 @@ type RunListResult struct {
 
 type RunCancelResult struct {
 	Run *Run `json:"run"`
+}
+
+// RunRuntimeLog exposes the same safe, per-step runtime projection used by
+// Agent logs while keeping the durable DigitalHuman run as the access boundary.
+type RunRuntimeLog struct {
+	Detail *dto.AgentRuntimeRunDetail `json:"detail,omitempty"`
+	Steps  []dto.AgentRuntimeStep     `json:"steps"`
 }
 
 func publicRun(run *Run) *Run {

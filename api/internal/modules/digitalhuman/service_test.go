@@ -77,7 +77,20 @@ func TestServicePublishCreatesImmutableSnapshotAndNextDraft(t *testing.T) {
 	if publishedDetail.Draft.ID == publishedDetail.Published.ID || publishedDetail.Draft.State != VersionStateDraft || publishedDetail.Draft.LockVersion != 1 {
 		t.Fatalf("next draft = %#v", publishedDetail.Draft)
 	}
-
+	if publishedDetail.Draft.Revision != publishedDetail.Published.Revision {
+		t.Fatalf("fresh draft revision = %q, published revision = %q", publishedDetail.Draft.Revision, publishedDetail.Published.Revision)
+	}
+	displayName := "Research workspace assistant"
+	publishedDetail, err = service.Update(t.Context(), scope, detail.Definition.ID, UpdateRequest{
+		ExpectedRevision: publishedDetail.Definition.Revision,
+		Name:             &displayName,
+	})
+	if err != nil {
+		t.Fatalf("Update(display metadata) error = %v", err)
+	}
+	if publishedDetail.Draft.Revision != publishedDetail.Published.Revision {
+		t.Fatalf("display metadata changed runtime revision: draft=%q published=%q", publishedDetail.Draft.Revision, publishedDetail.Published.Revision)
+	}
 	publishedPersona := publishedDetail.Published.Persona
 	publishedRevision := publishedDetail.Published.Revision
 	changedPersona := "A changed draft persona"
@@ -199,36 +212,144 @@ func TestPublishedVersionsAreNewestFirst(t *testing.T) {
 	}
 }
 
-func TestReusableRoleAndBindingsRemainPinnedAcrossDigitalHumans(t *testing.T) {
-	service, repo := newTestService(t)
+func TestRestorePublishedVersionReplacesOnlyCurrentDraft(t *testing.T) {
+	service, _ := newTestService(t)
 	scope := testScope()
-	role, err := service.CreateRoleTemplate(t.Context(), scope, CreateRoleTemplateRequest{
-		Name: "Growth researcher", Goals: []string{"Find qualified opportunities"},
-		Responsibilities: []string{"Research evidence before recommending actions"},
+	detail := createPublishableDigitalHuman(t, service, scope, "Saga")
+	firstBindings, err := service.ReplaceDraftResourceBindings(t.Context(), scope, detail.Definition.ID, ReplaceResourceBindingsRequest{
+		ExpectedDraftLockVersion: detail.Draft.LockVersion,
+		Items: []ResourceBindingInput{{
+			Type: resourcebindings.BindingTypeSkill, ResourceID: "skill.first", DisplayName: "First skill",
+			AccessMode: resourcebindings.AccessModeExecute, ResourceRevision: "skill:first:v1",
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	role, err = service.PublishRoleTemplate(t.Context(), scope, role.Template.ID, PublishRoleTemplateRequest{
-		ExpectedRevision: role.Template.Revision, ExpectedDraftLockVersion: role.Draft.LockVersion,
+	detail.Draft.LockVersion = firstBindings.DraftLockVersion
+	first, err := service.Publish(t.Context(), scope, detail.Definition.ID, PublishRequest{
+		ExpectedRevision: detail.Definition.Revision, ExpectedDraftLockVersion: detail.Draft.LockVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	secondPersona := "A second published persona"
+	secondDraft, err := service.UpdateDraft(t.Context(), scope, detail.Definition.ID, UpdateDraftRequest{
+		ExpectedLockVersion: first.Draft.LockVersion, Persona: &secondPersona,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBindings, err := service.ReplaceDraftResourceBindings(t.Context(), scope, detail.Definition.ID, ReplaceResourceBindingsRequest{
+		ExpectedDraftLockVersion: secondDraft.LockVersion,
+		Items: []ResourceBindingInput{{
+			Type: resourcebindings.BindingTypeSkill, ResourceID: "skill.second", DisplayName: "Second skill",
+			AccessMode: resourcebindings.AccessModeExecute, ResourceRevision: "skill:second:v1",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Publish(t.Context(), scope, detail.Definition.ID, PublishRequest{
+		ExpectedRevision: first.Definition.Revision, ExpectedDraftLockVersion: secondBindings.DraftLockVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changedPersona := "Unpublished work that will be replaced"
+	changedDraft, err := service.UpdateDraft(t.Context(), scope, detail.Definition.ID, UpdateDraftRequest{
+		ExpectedLockVersion: second.Draft.LockVersion, Persona: &changedPersona,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedBindings, err := service.ReplaceDraftResourceBindings(t.Context(), scope, detail.Definition.ID, ReplaceResourceBindingsRequest{
+		ExpectedDraftLockVersion: changedDraft.LockVersion,
+		Items: []ResourceBindingInput{{
+			Type: resourcebindings.BindingTypeSkill, ResourceID: "skill.draft", DisplayName: "Draft skill",
+			AccessMode: resourcebindings.AccessModeExecute, ResourceRevision: "skill:draft:v1",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	preview, err := service.PreviewVersionRestore(t.Context(), scope, detail.Definition.ID, first.Published.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.IsCurrent || !preview.WillDiscardUnpublishedChanges || preview.ImpactToken == "" || len(preview.ChangedFields) == 0 || len(preview.BindingChanges) != 2 {
+		t.Fatalf("PreviewVersionRestore() = %#v", preview)
+	}
+	restored, err := service.RestoreVersion(t.Context(), scope, detail.Definition.ID, RestoreVersionRequest{
+		VersionID: first.Published.ID, ExpectedRevision: second.Definition.Revision,
+		ExpectedDraftLockVersion: changedBindings.DraftLockVersion, ImpactToken: preview.ImpactToken,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Published == nil || restored.Published.ID != second.Published.ID {
+		t.Fatalf("active publication changed during restore: %#v", restored.Published)
+	}
+	if restored.Draft.ID != second.Draft.ID || restored.Draft.Persona != first.Published.Persona || restored.Draft.LockVersion != changedBindings.DraftLockVersion+1 {
+		t.Fatalf("restored draft = %#v", restored.Draft)
+	}
+	bindings, err := service.ListDraftResourceBindings(t.Context(), scope, detail.Definition.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings.Items) != 1 || bindings.Items[0].ResourceID != "skill.first" {
+		t.Fatalf("restored bindings = %#v", bindings.Items)
+	}
+}
+
+func TestRestorePublishedVersionRejectsChangedImpactToken(t *testing.T) {
+	service, _ := newTestService(t)
+	scope := testScope()
+	detail := createPublishableDigitalHuman(t, service, scope, "Iris")
+	published, err := service.Publish(t.Context(), scope, detail.Definition.ID, PublishRequest{
+		ExpectedRevision: detail.Definition.Revision, ExpectedDraftLockVersion: detail.Draft.LockVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.PreviewVersionRestore(t.Context(), scope, detail.Definition.ID, published.Published.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.RestoreVersion(t.Context(), scope, detail.Definition.ID, RestoreVersionRequest{
+		VersionID: published.Published.ID, ExpectedRevision: published.Definition.Revision,
+		ExpectedDraftLockVersion: published.Draft.LockVersion, ImpactToken: preview.ImpactToken + "changed",
+	})
+	if !errors.Is(err, ErrVersionRestoreImpactChanged) || !apperror.IsCode(err, AppCodeVersionRestoreImpactChanged) {
+		t.Fatalf("RestoreVersion(stale impact) error = %v", err)
+	}
+}
+
+func TestPersonaTemplatesAndBindingsRemainIndependent(t *testing.T) {
+	service, repo := newTestService(t)
+	scope := testScope()
+	template, err := service.CreatePersonaTemplate(t.Context(), scope, CreatePersonaTemplateRequest{
+		Name: "Nova", Persona: "Be evidence led", Goals: []string{"Find growth opportunities"}, Rules: []string{"Cite sources"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedPersona := "Be concise and evidence led"
+	template, err = service.UpdatePersonaTemplate(t.Context(), scope, template.ID, UpdatePersonaTemplateRequest{
+		ExpectedRevision: template.Revision,
+		Persona:          &changedPersona,
+	})
+	if err != nil || template.Persona != changedPersona || template.Revision != 2 {
+		t.Fatal(err)
+	}
+	if template.Name != "Nova" || string(template.Goals) != `["Find growth opportunities"]` {
+		t.Fatalf("persona template identity = %#v", template)
 	}
 
 	first := createPublishableDigitalHuman(t, service, scope, "Atlas")
-	second := createPublishableDigitalHuman(t, service, scope, "Nova")
-	for _, detail := range []*Detail{first, second} {
-		assigned, assignErr := service.ReplaceDraftRoleAssignments(t.Context(), scope, detail.Definition.ID, ReplaceRoleAssignmentsRequest{
-			ExpectedDraftLockVersion: detail.Draft.LockVersion,
-			Items:                    []RoleAssignmentInput{{RoleTemplateVersionID: role.Published.ID, Parameters: map[string]any{"region": "APAC"}}},
-		})
-		if assignErr != nil {
-			t.Fatal(assignErr)
-		}
-		detail.Draft.LockVersion = assigned.DraftLockVersion
-	}
-
 	bindings, err := service.ReplaceDraftResourceBindings(t.Context(), scope, first.Definition.ID, ReplaceResourceBindingsRequest{
 		ExpectedDraftLockVersion: first.Draft.LockVersion,
 		Items: []ResourceBindingInput{{
@@ -245,15 +366,6 @@ func TestReusableRoleAndBindingsRemainPinnedAcrossDigitalHumans(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	publishedAssignments, err := repo.ListRoleAssignments(t.Context(), scope, first.Definition.ID, first.Published.ID)
-	if err != nil || len(publishedAssignments) != 1 || publishedAssignments[0].RoleTemplateVersionID != role.Published.ID {
-		t.Fatalf("published assignments = %#v, %v", publishedAssignments, err)
-	}
-	nextDraftAssignments, err := repo.ListRoleAssignments(t.Context(), scope, first.Definition.ID, first.Draft.ID)
-	if err != nil || len(nextDraftAssignments) != 1 || nextDraftAssignments[0].ID == publishedAssignments[0].ID {
-		t.Fatalf("next draft assignments = %#v, %v", nextDraftAssignments, err)
 	}
 
 	versionID := first.Published.ID
@@ -283,6 +395,12 @@ func TestReusableRoleAndBindingsRemainPinnedAcrossDigitalHumans(t *testing.T) {
 	})
 	if err != nil || !decision.Allowed {
 		t.Fatalf("published snapshot changed with next draft: %#v, %v", decision, err)
+	}
+	if err := service.DeletePersonaTemplate(t.Context(), scope, template.ID, template.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.GetPersonaTemplate(t.Context(), scope, template.ID); !apperror.IsCode(err, AppCodePersonaTemplateNotFound) {
+		t.Fatalf("GetPersonaTemplate(deleted) error = %v", err)
 	}
 }
 
@@ -317,7 +435,7 @@ func newTestService(t *testing.T) (*Service, *GormRepository) {
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.AutoMigrate(
-		&Definition{}, &Version{}, &RoleTemplate{}, &RoleTemplateVersion{}, &RoleAssignment{}, &ResourceBinding{},
+		&Definition{}, &Version{}, &PersonaTemplate{}, &ResourceBinding{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +450,7 @@ func testScope() Scope {
 func createPublishableDigitalHuman(t *testing.T, service *Service, scope Scope, name string) *Detail {
 	t.Helper()
 	detail, err := service.Create(t.Context(), scope, CreateRequest{
-		Name: name, Persona: "A careful research partner", Rules: []string{"Cite evidence"}, DefaultModel: "gpt-5",
+		Name: name + " workspace", IdentityName: name, Persona: "A careful research partner", Goals: []string{"Complete assigned research"}, Rules: []string{"Cite evidence"}, DefaultModel: "gpt-5",
 		MemoryPolicy: map[string]any{"enabled": false}, TriggerPolicy: map[string]any{"manual": true},
 	})
 	if err != nil {

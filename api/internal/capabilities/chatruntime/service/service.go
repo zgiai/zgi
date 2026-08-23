@@ -576,4 +576,5 @@ type chatRequestParts struct {
 	BillingSource                    string
 	ModelTurnIntent                  *AIChatModelTurnIntent
 	ModelTurnIntentError             string
+	HistoryPolicy                    *runtimedto.ConversationHistoryPolicy
 }

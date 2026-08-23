@@ -1,7 +1,6 @@
 package digitalhuman
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -26,7 +25,7 @@ func NewBrainAdapter(bindingReader resourcebindings.Reader) *BrainAdapter {
 }
 
 func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunConfig, error) {
-	if resolved == nil || resolved.Snapshot.Subject.ID == uuid.Nil || resolved.Snapshot.Revision == "" || strings.TrimSpace(resolved.Snapshot.Model) == "" {
+	if resolved == nil || resolved.Snapshot.Subject.ID == uuid.Nil || resolved.Snapshot.Revision == "" || strings.TrimSpace(resolved.Snapshot.IdentityName) == "" || strings.TrimSpace(resolved.Snapshot.Model) == "" {
 		return chatruntime.RunConfig{}, ErrInvalidRequest
 	}
 	snapshotRef := resourcebindings.SnapshotRef{
@@ -109,24 +108,14 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 
 func buildDigitalHumanSystemPrompt(snapshot ExecutionSnapshot) string {
 	sections := []string{
-		"You are " + strings.TrimSpace(snapshot.Name) + ".",
+		"Your name is " + strings.TrimSpace(snapshot.IdentityName) + ".",
 		strings.TrimSpace(snapshot.Persona),
+	}
+	if len(snapshot.Goals) > 0 {
+		sections = append(sections, "Work goals:\n- "+strings.Join(snapshot.Goals, "\n- "))
 	}
 	if len(snapshot.Rules) > 0 {
 		sections = append(sections, "Rules:\n- "+strings.Join(snapshot.Rules, "\n- "))
-	}
-	for _, role := range snapshot.Roles {
-		var goals, responsibilities []string
-		if role.Version != nil {
-			_ = json.Unmarshal(role.Version.Goals, &goals)
-			_ = json.Unmarshal(role.Version.Responsibilities, &responsibilities)
-		}
-		if len(goals) > 0 {
-			sections = append(sections, "Role goals:\n- "+strings.Join(goals, "\n- "))
-		}
-		if len(responsibilities) > 0 {
-			sections = append(sections, "Role responsibilities:\n- "+strings.Join(responsibilities, "\n- "))
-		}
 	}
 	sections = append(sections,
 		"Use only capabilities and resources present in this execution snapshot.",

@@ -84,9 +84,25 @@ func (adapter *Adapter) Execute(ctx context.Context, request integrations.Action
 		if tokenErr != nil {
 			return feishuActionResult(nil, tokenMeta, 0), tokenErr
 		}
-		output, meta, actionErr := adapter.listMessages(ctx, region, token, request.Input)
+		output, meta, actionErr := adapter.listMessages(ctx, region, token, feishuConnectionAppID(request.Connection), request.Input)
 		meta.Attempts += tokenMeta.Attempts
 		return feishuActionResult(output, meta, outputCount(output, "messages")), actionErr
+	case ActionGetMessage:
+		token, tokenMeta, tokenErr := adapter.connectionAccessToken(ctx, request.Connection, region)
+		if tokenErr != nil {
+			return feishuActionResult(nil, tokenMeta, 0), tokenErr
+		}
+		output, meta, actionErr := adapter.getMessage(ctx, region, token, feishuConnectionAppID(request.Connection), request.Input)
+		meta.Attempts += tokenMeta.Attempts
+		return feishuActionResult(output, meta, outputCount(output, "messages")), actionErr
+	case ActionListChatMembers:
+		token, tokenMeta, tokenErr := adapter.connectionAccessToken(ctx, request.Connection, region)
+		if tokenErr != nil {
+			return feishuActionResult(nil, tokenMeta, 0), tokenErr
+		}
+		output, meta, actionErr := adapter.listChatMembers(ctx, region, token, request.Input)
+		meta.Attempts += tokenMeta.Attempts
+		return feishuActionResult(output, meta, outputCount(output, "members")), actionErr
 	case ActionListCalendars:
 		token, tokenMeta, tokenErr := adapter.connectionAccessToken(ctx, request.Connection, region)
 		if tokenErr != nil {
@@ -150,6 +166,7 @@ func (adapter *Adapter) ValidateConnection(ctx context.Context, connection *inte
 			AccountID:         firstNonEmpty(tenant.Tenant.TenantKey, tenant.Tenant.DisplayID),
 			DisplayName:       firstNonEmpty(tenant.Tenant.Name, tenant.Tenant.DisplayID, tenant.Tenant.TenantKey),
 			GrantedScopes:     append([]string(nil), connection.GrantedScopes...),
+			ScopeEvidence:     integrations.AuthScopeEvidenceConnectorDeclared,
 			ProviderRequestID: firstNonEmpty(tenantMeta.RequestID, meta.RequestID),
 		}, nil
 	}
@@ -365,7 +382,7 @@ func (adapter *Adapter) listChats(ctx context.Context, region, token string, inp
 	}, meta, nil
 }
 
-func (adapter *Adapter) listMessages(ctx context.Context, region, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+func (adapter *Adapter) listMessages(ctx context.Context, region, token, selfSenderID string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
 	chatID := strings.TrimSpace(inputString(input, "chat_id"))
 	if !validFeishuToken(chatID) {
 		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu chat id is invalid", nil)
@@ -430,7 +447,8 @@ func (adapter *Adapter) listMessages(ctx context.Context, region, token string, 
 			"chat_id": bounded(message.ChatID, 255), "message_type": bounded(message.MsgType, 64),
 			"text":      normalizedMessageText(message.MsgType, message.Body.Content),
 			"sender_id": bounded(message.Sender.ID, 128), "sender_type": bounded(message.Sender.SenderType, 64),
-			"create_time": bounded(message.CreateTime, 64), "update_time": bounded(message.UpdateTime, 64),
+			"sender_is_self": selfSenderID != "" && strings.EqualFold(strings.TrimSpace(message.Sender.ID), selfSenderID),
+			"create_time":    bounded(message.CreateTime, 64), "update_time": bounded(message.UpdateTime, 64),
 			"deleted": message.Deleted, "updated": message.Updated,
 		})
 	}
@@ -438,6 +456,75 @@ func (adapter *Adapter) listMessages(ctx context.Context, region, token string, 
 		"provider": IntegrationID, "request_id": bounded(meta.RequestID, 128),
 		"messages": messages, "next_page_token": bounded(data.PageToken, 1024), "has_more": data.HasMore,
 	}, meta, nil
+}
+
+func (adapter *Adapter) getMessage(ctx context.Context, region, token, selfSenderID string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	messageID := strings.TrimSpace(inputString(input, "message_id"))
+	if !validFeishuToken(messageID) {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu message id is invalid", nil)
+	}
+	var data feishuMessagesData
+	meta, err := adapter.client.getMessage(ctx, region, token, messageID, &data)
+	if err != nil {
+		return nil, meta, err
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(meta.RequestID, 128),
+		"messages": normalizedMessages(data.Items, 1, selfSenderID),
+	}, meta, nil
+}
+
+func (adapter *Adapter) listChatMembers(ctx context.Context, region, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
+	chatID := strings.TrimSpace(inputString(input, "chat_id"))
+	if !validFeishuToken(chatID) {
+		return nil, responseMeta{}, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu chat id is invalid", nil)
+	}
+	pageSize, err := strictInputInteger(input, "page_size", 100, 1, 100)
+	if err != nil {
+		return nil, responseMeta{}, err
+	}
+	query := url.Values{"member_id_type": []string{"open_id"}, "page_size": []string{strconv.Itoa(pageSize)}}
+	if pageToken := bounded(inputString(input, "page_token"), 1024); pageToken != "" {
+		query.Set("page_token", pageToken)
+	}
+	var data feishuChatMembersData
+	meta, err := adapter.client.listChatMembers(ctx, region, token, chatID, query, &data)
+	if err != nil {
+		return nil, meta, err
+	}
+	members := make([]interface{}, 0, min(len(data.Items), pageSize))
+	for index, member := range data.Items {
+		if index >= pageSize {
+			break
+		}
+		members = append(members, map[string]interface{}{
+			"member_id": bounded(member.MemberID, 128), "name": bounded(member.Name, 500),
+		})
+	}
+	return map[string]interface{}{
+		"provider": IntegrationID, "request_id": bounded(meta.RequestID, 128), "members": members,
+		"next_page_token": bounded(data.PageToken, 1024), "has_more": data.HasMore,
+	}, meta, nil
+}
+
+func normalizedMessages(items []feishuMessage, limit int, selfSenderID string) []interface{} {
+	messages := make([]interface{}, 0, min(len(items), limit))
+	for index, message := range items {
+		if index >= limit {
+			break
+		}
+		messages = append(messages, map[string]interface{}{
+			"message_id": bounded(message.MessageID, 255), "root_id": bounded(message.RootID, 255),
+			"parent_id": bounded(message.ParentID, 255), "thread_id": bounded(message.ThreadID, 255),
+			"chat_id": bounded(message.ChatID, 255), "message_type": bounded(message.MsgType, 64),
+			"text":      normalizedMessageText(message.MsgType, message.Body.Content),
+			"sender_id": bounded(message.Sender.ID, 128), "sender_type": bounded(message.Sender.SenderType, 64),
+			"sender_is_self": selfSenderID != "" && strings.EqualFold(strings.TrimSpace(message.Sender.ID), selfSenderID),
+			"create_time":    bounded(message.CreateTime, 64), "update_time": bounded(message.UpdateTime, 64),
+			"deleted": message.Deleted, "updated": message.Updated,
+		})
+	}
+	return messages
 }
 
 func (adapter *Adapter) listCalendars(ctx context.Context, region, token string, input map[string]interface{}) (map[string]interface{}, responseMeta, error) {
@@ -675,6 +762,13 @@ func (adapter *Adapter) connectionAccessToken(ctx context.Context, connection *i
 	return token, responseMeta{}, err
 }
 
+func feishuConnectionAppID(connection *integrations.ResolvedConnection) string {
+	if !isTenantAppConnection(connection) {
+		return ""
+	}
+	return strings.TrimSpace(connection.Credentials["app_id"])
+}
+
 func (adapter *Adapter) tenantAccessToken(ctx context.Context, connection *integrations.ResolvedConnection, region string) (string, responseMeta, error) {
 	if connection == nil || !isTenantAppConnection(connection) {
 		return "", responseMeta{}, integrations.NewError(integrations.ErrorCodeConnectionInvalid, "Feishu tenant app connection is required", nil)
@@ -906,6 +1000,17 @@ type feishuMessagesData struct {
 	Items     []feishuMessage `json:"items"`
 	PageToken string          `json:"page_token"`
 	HasMore   bool            `json:"has_more"`
+}
+
+type feishuChatMembersData struct {
+	Items     []feishuChatMember `json:"items"`
+	PageToken string             `json:"page_token"`
+	HasMore   bool               `json:"has_more"`
+}
+
+type feishuChatMember struct {
+	MemberID string `json:"member_id"`
+	Name     string `json:"name"`
 }
 
 type feishuMessage struct {
