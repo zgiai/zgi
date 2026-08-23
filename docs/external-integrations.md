@@ -658,8 +658,10 @@ Available read Actions are:
 - `feishu.document.read`;
 - `feishu.contact.search`;
 - `feishu.chat.list`;
+- `feishu.chat.members.list`;
 - `feishu.calendar.list`;
 - `feishu.message.list`;
+- `feishu.message.get`;
 - `feishu.calendar.event.list`.
 
 `feishu.contact.search` is delegated-user only. Drive and document reads, plus
@@ -722,23 +724,50 @@ supported read-permission alternatives for the selected authentication method.
 Calendar-event reads require an explicit calendar and time range. Neither
 capability bypasses Feishu application availability or resource-level access.
 
+### DigitalHuman channel provider boundary
+
+DigitalHuman uses `channelruntime` as its provider-neutral IM boundary. Every
+channel provider registers a message adapter and credential provisioner, plus
+an optional context reader. The DigitalHuman domain owns installation
+lifecycle, encrypted credential envelopes, conversation mapping, wake policy,
+runtime invocation, and delivery intent. A provider owns its credential field
+rules, callback authentication and acknowledgement, message normalization,
+installation identity discovery, context reads, and outbound API calls.
+
+Callbacks use `POST /console/api/webhooks/channels/:provider/:installation_id`.
+The provider path must match the stored installation. Headers and query values
+are bounded opaque input to the registered adapter; the shared handler does not
+read platform-specific signing headers. Adding another IM platform therefore
+requires provider registration rather than a branch in DigitalHuman routing.
+Providers without context-read support can still receive and send messages and
+report context as unavailable. In that case, the current request is still
+answered normally; the runtime asks for quoted history only when the request
+actually depends on earlier provider messages.
+
 ### DigitalHuman Feishu channel
 
-The DigitalHuman channel gateway requires both `DIGITAL_HUMAN_ENABLED=true`
-and `EXTERNAL_INTEGRATIONS_ENABLED=true`. Restart the API after changing either
-flag. Configure an organization-owned **Feishu tenant app** Connection with its
-App ID, App Secret, event Verification Token, and Encrypt Key. The Connection
-must have a current organization or workspace write grant for
-`feishu.message.send_bot`, and the organization Action policy must enable that
-Action with data egress allowed.
+The DigitalHuman channel gateway requires `DIGITAL_HUMAN_ENABLED=true`.
+Restart the API after changing the flag. Configure a **Feishu tenant app** with
+its App ID, App Secret, event Verification Token, and Encrypt Key. By default,
+the encrypted credential belongs to the channel installation and does not
+create a Connection Center record. An existing organization credential from
+Connection Center may be selected instead. Channel reads and sends call Feishu
+directly and do not depend on Connection action grants, action policy, cached
+scope observations, approval, or operation receipts.
 
-From a published DigitalHuman's **Channels** page:
+For attributed group context, also grant the application identity
+`im:message:readonly`, `im:message.group_msg`, and `im:chat.members:read`, then
+publish the Feishu app version. Feishu remains the authority for these
+capabilities: each real operation verifies them at runtime, and the console
+reports that the channel capability will be verified when used.
 
-1. Select the active Feishu tenant-app Connection and name the installation.
-   ZGI verifies the tenant and bot identity through Feishu and stores the
-   discovered routing identifiers with the Connection reference. The current
-   DigitalHuman becomes the installation's default subject; callback secrets
-   remain in the encrypted Connection vault.
+From a published DigitalHuman's **External connections** page:
+
+1. Enter the Feishu application credential directly, or select an available
+   credential from Connection Center, and name the installation. ZGI verifies
+   the tenant and bot identity through Feishu and stores only encrypted secret
+   material. The current DigitalHuman becomes the installation's default
+   subject.
 2. Copy the generated webhook URL into the Feishu application's event
    subscription configuration, enable encrypted callbacks, and subscribe to
    `im.message.receive_v1`.
@@ -749,8 +778,13 @@ From a published DigitalHuman's **Channels** page:
 4. Add the bot to a test group and mention it once. The explicit mention
    atomically assigns the group to the installation's default DigitalHuman and
    processes that first mention. Ordinary group messages neither create a route
-   nor invoke the model. Installations created before default subjects were
-   introduced retain a safe discovery fallback until an owner is configured.
+   nor invoke the model.
+
+The generated webhook URL uses the backend `CONSOLE_API_URL`. Docker
+deployments may set `CONSOLE_API_URL` to the HTTPS gateway or tunnel that
+reaches the API; when it is omitted, it falls back to `PUBLIC_URL` and then to
+the backend's local base URL. This is independent from `FILES_PUBLIC_URL`,
+which is used only for generated-file links.
 
 Direct-message bindings may use **Direct message or explicit mention**. Group
 bindings always require an explicit mention of the configured bot, regardless
@@ -758,20 +792,50 @@ of the selected label; ordinary group messages are audited as ignored and do
 not create a model run. Feishu event/message identifiers form the durable
 idempotency key, so provider retries reuse one DigitalHuman run.
 
+A group mention may include a request or contain only the bot mention. A
+mention-only message is accepted as a wake signal rather than rejected as an
+empty request. ZGI does not join it to a server-selected candidate message.
+Instead, the worker supplies the bounded, attributed channel history and marks
+the current turn as mention-only; the DigitalHuman model decides whether to
+answer a clear unresolved request from any sender or ask the current requester
+one concise clarifying question. The persisted query represents the actual bot
+mention and does not invent user-authored task text.
+
 The provider conversation ID maps to a server-owned local conversation ID when
 the binding is created, including the automatic binding performed by the first
 direct message. ChatRuntime creates that reserved conversation idempotently
 before the first accepted run. This prevents concurrent first messages from
-creating separate histories. Provider message lists are reserved for explicit
-history import or gap repair; they are not the runtime source of truth and are
-not fetched on every turn.
+creating separate histories.
+
+For an accepted group mention or direct message, the webhook records only the
+trigger and queues the run. The worker then reads a bounded snapshot from the
+same Feishu chat, ending at the trigger timestamp. This provider snapshot is
+the primary conversational context. It prioritizes the replied-to message,
+root message, topic messages, messages since the DigitalHuman's previous reply,
+and nearby recent messages. Durable ChatRuntime turns remain available only as
+a small supplemental continuity window and exact provider-content duplicates
+are removed. Each historical message is rendered with a resolved member name
+or a stable per-chat alias; sender categories and raw provider user IDs are not
+supplied to the model. If the initial page is insufficient, the model may
+request an older page only through a server-issued opaque cursor for that same
+installation and chat.
+
+Fetched channel history is ephemeral. It is not appended to ChatRuntime, is not
+eligible for long-term-memory extraction, and is not stored in execution
+traces. Run diagnostics retain only status, counts, estimated tokens,
+truncation, duration, provider request IDs, and safe error classifications.
+The current mention and the DigitalHuman's formal reply continue to use the
+stable channel conversation. A failed or partially available context read does
+not fail the run; the model is instructed to identify the missing source and
+ask a focused follow-up rather than guess.
 
 The DigitalHuman run outbox and the channel delivery outbox are intentionally
-separate. A model run commits one reply intent; a channel worker then sends it
-through the governed Integration Action. A definitely failed delivery may be
-retried from the Channels page without rerunning the model. An `unknown`
-provider outcome cannot be retried automatically: verify the Feishu group
-first to avoid a duplicate reply.
+separate. A model run commits one reply intent; a channel worker then resolves
+the installation's request-scoped credential and sends it through the direct
+Feishu channel adapter. A definitely failed delivery may be retried from the
+Channels page without rerunning the model. An `unknown` provider outcome cannot
+be retried automatically: verify the Feishu group first to avoid a duplicate
+reply.
 
 Long-running turns can emit transient channel feedback. Each DigitalHuman has
 independent published switches for the processing acknowledgement and coherent
@@ -794,6 +858,30 @@ reply; expiring signed URLs are never persisted in run history or the delivery
 outbox. Self-hosted deployments must expose the file endpoint publicly. Set
 `FILES_PUBLIC_URL` to the HTTPS gateway or tunnel that serves ZGI (for example,
 `https://zgi.example.com`) when `PUBLIC_URL` remains a local-only console URL.
+
+### DigitalHuman DingTalk channel
+
+The DingTalk channel uses an enterprise internal-application robot. Enter its
+AppKey and AppSecret directly on the DigitalHuman's **External connections**
+page, or select a compatible organization credential from Connection Center.
+ZGI validates the credential with DingTalk and keeps installation-owned secret
+material encrypted.
+
+To receive messages, add robot capability to the DingTalk application and
+select **Stream** as the message-reception mode. Connect the channel in ZGI,
+then publish the DingTalk application before testing. ZGI establishes and
+maintains the outbound Stream connection automatically; no public callback URL
+or DingTalk event-subscription URL is required. Direct messages wake the
+DigitalHuman; group messages wake it only when the robot is mentioned.
+DingTalk message IDs remain the idempotency key, and each provider conversation
+maps to one stable local channel conversation.
+
+Formal replies use DingTalk's application-robot send APIs. The application
+must have the corresponding robot message-send capability and must be visible
+to the test user or group. The first release supports plain-text direct and
+group messages. It does not yet read earlier DingTalk chat history, so a
+self-contained request is answered normally while a request that depends on
+missing earlier messages may require quoted context.
 
 Lark global is intentionally not presented as a region selector. Its endpoints,
 application registration, and governance destination differ; add it later as
