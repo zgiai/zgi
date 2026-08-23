@@ -102,7 +102,7 @@ export function InputArea({
       {topNotice}
       {referenceImage ? (
         <div className="px-2 pt-1">
-          <div className="group relative inline-flex h-16 max-w-full items-center rounded-[4px] border bg-muted/30 p-1 pr-8">
+          <div className="group relative inline-flex h-16 max-w-full items-center overflow-hidden rounded-[4px] border bg-muted/30 p-1">
             <img
               src={referenceImage.url}
               alt={referenceImage.filename || t('chat.imageInput.referenceImage')}
@@ -112,7 +112,7 @@ export function InputArea({
               type="button"
               isIcon
               variant="ghost"
-              className="absolute right-1 top-1 h-6 w-6 rounded-full bg-background/80"
+              className="absolute right-1 top-1 h-6 w-6 rounded-full bg-background/90 opacity-0 shadow-sm transition-opacity hover:bg-background focus-visible:opacity-100 group-hover:opacity-100"
               onClick={() => onReferenceImageChange?.(null)}
               disabled={isSending || isReferenceUploading}
               aria-label={t('chat.imageInput.removeReference')}

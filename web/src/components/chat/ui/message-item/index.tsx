@@ -411,11 +411,12 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
 
 function getMessageReferenceImage(message: Message): { url: string; filename: string } | null {
   const inputReference = objectValue(message.inputs?.image_reference);
+  const messageDataReference = objectValue(message.messageData?.image_reference);
   const metadata = objectValue(message.messageData?.metadata);
   const imageGeneration =
     objectValue(message.messageData?.image_generation) || objectValue(metadata?.image_generation);
   const persistedReference = objectValue(imageGeneration?.reference_image);
-  const reference = inputReference || persistedReference;
+  const reference = inputReference || messageDataReference || persistedReference;
   const url = stringValue(reference?.url);
   if (!url) return null;
   return {
