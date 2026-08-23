@@ -310,9 +310,12 @@ func (f *fakeImageAssetService) DeleteGeneratedImage(_ context.Context, fileID s
 }
 
 type fakeImageReferenceFileService struct {
-	file *dto.UploadFile
-	url  string
-	err  error
+	file          *dto.UploadFile
+	url           string
+	content       []byte
+	err           error
+	downloadErr   error
+	downloadCalls int
 }
 
 func (f *fakeImageReferenceFileService) GetFileByID(context.Context, string) (*dto.UploadFile, error) {
@@ -327,6 +330,14 @@ func (f *fakeImageReferenceFileService) GetFileURL(context.Context, string) (str
 		return "", f.err
 	}
 	return f.url, nil
+}
+
+func (f *fakeImageReferenceFileService) DownloadFile(context.Context, string) ([]byte, error) {
+	f.downloadCalls++
+	if f.downloadErr != nil {
+		return nil, f.downloadErr
+	}
+	return f.content, nil
 }
 
 func TestGenerateUsesAppCreateImageWithOrganizationBillingContext(t *testing.T) {
@@ -460,11 +471,209 @@ func TestGeneratePassesReferenceImageURLToLLM(t *testing.T) {
 	if llm.lastImageReq.ReferenceImageURL != files.url {
 		t.Fatalf("ReferenceImageURL = %q, want %q", llm.lastImageReq.ReferenceImageURL, files.url)
 	}
+	if files.downloadCalls != 0 {
+		t.Fatalf("DownloadFile calls = %d, want 0 for doubao reference images", files.downloadCalls)
+	}
 	if result.ImageGeneration.ReferenceImage == nil {
 		t.Fatal("result reference image is nil")
 	}
 	if result.ImageGeneration.ReferenceImage.FileID != fileID {
 		t.Fatalf("reference file id = %q, want %q", result.ImageGeneration.ReferenceImage.FileID, fileID)
+	}
+}
+
+func TestGenerateDownloadsReferenceImageBytesForOpenAI(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	fileID := uuid.New().String()
+	workspaceIDText := workspaceID.String()
+	llm := &fakeImageLLMClient{}
+	chat := &fakeImageChatService{}
+	content := []byte("PNGDATA")
+	files := &fakeImageReferenceFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: organizationID.String(),
+			TenantID:       organizationID.String(),
+			WorkspaceID:    &workspaceIDText,
+			Name:           "reference.png",
+			Extension:      "png",
+			MimeType:       "image/png",
+		},
+		url:     "https://files.example.com/reference.png?sign=1",
+		content: content,
+	}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "openai", Name: "gpt-image-2"}}},
+		fakeRouteLister{routes: map[string][]*channelmodel.RouteQueryResult{
+			"gpt-image-2": {
+				{RouteID: uuid.New(), ChannelProvider: "openai", Models: []string{"gpt-image-2"}},
+			},
+		}},
+		llm,
+		chat,
+		&fakeImageAssetService{},
+		files,
+	)
+
+	_, err := svc.Generate(t.Context(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &workspaceID,
+	}, GenerateRequest{
+		Prompt:   "add a person",
+		Provider: "openai",
+		Model:    "gpt-image-2",
+		Options:  GenerateOptions{Size: "auto"},
+		ReferenceImage: &ReferenceImage{
+			FileID: fileID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if files.downloadCalls != 1 {
+		t.Fatalf("DownloadFile calls = %d, want 1", files.downloadCalls)
+	}
+	if llm.lastImageReq == nil {
+		t.Fatal("image request is nil")
+	}
+	if string(llm.lastImageReq.ReferenceImageBytes) != string(content) {
+		t.Fatalf("ReferenceImageBytes = %q, want %q", llm.lastImageReq.ReferenceImageBytes, content)
+	}
+	if llm.lastImageReq.ReferenceImageFilename != "reference.png" {
+		t.Fatalf("ReferenceImageFilename = %q, want reference.png", llm.lastImageReq.ReferenceImageFilename)
+	}
+	if llm.lastImageReq.ReferenceImageMimeType != "image/png" {
+		t.Fatalf("ReferenceImageMimeType = %q, want image/png", llm.lastImageReq.ReferenceImageMimeType)
+	}
+	if llm.lastImageReq.ReferenceImageURL != files.url {
+		t.Fatalf("ReferenceImageURL = %q, want %q", llm.lastImageReq.ReferenceImageURL, files.url)
+	}
+}
+
+func TestGenerateReturnsInvalidReferenceImageWhenOpenAIDownloadFails(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	fileID := uuid.New().String()
+	workspaceIDText := workspaceID.String()
+	llm := &fakeImageLLMClient{}
+	chat := &fakeImageChatService{}
+	files := &fakeImageReferenceFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: organizationID.String(),
+			TenantID:       organizationID.String(),
+			WorkspaceID:    &workspaceIDText,
+			Name:           "reference.png",
+			Extension:      "png",
+			MimeType:       "image/png",
+		},
+		url:         "https://files.example.com/reference.png?sign=1",
+		downloadErr: errors.New("download failed"),
+	}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "openai", Name: "gpt-image-2"}}},
+		fakeRouteLister{routes: map[string][]*channelmodel.RouteQueryResult{
+			"gpt-image-2": {
+				{RouteID: uuid.New(), ChannelProvider: "openai", Models: []string{"gpt-image-2"}},
+			},
+		}},
+		llm,
+		chat,
+		&fakeImageAssetService{},
+		files,
+	)
+
+	_, err := svc.Generate(t.Context(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &workspaceID,
+	}, GenerateRequest{
+		Prompt:   "add a person",
+		Provider: "openai",
+		Model:    "gpt-image-2",
+		Options:  GenerateOptions{Size: "auto"},
+		ReferenceImage: &ReferenceImage{
+			FileID: fileID,
+		},
+	})
+	if !errors.Is(err, ErrReferenceImageInvalid) {
+		t.Fatalf("Generate error = %v, want ErrReferenceImageInvalid", err)
+	}
+	if files.downloadCalls != 1 {
+		t.Fatalf("DownloadFile calls = %d, want 1", files.downloadCalls)
+	}
+	if llm.appCreateImageCalls != 0 {
+		t.Fatalf("AppCreateImage calls = %d, want 0", llm.appCreateImageCalls)
+	}
+}
+
+func TestGenerateKeepsReferenceImageURLOnlyForQwen(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	fileID := uuid.New().String()
+	workspaceIDText := workspaceID.String()
+	llm := &fakeImageLLMClient{}
+	chat := &fakeImageChatService{}
+	files := &fakeImageReferenceFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: organizationID.String(),
+			TenantID:       organizationID.String(),
+			WorkspaceID:    &workspaceIDText,
+			Name:           "reference.png",
+			Extension:      "png",
+			MimeType:       "image/png",
+		},
+		url: "https://files.example.com/reference.png?sign=1",
+	}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "qwen", Name: "qwen-image-2.0"}}},
+		fakeRouteLister{routes: map[string][]*channelmodel.RouteQueryResult{
+			"qwen-image-2.0": {
+				{RouteID: uuid.New(), ChannelProvider: "qwen", Models: []string{"qwen-image-2.0"}},
+			},
+		}},
+		llm,
+		chat,
+		&fakeImageAssetService{},
+		files,
+	)
+
+	_, err := svc.Generate(t.Context(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &workspaceID,
+	}, GenerateRequest{
+		Prompt:   "换成赛博朋克风",
+		Provider: "qwen",
+		Model:    "qwen-image-2.0",
+		Options:  GenerateOptions{Size: "2048x2048"},
+		ReferenceImage: &ReferenceImage{
+			FileID: fileID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if files.downloadCalls != 0 {
+		t.Fatalf("DownloadFile calls = %d, want 0 for qwen reference images", files.downloadCalls)
+	}
+	if llm.lastImageReq == nil {
+		t.Fatal("image request is nil")
+	}
+	if llm.lastImageReq.ReferenceImageURL != files.url {
+		t.Fatalf("ReferenceImageURL = %q, want %q", llm.lastImageReq.ReferenceImageURL, files.url)
+	}
+	if len(llm.lastImageReq.ReferenceImageBytes) != 0 {
+		t.Fatalf("ReferenceImageBytes length = %d, want 0", len(llm.lastImageReq.ReferenceImageBytes))
 	}
 }
 

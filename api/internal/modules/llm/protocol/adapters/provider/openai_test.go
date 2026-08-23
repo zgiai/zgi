@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -335,6 +337,227 @@ func TestOpenAIAdapterCreateResponseStream_EmitsNativeResponsesEvents(t *testing
 	}
 	if usage == nil || usage.PromptTokens != 3 || usage.CompletionTokens != 2 || usage.TotalTokens != 5 {
 		t.Fatalf("usage = %+v, want prompt=3 completion=2 total=5", usage)
+	}
+}
+
+func TestOpenAIAdapterCreateImage_UsesGenerationsWithoutReferenceImage(t *testing.T) {
+	t.Helper()
+
+	var gotPayload map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+
+		if r.URL.Path != "/v1/images/generations" {
+			t.Fatalf("path = %q, want %q", r.URL.Path, "/v1/images/generations")
+		}
+		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			t.Fatalf("Content-Type = %q, want application/json", ct)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"created":1732083164,"data":[{"url":"https://cdn.example.com/generated.png"}]}`)
+	}))
+	defer server.Close()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	n := 2
+	resp, err := a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:   "gpt-image-2",
+		Prompt:  "draw a classroom",
+		Size:    "1024x1024",
+		Quality: "high",
+		N:       &n,
+	})
+	if err != nil {
+		t.Fatalf("CreateImage() error = %v", err)
+	}
+
+	if gotPayload["model"] != "gpt-image-2" || gotPayload["prompt"] != "draw a classroom" {
+		t.Fatalf("payload = %#v, want model and prompt", gotPayload)
+	}
+	if gotPayload["size"] != "1024x1024" || gotPayload["quality"] != "high" || gotPayload["n"] != float64(2) {
+		t.Fatalf("payload = %#v, want size, quality and n", gotPayload)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].URL != "https://cdn.example.com/generated.png" {
+		t.Fatalf("response data = %+v, want generated URL", resp.Data)
+	}
+}
+
+func TestOpenAIAdapterCreateImage_UsesEditsWithReferenceImageBytes(t *testing.T) {
+	t.Helper()
+
+	const referenceContent = "PNGDATA"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+
+		if r.URL.Path != "/v1/images/edits" {
+			t.Fatalf("path = %q, want %q", r.URL.Path, "/v1/images/edits")
+		}
+		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "multipart/form-data;") {
+			t.Fatalf("Content-Type = %q, want multipart/form-data", ct)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm() error = %v", err)
+		}
+
+		assertMultipartValue(t, r, "model", "gpt-image-2")
+		assertMultipartValue(t, r, "prompt", "add a person")
+		assertMultipartValue(t, r, "size", "1024x1024")
+		assertMultipartValue(t, r, "n", "2")
+		assertMultipartValue(t, r, "quality", "high")
+		assertMultipartValue(t, r, "user", "account-1")
+		assertMultipartValue(t, r, "background", "auto")
+		assertMultipartValue(t, r, "output_format", "png")
+
+		files := r.MultipartForm.File["image"]
+		if len(files) != 1 {
+			t.Fatalf("multipart image file count = %d, want 1", len(files))
+		}
+		if files[0].Filename != "reference.png" {
+			t.Fatalf("image filename = %q, want reference.png", files[0].Filename)
+		}
+		if got := files[0].Header.Get("Content-Type"); got != "image/png" {
+			t.Fatalf("image Content-Type = %q, want image/png", got)
+		}
+		file, err := files[0].Open()
+		if err != nil {
+			t.Fatalf("open multipart image file: %v", err)
+		}
+		defer file.Close()
+		content, err := io.ReadAll(file)
+		if err != nil {
+			t.Fatalf("read multipart image file: %v", err)
+		}
+		if string(content) != referenceContent {
+			t.Fatalf("image content = %q, want %q", content, referenceContent)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"created":1732083164,"data":[{"b64_json":"abc123"}]}`)
+	}))
+	defer server.Close()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	n := 2
+	resp, err := a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:                  "gpt-image-2",
+		Prompt:                 "add a person",
+		Size:                   "1024x1024",
+		Quality:                "high",
+		User:                   "account-1",
+		N:                      &n,
+		ReferenceImageBytes:    []byte(referenceContent),
+		ReferenceImageFilename: "reference.png",
+		ReferenceImageMimeType: "image/png",
+		AdditionalParameters: map[string]interface{}{
+			"background":        "auto",
+			"output_format":     "png",
+			"prompt":            "ignored",
+			"extra_object":      map[string]string{"ignored": "true"},
+			"extra_string_list": []string{"ignored"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateImage() error = %v", err)
+	}
+
+	if len(resp.Data) != 1 || resp.Data[0].B64JSON != "abc123" {
+		t.Fatalf("response data = %+v, want b64_json abc123", resp.Data)
+	}
+}
+
+func TestOpenAIAdapterCreateImage_RejectsReferenceImageForDallE(t *testing.T) {
+	t.Helper()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: "https://api.example.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:               "dall-e-3",
+		Prompt:              "add a person",
+		Size:                "1024x1024",
+		ReferenceImageBytes: []byte("PNGDATA"),
+	})
+	if !errors.Is(err, adapter.ErrCapabilityUnsupported) {
+		t.Fatalf("CreateImage() error = %v, want ErrCapabilityUnsupported", err)
+	}
+}
+
+func TestOpenAIAdapterCreateImage_RejectsUnsupportedEditSize(t *testing.T) {
+	t.Helper()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: "https://api.example.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:               "gpt-image-2",
+		Prompt:              "add a person",
+		Size:                "2048x2048",
+		ReferenceImageBytes: []byte("PNGDATA"),
+	})
+	if !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("CreateImage() error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+func TestOpenAIAdapterCreateImage_RejectsReferenceImageURLWithoutBytes(t *testing.T) {
+	t.Helper()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: "https://api.example.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:             "gpt-image-2",
+		Prompt:            "add a person",
+		Size:              "1024x1024",
+		ReferenceImageURL: "https://files.example.com/reference.png",
+	})
+	if !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("CreateImage() error = %v, want ErrInvalidRequest", err)
+	}
+}
+
+func assertMultipartValue(t *testing.T, r *http.Request, key, want string) {
+	t.Helper()
+
+	values := r.MultipartForm.Value[key]
+	if len(values) != 1 {
+		t.Fatalf("multipart field %q count = %d, want 1", key, len(values))
+	}
+	if values[0] != want {
+		t.Fatalf("multipart field %q = %q, want %q", key, values[0], want)
 	}
 }
 

@@ -512,6 +512,10 @@ type ImageRequest struct {
 	MaxImages         *int   `json:"max_images,omitempty"`
 	ReferenceImageURL string `json:"reference_image_url,omitempty"`
 
+	ReferenceImageBytes    []byte `json:"-"`
+	ReferenceImageFilename string `json:"-"`
+	ReferenceImageMimeType string `json:"-"`
+
 	// AdditionalParameters model-specific parameters
 	AdditionalParameters map[string]interface{} `json:"-"`
 }

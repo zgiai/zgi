@@ -38,6 +38,7 @@ type RouteLister interface {
 
 type ReferenceFileService interface {
 	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
+	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
 	GetFileURL(ctx context.Context, fileID string) (string, error)
 }
 
@@ -169,6 +170,15 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	}
 	if referenceImage != nil {
 		imageReq.ReferenceImageURL = referenceImage.URL
+		if strings.EqualFold(modelSpec.Provider, "openai") {
+			content, err := s.fileService.DownloadFile(ctx, referenceImage.FileID)
+			if err != nil || len(content) == 0 {
+				return nil, ErrReferenceImageInvalid
+			}
+			imageReq.ReferenceImageBytes = content
+			imageReq.ReferenceImageFilename = referenceImage.Filename
+			imageReq.ReferenceImageMimeType = referenceImage.MimeType
+		}
 	}
 	resp, err := s.llmClient.AppCreateImage(ctx, appCtx, imageReq)
 	if err != nil {
