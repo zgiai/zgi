@@ -357,6 +357,18 @@ func (s *NativeSkillSession) ToolSet() NativeToolSet {
 	return cloneNativeToolSet(s.active)
 }
 
+// AddToolProjections keeps request-scoped aliases inside the progressive
+// session so later Skill activations preserve them and reserve their names.
+func (s *NativeSkillSession) AddToolProjections(
+	projections []NativeToolProjection,
+	options NativeToolProjectionOptions,
+) int {
+	if s == nil {
+		return 0
+	}
+	return AppendNativeToolProjections(&s.active, projections, options)
+}
+
 func (s *NativeSkillSession) ActivationAttempts() []NativeSkillActivationAttempt {
 	if s == nil {
 		return nil
@@ -494,6 +506,7 @@ func (s *NativeSkillSession) mergeToolSet(increment NativeToolSet) {
 		s.active.ToolBindings[name] = binding
 	}
 	s.active.SkippedSkills = append(s.active.SkippedSkills, increment.SkippedSkills...)
+	s.active.SkippedTools = append(s.active.SkippedTools, increment.SkippedTools...)
 	s.active.InstructionChars += increment.InstructionChars
 	s.active.SchemaChars += increment.SchemaChars
 	s.active.InstructionTokens += increment.InstructionTokens
@@ -534,9 +547,10 @@ func cloneNativeToolSet(input NativeToolSet) NativeToolSet {
 	out.InstructionMessages = append([]llmadapter.Message(nil), input.InstructionMessages...)
 	out.ProviderTools = append([]llmadapter.Tool(nil), input.ProviderTools...)
 	out.SkippedSkills = append([]NativeSkillSkip(nil), input.SkippedSkills...)
+	out.SkippedTools = append([]NativeToolSkip(nil), input.SkippedTools...)
 	out.ToolBindings = make(map[string]NativeToolBinding, len(input.ToolBindings))
 	for name, binding := range input.ToolBindings {
-		out.ToolBindings[name] = binding
+		out.ToolBindings[name] = cloneNativeToolBinding(binding)
 	}
 	return out
 }

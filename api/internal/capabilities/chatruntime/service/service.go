@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -341,6 +342,7 @@ type service struct {
 	agentMemoryService             AgentMemoryContextService
 	agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	integrationPrefs               AIChatIntegrationPreferenceResolver
+	externalActionProjections      integrationmetatools.ActionProjectionResolver
 	customSkillStorage             customSkillStorage
 	modelIdleTimeout               time.Duration
 	modelProgressSchedule          modelprogress.Schedule
@@ -391,6 +393,7 @@ func NewServiceWithSkillRuntime(
 	var agentMemoryService AgentMemoryContextService
 	var agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	var integrationPrefs AIChatIntegrationPreferenceResolver
+	var externalActionProjections integrationmetatools.ActionProjectionResolver
 	for _, item := range optionalServices {
 		switch typed := item.(type) {
 		case AgentMemoryContextService:
@@ -404,6 +407,10 @@ func NewServiceWithSkillRuntime(
 		case AIChatIntegrationPreferenceResolver:
 			if integrationPrefs == nil {
 				integrationPrefs = typed
+			}
+		case integrationmetatools.ActionProjectionResolver:
+			if externalActionProjections == nil {
+				externalActionProjections = typed
 			}
 		}
 	}
@@ -423,6 +430,7 @@ func NewServiceWithSkillRuntime(
 		agentMemoryService:             agentMemoryService,
 		agentMemoryExtractionScheduler: agentMemoryExtractionScheduler,
 		integrationPrefs:               integrationPrefs,
+		externalActionProjections:      externalActionProjections,
 		customSkillStorage:             newFilesystemCustomSkillStorage(customSkillStorageRoot),
 		modelIdleTimeout:               configuredModelIdleTimeout(),
 	}

@@ -179,6 +179,111 @@ func TestNativeProviderToolNameKeepsValidUniqueNameAndAliasesConflicts(t *testin
 	}
 }
 
+func TestAppendNativeToolProjectionsKeepsBusinessSchemaAndGovernedBinding(t *testing.T) {
+	toolSet := NativeToolSet{
+		ActiveSkillIDs: []string{SkillExternalApps},
+		ToolBindings:   map[string]NativeToolBinding{},
+		BudgetChars:    10000,
+	}
+	fixed := map[string]interface{}{
+		"integration_id":         "wecom",
+		"action_id":              "wecom.message.send",
+		"action_schema_hash":     "hash-1",
+		"action_schema_revision": "schema-1",
+		"catalog_revision":       "catalog-1",
+	}
+	added := AppendNativeToolProjections(&toolSet, []NativeToolProjection{{
+		Name:        "wecom_send_message",
+		Description: "Send a WeCom message.",
+		InputSchema: map[string]interface{}{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]interface{}{
+				"content":  map[string]interface{}{"type": "string"},
+				"internal": map[string]interface{}{"type": "string", "readOnly": true},
+			},
+			"required": []interface{}{"content"},
+		},
+		Binding: NativeToolBinding{
+			SkillID:          SkillExternalApps,
+			ToolName:         "execute_action",
+			ArgumentEnvelope: "arguments",
+			FixedArguments:   fixed,
+		},
+	}}, NativeToolProjectionOptions{})
+	if added != 1 || len(toolSet.ProviderTools) != 1 {
+		t.Fatalf("AppendNativeToolProjections() added=%d tools=%#v", added, toolSet.ProviderTools)
+	}
+	tool := toolSet.ProviderTools[0]
+	if tool.Function.Name != "wecom_send_message" {
+		t.Fatalf("provider function name = %q", tool.Function.Name)
+	}
+	parameters, _ := tool.Function.Parameters.(map[string]interface{})
+	properties, _ := parameters["properties"].(map[string]interface{})
+	if _, ok := properties["content"]; !ok {
+		t.Fatalf("business schema = %#v, want content", parameters)
+	}
+	if _, ok := properties["internal"]; ok {
+		t.Fatalf("model-visible schema retained readOnly field: %#v", parameters)
+	}
+	if _, ok := properties["integration_id"]; ok {
+		t.Fatalf("model-visible schema exposes fixed identity: %#v", parameters)
+	}
+	binding := toolSet.ToolBindings[tool.Function.Name]
+	if binding.SkillID != SkillExternalApps || binding.ToolName != "execute_action" || binding.ArgumentEnvelope != "arguments" ||
+		binding.FixedArguments["action_id"] != "wecom.message.send" {
+		t.Fatalf("binding = %#v", binding)
+	}
+	fixed["action_id"] = "spoofed.after.append"
+	if binding.FixedArguments["action_id"] != "wecom.message.send" {
+		t.Fatalf("binding aliased caller-owned fixed arguments: %#v", binding.FixedArguments)
+	}
+	if toolSet.SchemaChars <= 0 || toolSet.SchemaChars >= toolSet.BudgetChars {
+		t.Fatalf("schema chars = %d budget = %d", toolSet.SchemaChars, toolSet.BudgetChars)
+	}
+}
+
+func TestAppendNativeToolProjectionsUsesStableLimitAndRemainingBudget(t *testing.T) {
+	projection := func(name string) NativeToolProjection {
+		return NativeToolProjection{
+			Name: name,
+			InputSchema: map[string]interface{}{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties":           map[string]interface{}{},
+			},
+			Binding: NativeToolBinding{SkillID: SkillExternalApps, ToolName: "execute_action"},
+		}
+	}
+	toolSet := NativeToolSet{ToolBindings: map[string]NativeToolBinding{}, BudgetChars: 10000}
+	if added := AppendNativeToolProjections(&toolSet, []NativeToolProjection{
+		projection("first_action"), projection("second_action"), projection("third_action"),
+	}, NativeToolProjectionOptions{MaxTools: 2}); added != 2 {
+		t.Fatalf("AppendNativeToolProjections() added = %d, want 2", added)
+	}
+	if len(toolSet.ProviderTools) != 2 || toolSet.ProviderTools[0].Function.Name != "first_action" ||
+		toolSet.ProviderTools[1].Function.Name != "second_action" {
+		t.Fatalf("stable projection order = %#v", toolSet.ProviderTools)
+	}
+	if len(toolSet.SkippedTools) != 1 || toolSet.SkippedTools[0].ToolName != "third_action" ||
+		toolSet.SkippedTools[0].Reason != "tool_limit_exceeded" {
+		t.Fatalf("skipped projections = %#v", toolSet.SkippedTools)
+	}
+
+	budgeted := NativeToolSet{
+		ToolBindings:     map[string]NativeToolBinding{},
+		InstructionChars: 5,
+		SchemaChars:      5,
+		BudgetChars:      11,
+	}
+	if added := AppendNativeToolProjections(&budgeted, []NativeToolProjection{projection("too_large")}, NativeToolProjectionOptions{}); added != 0 {
+		t.Fatalf("budgeted AppendNativeToolProjections() added = %d", added)
+	}
+	if len(budgeted.SkippedTools) != 1 || budgeted.SkippedTools[0].Reason != "context_budget_exceeded" {
+		t.Fatalf("budget skip = %#v", budgeted.SkippedTools)
+	}
+}
+
 func TestNativeSchemaFromToolParametersUsesLLMFields(t *testing.T) {
 	minimum := 1.0
 	maximum := 10.0

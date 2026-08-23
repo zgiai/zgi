@@ -357,10 +357,28 @@ func nativeExecutionCall(call adapter.ToolCall, toolSet *skills.NativeToolSet) a
 			return call
 		}
 	}
+	executionArguments := arguments
+	if binding.ArgumentEnvelope != "" {
+		executionArguments = make(map[string]interface{}, len(binding.FixedArguments)+1)
+		for key, value := range binding.FixedArguments {
+			executionArguments[key] = value
+		}
+		// The model-visible object is always nested after fixed values are
+		// copied, so it cannot replace integration/action/revision metadata.
+		executionArguments[binding.ArgumentEnvelope] = arguments
+	} else if len(binding.FixedArguments) > 0 {
+		executionArguments = make(map[string]interface{}, len(arguments)+len(binding.FixedArguments))
+		for key, value := range arguments {
+			executionArguments[key] = value
+		}
+		for key, value := range binding.FixedArguments {
+			executionArguments[key] = value
+		}
+	}
 	wrapper := map[string]interface{}{
 		"skill_id":  binding.SkillID,
 		"tool_name": binding.ToolName,
-		"arguments": arguments,
+		"arguments": executionArguments,
 	}
 	encoded, err := json.Marshal(wrapper)
 	if err != nil {

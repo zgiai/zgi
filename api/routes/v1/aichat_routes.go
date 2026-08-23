@@ -8,6 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/aichat"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
@@ -20,17 +21,18 @@ import (
 
 // AIChatRouteDeps contains dependencies required by AIChat routes.
 type AIChatRouteDeps struct {
-	DB                         *gorm.DB
-	LLMClient                  llmclient.LLMClient
-	DefaultModelService        llmdefaultservice.DefaultModelService
-	FileService                chatruntime.FileLookupService
-	ContentExtractor           chatruntime.ContentExtractionService
-	WorkspacePermissionService chatruntime.WorkspacePermissionService
-	MemoryService              *memorymodule.Service
-	AgentMemoryService         *agentmemory.Service
-	SkillRuntime               *skills.Runtime
-	AccountService             interfaces.AccountService
-	IntegrationPreferences     *integrations.DefaultAIChatIntegrationPreferenceService
+	DB                           *gorm.DB
+	LLMClient                    llmclient.LLMClient
+	DefaultModelService          llmdefaultservice.DefaultModelService
+	FileService                  chatruntime.FileLookupService
+	ContentExtractor             chatruntime.ContentExtractionService
+	WorkspacePermissionService   chatruntime.WorkspacePermissionService
+	MemoryService                *memorymodule.Service
+	AgentMemoryService           *agentmemory.Service
+	SkillRuntime                 *skills.Runtime
+	AccountService               interfaces.AccountService
+	IntegrationPreferences       *integrations.DefaultAIChatIntegrationPreferenceService
+	IntegrationActionProjections integrationmetatools.ActionProjectionResolver
 }
 
 func RegisterAIChatRoutes(router *gin.RouterGroup, deps AIChatRouteDeps) chatruntime.Service {
@@ -96,6 +98,7 @@ func RegisterAIChatRoutes(router *gin.RouterGroup, deps AIChatRouteDeps) chatrun
 		deps.AgentMemoryService,
 		deps.SkillRuntime,
 		preferenceResolver,
+		deps.IntegrationActionProjections,
 	)
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -80,5 +81,49 @@ func TestEffectiveAgentSkillIDsAddsExternalAppsOnlyForAuthorizedBinding(t *testi
 	config.BillingAppType = runtimemodel.ConversationCallerAIChat
 	if got := effectiveAgentSkillIDs(nil, catalog, nil, config); len(got) != 0 {
 		t.Fatalf("Agent external apps enabled for a non-Agent RunConfig: %#v", got)
+	}
+}
+
+func TestExternalActionNativeProjectionRequiresCompleteFrozenIdentityAndActiveSkill(t *testing.T) {
+	valid := integrationmetatools.ActionProjection{
+		IntegrationID: "WeCom", ActionID: "WeCom.Message.Send", ToolName: "wecom_send_message",
+		Description: "Send a message.",
+		InputSchema: map[string]interface{}{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties":           map[string]interface{}{"content": map[string]interface{}{"type": "string"}},
+		},
+		SchemaHash: "hash-1", SchemaRevision: "schema-1", CatalogRevision: "catalog-1",
+	}
+	incomplete := valid
+	incomplete.ToolName = "missing_revision"
+	incomplete.CatalogRevision = ""
+	projections := externalActionNativeToolProjections([]integrationmetatools.ActionProjection{valid, incomplete})
+	if len(projections) != 1 {
+		t.Fatalf("externalActionNativeToolProjections() = %#v, want only complete projection", projections)
+	}
+	binding := projections[0].Binding
+	if binding.SkillID != skills.SkillExternalApps || binding.ToolName != integrationmetatools.ToolExecuteAction ||
+		binding.ArgumentEnvelope != "arguments" {
+		t.Fatalf("projection binding = %#v", binding)
+	}
+	for key, want := range map[string]interface{}{
+		"integration_id": "wecom", "action_id": "wecom.message.send",
+		"action_schema_hash": "hash-1", "action_schema_revision": "schema-1", "catalog_revision": "catalog-1",
+	} {
+		if got := binding.FixedArguments[key]; got != want {
+			t.Fatalf("fixed argument %s = %#v, want %#v", key, got, want)
+		}
+	}
+
+	withoutSkill := skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{}, BudgetChars: 10000}
+	if added := projectExternalActionNativeTools(&withoutSkill, projections, nil); added != 0 || len(withoutSkill.ProviderTools) != 0 {
+		t.Fatalf("projection bypassed inactive external-apps skill: added=%d tools=%#v", added, withoutSkill.ProviderTools)
+	}
+	withSkill := skills.NativeToolSet{
+		ActiveSkillIDs: []string{skills.SkillExternalApps}, ToolBindings: map[string]skills.NativeToolBinding{}, BudgetChars: 10000,
+	}
+	if added := projectExternalActionNativeTools(&withSkill, projections, nil); added != 1 || len(withSkill.ProviderTools) != 1 {
+		t.Fatalf("active projection = added=%d tools=%#v", added, withSkill.ProviderTools)
 	}
 }

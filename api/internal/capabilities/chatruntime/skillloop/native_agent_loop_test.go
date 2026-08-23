@@ -804,3 +804,54 @@ func TestNativeAgentToolsForRunIncludesRuntimeToolWithoutSkills(t *testing.T) {
 		t.Fatalf("runtime step = %#v", step)
 	}
 }
+
+func TestNativeExecutionCallWrapsActionArgumentsUnderFixedIdentity(t *testing.T) {
+	toolSet := &skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{
+		"wecom_send_message": {
+			SkillID:          skills.SkillExternalApps,
+			ToolName:         "execute_action",
+			ArgumentEnvelope: "arguments",
+			FixedArguments: map[string]interface{}{
+				"integration_id":         "wecom",
+				"action_id":              "wecom.message.send",
+				"action_schema_hash":     "fixed-hash",
+				"action_schema_revision": "fixed-schema",
+				"catalog_revision":       "fixed-catalog",
+			},
+		},
+	}}
+	call := nativeExecutionCall(adapter.ToolCall{
+		ID: "call-action",
+		Function: adapter.FunctionCall{
+			Name: "wecom_send_message",
+			Arguments: `{"content":"hello","integration_id":"attacker","action_id":"attacker.action",` +
+				`"action_schema_hash":"attacker-hash","catalog_revision":"attacker-catalog"}`,
+		},
+	}, toolSet)
+	if call.Function.Name != skills.MetaToolCallSkillTool {
+		t.Fatalf("nativeExecutionCall() function = %q", call.Function.Name)
+	}
+	var wrapper map[string]interface{}
+	if err := json.Unmarshal([]byte(call.Function.Arguments), &wrapper); err != nil {
+		t.Fatalf("wrapped arguments are invalid JSON: %v", err)
+	}
+	if wrapper["skill_id"] != skills.SkillExternalApps || wrapper["tool_name"] != "execute_action" {
+		t.Fatalf("wrapper target = %#v", wrapper)
+	}
+	execution, _ := wrapper["arguments"].(map[string]interface{})
+	for key, want := range map[string]interface{}{
+		"integration_id": "wecom", "action_id": "wecom.message.send",
+		"action_schema_hash": "fixed-hash", "action_schema_revision": "fixed-schema", "catalog_revision": "fixed-catalog",
+	} {
+		if got := execution[key]; got != want {
+			t.Fatalf("fixed execution identity %s = %#v, want %#v", key, got, want)
+		}
+	}
+	business, _ := execution["arguments"].(map[string]interface{})
+	if business["content"] != "hello" || business["integration_id"] != "attacker" || business["action_id"] != "attacker.action" {
+		t.Fatalf("business arguments = %#v", business)
+	}
+	if _, exists := execution["content"]; exists {
+		t.Fatalf("business arguments escaped their envelope: %#v", execution)
+	}
+}

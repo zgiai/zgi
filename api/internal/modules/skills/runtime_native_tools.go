@@ -20,8 +20,36 @@ const maxNativeToolNameLength = 64
 var nativeToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type NativeToolBinding struct {
-	SkillID  string `json:"skill_id"`
-	ToolName string `json:"tool_name"`
+	SkillID          string                 `json:"skill_id"`
+	ToolName         string                 `json:"tool_name"`
+	ArgumentEnvelope string                 `json:"argument_envelope,omitempty"`
+	FixedArguments   map[string]interface{} `json:"fixed_arguments,omitempty"`
+}
+
+// NativeToolProjection adds a provider-native function while preserving the
+// existing Skill execution boundary described by Binding. It is used for
+// request-scoped capabilities whose public schema is narrower than the bound
+// Skill tool schema.
+type NativeToolProjection struct {
+	Name        string
+	Description string
+	InputSchema map[string]interface{}
+	Binding     NativeToolBinding
+}
+
+type NativeToolProjectionOptions struct {
+	MaxTools       int
+	EstimateTokens func([]llmadapter.Message, []llmadapter.Tool) int
+}
+
+type NativeToolSkip struct {
+	ToolName       string `json:"tool_name"`
+	Reason         string `json:"reason"`
+	Detail         string `json:"detail,omitempty"`
+	Budget         int    `json:"budget,omitempty"`
+	Required       int    `json:"required,omitempty"`
+	BudgetTokens   int    `json:"budget_tokens,omitempty"`
+	RequiredTokens int    `json:"required_tokens,omitempty"`
 }
 
 type NativeSkillSkip struct {
@@ -41,6 +69,7 @@ type NativeToolSet struct {
 	ProviderTools       []llmadapter.Tool            `json:"-"`
 	ToolBindings        map[string]NativeToolBinding `json:"tool_bindings"`
 	SkippedSkills       []NativeSkillSkip            `json:"skipped_skills"`
+	SkippedTools        []NativeToolSkip             `json:"skipped_tools,omitempty"`
 	InstructionChars    int                          `json:"instruction_chars"`
 	SchemaChars         int                          `json:"schema_chars"`
 	BudgetChars         int                          `json:"budget_chars"`
@@ -48,6 +77,8 @@ type NativeToolSet struct {
 	SchemaTokens        int                          `json:"schema_tokens"`
 	BudgetTokens        int                          `json:"budget_tokens"`
 }
+
+const DefaultMaxNativeToolProjections = 24
 
 type NativeToolSetOptions struct {
 	TenantID              string
@@ -173,6 +204,114 @@ func (r *Runtime) BuildNativeToolSet(ctx context.Context, resolved *ResolvedSkil
 		active[skillID] = struct{}{}
 	}
 	return result
+}
+
+// AppendNativeToolProjections adds bounded request-scoped functions to an
+// already built native set. Existing Skill instructions and tools retain
+// priority; projections consume only the remaining schema budget.
+func AppendNativeToolProjections(
+	toolSet *NativeToolSet,
+	projections []NativeToolProjection,
+	options NativeToolProjectionOptions,
+) int {
+	if toolSet == nil || len(projections) == 0 {
+		return 0
+	}
+	if toolSet.ToolBindings == nil {
+		toolSet.ToolBindings = make(map[string]NativeToolBinding)
+	}
+	maxTools := options.MaxTools
+	if maxTools <= 0 || maxTools > DefaultMaxNativeToolProjections {
+		maxTools = DefaultMaxNativeToolProjections
+	}
+	reservedNames := nativeControlToolNames()
+	for _, tool := range toolSet.ProviderTools {
+		if name := strings.TrimSpace(tool.Function.Name); name != "" {
+			reservedNames[name] = struct{}{}
+		}
+	}
+	localNames := map[string]struct{}{}
+	added := 0
+	for _, projection := range projections {
+		requestedName := strings.TrimSpace(projection.Name)
+		binding := cloneNativeToolBinding(projection.Binding)
+		binding.SkillID = normalizeSkillID(binding.SkillID)
+		binding.ToolName = strings.TrimSpace(binding.ToolName)
+		binding.ArgumentEnvelope = strings.TrimSpace(binding.ArgumentEnvelope)
+		if requestedName == "" || binding.SkillID == "" || binding.ToolName == "" {
+			toolSet.SkippedTools = append(toolSet.SkippedTools, NativeToolSkip{
+				ToolName: requestedName, Reason: "binding_invalid",
+			})
+			continue
+		}
+		if added >= maxTools {
+			toolSet.SkippedTools = append(toolSet.SkippedTools, NativeToolSkip{
+				ToolName: requestedName, Reason: "tool_limit_exceeded",
+			})
+			continue
+		}
+		schema := tools.ModelVisibleJSONSchema(projection.InputSchema)
+		if !validNativeObjectSchema(schema) {
+			toolSet.SkippedTools = append(toolSet.SkippedTools, NativeToolSkip{
+				ToolName: requestedName, Reason: "schema_unavailable",
+			})
+			continue
+		}
+		providerName := nativeProviderToolName(binding.SkillID, requestedName, reservedNames, localNames)
+		if providerName == "" {
+			toolSet.SkippedTools = append(toolSet.SkippedTools, NativeToolSkip{
+				ToolName: requestedName, Reason: "tool_name_invalid",
+			})
+			continue
+		}
+		description := strings.TrimSpace(projection.Description)
+		if description == "" {
+			description = "Use " + requestedName + " through the " + binding.SkillID + " runtime."
+		}
+		tool := llmadapter.Tool{Type: "function", Function: llmadapter.Function{
+			Name: providerName, Description: description, Parameters: schema,
+		}}
+		encoded, err := json.Marshal(tool)
+		if err != nil {
+			toolSet.SkippedTools = append(toolSet.SkippedTools, NativeToolSkip{
+				ToolName: requestedName, Reason: "schema_unavailable", Detail: err.Error(),
+			})
+			continue
+		}
+		requiredChars := len(encoded)
+		if toolSet.BudgetChars > 0 && toolSet.InstructionChars+toolSet.SchemaChars+requiredChars > toolSet.BudgetChars {
+			toolSet.SkippedTools = append(toolSet.SkippedTools, NativeToolSkip{
+				ToolName: requestedName, Reason: "context_budget_exceeded",
+				Budget: max(0, toolSet.BudgetChars-toolSet.InstructionChars-toolSet.SchemaChars), Required: requiredChars,
+			})
+			continue
+		}
+		requiredTokens := 0
+		if options.EstimateTokens != nil {
+			requiredTokens = options.EstimateTokens(nil, []llmadapter.Tool{tool})
+		}
+		if toolSet.BudgetTokens > 0 && toolSet.InstructionTokens+toolSet.SchemaTokens+requiredTokens > toolSet.BudgetTokens {
+			toolSet.SkippedTools = append(toolSet.SkippedTools, NativeToolSkip{
+				ToolName: requestedName, Reason: "context_budget_exceeded",
+				BudgetTokens: max(0, toolSet.BudgetTokens-toolSet.InstructionTokens-toolSet.SchemaTokens), RequiredTokens: requiredTokens,
+			})
+			continue
+		}
+		toolSet.ProviderTools = append(toolSet.ProviderTools, tool)
+		toolSet.ToolBindings[providerName] = binding
+		toolSet.SchemaChars += requiredChars
+		toolSet.SchemaTokens += requiredTokens
+		reservedNames[providerName] = struct{}{}
+		localNames[providerName] = struct{}{}
+		added++
+	}
+	return added
+}
+
+func cloneNativeToolBinding(input NativeToolBinding) NativeToolBinding {
+	out := input
+	out.FixedArguments = copyStringAnyMap(input.FixedArguments)
+	return out
 }
 
 func nativeToolNameCounts(docs []SkillDocument) map[string]int {
