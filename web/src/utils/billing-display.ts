@@ -1,4 +1,5 @@
 import type { Organization } from '@/services/types/organization';
+import Decimal from 'decimal.js-light';
 
 export type BillingDisplayCurrency = 'USD' | 'CNY';
 
@@ -17,6 +18,7 @@ export const DEFAULT_BILLING_DISPLAY: BillingDisplaySettings = {
 };
 
 export const NORMALIZED_AI_CREDITS_PER_USD = 1_000;
+const BILLING_DECIMAL_PLACES = 12;
 
 export function getBillingDisplaySettings(
   organization?: Pick<Organization, 'billing_display_currency' | 'usd_to_cny_rate'> | null
@@ -55,7 +57,7 @@ export function normalizedAiCreditsToUSD(
     return null;
   }
 
-  return normalizedCredits / NORMALIZED_AI_CREDITS_PER_USD;
+  return new Decimal(normalizedCredits).div(NORMALIZED_AI_CREDITS_PER_USD).toNumber();
 }
 
 /**
@@ -75,18 +77,17 @@ export function formatBillingDisplayAmountFromNormalizedCredits(
     return '-';
   }
 
-  const displayAmount = settings.currency === 'CNY' ? amountUSD * settings.usdToCnyRate : amountUSD;
-  if (!Number.isFinite(displayAmount)) return '-';
+  const displayAmount = new Decimal(amountUSD).times(
+    settings.currency === 'CNY' ? settings.usdToCnyRate : 1
+  );
 
   const symbol = getBillingCurrencySymbol(settings);
   const estimatePrefix = settings.currency === 'CNY' ? '≈' : '';
 
-  if (displayAmount > 0 && displayAmount < 0.0001) {
-    return `<${symbol}0.0001`;
-  }
-
-  const maximumFractionDigits = displayAmount > 0 && displayAmount < 1 ? 4 : 2;
-  const formatted = displayAmount.toLocaleString(locale, {
+  const displayNumber = displayAmount.toNumber();
+  if (!Number.isFinite(displayNumber)) return '-';
+  const maximumFractionDigits = displayAmount.abs().lt(1) ? BILLING_DECIMAL_PLACES : 2;
+  const formatted = displayNumber.toLocaleString(locale, {
     minimumFractionDigits: 2,
     maximumFractionDigits,
   });
@@ -94,14 +95,34 @@ export function formatBillingDisplayAmountFromNormalizedCredits(
 }
 
 export function formatBillingDisplayAmountFromUSD(
-  amountUSD: number | null | undefined,
+  amountUSD: number | string | null | undefined,
   settings: BillingDisplaySettings
 ): string {
-  if (amountUSD === undefined || amountUSD === null || !Number.isFinite(amountUSD)) {
+  if (amountUSD === undefined || amountUSD === null) {
     return '-';
   }
-  const displayAmount = settings.currency === 'CNY' ? amountUSD * settings.usdToCnyRate : amountUSD;
-  return `${getBillingCurrencySymbol(settings)}${displayAmount.toFixed(2)}`;
+  if (
+    settings.currency === 'CNY' &&
+    (!Number.isFinite(settings.usdToCnyRate) || settings.usdToCnyRate <= 0)
+  ) {
+    return '-';
+  }
+  let displayAmount: Decimal;
+  try {
+    displayAmount = new Decimal(amountUSD).times(
+      settings.currency === 'CNY' ? settings.usdToCnyRate : 1
+    );
+  } catch {
+    return '-';
+  }
+  const displayNumber = displayAmount.toNumber();
+  if (!Number.isFinite(displayNumber)) return '-';
+  const maximumFractionDigits = displayAmount.abs().lt(1) ? BILLING_DECIMAL_PLACES : 2;
+  const formatted = displayNumber.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits,
+  });
+  return `${getBillingCurrencySymbol(settings)}${formatted}`;
 }
 
 export function billingDisplayInputValueFromUSD(
@@ -111,7 +132,9 @@ export function billingDisplayInputValueFromUSD(
 ): string {
   if (!configured) return '';
   if (amountUSD === undefined || amountUSD === null || !Number.isFinite(amountUSD)) return '0';
-  const displayAmount = settings.currency === 'CNY' ? amountUSD * settings.usdToCnyRate : amountUSD;
+  const displayAmount = new Decimal(amountUSD).times(
+    settings.currency === 'CNY' ? settings.usdToCnyRate : 1
+  );
   return trimDecimal(displayAmount);
 }
 
@@ -121,13 +144,21 @@ export function billingDisplayInputToUSD(
 ): string {
   const trimmed = displayValue.trim();
   if (trimmed === '') return '';
-  const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed)) return trimmed;
-  const amountUSD = settings.currency === 'CNY' ? parsed / settings.usdToCnyRate : parsed;
-  return trimDecimal(amountUSD);
+  try {
+    const parsed = new Decimal(trimmed);
+    if (
+      settings.currency === 'CNY' &&
+      (!Number.isFinite(settings.usdToCnyRate) || settings.usdToCnyRate <= 0)
+    ) {
+      return trimmed;
+    }
+    const amountUSD = settings.currency === 'CNY' ? parsed.div(settings.usdToCnyRate) : parsed;
+    return trimDecimal(amountUSD);
+  } catch {
+    return trimmed;
+  }
 }
 
-function trimDecimal(value: number): string {
-  const rounded = Math.round(value * 1_000_000) / 1_000_000;
-  return String(rounded);
+function trimDecimal(value: Decimal): string {
+  return value.toDecimalPlaces(BILLING_DECIMAL_PLACES).toFixed();
 }

@@ -5,10 +5,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
+	"gorm.io/datatypes"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestPricingSnapshotCostUSDUsesExactComponentsBeforeRoundedCredits(t *testing.T) {
+	snapshot := datatypes.JSON(`{
+		"input_cost_usd":"0.000043065",
+		"cache_read_cost_usd":"0.000001856",
+		"cache_write_cost_usd":"0",
+		"output_cost_usd":"0.00012267"
+	}`)
+	got, ok := pricingSnapshotCostUSD(snapshot)
+	want := decimal.RequireFromString("0.000167591")
+	if !ok || !got.Equal(want) {
+		t.Fatalf("pricingSnapshotCostUSD() = %s, %t; want %s, true", got, ok, want)
+	}
+}
 
 func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
@@ -18,7 +34,7 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {
@@ -117,7 +133,7 @@ func TestGetInvocationLogCursorPreservesSubMillisecondPrecision(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {
@@ -166,7 +182,7 @@ func TestGetInvocationLogKeepsRetryAttemptsInsideSelectedTimeRange(t *testing.T)
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {
@@ -205,7 +221,7 @@ func TestGetInvocationLogIncludesFractionalPartOfEndSecond(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {
@@ -237,7 +253,7 @@ func TestGetInvocationLogKeepsBaseLogAvailableWithoutOptionalContentTable(t *tes
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {

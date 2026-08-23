@@ -78,6 +78,8 @@ type BillingContext struct {
 	EstimatedCredits     int64 // Estimated credits to deduct
 	ActualCredits        int64 // Actual credits used
 	PromptTokens         int
+	CacheReadTokens      int
+	CacheWriteTokens     int
 	CompletionTokens     int
 	TotalTokens          int
 	InputCost            decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
@@ -590,7 +592,11 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 
 	creditsToDeduct := bc.ActualCredits
 	if billingContextNeedsTokenReprice(bc) {
-		quote, quoteErr := NewPricingEngine(b.db).QuoteTokens(ctx, pricingModelRefFromBillingContext(bc), bc.PromptTokens, bc.CompletionTokens)
+		engine := NewPricingEngine(b.db)
+		quote, quoteErr := engine.(cacheTokenPricingEngine).QuoteTokenUsage(ctx, pricingModelRefFromBillingContext(bc), TokenUsage{
+			InputTokens: bc.PromptTokens, CacheReadTokens: bc.CacheReadTokens,
+			CacheWriteTokens: bc.CacheWriteTokens, OutputTokens: bc.CompletionTokens,
+		})
 		err = wrapPricingNotConfiguredError(quoteErr)
 		if err != nil {
 			return wrapPricingCalculationError(err)
@@ -615,13 +621,15 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 
 	// Create transaction detail (shared across all records in the batch)
 	transactionDetail := map[string]interface{}{
-		"model_name":        bc.ModelName,
-		"provider_name":     bc.ProviderName,
-		"prompt_tokens":     bc.PromptTokens,
-		"completion_tokens": bc.CompletionTokens,
-		"total_tokens":      bc.TotalTokens,
-		"request_id":        bc.RequestID,
-		"api_key_id":        bc.APIKeyID,
+		"model_name":         bc.ModelName,
+		"provider_name":      bc.ProviderName,
+		"prompt_tokens":      bc.PromptTokens,
+		"cache_read_tokens":  bc.CacheReadTokens,
+		"cache_write_tokens": bc.CacheWriteTokens,
+		"completion_tokens":  bc.CompletionTokens,
+		"total_tokens":       bc.TotalTokens,
+		"request_id":         bc.RequestID,
+		"api_key_id":         bc.APIKeyID,
 	}
 
 	// Generate shared batch_id for related transactions

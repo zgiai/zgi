@@ -15,6 +15,8 @@ export interface ModelUsageSummary {
   failed_count: number;
   partial_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   official_points: number;
@@ -32,6 +34,8 @@ export interface ModelUsageByModelItem {
   failed_count: number;
   partial_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   official_points: number;
@@ -47,6 +51,8 @@ export interface ModelUsageByAppTypeItem {
   failed_count: number;
   partial_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   official_points: number;
@@ -62,6 +68,8 @@ export interface ModelUsageDailyItem {
   failed_count: number;
   partial_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   official_tokens: number;
@@ -138,9 +146,12 @@ export interface InvocationLogItem {
   status: InvocationStatus;
   attempt_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   total_points: number;
+  total_cost_usd?: string;
   duration_ms: number;
   started_at: number;
   settled_at: number;

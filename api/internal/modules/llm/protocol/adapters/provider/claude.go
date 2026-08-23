@@ -1056,14 +1056,19 @@ func (a *ClaudeAdapter) convertStopReason(stopReason string) string {
 }
 
 func toAdapterUsage(usage claudeUsage) *adapter.Usage {
-	if usage.InputTokens == 0 && usage.OutputTokens == 0 {
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
 		return nil
 	}
-	return &adapter.Usage{
-		PromptTokens:     usage.InputTokens,
-		CompletionTokens: usage.OutputTokens,
-		TotalTokens:      usage.InputTokens + usage.OutputTokens,
+	result := &adapter.Usage{
+		PromptTokens:        usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens,
+		CompletionTokens:    usage.OutputTokens,
+		TotalTokens:         usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens + usage.OutputTokens,
+		UncachedInputTokens: usage.InputTokens,
+		CacheReadTokens:     usage.CacheReadInputTokens,
+		CacheWriteTokens:    usage.CacheCreationInputTokens,
 	}
+	result.NormalizeCacheTokens()
+	return result
 }
 
 // enrichModelInfo enriches model information with context length and pricing

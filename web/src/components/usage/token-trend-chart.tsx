@@ -219,7 +219,7 @@ export function TokenTrendChart({
                   tickLine={false}
                   tick={{ fontSize: 12, fill: '#6B7280' }}
                   tickFormatter={value =>
-                    chartMode === 'points' ? formatCost(value) : formatNumber(value, 2) || '0'
+                    chartMode === 'points' ? formatCost(value) : formatNumber(value, 0) || '0'
                   }
                   dx={-10}
                 />
@@ -259,15 +259,15 @@ export function TokenTrendChart({
                           <div className="space-y-1 text-muted-foreground">
                             <div>
                               {t('usage.chart.officialTokensSeries')}:{' '}
-                              {formatNumber(data.officialTokens, 2)} {unitLabel}
+                              {formatNumber(data.officialTokens, 0)} {unitLabel}
                             </div>
                             <div>
                               {t('usage.chart.privateTokensSeries')}:{' '}
-                              {formatNumber(data.privateTokens, 2)} {unitLabel}
+                              {formatNumber(data.privateTokens, 0)} {unitLabel}
                             </div>
                             <div>
                               {t('usage.chart.totalTokensSeries')}:{' '}
-                              {formatNumber(data.totalTokens, 2)} {unitLabel}
+                              {formatNumber(data.totalTokens, 0)} {unitLabel}
                             </div>
                             <div>
                               {t('usage.cards.attemptCount')}: {formatNumber(data.attemptCount)}
@@ -288,7 +288,7 @@ export function TokenTrendChart({
                               {seriesLabel}:{' '}
                               {chartMode === 'points'
                                 ? formatCost(data.totalPoints)
-                                : formatNumber(data.totalTokens, 2)}{' '}
+                                : formatNumber(data.totalTokens, 0)}{' '}
                               {unitLabel}
                             </div>
                             <div>
@@ -367,7 +367,7 @@ export function TokenTrendChart({
           )}
           <span className="text-muted-foreground">
             {t('usage.chart.totalLabel', {
-              count: chartMode === 'points' ? formatCost(totalValue) : formatNumber(totalValue, 2),
+              count: chartMode === 'points' ? formatCost(totalValue) : formatNumber(totalValue, 0),
             })}
             {unitLabel ? ` ${unitLabel}` : null}
           </span>

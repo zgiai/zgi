@@ -6,6 +6,7 @@ import {
   DEFAULT_BILLING_DISPLAY,
   billingDisplayInputToUSD,
   billingDisplayInputValueFromUSD,
+  formatBillingDisplayAmountFromUSD,
   formatBillingDisplayAmountFromNormalizedCredits,
   getBillingDisplaySettings,
   normalizedAiCreditsToUSD,
@@ -64,6 +65,26 @@ assert.equal(
   '',
   'empty token price inputs must stay empty so validation can reject them'
 );
+assert.equal(
+  billingDisplayInputValueFromUSD(0.0001806, true, usdSettings),
+  '0.0001806',
+  'model price inputs must preserve prices beyond six decimal places'
+);
+assert.equal(
+  billingDisplayInputToUSD('0.0012642', cnySettings),
+  '0.0001806',
+  'CNY model price conversion must preserve the canonical USD decimal value'
+);
+assert.equal(
+  formatBillingDisplayAmountFromUSD(0.0001806, usdSettings),
+  '$0.0001806',
+  'small model prices must be displayed directly without truncation'
+);
+assert.equal(
+  formatBillingDisplayAmountFromUSD('0.000167591', usdSettings),
+  '$0.000167591',
+  'exact settled USD strings must not be reconstructed from rounded integer credits'
+);
 
 assert.equal(
   normalizedAiCreditsToUSD(9_661.55),
@@ -93,14 +114,14 @@ assert.equal(
 
 assert.equal(
   formatBillingDisplayAmountFromNormalizedCredits(0.01, cnySettings, { locale: 'zh-CN' }),
-  '<¥0.0001',
-  'a non-zero CNY amount below the display threshold should use only the less-than marker'
+  '≈¥0.00007',
+  'a non-zero CNY amount must be displayed directly below the former threshold'
 );
 
 assert.equal(
   formatBillingDisplayAmountFromNormalizedCredits(0.05, usdSettings, { locale: 'en-US' }),
-  '<$0.0001',
-  'non-zero usage must not be rounded down to a visible zero'
+  '$0.00005',
+  'non-zero usage must be displayed directly below the former threshold'
 );
 assert.equal(
   formatBillingDisplayAmountFromNormalizedCredits(0.1, usdSettings, { locale: 'en-US' }),

@@ -408,6 +408,8 @@ const messages: AiProvidersMessages = {
       cancel: '取消',
       save: '保存',
       saving: '保存中...',
+      syncedPrices: '上游同步价（美元/1M）：输入 {input}，输出 {output}，缓存读取 {cacheRead}，缓存写入 {cacheWrite}',
+      notProvided: '未提供',
     },
     table: {
       model: '模型',
@@ -457,6 +459,8 @@ const messages: AiProvidersMessages = {
       tagline: '标语',
       inputPrice: '输入价格',
       outputPrice: '输出价格',
+      cacheReadPrice: '缓存读取价格',
+      cacheWritePrice: '缓存写入价格',
       priceConfiguredHint: '留空表示未配置，填 0 表示免费。',
       cachedPrice: '缓存输入价格',
       contextWindow: '最大上下文窗口',

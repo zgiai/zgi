@@ -273,10 +273,7 @@ function tokenPriceDisplayValue(
   return billingDisplayInputValueFromUSD(priceUSD, true, billingDisplay);
 }
 
-function tokenPriceUnit(
-  billingDisplay: BillingDisplaySettings,
-  t: (key: SettingsKey) => string
-) {
+function tokenPriceUnit(billingDisplay: BillingDisplaySettings, t: (key: SettingsKey) => string) {
   return t(
     billingDisplay.currency === 'CNY'
       ? 'settings.pricingFallback.cnyPerMillionShort'
@@ -866,7 +863,7 @@ function TokenPriceCell({
       <Input
         type="number"
         min="0"
-        step="0.0001"
+        step="any"
         className="h-8 w-28"
         value={draftValue}
         onFocus={() => setIsEditing(true)}
@@ -875,17 +872,12 @@ function TokenPriceCell({
           const nextDisplayValue = event.target.value;
           setDraftValue(nextDisplayValue);
           onRuleChange?.(baseRule, {
-            price_usd_per_1m_tokens: billingDisplayInputToUSD(
-              nextDisplayValue,
-              billingDisplay
-            ),
+            price_usd_per_1m_tokens: billingDisplayInputToUSD(nextDisplayValue, billingDisplay),
           });
         }}
         disabled={disabled}
       />
-      <span className="text-xs text-muted-foreground">
-        {tokenPriceUnit(billingDisplay, t)}
-      </span>
+      <span className="text-xs text-muted-foreground">{tokenPriceUnit(billingDisplay, t)}</span>
     </div>
   );
 }

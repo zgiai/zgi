@@ -1058,15 +1058,19 @@ func TestBatchToggleModelsPreservesPriceOverrides(t *testing.T) {
 	modelID := uuid.New()
 	inputPrice := decimal.RequireFromString("1.23")
 	outputPrice := decimal.RequireFromString("4.56")
+	cacheReadPrice := decimal.RequireFromString("0.12")
+	cacheWritePrice := decimal.RequireFromString("0.78")
 	configRepo := &availableConfigRepoFake{
 		configs: map[uuid.UUID]*llmmodel.ModelConfig{
 			modelID: {
-				OrganizationID:      organizationID,
-				ModelID:             modelID,
-				IsEnabled:           true,
-				AccessScope:         llmmodel.AccessScopeAll,
-				InputPriceOverride:  &inputPrice,
-				OutputPriceOverride: &outputPrice,
+				OrganizationID:          organizationID,
+				ModelID:                 modelID,
+				IsEnabled:               true,
+				AccessScope:             llmmodel.AccessScopeAll,
+				InputPriceOverride:      &inputPrice,
+				OutputPriceOverride:     &outputPrice,
+				CacheReadPriceOverride:  &cacheReadPrice,
+				CacheWritePriceOverride: &cacheWritePrice,
 			},
 		},
 	}
@@ -1092,8 +1096,39 @@ func TestBatchToggleModelsPreservesPriceOverrides(t *testing.T) {
 	if got.OutputPriceOverride == nil || !got.OutputPriceOverride.Equal(outputPrice) {
 		t.Fatalf("output override = %v, want %s", got.OutputPriceOverride, outputPrice)
 	}
+	if got.CacheReadPriceOverride == nil || !got.CacheReadPriceOverride.Equal(cacheReadPrice) {
+		t.Fatalf("cache read override = %v, want %s", got.CacheReadPriceOverride, cacheReadPrice)
+	}
+	if got.CacheWritePriceOverride == nil || !got.CacheWritePriceOverride.Equal(cacheWritePrice) {
+		t.Fatalf("cache write override = %v, want %s", got.CacheWritePriceOverride, cacheWritePrice)
+	}
 	if len(availableSvc.invalidated) != 1 || availableSvc.invalidated[0] != organizationID {
 		t.Fatalf("invalidated tenants = %v, want [%s]", availableSvc.invalidated, organizationID)
+	}
+}
+
+func TestConfigureModelCacheOverridesDistinguishEmptyAndZero(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	zero := "0"
+	empty := ""
+	configRepo := &availableConfigRepoFake{}
+	svc := &modelService{
+		globalRepo: &availableModelRepoFake{models: []*llmmodel.LLMModel{{ID: modelID}}},
+		configRepo: configRepo,
+	}
+
+	configured, err := svc.ConfigureModel(context.Background(), organizationID, &llmmodeldto.ConfigureModelRequest{
+		ModelID: modelID, CacheReadPriceOverride: &zero, CacheWritePriceOverride: &empty,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configured.CacheReadPriceOverride == nil || !configured.CacheReadPriceOverride.IsZero() {
+		t.Fatalf("cache read override = %v, want explicit zero", configured.CacheReadPriceOverride)
+	}
+	if configured.CacheWritePriceOverride != nil {
+		t.Fatalf("cache write override = %v, want nil", configured.CacheWritePriceOverride)
 	}
 }
 

@@ -136,6 +136,9 @@ func (a *OpenAIAdapter) ChatCompletion(ctx context.Context, request *adapter.Cha
 	if err := json.Unmarshal(respBody, &response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
+	if response.Usage != nil {
+		response.Usage.NormalizeCacheTokens()
+	}
 
 	return &response, nil
 }
@@ -223,6 +226,7 @@ func (a *OpenAIAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 
 				// Track usage info from any chunk
 				if streamResp.Usage != nil {
+					streamResp.Usage.NormalizeCacheTokens()
 					lastUsage = streamResp.Usage
 				}
 

@@ -31,9 +31,12 @@ type InvocationLogItem struct {
 	Status           string  `json:"status"`
 	AttemptCount     int64   `json:"attempt_count"`
 	PromptTokens     int64   `json:"prompt_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
 	CompletionTokens int64   `json:"completion_tokens"`
 	TotalTokens      int64   `json:"total_tokens"`
 	TotalPoints      int64   `json:"total_points"`
+	TotalCostUSD     *string `json:"total_cost_usd,omitempty"`
 	DurationMS       int64   `json:"duration_ms"`
 	StartedAt        int64   `json:"started_at"`
 	SettledAt        int64   `json:"settled_at"`

@@ -3,13 +3,16 @@ package repository
 import (
 	"context"
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -68,20 +71,23 @@ func (value dbTime) Value() (driver.Value, error) {
 }
 
 type invocationBillRow struct {
-	RequestID        string    `gorm:"column:request_id"`
-	AppID            *string   `gorm:"column:app_id"`
-	AppType          *string   `gorm:"column:app_type"`
-	InvocationSource string    `gorm:"column:invocation_source"`
-	ModelName        string    `gorm:"column:model_name"`
-	ProviderName     string    `gorm:"column:provider_name"`
-	Status           string    `gorm:"column:status"`
-	PromptTokens     int64     `gorm:"column:prompt_tokens"`
-	CompletionTokens int64     `gorm:"column:completion_tokens"`
-	TotalTokens      int64     `gorm:"column:total_tokens"`
-	TotalPoints      int64     `gorm:"column:total_points"`
-	ErrorCode        *string   `gorm:"column:error_code"`
-	RequestCreatedAt time.Time `gorm:"column:request_created_at"`
-	SettledAt        time.Time `gorm:"column:settled_at"`
+	RequestID        string         `gorm:"column:request_id"`
+	AppID            *string        `gorm:"column:app_id"`
+	AppType          *string        `gorm:"column:app_type"`
+	InvocationSource string         `gorm:"column:invocation_source"`
+	ModelName        string         `gorm:"column:model_name"`
+	ProviderName     string         `gorm:"column:provider_name"`
+	Status           string         `gorm:"column:status"`
+	PromptTokens     int64          `gorm:"column:prompt_tokens"`
+	CacheReadTokens  int64          `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens int64          `gorm:"column:cache_write_tokens"`
+	CompletionTokens int64          `gorm:"column:completion_tokens"`
+	TotalTokens      int64          `gorm:"column:total_tokens"`
+	TotalPoints      int64          `gorm:"column:total_points"`
+	PricingSnapshot  datatypes.JSON `gorm:"column:pricing_snapshot"`
+	ErrorCode        *string        `gorm:"column:error_code"`
+	RequestCreatedAt time.Time      `gorm:"column:request_created_at"`
+	SettledAt        time.Time      `gorm:"column:settled_at"`
 }
 
 type invocationContentAvailabilityRow struct {
@@ -221,10 +227,14 @@ func (r *statisticsRepositoryImpl) queryInvocationPage(ctx context.Context, filt
 
 func (r *statisticsRepositoryImpl) queryInvocationBills(ctx context.Context, filters invocationLogFilters, requestIDs []string) ([]invocationBillRow, error) {
 	var rows []invocationBillRow
+	pricingSnapshotColumn := "'{}' AS pricing_snapshot"
+	if r.db.Migrator().HasColumn(usageBillTable, "pricing_snapshot") {
+		pricingSnapshotColumn = "b.pricing_snapshot"
+	}
 	query := r.db.WithContext(ctx).Table(usageBillTable+" b").
-		Select(`b.request_id, b.app_id, b.app_type, b.invocation_source, b.model_name, b.provider_name,
-			b.status, b.prompt_tokens, b.completion_tokens, b.total_tokens, b.total_points,
-			b.error_code, b.request_created_at, b.settled_at`).
+		Select(fmt.Sprintf(`b.request_id, b.app_id, b.app_type, b.invocation_source, b.model_name, b.provider_name,
+			b.status, b.prompt_tokens, b.cache_read_tokens, b.cache_write_tokens, b.completion_tokens, b.total_tokens, b.total_points,
+			b.error_code, b.request_created_at, b.settled_at, %s`, pricingSnapshotColumn)).
 		Where("b.request_id IN ?", requestIDs)
 	query = applyInvocationLogFilters(query, "b", filters)
 	err := query.Order("b.request_created_at ASC").Scan(&rows).Error
@@ -251,11 +261,13 @@ func applyInvocationLogFilters(query *gorm.DB, alias string, filters invocationL
 }
 
 type invocationAccumulator struct {
-	item       dto.InvocationLogItem
-	startedAt  time.Time
-	settledAt  time.Time
-	hasSuccess bool
-	hasPartial bool
+	item         dto.InvocationLogItem
+	totalCostUSD decimal.Decimal
+	hasExactCost bool
+	startedAt    time.Time
+	settledAt    time.Time
+	hasSuccess   bool
+	hasPartial   bool
 }
 
 func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRow) []dto.InvocationLogItem {
@@ -268,9 +280,15 @@ func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRo
 		}
 		acc.item.AttemptCount++
 		acc.item.PromptTokens += bill.PromptTokens
+		acc.item.CacheReadTokens += bill.CacheReadTokens
+		acc.item.CacheWriteTokens += bill.CacheWriteTokens
 		acc.item.CompletionTokens += bill.CompletionTokens
 		acc.item.TotalTokens += bill.TotalTokens
 		acc.item.TotalPoints += bill.TotalPoints
+		if costUSD, ok := pricingSnapshotCostUSD(bill.PricingSnapshot); ok {
+			acc.totalCostUSD = acc.totalCostUSD.Add(costUSD)
+			acc.hasExactCost = true
+		}
 		if acc.startedAt.IsZero() || bill.RequestCreatedAt.Before(acc.startedAt) {
 			acc.startedAt = bill.RequestCreatedAt
 		}
@@ -307,9 +325,54 @@ func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRo
 		acc.item.StartedAt = acc.startedAt.UnixMilli()
 		acc.item.SettledAt = acc.settledAt.UnixMilli()
 		acc.item.DurationMS = max(acc.settledAt.Sub(acc.startedAt).Milliseconds(), 0)
+		if acc.hasExactCost {
+			value := acc.totalCostUSD.String()
+			acc.item.TotalCostUSD = &value
+		}
 		items = append(items, acc.item)
 	}
 	return items
+}
+
+func pricingSnapshotCostUSD(snapshot datatypes.JSON) (decimal.Decimal, bool) {
+	if len(snapshot) == 0 {
+		return decimal.Zero, false
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(snapshot)))
+	decoder.UseNumber()
+	values := map[string]interface{}{}
+	if err := decoder.Decode(&values); err != nil {
+		return decimal.Zero, false
+	}
+	if total, ok := snapshotDecimal(values["total_cost_usd"]); ok {
+		return total, true
+	}
+	total := decimal.Zero
+	found := false
+	for _, key := range []string{"input_cost_usd", "cache_read_cost_usd", "cache_write_cost_usd", "output_cost_usd"} {
+		if value, ok := snapshotDecimal(values[key]); ok {
+			total = total.Add(value)
+			found = true
+		}
+	}
+	return total, found
+}
+
+func snapshotDecimal(value interface{}) (decimal.Decimal, bool) {
+	var raw string
+	switch typed := value.(type) {
+	case string:
+		raw = typed
+	case json.Number:
+		raw = typed.String()
+	default:
+		return decimal.Zero, false
+	}
+	parsed, err := decimal.NewFromString(strings.TrimSpace(raw))
+	if err != nil || parsed.IsNegative() {
+		return decimal.Zero, false
+	}
+	return parsed, true
 }
 
 func normalizedInvocationSource(source string) string {

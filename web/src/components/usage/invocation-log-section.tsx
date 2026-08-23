@@ -40,6 +40,7 @@ import type {
   InvocationLogSummary,
 } from '@/services/types/statistics';
 import {
+  formatBillingDisplayAmountFromUSD,
   formatBillingDisplayAmountFromNormalizedCredits,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
@@ -293,7 +294,9 @@ export function InvocationLogSection({
                       {formatDuration(item.duration_ms)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatCost(item.total_points)}
+                      {item.total_cost_usd
+                        ? formatBillingDisplayAmountFromUSD(item.total_cost_usd, billingDisplay)
+                        : formatCost(item.total_points)}
                     </TableCell>
                     <TableCell className="pr-6 text-right">
                       <Button
@@ -448,11 +451,24 @@ function InvocationDetailSheet({
               values={[
                 [t('usage.invocations.details.promptTokens'), formatNumber(item.prompt_tokens, 0)],
                 [
+                  t('usage.invocations.details.cacheReadTokens'),
+                  formatNumber(item.cache_read_tokens ?? 0, 0),
+                ],
+                [
+                  t('usage.invocations.details.cacheWriteTokens'),
+                  formatNumber(item.cache_write_tokens ?? 0, 0),
+                ],
+                [
                   t('usage.invocations.details.completionTokens'),
                   formatNumber(item.completion_tokens, 0),
                 ],
                 [t('usage.invocations.details.totalTokens'), formatNumber(item.total_tokens, 0)],
-                [t('usage.invocations.details.cost'), formatCost(item.total_points)],
+                [
+                  t('usage.invocations.details.cost'),
+                  item.total_cost_usd
+                    ? formatBillingDisplayAmountFromUSD(item.total_cost_usd, billingDisplay)
+                    : formatCost(item.total_points),
+                ],
               ]}
             />
           </DetailSection>

@@ -350,9 +350,60 @@ type TokenLogprob struct {
 
 // Usage token usage statistics
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens            int                     `json:"prompt_tokens"`
+	CompletionTokens        int                     `json:"completion_tokens"`
+	TotalTokens             int                     `json:"total_tokens"`
+	PromptTokensDetails     PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+	UncachedInputTokens     int                     `json:"uncached_input_tokens,omitempty"`
+	CacheReadTokens         int                     `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens        int                     `json:"cache_write_tokens,omitempty"`
+}
+
+type PromptTokensDetails struct {
+	UncachedTokens      int `json:"uncached_tokens,omitempty"`
+	CachedTokens        int `json:"cached_tokens,omitempty"`
+	CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
+}
+
+type CompletionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+}
+
+// NormalizeCacheTokens derives the four disjoint billing buckets used by the
+// gateway. OpenAI-compatible prompt_tokens includes cache tokens, while
+// Anthropic adapters populate UncachedInputTokens explicitly before calling it.
+func (u *Usage) NormalizeCacheTokens() {
+	if u == nil {
+		return
+	}
+	if u.CacheReadTokens == 0 {
+		u.CacheReadTokens = maxUsageToken(u.PromptTokensDetails.CachedTokens)
+	}
+	if u.CacheWriteTokens == 0 {
+		u.CacheWriteTokens = maxUsageToken(u.PromptTokensDetails.CacheCreationTokens)
+	}
+	if u.UncachedInputTokens == 0 {
+		if u.PromptTokensDetails.UncachedTokens > 0 {
+			u.UncachedInputTokens = u.PromptTokensDetails.UncachedTokens
+		} else {
+			u.UncachedInputTokens = maxUsageToken(u.PromptTokens - u.CacheReadTokens - u.CacheWriteTokens)
+		}
+	}
+	u.PromptTokensDetails.UncachedTokens = u.UncachedInputTokens
+	u.PromptTokensDetails.CachedTokens = u.CacheReadTokens
+	u.PromptTokensDetails.CacheCreationTokens = u.CacheWriteTokens
+	componentTotal := u.UncachedInputTokens + u.CacheReadTokens + u.CacheWriteTokens + maxUsageToken(u.CompletionTokens)
+	if u.TotalTokens <= 0 || componentTotal > u.TotalTokens {
+		u.TotalTokens = componentTotal
+	}
+}
+
+func maxUsageToken(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 // SettlementResult carries console-api settlement data for official traffic.

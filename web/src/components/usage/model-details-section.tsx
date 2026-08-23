@@ -28,6 +28,8 @@ interface ModelDetailsSectionProps {
   totalAttempts: number;
   totalTokens: number;
   promptTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
   completionTokens: number;
   showSourceBreakdown: boolean;
   billingDisplay: BillingDisplaySettings;
@@ -95,6 +97,8 @@ export function ModelDetailsSection({
   totalAttempts,
   totalTokens,
   promptTokens,
+  cacheReadTokens,
+  cacheWriteTokens,
   completionTokens,
   showSourceBreakdown,
   billingDisplay,
@@ -175,8 +179,10 @@ export function ModelDetailsSection({
             })}
           </span>
           <div className="flex flex-wrap gap-4">
-            <span>{t('usage.modelDetails.inputTotal', { tokens: formatNumber(promptTokens, 2) })}</span>
-            <span>{t('usage.modelDetails.outputTotal', { tokens: formatNumber(completionTokens, 2) })}</span>
+            <span>{t('usage.modelDetails.inputTotal', { tokens: formatNumber(promptTokens, 0) })}</span>
+            <span>{t('usage.modelDetails.cacheReadTotal', { tokens: formatNumber(cacheReadTokens, 0) })}</span>
+            <span>{t('usage.modelDetails.cacheWriteTotal', { tokens: formatNumber(cacheWriteTokens, 0) })}</span>
+            <span>{t('usage.modelDetails.outputTotal', { tokens: formatNumber(completionTokens, 0) })}</span>
           </div>
         </div>
       </CardContent>
@@ -199,7 +205,7 @@ function TableView({
     formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
   const getProviderName = useProviderI18n();
   const { items: providers } = useProviders({ limit: 200, refetchOnWindowFocus: false });
-  const columnCount = showSourceBreakdown ? 9 : 7;
+  const columnCount = showSourceBreakdown ? 11 : 9;
   const centeredHeadClassName = 'px-3 text-center';
   const centeredCellClassName = 'px-3 text-center';
   const providerIdentifierLookup = useMemo(() => {
@@ -234,6 +240,8 @@ function TableView({
             <TableHead className="min-w-[120px] px-3 text-center">{t('usage.modelDetails.provider')}</TableHead>
             <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.attempts')}</TableHead>
             <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.inputTokens')}</TableHead>
+            <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.cacheReadTokens')}</TableHead>
+            <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.cacheWriteTokens')}</TableHead>
             <TableHead className={centeredHeadClassName}>{t('usage.modelDetails.outputTokens')}</TableHead>
             {showSourceBreakdown ? (
               <>
@@ -278,8 +286,10 @@ function TableView({
                   }
                 </TableCell>
                 <TableCell className={centeredCellClassName}>{formatNumber(model.attempt_count)}</TableCell>
-                <TableCell className={centeredCellClassName}>{formatNumber(model.prompt_tokens, 2)}</TableCell>
-                <TableCell className={centeredCellClassName}>{formatNumber(model.completion_tokens, 2)}</TableCell>
+                <TableCell className={centeredCellClassName}>{formatNumber(model.prompt_tokens, 0)}</TableCell>
+                <TableCell className={centeredCellClassName}>{formatNumber(model.cache_read_tokens, 0)}</TableCell>
+                <TableCell className={centeredCellClassName}>{formatNumber(model.cache_write_tokens, 0)}</TableCell>
+                <TableCell className={centeredCellClassName}>{formatNumber(model.completion_tokens, 0)}</TableCell>
                 {showSourceBreakdown ? (
                   <>
                     <TableCell className={centeredCellClassName}>{formatCost(model.official_points)}</TableCell>
@@ -330,9 +340,9 @@ function ChartView({
         data: tokensData,
         title: t('usage.chart.tokenDistribution'),
         totalLabel: t('usage.chart.totalTokens'),
-        totalValue: formatNumber(totalTokens, 2),
+        totalValue: formatNumber(totalTokens, 0),
         unitLabel: t('usage.chart.tokens'),
-        formatValue: (value: number) => formatNumber(value, 2),
+        formatValue: (value: number) => formatNumber(value, 0),
       };
     }
 

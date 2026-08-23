@@ -155,6 +155,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "decimal.js-light": "2.5.1",
     "docx-preview": "^0.3.7",
     "highlight.js": "^11.11.1",
     "import-in-the-middle": "^2.0.0",

@@ -87,13 +87,19 @@ export function StatsCards({
       <Card>
         <CardContent className="space-y-1.5 p-5">
           <div className="text-base">{t('usage.cards.totalTokens')}</div>
-          <div className="text-3xl font-bold">{formatNumber(summary.total_tokens, 2)}</div>
+          <div className="text-3xl font-bold">{formatNumber(summary.total_tokens, 0)}</div>
           <div className="space-y-0.5 text-sm text-muted-foreground">
             <div>
-              {t('usage.cards.inputTokens')}: {formatNumber(summary.prompt_tokens, 2)}
+              {t('usage.cards.inputTokens')}: {formatNumber(summary.prompt_tokens, 0)}
             </div>
             <div>
-              {t('usage.cards.outputTokens')}: {formatNumber(summary.completion_tokens, 2)}
+              {t('usage.cards.cacheReadTokens')}: {formatNumber(summary.cache_read_tokens, 0)}
+            </div>
+            <div>
+              {t('usage.cards.cacheWriteTokens')}: {formatNumber(summary.cache_write_tokens, 0)}
+            </div>
+            <div>
+              {t('usage.cards.outputTokens')}: {formatNumber(summary.completion_tokens, 0)}
             </div>
           </div>
         </CardContent>

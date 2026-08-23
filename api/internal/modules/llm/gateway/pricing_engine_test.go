@@ -62,6 +62,42 @@ func insertPricingModel(t *testing.T, db *gorm.DB, modelID uuid.UUID, provider s
 	insertPricingModelNamed(t, db, modelID, provider, "test-model", inputPrice, outputPrice, inputConfigured, outputConfigured, imagePrices)
 }
 
+func TestPricingEngineQuoteTokenUsageSeparatesCacheComponents(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	if err := db.Exec(`ALTER TABLE llm_models ADD COLUMN cost_cache_read decimal`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`ALTER TABLE llm_models ADD COLUMN cost_cache_write decimal`).Error; err != nil {
+		t.Fatal(err)
+	}
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "1", "2", true, true, `[]`)
+	if err := db.Exec(`UPDATE llm_models SET cost_cache_read = ?, cost_cache_write = ? WHERE id = ?`, "0.25", "1.25", modelID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	engine := NewPricingEngine(db).(cacheTokenPricingEngine)
+	quote, err := engine.QuoteTokenUsage(context.Background(), PricingModelRef{ModelID: modelID}, TokenUsage{
+		InputTokens: 400, CacheReadTokens: 300, CacheWriteTokens: 100, OutputTokens: 200,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quote.InputUSD.Equal(decimal.RequireFromString("0.0006")) || !quote.OutputUSD.Equal(decimal.RequireFromString("0.0004")) {
+		t.Fatalf("component costs input/output = %s/%s, want 0.0006/0.0004", quote.InputUSD, quote.OutputUSD)
+	}
+	if !quote.CacheReadUSD.Equal(decimal.RequireFromString("0.000075")) || !quote.CacheWriteUSD.Equal(decimal.RequireFromString("0.000125")) {
+		t.Fatalf("cache costs read/write = %s/%s", quote.CacheReadUSD, quote.CacheWriteUSD)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(quote.PricingSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot["total_cost_usd"] != "0.001" || snapshot["charged_credits"] != float64(1000) {
+		t.Fatalf("exact total and charged credits missing from snapshot: %#v", snapshot)
+	}
+}
+
 func insertPricingModelNamed(t *testing.T, db *gorm.DB, modelID uuid.UUID, provider string, name string, inputPrice string, outputPrice string, inputConfigured bool, outputConfigured bool, imagePrices string) {
 	t.Helper()
 	if imagePrices == "" {

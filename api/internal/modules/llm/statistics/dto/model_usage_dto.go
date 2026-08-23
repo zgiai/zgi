@@ -23,6 +23,8 @@ type ModelUsageSummary struct {
 	FailedCount      int64 `json:"failed_count"`
 	PartialCount     int64 `json:"partial_count"`
 	PromptTokens     int64 `json:"prompt_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
 	TotalTokens      int64 `json:"total_tokens"`
 	OfficialPoints   int64 `json:"official_points"`
@@ -40,6 +42,8 @@ type ModelUsageByModelItem struct {
 	FailedCount      int64     `json:"failed_count"`
 	PartialCount     int64     `json:"partial_count"`
 	PromptTokens     int64     `json:"prompt_tokens"`
+	CacheReadTokens  int64     `json:"cache_read_tokens"`
+	CacheWriteTokens int64     `json:"cache_write_tokens"`
 	CompletionTokens int64     `json:"completion_tokens"`
 	TotalTokens      int64     `json:"total_tokens"`
 	OfficialPoints   int64     `json:"official_points"`
@@ -55,6 +59,8 @@ type ModelUsageByAppTypeItem struct {
 	FailedCount      int64   `json:"failed_count"`
 	PartialCount     int64   `json:"partial_count"`
 	PromptTokens     int64   `json:"prompt_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
 	CompletionTokens int64   `json:"completion_tokens"`
 	TotalTokens      int64   `json:"total_tokens"`
 	OfficialPoints   int64   `json:"official_points"`
@@ -70,6 +76,8 @@ type ModelUsageDailyItem struct {
 	FailedCount      int64  `json:"failed_count"`
 	PartialCount     int64  `json:"partial_count"`
 	PromptTokens     int64  `json:"prompt_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
 	CompletionTokens int64  `json:"completion_tokens"`
 	TotalTokens      int64  `json:"total_tokens"`
 	OfficialTokens   int64  `json:"official_tokens"`

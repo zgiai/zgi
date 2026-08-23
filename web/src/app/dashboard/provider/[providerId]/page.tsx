@@ -413,7 +413,12 @@ export default function ModelPage() {
   ]);
 
   const handlePriceSubmit = useCallback(
-    async (values: { inputPrice: string; outputPrice: string }) => {
+    async (values: {
+      inputPrice: string;
+      outputPrice: string;
+      cacheReadPrice: string;
+      cacheWritePrice: string;
+    }) => {
       if (!pricingModel || !canManageModels) return;
 
       if (isCustom) {
@@ -427,6 +432,8 @@ export default function ModelPage() {
           is_enabled: pricingModel.is_enabled,
           input_price_override: values.inputPrice,
           output_price_override: values.outputPrice,
+          cache_read_price_override: values.cacheReadPrice,
+          cache_write_price_override: values.cacheWritePrice,
         });
       }
 
