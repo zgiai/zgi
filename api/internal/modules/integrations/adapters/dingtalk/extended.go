@@ -42,6 +42,7 @@ func (adapter *Adapter) searchDepartments(ctx context.Context, creds credentials
 		return nil, 0, err
 	}
 	items := extractSearchItems(response)
+	hasMore := searchResponseHasMore(response, len(items), limit)
 	departments := make([]map[string]interface{}, 0, min(limit, len(items)))
 	for _, item := range items {
 		if len(departments) >= limit {
@@ -57,7 +58,7 @@ func (adapter *Adapter) searchDepartments(ctx context.Context, creds credentials
 		}
 		departments = append(departments, departmentOutput(creds.ConnectionID, details))
 	}
-	return map[string]interface{}{"provider": IntegrationID, "departments": departments}, len(departments), nil
+	return map[string]interface{}{"provider": IntegrationID, "departments": departments, "has_more": hasMore}, len(departments), nil
 }
 
 func (adapter *Adapter) getDepartment(ctx context.Context, creds credentials, encoded string) (map[string]interface{}, error) {
@@ -335,6 +336,94 @@ func extractSearchItems(response map[string]json.RawMessage) []json.RawMessage {
 		}
 	}
 	return nil
+}
+
+// searchResponseHasMore preserves provider-page completeness before invalid or
+// unusable records are filtered out. Every pagination signal in the top-level
+// and nested response envelopes must agree before the page may be considered
+// complete. Malformed, negative, or contradictory provider metadata fails
+// closed as "has more".
+func searchResponseHasMore(response map[string]json.RawMessage, rawCount, limit int) bool {
+	if rawCount < 0 || limit < 0 {
+		return true
+	}
+	type paginationEvidence struct {
+		present     bool
+		invalid     bool
+		hasMoreSeen bool
+		hasMore     bool
+		totalSeen   bool
+		total       int64
+	}
+	evidence := paginationEvidence{}
+	var scan func(map[string]json.RawMessage, int)
+	scan = func(container map[string]json.RawMessage, depth int) {
+		if evidence.invalid || depth > 12 {
+			evidence.invalid = true
+			return
+		}
+		for key, raw := range container {
+			normalizedKey := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(key), "_", ""))
+			switch normalizedKey {
+			case "hasmore":
+				evidence.present = true
+				var decoded *bool
+				if json.Unmarshal(raw, &decoded) != nil || decoded == nil {
+					evidence.invalid = true
+					continue
+				}
+				value := *decoded
+				if evidence.hasMoreSeen && evidence.hasMore != value {
+					evidence.invalid = true
+					continue
+				}
+				evidence.hasMoreSeen = true
+				evidence.hasMore = value
+				continue
+			case "totalcount", "total":
+				evidence.present = true
+				var decoded *int64
+				if json.Unmarshal(raw, &decoded) != nil || decoded == nil || *decoded < 0 {
+					evidence.invalid = true
+					continue
+				}
+				value := *decoded
+				if evidence.totalSeen && evidence.total != value {
+					evidence.invalid = true
+					continue
+				}
+				evidence.totalSeen = true
+				evidence.total = value
+				continue
+			}
+			// Pagination metadata belongs to response envelopes. Recurse through
+			// nested objects, but never through business-record arrays where a
+			// provider-controlled field named total/has_more is not page evidence.
+			var nested map[string]json.RawMessage
+			if json.Unmarshal(raw, &nested) == nil && nested != nil {
+				scan(nested, depth+1)
+			}
+		}
+	}
+	scan(response, 0)
+	if evidence.invalid || evidence.hasMore {
+		return true
+	}
+	if evidence.totalSeen {
+		// A total below the number of raw records is internally inconsistent;
+		// a larger total explicitly proves another result remains.
+		if evidence.total != int64(rawCount) {
+			return true
+		}
+	}
+	if evidence.present {
+		// Every discovered signal parsed successfully and agrees with a
+		// complete page (has_more=false and/or total==rawCount).
+		return false
+	}
+	// With no provider metadata, only a positive, genuinely under-filled raw
+	// page is evidence of completion. Unknown/non-positive limits fail closed.
+	return limit <= 0 || rawCount >= limit
 }
 
 func rawInt64(raw json.RawMessage, keys ...string) int64 {

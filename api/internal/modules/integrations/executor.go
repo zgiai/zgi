@@ -194,6 +194,7 @@ func (e *Executor) Execute(ctx context.Context, req ActionRequest) (*ActionResul
 	if req.Input == nil {
 		req.Input = map[string]interface{}{}
 	}
+	req.Input = CanonicalizeActionInput(resolved.Definition, req.Input)
 	if err := e.safety.Check(operationCtx, resolved.Definition, req.Input); err != nil {
 		if operationCtx.Err() != nil {
 			return nil, NewError(ErrorCodeTimeout, "external integration preflight timed out", operationCtx.Err())

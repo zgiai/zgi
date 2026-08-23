@@ -414,6 +414,10 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		executionContext.RuntimeParameters,
 		frozen.CorrelationID,
 	)
+	executionContext.RuntimeParameters = skills.WithExternalActionOperationItemID(
+		executionContext.RuntimeParameters,
+		approvedFrozenProjectedExternalActionOperationItemID(prepared.Message.Metadata, frozen),
+	)
 	if err := timeline.RecordInvocationStart(callID, frozen.SkillID, frozen.ToolName, args); err != nil {
 		return nil, true, finalizedRuntimePersistenceError(err)
 	}
@@ -486,12 +490,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		return result, true, err
 	}
 	if executionErr == nil {
-		metadata, terminalOnly := completeBoundGovernedInvocationOperationPlan(prepared.Message.Metadata, frozen)
-		if approvedFrozenExternalActionProviderSuccess(frozen, invocation) {
-			var confirmedTerminal bool
-			metadata, confirmedTerminal = completeApprovedFrozenExternalActionSuccess(metadata, frozen, invocation)
-			terminalOnly = terminalOnly || confirmedTerminal
-		}
+		metadata, terminalOnly := completeApprovedFrozenInvocationSuccess(prepared.Message.Metadata, frozen, invocation)
 		prepared.Message.Metadata = metadata
 		prepared.TerminalOnly = terminalOnly
 		if terminalOnly {
@@ -555,11 +554,12 @@ func approvedFrozenExternalActionProviderSuccess(frozen toolgovernance.FrozenInv
 		return false
 	}
 	result := mapFromOperationContext(invocation.Trace.Result)
-	if confirmed, ok := result["provider_success_confirmed"].(bool); ok && confirmed {
-		return true
-	}
 	switch strings.ToLower(strings.TrimSpace(stringFromAny(result["operation_status"]))) {
 	case "completed", "already_completed", "succeeded":
+		if raw, exists := result["provider_success_confirmed"]; exists {
+			confirmed, valid := raw.(bool)
+			return valid && confirmed
+		}
 		return true
 	default:
 		return false
@@ -571,6 +571,93 @@ func completeApprovedFrozenExternalActionSuccess(
 	frozen toolgovernance.FrozenInvocation,
 	invocation *skills.ToolInvocationResult,
 ) (map[string]interface{}, bool) {
+	terminal := !approvedExternalActionHasExplicitRemainingWork(metadata, frozen)
+	next := recordApprovedFrozenExternalActionProviderSuccess(metadata, frozen, invocation, terminal)
+	if !terminal {
+		return next, false
+	}
+	markApprovedExternalActionPlanCompleted(next, frozen)
+	return next, true
+}
+
+func completeApprovedFrozenInvocationSuccess(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+	invocation *skills.ToolInvocationResult,
+) (map[string]interface{}, bool) {
+	serverProjectedPlan := approvedFrozenInvocationHasServerProjectedPlan(metadata, frozen)
+	projectedPlanAlreadyTerminal := approvedFrozenInvocationHasCompletedServerProjectedBinding(metadata, frozen)
+	if approvedFrozenExternalAction(frozen) && !approvedFrozenExternalActionProviderSuccess(frozen, invocation) {
+		// external-apps may return a structured non-success operation state with
+		// no Go error. Provider confirmation is therefore a hard precondition for
+		// changing any phase, outcome, attempt, effect, or completion summary.
+		// A previously completed exact projected binding remains terminal, but a
+		// later ambiguous/non-success receipt may not add or downgrade evidence.
+		return copyStringAnyMap(metadata), projectedPlanAlreadyTerminal
+	}
+	next, terminal := completeBoundGovernedInvocationOperationPlan(metadata, frozen)
+	if projectedPlanAlreadyTerminal {
+		terminal = true
+	}
+	if !approvedFrozenExternalAction(frozen) {
+		return next, terminal
+	}
+	if serverProjectedPlan {
+		// The exact projected binding is the only authority allowed to close a
+		// projected phase. The legacy success helper may update provider evidence
+		// but must never broadly complete unrelated native/model phases.
+		return recordApprovedFrozenExternalActionProviderSuccess(next, frozen, invocation, terminal), terminal
+	}
+	legacy, legacyTerminal := completeApprovedFrozenExternalActionSuccess(next, frozen, invocation)
+	return legacy, terminal || legacyTerminal
+}
+
+func approvedFrozenInvocationHasServerProjectedPlan(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+) bool {
+	if !approvedFrozenExternalAction(frozen) {
+		return false
+	}
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		if operationPlanExpectedActionIsServerProjected(mapFromOperationContext(phase["expected_action"])) {
+			return true
+		}
+	}
+	return false
+}
+
+func approvedFrozenInvocationHasCompletedServerProjectedBinding(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+) bool {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	phases := mapSliceFromAny(plan["phases"])
+	if len(phases) == 0 || !operationPlanPhasesTerminal(phases) {
+		return false
+	}
+	for _, phase := range phases {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(phase["status"])), operationPlanStepStatusCompleted) ||
+			!operationPlanExpectedActionIsServerProjected(mapFromOperationContext(phase["expected_action"])) {
+			continue
+		}
+		binding := mapFromOperationContext(phase[operationPlanRuntimeBindingKey])
+		projected, _ := binding["projected_external_action"].(bool)
+		if projected && governedInvocationPlanBindingMatches(binding, frozen) &&
+			governedProjectedInvocationBindingMatchesPhase(binding, phase, frozen) {
+			return true
+		}
+	}
+	return false
+}
+
+func recordApprovedFrozenExternalActionProviderSuccess(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+	invocation *skills.ToolInvocationResult,
+	terminal bool,
+) map[string]interface{} {
 	next := copyStringAnyMap(metadata)
 	if next == nil {
 		next = map[string]interface{}{}
@@ -586,12 +673,19 @@ func completeApprovedFrozenExternalActionSuccess(
 	if summary == nil {
 		summary = map[string]interface{}{}
 	}
-	summary["status"] = operationPlanStatusCompleted
 	summary["provider_success_confirmed"] = true
 	summary["operation_status"] = operationStatus
 	summary["success_count"] = max(1, intValueFromAny(result["result_count"]))
 	summary["failed_count"] = 0
-	summary["pending_next_action"] = "none"
+	if terminal {
+		summary["status"] = operationPlanStatusCompleted
+		summary["plan_status"] = operationPlanStatusCompleted
+		summary["pending_next_action"] = "none"
+	} else {
+		summary["status"] = operationPlanStatusRunning
+		summary["plan_status"] = operationPlanStatusRunning
+		summary["pending_next_action"] = "continue_plan"
+	}
 	summary["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 	if actionID != "" {
 		summary["operation"] = actionID
@@ -601,14 +695,10 @@ func completeApprovedFrozenExternalActionSuccess(
 		summary["latest_tool_result"] = result
 	}
 	next["operation_result_summary"] = summary
-	next["completion_reason"] = "external_operation_provider_confirmed"
-
-	terminal := !approvedExternalActionHasExplicitRemainingWork(next, frozen)
-	if !terminal {
-		return next, false
+	if terminal {
+		next["completion_reason"] = "external_operation_provider_confirmed"
 	}
-	markApprovedExternalActionPlanCompleted(next, frozen)
-	return next, true
+	return next
 }
 
 func approvedExternalActionHasExplicitRemainingWork(metadata map[string]interface{}, frozen toolgovernance.FrozenInvocation) bool {

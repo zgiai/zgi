@@ -366,6 +366,10 @@ func (s *NativeSkillSession) AddToolProjections(
 	if s == nil {
 		return 0
 	}
+	options.ReservedToolNames = append(
+		append([]string(nil), s.options.ReservedToolNames...),
+		options.ReservedToolNames...,
+	)
 	return AppendNativeToolProjections(&s.active, projections, options)
 }
 
@@ -548,6 +552,11 @@ func cloneNativeToolSet(input NativeToolSet) NativeToolSet {
 	out.ProviderTools = append([]llmadapter.Tool(nil), input.ProviderTools...)
 	out.SkippedSkills = append([]NativeSkillSkip(nil), input.SkippedSkills...)
 	out.SkippedTools = append([]NativeToolSkip(nil), input.SkippedTools...)
+	out.ExternalActionIntentKeys = append([]string(nil), input.ExternalActionIntentKeys...)
+	out.ExternalActionCandidates = make([]NativeExternalActionCandidate, 0, len(input.ExternalActionCandidates))
+	for _, candidate := range input.ExternalActionCandidates {
+		out.ExternalActionCandidates = append(out.ExternalActionCandidates, cloneNativeExternalActionCandidate(candidate))
+	}
 	out.ToolBindings = make(map[string]NativeToolBinding, len(input.ToolBindings))
 	for name, binding := range input.ToolBindings {
 		out.ToolBindings[name] = cloneNativeToolBinding(binding)

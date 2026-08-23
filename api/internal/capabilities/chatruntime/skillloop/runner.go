@@ -16,6 +16,11 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
+// ContextArtifactToolName remains reserved even on runtimes that do not expose
+// the optional oversized-result receipt reader, so projected business Actions
+// cannot claim a protocol name used by compatible runtimes.
+const ContextArtifactToolName = "read_context_artifact"
+
 const (
 	defaultMaxSkillPlanningRounds                 = 50
 	defaultMaxSkillStepsPerTurn                   = 160
@@ -236,6 +241,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	failedToolCallAttemptCounts := map[string]int{}
 	emptyFinalAnswerRetryCount := 0
 	externalActionCompletionRetryCounts := map[string]int{}
+	projectedPlanLedgerRetryCount := 0
 	skillToolCallCounts := map[string]int{}
 	successfulToolCalls := []SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
@@ -390,6 +396,18 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			emptyFinalAnswerRetryCount = 0
 			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
+			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
+				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
+					terminalStateGuardRecord(req, guard)
+					projectedPlanLedgerRetryCount++
+					messages = append(messages,
+						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
+						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
+					)
+					continue
+				}
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, text)
+			}
 			if guard.Path != terminalStateGuardAccepted &&
 				terminalStateGuardRequiresExternalExecutionRetry(guard) {
 				if !req.TerminalOnly &&
@@ -437,6 +455,18 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 			submission.streamed = submission.streamed || planningResult.answerStreamed
 			guard := terminalStateGuardEvaluate(roundRuntimeState, submission.answer)
+			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
+				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
+					terminalStateGuardRecord(req, guard)
+					projectedPlanLedgerRetryCount++
+					messages = append(messages,
+						adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
+						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
+					)
+					continue
+				}
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, submission.answer)
+			}
 			if guard.Path != terminalStateGuardAccepted &&
 				terminalStateGuardRequiresExternalExecutionRetry(guard) &&
 				terminalStateGuardCanRetryPendingExternalAction(

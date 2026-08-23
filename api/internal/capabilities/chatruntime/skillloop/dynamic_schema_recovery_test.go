@@ -100,6 +100,7 @@ func TestDynamicSchemaFailureReturnsSafeExpectedArgumentsAndRetryFeedback(t *tes
 		},
 		skills.ExecutionContext{},
 		nil,
+		nil,
 	)
 	if !step.recoverable || step.fatalErr != nil {
 		t.Fatalf("step recoverable=%v fatal=%v", step.recoverable, step.fatalErr)
@@ -209,6 +210,7 @@ func TestDynamicSchemaRecoveryHidesReadOnlyConnectionIdentity(t *testing.T) {
 			},
 		},
 		skills.ExecutionContext{},
+		nil,
 		nil,
 	)
 	if !step.recoverable || step.fatalErr != nil {

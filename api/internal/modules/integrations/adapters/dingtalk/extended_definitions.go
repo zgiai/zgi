@@ -86,7 +86,7 @@ func extendedActions() []integrations.ActionDefinition {
 		read(ActionDepartmentSearch, "search_dingtalk_departments", "Search DingTalk departments", "搜索钉钉部门", "Search visible departments by name and return connection-bound department references.", "按名称搜索应用可见的部门，并返回与当前连接绑定的部门引用。", object(map[string]interface{}{
 			"query":       titled(nonblank(128), "Department name", "部门名称"),
 			"max_results": titled(map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 20, "default": 10}, "Maximum results", "最大结果数"),
-		}, []string{"query"}), object(map[string]interface{}{"provider": nonblank(64), "departments": array(departmentSchema, 20)}, []string{"provider", "departments"}), []string{ScopeContacts}),
+		}, []string{"query"}), object(map[string]interface{}{"provider": nonblank(64), "departments": array(departmentSchema, 20), "has_more": map[string]interface{}{"type": "boolean"}}, []string{"provider", "departments", "has_more"}), []string{ScopeContacts}),
 		read(ActionDepartmentGet, "get_dingtalk_department", "Get DingTalk department", "获取钉钉部门", "Read one department selected from a department search or list result.", "读取部门搜索或部门列表中选定的一个部门。", object(map[string]interface{}{
 			"department_ref": titled(nonblank(2048), "Department reference", "部门引用"),
 		}, []string{"department_ref"}), object(map[string]interface{}{"provider": nonblank(64), "department": departmentSchema}, []string{"provider", "department"}), []string{ScopeContacts}),

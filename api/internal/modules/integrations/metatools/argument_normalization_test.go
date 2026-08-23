@@ -2,11 +2,69 @@ package metatools
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
 )
+
+func TestCanonicalizeExecuteActionBusinessArgumentsUnifiesConditionalSelfIdentity(t *testing.T) {
+	action := integrations.ActionDefinition{
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"recipient_type": map[string]interface{}{"type": "string"},
+				"recipient_id": map[string]interface{}{
+					"type":               "string",
+					"x-zgi-discard-when": map[string]interface{}{"argument": "recipient_type", "equals": "self"},
+				},
+				"text": map[string]interface{}{"type": "string"},
+			},
+			"required": []interface{}{"recipient_type", "text"},
+			"allOf": []interface{}{map[string]interface{}{
+				"if": map[string]interface{}{
+					"properties": map[string]interface{}{"recipient_type": map[string]interface{}{"const": "self"}},
+					"required":   []interface{}{"recipient_type"},
+				},
+				"else": map[string]interface{}{"required": []interface{}{"recipient_id"}},
+			}},
+		},
+		SuccessDeduplication: &integrations.SuccessDeduplicationDefinition{
+			TargetArgumentPaths: []string{"recipient_id", "recipient_type"},
+		},
+	}
+
+	first := canonicalizeExecuteActionBusinessArguments(map[string]interface{}{
+		"arguments": map[string]interface{}{
+			"recipient_type": "self", "recipient_id": "ignored-a", "text": "hello",
+		},
+	}, action)
+	second := canonicalizeExecuteActionBusinessArguments(map[string]interface{}{
+		"arguments": map[string]interface{}{
+			"recipient_type": "self", "recipient_id": "ignored-b", "text": "hello",
+		},
+	}, action)
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("semantically identical self requests retained distinct identities:\nfirst=%#v\nsecond=%#v", first, second)
+	}
+	arguments := first["arguments"].(map[string]interface{})
+	if arguments["recipient_type"] != "self" || arguments["text"] != "hello" {
+		t.Fatalf("canonical self arguments = %#v", arguments)
+	}
+	if _, exists := arguments["recipient_id"]; exists {
+		t.Fatalf("irrelevant self recipient_id survived canonicalization: %#v", arguments)
+	}
+
+	nonSelf := canonicalizeExecuteActionBusinessArguments(map[string]interface{}{
+		"arguments": map[string]interface{}{
+			"recipient_type": "open_id", "recipient_id": "ou_target", "text": "hello",
+		},
+	}, action)["arguments"].(map[string]interface{})
+	if nonSelf["recipient_id"] != "ou_target" {
+		t.Fatalf("meaningful non-self recipient_id was removed: %#v", nonSelf)
+	}
+}
 
 func TestNormalizeExecuteActionParametersAcceptsNativeAndEncodedObjects(t *testing.T) {
 	tests := []struct {

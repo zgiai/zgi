@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -195,6 +196,31 @@ func TestExecutorGuardExecutesTenDistinctItemsForSameTargetExactlyOnce(t *testin
 	}
 	if adapter.calls != 10 {
 		t.Fatalf("provider calls = %d, want exactly 10 distinct batch items", adapter.calls)
+	}
+}
+
+func TestExecutorGuardExecutesDistinctProjectedPhaseItemsAndReplaysEachExactlyOnce(t *testing.T) {
+	adapter := &testAdapter{driverID: "test"}
+	executor := NewExecutor(registerTestAction(t, guardedTestAction(), adapter), &testAudit{}, &testQuota{}, nil, []byte("operation-test-key"), 0).
+		WithOperationReceiptRepository(newMemoryOperationReceiptRepository())
+
+	first := guardedActionRequest(testMessageID, "recipient-a", "first")
+	first.OperationItemID = "phase:" + strings.Repeat("1", 64)
+	second := guardedActionRequest(testMessageID, "recipient-a", "second")
+	second.OperationItemID = "phase:" + strings.Repeat("2", 64)
+	for pass := 0; pass < 2; pass++ {
+		for index, request := range []ActionRequest{first, second} {
+			result, err := executor.Execute(context.Background(), request)
+			if err != nil {
+				t.Fatalf("pass %d phase %d Execute() error = %v", pass, index+1, err)
+			}
+			if result == nil || result.Replayed != (pass == 1) {
+				t.Fatalf("pass %d phase %d result = %#v", pass, index+1, result)
+			}
+		}
+	}
+	if adapter.calls != 2 {
+		t.Fatalf("provider calls = %d, want one call for each phase and no replay calls", adapter.calls)
 	}
 }
 

@@ -959,6 +959,29 @@ func TestRegistryValidatesPreparationHints(t *testing.T) {
 	}
 }
 
+func TestPreparationHintMultipleTargetsRequireKnownServerTransform(t *testing.T) {
+	action := testAction("github.issue.create", "create_issue")
+	properties := action.InputSchema["properties"].(map[string]interface{})
+	properties["owner"] = map[string]interface{}{"type": "string"}
+	properties["repo"] = map[string]interface{}{"type": "string"}
+	action.PreparationHints = []ActionPreparationHint{{
+		ActionID: "github.repository.search", Relation: ActionPreparationResolveTarget,
+		TargetArguments: []string{"owner", "repo"}, ResultPaths: []string{"repositories[].full_name"},
+		Description: "Resolve one repository.",
+	}}
+	if _, err := normalizeActionPreparationHints("github", action); err == nil || !strings.Contains(err.Error(), "requires a result transform") {
+		t.Fatalf("missing transform error = %v", err)
+	}
+	action.PreparationHints[0].ResultTransform = ActionPreparationResultTransform("model_defined")
+	if _, err := normalizeActionPreparationHints("github", action); err == nil || !strings.Contains(err.Error(), "result transform is invalid") {
+		t.Fatalf("unknown transform error = %v", err)
+	}
+	action.PreparationHints[0].ResultTransform = ActionPreparationSplitSlashPair
+	if hints, err := normalizeActionPreparationHints("github", action); err != nil || len(hints) != 1 || hints[0].ResultTransform != ActionPreparationSplitSlashPair {
+		t.Fatalf("known transform hints=%#v error=%v", hints, err)
+	}
+}
+
 func appendTestEvent(events *[]string, event string) {
 	if events != nil {
 		*events = append(*events, event)

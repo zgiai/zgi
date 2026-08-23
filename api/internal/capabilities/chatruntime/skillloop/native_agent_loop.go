@@ -13,6 +13,9 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
+const planExpectedActionServerProjectionKey = "_server_projected_tool_name"
+const planExpectedActionServerBindingFingerprintKey = "_server_projected_binding_fingerprint"
+
 func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool) []adapter.Tool {
 	runtimeDefinitions := make([]adapter.Tool, 0, len(runtimeTools))
 	for _, runtimeTool := range runtimeTools {
@@ -88,6 +91,7 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"If a candidate skill is needed, call activate_skills with the smallest relevant set before doing the business work. Use search_skills only when the compact candidate directory omitted the needed capability.",
 		"Skill discovery and activation are internal. Do not name, narrate, summarize, or expose that mechanism to the user. A useful user-facing process note may accompany the same turn when it describes the actual task stage rather than the internal preparation.",
 		"When a business action is needed, call the exposed business function directly. Never call or invent load_skill, call_skill_tool, submit_intermediate_answer, or submit_final_answer.",
+		"Before the first projected external Action, call update_plan earlier in the same tool-call response. Keep every required outcome phase and give each tool phase an expected_action whose tool_name is the exact exposed business function name; do not guess a hidden skill_id. Include stable target values when known, using target_arguments keyed by the exact business-argument path for nested targets. The runtime binds that alias to its server-owned integration, Action identity, and allowed target paths. A read prerequisite may run only after the final expected Action is in this ledger. If multiple phases call the same projected Action for the same target, pass that phase's exact plan_phase_id to each direct call.",
 		"For complex or multi-step work, before the first business stage include one brief user-visible process note in ordinary assistant content before the business function call. Add another note only after important evidence arrives, when the work changes stage, when the approach changes, or when recovering from an error.",
 		"A process note must use the language of the user's latest request and state the current judgment or evidence plus the result the next action will produce. Do not merely repeat the request.",
 		"Keep each process note concise, normally one to four short sentences and about 60 to 180 estimated tokens. Never exceed 384 estimated tokens for one note. Across one user task, produce at most eight notes and about 1920 estimated tokens total.",
@@ -346,7 +350,8 @@ func nativeExecutionCall(call adapter.ToolCall, toolSet *skills.NativeToolSet) a
 	if toolSet == nil {
 		return call
 	}
-	binding, ok := toolSet.ToolBindings[strings.TrimSpace(call.Function.Name)]
+	call = nativeCanonicalizeProjectedActionPlanCall(call, toolSet)
+	binding, _, ok := nativeToolBindingForCall(toolSet, call.Function.Name)
 	if !ok {
 		return call
 	}
@@ -356,6 +361,13 @@ func nativeExecutionCall(call adapter.ToolCall, toolSet *skills.NativeToolSet) a
 			// Preserve malformed JSON so the existing argument feedback path handles it.
 			return call
 		}
+	}
+	arguments = nativeMaterializeProjectedActionDefaults(arguments, binding.DefaultArguments)
+	arguments = nativeCanonicalizeProjectedActionArguments(arguments, binding.OptionalTargets)
+	planPhaseID := ""
+	if phaseArgument := strings.TrimSpace(binding.PlanPhaseArgument); phaseArgument != "" {
+		planPhaseID = strings.TrimSpace(evidenceStringFromAny(arguments[phaseArgument]))
+		delete(arguments, phaseArgument)
 	}
 	executionArguments := arguments
 	if binding.ArgumentEnvelope != "" {
@@ -380,6 +392,9 @@ func nativeExecutionCall(call adapter.ToolCall, toolSet *skills.NativeToolSet) a
 		"tool_name": binding.ToolName,
 		"arguments": executionArguments,
 	}
+	if planPhaseID != "" {
+		wrapper["plan_phase_id"] = planPhaseID
+	}
 	encoded, err := json.Marshal(wrapper)
 	if err != nil {
 		return call
@@ -387,6 +402,176 @@ func nativeExecutionCall(call adapter.ToolCall, toolSet *skills.NativeToolSet) a
 	call.Function.Name = skills.MetaToolCallSkillTool
 	call.Function.Arguments = string(encoded)
 	return call
+}
+
+func nativeCanonicalizeProjectedActionPlanCall(call adapter.ToolCall, toolSet *skills.NativeToolSet) adapter.ToolCall {
+	if toolSet == nil || !strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolUpdatePlan) {
+		return call
+	}
+	arguments := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
+		return call
+	}
+	phases := make([]interface{}, 0)
+	for _, key := range []string{"plan", "phase_updates"} {
+		if values, ok := arguments[key].([]interface{}); ok {
+			phases = append(phases, values...)
+		}
+	}
+	if len(phases) == 0 {
+		return call
+	}
+	changed := false
+	for _, rawPhase := range phases {
+		phase, _ := rawPhase.(map[string]interface{})
+		expected, _ := phase["expected_action"].(map[string]interface{})
+		if len(expected) == 0 {
+			continue
+		}
+		requestedToolName := strings.TrimSpace(evidenceStringFromAny(expected["tool_name"]))
+		if strings.EqualFold(requestedToolName, "execute_action") {
+			requestedToolName = strings.TrimSpace(evidenceStringFromAny(expected["projected_tool_name"]))
+		}
+		// This marker is server-owned. Strip any model copy before resolving the
+		// current request's binding, but leave ordinary expected_action fields
+		// untouched unless the selected name is a real projected external Action.
+		if _, submittedServerMarker := expected[planExpectedActionServerProjectionKey]; submittedServerMarker {
+			delete(expected, planExpectedActionServerProjectionKey)
+			changed = true
+		}
+		if _, submittedBindingFingerprint := expected[planExpectedActionServerBindingFingerprintKey]; submittedBindingFingerprint {
+			delete(expected, planExpectedActionServerBindingFingerprintKey)
+			changed = true
+		}
+		if _, submittedProjectedName := expected["projected_tool_name"]; submittedProjectedName {
+			delete(expected, "projected_tool_name")
+			changed = true
+		}
+		binding, providerName, exists := nativeToolBindingForCall(toolSet, requestedToolName)
+		integrationID, actionID, projected := nativeProjectedExternalActionIdentity(binding)
+		if !exists || !projected || strings.TrimSpace(binding.BindingFingerprint) == "" {
+			continue
+		}
+		submittedTargetArguments := copyStringAnyMap(evidenceMapFromAny(expected["target_arguments"]))
+		delete(expected, "target_arguments")
+		target := copyStringAnyMap(evidenceMapFromAny(expected["target"]))
+		if target == nil {
+			target = map[string]interface{}{}
+		}
+		// The alias only selects a server-created binding. Model values cannot
+		// replace the integration or Action identity captured in that binding.
+		target["integration_id"] = integrationID
+		target["action_id"] = actionID
+		expected["skill_id"] = skills.SkillExternalApps
+		expected["tool_name"] = "execute_action"
+		expected["target"] = target
+		expected["projected_tool_name"] = providerName
+		expected[planExpectedActionServerProjectionKey] = providerName
+		expected[planExpectedActionServerBindingFingerprintKey] = strings.TrimSpace(binding.BindingFingerprint)
+		targetArguments := map[string]interface{}{}
+		for _, path := range binding.TargetArgumentPaths {
+			value := operationPlanArgumentPathValue(target, path)
+			if value == "" {
+				value = strings.TrimSpace(evidenceStringFromAny(target[path]))
+			}
+			if value == "" {
+				value = strings.TrimSpace(evidenceStringFromAny(submittedTargetArguments[path]))
+			}
+			if value == "" {
+				value = operationPlanArgumentPathValue(binding.DefaultArguments, path)
+			}
+			if value == "" {
+				value = strings.TrimSpace(evidenceStringFromAny(binding.DefaultArguments[path]))
+			}
+			if value != "" {
+				targetArguments[path] = value
+			}
+		}
+		targetArguments = nativeCanonicalizeProjectedActionArguments(targetArguments, binding.OptionalTargets)
+		if len(targetArguments) > 0 {
+			expected["target_arguments"] = targetArguments
+		}
+		changed = true
+	}
+	if !changed {
+		return call
+	}
+	encoded, err := json.Marshal(arguments)
+	if err == nil {
+		call.Function.Arguments = string(encoded)
+	}
+	return call
+}
+
+func nativeMaterializeProjectedActionDefaults(
+	arguments map[string]interface{},
+	defaults map[string]interface{},
+) map[string]interface{} {
+	if len(defaults) == 0 {
+		return arguments
+	}
+	out := make(map[string]interface{}, len(arguments)+len(defaults))
+	for key, value := range defaults {
+		out[key] = value
+	}
+	for key, value := range arguments {
+		// Explicit model arguments retain normal JSON Schema semantics. The
+		// server-owned default applies only when a property is omitted.
+		out[key] = value
+	}
+	return out
+}
+
+func nativeCanonicalizeProjectedActionArguments(
+	arguments map[string]interface{},
+	optionalTargets []skills.NativeExternalActionOptionalTargetArgument,
+) map[string]interface{} {
+	if len(arguments) == 0 || len(optionalTargets) == 0 {
+		return arguments
+	}
+	out := copyStringAnyMap(arguments)
+	for _, target := range optionalTargets {
+		if !target.DiscardWhenMatched {
+			continue
+		}
+		path := strings.TrimSpace(target.Path)
+		whenArgument := strings.TrimSpace(target.WhenArgument)
+		if path == "" || whenArgument == "" {
+			continue
+		}
+		actual, exists := out[whenArgument]
+		if !exists || !nativeProjectedActionScalarEqual(actual, target.WhenEquals) {
+			continue
+		}
+		// The selected conditional branch makes this alternate target
+		// meaningless (for example recipient_id when recipient_type=self).
+		// Strip it before plan matching, approval and provider execution so it
+		// cannot split one real operation into several synthetic identities.
+		delete(out, path)
+	}
+	return out
+}
+
+func nativeProjectedActionScalarEqual(left, right interface{}) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
+}
+
+func nativeToolBindingForCall(toolSet *skills.NativeToolSet, name string) (skills.NativeToolBinding, string, bool) {
+	if toolSet == nil {
+		return skills.NativeToolBinding{}, "", false
+	}
+	name = strings.TrimSpace(name)
+	if binding, ok := toolSet.ToolBindings[name]; ok {
+		return binding, name, true
+	}
+	for providerName, binding := range toolSet.ToolBindings {
+		if strings.EqualFold(strings.TrimSpace(providerName), name) {
+			return binding, providerName, true
+		}
+	}
+	return skills.NativeToolBinding{}, "", false
 }
 
 func nativeExecutionCalls(calls []adapter.ToolCall, toolSet *skills.NativeToolSet) []adapter.ToolCall {

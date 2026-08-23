@@ -1150,7 +1150,10 @@ func messageInputSchema(allowSelf bool) map[string]interface{} {
 			"Recipient type", "接收者类型", englishLabels, chineseLabels,
 		),
 		"recipient_id": localizedSchema(
-			map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 255, "pattern": `^[A-Za-z0-9_-]+$`},
+			map[string]interface{}{
+				"type": "string", "minLength": 1, "maxLength": 255, "pattern": `^[A-Za-z0-9_-]+$`,
+				"x-zgi-discard-when": map[string]interface{}{"argument": "recipient_type", "equals": "self"},
+			},
 			recipientIDEnglish, recipientIDChinese,
 		),
 		"text": localizedSchema(

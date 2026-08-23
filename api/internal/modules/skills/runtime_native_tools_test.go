@@ -2,6 +2,8 @@ package skills
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -179,6 +181,16 @@ func TestNativeProviderToolNameKeepsValidUniqueNameAndAliasesConflicts(t *testin
 	}
 }
 
+func TestNativeProviderToolNameAliasesForbiddenLegacyProtocolNamesCaseInsensitively(t *testing.T) {
+	reserved := nativeControlToolNames()
+	for _, name := range []string{"LOAD_SKILL", "Call_Skill_Tool", "submit_intermediate_answer", "SUBMIT_FINAL_ANSWER"} {
+		got := nativeProviderToolName("external-apps/wecom.message.send", name, reserved, map[string]struct{}{})
+		if got == "" || strings.EqualFold(got, name) {
+			t.Fatalf("nativeProviderToolName(%q) = %q, want stable non-protocol alias", name, got)
+		}
+	}
+}
+
 func TestAppendNativeToolProjectionsKeepsBusinessSchemaAndGovernedBinding(t *testing.T) {
 	toolSet := NativeToolSet{
 		ActiveSkillIDs: []string{SkillExternalApps},
@@ -192,6 +204,11 @@ func TestAppendNativeToolProjectionsKeepsBusinessSchemaAndGovernedBinding(t *tes
 		"action_schema_revision": "schema-1",
 		"catalog_revision":       "catalog-1",
 	}
+	preparationActionIDs := []string{"wecom.contact.search"}
+	preparationHints := []NativeExternalActionPreparationHint{{
+		ActionID: "wecom.contact.search", Relation: "resolve_target",
+		TargetArguments: []string{"recipient_ref"}, ResultPaths: []string{"members[].recipient_ref"},
+	}}
 	added := AppendNativeToolProjections(&toolSet, []NativeToolProjection{{
 		Name:        "wecom_send_message",
 		Description: "Send a WeCom message.",
@@ -205,10 +222,12 @@ func TestAppendNativeToolProjectionsKeepsBusinessSchemaAndGovernedBinding(t *tes
 			"required": []interface{}{"content"},
 		},
 		Binding: NativeToolBinding{
-			SkillID:          SkillExternalApps,
-			ToolName:         "execute_action",
-			ArgumentEnvelope: "arguments",
-			FixedArguments:   fixed,
+			SkillID:              SkillExternalApps,
+			ToolName:             "execute_action",
+			ArgumentEnvelope:     "arguments",
+			FixedArguments:       fixed,
+			PreparationActionIDs: preparationActionIDs,
+			PreparationHints:     preparationHints,
 		},
 	}}, NativeToolProjectionOptions{})
 	if added != 1 || len(toolSet.ProviderTools) != 1 {
@@ -231,15 +250,180 @@ func TestAppendNativeToolProjectionsKeepsBusinessSchemaAndGovernedBinding(t *tes
 	}
 	binding := toolSet.ToolBindings[tool.Function.Name]
 	if binding.SkillID != SkillExternalApps || binding.ToolName != "execute_action" || binding.ArgumentEnvelope != "arguments" ||
-		binding.FixedArguments["action_id"] != "wecom.message.send" {
+		binding.FixedArguments["action_id"] != "wecom.message.send" ||
+		!reflect.DeepEqual(binding.PreparationActionIDs, []string{"wecom.contact.search"}) ||
+		!reflect.DeepEqual(binding.PreparationHints, preparationHints) {
 		t.Fatalf("binding = %#v", binding)
 	}
 	fixed["action_id"] = "spoofed.after.append"
 	if binding.FixedArguments["action_id"] != "wecom.message.send" {
 		t.Fatalf("binding aliased caller-owned fixed arguments: %#v", binding.FixedArguments)
 	}
+	preparationActionIDs[0] = "spoofed.after.append"
+	if !reflect.DeepEqual(binding.PreparationActionIDs, []string{"wecom.contact.search"}) {
+		t.Fatalf("binding aliased caller-owned preparation identities: %#v", binding.PreparationActionIDs)
+	}
+	preparationHints[0].ActionID = "spoofed.after.append"
+	preparationHints[0].TargetArguments[0] = "spoofed_target"
+	preparationHints[0].ResultPaths[0] = "spoofed[].value"
+	if !reflect.DeepEqual(binding.PreparationHints, []NativeExternalActionPreparationHint{{
+		ActionID: "wecom.contact.search", Relation: "resolve_target",
+		TargetArguments: []string{"recipient_ref"}, ResultPaths: []string{"members[].recipient_ref"},
+	}}) {
+		t.Fatalf("binding aliased caller-owned preparation contract: %#v", binding.PreparationHints)
+	}
 	if toolSet.SchemaChars <= 0 || toolSet.SchemaChars >= toolSet.BudgetChars {
 		t.Fatalf("schema chars = %d budget = %d", toolSet.SchemaChars, toolSet.BudgetChars)
+	}
+}
+
+func TestAppendNativeToolProjectionsDerivesDefaultsAndConditionalTargetsFromServerSchema(t *testing.T) {
+	toolSet := NativeToolSet{ToolBindings: map[string]NativeToolBinding{}, BudgetChars: 10000}
+	projection := NativeToolProjection{
+		Name: "send_feishu_user_message", NameScope: "feishu/feishu.message.send_user",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"recipient_type": map[string]interface{}{"type": "string", "default": "self"},
+				"recipient_id": map[string]interface{}{
+					"type":               "string",
+					"x-zgi-discard-when": map[string]interface{}{"argument": "recipient_type", "equals": "self"},
+				},
+				"text":        map[string]interface{}{"type": "string"},
+				"max_results": map[string]interface{}{"type": "integer", "default": 20},
+			},
+			"required": []string{"recipient_type", "text"},
+			"allOf": []interface{}{map[string]interface{}{
+				"if": map[string]interface{}{
+					"properties": map[string]interface{}{"recipient_type": map[string]interface{}{"const": "self"}},
+					"required":   []string{"recipient_type"},
+				},
+				"else": map[string]interface{}{"required": []string{"recipient_id"}},
+			}},
+			"additionalProperties": false,
+		},
+		Binding: NativeToolBinding{
+			SkillID: SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
+			Effect: "external_send", BindingFingerprint: "binding-feishu-send-user",
+			FixedArguments:      map[string]interface{}{"integration_id": "feishu", "action_id": "feishu.message.send_user"},
+			TargetArgumentPaths: []string{"recipient_id", "recipient_type"},
+		},
+	}
+	if added := AppendNativeToolProjections(&toolSet, []NativeToolProjection{projection}, NativeToolProjectionOptions{}); added != 1 {
+		t.Fatalf("AppendNativeToolProjections() added=%d skipped=%#v, want 1", added, toolSet.SkippedTools)
+	}
+	binding := toolSet.ToolBindings[toolSet.ProviderTools[0].Function.Name]
+	if !reflect.DeepEqual(binding.DefaultArguments, map[string]interface{}{"max_results": 20}) {
+		t.Fatalf("binding defaults = %#v, want only optional max_results", binding.DefaultArguments)
+	}
+	wantOptional := []NativeExternalActionOptionalTargetArgument{{
+		Path: "recipient_id", WhenArgument: "recipient_type", WhenEquals: "self", DiscardWhenMatched: true,
+	}}
+	if !reflect.DeepEqual(binding.OptionalTargets, wantOptional) {
+		t.Fatalf("binding optional targets = %#v, want %#v", binding.OptionalTargets, wantOptional)
+	}
+	if len(toolSet.ExternalActionCandidates) != 1 ||
+		!reflect.DeepEqual(toolSet.ExternalActionCandidates[0].DefaultArguments, binding.DefaultArguments) ||
+		!reflect.DeepEqual(toolSet.ExternalActionCandidates[0].OptionalTargets, wantOptional) {
+		t.Fatalf("candidate schema contract = %#v, want binding defaults and conditions", toolSet.ExternalActionCandidates)
+	}
+}
+
+func TestAppendNativeToolProjectionsReservesRuntimeNamesCaseInsensitively(t *testing.T) {
+	toolSet := NativeToolSet{ToolBindings: map[string]NativeToolBinding{}, BudgetChars: 10000}
+	projection := NativeToolProjection{
+		Name:      "Execute_Action",
+		NameScope: "wecom/wecom.message.send",
+		InputSchema: map[string]interface{}{
+			"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
+		},
+		Binding: NativeToolBinding{
+			SkillID: SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
+			FixedArguments: map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.message.send"},
+		},
+	}
+	if added := AppendNativeToolProjections(&toolSet, []NativeToolProjection{projection}, NativeToolProjectionOptions{
+		ReservedToolNames: []string{"execute_action"},
+	}); added != 1 {
+		t.Fatalf("AppendNativeToolProjections() added = %d, want 1", added)
+	}
+	name := toolSet.ProviderTools[0].Function.Name
+	if strings.EqualFold(name, "execute_action") {
+		t.Fatalf("projection retained runtime-reserved name %q", name)
+	}
+	if binding := toolSet.ToolBindings[name]; binding.FixedArguments["action_id"] != "wecom.message.send" {
+		t.Fatalf("aliased binding = %#v", binding)
+	}
+}
+
+func TestAppendNativeToolProjectionsAliasesThreeCrossIntegrationNameCollisions(t *testing.T) {
+	toolSet := NativeToolSet{ToolBindings: map[string]NativeToolBinding{}, BudgetChars: 20000}
+	projections := make([]NativeToolProjection, 0, 3)
+	for _, identity := range []struct{ integrationID, actionID string }{
+		{"wecom", "wecom.message.send"},
+		{"dingtalk", "dingtalk.message.send"},
+		{"feishu", "feishu.message.send"},
+	} {
+		projections = append(projections, NativeToolProjection{
+			Name:      "send_message",
+			NameScope: identity.integrationID + "/" + identity.actionID,
+			InputSchema: map[string]interface{}{
+				"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
+			},
+			Binding: NativeToolBinding{
+				SkillID: SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
+				FixedArguments: map[string]interface{}{"integration_id": identity.integrationID, "action_id": identity.actionID},
+			},
+		})
+	}
+	if added := AppendNativeToolProjections(&toolSet, projections, NativeToolProjectionOptions{}); added != 3 {
+		t.Fatalf("AppendNativeToolProjections() added = %d skipped=%#v, want 3", added, toolSet.SkippedTools)
+	}
+	seenNames := map[string]struct{}{}
+	seenActions := map[string]struct{}{}
+	for _, tool := range toolSet.ProviderTools {
+		name := strings.ToLower(tool.Function.Name)
+		if _, duplicate := seenNames[name]; duplicate {
+			t.Fatalf("duplicate projected alias %q", tool.Function.Name)
+		}
+		seenNames[name] = struct{}{}
+		binding := toolSet.ToolBindings[tool.Function.Name]
+		actionID, _ := binding.FixedArguments["action_id"].(string)
+		seenActions[actionID] = struct{}{}
+	}
+	if len(seenActions) != 3 {
+		t.Fatalf("cross-integration bindings = %#v, want 3 distinct Actions", seenActions)
+	}
+}
+
+func TestAppendNativeToolProjectionsKeepsSafeDescriptionWhenPreparationToolIsBudgetOmitted(t *testing.T) {
+	projection := func(name, actionID, description string) NativeToolProjection {
+		return NativeToolProjection{
+			Name: name, NameScope: "wecom/" + actionID, Description: description,
+			InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+			Binding: NativeToolBinding{
+				SkillID: SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
+				FixedArguments: map[string]interface{}{"integration_id": "wecom", "action_id": actionID},
+			},
+		}
+	}
+	send := projection("send_message", "wecom.message.send", "Resolve unknown targets with an available visible read Action or a visible external-action guide or search fallback.")
+	lookup := projection("raw_contact_lookup", "wecom.contact.search", strings.Repeat("large schema description ", 20))
+	probe := NativeToolSet{ToolBindings: map[string]NativeToolBinding{}}
+	if AppendNativeToolProjections(&probe, []NativeToolProjection{send}, NativeToolProjectionOptions{}) != 1 {
+		t.Fatal("failed to size the send projection")
+	}
+	toolSet := NativeToolSet{ToolBindings: map[string]NativeToolBinding{}, BudgetChars: probe.SchemaChars + 1}
+	if added := AppendNativeToolProjections(&toolSet, []NativeToolProjection{send, lookup}, NativeToolProjectionOptions{}); added != 1 {
+		t.Fatalf("added = %d skipped=%#v, want only send projection", added, toolSet.SkippedTools)
+	}
+	if len(toolSet.SkippedTools) != 1 || toolSet.SkippedTools[0].Reason != "context_budget_exceeded" {
+		t.Fatalf("skipped tools = %#v, want budget omission", toolSet.SkippedTools)
+	}
+	if description := toolSet.ProviderTools[0].Function.Description; strings.Contains(description, "raw_contact_lookup") ||
+		strings.Contains(description, "get_action_guide") || strings.Contains(description, "search_actions") ||
+		!strings.Contains(description, "visible external-action guide or search fallback") {
+		t.Fatalf("send description depends on omitted preparation alias: %q", description)
 	}
 }
 
@@ -282,6 +466,87 @@ func TestAppendNativeToolProjectionsUsesStableLimitAndRemainingBudget(t *testing
 	if len(budgeted.SkippedTools) != 1 || budgeted.SkippedTools[0].Reason != "context_budget_exceeded" {
 		t.Fatalf("budget skip = %#v", budgeted.SkippedTools)
 	}
+}
+
+func TestAppendNativeToolProjectionsKeepsPreparationDependenciesInsideTwentyFourToolLimit(t *testing.T) {
+	projection := func(index int, connection string) NativeToolProjection {
+		actionID := fmt.Sprintf("action.%03d", index)
+		return NativeToolProjection{
+			Name: fmt.Sprintf("action_%03d", index), NameScope: "wecom/" + actionID,
+			InputSchema: map[string]interface{}{
+				"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
+			},
+			Binding: NativeToolBinding{
+				SkillID: SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
+				BindingFingerprint: fmt.Sprintf("fingerprint-%03d", index), ConnectionBinding: connection,
+				FixedArguments: map[string]interface{}{"integration_id": "wecom", "action_id": actionID},
+			},
+		}
+	}
+	actionsInToolSet := func(toolSet NativeToolSet) map[string]bool {
+		out := map[string]bool{}
+		for _, tool := range toolSet.ProviderTools {
+			binding := toolSet.ToolBindings[tool.Function.Name]
+			out[fmt.Sprint(binding.FixedArguments["action_id"])] = true
+		}
+		return out
+	}
+
+	t.Run("intent target keeps same-connection dependency", func(t *testing.T) {
+		projections := make([]NativeToolProjection, 26)
+		for index := range projections {
+			projections[index] = projection(index, "connection-one")
+		}
+		projections[0].Binding.IntentMatched = true
+		projections[0].Binding.PreparationActionIDs = []string{"action.025"}
+		projections[25].Binding.ProjectionPriority = 1
+
+		toolSet := NativeToolSet{ToolBindings: map[string]NativeToolBinding{}}
+		if added := AppendNativeToolProjections(&toolSet, projections, NativeToolProjectionOptions{MaxTools: 24}); added != 24 {
+			t.Fatalf("added = %d skipped=%#v, want 24", added, toolSet.SkippedTools)
+		}
+		seen := actionsInToolSet(toolSet)
+		if !seen["action.000"] || !seen["action.025"] {
+			t.Fatalf("24-tool prefix lost target dependency closure: target=%v dependency=%v", seen["action.000"], seen["action.025"])
+		}
+		if seen["action.023"] || seen["action.024"] {
+			t.Fatalf("unrelated Actions displaced dependency: 023=%v 024=%v", seen["action.023"], seen["action.024"])
+		}
+	})
+
+	t.Run("pinned target below boundary keeps dependency", func(t *testing.T) {
+		projections := make([]NativeToolProjection, 26)
+		for index := range projections {
+			projections[index] = projection(index, "connection-one")
+		}
+		projections[25].Binding.Pinned = true
+		projections[25].Binding.PreparationActionIDs = []string{"action.024"}
+		projections[24].Binding.ProjectionPriority = 2
+
+		toolSet := NativeToolSet{ToolBindings: map[string]NativeToolBinding{}}
+		AppendNativeToolProjections(&toolSet, projections, NativeToolProjectionOptions{MaxTools: 24})
+		seen := actionsInToolSet(toolSet)
+		if !seen["action.025"] || !seen["action.024"] {
+			t.Fatalf("pinned target closure missing at 24-tool boundary: target=%v dependency=%v", seen["action.025"], seen["action.024"])
+		}
+	})
+
+	t.Run("different selected connection is not promoted", func(t *testing.T) {
+		projections := make([]NativeToolProjection, 26)
+		for index := range projections {
+			projections[index] = projection(index, "connection-one")
+		}
+		projections[0].Binding.IntentMatched = true
+		projections[0].Binding.PreparationActionIDs = []string{"action.025"}
+		projections[25].Binding.ConnectionBinding = "connection-two"
+
+		toolSet := NativeToolSet{ToolBindings: map[string]NativeToolBinding{}}
+		AppendNativeToolProjections(&toolSet, projections, NativeToolProjectionOptions{MaxTools: 24})
+		seen := actionsInToolSet(toolSet)
+		if seen["action.025"] {
+			t.Fatal("different-connection preparation Action was promoted into the 24-tool prefix")
+		}
+	})
 }
 
 func TestNativeSchemaFromToolParametersUsesLLMFields(t *testing.T) {
