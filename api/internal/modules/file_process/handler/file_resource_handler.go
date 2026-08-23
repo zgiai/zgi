@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -90,7 +91,7 @@ func (h *FileResourceHandler) GetFolders(c *gin.Context) {
 		h.enterpriseService,
 		organizationID,
 		accountID,
-		req.WorkspaceID,
+		"",
 		fileBrowsePermissionCodes()...,
 	)
 	if err != nil {
@@ -98,6 +99,10 @@ func (h *FileResourceHandler) GetFolders(c *gin.Context) {
 		return
 	}
 	if len(visibleWorkspaceIDs) == 0 {
+		respondEmptyFileFolderList(c, req.Page, req.Limit)
+		return
+	}
+	if req.WorkspaceID != "" && !slices.Contains(visibleWorkspaceIDs, req.WorkspaceID) {
 		respondEmptyFileFolderList(c, req.Page, req.Limit)
 		return
 	}
