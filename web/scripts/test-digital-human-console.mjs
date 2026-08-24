@@ -599,7 +599,7 @@ assert.match(
 assert.match(
   dingTalkChannelProvider,
   /DINGTALK_CREDENTIAL_KEYS = \['app_key', 'app_secret'\][\s\S]*callbackTitle[\s\S]*open-dev\.dingtalk\.com/,
-  'DigitalHuman DingTalk credential forms must require only app credentials and explain HTTP callback setup'
+  'DigitalHuman DingTalk credential forms must require only app credentials and explain Stream setup'
 );
 assert.doesNotMatch(
   channels,
@@ -615,6 +615,16 @@ assert.match(
   channels,
   /installation\.webhook_url[\s\S]*webhookDescription[\s\S]*webhookUnavailableHint/,
   'DigitalHuman channel setup must render the server-provided public webhook URL with actionable guidance'
+);
+assert.match(
+  channels,
+  /usesStream = installation\.provider === 'dingtalk'[\s\S]*usesStream \?[\s\S]*RadioTower[\s\S]*ChannelContextStatus/,
+  'DingTalk installations must show Stream state and provider context capability without HTTP callback setup'
+);
+assert.match(
+  channels,
+  /status === 'not_supported'[\s\S]*channels\.installations\.context\.status\.\$\{status\}/,
+  'Channel cards must distinguish unsupported history reads from temporary failures'
 );
 assert.doesNotMatch(
   channels,
@@ -645,6 +655,14 @@ assert.doesNotMatch(
   `${channels}\n${channelHooks}\n${channelPage}`,
   /MEMORY_KEYS\.me|\/console\/api\/agents\/|wake_policy:\s*'ambient'/,
   'DigitalHuman channels must not use account memory, Agent endpoints, or ambient wake policies'
+);
+
+const sourceTabs = runs.match(/const sourceTabs:[\s\S]*?= \[([\s\S]*?)\n {2}\];/)?.[1] ?? '';
+assert.ok(sourceTabs, 'DigitalHuman run source filters must remain statically inspectable');
+assert.doesNotMatch(
+  sourceTabs,
+  /scheduled|email/,
+  'DigitalHuman run filters must not expose scheduled or email sources before those capabilities exist'
 );
 
 console.log('DigitalHuman console contract checks passed.');
