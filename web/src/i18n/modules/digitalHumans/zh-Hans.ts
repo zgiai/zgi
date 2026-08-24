@@ -449,7 +449,7 @@ const messages: DigitalHumansMessages = {
   },
   runs: {
     title: '运行日志',
-    description: '查看数字人由对话、渠道、定时任务或外部调用触发后的处理结果。',
+    description: '查看数字人由对话、外部渠道或外部调用触发后的处理结果。',
     empty: '还没有运行记录。',
     emptyDescription: '通过对话或其他触发方式开始工作后，运行记录会显示在这里。',
     noMatches: '没有匹配的运行记录',
@@ -534,6 +534,7 @@ const messages: DigitalHumansMessages = {
     },
     channelContext: {
       title: '渠道上下文准备',
+      notSupported: '平台不支持历史读取',
     },
   },
   channels: {
@@ -574,19 +575,19 @@ const messages: DigitalHumansMessages = {
       context: {
         status: {
           ready: '渠道会话上下文可正常读取',
-          runtime_verification: '渠道能力将在使用时验证',
+          runtime_verification: '支持群聊上下文读取',
           missing_message_history: '缺少消息历史权限',
           missing_member_names: '缺少成员名称权限',
-          temporarily_unavailable: '渠道会话上下文尚未验证',
+          not_supported: '平台不支持历史读取',
+          temporarily_unavailable: '群聊上下文暂时读取失败',
         },
         hint: {
           ready: '',
-          runtime_verification:
-            '收到消息后会直接请求飞书；若能力不可用，数字人将根据飞书返回结果说明原因。',
+          runtime_verification: '',
           missing_message_history: '请在飞书开发者后台为应用开通消息历史只读权限后重新发布。',
           missing_member_names: '消息内容仍可读取；开通群成员读取权限后可显示真实发送者名称。',
-          temporarily_unavailable:
-            '首次收到渠道消息时会自动验证；如读取失败，请检查应用权限和可见范围。',
+          not_supported: '当前平台只提供本次回调消息；需要更早内容时，数字人会请你补充原文。',
+          temporarily_unavailable: '本次读取没有成功；请稍后重试，或检查应用权限和可见范围。',
         },
       },
       disable: '停用',

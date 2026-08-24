@@ -10,6 +10,7 @@ import {
   Clock3,
   Copy,
   ExternalLink,
+  Info,
   KeyRound,
   Loader2,
   MessageSquare,
@@ -406,12 +407,55 @@ function InstallationPanel({
                     </div>
                   </div>
                 )}
+                <ChannelContextStatus readiness={installation.channel_context} />
               </div>
             );
           })
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function ChannelContextStatus({
+  readiness,
+}: {
+  readiness?: DigitalHumanChannelInstallation['channel_context'];
+}) {
+  const t = useT('digitalHumans');
+  if (!readiness) return null;
+  const status = readiness.status;
+  const warning =
+    status === 'missing_message_history' ||
+    status === 'missing_member_names' ||
+    status === 'temporarily_unavailable';
+  const Icon =
+    status === 'ready'
+      ? CheckCircle2
+      : status === 'runtime_verification'
+        ? ShieldCheck
+        : status === 'not_supported'
+          ? Info
+          : AlertTriangle;
+  const hint = t(`channels.installations.context.hint.${status}`);
+
+  return (
+    <div
+      className={cn(
+        'mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
+        warning
+          ? 'border-amber-200/80 bg-amber-50/70 text-amber-800 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200'
+          : 'bg-muted/20 text-muted-foreground'
+      )}
+    >
+      <Icon className="mt-0.5 size-3.5 shrink-0" />
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">
+          {t(`channels.installations.context.status.${status}`)}
+        </p>
+        {hint ? <p className="mt-0.5 leading-5">{hint}</p> : null}
+      </div>
+    </div>
   );
 }
 

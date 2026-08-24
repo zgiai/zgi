@@ -479,8 +479,7 @@ const messages = {
   },
   runs: {
     title: 'Run logs',
-    description:
-      'Review results triggered by conversations, channels, schedules, or external calls.',
+    description: 'Review results triggered by conversations, external channels, or API calls.',
     empty: 'No runs recorded yet.',
     emptyDescription: 'Runs will appear here after a conversation or another trigger starts work.',
     noMatches: 'No matching runs',
@@ -565,6 +564,7 @@ const messages = {
     },
     channelContext: {
       title: 'Channel context preparation',
+      notSupported: 'Message history is not supported by this platform',
     },
   },
   channels: {
@@ -610,21 +610,23 @@ const messages = {
       context: {
         status: {
           ready: 'Channel conversation context is readable',
-          runtime_verification: 'Channel capabilities are verified when used',
+          runtime_verification: 'Group conversation context is supported',
           missing_message_history: 'Message history permission is missing',
           missing_member_names: 'Member name permission is missing',
-          temporarily_unavailable: 'Channel conversation context has not been verified',
+          not_supported: 'Message history is not supported by this platform',
+          temporarily_unavailable: 'Group conversation context is temporarily unavailable',
         },
         hint: {
           ready: '',
-          runtime_verification:
-            'ZGI calls Feishu when a message arrives. If a capability is unavailable, the digital human explains the provider response.',
+          runtime_verification: '',
           missing_message_history:
             'Enable read-only message history permission in Feishu Developer Console, then republish the app.',
           missing_member_names:
             'Messages remain readable. Enable chat member access to show real sender names.',
+          not_supported:
+            'Only the current callback message is available. The digital human asks for quoted source text when earlier context is required.',
           temporarily_unavailable:
-            'ZGI verifies this on the first channel message. If reading fails, check app permissions and visibility.',
+            'This read attempt failed. Retry later, or check app permissions and visibility.',
         },
       },
       disable: 'Disable',

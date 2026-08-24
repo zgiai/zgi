@@ -37,9 +37,17 @@ export function DigitalHumanRunDetailDrawer({
   const runtimeLog = runtimeQuery.data?.data;
   const runtimeSteps = useMemo(
     () =>
-      (runtimeLog?.steps ?? []).map(step =>
-        step.type === 'channel_context' ? { ...step, title: t('runs.channelContext.title') } : step
-      ),
+      (runtimeLog?.steps ?? []).map(step => {
+        if (step.type !== 'channel_context') return step;
+        const output = isRecord(step.output) ? step.output : null;
+        return {
+          ...step,
+          title:
+            output?.error_code === 'channel_context_not_supported'
+              ? t('runs.channelContext.notSupported')
+              : t('runs.channelContext.title'),
+        };
+      }),
     [runtimeLog?.steps, t]
   );
   const selectedRun = useMemo(() => (run ? toRuntimeRunItem(run) : null), [run]);

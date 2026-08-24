@@ -16,7 +16,7 @@ export function DigitalHumanConfigurationHub({ id }: { id: string }) {
   const initialPanel = legacySection ? legacySectionPanels[legacySection] : null;
 
   return (
-    <div className="h-full min-h-0 w-full">
+    <div className="mx-auto h-full min-h-0 w-full max-w-[2400px]">
       <DigitalHumanConfigurationEditor id={id} initialPanel={initialPanel} />
     </div>
   );

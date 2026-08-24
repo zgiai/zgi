@@ -430,6 +430,7 @@ export interface DigitalHumanChannelInstallation {
       | 'runtime_verification'
       | 'missing_message_history'
       | 'missing_member_names'
+      | 'not_supported'
       | 'temporarily_unavailable';
     message_history_available: boolean;
     member_names_available: boolean;

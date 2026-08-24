@@ -90,8 +90,6 @@ export function DigitalHumanRuns({ id }: { id: string }) {
     { value: 'all', label: t('runs.filters.allSources') },
     { value: 'manual', label: sourceLabels.manual },
     { value: 'channel', label: sourceLabels.channel },
-    { value: 'scheduled', label: sourceLabels.scheduled },
-    { value: 'email', label: sourceLabels.email },
     { value: 'external', label: sourceLabels.external },
   ];
 
