@@ -484,6 +484,71 @@ func TestOpenAIAdapterCreateImage_UsesEditsWithReferenceImageBytes(t *testing.T)
 	}
 }
 
+func TestOpenAICompatibleAdapterCreateImage_AllowsQwenImageEdit(t *testing.T) {
+	t.Helper()
+
+	var gotModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+
+		if r.URL.Path != "/v1/images/edits" {
+			t.Fatalf("path = %q, want %q", r.URL.Path, "/v1/images/edits")
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm() error = %v", err)
+		}
+		gotModel = r.FormValue("model")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"created":1732083164,"data":[{"b64_json":"abc123"}]}`)
+	}))
+	defer server.Close()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		ProviderName: "openai-compatible",
+		APIKey:       "test-key",
+		BaseURL:      server.URL + "/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:               "qwen-image-2.0",
+		Prompt:              "change style",
+		Size:                "1024x1024",
+		ReferenceImageBytes: []byte("PNGDATA"),
+	})
+	if err != nil {
+		t.Fatalf("CreateImage() error = %v", err)
+	}
+	if gotModel != "qwen-image-2.0" {
+		t.Fatalf("model = %q, want qwen-image-2.0", gotModel)
+	}
+}
+
+func TestOpenAIAdapterCreateImage_RejectsQwenImageEditForOfficialOpenAI(t *testing.T) {
+	t.Helper()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		ProviderName: "openai",
+		APIKey:       "test-key",
+		BaseURL:      "https://api.example.com/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:               "qwen-image-2.0",
+		Prompt:              "change style",
+		Size:                "1024x1024",
+		ReferenceImageBytes: []byte("PNGDATA"),
+	})
+	if !errors.Is(err, adapter.ErrCapabilityUnsupported) {
+		t.Fatalf("CreateImage() error = %v, want ErrCapabilityUnsupported", err)
+	}
+}
+
 func TestOpenAIAdapterCreateImage_RejectsReferenceImageForDallE(t *testing.T) {
 	t.Helper()
 

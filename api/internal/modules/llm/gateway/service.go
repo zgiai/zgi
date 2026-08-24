@@ -907,7 +907,9 @@ func (s *llmGatewayServiceImpl) validateRerankRequest(req *adapter.RerankRequest
 // createAdapterConfig creates adapter configuration from provider selection
 func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection, organizationID ...uuid.UUID) *adapter.AdapterConfig {
 	adapterProvider := selection.ChannelProvider
-	if spec, err := channelprovider.Resolve(selection.ChannelProvider); err == nil {
+	if strings.TrimSpace(selection.AdapterProviderOverride) != "" {
+		adapterProvider = strings.TrimSpace(selection.AdapterProviderOverride)
+	} else if spec, err := channelprovider.Resolve(selection.ChannelProvider); err == nil {
 		adapterProvider = spec.AdapterKey
 	}
 	llmConfig := appconfig.Current().LLM

@@ -170,7 +170,7 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	}
 	if referenceImage != nil {
 		imageReq.ReferenceImageURL = referenceImage.URL
-		if strings.EqualFold(modelSpec.Provider, "openai") {
+		if shouldDownloadReferenceImageBytes(modelSpec.Provider, routes) {
 			content, err := s.fileService.DownloadFile(ctx, referenceImage.FileID)
 			if err != nil || len(content) == 0 {
 				return nil, ErrReferenceImageInvalid
@@ -302,6 +302,25 @@ func (s *service) routesForModel(ctx context.Context, organizationID uuid.UUID, 
 		return nil, nil
 	}
 	return s.routes.GetRoutesForModel(ctx, organizationID, modelName)
+}
+
+func shouldDownloadReferenceImageBytes(provider string, routes []*channelmodel.RouteQueryResult) bool {
+	if strings.EqualFold(strings.TrimSpace(provider), "openai") {
+		return true
+	}
+	if !strings.EqualFold(strings.TrimSpace(provider), "qwen") {
+		return false
+	}
+	for _, route := range routes {
+		if route == nil || !route.NativeProtocols.OpenAIResponses.Enabled {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(route.ChannelProvider)) {
+		case "qwen", "openai-compatible", "agicto":
+			return true
+		}
+	}
+	return false
 }
 
 func (s *service) resolveGenerationConversation(ctx context.Context, scope chatruntime.Scope, rawID string, prompt string) (*generationConversation, error) {

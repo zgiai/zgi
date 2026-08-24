@@ -465,10 +465,10 @@ func (a *OpenAIAdapter) CreateImage(ctx context.Context, request *adapter.ImageR
 }
 
 func (a *OpenAIAdapter) createOpenAIImageEdit(ctx context.Context, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
-	if !openAIImageEditModelSupportsReference(request.Model) {
+	if !a.openAIImageEditModelSupportsReference(request.Model) {
 		return nil, fmt.Errorf("%w: reference image is not supported for openai image model %s", adapter.ErrCapabilityUnsupported, request.Model)
 	}
-	if err := validateOpenAIImageEditSize(request.Size); err != nil {
+	if err := a.validateOpenAIImageEditSize(request.Model, request.Size); err != nil {
 		return nil, err
 	}
 
@@ -572,6 +572,14 @@ func openAIImageEditModelSupportsReference(model string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image")
 }
 
+func (a *OpenAIAdapter) openAIImageEditModelSupportsReference(model string) bool {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	if openAIImageEditModelSupportsReference(normalizedModel) {
+		return true
+	}
+	return a.openAICompatibleQwenImageModel(normalizedModel)
+}
+
 func validateOpenAIImageEditSize(size string) error {
 	switch strings.TrimSpace(size) {
 	case "", "auto", "1024x1024", "1024x1536", "1536x1024":
@@ -579,6 +587,25 @@ func validateOpenAIImageEditSize(size string) error {
 	default:
 		return fmt.Errorf("%w: openai image edits do not support size %s", adapter.ErrInvalidRequest, size)
 	}
+}
+
+func (a *OpenAIAdapter) validateOpenAIImageEditSize(model string, size string) error {
+	if a.openAICompatibleQwenImageModel(model) {
+		return nil
+	}
+	return validateOpenAIImageEditSize(size)
+}
+
+func (a *OpenAIAdapter) openAICompatibleQwenImageModel(model string) bool {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	if !strings.HasPrefix(normalizedModel, "qwen-image") {
+		return false
+	}
+	providerName := ""
+	if a != nil && a.config != nil {
+		providerName = strings.ToLower(strings.TrimSpace(a.config.ProviderName))
+	}
+	return providerName == "openai-compatible" || providerName == "agicto"
 }
 
 func openAIImageEditReservedField(field string) bool {

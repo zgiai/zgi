@@ -677,6 +677,85 @@ func TestGenerateKeepsReferenceImageURLOnlyForQwen(t *testing.T) {
 	}
 }
 
+func TestGenerateDownloadsReferenceImageBytesForQwenOpenAIProtocolRoute(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	fileID := uuid.New().String()
+	workspaceIDText := workspaceID.String()
+	llm := &fakeImageLLMClient{}
+	chat := &fakeImageChatService{}
+	content := []byte("PNGDATA")
+	files := &fakeImageReferenceFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: organizationID.String(),
+			TenantID:       organizationID.String(),
+			WorkspaceID:    &workspaceIDText,
+			Name:           "reference.png",
+			Extension:      "png",
+			MimeType:       "image/png",
+		},
+		url:     "https://files.example.com/reference.png?sign=1",
+		content: content,
+	}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "qwen", Name: "qwen-image-2.0"}}},
+		fakeRouteLister{routes: map[string][]*channelmodel.RouteQueryResult{
+			"qwen-image-2.0": {
+				{
+					RouteID:         uuid.New(),
+					ChannelProvider: "qwen",
+					Models:          []string{"qwen-image-2.0"},
+					NativeProtocols: channelmodel.NativeProtocolConfig{
+						OpenAIResponses: channelmodel.NativeProtocolEndpoint{Enabled: true},
+					},
+				},
+			},
+		}},
+		llm,
+		chat,
+		&fakeImageAssetService{},
+		files,
+	)
+
+	_, err := svc.Generate(t.Context(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &workspaceID,
+	}, GenerateRequest{
+		Prompt:   "换成赛博朋克风",
+		Provider: "qwen",
+		Model:    "qwen-image-2.0",
+		Options:  GenerateOptions{Size: "2048x2048"},
+		ReferenceImage: &ReferenceImage{
+			FileID: fileID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if files.downloadCalls != 1 {
+		t.Fatalf("DownloadFile calls = %d, want 1", files.downloadCalls)
+	}
+	if llm.lastImageReq == nil {
+		t.Fatal("image request is nil")
+	}
+	if llm.lastImageReq.ReferenceImageURL != files.url {
+		t.Fatalf("ReferenceImageURL = %q, want %q", llm.lastImageReq.ReferenceImageURL, files.url)
+	}
+	if string(llm.lastImageReq.ReferenceImageBytes) != string(content) {
+		t.Fatalf("ReferenceImageBytes = %q, want %q", llm.lastImageReq.ReferenceImageBytes, content)
+	}
+	if llm.lastImageReq.ReferenceImageFilename != "reference.png" {
+		t.Fatalf("ReferenceImageFilename = %q, want reference.png", llm.lastImageReq.ReferenceImageFilename)
+	}
+	if llm.lastImageReq.ReferenceImageMimeType != "image/png" {
+		t.Fatalf("ReferenceImageMimeType = %q, want image/png", llm.lastImageReq.ReferenceImageMimeType)
+	}
+}
+
 func TestFileBelongsToScopeAllowsOwnedTemporaryZeroOrganizationFile(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
