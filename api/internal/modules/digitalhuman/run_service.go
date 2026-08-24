@@ -470,8 +470,11 @@ func channelContextRuntimeSteps(run *Run, steps []dto.AgentRuntimeStep) []dto.Ag
 		return steps
 	}
 	status, _ := items[0]["status"].(string)
+	errorCode, _ := items[0]["error_code"].(string)
 	stepStatus := "success"
-	if status == string(channelruntime.ContextStatusUnavailable) {
+	if status == string(channelruntime.ContextStatusUnavailable) && errorCode == "channel_context_not_supported" {
+		stepStatus = "skipped"
+	} else if status == string(channelruntime.ContextStatusUnavailable) {
 		stepStatus = "failed"
 	}
 	createdAt := run.CreatedAt.Unix()

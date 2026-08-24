@@ -162,6 +162,25 @@ func TestRuntimeServiceGetRunRuntimeLogProjectsModelAndToolSteps(t *testing.T) {
 	}
 }
 
+func TestChannelContextRuntimeStepTreatsUnsupportedProviderAsCapabilityBoundary(t *testing.T) {
+	run := &Run{
+		ID:             uuid.New(),
+		CreatedAt:      time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC),
+		ExecutionTrace: datatypes.JSON(`{"channel_context":[{"status":"unavailable","error_code":"channel_context_not_supported"}]}`),
+	}
+
+	steps := channelContextRuntimeSteps(run, nil)
+	if len(steps) != 1 || steps[0].Status != "skipped" {
+		t.Fatalf("channel context steps = %#v, want one skipped capability-boundary step", steps)
+	}
+
+	run.ExecutionTrace = datatypes.JSON(`{"channel_context":[{"status":"unavailable","error_code":"channel_context_unavailable"}]}`)
+	steps = channelContextRuntimeSteps(run, nil)
+	if len(steps) != 1 || steps[0].Status != "failed" {
+		t.Fatalf("channel context steps = %#v, want one failed runtime-read step", steps)
+	}
+}
+
 func TestRuntimeServiceExecuteUsesDigitalHumanCallerAndNoLegacyMemory(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)

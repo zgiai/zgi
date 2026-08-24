@@ -12,6 +12,7 @@ const (
 	ChannelContextReadinessRuntimeVerification   ChannelContextReadinessStatus = "runtime_verification"
 	ChannelContextReadinessMissingMessageHistory ChannelContextReadinessStatus = "missing_message_history"
 	ChannelContextReadinessMissingMemberNames    ChannelContextReadinessStatus = "missing_member_names"
+	ChannelContextReadinessNotSupported          ChannelContextReadinessStatus = "not_supported"
 	ChannelContextReadinessUnavailable           ChannelContextReadinessStatus = "temporarily_unavailable"
 )
 

@@ -81,7 +81,7 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 	lifecycle.now = func() time.Time { return now }
 	scope := Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID}
 	detail, err := lifecycle.Create(t.Context(), scope, CreateRequest{
-		IdentityName: "Channel teammate", Persona: "Respond as a channel teammate.", Rules: []string{"Never disclose credentials."},
+		Name: "Channel integration human", IdentityName: "Channel teammate", Persona: "Respond as a channel teammate.", Rules: []string{"Never disclose credentials."},
 		DefaultModel: "test-model", MemoryPolicy: map[string]any{"automatic_extraction": true}, TriggerPolicy: map[string]any{"channel": true},
 	})
 	if err != nil {

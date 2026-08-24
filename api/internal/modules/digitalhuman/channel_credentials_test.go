@@ -88,6 +88,56 @@ func (alternateChannelProviderStub) ConnectionSpec() channelruntime.ConnectionSp
 	return channelruntime.ConnectionSpec{IntegrationID: "acme-chat", DriverID: "acme-chat-api", AuthMethodID: "acme-app"}
 }
 
+type alternateChannelProviderWithoutContextStub struct {
+	alternateChannelProviderStub
+}
+
+func (alternateChannelProviderWithoutContextStub) Provider() string { return "acme-basic-chat" }
+
+func (alternateChannelProviderWithoutContextStub) Capabilities() channelruntime.ProviderCapabilities {
+	return channelruntime.ProviderCapabilities{}
+}
+
+func TestChannelContextReadinessDistinguishesUnsupportedAndUnavailable(t *testing.T) {
+	supported := alternateChannelProviderStub{}
+	unsupported := alternateChannelProviderWithoutContextStub{}
+	providers, err := channelruntime.NewRegistry(
+		channelruntime.Provider{Adapter: supported, Provisioner: supported},
+		channelruntime.Provider{Adapter: unsupported, Provisioner: unsupported},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := integrations.NewCredentialCipher("12345678901234567890123456789012")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := NewIntegrationChannelCredentialResolver(
+		&channelCredentialStoreStub{},
+		&connectionResolverStub{},
+		cipher,
+		providers,
+	)
+
+	tests := []struct {
+		name     string
+		provider string
+		want     ChannelContextReadinessStatus
+	}{
+		{name: "supported reader", provider: "acme-chat", want: ChannelContextReadinessRuntimeVerification},
+		{name: "unsupported reader", provider: unsupported.Provider(), want: ChannelContextReadinessNotSupported},
+		{name: "unknown provider", provider: "missing-provider", want: ChannelContextReadinessUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			readiness := resolver.ContextReadiness(t.Context(), &channelruntime.Installation{Provider: test.provider})
+			if readiness.Status != test.want {
+				t.Fatalf("ContextReadiness() status = %q, want %q", readiness.Status, test.want)
+			}
+		})
+	}
+}
+
 func TestEmbeddedChannelCredentialUsesRegisteredProviderWithoutCoreBranch(t *testing.T) {
 	cipher, err := integrations.NewCredentialCipher("12345678901234567890123456789012")
 	if err != nil {

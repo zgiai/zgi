@@ -212,8 +212,8 @@ func TestRegisteredProviderRunsEndToEndWithoutDigitalHumanProviderBranch(t *test
 	if installation.ExternalTenantID != "acme-workspace" || installation.ExternalBotID != "acme-helper" {
 		t.Fatalf("installation identity = %q/%q", installation.ExternalTenantID, installation.ExternalBotID)
 	}
-	if readiness := credentials.ContextReadiness(t.Context(), installation); readiness.Status != ChannelContextReadinessUnavailable {
-		t.Fatalf("context readiness = %#v, want unavailable for a provider without ContextReader", readiness)
+	if readiness := credentials.ContextReadiness(t.Context(), installation); readiness.Status != ChannelContextReadinessNotSupported {
+		t.Fatalf("context readiness = %#v, want not_supported for a provider without ContextReader", readiness)
 	}
 	payload := []byte(`{"event":"evt-1","message":"msg-1","room":"dm-1","from":"member-1","body":"hello","direct":true}`)
 	result, err := service.HandleWebhook(t.Context(), "acme-chat", installation.ID, channelruntime.WebhookRequest{

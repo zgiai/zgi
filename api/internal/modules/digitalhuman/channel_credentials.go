@@ -124,8 +124,11 @@ func (resolver *IntegrationChannelCredentialResolver) ContextReadiness(
 		return ChannelContextReadiness{Status: ChannelContextReadinessUnavailable}
 	}
 	registered, err := resolver.providers.ResolveProvider(installation.Provider)
-	if err != nil || !registered.Adapter.Capabilities().ContextRead {
+	if err != nil {
 		return ChannelContextReadiness{Status: ChannelContextReadinessUnavailable}
+	}
+	if !registered.Adapter.Capabilities().ContextRead {
+		return ChannelContextReadiness{Status: ChannelContextReadinessNotSupported}
 	}
 	return ChannelContextReadiness{Status: ChannelContextReadinessRuntimeVerification}
 }
