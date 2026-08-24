@@ -624,7 +624,7 @@ const messages = {
           missing_member_names:
             'Messages remain readable. Enable chat member access to show real sender names.',
           not_supported:
-            'Only the current callback message is available. The digital human asks for quoted source text when earlier context is required.',
+            'Only the current message is available. When earlier context is required, copy the source text into the same message that mentions the digital human.',
           temporarily_unavailable:
             'This read attempt failed. Retry later, or check app permissions and visibility.',
         },

@@ -586,7 +586,7 @@ const messages: DigitalHumansMessages = {
           runtime_verification: '',
           missing_message_history: '请在飞书开发者后台为应用开通消息历史只读权限后重新发布。',
           missing_member_names: '消息内容仍可读取；开通群成员读取权限后可显示真实发送者名称。',
-          not_supported: '当前平台只提供本次回调消息；需要更早内容时，数字人会请你补充原文。',
+          not_supported: '当前平台只提供本次消息；需要更早内容时，请把原文复制到同一条 @ 消息中。',
           temporarily_unavailable: '本次读取没有成功；请稍后重试，或检查应用权限和可见范围。',
         },
       },

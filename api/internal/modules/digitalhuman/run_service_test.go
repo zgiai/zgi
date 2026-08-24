@@ -181,6 +181,50 @@ func TestChannelContextRuntimeStepTreatsUnsupportedProviderAsCapabilityBoundary(
 	}
 }
 
+func TestRuntimeServiceUsesCopyPasteGuidanceWhenChannelContextReadFails(t *testing.T) {
+	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
+	now := time.Date(2026, 8, 24, 12, 45, 0, 0, time.UTC)
+	service := NewRuntimeService(
+		store, fakeExecutionResolver{now: now}, fakeBrainAdapter{}, chat, dispatcher,
+		WithChannelContextRuntime(&fakeChannelContextRuntimeProvider{err: errors.New("provider timeout")}),
+	)
+	service.now = func() time.Time { return now }
+	scope, digitalHumanID, conversationID := testRunScope(), uuid.New(), uuid.New()
+	installationID := uuid.NewString()
+	event := invocation.Event{
+		ID: "dingtalk-context-failure", Type: invocation.EventTypeChannelMessage,
+		Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: "dingtalk", InstallationID: installationID},
+		Target: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
+			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		},
+		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: "dingtalk-user"},
+		OccurredAt: now,
+		ReplyTo:    &invocation.ReplyAddress{Provider: "dingtalk", InstallationID: installationID, ConversationID: "cid-group"},
+	}
+	run, created, err := service.SubmitInvocation(t.Context(), scope, event, "回答一下这个问题", &conversationID)
+	if err != nil || !created {
+		t.Fatalf("SubmitInvocation() = created %v, err %v", created, err)
+	}
+	if err := service.Execute(t.Context(), run.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	for _, expected := range []string{
+		"copy the missing source text into the same message as the mention",
+		"ask one brief clarification",
+		"only recovery action",
+	} {
+		if !strings.Contains(chat.config.SystemPrompt, expected) {
+			t.Fatalf("fallback prompt missing %q: %s", expected, chat.config.SystemPrompt)
+		}
+	}
+	for _, unwanted := range []string{"ask the user to quote", "reply directly to it"} {
+		if strings.Contains(chat.config.SystemPrompt, unwanted) {
+			t.Fatalf("fallback prompt contains unsupported guidance %q: %s", unwanted, chat.config.SystemPrompt)
+		}
+	}
+}
+
 func TestRuntimeServiceExecuteUsesDigitalHumanCallerAndNoLegacyMemory(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)
@@ -804,6 +848,15 @@ type fakeMemoryRuntimeProvider struct {
 	preparation   *MemoryRuntimePreparation
 	calls         int
 	finalizeCalls int
+}
+
+type fakeChannelContextRuntimeProvider struct {
+	preparation *ChannelContextPreparation
+	err         error
+}
+
+func (p *fakeChannelContextRuntimeProvider) Prepare(context.Context, *Run, *ResolvedExecution, invocation.Event, string, string) (*ChannelContextPreparation, error) {
+	return p.preparation, p.err
 }
 
 func (p *fakeMemoryRuntimeProvider) Prepare(context.Context, *Run, *ResolvedExecution, invocation.Event) (*MemoryRuntimePreparation, error) {

@@ -280,7 +280,8 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			channelContextPreparation = &ChannelContextPreparation{
 				SystemPromptAddendum: strings.Join([]string{
 					"Channel conversation context is unavailable for this turn.",
-					"Do not guess missing source content. State that the referenced channel text could not be read and ask the user to quote or reply directly to it.",
+					"Do not guess missing source content.",
+					channelContextMissingSourceGuidance,
 				}, "\n"),
 				Diagnostics: ChannelContextDiagnostics{Status: string(channelruntime.ContextStatusUnavailable), ErrorCode: "channel_context_unavailable"},
 			}

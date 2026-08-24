@@ -27,13 +27,14 @@ import (
 )
 
 const (
-	channelContextToolName       = "read_channel_context"
-	initialContextMessageLimit   = 50
-	totalContextMessageLimit     = 100
-	fallbackInitialContextTokens = 3_000
-	fallbackTotalContextTokens   = 6_000
-	channelContextMessageTokens  = 1_200
-	channelContextSelfTokens     = 600
+	channelContextToolName              = "read_channel_context"
+	initialContextMessageLimit          = 50
+	totalContextMessageLimit            = 100
+	fallbackInitialContextTokens        = 3_000
+	fallbackTotalContextTokens          = 6_000
+	channelContextMessageTokens         = 1_200
+	channelContextSelfTokens            = 600
+	channelContextMissingSourceGuidance = "If the request depends on missing earlier content, ask one brief clarification that tells the sender to copy the missing source text into the same message as the mention. Do not introduce yourself or list unrelated capabilities. Use that copy-and-paste instruction as the only recovery action because referenced content may be absent from provider callbacks."
 )
 
 var (
@@ -132,7 +133,8 @@ func (runtime *DefaultChannelContextRuntime) Prepare(
 		return &ChannelContextPreparation{
 			SystemPromptAddendum: strings.Join([]string{
 				"The current channel request was sent by " + currentAuthorLabel + ".",
-				"No earlier provider messages were loaded for this turn. Answer the current request normally; ask for quoted context only when the request depends on earlier messages that are not present.",
+				"No earlier provider messages were loaded for this turn. Answer the current request normally when it is self-contained.",
+				channelContextMissingSourceGuidance,
 			}, "\n"),
 			Diagnostics: ChannelContextDiagnostics{
 				Status: string(channelruntime.ContextStatusUnavailable), ErrorCode: "channel_context_not_supported",

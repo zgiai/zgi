@@ -34,6 +34,14 @@ const service = await readFile(
   new URL('../src/services/digital-human.service.ts', import.meta.url),
   'utf8'
 );
+const digitalHumanZhHans = await readFile(
+  new URL('../src/i18n/modules/digitalHumans/zh-Hans.ts', import.meta.url),
+  'utf8'
+);
+const digitalHumanEnUS = await readFile(
+  new URL('../src/i18n/modules/digitalHumans/en-US.ts', import.meta.url),
+  'utf8'
+);
 const hooks = await readFile(
   new URL('../src/hooks/digital-human/use-digital-humans.ts', import.meta.url),
   'utf8'
@@ -625,6 +633,21 @@ assert.match(
   channels,
   /status === 'not_supported'[\s\S]*channels\.installations\.context\.status\.\$\{status\}/,
   'Channel cards must distinguish unsupported history reads from temporary failures'
+);
+assert.match(
+  digitalHumanZhHans,
+  /not_supported: '当前平台只提供本次消息；需要更早内容时，请把原文复制到同一条 @ 消息中。'/,
+  'The Chinese unsupported-history hint must explain the supported copy-and-paste recovery path'
+);
+assert.match(
+  digitalHumanEnUS,
+  /not_supported:[\s\S]*copy the source text into the same message that mentions the digital human/,
+  'The English unsupported-history hint must explain the supported copy-and-paste recovery path'
+);
+assert.doesNotMatch(
+  `${digitalHumanZhHans}\n${digitalHumanEnUS}`,
+  /asks for quoted source text|引用上一条|回复上一条/,
+  'Unsupported-history hints must not imply that provider quote metadata is available'
 );
 assert.doesNotMatch(
   channels,

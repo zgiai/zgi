@@ -146,13 +146,20 @@ func TestChannelContextRuntimeAnswersCurrentMessageWhenProviderHasNoHistoryReade
 	if preparation == nil || preparation.Diagnostics.ErrorCode != "channel_context_not_supported" {
 		t.Fatalf("preparation = %#v", preparation)
 	}
-	for _, expected := range []string{"sent by 康源", "Answer the current request normally"} {
+	for _, expected := range []string{
+		"sent by 康源",
+		"Answer the current request normally",
+		"copy the missing source text into the same message as the mention",
+		"ask one brief clarification",
+	} {
 		if !strings.Contains(preparation.SystemPromptAddendum, expected) {
 			t.Fatalf("fallback context missing %q: %s", expected, preparation.SystemPromptAddendum)
 		}
 	}
-	if strings.Contains(preparation.SystemPromptAddendum, "ask the user to quote") {
-		t.Fatalf("fallback incorrectly forces a clarification: %s", preparation.SystemPromptAddendum)
+	for _, unwanted := range []string{"ask the user to quote", "suggest quoting or replying"} {
+		if strings.Contains(preparation.SystemPromptAddendum, unwanted) {
+			t.Fatalf("fallback contains unsupported guidance %q: %s", unwanted, preparation.SystemPromptAddendum)
+		}
 	}
 }
 
