@@ -31,6 +31,8 @@ type OpenAIAdapter struct {
 	exactURL   bool
 }
 
+const openAIImageEditDefaultInputFidelity = "high"
+
 // NewOpenAIAdapter creates an OpenAI adapter
 func NewOpenAIAdapter(config *adapter.AdapterConfig) (*OpenAIAdapter, error) {
 	if err := validateOpenAIConfig(config); err != nil {
@@ -507,6 +509,11 @@ func (a *OpenAIAdapter) createOpenAIImageEdit(ctx context.Context, request *adap
 	if strings.TrimSpace(request.User) != "" {
 		if err := writer.WriteField("user", request.User); err != nil {
 			return nil, fmt.Errorf("failed to write multipart user field: %w", err)
+		}
+	}
+	if _, ok := request.AdditionalParameters["input_fidelity"]; !ok {
+		if err := writer.WriteField("input_fidelity", openAIImageEditDefaultInputFidelity); err != nil {
+			return nil, fmt.Errorf("failed to write multipart input_fidelity field: %w", err)
 		}
 	}
 	for k, v := range request.AdditionalParameters {

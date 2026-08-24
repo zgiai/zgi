@@ -416,6 +416,7 @@ func TestOpenAIAdapterCreateImage_UsesEditsWithReferenceImageBytes(t *testing.T)
 		assertMultipartValue(t, r, "n", "2")
 		assertMultipartValue(t, r, "quality", "high")
 		assertMultipartValue(t, r, "user", "account-1")
+		assertMultipartValue(t, r, "input_fidelity", "high")
 		assertMultipartValue(t, r, "background", "auto")
 		assertMultipartValue(t, r, "output_format", "png")
 

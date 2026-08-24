@@ -552,9 +552,6 @@ func TestGenerateDownloadsReferenceImageBytesForOpenAI(t *testing.T) {
 	if llm.lastImageReq.ReferenceImageURL != files.url {
 		t.Fatalf("ReferenceImageURL = %q, want %q", llm.lastImageReq.ReferenceImageURL, files.url)
 	}
-	if got := llm.lastImageReq.AdditionalParameters["input_fidelity"]; got != "high" {
-		t.Fatalf("input_fidelity = %#v, want high", got)
-	}
 }
 
 func TestGenerateReturnsInvalidReferenceImageWhenOpenAIDownloadFails(t *testing.T) {

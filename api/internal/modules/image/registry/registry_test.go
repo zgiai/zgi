@@ -33,6 +33,18 @@ func TestResolveKeepsProfileAcrossNativeRoutes(t *testing.T) {
 	}
 }
 
+func TestResolveKeepsQwenProfileForZGICloudRoute(t *testing.T) {
+	registry := NewRegistry()
+	routes := []*channelmodel.RouteQueryResult{
+		{RouteID: uuid.New(), ChannelProvider: "zgi-cloud", Models: []string{"qwen-image-2.0"}},
+	}
+
+	got := registry.Resolve("qwen", "qwen-image-2.0", routes)
+	if got.Size == nil || got.Quantity == nil || got.Quantity.Mode != QuantityModeExact {
+		t.Fatalf("Resolve() = %#v, want qwen profile for zgi-cloud route", got)
+	}
+}
+
 func TestResolveUnknownModelReturnsEmptyProfile(t *testing.T) {
 	registry := NewRegistry()
 	routes := []*channelmodel.RouteQueryResult{
@@ -54,5 +66,17 @@ func TestSeedream40UsesSequenceUpperBound(t *testing.T) {
 	got := registry.Resolve("doubao", "doubao-seedream-4-0-250828", routes)
 	if got.Quantity == nil || got.Quantity.Mode != QuantityModeSequence || got.Quantity.Min != 2 || got.Quantity.Max != 15 {
 		t.Fatalf("Resolve().Quantity = %#v, want sequence range 2..15", got.Quantity)
+	}
+}
+
+func TestSeedream40KeepsProfileForZGICloudRoute(t *testing.T) {
+	registry := NewRegistry()
+	routes := []*channelmodel.RouteQueryResult{
+		{RouteID: uuid.New(), ChannelProvider: "zgi-cloud", Models: []string{"doubao-seedream-4-0-250828"}},
+	}
+
+	got := registry.Resolve("doubao", "doubao-seedream-4-0-250828", routes)
+	if got.Size == nil || got.Quantity == nil || got.Quantity.Mode != QuantityModeSequence {
+		t.Fatalf("Resolve() = %#v, want seedream profile for zgi-cloud route", got)
 	}
 }

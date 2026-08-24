@@ -21,11 +21,10 @@ import (
 )
 
 const (
-	maxPromptRunes          = 4000
-	imageRuntimeAppType     = "image-runtime"
-	successMessage          = "已生成图片"
-	defaultReferencePrompt  = "请基于参考图生成一张新图片。"
-	openAIInputFidelityHigh = "high"
+	maxPromptRunes         = 4000
+	imageRuntimeAppType    = "image-runtime"
+	successMessage         = "已生成图片"
+	defaultReferencePrompt = "请基于参考图生成一张新图片。"
 )
 
 type Service interface {
@@ -179,9 +178,6 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 			imageReq.ReferenceImageBytes = content
 			imageReq.ReferenceImageFilename = referenceImage.Filename
 			imageReq.ReferenceImageMimeType = referenceImage.MimeType
-			imageReq.AdditionalParameters = map[string]interface{}{
-				"input_fidelity": openAIInputFidelityHigh,
-			}
 		}
 	}
 	resp, err := s.llmClient.AppCreateImage(ctx, appCtx, imageReq)
