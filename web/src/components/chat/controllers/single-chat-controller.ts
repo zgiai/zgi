@@ -616,7 +616,9 @@ export class SingleChatController implements ChatController {
     const tempKey =
       isQuestionAnswerResume && existingTempKey
         ? existingTempKey
-        : useChatStore.getState().appendUserMessage(activeId, { query: payload.query }).tempKey;
+        : useChatStore
+            .getState()
+            .appendUserMessage(activeId, { query: payload.query, inputs: payload.inputs }).tempKey;
     useChatStore.getState().ensureAiMessage(activeId, tempKey);
 
     // Use a mutable reference for the current conversation ID

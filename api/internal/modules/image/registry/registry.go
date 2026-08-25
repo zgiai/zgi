@@ -122,9 +122,9 @@ func routeSupportsNativeImageProfile(modelProvider, channelProvider string) bool
 	case "openai":
 		return channelProvider == "openai" || channelProvider == "zgi-cloud"
 	case "qwen":
-		return channelProvider == "qwen" || channelProvider == "dashscope" || channelProvider == "aliyun" || channelProvider == "alibaba"
+		return channelProvider == "qwen" || channelProvider == "dashscope" || channelProvider == "aliyun" || channelProvider == "alibaba" || channelProvider == "zgi-cloud"
 	case "doubao":
-		return channelProvider == "doubao" || channelProvider == "ark"
+		return channelProvider == "doubao" || channelProvider == "ark" || channelProvider == "zgi-cloud"
 	default:
 		return false
 	}
