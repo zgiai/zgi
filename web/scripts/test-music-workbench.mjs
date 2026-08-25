@@ -580,13 +580,18 @@ assert.match(composerSource, /mode === 'vocal'/);
 assert.match(workspaceVoiceInputSource, /useImperativeHandle\(ref, \(\) => \(\{ finish:/);
 assert.match(
   composerSource,
-  /if \(activeVoiceField === 'prompt'\) void promptVoiceInputRef\.current\?\.finish\(\)[\s\S]*if \(activeVoiceField === 'lyrics'\) void lyricsVoiceInputRef\.current\?\.finish\(\)[\s\S]*setMode\(nextMode\)/,
+  /activeVoiceField && activeVoiceField !== 'lyrics'[\s\S]*promptVoiceInputRefs\.current\[activeVoiceField\]\?\.finish\(\)[\s\S]*activeVoiceField === 'lyrics'[\s\S]*lyricsVoiceInputRef\.current\?\.finish\(\)[\s\S]*setActiveVoiceField\(null\)[\s\S]*setMode\(nextMode\)/,
   'switching music modes must finish and transcribe whichever voice recording is active in the background'
 );
 assert.match(
   composerSource,
-  /ref=\{promptVoiceInputRef\}[\s\S]*value=\{prompt\}/,
-  'the prompt voice control must expose a handle so mode switching can finish its recording'
+  /useState<Record<MusicMode, string>>\(createEmptyPrompts\)/,
+  'each music mode must keep an independent prompt value'
+);
+assert.match(
+  composerSource,
+  /MUSIC_MODES\.map\(promptMode =>[\s\S]*promptMode === mode \? 'flex' : 'hidden'[\s\S]*promptVoiceInputRefs\.current\[promptMode\] = handle[\s\S]*\[promptMode\]: value/,
+  'each music mode must keep its voice control mounted and write transcription to its own prompt'
 );
 assert.match(
   composerSource,

@@ -26,6 +26,13 @@ const MAX_PROMPT_RUNES = 2000;
 const MAX_LYRICS_RUNES = 3500;
 const SUBMIT_COOLDOWN_MS = 2000;
 const VARIANT_COUNTS: MusicVariantCount[] = [1, 2, 3, 4];
+const MUSIC_MODES: MusicMode[] = ['instrumental', 'auto_lyrics', 'vocal'];
+
+type MusicVoiceField = MusicMode | 'lyrics';
+
+function createEmptyPrompts(): Record<MusicMode, string> {
+  return { instrumental: '', auto_lyrics: '', vocal: '' };
+}
 
 function runeCount(value: string): number {
   return Array.from(value).length;
@@ -55,12 +62,14 @@ export function MusicComposer({
   const submitInFlightRef = React.useRef(false);
   const submitCooldownRef = React.useRef(false);
   const submitCooldownTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const promptVoiceInputRef = React.useRef<WorkspaceVoiceInputControlHandle>(null);
+  const promptVoiceInputRefs = React.useRef<
+    Partial<Record<MusicMode, WorkspaceVoiceInputControlHandle | null>>
+  >({});
   const lyricsVoiceInputRef = React.useRef<WorkspaceVoiceInputControlHandle>(null);
   const [mode, setMode] = React.useState<MusicMode>('instrumental');
-  const [prompt, setPrompt] = React.useState('');
+  const [prompts, setPrompts] = React.useState<Record<MusicMode, string>>(createEmptyPrompts);
   const [lyrics, setLyrics] = React.useState('');
-  const [activeVoiceField, setActiveVoiceField] = React.useState<'prompt' | 'lyrics' | null>(null);
+  const [activeVoiceField, setActiveVoiceField] = React.useState<MusicVoiceField | null>(null);
   const [variantCount, setVariantCount] = React.useState<MusicVariantCount>(2);
   const [validationError, setValidationError] = React.useState<string | null>(null);
   const [isSubmitCoolingDown, setIsSubmitCoolingDown] = React.useState(false);
@@ -74,24 +83,25 @@ export function MusicComposer({
     if (!reuseTask) return;
     onModelChange(reuseTask.model);
     setMode(reuseTask.mode);
-    setPrompt(reuseTask.prompt);
+    setPrompts(current => ({ ...current, [reuseTask.mode]: reuseTask.prompt }));
     setLyrics(reuseTask.mode === 'vocal' ? (reuseTask.lyrics ?? '') : '');
     setValidationError(null);
   }, [onModelChange, reuseTask]);
 
+  const prompt = prompts[mode];
   const promptLength = runeCount(prompt);
   const lyricsLength = runeCount(lyrics);
-  const handlePromptVoiceActiveChange = React.useCallback((active: boolean) => {
-    setActiveVoiceField(current => (active ? 'prompt' : current === 'prompt' ? null : current));
-  }, []);
   const handleLyricsVoiceActiveChange = React.useCallback((active: boolean) => {
     setActiveVoiceField(current => (active ? 'lyrics' : current === 'lyrics' ? null : current));
   }, []);
   const handleModeChange = React.useCallback(
     (nextMode: MusicMode) => {
       if (nextMode === mode) return;
-      if (activeVoiceField === 'prompt') void promptVoiceInputRef.current?.finish();
+      if (activeVoiceField && activeVoiceField !== 'lyrics') {
+        void promptVoiceInputRefs.current[activeVoiceField]?.finish();
+      }
       if (activeVoiceField === 'lyrics') void lyricsVoiceInputRef.current?.finish();
+      setActiveVoiceField(null);
       setMode(nextMode);
       setValidationError(null);
     },
@@ -192,51 +202,78 @@ export function MusicComposer({
           data-ui="music-prompt-surface"
           className="mx-4 flex min-h-0 flex-1 flex-col overflow-y-auto rounded-2xl border border-border"
         >
-          <div className={cn('flex min-h-44 flex-col p-4', mode !== 'vocal' && 'flex-1')}>
-            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-              <span>{t('prompt')}</span>
-              <div className="flex items-center gap-3">
-                <WorkspaceVoiceInputControl
-                  ref={promptVoiceInputRef}
-                  value={prompt}
-                  onChange={value => {
-                    setPrompt(value);
+          {MUSIC_MODES.map(promptMode => {
+            const promptValue = prompts[promptMode];
+            const promptValueLength = runeCount(promptValue);
+            return (
+              <div
+                key={promptMode}
+                className={cn(
+                  'min-h-44 flex-col p-4',
+                  promptMode === mode ? 'flex' : 'hidden',
+                  mode !== 'vocal' && 'flex-1'
+                )}
+              >
+                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                  <span>{t('prompt')}</span>
+                  <div className="flex items-center gap-3">
+                    <WorkspaceVoiceInputControl
+                      ref={handle => {
+                        promptVoiceInputRefs.current[promptMode] = handle;
+                      }}
+                      value={promptValue}
+                      onChange={value => {
+                        setPrompts(current => ({ ...current, [promptMode]: value }));
+                        setValidationError(null);
+                      }}
+                      disabled={
+                        mutation.isPending ||
+                        (activeVoiceField !== null && activeVoiceField !== promptMode)
+                      }
+                      onActiveChange={active => {
+                        setActiveVoiceField(current =>
+                          active ? promptMode : current === promptMode ? null : current
+                        );
+                      }}
+                    />
+                    <span
+                      className={cn(
+                        promptValueLength > MAX_PROMPT_RUNES && 'text-destructive'
+                      )}
+                    >
+                      {promptValueLength}/{MAX_PROMPT_RUNES}
+                    </span>
+                    {promptValue ? (
+                      <button
+                        type="button"
+                        className="transition-colors hover:text-foreground"
+                        onClick={() => {
+                          setPrompts(current => ({ ...current, [promptMode]: '' }));
+                          setValidationError(null);
+                        }}
+                      >
+                        {t('clear')}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <Textarea
+                  value={promptValue}
+                  onChange={event => {
+                    const value = event.target.value;
+                    setPrompts(current => ({ ...current, [promptMode]: value }));
                     setValidationError(null);
                   }}
-                  disabled={mutation.isPending || activeVoiceField === 'lyrics'}
-                  onActiveChange={handlePromptVoiceActiveChange}
+                  placeholder={t('promptPlaceholder')}
+                  className={cn(
+                    'mt-2 min-h-32 resize-none border-0 bg-transparent px-0 text-[15px] leading-6 shadow-none focus-visible:ring-0',
+                    mode !== 'vocal' && '!max-h-none flex-1'
+                  )}
+                  aria-invalid={promptValueLength > MAX_PROMPT_RUNES}
                 />
-                <span className={cn(promptLength > MAX_PROMPT_RUNES && 'text-destructive')}>
-                  {promptLength}/{MAX_PROMPT_RUNES}
-                </span>
-                {prompt ? (
-                  <button
-                    type="button"
-                    className="transition-colors hover:text-foreground"
-                    onClick={() => {
-                      setPrompt('');
-                      setValidationError(null);
-                    }}
-                  >
-                    {t('clear')}
-                  </button>
-                ) : null}
               </div>
-            </div>
-            <Textarea
-              value={prompt}
-              onChange={event => {
-                setPrompt(event.target.value);
-                setValidationError(null);
-              }}
-              placeholder={t('promptPlaceholder')}
-              className={cn(
-                'mt-2 min-h-32 resize-none border-0 bg-transparent px-0 text-[15px] leading-6 shadow-none focus-visible:ring-0',
-                mode !== 'vocal' && '!max-h-none flex-1'
-              )}
-              aria-invalid={promptLength > MAX_PROMPT_RUNES}
-            />
-          </div>
+            );
+          })}
 
           <div
             className={cn(
@@ -254,7 +291,10 @@ export function MusicComposer({
                     setLyrics(value);
                     setValidationError(null);
                   }}
-                  disabled={mutation.isPending || activeVoiceField === 'prompt'}
+                  disabled={
+                    mutation.isPending ||
+                    (activeVoiceField !== null && activeVoiceField !== 'lyrics')
+                  }
                   onActiveChange={handleLyricsVoiceActiveChange}
                 />
                 <span className={cn(lyricsLength > MAX_LYRICS_RUNES && 'text-destructive')}>
