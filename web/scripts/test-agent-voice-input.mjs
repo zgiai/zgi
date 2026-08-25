@@ -128,7 +128,10 @@ assert.equal(
 
 assert.equal(audio.formatVoiceRecordingDuration(0), '00:00');
 assert.equal(audio.formatVoiceRecordingDuration(9), '00:09');
-assert.equal(audio.formatVoiceRecordingDuration(60), '01:00');
+assert.equal(
+  audio.formatVoiceRecordingDuration(audio.VOICE_RECORDING_LIMIT_SECONDS),
+  '00:59'
+);
 
 const draftCalls = [];
 const webAppCalls = [];
