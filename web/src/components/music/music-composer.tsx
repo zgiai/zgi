@@ -55,6 +55,7 @@ export function MusicComposer({
   const submitInFlightRef = React.useRef(false);
   const submitCooldownRef = React.useRef(false);
   const submitCooldownTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const promptVoiceInputRef = React.useRef<WorkspaceVoiceInputControlHandle>(null);
   const lyricsVoiceInputRef = React.useRef<WorkspaceVoiceInputControlHandle>(null);
   const [mode, setMode] = React.useState<MusicMode>('instrumental');
   const [prompt, setPrompt] = React.useState('');
@@ -89,9 +90,8 @@ export function MusicComposer({
   const handleModeChange = React.useCallback(
     (nextMode: MusicMode) => {
       if (nextMode === mode) return;
-      if (activeVoiceField === 'lyrics') {
-        void lyricsVoiceInputRef.current?.finish();
-      }
+      if (activeVoiceField === 'prompt') void promptVoiceInputRef.current?.finish();
+      if (activeVoiceField === 'lyrics') void lyricsVoiceInputRef.current?.finish();
       setMode(nextMode);
       setValidationError(null);
     },
@@ -197,6 +197,7 @@ export function MusicComposer({
               <span>{t('prompt')}</span>
               <div className="flex items-center gap-3">
                 <WorkspaceVoiceInputControl
+                  ref={promptVoiceInputRef}
                   value={prompt}
                   onChange={value => {
                     setPrompt(value);

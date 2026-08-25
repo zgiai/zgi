@@ -580,8 +580,13 @@ assert.match(composerSource, /mode === 'vocal'/);
 assert.match(workspaceVoiceInputSource, /useImperativeHandle\(ref, \(\) => \(\{ finish:/);
 assert.match(
   composerSource,
-  /if \(activeVoiceField === 'lyrics'\)[\s\S]*void lyricsVoiceInputRef\.current\?\.finish\(\)[\s\S]*setMode\(nextMode\)/,
-  'switching away from custom lyrics must finish and transcribe the active recording in the background'
+  /if \(activeVoiceField === 'prompt'\) void promptVoiceInputRef\.current\?\.finish\(\)[\s\S]*if \(activeVoiceField === 'lyrics'\) void lyricsVoiceInputRef\.current\?\.finish\(\)[\s\S]*setMode\(nextMode\)/,
+  'switching music modes must finish and transcribe whichever voice recording is active in the background'
+);
+assert.match(
+  composerSource,
+  /ref=\{promptVoiceInputRef\}[\s\S]*value=\{prompt\}/,
+  'the prompt voice control must expose a handle so mode switching can finish its recording'
 );
 assert.match(
   composerSource,
