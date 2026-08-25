@@ -50,7 +50,7 @@ func TestDeliveryProjectsGeneratedFilesAsDownloadLinks(t *testing.T) {
 	now := time.Now().UTC()
 	delivery := &channelruntime.Delivery{
 		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
-		InstallationID: installation.ID, BindingID: binding.Binding.ID, InboundEventID: uuid.New(), RunID: uuid.New(),
+		InstallationID: installation.ID, BindingID: binding.Binding.ID, InboundEventID: uuidPointer(uuid.New()), RunID: uuid.New(),
 		Provider: "feishu", ConnectionID: installation.ConnectionID, ActorID: scope.ActorID,
 		SubjectType: runtimeidentity.SubjectTypeDigitalHuman, SubjectID: digitalHumanID,
 		ExternalConversationID: binding.Mapping.ExternalConversationID, Payload: payload, PayloadDigest: digest,

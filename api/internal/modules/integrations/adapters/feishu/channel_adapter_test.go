@@ -175,6 +175,7 @@ func TestChannelAdapterDeliverUsesGovernedExecutorAndStableIdentity(t *testing.T
 		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New(), InstallationID: uuid.New(),
 		ConnectionID: uuid.New(), Subject: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New()},
 		RunID: uuid.New(), DeliveryID: uuid.New(), ExternalConversationID: "oc_chat", Text: "answer",
+		Mentions: []channelruntime.DeliveryMention{{ExternalID: "ou_sender", DisplayName: "康源"}},
 	}
 	receipt, err := adapter.Deliver(t.Context(), request)
 	if err != nil {
@@ -187,8 +188,20 @@ func TestChannelAdapterDeliverUsesGovernedExecutorAndStableIdentity(t *testing.T
 	if got.InvokeFrom != tools.ToolInvokeFromAPI || got.ActionID != ActionSendBotMessage ||
 		got.ConnectionID != request.ConnectionID.String() || got.MessageID != request.DeliveryID.String() ||
 		got.ConversationID != request.RunID.String() || got.AppID != request.Subject.ID.String() ||
-		got.Input["recipient_id"] != "oc_chat" || got.Input["text"] != "answer" {
+		got.Input["recipient_id"] != "oc_chat" || got.Input["text"] != `<at user_id="ou_sender">康源</at> answer` {
 		t.Fatalf("executor request = %#v", got)
+	}
+}
+
+func TestRenderFeishuDeliveryTextSkipsInvalidAndDuplicateMentions(t *testing.T) {
+	text := renderFeishuDeliveryText("处理完成", []channelruntime.DeliveryMention{
+		{ExternalID: "ou_sender", DisplayName: `<康源>`},
+		{ExternalID: "ou_sender", DisplayName: "重复"},
+		{ExternalID: `bad\" id`, DisplayName: "无效"},
+	})
+	want := `<at user_id="ou_sender">&lt;康源&gt;</at> 处理完成`
+	if text != want {
+		t.Fatalf("renderFeishuDeliveryText() = %q, want %q", text, want)
 	}
 }
 

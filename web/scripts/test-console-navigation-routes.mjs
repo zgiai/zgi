@@ -29,7 +29,9 @@ for (const href of [
   '/console/digital-humans/digital-human-1/settings',
   '/console/digital-humans/digital-human-1/capabilities',
   '/console/digital-humans/digital-human-1/channels',
-  '/console/digital-humans/digital-human-1/chat',
+  '/console/digital-humans/digital-human-1/configuration',
+  '/console/digital-humans/digital-human-1/preferences',
+  '/console/digital-humans/digital-human-1/tasks',
   '/console/digital-humans/digital-human-1/runs',
   '/console/digital-humans/digital-human-1/memory',
 ]) {
@@ -126,9 +128,23 @@ assert.equal(
   'allowed'
 );
 assert.equal(
-  getZGIConsoleNavigationAccess('/console/digital-humans/digital-human-1/chat', digitalHumanViewer)
+  getZGIConsoleNavigationAccess('/console/digital-humans/digital-human-1/tasks', digitalHumanViewer)
     .status,
-  'permission_denied'
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess(
+    '/console/digital-humans/digital-human-1/configuration',
+    digitalHumanViewer
+  ).status,
+  'allowed'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess(
+    '/console/digital-humans/digital-human-1/preferences',
+    digitalHumanViewer
+  ).status,
+  'allowed'
 );
 assert.equal(
   getZGIConsoleNavigationAccess(

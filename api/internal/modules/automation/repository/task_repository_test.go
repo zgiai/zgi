@@ -24,6 +24,10 @@ func TestTaskRepositoryCountByStatusScopesToOrganizationAndWorkspace(t *testing.
 	insertAutomationTask(t, db, "task-3", "org-1", "workspace-1", automationmodel.AutomationTaskStatusPaused)
 	insertAutomationTask(t, db, "task-4", "org-1", "workspace-2", automationmodel.AutomationTaskStatusCompleted)
 	insertAutomationTask(t, db, "task-5", "org-2", "workspace-1", automationmodel.AutomationTaskStatusArchived)
+	insertAutomationTask(t, db, "digital-human-task", "org-1", "workspace-1", automationmodel.AutomationTaskStatusActive)
+	if err := db.Model(&automationmodel.AutomationTask{}).Where("id = ?", "digital-human-task").Update("task_kind", automationmodel.AutomationTaskKindDigitalHuman).Error; err != nil {
+		t.Fatalf("mark digital human task: %v", err)
+	}
 
 	counts, err := NewTaskRepository(db).CountByStatus(context.Background(), nil, automationdto.TaskScope{
 		OrganizationID: "org-1",

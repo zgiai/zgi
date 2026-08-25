@@ -39,6 +39,9 @@ func TestChannelWebhookReplayedTenTimesCreatesOneInvocation(t *testing.T) {
 	if runtime.calls != 1 {
 		t.Fatalf("SubmitInvocation() calls = %d, want 1", runtime.calls)
 	}
+	if runtime.lastEvent.ReplyTo == nil || runtime.lastEvent.ReplyTo.RecipientID != "ou_sender" {
+		t.Fatalf("group reply target = %#v, want triggering sender", runtime.lastEvent.ReplyTo)
+	}
 	if len(store.events) != 1 {
 		t.Fatalf("inbound events = %d, want 1", len(store.events))
 	}
@@ -52,6 +55,20 @@ func TestChannelWebhookReplayedTenTimesCreatesOneInvocation(t *testing.T) {
 	}
 	if len(store.deliveries) != 0 {
 		t.Fatalf("durable acknowledgement deliveries = %d, want 0", len(store.deliveries))
+	}
+}
+
+func TestChannelDeliveryMentionsOnlyFinalReplyRecipient(t *testing.T) {
+	event := invocation.Event{
+		ReplyTo: &invocation.ReplyAddress{RecipientID: " user-1 "},
+		Context: map[string]any{"sender_display_name": " 康源 "},
+	}
+	mentions := channelDeliveryMentions(event, channelruntime.DeliveryKindFinal)
+	if len(mentions) != 1 || mentions[0].ExternalID != "user-1" || mentions[0].DisplayName != "康源" {
+		t.Fatalf("final mentions = %#v, want attributed triggering sender", mentions)
+	}
+	if progress := channelDeliveryMentions(event, channelruntime.DeliveryKindProgress); len(progress) != 0 {
+		t.Fatalf("progress mentions = %#v, want none", progress)
 	}
 }
 
@@ -85,6 +102,9 @@ func TestChannelWebhookSkipsAcknowledgementWhenDisabled(t *testing.T) {
 	}
 	if requests := service.transient.(*channelTransientDispatcherStub).requests; len(requests) != 0 {
 		t.Fatalf("transient acknowledgement requests = %#v, want none", requests)
+	}
+	if runtime.lastEvent.ReplyTo == nil || runtime.lastEvent.ReplyTo.RecipientID != "" {
+		t.Fatalf("direct reply target = %#v, want no redundant mention", runtime.lastEvent.ReplyTo)
 	}
 }
 
@@ -495,7 +515,7 @@ func TestDeliveryRetryDoesNotSubmitInvocationAgain(t *testing.T) {
 	now := time.Now().UTC()
 	delivery := &channelruntime.Delivery{
 		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
-		InstallationID: installation.ID, BindingID: binding.Binding.ID, InboundEventID: uuid.New(), RunID: uuid.New(),
+		InstallationID: installation.ID, BindingID: binding.Binding.ID, InboundEventID: uuidPointer(uuid.New()), RunID: uuid.New(),
 		Provider: "feishu", ConnectionID: installation.ConnectionID, ActorID: scope.ActorID,
 		SubjectType: runtimeidentity.SubjectTypeDigitalHuman, SubjectID: digitalHumanID,
 		ExternalConversationID: binding.Mapping.ExternalConversationID, Payload: payload, PayloadDigest: digest,
@@ -598,7 +618,7 @@ func newChannelTestDelivery(
 	}
 	return &channelruntime.Delivery{
 		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
-		InstallationID: installation.ID, BindingID: binding.Binding.ID, InboundEventID: uuid.New(), RunID: uuid.New(),
+		InstallationID: installation.ID, BindingID: binding.Binding.ID, InboundEventID: uuidPointer(uuid.New()), RunID: uuid.New(),
 		Provider: "feishu", ConnectionID: installation.ConnectionID, ActorID: scope.ActorID,
 		SubjectType: runtimeidentity.SubjectTypeDigitalHuman, SubjectID: digitalHumanID,
 		ExternalConversationID: binding.Mapping.ExternalConversationID, Payload: payload, PayloadDigest: digest,
@@ -951,7 +971,7 @@ func (store *channelStoreStub) EnqueueRunChannelDelivery(_ context.Context, runI
 		}
 		store.deliveries[id] = &channelruntime.Delivery{
 			ID: id, OrganizationID: event.OrganizationID, WorkspaceID: event.WorkspaceID,
-			InstallationID: installation.ID, BindingID: binding.ID, InboundEventID: event.ID, RunID: runID,
+			InstallationID: installation.ID, BindingID: binding.ID, InboundEventID: uuidPointer(event.ID), RunID: runID,
 			Kind: kind, DeliveryKey: deliveryKey, Sequence: sequence,
 			Provider: installation.Provider, ConnectionID: installation.ConnectionID, ActorID: installation.CreatedBy,
 			SubjectType: binding.SubjectType, SubjectID: binding.SubjectID,

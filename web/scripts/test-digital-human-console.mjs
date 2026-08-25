@@ -73,6 +73,10 @@ const detailPage = await readFile(
   new URL('../src/app/console/digital-humans/[digitalHumanId]/page.tsx', import.meta.url),
   'utf8'
 );
+const dashboard = await readFile(
+  new URL('../src/components/digital-human/digital-human-dashboard.tsx', import.meta.url),
+  'utf8'
+);
 const layout = await readFile(
   new URL('../src/app/console/digital-humans/[digitalHumanId]/layout.tsx', import.meta.url),
   'utf8'
@@ -128,6 +132,18 @@ const dingTalkChannelProvider = await readFile(
 );
 const channelPage = await readFile(
   new URL('../src/app/console/digital-humans/[digitalHumanId]/channels/page.tsx', import.meta.url),
+  'utf8'
+);
+const taskPage = await readFile(
+  new URL('../src/app/console/digital-humans/[digitalHumanId]/tasks/page.tsx', import.meta.url),
+  'utf8'
+);
+const tasks = await readFile(
+  new URL('../src/components/digital-human/digital-human-tasks.tsx', import.meta.url),
+  'utf8'
+);
+const taskHooks = await readFile(
+  new URL('../src/hooks/digital-human/use-digital-human-tasks.ts', import.meta.url),
   'utf8'
 );
 
@@ -236,13 +252,58 @@ assert.doesNotMatch(
 );
 assert.match(
   detailPage,
-  /redirect\([\s\S]*\/configuration/,
-  'DigitalHuman detail root must open the configuration workbench instead of a redundant overview'
+  /DigitalHumanDashboard[\s\S]*id=\{digitalHumanId\}/,
+  'DigitalHuman detail root must render the operational workspace dashboard'
 );
 assert.doesNotMatch(
   detailPage,
-  /section=/,
-  'DigitalHuman canonical configuration route must not require a tab query'
+  /redirect\(/,
+  'DigitalHuman detail root must remain available as the operational workspace route'
+);
+assert.match(
+  dashboard,
+  /useDigitalHuman\(id\)[\s\S]*useDigitalHumanTasks\(id\)[\s\S]*useDigitalHumanRuns\(id\)[\s\S]*useDigitalHumanChannels\(id, true\)/,
+  'DigitalHuman dashboard must derive identity, tasks, runs, and connection state from live data'
+);
+assert.match(
+  dashboard,
+  /getAgentTextIconDisplay\([\s\S]*icon=\{textIcon\.text\}[\s\S]*iconBackground=\{textIcon\.background\}[\s\S]*definition\.icon_url \|\| definition\.avatar/,
+  'DigitalHuman dashboard must render the same persisted text and image icon representation as Agent surfaces'
+);
+assert.match(
+  dashboard,
+  /tasks\?task=\$\{task\.id\}/,
+  'DigitalHuman dashboard task rows must deep-link to the selected task detail'
+);
+assert.match(
+  dashboard,
+  /refreshDashboard[\s\S]*detail\.refetch\(\)[\s\S]*tasks\.refetch\(\)[\s\S]*runs\.refetch\(\)[\s\S]*channels\.events\.refetch\(\)/,
+  'DigitalHuman dashboard must provide one manual refresh action for all visible status sources'
+);
+assert.match(
+  dashboard,
+  /DashboardLiveFeed[\s\S]*prefers-reduced-motion[\s\S]*dashboard\.live\.title/,
+  'DigitalHuman dashboard must expose a reduced-motion-aware live activity surface'
+);
+assert.match(
+  dashboard,
+  /runs\.filter\(item => activeRunStatuses\.has\(item\.status\)\)/,
+  'DigitalHuman live activity must only include currently active runs'
+);
+assert.match(
+  dashboard,
+  /!\['completed', 'canceled'\]\.includes\(task\.work_status\)/,
+  'DigitalHuman workspace task board must hide terminal tasks by default'
+);
+assert.match(
+  tasks,
+  /useState<StatusFilter>\('open'\)[\s\S]*openStatuses/,
+  'DigitalHuman task management must default to unfinished work while preserving an all-status filter'
+);
+assert.match(
+  hooks,
+  /return active \? 1_500 : 10_000/,
+  'DigitalHuman runs must refresh quickly while active and continue low-frequency idle polling'
 );
 assert.match(
   layout,
@@ -378,7 +439,7 @@ assert.match(
 );
 assert.match(
   layout,
-  /isConfigurationPage[\s\S]*\{isConfigurationPage \? \([\s\S]*<DigitalHumanHeader/,
+  /isConfigurationPage[\s\S]*<DigitalHumanHeader/,
   'DigitalHuman Agent-style draft header must only be mounted for the configuration workbench'
 );
 assert.match(
@@ -680,12 +741,53 @@ assert.doesNotMatch(
   'DigitalHuman channels must not use account memory, Agent endpoints, or ambient wake policies'
 );
 
+assert.match(
+  taskPage,
+  /DigitalHumanFeatureGate permission="digital_human\.view"[\s\S]*DigitalHumanTasks/,
+  'DigitalHuman tasks must be available through the feature and view-permission gate'
+);
+assert.match(
+  service,
+  /listTasks\([\s\S]*createTask\([\s\S]*getTask\([\s\S]*updateTask\([\s\S]*applyTaskAction\([\s\S]*listTaskRuns\([\s\S]*listTaskActivities\(/,
+  'DigitalHuman service must expose the complete task lifecycle and audit API'
+);
+assert.match(
+  service,
+  /channels\/installations\/\$\{installationId\}\/task-policy/,
+  'DigitalHuman service must expose per-installation task authorization'
+);
+assert.match(
+  `${taskHooks}\n${service}`,
+  /revision: number[\s\S]*applyTaskAction\(id, taskId, action, revision\)[\s\S]*expected_revision: expectedRevision/,
+  'DigitalHuman task mutations must submit the current revision for optimistic concurrency'
+);
+assert.match(
+  tasks,
+  /ConfirmDialog[\s\S]*decline[\s\S]*cancel[\s\S]*archive/,
+  'DigitalHuman task destructive actions must require explicit confirmation'
+);
+assert.match(
+  tasks,
+  /TaskListCell label=[\s\S]*sm:grid-cols/,
+  'DigitalHuman tasks must provide mobile row labels and responsive table layout'
+);
+assert.match(
+  channels,
+  /useChannelTaskPolicy[\s\S]*channel-task-policy-[\s\S]*taskPolicy\.description/,
+  'External channel task management must be an explicit per-installation opt-in'
+);
+
 const sourceTabs = runs.match(/const sourceTabs:[\s\S]*?= \[([\s\S]*?)\n {2}\];/)?.[1] ?? '';
 assert.ok(sourceTabs, 'DigitalHuman run source filters must remain statically inspectable');
+assert.match(
+  sourceTabs,
+  /scheduled/,
+  'DigitalHuman run filters must expose scheduled executions after task scheduling is delivered'
+);
 assert.doesNotMatch(
   sourceTabs,
-  /scheduled|email/,
-  'DigitalHuman run filters must not expose scheduled or email sources before those capabilities exist'
+  /email/,
+  'DigitalHuman run filters must not expose email sources before email delivery exists'
 );
 
 console.log('DigitalHuman console contract checks passed.');

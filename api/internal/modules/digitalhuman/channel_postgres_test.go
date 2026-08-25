@@ -315,6 +315,44 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 	if err := db.Model(&channelruntime.Delivery{}).Where("id = ?", delivery.ID).Update("provider", "forged").Error; err == nil {
 		t.Fatal("database accepted a delivery provider that does not match its installation")
 	}
+
+	scheduledEvent := invocation.Event{
+		ID: "scheduled-channel-delivery", Type: invocation.EventTypeSchedule,
+		Origin: invocation.Origin{Kind: invocation.OriginSchedule},
+		Target: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: detail.Definition.ID,
+			OrganizationID: organizationID, WorkspaceID: workspaceID,
+		},
+		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"},
+		OccurredAt: now.Add(4 * time.Second),
+		ReplyTo: &invocation.ReplyAddress{
+			Provider: feishu.IntegrationID, InstallationID: installation.ID.String(), ConversationID: mapping.ExternalConversationID,
+		},
+	}
+	scheduledRun, created, err := runtime.SubmitInvocation(t.Context(), scope, scheduledEvent, "执行已确认的提醒", nil)
+	if err != nil || !created {
+		t.Fatalf("SubmitInvocation(schedule) = created %v, err %v", created, err)
+	}
+	if err := db.Model(&Run{}).Where("id = ?", scheduledRun.ID).Updates(map[string]any{
+		"status": RunStatusRunning, "started_at": now.Add(4 * time.Second), "updated_at": now.Add(4 * time.Second),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.CompleteRunWithDelivery(t.Context(), scheduledRun.ID, "该喝水了", datatypes.JSON(`{}`), now.Add(5*time.Second)); err != nil {
+		t.Fatalf("CompleteRunWithDelivery(schedule) error = %v", err)
+	}
+	var scheduledDelivery channelruntime.Delivery
+	if err := db.Where("run_id = ?", scheduledRun.ID).Take(&scheduledDelivery).Error; err != nil {
+		t.Fatal(err)
+	}
+	if scheduledDelivery.InboundEventID != nil || scheduledDelivery.ExternalConversationID != mapping.ExternalConversationID {
+		t.Fatalf("scheduled delivery = %#v", scheduledDelivery)
+	}
+	if err := db.Model(&channelruntime.Delivery{}).Where("id = ?", scheduledDelivery.ID).
+		Update("external_conversation_id", "forged-conversation").Error; err == nil {
+		t.Fatal("database accepted a scheduled delivery address that does not match its run")
+	}
+
 	if err := integrations.NewGormConnectionRepository(db).DeleteAs(t.Context(), organizationID, connection.ID, &actorID); !errors.Is(err, integrations.ErrConnectionInUse) {
 		t.Fatalf("DeleteAs(bound channel connection) error = %v", err)
 	}

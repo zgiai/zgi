@@ -118,6 +118,7 @@ func TestDingTalkChannelDeliverUsesRobotAPI(t *testing.T) {
 	receipt, err := adapter.Deliver(t.Context(), channelruntime.DeliveryRequest{
 		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New(), ConnectionID: connectionID,
 		RunID: uuid.New(), DeliveryID: uuid.New(), ExternalConversationID: "group:cid-9", Text: "处理完成",
+		Mentions: []channelruntime.DeliveryMention{{ExternalID: "user-1", DisplayName: "康源"}},
 	})
 	if err != nil {
 		t.Fatalf("Deliver() error = %v", err)
@@ -125,6 +126,14 @@ func TestDingTalkChannelDeliverUsesRobotAPI(t *testing.T) {
 	if receipt.ProviderMessageID != "query-1" || receivedPath != "/v1.0/robot/groupMessages/send" ||
 		receivedBody["openConversationId"] != "cid-9" || receivedBody["robotCode"] != "ding-app" {
 		t.Fatalf("Deliver() receipt=%#v path=%q body=%#v", receipt, receivedPath, receivedBody)
+	}
+	atUserIDs, ok := receivedBody["atUserIds"].([]interface{})
+	if !ok || len(atUserIDs) != 1 || atUserIDs[0] != "user-1" {
+		t.Fatalf("Deliver() atUserIds = %#v, want user-1", receivedBody["atUserIds"])
+	}
+	var parameters map[string]string
+	if err := json.Unmarshal([]byte(receivedBody["msgParam"].(string)), &parameters); err != nil || parameters["content"] != "@user-1 处理完成" {
+		t.Fatalf("Deliver() msgParam = %#v, decoded=%#v error=%v", receivedBody["msgParam"], parameters, err)
 	}
 }
 

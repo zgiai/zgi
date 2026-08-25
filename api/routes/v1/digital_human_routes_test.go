@@ -18,6 +18,9 @@ type digitalHumanRoutesRuntime struct {
 type digitalHumanRoutesChannels struct {
 	digitalhuman.ChannelHandlerService
 }
+type digitalHumanRoutesTasks struct {
+	digitalhuman.TaskHandlerService
+}
 
 func TestDigitalHumanPermissionForRequest(t *testing.T) {
 	tests := []struct {
@@ -48,6 +51,11 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodGet, "/console/api/digital-humans/:id/channels/events", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
 		{http.MethodGet, "/console/api/digital-humans/:id/channels/deliveries", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
 		{http.MethodPost, "/console/api/digital-humans/:id/channels/deliveries/:delivery_id/retry", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPost, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodPatch, "/console/api/digital-humans/:id/tasks/:task_id", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodGet, "/console/api/digital-humans/:id/channels/installations/:installation_id/task-policy", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPut, "/console/api/digital-humans/:id/channels/installations/:installation_id/task-policy", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 	}
 	for _, test := range tests {
 		if got := digitalHumanPermissionForRequest(test.method, test.path); got != test.want {
@@ -81,61 +89,58 @@ func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
 		Service:                 digitalHumanRoutesService{},
 		Runtime:                 digitalHumanRoutesRuntime{},
 		Channels:                digitalHumanRoutesChannels{},
+		Tasks:                   digitalHumanRoutesTasks{},
 		AccountService:          digitalHumanRoutesAccountService{},
 		OrganizationService:     digitalHumanRoutesOrganizationService{},
 		ApplicationErrorCatalog: digitalHumanRoutesCatalog(t),
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 49; got != want {
+	if got, want := len(routes), 56; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
-		"POST /console/api/digital-humans":                                                    false,
-		"GET /console/api/digital-humans":                                                     false,
-		"GET /console/api/digital-humans/:id":                                                 false,
-		"PATCH /console/api/digital-humans/:id":                                               false,
-		"GET /console/api/digital-humans/:id/draft":                                           false,
-		"PATCH /console/api/digital-humans/:id/draft":                                         false,
-		"POST /console/api/digital-humans/:id/publish":                                        false,
-		"GET /console/api/digital-humans/:id/versions":                                        false,
-		"GET /console/api/digital-humans/:id/delete-impact":                                   false,
-		"DELETE /console/api/digital-humans/:id":                                              false,
-		"GET /console/api/digital-humans/:id/draft/roles":                                     false,
-		"PUT /console/api/digital-humans/:id/draft/roles":                                     false,
-		"GET /console/api/digital-humans/:id/draft/bindings":                                  false,
-		"PUT /console/api/digital-humans/:id/draft/bindings":                                  false,
-		"POST /console/api/digital-humans/:id/invocations":                                    false,
-		"GET /console/api/digital-humans/:id/memory":                                          false,
-		"POST /console/api/digital-humans/:id/memory/proposals":                               false,
-		"PATCH /console/api/digital-humans/:id/memory/state":                                  false,
-		"POST /console/api/digital-humans/:id/memory/operations/:operation_id/undo":           false,
-		"GET /console/api/digital-humans/:id/draft/binding-candidates":                        false,
-		"GET /console/api/digital-humans/:id/runs":                                            false,
-		"GET /console/api/digital-humans/:id/runs/:run_id":                                    false,
-		"POST /console/api/digital-humans/:id/runs/:run_id/cancel":                            false,
-		"GET /console/api/digital-humans/:id/runtime/conversations":                           false,
-		"GET /console/api/digital-humans/:id/runtime/search":                                  false,
-		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/messages": false,
-		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/events":   false,
-		"POST /console/api/webhooks/channels/feishu/:installation_id":                         false,
-		"POST /console/api/digital-humans/:id/channels/installations":                         false,
-		"GET /console/api/digital-humans/:id/channels/installations":                          false,
-		"PATCH /console/api/digital-humans/:id/channels/installations/:installation_id":       false,
-		"DELETE /console/api/digital-humans/:id/channels/installations/:installation_id":      false,
-		"POST /console/api/digital-humans/:id/channels/bindings":                              false,
-		"GET /console/api/digital-humans/:id/channels/bindings":                               false,
-		"GET /console/api/digital-humans/:id/channels/discoveries":                            false,
-		"DELETE /console/api/digital-humans/:id/channels/bindings/:binding_id":                false,
-		"GET /console/api/digital-humans/:id/channels/events":                                 false,
-		"GET /console/api/digital-humans/:id/channels/deliveries":                             false,
-		"POST /console/api/digital-humans/:id/channels/deliveries/:delivery_id/retry":         false,
-		"POST /console/api/digital-human-role-templates":                                      false,
-		"GET /console/api/digital-human-role-templates":                                       false,
-		"GET /console/api/digital-human-role-templates/:id":                                   false,
-		"PATCH /console/api/digital-human-role-templates/:id":                                 false,
-		"PATCH /console/api/digital-human-role-templates/:id/draft":                           false,
-		"POST /console/api/digital-human-role-templates/:id/publish":                          false,
+		"POST /console/api/digital-humans":                                                        false,
+		"GET /console/api/digital-humans":                                                         false,
+		"GET /console/api/digital-humans/:id":                                                     false,
+		"PATCH /console/api/digital-humans/:id":                                                   false,
+		"GET /console/api/digital-humans/:id/draft":                                               false,
+		"PATCH /console/api/digital-humans/:id/draft":                                             false,
+		"POST /console/api/digital-humans/:id/publish":                                            false,
+		"GET /console/api/digital-humans/:id/versions":                                            false,
+		"GET /console/api/digital-humans/:id/delete-impact":                                       false,
+		"DELETE /console/api/digital-humans/:id":                                                  false,
+		"GET /console/api/digital-humans/:id/draft/bindings":                                      false,
+		"PUT /console/api/digital-humans/:id/draft/bindings":                                      false,
+		"POST /console/api/digital-humans/:id/invocations":                                        false,
+		"GET /console/api/digital-humans/:id/memory":                                              false,
+		"POST /console/api/digital-humans/:id/memory/proposals":                                   false,
+		"PATCH /console/api/digital-humans/:id/memory/state":                                      false,
+		"POST /console/api/digital-humans/:id/memory/operations/:operation_id/undo":               false,
+		"GET /console/api/digital-humans/:id/draft/binding-candidates":                            false,
+		"GET /console/api/digital-humans/:id/runs":                                                false,
+		"GET /console/api/digital-humans/:id/runs/:run_id":                                        false,
+		"POST /console/api/digital-humans/:id/runs/:run_id/cancel":                                false,
+		"GET /console/api/digital-humans/:id/runtime/conversations":                               false,
+		"GET /console/api/digital-humans/:id/runtime/search":                                      false,
+		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/messages":     false,
+		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/events":       false,
+		"POST /console/api/digital-humans/:id/channels/installations":                             false,
+		"GET /console/api/digital-humans/:id/channels/installations":                              false,
+		"PATCH /console/api/digital-humans/:id/channels/installations/:installation_id":           false,
+		"DELETE /console/api/digital-humans/:id/channels/installations/:installation_id":          false,
+		"GET /console/api/digital-humans/:id/channels/events":                                     false,
+		"GET /console/api/digital-humans/:id/channels/deliveries":                                 false,
+		"POST /console/api/digital-humans/:id/channels/deliveries/:delivery_id/retry":             false,
+		"GET /console/api/digital-humans/:id/tasks":                                               false,
+		"POST /console/api/digital-humans/:id/tasks":                                              false,
+		"GET /console/api/digital-humans/:id/tasks/:task_id":                                      false,
+		"PATCH /console/api/digital-humans/:id/tasks/:task_id":                                    false,
+		"POST /console/api/digital-humans/:id/tasks/:task_id/actions/:action":                     false,
+		"GET /console/api/digital-humans/:id/tasks/:task_id/runs":                                 false,
+		"GET /console/api/digital-humans/:id/tasks/:task_id/activities":                           false,
+		"GET /console/api/digital-humans/:id/channels/installations/:installation_id/task-policy": false,
+		"PUT /console/api/digital-humans/:id/channels/installations/:installation_id/task-policy": false,
 	}
 	for _, route := range routes {
 		key := route.Method + " " + route.Path
