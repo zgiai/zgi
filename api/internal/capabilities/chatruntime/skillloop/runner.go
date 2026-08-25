@@ -1791,6 +1791,7 @@ func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, 
 	planningReq = cloneChatRequest(planningReq)
 	sourceMessages := cloneMessagesForProvider(planningReq.Messages)
 	planningReq.Messages = adapter.NormalizeSystemMessages(sourceMessages)
+	planningReq.Tools = providerCompatibleFunctionTools(planningReq.Tools)
 	if err := r.applyFinalPlanningRequestBudget(planningReq, sourceMessages); err != nil {
 		r.recordModelInvocation(ModelInvocationTrace{
 			Phase:     phase,
