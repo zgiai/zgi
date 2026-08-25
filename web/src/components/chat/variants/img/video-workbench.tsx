@@ -27,6 +27,7 @@ import {
 import { toast } from 'sonner';
 
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
+import { WorkspaceVoiceInputControl } from '@/components/chat/variants/aichat/voice/workspace-voice-input-control';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -1033,6 +1034,11 @@ function ComposerPanel({
         </div>
 
         <div className="flex items-center justify-end gap-3">
+          <WorkspaceVoiceInputControl
+            value={prompt}
+            onChange={onPromptChange}
+            disabled={effectiveGenerating}
+          />
           {modelError ? (
             <Badge className="rounded-md border-red-500/30 bg-red-500/10 text-red-300">
               {t('chat.videoWorkbench.modelsLoadFailed')}
