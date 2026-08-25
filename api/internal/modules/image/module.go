@@ -9,6 +9,7 @@ import (
 	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"gorm.io/gorm"
 )
 
@@ -17,14 +18,14 @@ type Module struct {
 	Service imageservice.Service
 }
 
-func NewModule(db *gorm.DB, availableModels llmmodelsvc.AvailableModelsService, routes imageservice.RouteLister, llmClient llmclient.LLMClient, chatService service.Service, fileServices ...imageservice.ReferenceFileService) *Module {
+func NewModule(db *gorm.DB, availableModels llmmodelsvc.AvailableModelsService, routes imageservice.RouteLister, llmClient llmclient.LLMClient, chatService service.Service, errorProjector *apptransport.Projector, fileServices ...imageservice.ReferenceFileService) *Module {
 	var fileService imageservice.ReferenceFileService
 	if len(fileServices) > 0 {
 		fileService = fileServices[0]
 	}
 	svc := imageservice.NewServiceWithTasks(db, registry.NewRegistry(), availableModels, routes, llmClient, chatService, imageasset.NewService(), fileService)
 	return &Module{
-		Handler: handler.NewHandler(svc),
+		Handler: handler.NewHandler(svc, errorProjector),
 		Service: svc,
 	}
 }

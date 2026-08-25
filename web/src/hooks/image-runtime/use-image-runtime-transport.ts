@@ -20,6 +20,7 @@ import type {
   ImageRuntimeTask,
 } from '@/services/types/image-runtime';
 import { generateClientId } from '@/utils/client-id';
+import { useT } from '@/i18n/translations';
 import { IMAGE_RUNTIME_KEYS } from './use-image-runtime-models';
 
 interface UseImageRuntimeTransportOptions {
@@ -29,11 +30,33 @@ interface UseImageRuntimeTransportOptions {
 const IMAGE_TASK_POLL_INTERVAL_MS = 5000;
 const IMAGE_TASK_CLIENT_POLL_MAX_MS = 10 * 60 * 1000;
 const IMAGE_TASK_TIMEOUT_ERROR = 'IMAGE_TASK_TIMEOUT';
-const IMAGE_TASK_STILL_RUNNING_TEXT = '图片仍在生成中，你可以稍后刷新查看结果。';
+const IMAGE_PROMPT_MAX_CHARACTERS = 4000;
+
+interface ImageRuntimeText {
+  generated: string;
+  cancelled: string;
+  timeout: string;
+  providerFailed: string;
+  failed: string;
+  stillRunning: string;
+  promptTooLong: string;
+}
 
 export function useImageRuntimeTransport(_options: UseImageRuntimeTransportOptions) {
+  const t = useT('webapp');
   const queryClient = useQueryClient();
   const recoveringTaskIdsRef = React.useRef(new Set<string>());
+  const imageRuntimeText: ImageRuntimeText = {
+    generated: t('chat.imageInput.taskGenerated'),
+    cancelled: t('chat.imageInput.taskCancelled'),
+    timeout: t('chat.imageInput.taskTimeout'),
+    providerFailed: t('chat.imageInput.taskProviderFailed'),
+    failed: t('chat.imageInput.taskFailed'),
+    stillRunning: t('chat.imageInput.taskStillRunning'),
+    promptTooLong: t('chat.imageInput.promptTooLong', { max: IMAGE_PROMPT_MAX_CHARACTERS }),
+  };
+  const imageRuntimeTextRef = React.useRef(imageRuntimeText);
+  imageRuntimeTextRef.current = imageRuntimeText;
 
   React.useEffect(() => {
     let disposed = false;
@@ -42,7 +65,7 @@ export function useImageRuntimeTransport(_options: UseImageRuntimeTransportOptio
         const resp = await ImageRuntimeService.listTasks({ limit: 20 });
         const tasks = resp.data?.data ?? [];
         tasks.filter(isExpiredImageTask).forEach(task => {
-          applyRecoveredTaskToChatStore(taskWithTimeoutDisplay(task));
+          applyRecoveredTaskToChatStore(taskWithTimeoutDisplay(task), imageRuntimeTextRef.current);
         });
         const activeTasks = tasks.filter(isActiveImageTask);
         if (activeTasks.length === 0) return;
@@ -56,7 +79,7 @@ export function useImageRuntimeTransport(_options: UseImageRuntimeTransportOptio
             .map(task =>
               waitForImageTask(task, {
                 onTerminal: terminalTask => {
-                  applyRecoveredTaskToChatStore(terminalTask);
+                  applyRecoveredTaskToChatStore(terminalTask, imageRuntimeTextRef.current);
                   void queryClient.invalidateQueries({ queryKey: IMAGE_RUNTIME_KEYS.conversations });
                   void queryClient.invalidateQueries({ queryKey: IMAGE_RUNTIME_KEYS.taskLists });
                 },
@@ -120,7 +143,7 @@ export function useImageRuntimeTransport(_options: UseImageRuntimeTransportOptio
           summary,
           messages: [...messagesResp.data.data]
             .sort((a, b) => a.created_at - b.created_at)
-            .map(mapMessage),
+            .map(item => mapMessage(item, imageRuntimeTextRef.current)),
           loaded: true,
           loading: false,
         };
@@ -151,7 +174,13 @@ export function useImageRuntimeTransport(_options: UseImageRuntimeTransportOptio
       },
 
       send(payload: SendMessagePayload, callbacks: ChatRunCallbacks, abortSignal?: AbortSignal): void {
-        void sendImageRuntimeMessage(payload, callbacks, abortSignal, queryClient);
+        void sendImageRuntimeMessage(
+          payload,
+          callbacks,
+          abortSignal,
+          queryClient,
+          imageRuntimeTextRef.current
+        );
       },
     }),
     [queryClient]
@@ -164,7 +193,8 @@ async function sendImageRuntimeMessage(
   payload: SendMessagePayload,
   callbacks: ChatRunCallbacks,
   abortSignal: AbortSignal | undefined,
-  queryClient: ReturnType<typeof useQueryClient>
+  queryClient: ReturnType<typeof useQueryClient>,
+  text: ImageRuntimeText
 ) {
   const modelConfig = objectValue(payload.inputs?.model_config);
   const provider = stringValue(modelConfig?.provider);
@@ -203,16 +233,16 @@ async function sendImageRuntimeMessage(
       abortSignal
     );
     submittedTask = resp.data.task;
-    await handleSubmittedImageTask(submittedTask, callbacks, queryClient);
+    await handleSubmittedImageTask(submittedTask, callbacks, queryClient, text);
   } catch (error) {
     const recoveredTask = await findImageTaskByClientRequestId(clientRequestId).catch(() => null);
     if (recoveredTask) {
       submittedTask = recoveredTask;
-      await handleSubmittedImageTask(recoveredTask, callbacks, queryClient);
+      await handleSubmittedImageTask(recoveredTask, callbacks, queryClient, text);
       return;
     }
     if (submittedTask && isActiveImageTask(submittedTask)) {
-      callbacks.onToken(IMAGE_TASK_STILL_RUNNING_TEXT);
+      callbacks.onToken(text.stillRunning);
       callbacks.onFinished({ status: 'completed' });
       await queryClient.invalidateQueries({ queryKey: IMAGE_RUNTIME_KEYS.conversations });
       return;
@@ -226,7 +256,8 @@ async function sendImageRuntimeMessage(
 async function handleSubmittedImageTask(
   initialTask: ImageRuntimeTask,
   callbacks: ChatRunCallbacks,
-  queryClient: ReturnType<typeof useQueryClient>
+  queryClient: ReturnType<typeof useQueryClient>,
+  text: ImageRuntimeText
 ) {
   let task = initialTask;
   if (task.conversation_id) {
@@ -290,7 +321,7 @@ async function handleSubmittedImageTask(
       generatedImages,
     });
     callbacks.onMessage({ generatedImages });
-    callbacks.onToken('已生成图片');
+    callbacks.onToken(text.generated);
     callbacks.onFinished({
       status: 'completed',
       messageId: task.message_id,
@@ -303,7 +334,7 @@ async function handleSubmittedImageTask(
   }
 
   if (task.status === 'failed') {
-    const message = imageTaskErrorDisplayText(task.error_message);
+    const message = imageTaskErrorDisplayText(task.error_message, text);
     callbacks.mergeMessageData?.({
       conversation_id: task.conversation_id,
       message_id: task.message_id,
@@ -339,14 +370,14 @@ async function handleSubmittedImageTask(
       message_id: task.message_id,
       generatedImages: [],
     });
-    callbacks.onToken('图片生成已取消');
+    callbacks.onToken(text.cancelled);
     callbacks.onFinished({ status: 'stopped', messageId: task.message_id });
     await queryClient.invalidateQueries({ queryKey: IMAGE_RUNTIME_KEYS.conversations });
     await queryClient.invalidateQueries({ queryKey: IMAGE_RUNTIME_KEYS.taskLists });
     return;
   }
 
-  callbacks.onToken(IMAGE_TASK_STILL_RUNNING_TEXT);
+  callbacks.onToken(text.stillRunning);
   callbacks.onFinished({ status: 'completed' });
 }
 
@@ -450,7 +481,7 @@ function mapConversationToSummary(item: AIChatConversation): ConversationSummary
   };
 }
 
-function mapMessage(item: AIChatMessage): Message {
+function mapMessage(item: AIChatMessage, text: ImageRuntimeText): Message {
   const rawImageGeneration = objectValue(item.metadata?.image_generation) as ImageRuntimeGeneration | undefined;
   const rawImageTaskStatus = stringValue(item.metadata?.image_task_status) || rawImageGeneration?.status || item.status;
   const isExpiredImageMessage = isExpiredRuntimeImageMessage(item, rawImageTaskStatus);
@@ -471,12 +502,13 @@ function mapMessage(item: AIChatMessage): Message {
   const imageErrorText = imageTaskErrorDisplayText(
     isExpiredImageMessage
       ? IMAGE_TASK_TIMEOUT_ERROR
-      : stringValue(item.metadata?.image_task_error) || item.error || imageTaskStatus
+      : stringValue(item.metadata?.image_task_error) || item.error || imageTaskStatus,
+    text
   );
   const isImageError = item.status === 'error' || isFailedImageStatus(imageTaskStatus);
   const answer =
     isImageError && isInternalImageTaskError(item.answer)
-      ? imageTaskErrorDisplayText(item.answer)
+      ? imageTaskErrorDisplayText(item.answer, text)
       : item.answer || (isImageError ? imageErrorText : '');
   return {
     messageId: item.id,
@@ -597,7 +629,7 @@ function isExpiredRuntimeImageMessage(item: AIChatMessage, rawStatus: unknown): 
   return hasImageRuntimeMetadata && isActiveImageStatus(rawStatus) && isOlderThanImageTaskTimeout(item.created_at);
 }
 
-function applyRecoveredTaskToChatStore(task: ImageRuntimeTask) {
+function applyRecoveredTaskToChatStore(task: ImageRuntimeTask, text: ImageRuntimeText) {
   useChatStore.setState(state => {
     let changed = false;
     const nextConversations: Record<string, Conversation> = {};
@@ -634,11 +666,11 @@ function applyRecoveredTaskToChatStore(task: ImageRuntimeTask) {
           ...message,
           answer:
             task.status === 'succeeded'
-              ? '已生成图片'
+              ? text.generated
               : task.status === 'failed'
-                ? imageTaskErrorDisplayText(task.error_message)
+                ? imageTaskErrorDisplayText(task.error_message, text)
                 : task.status === 'cancelled'
-                  ? '图片生成已取消'
+                  ? text.cancelled
                   : message.answer,
           clientState,
           generatedImages,
@@ -741,18 +773,18 @@ function optionalStringValue(value: unknown): string | undefined {
   return normalized || undefined;
 }
 
-function imageTaskErrorDisplayText(errorMessage: unknown): string {
+function imageTaskErrorDisplayText(errorMessage: unknown, text: ImageRuntimeText): string {
   switch (stringValue(errorMessage).toLowerCase()) {
     case 'image_task_timeout':
     case 'runtime_lease_expired':
     case 'timeout':
-      return '图片生成超时，请稍后重试';
+      return text.timeout;
     case 'prompt_too_long':
-      return '提示词不能超过 4000 字，请缩短后重试。';
+      return text.promptTooLong;
     case 'upstream_failed':
-      return '图片生成服务暂时失败，请稍后重试';
+      return text.providerFailed;
     default:
-      return stringValue(errorMessage) || '图片生成失败';
+      return stringValue(errorMessage) || text.failed;
   }
 }
 

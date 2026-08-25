@@ -69,6 +69,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
 }) => {
   const t = useT('common');
   const tAgents = useT('agents');
+  const tWebapp = useT('webapp');
   // Defer heavy markdown parsing under streaming to reduce render pressure
   const deferredAnswer = useDeferredValue(message.answer);
 
@@ -96,8 +97,8 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const hasImages = generatedImages.length > 0;
   const imageGenerationStatus = useMemo(() => getImageGenerationStatus(message), [message]);
   const imageGenerationErrorText = useMemo(
-    () => getImageGenerationErrorText(message, imageGenerationStatus),
-    [message, imageGenerationStatus]
+    () => getImageGenerationErrorText(message, imageGenerationStatus, tWebapp),
+    [message, imageGenerationStatus, tWebapp]
   );
   const displayAnswer = imageGenerationErrorText || safeAnswer;
   const hasAi = useMemo(() => displayAnswer && displayAnswer.length > 0, [displayAnswer]);
@@ -262,9 +263,15 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                 renderIdentity={message.messageId}
               />
             ) : isImageGenerating && !hasImages ? (
-              <ImageGenerationStatusRow status="running" />
+              <ImageGenerationStatusRow
+                icon="running"
+                label={tWebapp('chat.imageInput.taskRunning')}
+              />
             ) : isImageCancelled ? (
-              <ImageGenerationStatusRow status="cancelled" />
+              <ImageGenerationStatusRow
+                icon="cancelled"
+                label={tWebapp('chat.imageInput.taskCancelled')}
+              />
             ) : workflowPauseStatus || isEmptyStoppedWorkflow ? (
               <div
                 className={cn(
@@ -318,7 +325,11 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
             ) : null}
 
             {hasAi && isImageGenerating && !hasImages ? (
-              <ImageGenerationStatusRow status="running" className="mt-3" />
+              <ImageGenerationStatusRow
+                icon="running"
+                label={tWebapp('chat.imageInput.taskRunning')}
+                className="mt-3"
+              />
             ) : null}
             {hasImages && (
               <div className="mt-4">
@@ -339,7 +350,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                         <div className="flex h-full w-full items-center justify-center bg-muted/70">
                           <div className="flex flex-col items-center gap-2 text-xs text-muted-foreground">
                             <Loader className="size-5 animate-spin" aria-hidden="true" />
-                            <span>生成中</span>
+                            <span>{tWebapp('chat.imageInput.generatingShort')}</span>
                           </div>
                         </div>
                       ) : (
@@ -435,10 +446,12 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
 });
 
 function ImageGenerationStatusRow({
-  status,
+  icon,
+  label,
   className,
 }: {
-  status: 'running' | 'cancelled';
+  icon: 'running' | 'cancelled';
+  label: string;
   className?: string;
 }) {
   return (
@@ -450,12 +463,12 @@ function ImageGenerationStatusRow({
       role="status"
       aria-live="polite"
     >
-      {status === 'running' ? (
+      {icon === 'running' ? (
         <Loader className="size-4 animate-spin" aria-hidden="true" />
       ) : (
         <CircleStop className="size-4" aria-hidden="true" />
       )}
-      <span>{status === 'running' ? '图片正在生成中...' : '图片生成已取消'}</span>
+      <span>{label}</span>
     </div>
   );
 }
@@ -537,7 +550,11 @@ function timestampMs(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function getImageGenerationErrorText(message: Message, status: string): string {
+function getImageGenerationErrorText(
+  message: Message,
+  status: string,
+  t: ReturnType<typeof useT<'webapp'>>
+): string {
   if (status !== 'failed') {
     return '';
   }
@@ -547,15 +564,15 @@ function getImageGenerationErrorText(message: Message, status: string): string {
     stringValue(metadata?.image_task_error) ||
     stringValue(message.answer);
   if (isImageTimeoutError(rawError) || (!rawError && isImageMessageOlderThanTimeout(message))) {
-    return '图片生成超时，请稍后重试';
+    return t('chat.imageInput.taskTimeout');
   }
   if (rawError.toLowerCase() === 'prompt_too_long') {
-    return '提示词不能超过 4000 字，请缩短后重试。';
+    return t('chat.imageInput.promptTooLong', { max: 4000 });
   }
   if (rawError.toLowerCase() === 'upstream_failed') {
-    return '图片生成服务暂时失败，请稍后重试';
+    return t('chat.imageInput.taskProviderFailed');
   }
-  return isInternalImageGenerationError(rawError) ? '图片生成失败' : '';
+  return isInternalImageGenerationError(rawError) ? t('chat.imageInput.taskFailed') : '';
 }
 
 function isImageTimeoutError(value: unknown): boolean {

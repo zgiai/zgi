@@ -9,15 +9,21 @@ import (
 	"github.com/google/uuid"
 	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
 	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/apperror"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 type Handler struct {
-	service imageservice.Service
+	service        imageservice.Service
+	errorProjector *apptransport.Projector
 }
 
-func NewHandler(service imageservice.Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service imageservice.Service, errorProjector *apptransport.Projector) *Handler {
+	if errorProjector == nil {
+		panic("image runtime handler requires application error projector")
+	}
+	return &Handler{service: service, errorProjector: errorProjector}
 }
 
 func (h *Handler) ListModels(c *gin.Context) {
@@ -27,7 +33,7 @@ func (h *Handler) ListModels(c *gin.Context) {
 	}
 	models, err := h.service.ListModels(c.Request.Context(), scope)
 	if err != nil {
-		fail(c, err)
+		h.fail(c, err)
 		return
 	}
 	response.Success(c, models)
@@ -45,7 +51,7 @@ func (h *Handler) Generate(c *gin.Context) {
 	}
 	result, err := h.service.CreateTask(c.Request.Context(), scope, req)
 	if err != nil {
-		fail(c, err)
+		h.fail(c, err)
 		return
 	}
 	response.Success(c, result)
@@ -67,7 +73,7 @@ func (h *Handler) ListTasks(c *gin.Context) {
 		Search: strings.TrimSpace(c.Query("search")),
 	})
 	if err != nil {
-		fail(c, err)
+		h.fail(c, err)
 		return
 	}
 	response.Success(c, result)
@@ -80,7 +86,7 @@ func (h *Handler) GetTask(c *gin.Context) {
 	}
 	task, err := h.service.GetTask(c.Request.Context(), scope, strings.TrimSpace(c.Param("task_id")))
 	if err != nil {
-		fail(c, err)
+		h.fail(c, err)
 		return
 	}
 	response.Success(c, task)
@@ -93,7 +99,7 @@ func (h *Handler) CancelTask(c *gin.Context) {
 	}
 	task, err := h.service.CancelTask(c.Request.Context(), scope, strings.TrimSpace(c.Param("task_id")))
 	if err != nil {
-		fail(c, err)
+		h.fail(c, err)
 		return
 	}
 	response.Success(c, task)
@@ -122,7 +128,16 @@ func (h *Handler) scope(c *gin.Context) (imageservice.Scope, bool) {
 	return imageservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: workspaceID}, true
 }
 
-func fail(c *gin.Context, err error) {
+func (h *Handler) fail(c *gin.Context, err error) {
+	if _, ok := apperror.As(err); ok && h.errorProjector != nil {
+		locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+		presentation := h.errorProjector.Project(err, locale).Presentation
+		c.JSON(presentation.HTTPStatus, gin.H{
+			"code":    presentation.Code.String(),
+			"message": presentation.Message,
+		})
+		return
+	}
 	code := imageservice.ErrorCode(err)
 	status := http.StatusBadRequest
 	switch code {
@@ -130,10 +145,6 @@ func fail(c *gin.Context, err error) {
 		status = http.StatusBadGateway
 	case "CONVERSATION_NOT_ACCESSIBLE":
 		status = http.StatusForbidden
-	case "IMAGE_TASK_NOT_FOUND":
-		status = http.StatusNotFound
-	case "IMAGE_TASK_CONFLICT":
-		status = http.StatusConflict
 	}
 	c.JSON(status, gin.H{"code": code, "message": publicErrorMessage(code)})
 }

@@ -297,13 +297,14 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 	if llmModule != nil && llmModule.LLMModelModule != nil {
 		RegisterImageRuntimeRoutes(v1, ImageRuntimeRouteDeps{
-			DB:              db,
-			AvailableModels: llmModule.LLMModelModule.AvailableModelsSvc,
-			Routes:          llmModule.ChannelSvc,
-			LLMClient:       serviceContainer.GetLLMClient(),
-			ChatService:     chatService,
-			AccountService:  accountService,
-			FileService:     serviceContainer.GetFileService(),
+			DB:                      db,
+			AvailableModels:         llmModule.LLMModelModule.AvailableModelsSvc,
+			Routes:                  llmModule.ChannelSvc,
+			LLMClient:               serviceContainer.GetLLMClient(),
+			ChatService:             chatService,
+			AccountService:          accountService,
+			FileService:             serviceContainer.GetFileService(),
+			ApplicationErrorCatalog: applicationErrorCatalog,
 		})
 		RegisterVideoRuntimeRoutes(v1, VideoRuntimeRouteDeps{
 			DB:              db,

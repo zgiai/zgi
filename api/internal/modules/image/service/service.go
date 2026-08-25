@@ -21,6 +21,7 @@ import (
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/datatypes"
@@ -413,6 +414,9 @@ func (s *service) CreateTask(ctx context.Context, scope Scope, req GenerateReque
 				return &CreateTaskResult{Task: task}, nil
 			}
 		}
+		if errors.Is(err, ErrTaskConflict) {
+			return nil, imageTaskConflictError("image.task.create")
+		}
 		return nil, err
 	}
 	logger.InfoContext(imageRuntimeLogContext(operationCtx, scope, record.TaskID, record.ClientRequestID, prepared), "image runtime task created",
@@ -685,7 +689,7 @@ func (s *service) ListTasks(ctx context.Context, scope Scope, query ListTasksQue
 	}
 	search := strings.TrimSpace(query.Search)
 	if len([]rune(search)) > maxImageSearchRunes {
-		return nil, ErrSearchTooLong
+		return nil, imageSearchTooLongError("image.task.list")
 	}
 	limit := query.Limit
 	if limit <= 0 || limit > 50 {
@@ -695,7 +699,7 @@ func (s *service) ListTasks(ctx context.Context, scope Scope, query ListTasksQue
 	if cursor := strings.TrimSpace(query.Cursor); cursor != "" {
 		decoded, err := decodeImageTaskCursor(cursor)
 		if err != nil {
-			return nil, ErrInvalidCursor
+			return nil, imageInvalidCursorError("image.task.list")
 		}
 		params.BeforeCreatedAt = &decoded.CreatedAt
 		params.BeforeID = &decoded.ID
@@ -723,10 +727,13 @@ func (s *service) ListTasks(ctx context.Context, scope Scope, query ListTasksQue
 
 func (s *service) GetTask(ctx context.Context, scope Scope, taskID string) (*ImageTask, error) {
 	if s.tasks == nil {
-		return nil, ErrTaskNotFound
+		return nil, imageTaskNotFoundError("image.task.get")
 	}
 	record, err := s.tasks.findByTaskID(ctx, scope, taskID)
 	if err != nil {
+		if errors.Is(err, ErrTaskNotFound) {
+			return nil, imageTaskNotFoundError("image.task.get")
+		}
 		return nil, err
 	}
 	task := imageTaskFromRecord(*record)
@@ -735,10 +742,13 @@ func (s *service) GetTask(ctx context.Context, scope Scope, taskID string) (*Ima
 
 func (s *service) CancelTask(ctx context.Context, scope Scope, taskID string) (*ImageTask, error) {
 	if s.tasks == nil {
-		return nil, ErrTaskNotFound
+		return nil, imageTaskNotFoundError("image.task.cancel")
 	}
 	record, err := s.tasks.cancelByTaskID(ctx, scope, taskID)
 	if err != nil {
+		if errors.Is(err, ErrTaskNotFound) {
+			return nil, imageTaskNotFoundError("image.task.cancel")
+		}
 		return nil, err
 	}
 	if record.MessageID != "" && record.ConversationID != "" {
@@ -1427,14 +1437,26 @@ func ErrorCode(err error) string {
 		ErrReferenceImageRequired,
 		ErrReferenceImageInvalid,
 		ErrReferenceImageUnsupported,
-		ErrTaskNotFound,
-		ErrTaskConflict,
-		ErrSearchTooLong,
-		ErrInvalidCursor,
 	} {
 		if errors.Is(err, candidate) {
 			return candidate.Error()
 		}
 	}
 	return "IMAGE_RUNTIME_FAILED"
+}
+
+func imageTaskNotFoundError(operation string) error {
+	return apperror.Wrap(ErrTaskNotFound, AppCodeTaskNotFound, apperror.WithOperation(operation))
+}
+
+func imageTaskConflictError(operation string) error {
+	return apperror.Wrap(ErrTaskConflict, AppCodeTaskConflict, apperror.WithOperation(operation))
+}
+
+func imageSearchTooLongError(operation string) error {
+	return apperror.Wrap(ErrSearchTooLong, AppCodeSearchTooLong, apperror.WithOperation(operation))
+}
+
+func imageInvalidCursorError(operation string) error {
+	return apperror.Wrap(ErrInvalidCursor, AppCodeInvalidCursor, apperror.WithOperation(operation))
 }

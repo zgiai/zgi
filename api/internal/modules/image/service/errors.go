@@ -1,6 +1,10 @@
 package service
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/zgiai/zgi/api/pkg/apperror"
+)
 
 var (
 	ErrPromptRequired            = errors.New("PROMPT_REQUIRED")
@@ -21,8 +25,15 @@ var (
 	ErrReferenceImageRequired    = errors.New("REFERENCE_IMAGE_REQUIRED")
 	ErrReferenceImageInvalid     = errors.New("REFERENCE_IMAGE_INVALID")
 	ErrReferenceImageUnsupported = errors.New("REFERENCE_IMAGE_UNSUPPORTED")
-	ErrTaskNotFound              = errors.New("IMAGE_TASK_NOT_FOUND")
-	ErrTaskConflict              = errors.New("IMAGE_TASK_CONFLICT")
-	ErrSearchTooLong             = errors.New("IMAGE_SEARCH_TOO_LONG")
-	ErrInvalidCursor             = errors.New("IMAGE_INVALID_CURSOR")
+	ErrTaskNotFound              = errors.New("image task not found")
+	ErrTaskConflict              = errors.New("image task conflict")
+	ErrSearchTooLong             = errors.New("image task search too long")
+	ErrInvalidCursor             = errors.New("image task cursor invalid")
+)
+
+var (
+	AppCodeTaskNotFound  = apperror.MustCode("image.task.not_found")
+	AppCodeTaskConflict  = apperror.MustCode("image.task.conflict")
+	AppCodeSearchTooLong = apperror.MustCode("image.search.too_long")
+	AppCodeInvalidCursor = apperror.MustCode("image.cursor.invalid")
 )

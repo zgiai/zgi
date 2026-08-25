@@ -24,8 +24,6 @@ import type { ImageSettings, ImageSettingsPatch } from './settings-toolbar';
 import type { ImageRuntimeModel } from '@/services/types/image-runtime';
 import { getImagePromptCharacterCount, IMAGE_PROMPT_MAX_CHARACTERS } from './constants';
 
-const DEFAULT_REFERENCE_IMAGE_PROMPT = '请基于参考图生成一张新图片。';
-
 export interface ImgChatProps {
   controller: ChatController;
   modelSelectorValue?: ModelSelectorValue;
@@ -163,7 +161,7 @@ export function ImgChat({
         toast.error(t('chat.imageInput.promptTooLong', { max: IMAGE_PROMPT_MAX_CHARACTERS }));
         return;
       }
-      const outgoingPrompt = trimmedPrompt || DEFAULT_REFERENCE_IMAGE_PROMPT;
+      const outgoingPrompt = trimmedPrompt || t('chat.imageInput.defaultReferencePrompt');
 
       // Optimistically mark as started to prevent home view flicker
       setHasStartedChat(true);
