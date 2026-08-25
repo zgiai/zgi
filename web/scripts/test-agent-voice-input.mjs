@@ -60,8 +60,8 @@ assert.ok(
 const overLimit = new Float32Array(16_000 * 61).fill(0.1);
 assert.equal(
   audio.encodeMonoPCM16(overLimit, 16_000).byteLength,
-  16_000 * 60 * 2,
-  'PCM output must never exceed the backend 60-second limit.'
+  16_000 * 59 * 2,
+  'PCM output must never exceed the 59-second recording limit.'
 );
 assert.throws(
   () => audio.encodeMonoPCM16(new Float32Array(), 16_000),
@@ -128,7 +128,10 @@ assert.equal(
 
 assert.equal(audio.formatVoiceRecordingDuration(0), '00:00');
 assert.equal(audio.formatVoiceRecordingDuration(9), '00:09');
-assert.equal(audio.formatVoiceRecordingDuration(60), '01:00');
+assert.equal(
+  audio.formatVoiceRecordingDuration(audio.VOICE_RECORDING_LIMIT_SECONDS),
+  '00:59'
+);
 
 const draftCalls = [];
 const webAppCalls = [];
@@ -290,7 +293,7 @@ try {
   });
   activePort.onmessage({ data: new Float32Array([0, 0.5, -0.5]) });
   maxDurationCallback();
-  assert.equal(reachedLimit, true, 'The recorder must enforce the 60-second stop callback.');
+  assert.equal(reachedLimit, true, 'The recorder must enforce the 59-second stop callback.');
   const recordedPCM = new Int16Array(await recorder.stop());
   assert.deepEqual([...recordedPCM], [0, 16384, -16384]);
   assert.equal(trackStopped, true);

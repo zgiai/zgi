@@ -158,6 +158,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 
 	// Agent management endpoints
 	appsGroup.GET("", appHandler.GetAgentsList)
+	appsGroup.POST("/runtime/audio/transcriptions", appHandler.TranscribeWorkspaceVoice)
 	appsGroup.GET("/runnable-webapps", appHandler.GetRunnableWebApps)
 	appsGroup.POST("", appHandler.CreateAgent)
 	appsGroup.GET("/:agent_id/candidates/skills", appHandler.ListAgentSkillBindingCandidates)
