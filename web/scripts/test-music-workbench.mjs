@@ -36,10 +36,28 @@ function loadTypeScriptModule(relativePath, mocks = new Map()) {
 }
 
 function renderMusicComposer(mutation, mode = 'instrumental') {
-  const stateValues = [mode, 'A quiet piano piece', '', 1, null, false];
+  const stateValues = [
+    mode,
+    {
+      instrumental: 'A quiet piano piece',
+      auto_lyrics: 'A quiet piano piece',
+      vocal: 'A quiet piano piece',
+    },
+    '',
+    null,
+    1,
+    null,
+    false,
+  ];
   let stateIndex = 0;
   const react = {
     useEffect() {},
+    useCallback(callback) {
+      return callback;
+    },
+    useMemo(factory) {
+      return factory();
+    },
     useRef(initialValue) {
       return { current: initialValue };
     },
@@ -60,6 +78,7 @@ function renderMusicComposer(mutation, mode = 'instrumental') {
       ['@/components/ui/button', components],
       ['@/components/ui/select', components],
       ['@/components/ui/textarea', components],
+      ['@/components/chat/variants/aichat/voice/workspace-voice-input-control', components],
       ['@/hooks/music/use-music-tasks', { useCreateMusicTasks: () => mutation }],
       ['@/i18n', { useT: () => key => key }],
       ['@/lib/utils', { cn: (...values) => values.filter(Boolean).join(' ') }],
@@ -232,7 +251,10 @@ try {
     ['auto lyrics', autoLyricsForm],
   ]) {
     const promptSurface = form.props.children[1];
-    const promptSection = promptSurface.props.children[0];
+    const promptSections = promptSurface.props.children[0];
+    const promptSection = promptSections.find(
+      section => !section.props.className.includes('hidden')
+    );
     const promptTextarea = promptSection.props.children[1];
     assert.match(
       promptSection.props.className,
