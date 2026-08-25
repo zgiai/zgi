@@ -482,7 +482,7 @@ export interface DigitalHumanChannelDelivery {
   id: string;
   installation_id: string;
   binding_id: string;
-  inbound_event_id: string;
+  inbound_event_id?: string;
   run_id: string;
   provider: string;
   connection_id: string;
@@ -511,4 +511,109 @@ export interface DigitalHumanChannelPage<T> {
   page: number;
   page_size: number;
   has_more: boolean;
+}
+
+export type DigitalHumanTaskStatus =
+  | 'proposed'
+  | 'pending'
+  | 'in_progress'
+  | 'waiting'
+  | 'blocked'
+  | 'completed'
+  | 'canceled';
+export type DigitalHumanTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type DigitalHumanTaskScheduleType = 'manual' | 'once' | 'cron';
+
+export interface DigitalHumanTaskSchedule {
+  type: DigitalHumanTaskScheduleType;
+  run_at?: string;
+  cron?: string;
+  timezone?: string;
+}
+
+export interface DigitalHumanTask {
+  id: string;
+  digital_human_id: string;
+  name: string;
+  goal: string;
+  success_criteria: string[];
+  work_status: DigitalHumanTaskStatus;
+  lifecycle_status: 'draft' | 'active' | 'paused' | 'completed' | 'archived';
+  priority: DigitalHumanTaskPriority;
+  schedule: DigitalHumanTaskSchedule;
+  delivery_mode: 'task_only' | 'source_conversation';
+  execution_timeout_seconds: number;
+  max_attempts: number;
+  next_run_at?: string;
+  last_run_at?: string;
+  last_run_status?: string;
+  source: string;
+  source_conversation_type?: 'direct' | 'group';
+  revision: number;
+  proposal_expires_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DigitalHumanTaskList {
+  items: DigitalHumanTask[];
+  counts: Partial<Record<DigitalHumanTaskStatus, number>>;
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
+export interface CreateDigitalHumanTaskRequest {
+  name: string;
+  goal: string;
+  success_criteria?: string[];
+  priority?: DigitalHumanTaskPriority;
+  schedule: DigitalHumanTaskSchedule;
+  delivery_mode?: 'task_only' | 'source_conversation';
+  execution_timeout_seconds?: number;
+  max_attempts?: number;
+}
+
+export type UpdateDigitalHumanTaskRequest = Partial<CreateDigitalHumanTaskRequest> & {
+  expected_revision: number;
+};
+
+export interface DigitalHumanTaskRun {
+  id: string;
+  task_id: string;
+  digital_human_run_id?: string;
+  trigger_source: string;
+  attempt: number;
+  status: string;
+  error_summary?: string;
+  scheduled_for: string;
+  started_at?: string;
+  finished_at?: string;
+  created_at: string;
+}
+
+export interface DigitalHumanTaskActivity {
+  id: string;
+  actor_type: string;
+  actor_ref: string;
+  action: string;
+  summary: string;
+  changes?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DigitalHumanTaskPage<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
+export interface DigitalHumanChannelTaskPolicy {
+  installation_id: string;
+  enabled: boolean;
+  revision: number;
+  updated_at?: string;
 }

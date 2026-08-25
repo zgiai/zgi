@@ -3,7 +3,7 @@
 import { useEffect, useId, type MouseEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { BrainCircuit, History, RadioTower, Settings2, X } from 'lucide-react';
+import { BrainCircuit, History, House, ListTodo, RadioTower, Settings2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -42,9 +42,7 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
   const testChatControlsPortalId = useId();
   const draftIsDirty = useDigitalHumanDraftStore(state => Boolean(state.editors[id]?.isDirty));
   const permissions = useAccountPermissions();
-  const isConfigurationPage = pathname.startsWith(
-    `/console/digital-humans/${id}/configuration`
-  );
+  const isConfigurationPage = pathname.startsWith(`/console/digital-humans/${id}/configuration`);
 
   useEffect(() => {
     if (!draftIsDirty) return;
@@ -81,6 +79,12 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
 
   const mobileItems = [
     {
+      href: `/console/digital-humans/${id}`,
+      label: t('tabs.dashboard'),
+      icon: House,
+      active: pathname === `/console/digital-humans/${id}`,
+    },
+    {
       href: `/console/digital-humans/${id}/configuration`,
       label: t('tabs.configuration'),
       icon: Settings2,
@@ -91,6 +95,12 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
       label: t('tabs.channels'),
       icon: RadioTower,
       active: pathname.startsWith(`/console/digital-humans/${id}/channels`),
+    },
+    {
+      href: `/console/digital-humans/${id}/tasks`,
+      label: t('tabs.tasks'),
+      icon: ListTodo,
+      active: pathname.startsWith(`/console/digital-humans/${id}/tasks`),
     },
     {
       href: `/console/digital-humans/${id}/runs`,
@@ -114,12 +124,7 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
     <div className="flex h-full min-h-0 min-w-0 bg-background">
       <DigitalHumanSidebar id={id} onNavigate={navigateAfterSaving} />
       <div className="flex h-full min-h-0 w-0 min-w-0 grow flex-col overflow-hidden">
-        {isConfigurationPage ? (
-          <DigitalHumanHeader
-            id={id}
-            onOpenTest={openTestChat}
-          />
-        ) : null}
+        {isConfigurationPage ? <DigitalHumanHeader id={id} onOpenTest={openTestChat} /> : null}
         <nav
           className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-2 py-1 md:hidden"
           aria-label={t('tabs.navigation')}

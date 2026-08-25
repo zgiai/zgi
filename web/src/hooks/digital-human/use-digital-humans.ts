@@ -127,7 +127,7 @@ export function useDigitalHumanRuns(id: string, enabled = true) {
       const active = query.state.data?.data?.items.some(run =>
         ['queued', 'running', 'canceling'].includes(run.status)
       );
-      return active ? 1_500 : false;
+      return active ? 1_500 : 10_000;
     },
   });
 }

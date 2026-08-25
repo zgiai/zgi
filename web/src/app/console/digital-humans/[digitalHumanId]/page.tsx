@@ -1,4 +1,4 @@
-import { redirect } from 'next/navigation';
+import { DigitalHumanDashboard } from '@/components/digital-human/digital-human-dashboard';
 
 interface DigitalHumanDetailPageProps {
   params: Promise<{ digitalHumanId: string }>;
@@ -6,5 +6,5 @@ interface DigitalHumanDetailPageProps {
 
 export default async function DigitalHumanDetailPage({ params }: DigitalHumanDetailPageProps) {
   const { digitalHumanId } = await params;
-  redirect(`/console/digital-humans/${digitalHumanId}/configuration`);
+  return <DigitalHumanDashboard id={digitalHumanId} />;
 }

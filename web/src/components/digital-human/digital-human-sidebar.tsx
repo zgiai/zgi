@@ -2,7 +2,7 @@
 
 import type { MouseEvent } from 'react';
 import { usePathname } from 'next/navigation';
-import { BrainCircuit, History, RadioTower, Settings2 } from 'lucide-react';
+import { BrainCircuit, History, House, ListTodo, RadioTower, Settings2 } from 'lucide-react';
 import {
   ResourceSidebar,
   ResourceSidebarHeader,
@@ -27,6 +27,12 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
   const configurationHref = `/console/digital-humans/${id}/configuration`;
   const navItems: ResourceSidebarNavItem[] = [
     {
+      title: t('digitalHumans.tabs.dashboard'),
+      href: `/console/digital-humans/${id}`,
+      icon: House,
+      isActive: currentPathname => currentPathname === `/console/digital-humans/${id}`,
+    },
+    {
       title: t('digitalHumans.tabs.configuration'),
       href: configurationHref,
       icon: Settings2,
@@ -37,6 +43,11 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
       title: t('digitalHumans.tabs.channels'),
       href: `/console/digital-humans/${id}/channels`,
       icon: RadioTower,
+    },
+    {
+      title: t('digitalHumans.tabs.tasks'),
+      href: `/console/digital-humans/${id}/tasks`,
+      icon: ListTodo,
     },
     {
       title: t('digitalHumans.tabs.runs'),

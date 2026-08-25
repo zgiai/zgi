@@ -1,0 +1,1023 @@
+'use client';
+
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import Link from 'next/link';
+import {
+  Activity,
+  AlertCircle,
+  ArrowRight,
+  CheckCircle2,
+  CircleDashed,
+  ListTodo,
+  MessageSquare,
+  RadioTower,
+  RefreshCw,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { IconPreview } from '@/components/common/icon-input/icon-preview';
+import { getAgentTextIconDisplay } from '@/components/agents/agent-runtime/utils';
+import { Skeleton } from '@/components/ui/skeleton';
+import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
+import { useDigitalHumanChannels } from '@/hooks/digital-human/use-digital-human-channels';
+import { useDigitalHumanTasks } from '@/hooks/digital-human/use-digital-human-tasks';
+import { useDigitalHuman, useDigitalHumanRuns } from '@/hooks/digital-human/use-digital-humans';
+import { useLocale } from '@/hooks/use-locale';
+import { useMediaQuery } from '@/hooks/use-media-query';
+import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
+import type {
+  DigitalHumanChannelInstallation,
+  DigitalHumanRun,
+  DigitalHumanRunStatus,
+  DigitalHumanTask,
+  DigitalHumanTaskStatus,
+} from '@/services/types/digital-human';
+
+const activeRunStatuses = new Set<DigitalHumanRunStatus>(['queued', 'running', 'canceling']);
+const taskStatusOrder: Record<DigitalHumanTaskStatus, number> = {
+  proposed: 0,
+  blocked: 1,
+  in_progress: 2,
+  waiting: 3,
+  pending: 4,
+  completed: 5,
+  canceled: 6,
+};
+
+export function DigitalHumanDashboard({ id }: { id: string }) {
+  const t = useT('digitalHumans');
+  const { locale } = useLocale();
+  const detail = useDigitalHuman(id);
+  const tasks = useDigitalHumanTasks(id);
+  const runs = useDigitalHumanRuns(id);
+  const channels = useDigitalHumanChannels(id, true);
+  const [refreshState, setRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>(
+    'idle'
+  );
+
+  useEffect(() => {
+    if (!['success', 'error'].includes(refreshState)) return;
+    const timer = window.setTimeout(() => setRefreshState('idle'), 2_500);
+    return () => window.clearTimeout(timer);
+  }, [refreshState]);
+
+  async function refreshDashboard() {
+    if (refreshState === 'refreshing') return;
+    setRefreshState('refreshing');
+    const results = await Promise.allSettled([
+      detail.refetch(),
+      tasks.refetch(),
+      runs.refetch(),
+      channels.installations.refetch(),
+      channels.events.refetch(),
+      channels.deliveries.refetch(),
+    ]);
+    setRefreshState(
+      results.some(result => result.status === 'rejected' || result.value.isError)
+        ? 'error'
+        : 'success'
+    );
+  }
+
+  if (detail.isLoading) return <DashboardSkeleton />;
+
+  if (detail.isError || !detail.data?.data) {
+    return (
+      <main className="mx-auto flex min-h-full w-full max-w-[1600px] items-center justify-center px-4 py-10 md:px-8">
+        <div className="max-w-md rounded-xl border bg-background p-8 text-center">
+          <AlertCircle className="mx-auto size-6 text-destructive" />
+          <h1 className="mt-3 text-lg font-semibold">{t('dashboard.loadError')}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('dashboard.loadErrorDescription')}
+          </p>
+          <Button className="mt-5" variant="outline" onClick={() => void detail.refetch()}>
+            <RefreshCw className="size-4" />
+            {t('common.refresh')}
+          </Button>
+        </div>
+      </main>
+    );
+  }
+
+  const definition = detail.data.data.definition;
+  const textIcon = getAgentTextIconDisplay(definition.icon_type, definition.icon, definition.name);
+  const published = detail.data.data.published;
+  const taskItems = tasks.data?.data.items ?? [];
+  const taskCounts = tasks.data?.data.counts ?? {};
+  const runItems = runs.data?.data.items ?? [];
+  const installations = channels.installations.data?.data ?? [];
+  const deliveries = channels.deliveries.data?.data.items ?? [];
+  const activeRun = runItems.find(run => activeRunStatuses.has(run.status));
+  const currentTask = taskItems.find(task => task.work_status === 'in_progress');
+  const nextTask = [...taskItems]
+    .filter(task => task.work_status === 'pending' && task.lifecycle_status === 'active')
+    .sort((left, right) => taskNextTimestamp(left) - taskNextTimestamp(right))[0];
+  const failedDeliveries = deliveries.filter(delivery =>
+    ['failed', 'unknown'].includes(delivery.status)
+  );
+  const attentionTasks = taskItems
+    .filter(task => ['proposed', 'blocked'].includes(task.work_status))
+    .sort((left, right) => taskStatusOrder[left.work_status] - taskStatusOrder[right.work_status]);
+  const attentionTaskIds = new Set(attentionTasks.map(task => task.id));
+  const failedTaskRuns = taskItems.filter(
+    task =>
+      task.lifecycle_status !== 'archived' &&
+      normalizeRunStatus(task.last_run_status ?? '') === 'failed' &&
+      !attentionTaskIds.has(task.id)
+  );
+  const attentionCount = attentionTasks.length + failedTaskRuns.length + failedDeliveries.length;
+  const todayCompleted = taskItems.filter(
+    task => task.work_status === 'completed' && isSameLocalDay(task.updated_at, new Date())
+  ).length;
+  const dashboardStatus = resolveDashboardStatus({
+    definitionStatus: definition.status,
+    published: Boolean(published),
+    attentionCount,
+  });
+  const visibleTasks = [...taskItems]
+    .filter(
+      task =>
+        task.lifecycle_status !== 'archived' &&
+        !['completed', 'canceled'].includes(task.work_status)
+    )
+    .sort((left, right) => {
+      const statusDiff = taskStatusOrder[left.work_status] - taskStatusOrder[right.work_status];
+      if (statusDiff !== 0) return statusDiff;
+      return taskNextTimestamp(left) - taskNextTimestamp(right);
+    })
+    .slice(0, 7);
+  const recentRuns = [...runItems]
+    .sort(
+      (left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()
+    )
+    .slice(0, 5);
+  const lastUpdatedAt = Math.max(
+    detail.dataUpdatedAt,
+    tasks.dataUpdatedAt,
+    runs.dataUpdatedAt,
+    channels.installations.dataUpdatedAt,
+    channels.events.dataUpdatedAt,
+    channels.deliveries.dataUpdatedAt
+  );
+  const isWorking = Boolean(currentTask || activeRun);
+
+  return (
+    <main className="@container/dashboard mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-4 px-4 py-4 sm:gap-5 md:px-6 md:py-6 2xl:gap-6 2xl:px-8 2xl:py-8">
+      <header className="flex flex-col gap-3 @[680px]/dashboard:flex-row @[680px]/dashboard:items-center @[680px]/dashboard:justify-between">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+            {t('dashboard.title')}
+          </h1>
+          <p className="text-xs text-muted-foreground sm:text-sm">
+            {formatFullDate(new Date(), locale)}
+          </p>
+        </div>
+        <div className="flex items-center justify-between gap-3 @[680px]/dashboard:justify-end">
+          <p className="min-w-0 truncate text-xs text-muted-foreground" aria-live="polite">
+            {refreshState === 'success'
+              ? t('dashboard.refreshed')
+              : refreshState === 'error'
+                ? t('dashboard.refreshFailed')
+                : t('dashboard.updatedAt', {
+                    value: formatClock(new Date(lastUpdatedAt || Date.now()), locale),
+                  })}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={refreshState === 'refreshing'}
+            aria-label={t('dashboard.refresh')}
+            onClick={() => void refreshDashboard()}
+          >
+            <RefreshCw className={cn('size-4', refreshState === 'refreshing' && 'animate-spin')} />
+            {refreshState === 'refreshing' ? t('dashboard.refreshing') : t('dashboard.refresh')}
+          </Button>
+        </div>
+      </header>
+
+      <DashboardLiveFeed id={id} runs={runItems} tasks={taskItems} locale={locale} />
+
+      <section
+        className="@container/dashboard-hero grid overflow-hidden rounded-xl border bg-background @[680px]/dashboard-hero:grid-cols-2 @[1120px]/dashboard-hero:grid-cols-[minmax(300px,1.2fr)_minmax(220px,0.8fr)_minmax(220px,0.8fr)]"
+        aria-busy={isWorking}
+      >
+        <div className="flex min-w-0 items-center gap-3 p-4 sm:gap-4 sm:p-5 @[680px]/dashboard-hero:col-span-2 @[1120px]/dashboard-hero:col-span-1 @[1120px]/dashboard-hero:p-6">
+          <IconPreview
+            iconType={definition.icon_type || 'text'}
+            icon={textIcon.text}
+            iconBackground={textIcon.background}
+            src={
+              definition.icon_type === 'image' ? definition.icon_url || definition.avatar || '' : ''
+            }
+            alt={definition.name}
+            size="md"
+            editable={false}
+            showUpload={false}
+            showRemove={false}
+            className="shrink-0"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-lg font-semibold">{definition.name}</h2>
+              <DashboardStatusBadge status={dashboardStatus} working={isWorking} />
+            </div>
+            <p className="mt-1 line-clamp-2 text-sm font-medium">
+              {currentTask
+                ? t('dashboard.statusLine.working', { name: currentTask.name })
+                : activeRun
+                  ? t('dashboard.statusLine.responding')
+                  : t('dashboard.statusLine.idle')}
+            </p>
+            <p className="mt-1 truncate text-xs text-muted-foreground">
+              {published?.version_number
+                ? t('dashboard.version', { value: published.version_number })
+                : t('dashboard.notPublished')}
+            </p>
+          </div>
+          <Button asChild variant="outline" size="sm" className="hidden shrink-0 sm:inline-flex">
+            {activeRun ? (
+              <Link href={`/console/digital-humans/${id}/runs?run=${activeRun.id}`}>
+                <Activity className={cn('size-4', isWorking && 'animate-pulse')} />
+                {t('dashboard.viewRun')}
+              </Link>
+            ) : (
+              <Link href={`/console/digital-humans/${id}?test-chat=1`}>
+                <MessageSquare className="size-4" />
+                {t('dashboard.startRun')}
+              </Link>
+            )}
+          </Button>
+        </div>
+
+        <FocusBlock
+          label={t('dashboard.currentFocus')}
+          title={currentTask?.name ?? activeRun?.query ?? t('dashboard.noCurrentFocus')}
+          meta={
+            currentTask
+              ? t(`tasks.status.${currentTask.work_status}`)
+              : activeRun
+                ? t(`status.${activeRun.status}`)
+                : undefined
+          }
+          active={Boolean(currentTask || activeRun)}
+          className="@[680px]/dashboard-hero:border-l-0 @[1120px]/dashboard-hero:border-l"
+        />
+        <FocusBlock
+          label={t('dashboard.nextUp')}
+          title={nextTask?.name ?? t('dashboard.noNextTask')}
+          meta={nextTask ? formatTaskSchedule(nextTask, locale, t) : undefined}
+        />
+        <div className="flex items-center border-t p-4 sm:hidden">
+          {activeRun ? (
+            <Button asChild variant="outline" size="sm" className="w-full">
+              <Link href={`/console/digital-humans/${id}/runs?run=${activeRun.id}`}>
+                <Activity className="size-4 animate-pulse" />
+                {t('dashboard.viewRun')}
+              </Link>
+            </Button>
+          ) : (
+            <Button asChild variant="outline" size="sm" className="w-full">
+              <Link href={`/console/digital-humans/${id}?test-chat=1`}>
+                <MessageSquare className="size-4" />
+                {t('dashboard.startRun')}
+              </Link>
+            </Button>
+          )}
+        </div>
+      </section>
+
+      <div className="grid gap-5 @[1180px]/dashboard:grid-cols-[minmax(0,1fr)_340px] @[1480px]/dashboard:grid-cols-[minmax(0,1fr)_380px] 2xl:gap-6">
+        <section className="overflow-hidden rounded-xl border bg-background">
+          <div className="flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-semibold">{t('dashboard.tasksTitle')}</h2>
+              <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
+                <SummaryCount label={t('tasks.status.proposed')} value={taskCounts.proposed ?? 0} />
+                <SummaryCount
+                  label={t('tasks.status.in_progress')}
+                  value={taskCounts.in_progress ?? 0}
+                />
+                <SummaryCount label={t('dashboard.completedToday')} value={todayCompleted} />
+              </div>
+            </div>
+            <Button asChild variant="ghost" size="sm">
+              <Link href={`/console/digital-humans/${id}/tasks`}>
+                {t('dashboard.viewAllTasks')}
+                <ArrowRight className="size-4" />
+              </Link>
+            </Button>
+          </div>
+
+          {tasks.isLoading ? (
+            <div className="space-y-3 p-5">
+              {[0, 1, 2, 3].map(item => (
+                <Skeleton key={item} className="h-14 rounded-lg" />
+              ))}
+            </div>
+          ) : tasks.isError ? (
+            <InlineState
+              icon={<AlertCircle className="size-5 text-destructive" />}
+              title={t('dashboard.tasksUnavailable')}
+              description={t('dashboard.tasksUnavailableDescription')}
+            />
+          ) : visibleTasks.length === 0 ? (
+            <InlineState
+              icon={<ListTodo className="size-5 text-muted-foreground" />}
+              title={t('dashboard.noTasks')}
+              description={t('dashboard.noTasksDescription')}
+              action={
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/console/digital-humans/${id}/tasks`}>
+                    {t('dashboard.openTasks')}
+                  </Link>
+                </Button>
+              }
+            />
+          ) : (
+            <TaskTable id={id} tasks={visibleTasks} locale={locale} />
+          )}
+        </section>
+
+        <aside className="flex min-w-0 flex-col gap-5 2xl:gap-6">
+          <section className="overflow-hidden rounded-xl border bg-background">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <div className="flex items-center gap-2">
+                <h2 className="font-semibold">{t('dashboard.attentionTitle')}</h2>
+                {attentionCount > 0 ? <Badge variant="warning">{attentionCount}</Badge> : null}
+              </div>
+            </div>
+            {attentionCount === 0 ? (
+              <InlineState
+                compact
+                icon={<CheckCircle2 className="size-5 text-success" />}
+                title={t('dashboard.noAttention')}
+                description={t('dashboard.noAttentionDescription')}
+              />
+            ) : (
+              <div className="divide-y">
+                {attentionTasks.slice(0, 3).map(task => (
+                  <AttentionRow
+                    key={task.id}
+                    title={task.name}
+                    description={
+                      task.work_status === 'proposed'
+                        ? t('dashboard.proposalNeedsDecision')
+                        : t('dashboard.blockedNeedsHelp')
+                    }
+                    href={`/console/digital-humans/${id}/tasks?task=${task.id}`}
+                    tone={task.work_status === 'blocked' ? 'danger' : 'warning'}
+                  />
+                ))}
+                {failedTaskRuns.slice(0, 2).map(task => (
+                  <AttentionRow
+                    key={`failed-run-${task.id}`}
+                    title={task.name}
+                    description={t('dashboard.taskRunFailedNeedsReview')}
+                    href={`/console/digital-humans/${id}/tasks?task=${task.id}`}
+                    tone="danger"
+                  />
+                ))}
+                {failedDeliveries.slice(0, 2).map(delivery => (
+                  <AttentionRow
+                    key={delivery.id}
+                    title={t('dashboard.deliveryFailed')}
+                    description={delivery.error_message || t('dashboard.deliveryFailedDescription')}
+                    href={`/console/digital-humans/${id}/channels`}
+                    tone="danger"
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="overflow-hidden rounded-xl border bg-background">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <h2 className="font-semibold">{t('dashboard.connectionsTitle')}</h2>
+              <Button asChild variant="ghost" size="sm" className="-mr-2">
+                <Link href={`/console/digital-humans/${id}/channels`}>
+                  {t('dashboard.manageConnections')}
+                </Link>
+              </Button>
+            </div>
+            {channels.installations.isLoading ? (
+              <div className="space-y-3 p-5">
+                {[0, 1].map(item => (
+                  <Skeleton key={item} className="h-10 rounded-lg" />
+                ))}
+              </div>
+            ) : installations.length === 0 ? (
+              <InlineState
+                compact
+                icon={<RadioTower className="size-5 text-muted-foreground" />}
+                title={t('dashboard.noConnections')}
+                description={t('dashboard.noConnectionsDescription')}
+              />
+            ) : (
+              <div className="divide-y px-5">
+                {installations.slice(0, 6).map(installation => (
+                  <ConnectionRow key={installation.id} installation={installation} />
+                ))}
+              </div>
+            )}
+          </section>
+        </aside>
+      </div>
+
+      <section className="overflow-hidden rounded-xl border bg-background">
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <h2 className="font-semibold">{t('dashboard.recentActivity')}</h2>
+          <Button asChild variant="ghost" size="sm" className="-mr-2">
+            <Link href={`/console/digital-humans/${id}/runs`}>
+              {t('dashboard.viewAllActivity')}
+              <ArrowRight className="size-4" />
+            </Link>
+          </Button>
+        </div>
+        {runs.isLoading ? (
+          <div className="space-y-3 p-5">
+            {[0, 1, 2].map(item => (
+              <Skeleton key={item} className="h-8 rounded-md" />
+            ))}
+          </div>
+        ) : recentRuns.length === 0 ? (
+          <InlineState
+            compact
+            icon={<Activity className="size-5 text-muted-foreground" />}
+            title={t('dashboard.noActivity')}
+            description={t('dashboard.noActivityDescription')}
+          />
+        ) : (
+          <div className="divide-y px-5">
+            {recentRuns.map(run => (
+              <RecentRunRow key={run.id} id={id} run={run} locale={locale} />
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+type DashboardStatus = 'healthy' | 'attention' | 'unpublished' | 'disabled';
+
+function resolveDashboardStatus({
+  definitionStatus,
+  published,
+  attentionCount,
+}: {
+  definitionStatus: string;
+  published: boolean;
+  attentionCount: number;
+}): DashboardStatus {
+  if (definitionStatus === 'disabled') return 'disabled';
+  if (!published) return 'unpublished';
+  if (attentionCount > 0) return 'attention';
+  return 'healthy';
+}
+
+function DashboardStatusBadge({ status, working }: { status: DashboardStatus; working: boolean }) {
+  const t = useT('digitalHumans');
+  return (
+    <Badge
+      variant={
+        status === 'healthy'
+          ? 'success'
+          : status === 'attention' || status === 'unpublished'
+            ? 'warning'
+            : 'subtle'
+      }
+    >
+      {working ? (
+        <CircleDashed className="size-3 animate-spin motion-reduce:animate-none" />
+      ) : status === 'healthy' ? (
+        <CheckCircle2 className="size-3" />
+      ) : (
+        <AlertCircle className="size-3" />
+      )}
+      {t(`dashboard.status.${status}`)}
+    </Badge>
+  );
+}
+
+function FocusBlock({
+  label,
+  title,
+  meta,
+  active = false,
+  className,
+}: {
+  label: string;
+  title: string;
+  meta?: string;
+  active?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'min-w-0 border-t p-4 sm:p-5 @[680px]/dashboard-hero:border-l @[1120px]/dashboard-hero:border-t-0 @[1120px]/dashboard-hero:p-6',
+        className
+      )}
+    >
+      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        {active ? (
+          <span className="relative flex size-2" aria-hidden="true">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-50 motion-reduce:hidden" />
+            <span className="relative inline-flex size-2 rounded-full bg-primary" />
+          </span>
+        ) : null}
+        {label}
+      </p>
+      <p className="mt-2 line-clamp-2 text-sm font-semibold">{title}</p>
+      {meta ? <p className="mt-1 truncate text-xs text-muted-foreground">{meta}</p> : null}
+    </div>
+  );
+}
+
+type DashboardLiveEventTone = 'active' | 'success' | 'warning' | 'danger' | 'neutral';
+
+interface DashboardLiveEvent {
+  id: string;
+  title: string;
+  description: string;
+  timestamp: string;
+  href: string;
+  tone: DashboardLiveEventTone;
+}
+
+function DashboardLiveFeed({
+  id,
+  runs,
+  tasks,
+  locale,
+}: {
+  id: string;
+  runs: DigitalHumanRun[];
+  tasks: DigitalHumanTask[];
+  locale: string;
+}) {
+  const t = useT('digitalHumans');
+  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const events = useMemo(
+    () => buildDashboardLiveEvents({ id, runs, tasks, t }),
+    [id, runs, t, tasks]
+  );
+  const [activeIndex, setActiveIndex] = useState(0);
+  const newestEventId = events[0]?.id;
+
+  useEffect(() => setActiveIndex(0), [newestEventId]);
+  useEffect(() => {
+    if (reduceMotion || events.length < 2) return;
+    const timer = window.setInterval(
+      () => setActiveIndex(current => (current + 1) % events.length),
+      4_500
+    );
+    return () => window.clearInterval(timer);
+  }, [events.length, reduceMotion]);
+
+  const event = events[activeIndex] ?? events[0];
+
+  if (!event) return null;
+
+  return (
+    <section
+      className="flex min-h-12 min-w-0 items-center gap-3 overflow-hidden rounded-xl border bg-muted/15 px-3 py-2.5 sm:px-4"
+      aria-label={t('dashboard.live.title')}
+    >
+      <div className="flex shrink-0 items-center gap-2 border-r pr-3 text-xs font-medium sm:pr-4">
+        <Activity className="size-4 animate-pulse text-primary motion-reduce:animate-none" />
+        <span className="hidden sm:inline">{t('dashboard.live.title')}</span>
+      </div>
+
+      <Link
+        key={`${event.id}-${activeIndex}`}
+        href={event.href}
+        className="group flex min-w-0 flex-1 items-center gap-2 rounded-sm outline-none animate-in fade-in slide-in-from-bottom-1 duration-300 motion-reduce:animate-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span
+          className={cn('size-1.5 shrink-0 rounded-full', liveEventToneClassName(event.tone))}
+        />
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {formatClock(new Date(event.timestamp), locale)}
+        </span>
+        <span className="shrink-0 text-xs font-medium">{event.title}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground group-hover:text-foreground">
+          {event.description}
+        </span>
+        <ArrowRight className="hidden size-3.5 shrink-0 text-muted-foreground sm:block" />
+      </Link>
+
+      {events.length > 1 ? (
+        <div className="hidden shrink-0 items-center gap-1 sm:flex" aria-hidden="true">
+          {events.map((item, index) => (
+            <span
+              key={item.id}
+              className={cn(
+                'h-1 rounded-full transition-[width,background-color] duration-300 motion-reduce:transition-none',
+                index === activeIndex ? 'w-3 bg-primary' : 'w-1 bg-border'
+              )}
+            />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function buildDashboardLiveEvents({
+  id,
+  runs,
+  tasks,
+  t,
+}: {
+  id: string;
+  runs: DigitalHumanRun[];
+  tasks: DigitalHumanTask[];
+  t: ReturnType<typeof useT<'digitalHumans'>>;
+}) {
+  const events: DashboardLiveEvent[] = [];
+  const currentTask = tasks.find(task => task.work_status === 'in_progress');
+  if (currentTask) {
+    events.push({
+      id: `task-${currentTask.id}-${currentTask.updated_at}`,
+      title: t('dashboard.live.taskRunning'),
+      description: currentTask.name,
+      timestamp: currentTask.updated_at,
+      href: `/console/digital-humans/${id}/tasks?task=${currentTask.id}`,
+      tone: 'active',
+    });
+  }
+
+  for (const run of newestFirst(runs.filter(item => activeRunStatuses.has(item.status))).slice(
+    0,
+    4
+  )) {
+    events.push({
+      id: `run-${run.id}-${run.status}-${run.updated_at}`,
+      title: t('dashboard.live.runActive'),
+      description: currentTask
+        ? currentTask.name
+        : dashboardRunSummary(run, t('dashboard.automaticRun')),
+      timestamp: run.updated_at,
+      href: `/console/digital-humans/${id}/runs?run=${run.id}`,
+      tone: 'active',
+    });
+  }
+
+  return events
+    .filter(event => Number.isFinite(Date.parse(event.timestamp)))
+    .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+    .slice(0, 6);
+}
+
+function newestFirst<T extends { updated_at: string }>(items: T[]) {
+  return [...items].sort(
+    (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)
+  );
+}
+
+function dashboardRunSummary(run: DigitalHumanRun, scheduledFallback: string) {
+  const origin = isRecord(run.invocation_event?.origin) ? run.invocation_event.origin : null;
+  const source =
+    (typeof origin?.kind === 'string' && origin.kind) ||
+    (typeof run.invocation_event?.type === 'string' && run.invocation_event.type) ||
+    'manual';
+  if (source === 'schedule' || source === 'scheduled') return scheduledFallback;
+  return run.query || run.result_summary || run.error_message || scheduledFallback;
+}
+
+function liveEventToneClassName(tone: DashboardLiveEventTone) {
+  if (tone === 'active') return 'bg-primary';
+  if (tone === 'success') return 'bg-success';
+  if (tone === 'warning') return 'bg-warning';
+  if (tone === 'danger') return 'bg-destructive';
+  return 'bg-muted-foreground';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function SummaryCount({ label, value }: { label: string; value: number }) {
+  return (
+    <span>
+      {label} <strong className="ml-1 font-semibold tabular-nums text-foreground">{value}</strong>
+    </span>
+  );
+}
+
+function TaskTable({
+  id,
+  tasks,
+  locale,
+}: {
+  id: string;
+  tasks: DigitalHumanTask[];
+  locale: string;
+}) {
+  const t = useT('digitalHumans');
+  return (
+    <div>
+      <div className="hidden grid-cols-[minmax(220px,1.5fr)_100px_150px_130px] gap-4 border-b bg-muted/20 px-5 py-2.5 text-xs font-medium text-muted-foreground md:grid">
+        <span>{t('tasks.columns.name')}</span>
+        <span>{t('tasks.columns.status')}</span>
+        <span>{t('tasks.columns.schedule')}</span>
+        <span>{t('tasks.columns.lastResult')}</span>
+      </div>
+      <div className="divide-y">
+        {tasks.map(task => (
+          <Link
+            key={task.id}
+            href={`/console/digital-humans/${id}/tasks?task=${task.id}`}
+            className="grid min-w-0 gap-3 px-5 py-3.5 outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[minmax(220px,1.5fr)_100px_150px_130px] md:items-center md:gap-4"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{task.name}</p>
+              <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{task.goal}</p>
+              <p className="mt-1 truncate text-[11px] text-muted-foreground/80">
+                {dashboardTaskSourceLabel(task, t)}
+              </p>
+            </div>
+            <DashboardTaskCell label={t('tasks.columns.status')}>
+              <TaskStatusBadge task={task} />
+            </DashboardTaskCell>
+            <DashboardTaskCell label={t('tasks.columns.schedule')}>
+              {formatTaskSchedule(task, locale, t)}
+            </DashboardTaskCell>
+            <DashboardTaskCell label={t('tasks.columns.lastResult')}>
+              {task.last_run_status
+                ? t(`tasks.runStatus.${normalizeRunStatus(task.last_run_status)}`)
+                : t('tasks.neverRun')}
+            </DashboardTaskCell>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function dashboardTaskSourceLabel(
+  task: DigitalHumanTask,
+  t: ReturnType<typeof useT<'digitalHumans'>>
+) {
+  if (task.source === 'console') return t('tasks.source.console');
+  if (!task.source.startsWith('channel:')) return task.source || t('tasks.source.unknown');
+  const providerID = task.source.slice('channel:'.length);
+  const provider = digitalHumanChannelProvider(providerID);
+  const providerName = provider ? t(provider.nameKey) : providerID;
+  if (task.source_conversation_type === 'group') {
+    return t('tasks.source.channelGroup', { provider: providerName });
+  }
+  if (task.source_conversation_type === 'direct') {
+    return t('tasks.source.channelDirect', { provider: providerName });
+  }
+  return t('tasks.source.channel', { provider: providerName });
+}
+
+function DashboardTaskCell({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-4 text-xs text-muted-foreground md:block">
+      <span className="font-medium text-foreground/70 md:hidden">{label}</span>
+      <div className="min-w-0 text-right md:text-left">{children}</div>
+    </div>
+  );
+}
+
+function TaskStatusBadge({ task }: { task: DigitalHumanTask }) {
+  const t = useT('digitalHumans');
+  const status =
+    task.lifecycle_status === 'paused' && task.work_status === 'pending'
+      ? 'paused'
+      : task.work_status;
+  const variant =
+    task.work_status === 'completed'
+      ? 'success'
+      : task.work_status === 'blocked'
+        ? 'destructive'
+        : task.work_status === 'proposed' || task.work_status === 'waiting'
+          ? 'warning'
+          : task.work_status === 'in_progress'
+            ? 'info'
+            : 'subtle';
+  return <Badge variant={variant}>{t(`tasks.status.${status}`)}</Badge>;
+}
+
+function AttentionRow({
+  title,
+  description,
+  href,
+  tone,
+}: {
+  title: string;
+  description: string;
+  href: string;
+  tone: 'warning' | 'danger';
+}) {
+  const t = useT('digitalHumans');
+  return (
+    <Link
+      href={href}
+      className="group flex gap-3 px-5 py-4 outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    >
+      <AlertCircle
+        className={cn(
+          'mt-0.5 size-4 shrink-0',
+          tone === 'danger' ? 'text-destructive' : 'text-warning'
+        )}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="line-clamp-2 text-sm font-medium">{title}</p>
+        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{description}</p>
+      </div>
+      <span className="shrink-0 self-center text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+        {t('dashboard.handle')}
+      </span>
+    </Link>
+  );
+}
+
+function ConnectionRow({ installation }: { installation: DigitalHumanChannelInstallation }) {
+  const t = useT('digitalHumans');
+  const provider = digitalHumanChannelProvider(installation.provider);
+  const connected =
+    installation.status === 'active' &&
+    (!installation.receiver ||
+      ['connected', 'not_applicable'].includes(installation.receiver.state));
+  return (
+    <div className="flex items-center gap-3 py-3">
+      <span
+        className={cn(
+          'flex size-8 shrink-0 items-center justify-center rounded-lg',
+          provider?.accentClassName ?? 'bg-muted text-muted-foreground'
+        )}
+      >
+        <RadioTower className="size-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{installation.name}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {provider ? t(provider.nameKey) : installation.provider}
+        </p>
+      </div>
+      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <span className={cn('size-1.5 rounded-full', connected ? 'bg-success' : 'bg-warning')} />
+        {connected ? t('dashboard.connectionHealthy') : t('dashboard.connectionAttention')}
+      </span>
+    </div>
+  );
+}
+
+function RecentRunRow({ id, run, locale }: { id: string; run: DigitalHumanRun; locale: string }) {
+  const t = useT('digitalHumans');
+  const Icon =
+    run.status === 'succeeded'
+      ? CheckCircle2
+      : activeRunStatuses.has(run.status)
+        ? CircleDashed
+        : AlertCircle;
+  return (
+    <Link
+      href={`/console/digital-humans/${id}/runs?run=${run.id}`}
+      className="grid gap-2 py-3 text-sm outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[70px_20px_minmax(0,1fr)_auto] sm:items-center"
+    >
+      <time className="text-xs tabular-nums text-muted-foreground">
+        {formatClock(new Date(run.updated_at), locale)}
+      </time>
+      <Icon
+        className={cn(
+          'size-4',
+          run.status === 'succeeded'
+            ? 'text-success'
+            : activeRunStatuses.has(run.status)
+              ? 'text-primary'
+              : 'text-destructive'
+        )}
+      />
+      <div className="min-w-0">
+        <p className="truncate font-medium text-foreground">
+          {run.query || t('dashboard.automaticRun')}
+        </p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          {run.result_summary || run.error_message || t(`status.${run.status}`)}
+        </p>
+      </div>
+      <span className="hidden text-xs text-muted-foreground sm:block">
+        {t(`status.${run.status}`)}
+      </span>
+    </Link>
+  );
+}
+
+function InlineState({
+  icon,
+  title,
+  description,
+  action,
+  compact = false,
+}: {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  action?: ReactNode;
+  compact?: boolean;
+}) {
+  return (
+    <div className={cn('flex flex-col items-center px-6 text-center', compact ? 'py-7' : 'py-10')}>
+      {icon}
+      <p className="mt-2 text-sm font-medium">{title}</p>
+      <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">{description}</p>
+      {action ? <div className="mt-4">{action}</div> : null}
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <main className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-5 px-4 py-5 md:px-8 md:py-7">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-4 w-28" />
+      </div>
+      <Skeleton className="h-32 rounded-xl" />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <Skeleton className="h-[440px] rounded-xl" />
+        <div className="space-y-5">
+          <Skeleton className="h-56 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+        </div>
+      </div>
+      <Skeleton className="h-52 rounded-xl" />
+    </main>
+  );
+}
+
+function taskNextTimestamp(task: DigitalHumanTask) {
+  const value = task.next_run_at ?? task.schedule.run_at;
+  if (!value) return Number.MAX_SAFE_INTEGER;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
+}
+
+function formatTaskSchedule(
+  task: DigitalHumanTask,
+  locale: string,
+  t: ReturnType<typeof useT<'digitalHumans'>>
+) {
+  if (task.schedule.type === 'manual') return t('tasks.schedule.manual');
+  if (task.schedule.type === 'cron') return t('tasks.schedule.cron');
+  const value = task.next_run_at ?? task.schedule.run_at;
+  return value ? formatDateTime(new Date(value), locale) : t('tasks.schedule.once');
+}
+
+function normalizeRunStatus(
+  status: string
+): 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'unknown' {
+  if (['pending', 'processing', 'running'].includes(status)) {
+    return 'running';
+  }
+  if (['succeeded', 'success', 'completed'].includes(status)) {
+    return 'succeeded';
+  }
+  if (status === 'failed') {
+    return 'failed';
+  }
+  if (status === 'canceled') {
+    return 'canceled';
+  }
+  return 'queued';
+}
+
+function isSameLocalDay(value: string | undefined, day: Date) {
+  if (!value) return false;
+  const date = new Date(value);
+  return (
+    date.getFullYear() === day.getFullYear() &&
+    date.getMonth() === day.getMonth() &&
+    date.getDate() === day.getDate()
+  );
+}
+
+function formatFullDate(value: Date, locale: string) {
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'long',
+  }).format(value);
+}
+
+function formatDateTime(value: Date, locale: string) {
+  return new Intl.DateTimeFormat(locale, {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(value);
+}
+
+function formatClock(value: Date, locale: string) {
+  return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(value);
+}

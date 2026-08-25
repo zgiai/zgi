@@ -39,6 +39,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ENABLED_DIGITAL_HUMAN_CHANNEL_PROVIDERS,
@@ -51,6 +52,7 @@ import {
   useDigitalHumanChannelMutations,
   useDigitalHumanChannels,
 } from '@/hooks/digital-human/use-digital-human-channels';
+import { useChannelTaskPolicy } from '@/hooks/digital-human/use-digital-human-tasks';
 import { useLocale } from '@/hooks/use-locale';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
@@ -150,6 +152,7 @@ export function DigitalHumanChannels({ id }: { id: string }) {
           <LoadFailure onRetry={refresh} />
         ) : (
           <InstallationPanel
+            id={id}
             installations={installations}
             loading={queries.installations.isLoading}
             canManage={canManage}
@@ -232,6 +235,7 @@ function MetricCard({
 }
 
 function InstallationPanel({
+  id,
   installations,
   loading,
   canManage,
@@ -240,6 +244,7 @@ function InstallationPanel({
   onEditCredential,
   deletingInstallationId,
 }: {
+  id: string;
   installations: DigitalHumanChannelInstallation[];
   loading: boolean;
   canManage: boolean;
@@ -407,6 +412,11 @@ function InstallationPanel({
                     </div>
                   </div>
                 )}
+                <ChannelTaskPolicy
+                  digitalHumanID={id}
+                  installation={installation}
+                  canManage={canManage}
+                />
                 <ChannelContextStatus readiness={installation.channel_context} />
               </div>
             );
@@ -414,6 +424,43 @@ function InstallationPanel({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function ChannelTaskPolicy({
+  digitalHumanID,
+  installation,
+  canManage,
+}: {
+  digitalHumanID: string;
+  installation: DigitalHumanChannelInstallation;
+  canManage: boolean;
+}) {
+  const t = useT('digitalHumans');
+  const policy = useChannelTaskPolicy(digitalHumanID, installation.id);
+  const enabled = policy.query.data?.data.enabled ?? false;
+  return (
+    <div className="mt-3 flex items-start justify-between gap-4 rounded-lg border bg-background px-3 py-3">
+      <div className="min-w-0">
+        <Label htmlFor={`channel-task-policy-${installation.id}`} className="text-xs font-medium">
+          {t('channels.installations.taskPolicy.title')}
+        </Label>
+        <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
+          {t('channels.installations.taskPolicy.description')}
+        </p>
+      </div>
+      {policy.query.isLoading ? (
+        <Skeleton className="h-5 w-9 shrink-0 rounded-full" />
+      ) : (
+        <Switch
+          id={`channel-task-policy-${installation.id}`}
+          checked={enabled}
+          disabled={!canManage || policy.update.isPending}
+          onCheckedChange={value => policy.update.mutate(value)}
+          aria-label={t('channels.installations.taskPolicy.title')}
+        />
+      )}
+    </div>
   );
 }
 
@@ -559,7 +606,7 @@ function ActivityPanel({
                     <DeliveryRow
                       key={delivery.id}
                       delivery={delivery}
-                      event={eventsByID.get(delivery.inbound_event_id)}
+                      event={delivery.inbound_event_id ? eventsByID.get(delivery.inbound_event_id) : undefined}
                       id={id}
                       canRetry={canRetry}
                       retrying={retryingId === delivery.id}

@@ -323,12 +323,30 @@ const ZGI_CONSOLE_DYNAMIC_ROUTES: readonly ZGIConsoleDynamicRouteDefinition[] = 
     },
   },
   {
-    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/chat$/,
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/configuration$/,
     route: {
-      label: 'Digital Human Chat',
-      purpose: 'run a published digital human',
+      label: 'Digital Human Configuration',
+      purpose: 'configure digital human identity, behavior, and capabilities',
       scope: 'workspace',
-      permissions: ['digital_human.run'],
+      permissions: ['digital_human.view', 'digital_human.update'],
+    },
+  },
+  {
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/preferences$/,
+    route: {
+      label: 'Digital Human Preferences',
+      purpose: 'redirect legacy response settings to unified configuration',
+      scope: 'workspace',
+      permissions: ['digital_human.view', 'digital_human.update'],
+    },
+  },
+  {
+    pattern: /^\/console\/digital-humans\/[A-Za-z0-9_-]+\/tasks$/,
+    route: {
+      label: 'Digital Human Tasks',
+      purpose: 'inspect and manage digital human tasks',
+      scope: 'workspace',
+      permissions: ['digital_human.view'],
     },
   },
   {
