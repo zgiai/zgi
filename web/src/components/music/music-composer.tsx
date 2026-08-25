@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { WorkspaceVoiceInputControl } from '@/components/chat/variants/aichat/voice/workspace-voice-input-control';
 import { useCreateMusicTasks } from '@/hooks/music/use-music-tasks';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -54,6 +55,7 @@ export function MusicComposer({
   const [mode, setMode] = React.useState<MusicMode>('instrumental');
   const [prompt, setPrompt] = React.useState('');
   const [lyrics, setLyrics] = React.useState('');
+  const [activeVoiceField, setActiveVoiceField] = React.useState<'prompt' | 'lyrics' | null>(null);
   const [variantCount, setVariantCount] = React.useState<MusicVariantCount>(2);
   const [validationError, setValidationError] = React.useState<string | null>(null);
   const [isSubmitCoolingDown, setIsSubmitCoolingDown] = React.useState(false);
@@ -74,10 +76,16 @@ export function MusicComposer({
 
   const promptLength = runeCount(prompt);
   const lyricsLength = runeCount(lyrics);
+  const handlePromptVoiceActiveChange = React.useCallback((active: boolean) => {
+    setActiveVoiceField(current => (active ? 'prompt' : current === 'prompt' ? null : current));
+  }, []);
+  const handleLyricsVoiceActiveChange = React.useCallback((active: boolean) => {
+    setActiveVoiceField(current => (active ? 'lyrics' : current === 'lyrics' ? null : current));
+  }, []);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (submitInFlightRef.current || submitCooldownRef.current) return;
+    if (submitInFlightRef.current || submitCooldownRef.current || activeVoiceField) return;
     mutation.reset();
     const normalizedPrompt = prompt.trim();
     const normalizedLyrics = lyrics.trim();
@@ -176,6 +184,15 @@ export function MusicComposer({
             <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>{t('prompt')}</span>
               <div className="flex items-center gap-3">
+                <WorkspaceVoiceInputControl
+                  value={prompt}
+                  onChange={value => {
+                    setPrompt(value);
+                    setValidationError(null);
+                  }}
+                  disabled={mutation.isPending || activeVoiceField === 'lyrics'}
+                  onActiveChange={handlePromptVoiceActiveChange}
+                />
                 <span className={cn(promptLength > MAX_PROMPT_RUNES && 'text-destructive')}>
                   {promptLength}/{MAX_PROMPT_RUNES}
                 </span>
@@ -213,6 +230,15 @@ export function MusicComposer({
               <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
                 <span>{t('lyrics')}</span>
                 <div className="flex items-center gap-3">
+                  <WorkspaceVoiceInputControl
+                    value={lyrics}
+                    onChange={value => {
+                      setLyrics(value);
+                      setValidationError(null);
+                    }}
+                    disabled={mutation.isPending || activeVoiceField === 'prompt'}
+                    onActiveChange={handleLyricsVoiceActiveChange}
+                  />
                   <span className={cn(lyricsLength > MAX_LYRICS_RUNES && 'text-destructive')}>
                     {lyricsLength}/{MAX_LYRICS_RUNES}
                   </span>
@@ -324,6 +350,7 @@ export function MusicComposer({
               loading={mutation.isPending}
               disabled={
                 isSubmitCoolingDown ||
+                Boolean(activeVoiceField) ||
                 !models.length ||
                 promptLength > MAX_PROMPT_RUNES ||
                 lyricsLength > MAX_LYRICS_RUNES
