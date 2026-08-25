@@ -531,6 +531,13 @@ const composerSource = readFileSync(
   path.join(root, 'src/components/music/music-composer.tsx'),
   'utf8'
 );
+const workspaceVoiceInputSource = readFileSync(
+  path.join(
+    root,
+    'src/components/chat/variants/aichat/voice/workspace-voice-input-control.tsx'
+  ),
+  'utf8'
+);
 const trackListSource = readFileSync(
   path.join(root, 'src/components/music/music-track-list.tsx'),
   'utf8'
@@ -570,6 +577,17 @@ const musicSources = [
   segmentedProgressSource,
 ];
 assert.match(composerSource, /mode === 'vocal'/);
+assert.match(workspaceVoiceInputSource, /useImperativeHandle\(ref, \(\) => \(\{ finish:/);
+assert.match(
+  composerSource,
+  /if \(activeVoiceField === 'lyrics'\)[\s\S]*void lyricsVoiceInputRef\.current\?\.finish\(\)[\s\S]*setMode\(nextMode\)/,
+  'switching away from custom lyrics must finish and transcribe the active recording in the background'
+);
+assert.match(
+  composerSource,
+  /mode !== 'vocal' && 'hidden'[\s\S]*ref=\{lyricsVoiceInputRef\}/,
+  'the lyrics voice control must remain mounted while its transcription finishes'
+);
 assert.match(trackListSource, /MusicWaveform/);
 assert.match(lyricsSource, /task\.lyrics/);
 assert.match(playerSource, /toMusicDownloadURL/);

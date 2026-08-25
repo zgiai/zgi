@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
 import { toast } from 'sonner';
 import { useT } from '@/i18n/translations';
 import { transcribeWorkspaceVoice } from '@/services/voice-transcription.service';
@@ -15,12 +15,17 @@ interface WorkspaceVoiceInputControlProps {
   onActiveChange?: (active: boolean) => void;
 }
 
-export function WorkspaceVoiceInputControl({
-  value,
-  onChange,
-  disabled = false,
-  onActiveChange,
-}: WorkspaceVoiceInputControlProps) {
+export interface WorkspaceVoiceInputControlHandle {
+  finish: () => Promise<void>;
+}
+
+export const WorkspaceVoiceInputControl = forwardRef<
+  WorkspaceVoiceInputControlHandle,
+  WorkspaceVoiceInputControlProps
+>(function WorkspaceVoiceInputControl(
+  { value, onChange, disabled = false, onActiveChange },
+  ref
+) {
   const t = useT('webapp');
   const ownsActivityRef = useRef(false);
   const handleError = useCallback(
@@ -54,6 +59,8 @@ export function WorkspaceVoiceInputControl({
     await voiceInput.start();
   }, [onActiveChange, voiceInput.start]);
 
+  useImperativeHandle(ref, () => ({ finish: voiceInput.finish }), [voiceInput.finish]);
+
   useEffect(() => {
     if (voiceInput.phase !== 'idle' || !ownsActivityRef.current) return;
     ownsActivityRef.current = false;
@@ -68,4 +75,4 @@ export function WorkspaceVoiceInputControl({
   );
 
   return <AIChatVoiceInputControl {...voiceInput} start={start} />;
-}
+});

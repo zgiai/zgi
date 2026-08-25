@@ -11,7 +11,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { WorkspaceVoiceInputControl } from '@/components/chat/variants/aichat/voice/workspace-voice-input-control';
+import {
+  WorkspaceVoiceInputControl,
+  type WorkspaceVoiceInputControlHandle,
+} from '@/components/chat/variants/aichat/voice/workspace-voice-input-control';
 import { useCreateMusicTasks } from '@/hooks/music/use-music-tasks';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -52,6 +55,7 @@ export function MusicComposer({
   const submitInFlightRef = React.useRef(false);
   const submitCooldownRef = React.useRef(false);
   const submitCooldownTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lyricsVoiceInputRef = React.useRef<WorkspaceVoiceInputControlHandle>(null);
   const [mode, setMode] = React.useState<MusicMode>('instrumental');
   const [prompt, setPrompt] = React.useState('');
   const [lyrics, setLyrics] = React.useState('');
@@ -82,6 +86,17 @@ export function MusicComposer({
   const handleLyricsVoiceActiveChange = React.useCallback((active: boolean) => {
     setActiveVoiceField(current => (active ? 'lyrics' : current === 'lyrics' ? null : current));
   }, []);
+  const handleModeChange = React.useCallback(
+    (nextMode: MusicMode) => {
+      if (nextMode === mode) return;
+      if (activeVoiceField === 'lyrics') {
+        void lyricsVoiceInputRef.current?.finish();
+      }
+      setMode(nextMode);
+      setValidationError(null);
+    },
+    [activeVoiceField, mode]
+  );
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -158,10 +173,7 @@ export function MusicComposer({
                 key={item.value}
                 type="button"
                 aria-pressed={mode === item.value}
-                onClick={() => {
-                  setMode(item.value);
-                  setValidationError(null);
-                }}
+                onClick={() => handleModeChange(item.value)}
                 className={cn(
                   'inline-flex h-10 shrink-0 items-center gap-2 rounded-xl border px-3.5 text-xs font-medium transition-[border-color,background-color,box-shadow]',
                   mode === item.value
@@ -225,49 +237,53 @@ export function MusicComposer({
             />
           </div>
 
-          {mode === 'vocal' ? (
-            <div className="min-h-52 border-t border-border p-4">
-              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                <span>{t('lyrics')}</span>
-                <div className="flex items-center gap-3">
-                  <WorkspaceVoiceInputControl
-                    value={lyrics}
-                    onChange={value => {
-                      setLyrics(value);
+          <div
+            className={cn(
+              'min-h-52 border-t border-border p-4',
+              mode !== 'vocal' && 'hidden'
+            )}
+          >
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>{t('lyrics')}</span>
+              <div className="flex items-center gap-3">
+                <WorkspaceVoiceInputControl
+                  ref={lyricsVoiceInputRef}
+                  value={lyrics}
+                  onChange={value => {
+                    setLyrics(value);
+                    setValidationError(null);
+                  }}
+                  disabled={mutation.isPending || activeVoiceField === 'prompt'}
+                  onActiveChange={handleLyricsVoiceActiveChange}
+                />
+                <span className={cn(lyricsLength > MAX_LYRICS_RUNES && 'text-destructive')}>
+                  {lyricsLength}/{MAX_LYRICS_RUNES}
+                </span>
+                {lyrics ? (
+                  <button
+                    type="button"
+                    className="transition-colors hover:text-foreground"
+                    onClick={() => {
+                      setLyrics('');
                       setValidationError(null);
                     }}
-                    disabled={mutation.isPending || activeVoiceField === 'prompt'}
-                    onActiveChange={handleLyricsVoiceActiveChange}
-                  />
-                  <span className={cn(lyricsLength > MAX_LYRICS_RUNES && 'text-destructive')}>
-                    {lyricsLength}/{MAX_LYRICS_RUNES}
-                  </span>
-                  {lyrics ? (
-                    <button
-                      type="button"
-                      className="transition-colors hover:text-foreground"
-                      onClick={() => {
-                        setLyrics('');
-                        setValidationError(null);
-                      }}
-                    >
-                      {t('clear')}
-                    </button>
-                  ) : null}
-                </div>
+                  >
+                    {t('clear')}
+                  </button>
+                ) : null}
               </div>
-              <Textarea
-                value={lyrics}
-                onChange={event => {
-                  setLyrics(event.target.value);
-                  setValidationError(null);
-                }}
-                placeholder={t('lyricsPlaceholder')}
-                className="mt-2 min-h-44 resize-none border-0 bg-transparent px-0 font-mono text-sm leading-6 shadow-none focus-visible:ring-0"
-                aria-invalid={lyricsLength > MAX_LYRICS_RUNES}
-              />
             </div>
-          ) : null}
+            <Textarea
+              value={lyrics}
+              onChange={event => {
+                setLyrics(event.target.value);
+                setValidationError(null);
+              }}
+              placeholder={t('lyricsPlaceholder')}
+              className="mt-2 min-h-44 resize-none border-0 bg-transparent px-0 font-mono text-sm leading-6 shadow-none focus-visible:ring-0"
+              aria-invalid={lyricsLength > MAX_LYRICS_RUNES}
+            />
+          </div>
         </div>
 
         {modelsError ? (
