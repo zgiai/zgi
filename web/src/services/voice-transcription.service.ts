@@ -30,6 +30,12 @@ function validateRequest(targetID: string, pcm: ArrayBuffer): string {
   return encodeURIComponent(normalizedTargetID);
 }
 
+function validateAudio(pcm: ArrayBuffer): void {
+  if (pcm.byteLength === 0) {
+    throw voiceClientError('INVALID_VOICE_AUDIO', 'PCM audio is required.');
+  }
+}
+
 function readTranscript(response: ApiResponseData<VoiceTranscriptionResult>): string {
   const transcript = response.data?.text?.trim();
   if (!transcript) {
@@ -57,6 +63,19 @@ export async function transcribeAgentDraftVoice(
   const targetID = validateRequest(agentID, pcm);
   const response = await http.post<ApiResponseData<VoiceTranscriptionResult>>(
     `/console/api/agents/${targetID}/runtime/audio/transcriptions`,
+    pcm,
+    requestConfig(signal)
+  );
+  return readTranscript(response);
+}
+
+export async function transcribeWorkspaceVoice(
+  pcm: ArrayBuffer,
+  signal: AbortSignal
+): Promise<string> {
+  validateAudio(pcm);
+  const response = await http.post<ApiResponseData<VoiceTranscriptionResult>>(
+    '/console/api/agents/runtime/audio/transcriptions',
     pcm,
     requestConfig(signal)
   );

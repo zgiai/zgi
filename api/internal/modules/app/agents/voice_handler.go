@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -32,6 +34,15 @@ func (h *AgentsHandler) TranscribeAgentVoice(c *gin.Context) {
 		return
 	}
 	h.transcribeVoice(c, scope.OrganizationID.String())
+}
+
+func (h *AgentsHandler) TranscribeWorkspaceVoice(c *gin.Context) {
+	organizationID := util.GetOrganizationID(c)
+	if _, err := uuid.Parse(organizationID); err != nil {
+		writeVoiceError(c, http.StatusUnauthorized, "INVALID_ORGANIZATION", "A valid organization is required")
+		return
+	}
+	h.transcribeVoice(c, organizationID)
 }
 
 func (h *AgentsHandler) TranscribeWebAppAgentVoice(c *gin.Context) {
