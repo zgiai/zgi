@@ -206,6 +206,7 @@ func (adapter *Adapter) searchContacts(ctx context.Context, creds credentials, i
 		return nil, 0, err
 	}
 	rawItems := extractSearchItems(response)
+	hasMore := searchResponseHasMore(response, len(rawItems), limit)
 	items := make([]map[string]interface{}, 0, min(limit, len(rawItems)))
 	for _, raw := range rawItems {
 		if len(items) >= limit {
@@ -237,7 +238,7 @@ func (adapter *Adapter) searchContacts(ctx context.Context, creds credentials, i
 		}
 		items = append(items, map[string]interface{}{"recipient_ref": encodeRecipientRef(creds.ConnectionID, userID), "name": bounded(candidate.Name, 255), "title": bounded(candidate.Title, 255)})
 	}
-	return map[string]interface{}{"provider": IntegrationID, "members": items}, len(items), nil
+	return map[string]interface{}{"provider": IntegrationID, "members": items, "has_more": hasMore}, len(items), nil
 }
 
 type userDetails struct {

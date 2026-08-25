@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
@@ -170,6 +172,63 @@ func TestAnnotateSuccessfulResultSemanticsMarksOnlyEmptyReads(t *testing.T) {
 	}, &integrations.ActionResult{ResultCount: 1})
 	if len(nonEmptyOutput) != 0 {
 		t.Fatalf("non-empty read received empty semantics: %#v", nonEmptyOutput)
+	}
+}
+
+func TestExecuteActionInvokeAcceptsEmptyReadResultSemantics(t *testing.T) {
+	fixture := newAgentMetaToolFixture(t, toolgovernance.EffectRead, toolgovernance.ApprovalPolicyNeverAsk, true)
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	fixture.executor.result = &integrations.ActionResult{
+		Output: map[string]interface{}{"messages": []interface{}{}}, ResultCount: 0, AttemptCount: 1,
+	}
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{
+			fixture.integrationID: {fixture.connectionOne.ID.String()},
+		},
+	})
+	messages, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID,
+		"action_id":      fixture.actionID,
+		"connection_id":  fixture.connectionOne.ID.String(),
+		"arguments":      map[string]interface{}{},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() empty read error = %v", err)
+	}
+	if len(messages) != 1 || messages[0].Data["operation_status"] != "completed" ||
+		messages[0].Data["empty_result"] != true || messages[0].Data["result_semantics"] != "provider_succeeded_no_matching_items" {
+		t.Fatalf("Invoke() empty read output = %#v", messages)
+	}
+	if err := tools.ValidateJSONSchemaValue(tool.GetEntity().OutputSchema, messages[0].Data); err != nil {
+		t.Fatalf("execute_action empty read output schema error = %v", err)
+	}
+}
+
+func TestExecuteActionOrdinaryReadReturnsCompletedOperationStatus(t *testing.T) {
+	fixture := newAgentMetaToolFixture(t, toolgovernance.EffectRead, toolgovernance.ApprovalPolicyNeverAsk, true)
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{
+			fixture.integrationID: {fixture.connectionOne.ID.String()},
+		},
+	})
+	messages, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID,
+		"action_id":      fixture.actionID,
+		"connection_id":  fixture.connectionOne.ID.String(),
+		"arguments":      map[string]interface{}{},
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() ordinary read error = %v", err)
+	}
+	if len(messages) != 1 || messages[0].Data["operation_status"] != "completed" {
+		t.Fatalf("Invoke() ordinary read output = %#v", messages)
+	}
+	if result, ok := messages[0].Data["result"].(map[string]interface{}); !ok ||
+		!reflect.DeepEqual(result["messages"], []interface{}{"message-1"}) {
+		t.Fatalf("Invoke() ordinary read facade payload = %#v", messages)
 	}
 }
 
@@ -346,8 +405,9 @@ func TestPreparationHintsExposeOnlyExecutableReadActions(t *testing.T) {
 	target := integrations.ActionDefinition{PreparationHints: []integrations.ActionPreparationHint{{
 		ActionID:        fixture.actionID,
 		Relation:        integrations.ActionPreparationResolveTarget,
-		TargetArguments: []string{"recipient_id"},
-		ResultPaths:     []string{"results[].id"},
+		TargetArguments: []string{"owner", "repo"},
+		ResultPaths:     []string{"results[].full_name"},
+		ResultTransform: integrations.ActionPreparationSplitSlashPair,
 		Description:     "Resolve the recipient before executing the target action.",
 		DescriptionI18n: integrations.LocalizedText{
 			integrations.LocaleEnglishUS:         "Resolve the recipient before executing the target action.",
@@ -359,7 +419,8 @@ func TestPreparationHintsExposeOnlyExecutableReadActions(t *testing.T) {
 		t.Fatalf("preparation hints = %#v, want one executable read hint", hints)
 	}
 	hint, _ := hints[0].(map[string]interface{})
-	if hint["action_id"] != fixture.actionID || hint["relation"] != string(integrations.ActionPreparationResolveTarget) {
+	if hint["action_id"] != fixture.actionID || hint["relation"] != string(integrations.ActionPreparationResolveTarget) ||
+		hint["result_transform"] != string(integrations.ActionPreparationSplitSlashPair) {
 		t.Fatalf("preparation hint = %#v", hint)
 	}
 
@@ -871,6 +932,122 @@ func TestExecuteActionLabelsReplayedOperationForTheModel(t *testing.T) {
 	}
 }
 
+func TestExecuteActionPropagatesOnlyServerBoundPhaseOperationIdentity(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	operationItemID := skills.ProjectedExternalActionOperationItemID(
+		"phase-send", "ledger-1", "binding-1", fixture.integrationID, fixture.actionID, fixture.connectionOne.ID.String(),
+	)
+	tool := fixture.runtimeTool(t, ToolExecuteAction, skills.WithExternalActionOperationItemID(map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	}, operationItemID))
+	if _, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
+		"arguments": map[string]interface{}{"title": "hello"},
+	}, nil, nil, nil); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if len(fixture.executor.requests) != 1 || fixture.executor.requests[0].OperationItemID != operationItemID {
+		t.Fatalf("executor requests = %#v, want server phase identity %q", fixture.executor.requests, operationItemID)
+	}
+
+	fixture.executor.requests = nil
+	spoofed := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"_server_external_action_operation_item_id": skills.ProjectedExternalActionOperationItemID(
+			"phase-attacker", "ledger-attacker", "binding-attacker", fixture.integrationID, fixture.actionID, fixture.connectionOne.ID.String(),
+		),
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	})
+	if _, err := spoofed.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+		"integration_id": fixture.integrationID, "action_id": fixture.actionID,
+		"arguments": map[string]interface{}{"title": "hello"},
+	}, nil, nil, nil); err != nil {
+		t.Fatalf("spoofed Invoke() error = %v", err)
+	}
+	if len(fixture.executor.requests) != 1 || fixture.executor.requests[0].OperationItemID != "" {
+		t.Fatalf("malformed runtime identity reached executor: %#v", fixture.executor.requests)
+	}
+}
+
+func TestExecuteActionRealExecutorReceiptsKeepProjectedPhasesIndependentAndReplaySafe(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	definition, _ := fixture.registry.ProviderDefinition(fixture.integrationID)
+	action, _ := fixture.registry.ActionDetail(fixture.integrationID, fixture.actionID)
+	properties := action.InputSchema["properties"].(map[string]interface{})
+	properties["body"] = map[string]interface{}{
+		"type": "string", "minLength": 1,
+		"title_i18n": map[string]interface{}{
+			integrations.LocaleEnglishUS: "Issue body", integrations.LocaleSimplifiedChinese: "议题正文",
+		},
+	}
+	action.SuccessDeduplication = &integrations.SuccessDeduplicationDefinition{TargetArgumentPaths: []string{"title"}}
+	definition.CatalogRevision = ""
+	action.SchemaHash = ""
+	action.SchemaRevision = ""
+	action.CatalogRevision = ""
+	definition.Actions = []integrations.ActionDefinition{action}
+	adapter := &phaseReceiptTestAdapter{driverID: definition.DriverID}
+	registry := integrations.NewRegistry()
+	if err := registry.Register(integrations.Registration{Definition: definition, Adapter: adapter}); err != nil {
+		t.Fatalf("register guarded integration: %v", err)
+	}
+	receipts := newPhaseReceiptTestRepository()
+	executor := integrations.NewExecutor(
+		registry, phaseReceiptTestAudit{}, phaseReceiptTestQuota{}, nil, []byte("phase-receipt-integration-test-key"), 0,
+	).WithOperationReceiptRepository(receipts)
+	provider, err := NewProvider(registry, executor, fixture.lookup, fixture.access, fixture.policies)
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	messageID := uuid.NewString()
+	conversationID := uuid.NewString()
+	phaseIDs := []string{
+		skills.ProjectedExternalActionOperationItemID("phase-first", "epoch-first", "binding-1", fixture.integrationID, fixture.actionID, fixture.connectionOne.ID.String()),
+		skills.ProjectedExternalActionOperationItemID("phase-second", "epoch-second", "binding-1", fixture.integrationID, fixture.actionID, fixture.connectionOne.ID.String()),
+	}
+	statuses := make([]string, 0, 4)
+	for pass := 0; pass < 2; pass++ {
+		for index, body := range []string{"first content", "second content"} {
+			baseTool, toolErr := provider.GetTool(ToolExecuteAction)
+			if toolErr != nil {
+				t.Fatal(toolErr)
+			}
+			tool := baseTool.ForkToolRuntime(&tools.ToolRuntime{
+				TenantID: fixture.organizationID.String(), InvokeFrom: tools.ToolInvokeFromAIChat,
+				RuntimeParameters: skills.WithExternalActionOperationItemID(map[string]interface{}{
+					"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+					"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+				}, phaseIDs[index]),
+			})
+			messages, invokeErr := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+				"integration_id": fixture.integrationID, "action_id": fixture.actionID,
+				"arguments": map[string]interface{}{"title": "same-target", "body": body},
+			}, &conversationID, nil, &messageID)
+			if invokeErr != nil || len(messages) != 1 {
+				t.Fatalf("pass %d phase %d messages=%#v error=%v", pass, index+1, messages, invokeErr)
+			}
+			statuses = append(statuses, fmt.Sprint(messages[0].Data["operation_status"]))
+		}
+	}
+	if adapter.calls != 2 {
+		t.Fatalf("provider calls = %d, want each phase once and each replay suppressed", adapter.calls)
+	}
+	if !reflect.DeepEqual(adapter.bodies, []string{"first content", "second content"}) {
+		t.Fatalf("provider bodies = %#v", adapter.bodies)
+	}
+	if want := []string{"completed", "completed", "already_completed", "already_completed"}; !reflect.DeepEqual(statuses, want) {
+		t.Fatalf("operation statuses = %#v, want %#v", statuses, want)
+	}
+	if phaseIDs[0] == "" || phaseIDs[0] == phaseIDs[1] || receipts.count() != 2 {
+		t.Fatalf("phase identities=%#v receipt count=%d", phaseIDs, receipts.count())
+	}
+}
+
 func TestExecuteActionBatchUsesDistinctFrozenItemsAndReturnsAggregateStatus(t *testing.T) {
 	fixture := newMetaToolFixture(t)
 	enableFixtureSuccessGuard(t, fixture, "title")
@@ -1014,6 +1191,76 @@ func TestExecuteActionPreservesPreferredClassificationAfterGovernanceEnrichment(
 		t.Fatalf("enriched preferred result = %#v", messages)
 	}
 	assertNoConnectionUUIDs(t, messages[0].Data, fixture.connectionOne.ID)
+}
+
+func TestExecuteActionGovernanceEnrichmentCanonicalizesConditionalSelfIdentity(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	configureFixtureConditionalSelfAction(t, fixture)
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	})
+	enricher := tool.(tools.ToolGovernanceArgumentEnricher)
+	enrich := func(recipientID string) map[string]interface{} {
+		return enricher.EnrichGovernanceArguments(context.Background(), fixture.accountID.String(), map[string]interface{}{
+			"integration_id": fixture.integrationID, "action_id": fixture.actionID,
+			"arguments": map[string]interface{}{
+				"recipient_type": "self", "recipient_id": recipientID, "text": "hello",
+			},
+		})
+	}
+	first := enrich("ignored-a")
+	second := enrich("ignored-b")
+	firstArguments := first["arguments"].(map[string]interface{})
+	secondArguments := second["arguments"].(map[string]interface{})
+	if !reflect.DeepEqual(firstArguments, secondArguments) {
+		t.Fatalf("direct meta-tool self identities differ:\nfirst=%#v\nsecond=%#v", firstArguments, secondArguments)
+	}
+	if _, exists := firstArguments["recipient_id"]; exists {
+		t.Fatalf("direct meta-tool governance retained irrelevant recipient_id: %#v", firstArguments)
+	}
+	if firstArguments["recipient_type"] != "self" || firstArguments["text"] != "hello" {
+		t.Fatalf("direct meta-tool canonical arguments = %#v", firstArguments)
+	}
+	if _, err := tool.Invoke(context.Background(), fixture.accountID.String(), first, nil, nil, nil); err != nil {
+		t.Fatalf("Invoke() explicit self error = %v", err)
+	}
+	if len(fixture.executor.requests) != 1 {
+		t.Fatalf("executor requests = %#v, want one explicit self call", fixture.executor.requests)
+	}
+	providerArguments := fixture.executor.requests[0].Input
+	if providerArguments["recipient_type"] != "self" || providerArguments["text"] != "hello" {
+		t.Fatalf("provider arguments = %#v", providerArguments)
+	}
+	if _, exists := providerArguments["recipient_id"]; exists {
+		t.Fatalf("provider received irrelevant self recipient_id: %#v", providerArguments)
+	}
+}
+
+func TestExecuteActionMissingRequiredRecipientTypeStopsBeforeProvider(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	configureFixtureConditionalSelfAction(t, fixture)
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	})
+	for _, arguments := range []map[string]interface{}{
+		{"recipient_id": "ou_target", "text": "must not send"},
+		{"text": "must not send"},
+	} {
+		if _, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+			"integration_id": fixture.integrationID, "action_id": fixture.actionID, "arguments": arguments,
+		}, nil, nil, nil); integrations.ErrorCode(err) != integrations.ErrorCodeInvalidInput {
+			t.Fatalf("Invoke() error = %v, want invalid input", err)
+		}
+	}
+	if len(fixture.executor.requests) != 0 {
+		t.Fatalf("provider requests = %#v, missing required recipient_type must fail before provider", fixture.executor.requests)
+	}
 }
 
 func TestExecuteActionGovernanceEnrichmentReturnsMissingScopeReason(t *testing.T) {
@@ -1726,6 +1973,69 @@ func enableFixtureSuccessGuard(t *testing.T, fixture *metaToolFixture, targetPat
 	fixture.provider = provider
 }
 
+func configureFixtureConditionalSelfAction(t *testing.T, fixture *metaToolFixture) {
+	t.Helper()
+	definition, _ := fixture.registry.ProviderDefinition(fixture.integrationID)
+	action, _ := fixture.registry.ActionDetail(fixture.integrationID, fixture.actionID)
+	localizedTitle := func(english, chinese string) map[string]interface{} {
+		return map[string]interface{}{
+			integrations.LocaleEnglishUS: english, integrations.LocaleSimplifiedChinese: chinese,
+		}
+	}
+	action.InputSchema = map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"recipient_type": map[string]interface{}{
+				"type": "string", "enum": []interface{}{"self", "open_id"}, "title_i18n": localizedTitle("Recipient type", "接收者类型"),
+				"enum_labels_i18n": map[string]interface{}{
+					integrations.LocaleEnglishUS: map[string]interface{}{"self": "Myself", "open_id": "Open ID"},
+					integrations.LocaleSimplifiedChinese: map[string]interface{}{
+						"self": "我自己", "open_id": "Open ID",
+					},
+				},
+			},
+			"recipient_id": map[string]interface{}{
+				"type": "string", "minLength": 1, "title_i18n": localizedTitle("Recipient ID", "接收者 ID"),
+				"x-zgi-discard-when": map[string]interface{}{"argument": "recipient_type", "equals": "self"},
+			},
+			"text": map[string]interface{}{
+				"type": "string", "minLength": 1, "title_i18n": localizedTitle("Message text", "消息文本"),
+			},
+		},
+		"required": []interface{}{"recipient_type", "text"},
+		"allOf": []interface{}{map[string]interface{}{
+			"if": map[string]interface{}{
+				"properties": map[string]interface{}{"recipient_type": map[string]interface{}{
+					"const": "self", "title_i18n": localizedTitle("Recipient type", "接收者类型"),
+				}},
+				"required": []interface{}{"recipient_type"},
+			},
+			"else": map[string]interface{}{"required": []interface{}{"recipient_id"}},
+		}},
+		"additionalProperties": false,
+	}
+	action.SuccessDeduplication = &integrations.SuccessDeduplicationDefinition{
+		TargetArgumentPaths: []string{"recipient_id", "recipient_type"},
+	}
+	definition.CatalogRevision = ""
+	action.SchemaHash = ""
+	action.SchemaRevision = ""
+	action.CatalogRevision = ""
+	definition.Actions = []integrations.ActionDefinition{action}
+	registry := integrations.NewRegistry()
+	if err := registry.Register(integrations.Registration{
+		Definition: definition, Adapter: fakeRegistryAdapter{driverID: definition.DriverID},
+	}); err != nil {
+		t.Fatalf("register conditional self action: %v", err)
+	}
+	provider, err := NewProvider(registry, fixture.executor, fixture.lookup, fixture.access, fixture.policies)
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+	fixture.registry = registry
+	fixture.provider = provider
+}
+
 func newAgentMetaToolFixture(
 	t *testing.T,
 	effect toolgovernance.Effect,
@@ -1946,6 +2256,118 @@ type fakeActionExecutor struct {
 	requests []integrations.ActionRequest
 	result   *integrations.ActionResult
 	err      error
+}
+
+type phaseReceiptTestAdapter struct {
+	driverID string
+	calls    int
+	bodies   []string
+}
+
+func (adapter *phaseReceiptTestAdapter) DriverID() string { return adapter.driverID }
+
+func (adapter *phaseReceiptTestAdapter) Execute(_ context.Context, request integrations.ActionRequest) (*integrations.ActionResult, error) {
+	adapter.calls++
+	adapter.bodies = append(adapter.bodies, fmt.Sprint(request.Input["body"]))
+	return &integrations.ActionResult{
+		Output:            map[string]interface{}{"issue_id": fmt.Sprintf("issue-%d", adapter.calls)},
+		ProviderRequestID: fmt.Sprintf("request-%d", adapter.calls), ResultCount: 1, AttemptCount: 1,
+	}, nil
+}
+
+type phaseReceiptTestQuota struct{}
+
+func (phaseReceiptTestQuota) Acquire(context.Context, string) error { return nil }
+
+type phaseReceiptTestAudit struct{}
+
+func (phaseReceiptTestAudit) Create(context.Context, *integrations.ExecutionRecord) error { return nil }
+func (phaseReceiptTestAudit) Complete(context.Context, uuid.UUID, integrations.ExecutionCompletion) error {
+	return nil
+}
+
+type phaseReceiptTestRepository struct {
+	mu    sync.Mutex
+	byKey map[string]*integrations.OperationReceipt
+	byID  map[uuid.UUID]*integrations.OperationReceipt
+}
+
+func newPhaseReceiptTestRepository() *phaseReceiptTestRepository {
+	return &phaseReceiptTestRepository{
+		byKey: map[string]*integrations.OperationReceipt{},
+		byID:  map[uuid.UUID]*integrations.OperationReceipt{},
+	}
+}
+
+func (repository *phaseReceiptTestRepository) Claim(_ context.Context, candidate *integrations.OperationReceipt) (integrations.OperationReceiptClaim, error) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if existing := repository.byKey[candidate.OperationKey]; existing != nil {
+		copyReceipt := *existing
+		copyReceipt.ResultPayload = cloneMap(existing.ResultPayload)
+		return integrations.OperationReceiptClaim{Receipt: &copyReceipt}, nil
+	}
+	copyReceipt := *candidate
+	repository.byKey[candidate.OperationKey] = &copyReceipt
+	repository.byID[candidate.ID] = &copyReceipt
+	return integrations.OperationReceiptClaim{Receipt: candidate, Claimed: true}, nil
+}
+
+func (repository *phaseReceiptTestRepository) MarkProviderStarted(_ context.Context, id, token, executionID uuid.UUID) error {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	receipt := repository.byID[id]
+	if receipt == nil || receipt.ClaimToken != token {
+		return errors.New("receipt not found")
+	}
+	now := time.Now().UTC()
+	receipt.ProviderStartedAt = &now
+	receipt.ExecutionID = &executionID
+	return nil
+}
+
+func (repository *phaseReceiptTestRepository) CompleteSuccess(_ context.Context, id, token uuid.UUID, result *integrations.ActionResult) error {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	receipt := repository.byID[id]
+	if receipt == nil || receipt.ClaimToken != token {
+		return errors.New("receipt not found")
+	}
+	receipt.Status = integrations.OperationReceiptStatusSucceeded
+	receipt.ProviderRequestID = result.ProviderRequestID
+	receipt.ResultPayload = cloneMap(result.Output)
+	receipt.ResultCount = result.ResultCount
+	return nil
+}
+
+func (repository *phaseReceiptTestRepository) Release(_ context.Context, id, token uuid.UUID) error {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	receipt := repository.byID[id]
+	if receipt == nil || receipt.ClaimToken != token {
+		return errors.New("receipt not found")
+	}
+	delete(repository.byKey, receipt.OperationKey)
+	delete(repository.byID, id)
+	return nil
+}
+
+func (repository *phaseReceiptTestRepository) MarkOutcomeUnknown(_ context.Context, id, token, executionID uuid.UUID) error {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	receipt := repository.byID[id]
+	if receipt == nil || receipt.ClaimToken != token {
+		return errors.New("receipt not found")
+	}
+	receipt.Status = integrations.OperationReceiptStatusOutcomeUnknown
+	receipt.ExecutionID = &executionID
+	return nil
+}
+
+func (repository *phaseReceiptTestRepository) count() int {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	return len(repository.byKey)
 }
 
 func (executor *fakeActionExecutor) Execute(_ context.Context, request integrations.ActionRequest) (*integrations.ActionResult, error) {

@@ -237,9 +237,10 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 		return dataSources, rows.Err()
 	}
 
-	// For non-admin users, enforce membership-based visibility.
-
-	// Build query for non-admin users with membership-based filtering
+	// Build query for non-admin users. An explicitly provided workspace list has
+	// already been authorized by the caller and is the source of truth for
+	// visibility. The membership fallback is retained for legacy callers that do
+	// not provide an authorized workspace scope.
 	var rows *sql.Rows
 	var err error
 	query := `
@@ -258,18 +259,18 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 		// Restrict to allowed workspace IDs
 		query += " AND workspace_id IN (?)"
 		args = append(args, filterWorkspaceIDs)
-	}
-
-	query += `
+	} else {
+		query += `
 		AND EXISTS (
 			SELECT 1 FROM workspace_members taj
 			WHERE taj.account_id = ?
 			  AND taj.workspace_id = data_sources.workspace_id
 		)
-		ORDER BY created_at DESC
 	`
+		args = append(args, accountID)
+	}
 
-	args = append(args, accountID)
+	query += " ORDER BY created_at DESC"
 
 	rows, err = r.db.WithContext(ctx).Raw(query, args...).Rows()
 

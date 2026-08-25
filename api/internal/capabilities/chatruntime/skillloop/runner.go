@@ -16,6 +16,11 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
+// ContextArtifactToolName remains reserved even on runtimes that do not expose
+// the optional oversized-result receipt reader, so projected business Actions
+// cannot claim a protocol name used by compatible runtimes.
+const ContextArtifactToolName = "read_context_artifact"
+
 const (
 	defaultMaxSkillPlanningRounds                 = 50
 	defaultMaxSkillStepsPerTurn                   = 160
@@ -235,8 +240,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureCounts := map[string]int{}
 	failedToolCallAttemptCounts := map[string]int{}
 	emptyFinalAnswerRetryCount := 0
-	externalActionCompletionRetryCount := 0
-	externalActionSucceeded := false
+	externalActionCompletionRetryCounts := map[string]int{}
+	projectedPlanLedgerRetryCount := 0
 	skillToolCallCounts := map[string]int{}
 	successfulToolCalls := []SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
@@ -391,19 +396,37 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			emptyFinalAnswerRetryCount = 0
 			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
-			terminalStateGuardRecord(req, guard)
-			if guard.Path != terminalStateGuardAccepted {
-				if !req.TerminalOnly &&
-					terminalStateGuardRequiresExternalExecutionRetry(guard) &&
-					!externalActionSucceeded &&
-					externalActionCompletionRetryCount < 1 {
-					externalActionCompletionRetryCount++
+			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
+				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
+					terminalStateGuardRecord(req, guard)
+					projectedPlanLedgerRetryCount++
 					messages = append(messages,
 						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
-						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage()},
+						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
 					)
 					continue
 				}
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, text)
+			}
+			if guard.Path != terminalStateGuardAccepted &&
+				terminalStateGuardRequiresExternalExecutionRetry(guard) {
+				if !req.TerminalOnly &&
+					terminalStateGuardCanRetryPendingExternalAction(
+						guard.PendingExternalAction,
+						externalActionCompletionRetryCounts,
+					) {
+					terminalStateGuardRecord(req, guard)
+					externalActionCompletionRetryCounts[guard.PendingExternalAction.RetryKey]++
+					messages = append(messages,
+						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
+						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage(guard.PendingExternalAction)},
+					)
+					continue
+				}
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, text)
+			}
+			terminalStateGuardRecord(req, guard)
+			if guard.Path != terminalStateGuardAccepted {
 				terminalStateGuardNotify(req, guard)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
@@ -432,20 +455,44 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 			submission.streamed = submission.streamed || planningResult.answerStreamed
 			guard := terminalStateGuardEvaluate(roundRuntimeState, submission.answer)
-			terminalStateGuardRecord(req, guard)
-			if guard.Path != terminalStateGuardAccepted {
-				if terminalStateGuardRequiresExternalExecutionRetry(guard) &&
-					!externalActionSucceeded &&
-					externalActionCompletionRetryCount < 1 {
-					externalActionCompletionRetryCount++
+			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
+				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
+					terminalStateGuardRecord(req, guard)
+					projectedPlanLedgerRetryCount++
 					messages = append(messages,
 						adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
-						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage()},
+						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
 					)
 					continue
 				}
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, submission.answer)
+			}
+			if guard.Path != terminalStateGuardAccepted &&
+				terminalStateGuardRequiresExternalExecutionRetry(guard) &&
+				terminalStateGuardCanRetryPendingExternalAction(
+					guard.PendingExternalAction,
+					externalActionCompletionRetryCounts,
+				) {
+				terminalStateGuardRecord(req, guard)
+				externalActionCompletionRetryCounts[guard.PendingExternalAction.RetryKey]++
+				messages = append(messages,
+					adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
+					adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage(guard.PendingExternalAction)},
+				)
+				continue
+			}
+			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresExternalExecutionRetry(guard) {
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, submission.answer)
+			}
+			terminalStateGuardRecord(req, guard)
+			if guard.Path != terminalStateGuardAccepted {
 				terminalStateGuardNotify(req, guard)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
+			}
+			guardAnswer := strings.TrimSpace(firstNonEmptyString(guard.FinalAnswer, submission.answer))
+			if guardAnswer != strings.TrimSpace(submission.answer) {
+				submission.answer = guardAnswer
+				submission.streamed = false
 			}
 
 			result := finalAnswerSkillStep(call.ID, submission)
@@ -689,10 +736,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						Arguments: copyStringAnyMap(result.trace.Arguments),
 						Result:    copyStringAnyMap(result.toolResult),
 					})
-					if strings.EqualFold(strings.TrimSpace(result.trace.SkillID), "external-apps") &&
-						strings.EqualFold(strings.TrimSpace(result.trace.ToolName), "execute_action") {
-						externalActionSucceeded = true
-					}
 				}
 			}
 			if result.pendingApproval != nil {

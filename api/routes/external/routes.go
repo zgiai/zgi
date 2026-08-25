@@ -8,6 +8,7 @@ import (
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
@@ -36,6 +37,7 @@ type ExternalRouteDeps struct {
 	WorkflowEngineFactory *graph_engine.EngineFactory
 	SkillManifestResolver skills.ToolGovernanceManifestResolver
 	IntegrationRegistry   *integrations.Registry
+	ActionProjections     integrationmetatools.ActionProjectionResolver
 }
 
 // RegisterExternalRoutes registers all external API routes
@@ -69,6 +71,7 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 			deps.WorkflowEngineFactory,
 			deps.SkillManifestResolver,
 			deps.IntegrationRegistry,
+			deps.ActionProjections,
 		)
 	}
 

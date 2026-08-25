@@ -84,6 +84,31 @@ func applyWorkspaceIDsFilter(query *gorm.DB, workspaceIDs []string, column strin
 	return query.Where(column+" IN ?", filtered)
 }
 
+func applyVisibleFolderAccessFilter(query *gorm.DB, workspaceIDs []string, accountID string) *gorm.DB {
+	filtered := slices.Compact(workspaceIDs)
+	if len(filtered) == 0 {
+		return query.Where("1 = 0")
+	}
+
+	permissionQuery := "(permission = ? OR " +
+		"(permission = ? AND created_by = ?) OR " +
+		"(permission = ? AND EXISTS(SELECT 1 FROM file_folder_permissions ffp WHERE ffp.folder_id = file_folders.id AND ffp.workspace_id IN ?)))"
+	permissionArgs := []any{
+		string(file_model.FileFolderPermissionAllTeam),
+		string(file_model.FileFolderPermissionOnlyMe), accountID,
+		string(file_model.FileFolderPermissionPartialTeam), filtered,
+	}
+
+	if query != nil && query.Dialector != nil && query.Dialector.Name() == "postgres" {
+		permissionQuery = "(permission = ? OR " +
+			"(permission = ? AND created_by = ?) OR " +
+			"(permission = ? AND EXISTS(SELECT 1 FROM file_folder_permissions ffp WHERE ffp.folder_id = file_folders.id AND ffp.workspace_id::text = ANY(string_to_array(?, ',')))))"
+		permissionArgs[len(permissionArgs)-1] = strings.Join(filtered, ",")
+	}
+
+	return query.Where(permissionQuery, permissionArgs...)
+}
+
 func applyUploadFileVisibilityScope(query *gorm.DB, workspaceIDs []string, accountID string, allowAllFolders bool) *gorm.DB {
 	query = applyWorkspaceIDsFilter(query, workspaceIDs, "upload_files.workspace_id")
 	return applyVisibleFileAccessFilter(query, workspaceIDs, accountID, allowAllFolders)
@@ -431,41 +456,16 @@ func (r *fileFolderRepository) ListFoldersWithPermissionFilter(ctx context.Conte
 		query = query.Where("name LIKE ?", "%"+keyword+"%")
 	}
 
-	query = applyWorkspaceIDsFilter(query, workspaceIDs, "workspace_id")
-
-	// First, get all tenant IDs associated with the group
-	tenantIDsSubQuery := r.db.WithContext(ctx).Table("workspaces").
-		Where("organization_id = ?", organizationID).
-		Select("id")
-
-	// Check if there are any tenants associated with the group
-	var tenantCount int64
-	r.db.WithContext(ctx).Table("workspaces").
-		Where("organization_id = ?", organizationID).
-		Count(&tenantCount)
-
-	// Build the full query with permission checks
-	if tenantCount > 0 {
-		// If there are associated tenants, use them in the partial_team check
-		// For partial_team: folder must be in file_folder_permissions AND user must be member of tenant in workspaces (via organization_id)
-		query = query.Where(
-			"(permission = ? OR "+
-				"(permission = ? AND created_by = ?) OR "+
-				"(permission = ? AND EXISTS(SELECT 1 FROM file_folder_permissions ffp WHERE ffp.folder_id = file_folders.id AND ffp.workspace_id IN (SELECT taj.workspace_id FROM workspace_members taj WHERE taj.account_id = ? AND taj.workspace_id IN (?)))))",
-			"all_team",
-			"only_me", accountID,
-			"partial_team", accountID, tenantIDsSubQuery)
+	if workspaceID != "" {
+		query = query.Where("workspace_id = ?", workspaceID)
 	} else {
-		// If there are no associated tenants, treat the tenantID as a regular tenant
-		// For partial_team: folder must be in file_folder_permissions AND user must be member of tenant
-		query = query.Where(
-			"(permission = ? OR "+
-				"(permission = ? AND created_by = ?) OR "+
-				"(permission = ? AND EXISTS(SELECT 1 FROM file_folder_permissions ffp WHERE ffp.folder_id = file_folders.id AND ffp.workspace_id = ? AND EXISTS(SELECT 1 FROM workspace_members taj WHERE taj.account_id = ? AND taj.workspace_id = ?))))",
-			"all_team",
-			"only_me", accountID,
-			"partial_team", organizationID, accountID, organizationID)
+		query = applyWorkspaceIDsFilter(query, workspaceIDs, "workspace_id")
 	}
+
+	// The handler resolves workspace visibility through the shared permission
+	// service. Reuse that authorized scope for partial-team shares instead of
+	// requiring a direct workspace_members row.
+	query = applyVisibleFolderAccessFilter(query, workspaceIDs, accountID)
 
 	// Get total count
 	if err := query.Count(&total).Error; err != nil {

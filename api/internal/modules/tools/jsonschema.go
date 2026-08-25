@@ -370,6 +370,10 @@ func modelVisibleJSONSchemaValueAtDepth(value interface{}, inheritedHidden map[s
 			switch key {
 			case "readOnly":
 				continue
+			case "x-zgi-discard-when":
+				// This is a server-only input canonicalization rule. Provider
+				// function schemas must not expose private orchestration keywords.
+				continue
 			case "properties":
 				properties, ok := child.(map[string]interface{})
 				if !ok {

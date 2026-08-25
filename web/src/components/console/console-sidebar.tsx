@@ -202,14 +202,14 @@ export function ConsoleSidebar({
             icon: ImageIcon,
           },
           {
-            title: t('video'),
-            href: '/console/work/video',
-            icon: Video,
-          },
-          {
             title: t('music'),
             href: '/console/work/music',
             icon: Music2,
+          },
+          {
+            title: t('video'),
+            href: '/console/work/video',
+            icon: Video,
           },
           {
             title: t('app'),
@@ -595,14 +595,14 @@ export function ConsoleMobileSidebar({
             icon: ImageIcon,
           },
           {
-            title: t('video'),
-            href: '/console/work/video',
-            icon: Video,
-          },
-          {
             title: t('music'),
             href: '/console/work/music',
             icon: Music2,
+          },
+          {
+            title: t('video'),
+            href: '/console/work/video',
+            icon: Video,
           },
           {
             title: t('app'),

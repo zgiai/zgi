@@ -84,6 +84,88 @@ function removeVideoTaskFromListCache(
   };
 }
 
+function upsertVideoTaskInListCache(
+  data: InfiniteData<VideoRuntimeTasksResponse> | undefined,
+  task: VideoRuntimeTask,
+  insertIfMissing: boolean
+): InfiniteData<VideoRuntimeTasksResponse> | undefined {
+  if (!data?.pages.length) return data;
+
+  let didUpdate = false;
+  let didInsert = false;
+  const pages = data.pages.map((page, pageIndex) => {
+    const items = page.data?.data;
+    if (!Array.isArray(items)) return page;
+
+    const existingIndex = items.findIndex(item => item.task_id === task.task_id);
+    if (existingIndex >= 0) {
+      didUpdate = true;
+      const nextItems = [...items];
+      nextItems[existingIndex] = task;
+      return {
+        ...page,
+        data: {
+          ...page.data,
+          data: nextItems,
+        },
+      };
+    }
+
+    if (pageIndex === 0 && insertIfMissing) {
+      didInsert = true;
+      return {
+        ...page,
+        data: {
+          ...page.data,
+          data: [task, ...items],
+          total: (page.data?.total ?? items.length) + 1,
+        },
+      };
+    }
+
+    return page;
+  });
+
+  if (!didUpdate && !didInsert) return data;
+  return { ...data, pages };
+}
+
+function getTaskListSearchFromQueryKey(queryKey: QueryKey) {
+  const queryPart = Array.isArray(queryKey) ? queryKey[3] : undefined;
+  if (!queryPart || typeof queryPart !== 'object' || !('search' in queryPart)) return '';
+  const search = (queryPart as { search?: unknown }).search;
+  return typeof search === 'string' ? search.trim().toLowerCase() : '';
+}
+
+function videoTaskMatchesSearch(task: VideoRuntimeTask, search: string) {
+  if (!search) return true;
+  return [task.task_id, task.model, task.model_label, task.prompt, task.status]
+    .filter((value): value is string => typeof value === 'string')
+    .some(value => value.toLowerCase().includes(search));
+}
+
+function upsertVideoTaskIntoListCaches(queryClient: QueryClient, task: VideoRuntimeTask) {
+  if (!task.task_id) return;
+  queryClient.setQueryData<VideoRuntimeTaskResponse>(
+    VIDEO_RUNTIME_KEYS.task(task.task_id),
+    createCachedVideoTaskResponse(task)
+  );
+
+  queryClient
+    .getQueriesData<InfiniteData<VideoRuntimeTasksResponse>>({ queryKey: VIDEO_RUNTIME_KEYS.taskLists })
+    .forEach(([queryKey, data]) => {
+      const search = getTaskListSearchFromQueryKey(queryKey);
+      const hasExistingTask = Boolean(
+        data?.pages.some(page => page.data?.data?.some(item => item.task_id === task.task_id))
+      );
+      const insertIfMissing = hasExistingTask || videoTaskMatchesSearch(task, search);
+      const nextData = upsertVideoTaskInListCache(data, task, insertIfMissing);
+      if (nextData !== data) {
+        queryClient.setQueryData(queryKey, nextData);
+      }
+    });
+}
+
 export function useVideoRuntimeModels() {
   const query = useQuery({
     queryKey: VIDEO_RUNTIME_KEYS.models,
@@ -133,7 +215,7 @@ export function useVideoRuntimeTasks(search = '') {
   }, [queryClient, tasks]);
 
   const reload = useCallback(async () => {
-    await queryClient.resetQueries({ queryKey, exact: true });
+    await queryClient.invalidateQueries({ queryKey, exact: true, refetchType: 'active' });
   }, [queryClient, queryKey]);
 
   return {
@@ -165,9 +247,13 @@ export function useVideoRuntimeTask(taskId?: string | null) {
   const taskActive = task ? isVideoRuntimeTaskActive(task) : false;
 
   useEffect(() => {
-    if (!taskIdValue || taskActive) return;
-    void queryClient.resetQueries({ queryKey: VIDEO_RUNTIME_KEYS.taskLists });
-  }, [queryClient, taskActive, taskIdValue, taskStatus]);
+    if (!taskIdValue || taskActive || !task) return;
+    upsertVideoTaskIntoListCaches(queryClient, task);
+    void queryClient.invalidateQueries({
+      queryKey: VIDEO_RUNTIME_KEYS.taskLists,
+      refetchType: 'none',
+    });
+  }, [queryClient, task, taskActive, taskIdValue, taskStatus]);
 
   return {
     ...query,
@@ -196,8 +282,13 @@ export function useGenerateVideoTask() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: VideoRuntimeGenerateRequest) => VideoRuntimeService.generate(payload),
-    onSuccess: () => {
-      void queryClient.resetQueries({ queryKey: VIDEO_RUNTIME_KEYS.taskLists });
+    onSuccess: response => {
+      const task = response.data?.task;
+      if (task) upsertVideoTaskIntoListCaches(queryClient, task);
+      void queryClient.invalidateQueries({
+        queryKey: VIDEO_RUNTIME_KEYS.taskLists,
+        refetchType: 'none',
+      });
     },
   });
 }

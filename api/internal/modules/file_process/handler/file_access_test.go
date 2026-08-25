@@ -805,6 +805,47 @@ func TestGetRelatedResourcesRequiresFileReadablePermissionBeforeServiceLookup(t 
 	}
 }
 
+func TestGetFoldersKeepsFullVisibleScopeWhenWorkspaceIsFiltered(t *testing.T) {
+	folderService := &fileResourcePermissionFolderService{}
+	permissionChecker := &fileAccessPermissionChecker{
+		allowedByWorkspace: map[string]map[workspace_model.WorkspacePermissionCode]bool{
+			"workspace-a": {
+				workspace_model.WorkspacePermissionWorkspaceView: true,
+			},
+			"workspace-b": {
+				workspace_model.WorkspacePermissionWorkspaceView: true,
+			},
+		},
+	}
+	handler := &FileResourceHandler{
+		fileFolderService: folderService,
+		enterpriseService: &fileResourcePermissionChecker{
+			checker: permissionChecker,
+			workspaces: []*workspace_model.Workspace{
+				{ID: "workspace-a", Status: workspace_model.WorkspaceStatusNormal},
+				{ID: "workspace-b", Status: workspace_model.WorkspaceStatusNormal},
+			},
+		},
+	}
+	c, recorder := newFileAccessTestContext("organization-owner", "org-1")
+	c.Request = httptest.NewRequest(http.MethodGet, "/file-folders?workspace_id=workspace-a", nil)
+
+	handler.GetFolders(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if folderService.listFoldersCalls != 1 {
+		t.Fatalf("list folder calls = %d, want 1", folderService.listFoldersCalls)
+	}
+	if folderService.lastWorkspaceID != "workspace-a" {
+		t.Fatalf("workspace filter = %q, want workspace-a", folderService.lastWorkspaceID)
+	}
+	if !reflect.DeepEqual(folderService.lastVisibleWorkspaceIDs, []string{"workspace-a", "workspace-b"}) {
+		t.Fatalf("visible workspace IDs = %#v, want workspace-a and workspace-b", folderService.lastVisibleWorkspaceIDs)
+	}
+}
+
 func TestGetRelatedResourcesFiltersKnowledgeBaseResourcesByReadPermission(t *testing.T) {
 	fileID := "11111111-1111-1111-1111-111111111111"
 	fileWorkspaceID := "file-workspace"
@@ -989,10 +1030,19 @@ type fileResourcePermissionFolderService struct {
 	statistics               *dto.FileStatisticsResponse
 	getFileStatisticsCalls   int
 	lastVisibleWorkspaceIDs  []string
+	listFoldersCalls         int
+	lastWorkspaceID          string
 	relatedDocuments         []*dataset_model.Document
 	relatedDatasets          []*dataset_model.Dataset
 	getRelatedDocumentsCalls int
 	getRelatedDatasetsCalls  int
+}
+
+func (f *fileResourcePermissionFolderService) ListFoldersWithPermissionFilter(ctx context.Context, tenantID, accountID string, page, limit int, keyword, sort, parentID, workspaceID string, visibleWorkspaceIDs []string) ([]*file_model.FileFolder, int64, error) {
+	f.listFoldersCalls++
+	f.lastWorkspaceID = workspaceID
+	f.lastVisibleWorkspaceIDs = append([]string(nil), visibleWorkspaceIDs...)
+	return []*file_model.FileFolder{}, 0, nil
 }
 
 func (f *fileResourcePermissionFolderService) GetFolderByID(ctx context.Context, id string) (*file_model.FileFolder, error) {
