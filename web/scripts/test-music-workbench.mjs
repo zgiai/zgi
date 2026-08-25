@@ -595,6 +595,11 @@ assert.match(
 );
 assert.match(
   composerSource,
+  /const promptVoiceActiveChangeHandlers = React\.useMemo\([\s\S]*onActiveChange=\{promptVoiceActiveChangeHandlers\[promptMode\]\}/,
+  'per-mode activity callbacks must stay stable so rerenders do not clear active recordings'
+);
+assert.match(
+  composerSource,
   /mode !== 'vocal' && 'hidden'[\s\S]*ref=\{lyricsVoiceInputRef\}/,
   'the lyrics voice control must remain mounted while its transcription finishes'
 );

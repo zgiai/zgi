@@ -91,6 +91,20 @@ export function MusicComposer({
   const prompt = prompts[mode];
   const promptLength = runeCount(prompt);
   const lyricsLength = runeCount(lyrics);
+  const promptVoiceActiveChangeHandlers = React.useMemo(
+    () =>
+      Object.fromEntries(
+        MUSIC_MODES.map(promptMode => [
+          promptMode,
+          (active: boolean) => {
+            setActiveVoiceField(current =>
+              active ? promptMode : current === promptMode ? null : current
+            );
+          },
+        ])
+      ) as Record<MusicMode, (active: boolean) => void>,
+    []
+  );
   const handleLyricsVoiceActiveChange = React.useCallback((active: boolean) => {
     setActiveVoiceField(current => (active ? 'lyrics' : current === 'lyrics' ? null : current));
   }, []);
@@ -230,11 +244,7 @@ export function MusicComposer({
                         mutation.isPending ||
                         (activeVoiceField !== null && activeVoiceField !== promptMode)
                       }
-                      onActiveChange={active => {
-                        setActiveVoiceField(current =>
-                          active ? promptMode : current === promptMode ? null : current
-                        );
-                      }}
+                      onActiveChange={promptVoiceActiveChangeHandlers[promptMode]}
                     />
                     <span
                       className={cn(
