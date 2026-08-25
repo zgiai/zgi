@@ -10,9 +10,11 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"gorm.io/gorm"
 )
 
 type ImageRuntimeRouteDeps struct {
+	DB              *gorm.DB
 	AvailableModels llmmodelsvc.AvailableModelsService
 	Routes          channelsvc.ChannelService
 	LLMClient       llmclient.LLMClient
@@ -40,7 +42,7 @@ func RegisterImageRuntimeRoutes(router *gin.RouterGroup, deps ImageRuntimeRouteD
 	if deps.FileService == nil {
 		panic("image runtime routes require file service")
 	}
-	module := imagemodule.NewModule(deps.AvailableModels, deps.Routes, deps.LLMClient, deps.ChatService, deps.FileService)
+	module := imagemodule.NewModule(deps.DB, deps.AvailableModels, deps.Routes, deps.LLMClient, deps.ChatService, deps.FileService)
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))

@@ -19,8 +19,12 @@ import type { FileItem } from '@/services/types/file';
 import { fileManageService, uploadService } from '@/services';
 import type { UploadResponse } from '@/services/upload.service';
 import { toast } from 'sonner';
+import { getImagePromptCharacterCount, IMAGE_PROMPT_MAX_CHARACTERS } from './constants';
 
 const IMAGE_REFERENCE_ACCEPT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+const IMAGE_REFERENCE_ACCEPT_ATTRIBUTE = IMAGE_REFERENCE_ACCEPT_EXTENSIONS
+  .map(extension => `.${extension}`)
+  .join(',');
 
 export interface ImageReferenceAttachment {
   fileId: string;
@@ -65,10 +69,24 @@ export function InputArea({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [isReferenceUploading, setIsReferenceUploading] = React.useState(false);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = React.useState(false);
+  const promptCharacterCount = React.useMemo(() => getImagePromptCharacterCount(input), [input]);
+  const isPromptTooLong = promptCharacterCount > IMAGE_PROMPT_MAX_CHARACTERS;
   const imageRuntimeModelItems = React.useMemo(
     () => imageRuntimeModels?.map(mapImageRuntimeModelToModelItem),
     [imageRuntimeModels]
   );
+
+  const handleSend = React.useCallback(() => {
+    if (isPromptTooLong) {
+      toast.error(
+        t('chat.imageInput.promptTooLong', {
+          max: IMAGE_PROMPT_MAX_CHARACTERS,
+        })
+      );
+      return;
+    }
+    onSend();
+  }, [isPromptTooLong, onSend, t]);
 
   const adjustHeight = React.useCallback(() => {
     const textarea = textareaRef.current;
@@ -131,7 +149,7 @@ export function InputArea({
         onKeyDown={e => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            onSend();
+            handleSend();
           }
         }}
         placeholder={t('chat.enterCommand')}
@@ -171,7 +189,7 @@ export function InputArea({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept={IMAGE_REFERENCE_ACCEPT_ATTRIBUTE}
             className="hidden"
             onChange={event => {
               const file = event.target.files?.[0];
@@ -213,17 +231,32 @@ export function InputArea({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {promptCharacterCount > 0 ? (
+            <span
+              className={cn(
+                'px-1 text-xs tabular-nums',
+                isPromptTooLong ? 'text-destructive' : 'text-muted-foreground'
+              )}
+              aria-live="polite"
+            >
+              {t('chat.imageInput.promptLengthCounter', {
+                count: promptCharacterCount,
+                max: IMAGE_PROMPT_MAX_CHARACTERS,
+              })}
+            </span>
+          ) : null}
           <Button
             isIcon
             className={cn(
               'h-8 w-8 rounded-full ml-1 transition-all',
-              input.trim() || referenceImage
+              (input.trim() || referenceImage) && !isPromptTooLong
                 ? 'bg-primary text-white hover:bg-primary-hover'
                 : 'bg-muted text-muted-foreground'
             )}
-            onClick={onSend}
+            onClick={handleSend}
             disabled={
               (!input.trim() && !referenceImage) ||
+              isPromptTooLong ||
               isSending ||
               isReferenceUploading ||
               !modelSelectorValue?.model
@@ -250,12 +283,13 @@ export function InputArea({
   );
 
   async function uploadReferenceFile(file: File) {
-    if (!file.type.startsWith('image/')) {
+    if (!isSupportedReferenceImage(file.type, getFileExtension(file.name))) {
       toast.error(t('chat.imageInput.imageOnly'));
       return;
     }
     setIsReferenceUploading(true);
     try {
+      await assertImageFileLoadable(file, t('chat.imageInput.invalidImageContent'));
       const uploaded = await uploadService.uploadSingle(file, {
         is_temporary: true,
         processing_mode: 'store_only',
@@ -275,7 +309,7 @@ export function InputArea({
   }
 
   async function selectManagedReferenceFile(file: FileItem) {
-    if (!isImageFile(file.mime_type, file.extension)) {
+    if (!isSupportedReferenceImage(file.mime_type, file.extension)) {
       toast.error(t('chat.imageInput.imageOnly'));
       return;
     }
@@ -286,6 +320,7 @@ export function InputArea({
       if (!previewURL) {
         throw new Error(t('chat.imageInput.previewUrlMissing'));
       }
+      await assertImageURLLoadable(previewURL, t('chat.imageInput.invalidImageContent'));
       onReferenceImageChange?.({
         fileId: file.id,
         url: previewURL,
@@ -309,9 +344,41 @@ export function InputArea({
   }
 }
 
-function isImageFile(mimeType: string, extension: string): boolean {
-  if (mimeType.trim().toLowerCase().startsWith('image/')) return true;
-  return IMAGE_REFERENCE_ACCEPT_EXTENSIONS.includes(extension.trim().toLowerCase().replace(/^\./, ''));
+function isSupportedReferenceImage(mimeType: string, extension: string): boolean {
+  const normalizedMimeType = mimeType.trim().toLowerCase();
+  const normalizedExtension = extension.trim().toLowerCase().replace(/^\./, '');
+  if (!IMAGE_REFERENCE_ACCEPT_EXTENSIONS.includes(normalizedExtension)) return false;
+  return !normalizedMimeType || normalizedMimeType.startsWith('image/');
+}
+
+function getFileExtension(filename: string): string {
+  const lastDotIndex = filename.lastIndexOf('.');
+  return lastDotIndex >= 0 ? filename.slice(lastDotIndex + 1) : '';
+}
+
+async function assertImageFileLoadable(file: File, errorMessage: string): Promise<void> {
+  const objectURL = URL.createObjectURL(file);
+  try {
+    await assertImageURLLoadable(objectURL, errorMessage);
+  } finally {
+    URL.revokeObjectURL(objectURL);
+  }
+}
+
+function assertImageURLLoadable(url: string, errorMessage: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+
+    image.onload = () => {
+      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(errorMessage));
+    };
+    image.onerror = () => reject(new Error(errorMessage));
+    image.src = url;
+  });
 }
 
 function mapImageRuntimeModelToModelItem(item: ImageRuntimeModel): ModelItem {
