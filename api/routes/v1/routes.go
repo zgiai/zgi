@@ -7,6 +7,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
@@ -39,6 +40,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	accountService := serviceContainer.GetAccountServiceAdapter()
 	tenantService := serviceContainer.GetTenantServiceAdapter()
+	var digitalHumanRuntime *DigitalHumanRuntimeBundle
 
 	// ---------- User / Auth domain ----------
 	RegisterUserRoutes(v1, UserRouteDeps{
@@ -183,19 +185,26 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Automation ----------
-	automationDefinitionService := RegisterAutomationRoutes(v1, AutomationRouteDeps{
+	automationBundle := RegisterAutomationRoutes(v1, AutomationRouteDeps{
 		DB:                               db,
 		TaskManager:                      serviceContainer.GetTaskManager(),
 		TaskHandlerRegistry:              serviceContainer.GetTaskHandlerRegistry(),
 		Scheduler:                        serviceContainer.GetScheduler(),
 		NotificationSMSService:           serviceContainer.GetNotificationSMSService(),
 		AutomationWorkflowRunnerProvider: serviceContainer.GetAutomationWorkflowRunner,
-		AccountService:                   accountService,
-		OrganizationService:              serviceContainer.GetOrganizationService(),
-		WorkspaceManagementService:       tenantService,
-		LLMClient:                        serviceContainer.GetLLMClient(),
-		DefaultModelService:              serviceContainer.GetDefaultModelService(),
+		DigitalHumanRunnerProvider: func() automationaction.AutomationDigitalHumanRunner {
+			if digitalHumanRuntime == nil || digitalHumanRuntime.Runtime == nil {
+				return nil
+			}
+			return &digitalHumanAutomationRunner{runtime: digitalHumanRuntime.Runtime}
+		},
+		AccountService:             accountService,
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		WorkspaceManagementService: tenantService,
+		LLMClient:                  serviceContainer.GetLLMClient(),
+		DefaultModelService:        serviceContainer.GetDefaultModelService(),
 	})
+	automationDefinitionService := automationBundle.Definition
 	serviceContainer.SetAutomationDefinitionService(automationDefinitionService)
 
 	// ---------- Payment ----------
@@ -240,7 +249,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	if !digitalHumanEnabled {
 		RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{Enabled: false})
 	} else {
-		digitalHumanRuntime := InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{
+		digitalHumanRuntime = InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{
 			DB:                  db,
 			LLMClient:           serviceContainer.GetLLMClient(),
 			FileService:         serviceContainer.GetFileService(),
@@ -254,10 +263,12 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			ManifestResolver:    integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
 			ConnectionResolver:  serviceContainer.GetIntegrationRuntimeConnectionResolver(),
 			CredentialCipher:    serviceContainer.GetIntegrationCredentialCipher(),
+			Tasks:               automationBundle.DigitalHumanTasks,
 		})
 		serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
 		RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
 			Enabled: true, Service: serviceContainer.GetDigitalHumanService(), Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
+			Tasks:          automationBundle.DigitalHumanTasks,
 			AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 			ApplicationErrorCatalog: applicationErrorCatalog,
 		})

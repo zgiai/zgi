@@ -299,6 +299,15 @@ type DeliveryRequest struct {
 	ExternalConversationID string
 	ExternalThreadID       string
 	Text                   string
+	Mentions               []DeliveryMention
+}
+
+// DeliveryMention identifies one provider-native mention that should accompany
+// an outbound group message. ExternalID must come from the trusted channel
+// envelope; model output must never select or modify it.
+type DeliveryMention struct {
+	ExternalID  string `json:"external_id"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 // DeliveryReceipt is the safe provider evidence retained after a send.

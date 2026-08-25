@@ -925,45 +925,47 @@ func createRunChannelDelivery(
 	now time.Time,
 ) error {
 	var event invocation.Event
-	if run == nil || json.Unmarshal(run.InvocationEvent, &event) != nil || event.ReplyTo == nil || event.Origin.Kind != invocation.OriginChannel {
+	if run == nil || json.Unmarshal(run.InvocationEvent, &event) != nil || event.ReplyTo == nil {
 		return nil
 	}
-	inboundEventID, ok := contextUUID(event.Context, "channel_inbound_event_id")
-	if !ok {
-		return fmt.Errorf("channel invocation is missing inbound event identity")
+	installationIdentity := strings.TrimSpace(event.ReplyTo.InstallationID)
+	if installationIdentity == "" {
+		installationIdentity = strings.TrimSpace(event.Origin.InstallationID)
 	}
-	installationID, err := uuid.Parse(strings.TrimSpace(event.Origin.InstallationID))
+	installationID, err := uuid.Parse(installationIdentity)
 	if err != nil || installationID == uuid.Nil {
-		return fmt.Errorf("channel invocation installation identity is invalid")
-	}
-	var inbound channelruntime.InboundEvent
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-		"id = ? AND installation_id = ? AND organization_id = ? AND workspace_id = ?",
-		inboundEventID, installationID, run.OrganizationID, run.WorkspaceID,
-	).Take(&inbound).Error; err != nil {
-		return fmt.Errorf("load channel inbound event for delivery: %w", err)
-	}
-	if inbound.InvocationRunID != nil && *inbound.InvocationRunID != run.ID {
-		return fmt.Errorf("channel inbound event is linked to another run")
-	}
-	if inbound.InvocationRunID == nil || inbound.Status != channelruntime.InboundEventAccepted {
-		if err := tx.WithContext(ctx).Model(&channelruntime.InboundEvent{}).Where("id = ?", inbound.ID).Updates(map[string]any{
-			"status": channelruntime.InboundEventAccepted, "reason_code": "", "invocation_run_id": run.ID,
-			"processed_at": now, "updated_at": now,
-		}).Error; err != nil {
-			return fmt.Errorf("repair channel inbound run linkage: %w", err)
-		}
-		inbound.InvocationRunID = &run.ID
-	}
-	if inbound.BindingID == nil || *inbound.BindingID == uuid.Nil {
-		return fmt.Errorf("channel inbound event is missing binding identity")
+		return fmt.Errorf("channel reply installation identity is invalid")
 	}
 	var binding channelruntime.Binding
-	if err := tx.WithContext(ctx).Where(
-		"id = ? AND installation_id = ? AND organization_id = ? AND workspace_id = ? AND subject_type = ? AND subject_id = ?",
-		*inbound.BindingID, installationID, run.OrganizationID, run.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, run.DigitalHumanID,
-	).Take(&binding).Error; err != nil {
-		return fmt.Errorf("load channel binding for delivery: %w", err)
+	var inboundEventID *uuid.UUID
+	if event.Origin.Kind == invocation.OriginChannel {
+		inboundID, ok := contextUUID(event.Context, "channel_inbound_event_id")
+		if !ok {
+			return fmt.Errorf("channel invocation is missing inbound event identity")
+		}
+		var inbound channelruntime.InboundEvent
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND installation_id = ? AND organization_id = ? AND workspace_id = ?", inboundID, installationID, run.OrganizationID, run.WorkspaceID).Take(&inbound).Error; err != nil {
+			return fmt.Errorf("load channel inbound event for delivery: %w", err)
+		}
+		if inbound.InvocationRunID != nil && *inbound.InvocationRunID != run.ID {
+			return fmt.Errorf("channel inbound event is linked to another run")
+		}
+		if inbound.InvocationRunID == nil || inbound.Status != channelruntime.InboundEventAccepted {
+			if err := tx.WithContext(ctx).Model(&channelruntime.InboundEvent{}).Where("id = ?", inbound.ID).Updates(map[string]any{"status": channelruntime.InboundEventAccepted, "reason_code": "", "invocation_run_id": run.ID, "processed_at": now, "updated_at": now}).Error; err != nil {
+				return fmt.Errorf("repair channel inbound run linkage: %w", err)
+			}
+		}
+		if inbound.BindingID == nil || *inbound.BindingID == uuid.Nil {
+			return fmt.Errorf("channel inbound event is missing binding identity")
+		}
+		if err := tx.WithContext(ctx).Where("id = ? AND installation_id = ? AND organization_id = ? AND workspace_id = ? AND subject_type = ? AND subject_id = ?", *inbound.BindingID, installationID, run.OrganizationID, run.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, run.DigitalHumanID).Take(&binding).Error; err != nil {
+			return fmt.Errorf("load channel binding for delivery: %w", err)
+		}
+		inboundEventID = &inbound.ID
+	} else {
+		if err := tx.WithContext(ctx).Where("installation_id = ? AND organization_id = ? AND workspace_id = ? AND subject_type = ? AND subject_id = ? AND enabled = ?", installationID, run.OrganizationID, run.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, run.DigitalHumanID, true).Order("updated_at DESC").Take(&binding).Error; err != nil {
+			return fmt.Errorf("load scheduled channel binding for delivery: %w", err)
+		}
 	}
 	var installation channelruntime.Installation
 	if err := tx.WithContext(ctx).Where(
@@ -972,17 +974,21 @@ func createRunChannelDelivery(
 	).Take(&installation).Error; err != nil {
 		return fmt.Errorf("load channel installation for delivery: %w", err)
 	}
+	if provider := strings.ToLower(strings.TrimSpace(event.ReplyTo.Provider)); provider == "" || provider != strings.ToLower(strings.TrimSpace(installation.Provider)) {
+		return fmt.Errorf("channel reply provider does not match installation")
+	}
 	text = boundedRunes(strings.TrimSpace(text), maxChannelDeliveryRunes)
 	if text == "" && len(artifacts) == 0 {
 		return nil
 	}
-	payload, digest, err := channelDeliveryPayloadWithKind(kind, text, artifacts...)
+	mentions := channelDeliveryMentions(event, kind)
+	payload, digest, err := channelDeliveryPayloadWithMentions(kind, text, mentions, artifacts...)
 	if err != nil {
 		return err
 	}
 	delivery := &channelruntime.Delivery{
 		ID: channelDeliveryStageID(run.ID, kind, deliveryKey), OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID,
-		InstallationID: installation.ID, BindingID: binding.ID, InboundEventID: inbound.ID, RunID: run.ID,
+		InstallationID: installation.ID, BindingID: binding.ID, InboundEventID: inboundEventID, RunID: run.ID,
 		Kind: kind, DeliveryKey: deliveryKey, Sequence: sequence,
 		Provider: strings.ToLower(strings.TrimSpace(installation.Provider)), ConnectionID: installation.ConnectionID,
 		ActorID: installation.CreatedBy, SubjectType: binding.SubjectType, SubjectID: binding.SubjectID,
@@ -1086,15 +1092,44 @@ func channelDeliveryPayload(text string, artifacts ...channelDeliveryArtifact) (
 }
 
 func channelDeliveryPayloadWithKind(kind channelruntime.DeliveryKind, text string, artifacts ...channelDeliveryArtifact) (datatypes.JSON, string, error) {
+	return channelDeliveryPayloadWithMentions(kind, text, nil, artifacts...)
+}
+
+func channelDeliveryPayloadWithMentions(
+	kind channelruntime.DeliveryKind,
+	text string,
+	mentions []channelruntime.DeliveryMention,
+	artifacts ...channelDeliveryArtifact,
+) (datatypes.JSON, string, error) {
 	if len(artifacts) > maxChannelDeliveryArtifacts {
 		artifacts = artifacts[:maxChannelDeliveryArtifacts]
 	}
-	payload, err := json.Marshal(channelDeliveryPayloadData{Kind: kind, Text: text, Artifacts: artifacts})
+	if len(mentions) > maxChannelDeliveryMentions {
+		mentions = mentions[:maxChannelDeliveryMentions]
+	}
+	payload, err := json.Marshal(channelDeliveryPayloadData{Kind: kind, Text: text, Mentions: mentions, Artifacts: artifacts})
 	if err != nil {
 		return nil, "", fmt.Errorf("encode channel delivery payload: %w", err)
 	}
 	digest := sha256.Sum256(payload)
 	return datatypes.JSON(payload), "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func channelDeliveryMentions(event invocation.Event, kind channelruntime.DeliveryKind) []channelruntime.DeliveryMention {
+	if kind != channelruntime.DeliveryKindFinal || event.ReplyTo == nil {
+		return nil
+	}
+	externalID := strings.TrimSpace(event.ReplyTo.RecipientID)
+	if externalID == "" {
+		return nil
+	}
+	displayName := ""
+	if event.Context != nil {
+		if value, ok := event.Context["sender_display_name"].(string); ok {
+			displayName = boundedRunes(strings.TrimSpace(value), maxChannelMentionNameRunes)
+		}
+	}
+	return []channelruntime.DeliveryMention{{ExternalID: boundedRunes(externalID, maxChannelMentionIDRunes), DisplayName: displayName}}
 }
 
 func boundedRunes(value string, limit int) string {

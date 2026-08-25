@@ -41,6 +41,7 @@ const (
 	SkillAgentWorkflow          = "agent-workflow"
 	SkillAgentMemory            = "agent-memory"
 	SkillDigitalHumanMemory     = "digital-human-memory"
+	SkillDigitalHumanTasks      = "digital-human-tasks"
 	SkillUserMemory             = "user-memory"
 	SkillExternalApps           = "external-apps"
 

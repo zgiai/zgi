@@ -35,6 +35,7 @@ type DigitalHumanRouteDeps struct {
 	Service                 digitalhuman.HandlerService
 	Runtime                 digitalhuman.RuntimeHandlerService
 	Channels                digitalhuman.ChannelHandlerService
+	Tasks                   digitalhuman.TaskHandlerService
 	AccountService          interfaces.AccountService
 	OrganizationService     interfaces.OrganizationService
 	ApplicationErrorCatalog *appcatalog.Catalog
@@ -56,6 +57,7 @@ type DigitalHumanRuntimeDeps struct {
 	ManifestResolver    skills.ToolGovernanceManifestResolver
 	ConnectionResolver  integrations.ConnectionResolver
 	CredentialCipher    integrations.CredentialCipher
+	Tasks               digitalhuman.TaskHandlerService
 }
 
 // DigitalHumanRuntimeBundle keeps the model runtime and channel application
@@ -71,7 +73,7 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	if !deps.Enabled {
 		return
 	}
-	if router == nil || deps.Service == nil || deps.Runtime == nil || deps.Channels == nil || deps.AccountService == nil || deps.OrganizationService == nil {
+	if router == nil || deps.Service == nil || deps.Runtime == nil || deps.Channels == nil || deps.Tasks == nil || deps.AccountService == nil || deps.OrganizationService == nil {
 		panic("digital human routes require lifecycle, runtime, channel, account, and permission services")
 	}
 	errorProjector, err := apptransport.NewProjector(deps.ApplicationErrorCatalog)
@@ -87,12 +89,21 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	group.Use(digitalHumanPermissionMiddleware(deps.OrganizationService, errorProjector))
 	digitalhuman.NewHandler(deps.Service, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector).RegisterRoutes(group)
+	digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).RegisterRoutes(group)
 	channelHandler.RegisterAuthenticatedRoutes(group)
 }
 
 func digitalHumanPermissionMiddleware(organizationService interfaces.OrganizationService, projector *apptransport.Projector) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		permission := digitalHumanPermissionForRequest(c.Request.Method, c.FullPath())
+		if strings.Contains(c.FullPath(), "/tasks/:task_id/actions/:action") {
+			switch digitalhuman.TaskAction(strings.TrimSpace(c.Param("action"))) {
+			case digitalhuman.TaskActionRunNow, digitalhuman.TaskActionRetry, digitalhuman.TaskActionCancel:
+				permission = workspacemodel.WorkspacePermissionDigitalHumanRun
+			default:
+				permission = workspacemodel.WorkspacePermissionDigitalHumanUpdate
+			}
+		}
 		if permission == "" {
 			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodePermissionDenied, apperror.WithOperation("digital_human.permission.route")))
 			return
@@ -116,6 +127,16 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	path := strings.TrimSpace(routePath)
 	if path == "" {
 		return ""
+	}
+	if strings.Contains(path, "/tasks") || strings.HasSuffix(path, "/task-policy") {
+		switch method {
+		case http.MethodGet:
+			return workspacemodel.WorkspacePermissionDigitalHumanView
+		case http.MethodPost, http.MethodPatch, http.MethodPut:
+			return workspacemodel.WorkspacePermissionDigitalHumanUpdate
+		default:
+			return ""
+		}
 	}
 	if strings.Contains(path, "/runs") {
 		if method == http.MethodGet {
@@ -198,7 +219,7 @@ func writeDigitalHumanRouteError(c *gin.Context, projector *apptransport.Project
 func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRuntimeBundle {
 	if deps.DB == nil || deps.LLMClient == nil || deps.FileService == nil || deps.ContentExtractor == nil ||
 		deps.OrganizationService == nil || deps.ToolEngine == nil || deps.ToolManager == nil || deps.TaskManager == nil ||
-		deps.TaskRegistry == nil || deps.Scheduler == nil || deps.ConnectionResolver == nil || deps.CredentialCipher == nil {
+		deps.TaskRegistry == nil || deps.Scheduler == nil || deps.ConnectionResolver == nil || deps.CredentialCipher == nil || deps.Tasks == nil {
 		panic("DigitalHuman runtime requires database, model, tool, queue, scheduler, and credential dependencies")
 	}
 	repository := digitalhuman.NewRepository(deps.DB)
@@ -244,6 +265,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		chatRuntime,
 		dispatcher,
 		digitalhuman.WithMemoryRuntime(memoryProvider),
+		digitalhuman.WithTaskRuntime(digitalhuman.NewTaskRuntimeProvider(deps.Tasks)),
 		digitalhuman.WithChannelTransientDispatcher(transientDispatcher),
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
 	)

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -303,6 +304,7 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 		request.DeliveryID == uuid.Nil || strings.TrimSpace(request.ExternalConversationID) == "" || strings.TrimSpace(request.Text) == "" {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
+	request.Text = renderFeishuDeliveryText(request.Text, request.Mentions)
 	if adapter.directProviderAvailable() {
 		return adapter.deliverDirect(ctx, request)
 	}
@@ -329,6 +331,36 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 		return nil, channelruntime.ErrDeliveryOutcomeUnknown
 	}
 	return &channelruntime.DeliveryReceipt{ProviderMessageID: messageID, ProviderRequestID: result.ProviderRequestID, Replayed: result.Replayed}, nil
+}
+
+func renderFeishuDeliveryText(text string, mentions []channelruntime.DeliveryMention) string {
+	text = strings.TrimSpace(text)
+	if text == "" || len(mentions) == 0 {
+		return text
+	}
+	var builder strings.Builder
+	seen := make(map[string]struct{}, len(mentions))
+	for _, mention := range mentions {
+		externalID := strings.TrimSpace(mention.ExternalID)
+		if !validFeishuToken(externalID) {
+			continue
+		}
+		if _, exists := seen[externalID]; exists {
+			continue
+		}
+		seen[externalID] = struct{}{}
+		displayName := strings.TrimSpace(mention.DisplayName)
+		if displayName == "" {
+			displayName = "成员"
+		}
+		builder.WriteString(`<at user_id="`)
+		builder.WriteString(externalID)
+		builder.WriteString(`">`)
+		builder.WriteString(html.EscapeString(displayName))
+		builder.WriteString("</at> ")
+	}
+	builder.WriteString(text)
+	return strings.TrimSpace(builder.String())
 }
 
 func (adapter *ChannelAdapter) deliverDirect(ctx context.Context, request channelruntime.DeliveryRequest) (*channelruntime.DeliveryReceipt, error) {

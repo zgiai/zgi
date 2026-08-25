@@ -527,6 +527,9 @@ func (service *ChannelService) submitChannelInvocation(
 			ConversationID: message.ExternalConversationID, ThreadID: message.ExternalThreadID,
 		},
 	}
+	if message.ConversationType == channelruntime.ConversationTypeGroup {
+		event.ReplyTo.RecipientID = strings.TrimSpace(message.SenderExternalID)
+	}
 	scope := Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy}
 	run, _, err := service.runtime.SubmitInvocation(ctx, scope, event, channelInvocationQuery(message), route.Mapping.LocalConversationID)
 	if err != nil {
@@ -652,7 +655,8 @@ func (service *ChannelService) DispatchDeliveries(ctx context.Context, limit int
 				OrganizationID: delivery.OrganizationID, WorkspaceID: delivery.WorkspaceID,
 			},
 			RunID: delivery.RunID, DeliveryID: delivery.ID,
-			ExternalConversationID: delivery.ExternalConversationID, ExternalThreadID: delivery.ExternalThreadID, Text: text,
+			ExternalConversationID: delivery.ExternalConversationID, ExternalThreadID: delivery.ExternalThreadID,
+			Text: text, Mentions: append([]channelruntime.DeliveryMention(nil), payload.Mentions...),
 		})
 		if deliveryErr != nil {
 			combined = errors.Join(combined, service.finishDeliveryFailure(ctx, delivery, deliveryErr))
@@ -849,6 +853,7 @@ func decodeDeliveryPayload(delivery *channelruntime.Delivery) (*channelDeliveryP
 	}
 	var payload channelDeliveryPayloadData
 	if json.Unmarshal(delivery.Payload, &payload) != nil || len(payload.Artifacts) > maxChannelDeliveryArtifacts ||
+		len(payload.Mentions) > maxChannelDeliveryMentions ||
 		(strings.TrimSpace(payload.Text) == "" && len(payload.Artifacts) == 0) ||
 		(payload.Text != "" && !validChannelText(payload.Text, maxChannelDeliveryRunes)) {
 		return nil, fmt.Errorf("decode channel delivery payload")
@@ -857,6 +862,16 @@ func decodeDeliveryPayload(delivery *channelruntime.Delivery) (*channelDeliveryP
 		if strings.TrimSpace(artifact.ToolFileID) == "" || utf8.RuneCountInString(artifact.ToolFileID) > 128 ||
 			utf8.RuneCountInString(artifact.Filename) > maxChannelArtifactNameRunes ||
 			(artifact.Extension != "" && normalizeChannelArtifactExtension(artifact.Extension) == "") {
+			return nil, fmt.Errorf("decode channel delivery payload")
+		}
+	}
+	for index := range payload.Mentions {
+		mention := &payload.Mentions[index]
+		mention.ExternalID = strings.TrimSpace(mention.ExternalID)
+		mention.DisplayName = strings.TrimSpace(mention.DisplayName)
+		if mention.ExternalID == "" || utf8.RuneCountInString(mention.ExternalID) > maxChannelMentionIDRunes ||
+			utf8.RuneCountInString(mention.DisplayName) > maxChannelMentionNameRunes ||
+			!utf8.ValidString(mention.ExternalID) || !utf8.ValidString(mention.DisplayName) {
 			return nil, fmt.Errorf("decode channel delivery payload")
 		}
 	}

@@ -77,6 +77,7 @@ func (r *taskRepository) GetByID(ctx context.Context, db *gorm.DB, scope automat
 		Where("id = ?", taskID).
 		Where("organization_id = ?", scope.OrganizationID).
 		Where("workspace_id = ?", scope.WorkspaceID).
+		Where("task_kind = ?", automationmodel.AutomationTaskKindAutomation).
 		First(&task).Error
 	if err != nil {
 		return nil, fmt.Errorf("get automation task %s by scope: %w", taskID, err)
@@ -138,6 +139,7 @@ func (r *taskRepository) CountByStatus(ctx context.Context, db *gorm.DB, scope a
 		Select("status, COUNT(*) AS count").
 		Where("organization_id = ?", scope.OrganizationID).
 		Where("workspace_id = ?", scope.WorkspaceID).
+		Where("task_kind = ?", automationmodel.AutomationTaskKindAutomation).
 		Group("status").
 		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("count automation tasks by status: %w", err)
@@ -183,6 +185,12 @@ func (r *taskRepository) applyTaskFilter(query *gorm.DB, filter automationdto.Ta
 		Model(&automationmodel.AutomationTask{}).
 		Where("organization_id = ?", filter.OrganizationID).
 		Where("workspace_id = ?", filter.WorkspaceID)
+
+	if len(filter.TaskKinds) == 0 {
+		query = query.Where("task_kind = ?", automationmodel.AutomationTaskKindAutomation)
+	} else {
+		query = query.Where("task_kind IN ?", filter.TaskKinds)
+	}
 
 	if len(filter.Statuses) > 0 {
 		statuses := make([]string, 0, len(filter.Statuses))

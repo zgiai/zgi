@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -180,7 +181,7 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 		AppKey: strings.TrimSpace(connection.Credentials["app_key"]), AppSecret: strings.TrimSpace(connection.Credentials["app_secret"]),
 		AgentID: strings.TrimSpace(connection.Credentials["agent_id"]), ConnectionID: connection.ID,
 	}
-	path, body, err := dingTalkRobotDelivery(request.ExternalConversationID, creds.AppKey, request.Text)
+	path, body, err := dingTalkRobotDelivery(request.ExternalConversationID, creds.AppKey, request.Text, request.Mentions)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +279,12 @@ func dingTalkConversationTarget(callback dingTalkRobotCallback, senderID string)
 	}
 }
 
-func dingTalkRobotDelivery(target, robotCode, text string) (string, map[string]interface{}, error) {
+func dingTalkRobotDelivery(
+	target string,
+	robotCode string,
+	text string,
+	mentions []channelruntime.DeliveryMention,
+) (string, map[string]interface{}, error) {
 	target = strings.TrimSpace(target)
 	robotCode = strings.TrimSpace(robotCode)
 	text = strings.TrimSpace(text)
@@ -303,11 +309,56 @@ func dingTalkRobotDelivery(target, robotCode, text string) (string, map[string]i
 		if conversationID == "" {
 			return "", nil, channelruntime.ErrInvalidWebhook
 		}
+		mentionIDs := dingTalkMentionUserIDs(mentions)
+		if len(mentionIDs) > 0 {
+			prefixes := make([]string, 0, len(mentionIDs))
+			for _, mentionID := range mentionIDs {
+				prefixes = append(prefixes, "@"+mentionID)
+			}
+			parameter, err = json.Marshal(map[string]string{"content": strings.Join(prefixes, " ") + " " + text})
+			if err != nil {
+				return "", nil, channelruntime.ErrInvalidWebhook
+			}
+			body["msgParam"] = string(parameter)
+			body["atUserIds"] = mentionIDs
+		}
 		body["openConversationId"] = conversationID
 		return "/v1.0/robot/groupMessages/send", body, nil
 	default:
 		return "", nil, channelruntime.ErrInvalidWebhook
 	}
+}
+
+func dingTalkMentionUserIDs(mentions []channelruntime.DeliveryMention) []string {
+	if len(mentions) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(mentions))
+	seen := make(map[string]struct{}, len(mentions))
+	for _, mention := range mentions {
+		externalID := strings.TrimSpace(mention.ExternalID)
+		if !validDingTalkMentionUserID(externalID) {
+			continue
+		}
+		if _, exists := seen[externalID]; exists {
+			continue
+		}
+		seen[externalID] = struct{}{}
+		result = append(result, externalID)
+	}
+	return result
+}
+
+func validDingTalkMentionUserID(value string) bool {
+	if value == "" || utf8.RuneCountInString(value) > 255 {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsSpace(character) || unicode.IsControl(character) || character == '@' {
+			return false
+		}
+	}
+	return true
 }
 
 func firstDingTalkWebhookValue(values ...string) string {

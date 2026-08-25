@@ -18,8 +18,11 @@ import (
 
 const (
 	maxChannelDeliveryArtifacts = 8
+	maxChannelDeliveryMentions  = 8
 	maxChannelArtifactNameRunes = 256
 	maxChannelArtifactURLRunes  = 2048
+	maxChannelMentionIDRunes    = 255
+	maxChannelMentionNameRunes  = 128
 )
 
 type channelDeliveryArtifact struct {
@@ -29,9 +32,10 @@ type channelDeliveryArtifact struct {
 }
 
 type channelDeliveryPayloadData struct {
-	Kind      channelruntime.DeliveryKind `json:"kind,omitempty"`
-	Text      string                      `json:"text,omitempty"`
-	Artifacts []channelDeliveryArtifact   `json:"artifacts,omitempty"`
+	Kind      channelruntime.DeliveryKind      `json:"kind,omitempty"`
+	Text      string                           `json:"text,omitempty"`
+	Mentions  []channelruntime.DeliveryMention `json:"mentions,omitempty"`
+	Artifacts []channelDeliveryArtifact        `json:"artifacts,omitempty"`
 }
 
 type channelArtifactLink struct {

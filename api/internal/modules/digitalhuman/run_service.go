@@ -66,6 +66,7 @@ type RuntimeService struct {
 	dispatcher     RunDispatcher
 	transient      ChannelTransientDispatcher
 	memory         MemoryRuntimeProvider
+	tasks          TaskRuntimeProvider
 	channelContext ChannelContextRuntimeProvider
 	now            func() time.Time
 }
@@ -92,6 +93,11 @@ type RuntimeServiceOption func(*RuntimeService)
 // WithMemoryRuntime attaches DigitalHuman memory without enabling legacy memory.
 func WithMemoryRuntime(provider MemoryRuntimeProvider) RuntimeServiceOption {
 	return func(service *RuntimeService) { service.memory = provider }
+}
+
+// WithTaskRuntime exposes subject-owned task tools at the DigitalHuman edge.
+func WithTaskRuntime(provider TaskRuntimeProvider) RuntimeServiceOption {
+	return func(service *RuntimeService) { service.tasks = provider }
 }
 
 // WithChannelTransientDispatcher enables UX-only channel messages without
@@ -304,6 +310,19 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
 			}
 			config.RuntimeTools = append(config.RuntimeTools, memoryPreparation.Tools...)
+		}
+	}
+	if s.tasks != nil {
+		taskPreparation, taskErr := s.tasks.Prepare(ctx, run, event)
+		if taskErr != nil {
+			_ = s.store.FailRun(ctx, run.ID, "digital_human.tasks.prepare_failed", "The DigitalHuman could not prepare its task tools.", s.now())
+			return taskErr
+		}
+		if taskPreparation != nil {
+			if addendum := strings.TrimSpace(taskPreparation.SystemPromptAddendum); addendum != "" {
+				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
+			}
+			config.RuntimeTools = append(config.RuntimeTools, taskPreparation.Tools...)
 		}
 	}
 	chatRequest := runtimedto.ChatRequest{

@@ -17,6 +17,8 @@ type AutomationActionRun struct {
 	ResponsePayload map[string]interface{}    `gorm:"column:response_payload;type:jsonb;serializer:json" json:"response_payload,omitempty"`
 	ErrorMessage    *string                   `gorm:"column:error_message;type:text" json:"error_message,omitempty"`
 	Status          AutomationActionRunStatus `gorm:"type:varchar(32);not null" json:"status"`
+	ExternalRunType *string                   `gorm:"column:external_run_type;type:varchar(32)" json:"external_run_type,omitempty"`
+	ExternalRunID   *string                   `gorm:"column:external_run_id;type:uuid" json:"external_run_id,omitempty"`
 	StartedAt       *time.Time                `gorm:"column:started_at" json:"started_at,omitempty"`
 	FinishedAt      *time.Time                `gorm:"column:finished_at" json:"finished_at,omitempty"`
 	CreatedAt       time.Time                 `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`

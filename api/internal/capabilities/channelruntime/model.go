@@ -152,7 +152,7 @@ type Delivery struct {
 	WorkspaceID            uuid.UUID                   `gorm:"type:uuid;not null" json:"workspace_id"`
 	InstallationID         uuid.UUID                   `gorm:"type:uuid;not null" json:"installation_id"`
 	BindingID              uuid.UUID                   `gorm:"type:uuid;not null" json:"binding_id"`
-	InboundEventID         uuid.UUID                   `gorm:"type:uuid;not null" json:"inbound_event_id"`
+	InboundEventID         *uuid.UUID                  `gorm:"type:uuid" json:"inbound_event_id,omitempty"`
 	RunID                  uuid.UUID                   `gorm:"type:uuid;not null;index:idx_channel_delivery_outbox_run" json:"run_id"`
 	Kind                   DeliveryKind                `gorm:"column:delivery_kind;type:varchar(24);not null;default:final" json:"kind"`
 	DeliveryKey            string                      `gorm:"type:varchar(128);not null;default:final" json:"delivery_key"`

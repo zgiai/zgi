@@ -813,6 +813,12 @@ func applicationError(err error, operation string) error {
 		code = AppCodeMemoryPolicyRejected
 	case errors.Is(err, ErrMemoryUndoUnavailable):
 		code = AppCodeMemoryUndoUnavailable
+	case errors.Is(err, ErrTaskNotFound):
+		code = AppCodeNotFound
+	case errors.Is(err, ErrTaskConflict):
+		code = AppCodeRevisionConflict
+	case errors.Is(err, ErrTaskPolicyRejected):
+		code = AppCodeRequestInvalid
 	case errors.Is(err, ErrChannelInstallationNotFound):
 		code = AppCodeChannelInstallationNotFound
 	case errors.Is(err, ErrChannelConflict):

@@ -41,6 +41,12 @@ var (
 	ErrMemoryPolicyRejected = errors.New("digital human memory proposal rejected")
 	// ErrMemoryUndoUnavailable indicates an expired, consumed, or stale undo record.
 	ErrMemoryUndoUnavailable = errors.New("digital human memory undo unavailable")
+	// ErrTaskNotFound indicates that a scoped DigitalHuman task does not exist.
+	ErrTaskNotFound = errors.New("digital human task not found")
+	// ErrTaskConflict indicates a stale revision or invalid task transition.
+	ErrTaskConflict = errors.New("digital human task conflict")
+	// ErrTaskPolicyRejected indicates that the invocation cannot manage tasks.
+	ErrTaskPolicyRejected = errors.New("digital human task policy rejected")
 	// ErrChannelInstallationNotFound indicates a missing scoped channel installation.
 	ErrChannelInstallationNotFound = errors.New("digital human channel installation not found")
 	// ErrChannelCredentialNotFound indicates that an installation does not own
