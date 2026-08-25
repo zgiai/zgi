@@ -115,7 +115,6 @@ export function MusicComposer({
         void promptVoiceInputRefs.current[activeVoiceField]?.finish();
       }
       if (activeVoiceField === 'lyrics') void lyricsVoiceInputRef.current?.finish();
-      setActiveVoiceField(null);
       setMode(nextMode);
       setValidationError(null);
     },
@@ -219,6 +218,8 @@ export function MusicComposer({
           {MUSIC_MODES.map(promptMode => {
             const promptValue = prompts[promptMode];
             const promptValueLength = runeCount(promptValue);
+            const voiceInputInUse =
+              activeVoiceField !== null && activeVoiceField !== promptMode;
             return (
               <div
                 key={promptMode}
@@ -231,21 +232,22 @@ export function MusicComposer({
                 <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
                   <span>{t('prompt')}</span>
                   <div className="flex items-center gap-3">
-                    <WorkspaceVoiceInputControl
-                      ref={handle => {
-                        promptVoiceInputRefs.current[promptMode] = handle;
-                      }}
-                      value={promptValue}
-                      onChange={value => {
-                        setPrompts(current => ({ ...current, [promptMode]: value }));
-                        setValidationError(null);
-                      }}
-                      disabled={
-                        mutation.isPending ||
-                        (activeVoiceField !== null && activeVoiceField !== promptMode)
-                      }
-                      onActiveChange={promptVoiceActiveChangeHandlers[promptMode]}
-                    />
+                    {voiceInputInUse ? (
+                      <span className="text-xs text-muted-foreground">{t('voiceInputInUse')}</span>
+                    ) : (
+                      <WorkspaceVoiceInputControl
+                        ref={handle => {
+                          promptVoiceInputRefs.current[promptMode] = handle;
+                        }}
+                        value={promptValue}
+                        onChange={value => {
+                          setPrompts(current => ({ ...current, [promptMode]: value }));
+                          setValidationError(null);
+                        }}
+                        disabled={mutation.isPending}
+                        onActiveChange={promptVoiceActiveChangeHandlers[promptMode]}
+                      />
+                    )}
                     <span
                       className={cn(
                         promptValueLength > MAX_PROMPT_RUNES && 'text-destructive'

@@ -580,8 +580,13 @@ assert.match(composerSource, /mode === 'vocal'/);
 assert.match(workspaceVoiceInputSource, /useImperativeHandle\(ref, \(\) => \(\{ finish:/);
 assert.match(
   composerSource,
-  /activeVoiceField && activeVoiceField !== 'lyrics'[\s\S]*promptVoiceInputRefs\.current\[activeVoiceField\]\?\.finish\(\)[\s\S]*activeVoiceField === 'lyrics'[\s\S]*lyricsVoiceInputRef\.current\?\.finish\(\)[\s\S]*setActiveVoiceField\(null\)[\s\S]*setMode\(nextMode\)/,
+  /activeVoiceField && activeVoiceField !== 'lyrics'[\s\S]*promptVoiceInputRefs\.current\[activeVoiceField\]\?\.finish\(\)[\s\S]*activeVoiceField === 'lyrics'[\s\S]*lyricsVoiceInputRef\.current\?\.finish\(\)[\s\S]*setMode\(nextMode\)/,
   'switching music modes must finish and transcribe whichever voice recording is active in the background'
+);
+assert.doesNotMatch(
+  composerSource,
+  /finish\(\)[\s\S]*setActiveVoiceField\(null\)[\s\S]*setMode\(nextMode\)/,
+  'mode switching must keep voice input occupied until the previous transcription finishes'
 );
 assert.match(
   composerSource,
@@ -597,6 +602,11 @@ assert.match(
   composerSource,
   /const promptVoiceActiveChangeHandlers = React\.useMemo\([\s\S]*onActiveChange=\{promptVoiceActiveChangeHandlers\[promptMode\]\}/,
   'per-mode activity callbacks must stay stable so rerenders do not clear active recordings'
+);
+assert.match(
+  composerSource,
+  /voiceInputInUse[\s\S]*t\('voiceInputInUse'\)/,
+  'the newly selected mode must show that voice input is in use while the previous transcription finishes'
 );
 assert.match(
   composerSource,
