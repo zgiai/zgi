@@ -209,11 +209,11 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 					}
 					if !submission.ResumeReady {
 						if submission.Event != nil {
-							sendWorkflowSSEStoredEvent(c.Request.Context(), c.Writer, *submission.Event)
+							sendWorkflowSSEStoredEventForInvocation(c.Request.Context(), c.Writer, triggeredFrom, *submission.Event)
 						}
 						for _, pendingEvent := range submission.PendingEvents {
 							if pendingEvent != nil {
-								sendWorkflowSSEStoredEvent(c.Request.Context(), c.Writer, *pendingEvent)
+								sendWorkflowSSEStoredEventForInvocation(c.Request.Context(), c.Writer, triggeredFrom, *pendingEvent)
 							}
 						}
 						return
@@ -241,7 +241,7 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 						if run.ActiveExecutionID != nil {
 							executionID = *run.ActiveExecutionID
 						}
-						sendWorkflowSSEEvent(c.Request.Context(), c.Writer, "workflow_resume_running", map[string]interface{}{
+						sendWorkflowSSEEventForInvocation(c.Request.Context(), c.Writer, triggeredFrom, "workflow_resume_running", map[string]interface{}{
 							"workflow_run_id": run.ID,
 							"execution_id":    executionID,
 							"event_cursor":    latest,
@@ -322,10 +322,10 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 			envelope := *stored
 			envelope.Event = eventType
 			envelope.Data = data
-			sendWorkflowSSEStoredEvent(c.Request.Context(), c.Writer, envelope)
+			sendWorkflowSSEStoredEventForInvocation(c.Request.Context(), c.Writer, triggeredFrom, envelope)
 			return nil
 		}
-		sendWorkflowSSEEvent(c.Request.Context(), c.Writer, eventType, data)
+		sendWorkflowSSEEventForInvocation(c.Request.Context(), c.Writer, triggeredFrom, eventType, data)
 		return nil
 	})
 	defer func() {
