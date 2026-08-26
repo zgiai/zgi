@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
@@ -620,6 +621,7 @@ func (r *Runner) handleCallSkillTool(
 	runtimeState map[string]interface{},
 	onEvent func(Event) error,
 ) skillStepResult {
+	delegateOutput := &agentWorkflowDelegateOutput{}
 	skillID := stringArg(args, "skill_id")
 	toolName := stringArg(args, "tool_name")
 	toolArgs := mapArg(args, "arguments")
@@ -693,6 +695,12 @@ func (r *Runner) handleCallSkillTool(
 			if event.PauseGeneration > 0 {
 				payload["pause_generation"] = event.PauseGeneration
 			}
+			if event.Type == EventMessage && agentWorkflowInvocationIsDelegate(payload) {
+				if chunk, _ := payload["answer"].(string); chunk != "" {
+					payload["presentation_role"] = agentWorkflowDelegatePresentationRole
+					delegateOutput.append(chunk)
+				}
+			}
 			r.emitEvent(prepared, event.Type, payload)
 		})
 	}
@@ -702,6 +710,7 @@ func (r *Runner) handleCallSkillTool(
 	}
 	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
+		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 		if err == nil {
 			err = fmt.Errorf("%w: skill tool returned no invocation result", ErrInvalidInput)
 		}
@@ -712,6 +721,7 @@ func (r *Runner) handleCallSkillTool(
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName, resolved)), true, false)
 	}
 	if err != nil {
+		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 		// CallSkillTool owns the safe trace summary for validation and provider
 		// failures. In particular, data-egress tools redact their arguments at
 		// that boundary; do not replace the redacted summary with call inputs.
@@ -819,12 +829,14 @@ func (r *Runner) handleCallSkillTool(
 	if isAgentWorkflowRunTool(invocation.Trace.SkillID, invocation.Trace.ToolName) {
 		if payload := agentWorkflowResultPayload(invocation.Messages); len(payload) > 0 {
 			if strings.EqualFold(stringFromInterface(payload["status"]), "pending_approval") {
+				r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 				result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 				result.toolResult = guardToolResult
 				result.pendingApproval = payload
 				return result
 			}
 			if strings.EqualFold(stringFromInterface(payload["status"]), "pending_question") {
+				r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 				result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 				result.toolResult = guardToolResult
 				result.pendingQuestion = payload
@@ -832,19 +844,17 @@ func (r *Runner) handleCallSkillTool(
 			}
 			if agentWorkflowInvocationIsDelegate(payload) &&
 				strings.EqualFold(stringFromInterface(payload["status"]), "succeeded") {
-				answer := strings.TrimSpace(stringFromInterface(payload["primary_output"]))
-				if answer == "" {
-					answer = "工作流已运行，但未返回可展示输出。workflow_run_id: " + stringFromInterface(payload["workflow_run_id"])
+				answer, _ := payload["primary_output"].(string)
+				if strings.TrimSpace(answer) != "" {
+					result := terminalSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+					result.toolResult = guardToolResult
+					result.answer = answer
+					result.answerStreamed = r.reconcileAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput, answer)
+					return result
 				}
-				result := terminalSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
-				result.toolResult = guardToolResult
-				result.answer = answer
-				// The workflow event bridge already streamed the delegate answer. Keep
-				// the text for persistence without emitting it again from the Skill Loop.
-				result.answerStreamed = true
-				return result
 			}
 		}
+		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 	}
 	if toolGovernanceApprovalPending(invocation.Trace) {
 		result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
@@ -869,6 +879,84 @@ func agentWorkflowInvocationIsDelegate(payload map[string]interface{}) bool {
 		return strings.EqualFold(mode, "agent_conversation_delegate")
 	}
 	return strings.EqualFold(stringFromInterface(payload["agent_type"]), "CONVERSATIONAL_WORKFLOW")
+}
+
+const agentWorkflowDelegatePresentationRole = "final_output"
+
+type agentWorkflowDelegateOutput struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (o *agentWorkflowDelegateOutput) append(chunk string) {
+	if o == nil || chunk == "" {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.text.WriteString(chunk)
+}
+
+func (o *agentWorkflowDelegateOutput) snapshot() string {
+	if o == nil {
+		return ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.text.String()
+}
+
+func (o *agentWorkflowDelegateOutput) take() string {
+	if o == nil {
+		return ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	text := o.text.String()
+	o.text.Reset()
+	return text
+}
+
+func (r *Runner) reconcileAgentWorkflowDelegateOutput(ctx context.Context, prepared *PreparedChat, output *agentWorkflowDelegateOutput, answer string) bool {
+	streamed := output.snapshot()
+	if streamed == "" {
+		return false
+	}
+	if streamed == answer {
+		return true
+	}
+	if strings.HasPrefix(answer, streamed) {
+		suffix := strings.TrimPrefix(answer, streamed)
+		if suffix != "" {
+			output.append(suffix)
+			r.emitEvent(prepared, EventMessage, map[string]interface{}{
+				"conversation_id":   prepared.Conversation.ID.String(),
+				"message_id":        prepared.Message.ID.String(),
+				"answer":            suffix,
+				"presentation_role": agentWorkflowDelegatePresentationRole,
+			})
+		}
+		return true
+	}
+
+	r.discardAgentWorkflowDelegateOutput(ctx, prepared, output)
+	return false
+}
+
+func (r *Runner) discardAgentWorkflowDelegateOutput(_ context.Context, prepared *PreparedChat, output *agentWorkflowDelegateOutput) {
+	content := output.take()
+	if content == "" || prepared == nil || prepared.Conversation == nil || prepared.Message == nil {
+		return
+	}
+	r.emitEvent(prepared, EventMessageRetract, map[string]interface{}{
+		"conversation_id":          prepared.Conversation.ID.String(),
+		"message_id":               prepared.Message.ID.String(),
+		"content":                  content,
+		"length":                   utf16CodeUnitLength(content),
+		"created_at":               time.Now().Unix(),
+		"presentation_disposition": "discard",
+		"presentation_role":        agentWorkflowDelegatePresentationRole,
+	})
 }
 
 func normalizeSkillToolCompletionIntent(value string) string {

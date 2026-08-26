@@ -17,21 +17,45 @@ import (
 
 // AgentRuntimeLogsHandler exposes dedicated AGENT runtime log APIs.
 type AgentRuntimeLogsHandler struct {
-	agentsRepo        agentRuntimeLookupRepository
-	chatRuntime       runtimeservice.Service
-	enterpriseService runtimeLogWorkspacePermissionChecker
+	agentsRepo              agentRuntimeLookupRepository
+	chatRuntime             runtimeservice.Service
+	enterpriseService       runtimeLogWorkspacePermissionChecker
+	workflowRunLogs         agentRuntimeWorkflowRunLogRepository
+	workflowNodeRuntimeLogs agentRuntimeWorkflowNodeLogRepository
+}
+
+// AgentRuntimeLogsHandlerOption configures internal-only runtime log enrichment.
+type AgentRuntimeLogsHandlerOption func(*AgentRuntimeLogsHandler)
+
+// WithAgentRuntimeWorkflowDiagnostics lets the authorized Agent log view load
+// raw workflow diagnostics without persisting them in user-visible chat events.
+func WithAgentRuntimeWorkflowDiagnostics(
+	workflowRunLogs agentRuntimeWorkflowRunLogRepository,
+	workflowNodeRuntimeLogs agentRuntimeWorkflowNodeLogRepository,
+) AgentRuntimeLogsHandlerOption {
+	return func(handler *AgentRuntimeLogsHandler) {
+		handler.workflowRunLogs = workflowRunLogs
+		handler.workflowNodeRuntimeLogs = workflowNodeRuntimeLogs
+	}
 }
 
 func NewAgentRuntimeLogsHandler(
 	agentsRepo agentRuntimeLookupRepository,
 	chatRuntime runtimeservice.Service,
 	enterpriseService runtimeLogWorkspacePermissionChecker,
+	opts ...AgentRuntimeLogsHandlerOption,
 ) *AgentRuntimeLogsHandler {
-	return &AgentRuntimeLogsHandler{
+	handler := &AgentRuntimeLogsHandler{
 		agentsRepo:        agentsRepo,
 		chatRuntime:       chatRuntime,
 		enterpriseService: enterpriseService,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(handler)
+		}
+	}
+	return handler
 }
 
 func (h *AgentRuntimeLogsHandler) GetRuntimeRuns(c *gin.Context) {
@@ -239,6 +263,7 @@ func (h *AgentRuntimeLogsHandler) runtimeMessage(c *gin.Context) (*runtimemodel.
 		response.Fail(c, response.ErrNotFound)
 		return nil, nil, false
 	}
+	message = h.withAgentRuntimeWorkflowDiagnostics(c.Request.Context(), message, scope, agentID)
 	return message, conversation, true
 }
 

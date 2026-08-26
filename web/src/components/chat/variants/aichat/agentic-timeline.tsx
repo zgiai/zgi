@@ -168,6 +168,7 @@ interface AIChatAgenticTimelineProps {
   defaultOpen?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  showWorkflowFailureDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
   suppressPendingToolGovernanceApprovals?: boolean;
   messageStatus?: AIChatMessage['status'];
@@ -3085,7 +3086,13 @@ function ToolGovernanceDecisionRow({
   );
 }
 
-function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
+function WorkflowTimelineRow({
+  item,
+  showFailureDetails,
+}: {
+  item: WorkflowTimelineItem;
+  showFailureDetails: boolean;
+}) {
   const nodes: WorkflowRunNodeListItem[] = item.nodes.map((node, index) => ({
     title: node.title ?? node.nodeId ?? node.nodeType ?? '',
     nodeId: node.nodeId ?? `workflow-node-${index}`,
@@ -3115,6 +3122,7 @@ function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
         elapsedTime={item.elapsedTime}
         error={item.error}
         items={nodes}
+        showFailureDetails={showFailureDetails}
         defaultOpen={item.status === 'running' || item.status === 'pending_approval'}
         className="max-w-3xl rounded-md bg-background"
       />
@@ -3793,6 +3801,7 @@ function TimelineRenderRow({
   skillDisplayById,
   showMemoryKey,
   showSkillEventDetails,
+  showWorkflowFailureDetails,
   enableToolGovernanceApprovals,
   onToolGovernanceDecision,
 }: {
@@ -3800,6 +3809,7 @@ function TimelineRenderRow({
   skillDisplayById: AIChatSkillDisplayMap;
   showMemoryKey: boolean;
   showSkillEventDetails: boolean;
+  showWorkflowFailureDetails: boolean;
   enableToolGovernanceApprovals: boolean;
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
@@ -3845,7 +3855,9 @@ function TimelineRenderRow({
         />
       );
     case 'workflow':
-      return <WorkflowTimelineRow item={item.item} />;
+      return (
+        <WorkflowTimelineRow item={item.item} showFailureDetails={showWorkflowFailureDetails} />
+      );
     case 'skill':
       return <SkillTimelineRow event={item.view} showDetails={showSkillEventDetails} />;
   }
@@ -3954,6 +3966,7 @@ export function AIChatAgenticTimeline({
   defaultOpen = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  showWorkflowFailureDetails = true,
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
   messageStatus,
@@ -4103,6 +4116,7 @@ export function AIChatAgenticTimeline({
               skillDisplayById={skillDisplayById}
               showMemoryKey={showMemoryKey}
               showSkillEventDetails={showSkillEventDetails}
+              showWorkflowFailureDetails={showWorkflowFailureDetails}
               enableToolGovernanceApprovals={enableToolGovernanceApprovals}
               onToolGovernanceDecision={onToolGovernanceDecision}
             />

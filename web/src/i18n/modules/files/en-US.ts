@@ -129,6 +129,7 @@ const messages = {
     fileMeta: '{extension} original preview',
     loading: 'Loading preview...',
     loadError: 'Failed to load file preview',
+    fileMissing: 'The file is missing or has been deleted and cannot be previewed',
     noFileSelected: 'No file selected',
     unsupportedTitle: 'Preview is not available for this file',
     unsupportedDescription:
