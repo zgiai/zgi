@@ -16,8 +16,8 @@ assert.match(
 );
 assert.match(
   previewHook,
-  /retry:\s*false,[\s\S]*retryOnMount:\s*false,[\s\S]*refetchOnReconnect:\s*false/,
-  'a failed preview query should remain terminal across remounts and reconnects'
+  /retry:\s*\(failureCount, requestError\) =>[\s\S]*!isMissingFilePreviewError\(requestError\) && failureCount < 2,[\s\S]*retryOnMount:\s*!isMissingFilePreviewError\(cachedError\),[\s\S]*refetchOnReconnect:\s*query => !isMissingFilePreviewError\(query\.state\.error\)/,
+  'only confirmed missing previews should remain terminal across retries, remounts, and reconnects'
 );
 assert.doesNotMatch(
   previewHook,
@@ -31,12 +31,12 @@ assert.match(
 );
 assert.match(
   messageBubble,
-  /disabled=\{!canPreview\}[\s\S]*<Dialog open=\{isPreviewOpen && canPreview\}/,
-  'missing image attachments should disable expansion and keep the dialog closed'
+  /const canRetry =[\s\S]*Boolean\(error\) && !isMissing[\s\S]*const canInteract = canPreview \|\| canRetry[\s\S]*disabled=\{!canInteract\}[\s\S]*if \(canRetry\) \{[\s\S]*refetch\(\)[\s\S]*<Dialog open=\{isPreviewOpen && canPreview\}/,
+  'transient image failures should support manual retry while missing attachments stay disabled'
 );
 assert.match(
   messageBubble,
-  /const showUnavailableTooltip = !isLoading && \(isError \|\| isFiltered\)[\s\S]*<TooltipTrigger asChild>[\s\S]*\{previewButton\}[\s\S]*<TooltipContent[\s\S]*\{title \|\| t\('consoleChat\.attachments\.previewLoadError'\)\}/,
+  /const showUnavailableTooltip =[\s\S]*!isFetching && \(isError \|\| isFiltered\)[\s\S]*<TooltipTrigger asChild>[\s\S]*\{previewButton\}[\s\S]*<TooltipContent[\s\S]*\{title \|\| t\('consoleChat\.attachments\.previewLoadError'\)\}/,
   'missing image errors should be shown only from the image hover tooltip'
 );
 assert.doesNotMatch(

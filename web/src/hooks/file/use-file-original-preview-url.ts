@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n';
 import { FILE_KEYS } from '@/hooks/query-keys';
 import { fileManageService } from '@/services/file-manage.service';
@@ -60,27 +60,32 @@ export function useFileOriginalPreviewUrl(
   preview: FileOriginalPreviewUrlResponse | null;
   previewUrl: string;
   isLoading: boolean;
+  isFetching: boolean;
   error: string | null;
   isMissing: boolean;
   refetch: () => void;
 } {
   const t = useT('files');
+  const queryClient = useQueryClient();
   const {
     enabled = !!fileId,
     staleTime = 60 * 1000,
     gcTime = 5 * 60 * 1000,
     refetchOnWindowFocus = false,
   } = options;
+  const queryKey = getFileOriginalPreviewUrlKey(fileId);
+  const cachedError = queryClient.getQueryState(queryKey)?.error;
 
-  const { data, isLoading, error, refetch } = useQuery<FileOriginalPreviewUrlResponse>({
-    queryKey: getFileOriginalPreviewUrlKey(fileId),
+  const { data, isLoading, isFetching, error, refetch } = useQuery<FileOriginalPreviewUrlResponse>({
+    queryKey,
     enabled,
     staleTime,
     gcTime,
     refetchOnWindowFocus,
-    retry: false,
-    retryOnMount: false,
-    refetchOnReconnect: false,
+    retry: (failureCount, requestError) =>
+      !isMissingFilePreviewError(requestError) && failureCount < 2,
+    retryOnMount: !isMissingFilePreviewError(cachedError),
+    refetchOnReconnect: query => !isMissingFilePreviewError(query.state.error),
     queryFn: async () => {
       if (!fileId) {
         throw new Error(t('preview.noFileSelected'));
@@ -106,6 +111,7 @@ export function useFileOriginalPreviewUrl(
     preview: data ?? null,
     previewUrl: data?.url ?? '',
     isLoading,
+    isFetching,
     error: errorMessage,
     isMissing,
     refetch: () => {

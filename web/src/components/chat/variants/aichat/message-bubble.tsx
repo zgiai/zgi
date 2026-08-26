@@ -901,13 +901,17 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
   const t = useT('webapp');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [imageLoadFailed, setImageLoadFailed] = useState(false);
-  const { previewUrl, isLoading, error } = useFileOriginalPreviewUrl(file.id, {
-    enabled: Boolean(file.id),
-  });
+  const { previewUrl, isLoading, isFetching, error, isMissing, refetch } =
+    useFileOriginalPreviewUrl(file.id, {
+      enabled: Boolean(file.id),
+    });
   const isFiltered = file.content_status === 'filtered';
   const isError = file.parse_status === 'error' || Boolean(error) || imageLoadFailed;
   const canPreview = Boolean(previewUrl) && !isError && !isFiltered;
-  const showUnavailableTooltip = !isLoading && (isError || isFiltered);
+  const canRetry =
+    !isLoading && !isFetching && !isFiltered && ((Boolean(error) && !isMissing) || imageLoadFailed);
+  const canInteract = canPreview || canRetry;
+  const showUnavailableTooltip = !isLoading && !isFetching && (isError || isFiltered);
   const title =
     file.error ||
     error ||
@@ -937,13 +941,24 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
       className={cn(
         'relative size-24 overflow-hidden rounded-lg border bg-background/70 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         isError || isFiltered ? 'border-destructive/40' : 'border-border',
-        canPreview ? 'cursor-zoom-in' : showUnavailableTooltip ? 'cursor-help' : 'cursor-default'
+        canPreview
+          ? 'cursor-zoom-in'
+          : canRetry
+            ? 'cursor-pointer'
+            : showUnavailableTooltip
+              ? 'cursor-help'
+              : 'cursor-default'
       )}
       aria-label={title || file.name}
-      disabled={!canPreview}
+      disabled={!canInteract}
       onClick={() => {
         if (canPreview) {
           setIsPreviewOpen(true);
+          return;
+        }
+        if (canRetry) {
+          setImageLoadFailed(false);
+          refetch();
         }
       }}
     >
@@ -956,7 +971,7 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-          {isLoading ? (
+          {isLoading || isFetching ? (
             <Loader2 className="size-5 animate-spin" />
           ) : isError || isFiltered ? (
             <AlertCircle className="size-5 text-destructive" />
