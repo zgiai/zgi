@@ -1,8 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { FILE_KEYS } from '@/hooks/query-keys';
 import { fileManageService } from '@/services/file-manage.service';
@@ -13,6 +11,39 @@ interface UseFileOriginalPreviewUrlOptions {
   staleTime?: number;
   gcTime?: number;
   refetchOnWindowFocus?: boolean;
+}
+
+interface FilePreviewRequestError {
+  message?: string;
+  response?: {
+    status?: number;
+    data?: { code?: string | number; message?: string; errorMessage?: string };
+  };
+  businessError?: { code?: string | number; message?: string };
+}
+
+function isMissingFilePreviewError(error: unknown): boolean {
+  const candidate = error as FilePreviewRequestError | null | undefined;
+  if (!candidate) return false;
+  if (candidate.response?.status === 404) return true;
+
+  const code = String(candidate.businessError?.code ?? candidate.response?.data?.code ?? '').trim();
+  if (code === '210001') return true;
+
+  const message = (
+    candidate.businessError?.message ||
+    candidate.response?.data?.message ||
+    candidate.response?.data?.errorMessage ||
+    candidate.message ||
+    ''
+  )
+    .trim()
+    .toLowerCase();
+  return (
+    message.includes('file not found') ||
+    message.includes('文件不存在') ||
+    message.includes('文件已删除')
+  );
 }
 
 export const getFileOriginalPreviewUrlKey = (fileId?: string) =>
@@ -30,6 +61,7 @@ export function useFileOriginalPreviewUrl(
   previewUrl: string;
   isLoading: boolean;
   error: string | null;
+  isMissing: boolean;
   refetch: () => void;
 } {
   const t = useT('files');
@@ -47,6 +79,8 @@ export function useFileOriginalPreviewUrl(
     gcTime,
     refetchOnWindowFocus,
     retry: false,
+    retryOnMount: false,
+    refetchOnReconnect: false,
     queryFn: async () => {
       if (!fileId) {
         throw new Error(t('preview.noFileSelected'));
@@ -61,17 +95,19 @@ export function useFileOriginalPreviewUrl(
     },
   });
 
-  useEffect(() => {
-    if (!error) return;
-
-    toast.error((error as { message?: string }).message ?? t('preview.loadError'));
-  }, [error, t]);
+  const isMissing = isMissingFilePreviewError(error);
+  const errorMessage = error
+    ? isMissing
+      ? t('preview.fileMissing')
+      : ((error as { message?: string }).message ?? t('preview.loadError'))
+    : null;
 
   return {
     preview: data ?? null,
     previewUrl: data?.url ?? '',
     isLoading,
-    error: error ? ((error as { message?: string }).message ?? t('preview.loadError')) : null,
+    error: errorMessage,
+    isMissing,
     refetch: () => {
       void refetch();
     },

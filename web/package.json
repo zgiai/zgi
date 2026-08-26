@@ -46,6 +46,7 @@
     "test:agent-chat-model-precheck": "node scripts/test-agent-chat-model-precheck.mjs",
     "test:aichat-model-precheck-refresh": "node scripts/test-aichat-model-precheck-refresh.mjs",
     "test:aichat-vision-replay-warning": "node scripts/test-aichat-vision-replay-warning.mjs",
+    "test:aichat-missing-file-preview": "node scripts/test-aichat-missing-file-preview.mjs",
     "test:model-selector-risk-marker": "node scripts/test-model-selector-risk-marker.mjs",
     "test:provider-list-segmentation": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-provider-list-segmentation.mjs",
     "test:provider-runtime-state": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-provider-runtime-state.mjs",
