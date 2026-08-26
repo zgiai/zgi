@@ -272,6 +272,7 @@ const messages = {
       description: 'Select a provider from the left to view its models',
     },
     loadError: 'Failed to load models: {error}',
+    loadErrorDescription: 'The model list could not be loaded. Retry without leaving this page.',
     searchPlaceholder: 'Search models...',
     features: {
       // Model features (from API features object)

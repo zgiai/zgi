@@ -258,7 +258,7 @@ func (a *ClaudeAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 					if streamResp.Message != nil {
 						messageID = streamResp.Message.ID
 						model = streamResp.Message.Model
-						lastUsage = toAdapterUsage(streamResp.Message.Usage)
+						lastUsage = mergeClaudeUsage(lastUsage, streamResp.Message.Usage)
 					}
 				case "content_block_start":
 					if streamResp.ContentBlock != nil && streamResp.ContentBlock.Type == "tool_use" {
@@ -346,7 +346,7 @@ func (a *ClaudeAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 					// Content block completed
 				case "message_delta":
 					if streamResp.Usage != nil {
-						lastUsage = toAdapterUsage(*streamResp.Usage)
+						lastUsage = mergeClaudeUsage(lastUsage, *streamResp.Usage)
 					}
 					if streamResp.Delta != nil && streamResp.Delta.StopReason != "" {
 						finishReason := a.convertStopReason(streamResp.Delta.StopReason)
@@ -1056,19 +1056,16 @@ func (a *ClaudeAdapter) convertStopReason(stopReason string) string {
 }
 
 func toAdapterUsage(usage claudeUsage) *adapter.Usage {
-	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
-		return nil
-	}
-	result := &adapter.Usage{
-		PromptTokens:        usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens,
-		CompletionTokens:    usage.OutputTokens,
-		TotalTokens:         usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens + usage.OutputTokens,
-		UncachedInputTokens: usage.InputTokens,
-		CacheReadTokens:     usage.CacheReadInputTokens,
-		CacheWriteTokens:    usage.CacheCreationInputTokens,
-	}
-	result.NormalizeCacheTokens()
-	return result
+	return mergeClaudeUsage(nil, usage)
+}
+
+func mergeClaudeUsage(previous *adapter.Usage, usage claudeUsage) *adapter.Usage {
+	return mergeAnthropicTokenUsage(previous, anthropicUsageShape{
+		InputTokens:              usage.InputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+	})
 }
 
 // enrichModelInfo enriches model information with context length and pricing

@@ -153,6 +153,8 @@ export interface InvocationLogItem {
   total_tokens: number;
   total_points: number;
   total_cost_usd?: string;
+  total_cost_cny?: string;
+  pricing_details?: InvocationPricingDetails;
   duration_ms: number;
   started_at: number;
   settled_at: number;
@@ -161,6 +163,26 @@ export interface InvocationLogItem {
   content_expires_at?: number;
   input?: unknown;
   output?: unknown;
+}
+
+export interface InvocationPricingDetails {
+  billing_lane: string;
+  pricing_source?: string;
+  usage_source?: string;
+  input_price_usd_per_1m_tokens?: string;
+  cache_read_price_usd_per_1m_tokens?: string;
+  cache_write_price_usd_per_1m_tokens?: string;
+  output_price_usd_per_1m_tokens?: string;
+  input_cost_usd?: string;
+  cache_read_cost_usd?: string;
+  cache_write_cost_usd?: string;
+  output_cost_usd?: string;
+  cny_per_usd?: string;
+  billing_display_currency?: string;
+  input_price_source?: string;
+  cache_read_price_source?: string;
+  cache_write_price_source?: string;
+  output_price_source?: string;
 }
 
 export interface InvocationLogCursor {

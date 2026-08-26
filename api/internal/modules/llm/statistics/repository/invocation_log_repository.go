@@ -85,6 +85,9 @@ type invocationBillRow struct {
 	CompletionTokens int64          `gorm:"column:completion_tokens"`
 	TotalTokens      int64          `gorm:"column:total_tokens"`
 	TotalPoints      int64          `gorm:"column:total_points"`
+	BillingLane      string         `gorm:"column:billing_lane"`
+	PricingSource    string         `gorm:"column:pricing_source"`
+	UsageSource      string         `gorm:"column:usage_source"`
 	PricingSnapshot  datatypes.JSON `gorm:"column:pricing_snapshot"`
 	ErrorCode        *string        `gorm:"column:error_code"`
 	RequestCreatedAt time.Time      `gorm:"column:request_created_at"`
@@ -232,6 +235,18 @@ func (r *statisticsRepositoryImpl) queryInvocationBills(ctx context.Context, fil
 	if r.db.Migrator().HasColumn(usageBillTable, "pricing_snapshot") {
 		pricingSnapshotColumn = "b.pricing_snapshot"
 	}
+	billingLaneColumn := "'' AS billing_lane"
+	if r.db.Migrator().HasColumn(usageBillTable, "billing_lane") {
+		billingLaneColumn = "b.billing_lane"
+	}
+	pricingSourceColumn := "'' AS pricing_source"
+	if r.db.Migrator().HasColumn(usageBillTable, "pricing_source") {
+		pricingSourceColumn = "b.pricing_source"
+	}
+	usageSourceColumn := "'' AS usage_source"
+	if r.db.Migrator().HasColumn(usageBillTable, "usage_source") {
+		usageSourceColumn = "b.usage_source"
+	}
 	channelNameColumn := "'' AS channel_name"
 	joinChannel := r.db.Migrator().HasColumn(usageBillTable, "channel_id") &&
 		r.db.Migrator().HasTable("llm_routes") &&
@@ -242,7 +257,8 @@ func (r *statisticsRepositoryImpl) queryInvocationBills(ctx context.Context, fil
 	query := r.db.WithContext(ctx).Table(usageBillTable+" b").
 		Select(fmt.Sprintf(`b.request_id, b.app_id, b.app_type, b.invocation_source, b.model_name, b.provider_name,
 			b.status, b.prompt_tokens, b.cache_read_tokens, b.cache_write_tokens, b.completion_tokens, b.total_tokens, b.total_points,
-			b.error_code, b.request_created_at, b.settled_at, %s, %s`, pricingSnapshotColumn, channelNameColumn)).
+			b.error_code, b.request_created_at, b.settled_at, %s, %s, %s, %s, %s`,
+			pricingSnapshotColumn, channelNameColumn, billingLaneColumn, pricingSourceColumn, usageSourceColumn)).
 		Where("b.request_id IN ?", requestIDs)
 	if joinChannel {
 		query = query.Joins("LEFT JOIN llm_routes r ON r.id = b.channel_id")
@@ -274,7 +290,10 @@ func applyInvocationLogFilters(query *gorm.DB, alias string, filters invocationL
 type invocationAccumulator struct {
 	item         dto.InvocationLogItem
 	totalCostUSD decimal.Decimal
+	totalCostCNY decimal.Decimal
 	hasExactCost bool
+	hasCostCNY   bool
+	missingCNY   bool
 	startedAt    time.Time
 	settledAt    time.Time
 	hasSuccess   bool
@@ -299,6 +318,15 @@ func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRo
 		if costUSD, ok := pricingSnapshotCostUSD(bill.PricingSnapshot); ok {
 			acc.totalCostUSD = acc.totalCostUSD.Add(costUSD)
 			acc.hasExactCost = true
+		}
+		if costCNY, ok := pricingSnapshotCostCNY(bill.PricingSnapshot); ok {
+			acc.totalCostCNY = acc.totalCostCNY.Add(costCNY)
+			acc.hasCostCNY = true
+		} else if bill.TotalPoints > 0 {
+			acc.missingCNY = true
+		}
+		if details := invocationPricingDetails(bill); details != nil && (acc.item.PricingDetails == nil || bill.Status == "success") {
+			acc.item.PricingDetails = details
 		}
 		if acc.startedAt.IsZero() || bill.RequestCreatedAt.Before(acc.startedAt) {
 			acc.startedAt = bill.RequestCreatedAt
@@ -341,19 +369,77 @@ func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRo
 			value := acc.totalCostUSD.String()
 			acc.item.TotalCostUSD = &value
 		}
+		if acc.hasCostCNY && !acc.missingCNY {
+			value := acc.totalCostCNY.String()
+			acc.item.TotalCostCNY = &value
+		}
 		items = append(items, acc.item)
 	}
 	return items
 }
 
-func pricingSnapshotCostUSD(snapshot datatypes.JSON) (decimal.Decimal, bool) {
+func invocationPricingDetails(bill invocationBillRow) *dto.InvocationPricingDetails {
+	details := &dto.InvocationPricingDetails{
+		BillingLane:   strings.TrimSpace(bill.BillingLane),
+		PricingSource: strings.TrimSpace(bill.PricingSource),
+		UsageSource:   strings.TrimSpace(bill.UsageSource),
+	}
+	values := pricingSnapshotValues(bill.PricingSnapshot)
+	details.InputPriceUSDPer1MTokens = snapshotDecimalString(values["input_price_usd_per_1m_tokens"])
+	details.CacheReadPriceUSDPer1MTokens = snapshotDecimalString(values["cache_read_price_usd_per_1m_tokens"])
+	details.CacheWritePriceUSDPer1MTokens = snapshotDecimalString(values["cache_write_price_usd_per_1m_tokens"])
+	details.OutputPriceUSDPer1MTokens = snapshotDecimalString(values["output_price_usd_per_1m_tokens"])
+	details.InputCostUSD = snapshotDecimalString(values["input_cost_usd"])
+	details.CacheReadCostUSD = snapshotDecimalString(values["cache_read_cost_usd"])
+	details.CacheWriteCostUSD = snapshotDecimalString(values["cache_write_cost_usd"])
+	details.OutputCostUSD = snapshotDecimalString(values["output_cost_usd"])
+	details.CNYPerUSD = snapshotDecimalString(values["cny_per_usd"])
+	details.BillingDisplayCurrency = snapshotString(values["billing_display_currency"])
+	details.InputPriceSource = snapshotString(values["input_price_source"])
+	details.CacheReadPriceSource = snapshotString(values["cache_read_price_source"])
+	details.CacheWritePriceSource = snapshotString(values["cache_write_price_source"])
+	details.OutputPriceSource = snapshotString(values["output_price_source"])
+
+	if details.BillingLane == "" && details.PricingSource == "" && details.UsageSource == "" &&
+		details.InputPriceUSDPer1MTokens == nil && details.CacheReadPriceUSDPer1MTokens == nil &&
+		details.CacheWritePriceUSDPer1MTokens == nil && details.OutputPriceUSDPer1MTokens == nil &&
+		details.InputCostUSD == nil && details.CacheReadCostUSD == nil && details.CacheWriteCostUSD == nil &&
+		details.OutputCostUSD == nil && details.CNYPerUSD == nil && details.BillingDisplayCurrency == "" {
+		return nil
+	}
+	return details
+}
+
+func pricingSnapshotValues(snapshot datatypes.JSON) map[string]interface{} {
 	if len(snapshot) == 0 {
-		return decimal.Zero, false
+		return nil
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(snapshot)))
 	decoder.UseNumber()
 	values := map[string]interface{}{}
 	if err := decoder.Decode(&values); err != nil {
+		return nil
+	}
+	return values
+}
+
+func snapshotDecimalString(value interface{}) *string {
+	parsed, ok := snapshotDecimal(value)
+	if !ok {
+		return nil
+	}
+	result := parsed.String()
+	return &result
+}
+
+func snapshotString(value interface{}) string {
+	result, _ := value.(string)
+	return strings.TrimSpace(result)
+}
+
+func pricingSnapshotCostUSD(snapshot datatypes.JSON) (decimal.Decimal, bool) {
+	values := pricingSnapshotValues(snapshot)
+	if values == nil {
 		return decimal.Zero, false
 	}
 	if total, ok := snapshotDecimal(values["total_cost_usd"]); ok {
@@ -368,6 +454,14 @@ func pricingSnapshotCostUSD(snapshot datatypes.JSON) (decimal.Decimal, bool) {
 		}
 	}
 	return total, found
+}
+
+func pricingSnapshotCostCNY(snapshot datatypes.JSON) (decimal.Decimal, bool) {
+	values := pricingSnapshotValues(snapshot)
+	if values == nil {
+		return decimal.Zero, false
+	}
+	return snapshotDecimal(values["total_cost_cny"])
 }
 
 func snapshotDecimal(value interface{}) (decimal.Decimal, bool) {

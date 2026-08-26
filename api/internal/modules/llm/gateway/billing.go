@@ -88,6 +88,8 @@ type BillingContext struct {
 	InputUSD             decimal.Decimal
 	OutputUSD            decimal.Decimal
 	TotalUSD             decimal.Decimal
+	DisplayCurrency      string
+	USDToCNYRate         decimal.Decimal
 	PricingSource        PricingSource
 	UsageSource          UsageSource
 	PricingSnapshot      datatypes.JSON
@@ -130,6 +132,11 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 	useSystemProvider := usageBillingLaneUsesSystemProvider(usageLane)
 
 	err := b.db.Transaction(func(tx *gorm.DB) error {
+		if usageLane == UsageBillingLanePrivate {
+			if err := captureOrganizationBillingCurrency(ctx, tx, bc); err != nil {
+				return fmt.Errorf("capture billing currency snapshot: %w", err)
+			}
+		}
 		if err := b.upsertAttemptInit(ctx, tx, bc); err != nil {
 			return fmt.Errorf("failed to init billing attempt: %w", err)
 		}
@@ -212,6 +219,12 @@ func (b *BillingService) Settle(ctx context.Context, bc *BillingContext) error {
 	alreadyFinalized := false
 	// Critical billing operations in transaction
 	err := b.db.Transaction(func(tx *gorm.DB) error {
+		if usageLane == UsageBillingLanePrivate {
+			if err := captureOrganizationBillingCurrency(ctx, tx, bc); err != nil {
+				return fmt.Errorf("capture billing currency snapshot: %w", err)
+			}
+			applyLocalBillingCurrencySnapshot(bc)
+		}
 		attemptID, err := b.ensureAttemptID(bc)
 		if err != nil {
 			return err

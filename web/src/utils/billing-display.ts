@@ -12,6 +12,10 @@ interface UsageAmountFormatOptions {
   locale?: Intl.LocalesArgument;
 }
 
+interface RecordedCurrencyFormatOptions extends UsageAmountFormatOptions {
+  showSign?: boolean;
+}
+
 export const DEFAULT_BILLING_DISPLAY: BillingDisplaySettings = {
   currency: 'USD',
   usdToCnyRate: 7,
@@ -123,6 +127,107 @@ export function formatBillingDisplayAmountFromUSD(
     maximumFractionDigits,
   });
   return `${getBillingCurrencySymbol(settings)}${formatted}`;
+}
+
+export function formatRecordedBillingAmount(
+  amount: number | string | null | undefined,
+  currency: BillingDisplayCurrency,
+  { locale }: UsageAmountFormatOptions = {}
+): string {
+  if (amount === undefined || amount === null) return '-';
+  let recordedAmount: Decimal;
+  try {
+    recordedAmount = new Decimal(amount);
+  } catch {
+    return '-';
+  }
+  const displayNumber = recordedAmount.toNumber();
+  if (!Number.isFinite(displayNumber)) return '-';
+  const maximumFractionDigits = recordedAmount.abs().lt(1) ? BILLING_DECIMAL_PLACES : 2;
+  const formatted = displayNumber.toLocaleString(locale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits,
+  });
+  return `${currency === 'CNY' ? '¥' : '$'}${formatted}`;
+}
+
+export function formatRecordedBillingAmountFromUSD(
+  amountUSD: number | string | null | undefined,
+  displayCurrency: BillingDisplayCurrency,
+  recordedUSDToCNYRate: number | string | null | undefined,
+  options: UsageAmountFormatOptions = {}
+): string {
+  if (displayCurrency === 'USD') {
+    return formatRecordedBillingAmount(amountUSD, 'USD', options);
+  }
+  if (amountUSD === undefined || amountUSD === null || recordedUSDToCNYRate == null) {
+    return formatRecordedBillingAmount(amountUSD, 'USD', options);
+  }
+  try {
+    const rate = new Decimal(recordedUSDToCNYRate);
+    if (!rate.isPositive()) return formatRecordedBillingAmount(amountUSD, 'USD', options);
+    return formatRecordedBillingAmount(new Decimal(amountUSD).times(rate).toString(), 'CNY', options);
+  } catch {
+    return formatRecordedBillingAmount(amountUSD, 'USD', options);
+  }
+}
+
+export function formatRecordedCurrencyAmount(
+  amount: number | string | null | undefined,
+  currency: string | null | undefined,
+  { locale, showSign = false }: RecordedCurrencyFormatOptions = {}
+): string {
+  if (amount === undefined || amount === null) return '-';
+  const normalizedCurrency = currency?.trim().toUpperCase();
+  if (!normalizedCurrency) return String(amount);
+  let value: number;
+  try {
+    value = new Decimal(amount).toNumber();
+  } catch {
+    return '-';
+  }
+  if (!Number.isFinite(value)) return '-';
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: normalizedCurrency,
+      currencyDisplay: 'code',
+      signDisplay: showSign ? 'exceptZero' : 'auto',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    const sign = showSign && value > 0 ? '+' : '';
+    return `${sign}${value.toFixed(2)} ${normalizedCurrency}`;
+  }
+}
+
+export function formatCatalogCurrencyAmount(
+  amount: number | string | null | undefined,
+  sourceCurrency: string | null | undefined,
+  settings: BillingDisplaySettings,
+  options: UsageAmountFormatOptions = {}
+): string {
+  if (amount === undefined || amount === null) return '-';
+  const source = sourceCurrency?.trim().toUpperCase();
+  if (source !== 'USD' && source !== 'CNY') {
+    return formatRecordedCurrencyAmount(amount, sourceCurrency, options);
+  }
+  if (source === settings.currency) {
+    return formatRecordedCurrencyAmount(amount, source, options);
+  }
+  if (!Number.isFinite(settings.usdToCnyRate) || settings.usdToCnyRate <= 0) {
+    return formatRecordedCurrencyAmount(amount, source, options);
+  }
+  try {
+    const converted =
+      source === 'USD'
+        ? new Decimal(amount).times(settings.usdToCnyRate)
+        : new Decimal(amount).div(settings.usdToCnyRate);
+    return `≈${formatRecordedCurrencyAmount(converted.toString(), settings.currency, options)}`;
+  } catch {
+    return formatRecordedCurrencyAmount(amount, source, options);
+  }
 }
 
 export function billingDisplayInputValueFromUSD(

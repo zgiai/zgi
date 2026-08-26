@@ -188,10 +188,14 @@ type CustomModel struct {
 	DefaultParameters   JSONObject           `gorm:"column:default_parameters;type:jsonb" json:"default_parameters,omitempty"`
 
 	// Pricing (per million tokens, aligned with LLMModel)
-	InputPrice            decimal.Decimal `gorm:"column:input_price;type:decimal(24,12)" json:"input_price"`
-	OutputPrice           decimal.Decimal `gorm:"column:output_price;type:decimal(24,12)" json:"output_price"`
-	InputPriceConfigured  bool            `gorm:"column:input_price_configured;default:false" json:"input_price_configured"`
-	OutputPriceConfigured bool            `gorm:"column:output_price_configured;default:false" json:"output_price_configured"`
+	InputPrice                decimal.Decimal `gorm:"column:input_price;type:decimal(24,12)" json:"input_price"`
+	OutputPrice               decimal.Decimal `gorm:"column:output_price;type:decimal(24,12)" json:"output_price"`
+	CostCacheRead             decimal.Decimal `gorm:"column:cost_cache_read;type:decimal(24,12)" json:"cache_read_price"`
+	CostCacheWrite            decimal.Decimal `gorm:"column:cost_cache_write;type:decimal(24,12)" json:"cache_write_price"`
+	InputPriceConfigured      bool            `gorm:"column:input_price_configured;default:false" json:"input_price_configured"`
+	OutputPriceConfigured     bool            `gorm:"column:output_price_configured;default:false" json:"output_price_configured"`
+	CacheReadPriceConfigured  bool            `gorm:"column:cache_read_price_configured;default:false" json:"cache_read_price_configured"`
+	CacheWritePriceConfigured bool            `gorm:"column:cache_write_price_configured;default:false" json:"cache_write_price_configured"`
 
 	// Status and ordering
 	IsActive  bool                   `gorm:"default:true;index" json:"is_active"`
@@ -367,23 +371,25 @@ type ModelView struct {
 	OpenWeights   bool   `json:"-"`           // Internal use only
 
 	// Pricing (per million tokens)
-	Currency                string         `json:"currency"`
-	InputPrice              float64        `json:"input_price"`  // Price per million input tokens
-	OutputPrice             float64        `json:"output_price"` // Price per million output tokens
-	InputPriceConfigured    bool           `json:"input_price_configured"`
-	OutputPriceConfigured   bool           `json:"output_price_configured"`
-	CachedInputPrice        float64        `json:"cached_input_price"`
-	CacheReadPrice          float64        `json:"cache_read_price"`
-	CacheWritePrice         float64        `json:"cache_write_price"`
-	SyncedInputPrice        *float64       `json:"synced_input_price"`
-	SyncedOutputPrice       *float64       `json:"synced_output_price"`
-	SyncedCacheReadPrice    *float64       `json:"synced_cache_read_price"`
-	SyncedCacheWritePrice   *float64       `json:"synced_cache_write_price"`
-	InputPriceOverride      *float64       `json:"input_price_override"`
-	OutputPriceOverride     *float64       `json:"output_price_override"`
-	CacheReadPriceOverride  *float64       `json:"cache_read_price_override"`
-	CacheWritePriceOverride *float64       `json:"cache_write_price_override"`
-	Pricing                 datatypes.JSON `json:"pricing,omitempty"`
+	Currency                  string         `json:"currency"`
+	InputPrice                float64        `json:"input_price"`  // Price per million input tokens
+	OutputPrice               float64        `json:"output_price"` // Price per million output tokens
+	InputPriceConfigured      bool           `json:"input_price_configured"`
+	OutputPriceConfigured     bool           `json:"output_price_configured"`
+	CachedInputPrice          float64        `json:"cached_input_price"`
+	CacheReadPrice            float64        `json:"cache_read_price"`
+	CacheWritePrice           float64        `json:"cache_write_price"`
+	CacheReadPriceConfigured  bool           `json:"cache_read_price_configured"`
+	CacheWritePriceConfigured bool           `json:"cache_write_price_configured"`
+	SyncedInputPrice          *float64       `json:"synced_input_price"`
+	SyncedOutputPrice         *float64       `json:"synced_output_price"`
+	SyncedCacheReadPrice      *float64       `json:"synced_cache_read_price"`
+	SyncedCacheWritePrice     *float64       `json:"synced_cache_write_price"`
+	InputPriceOverride        *float64       `json:"input_price_override"`
+	OutputPriceOverride       *float64       `json:"output_price_override"`
+	CacheReadPriceOverride    *float64       `json:"cache_read_price_override"`
+	CacheWritePriceOverride   *float64       `json:"cache_write_price_override"`
+	Pricing                   datatypes.JSON `json:"pricing,omitempty"`
 
 	// Context
 	ContextWindow   int `json:"context_window"`

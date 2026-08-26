@@ -26,6 +26,84 @@ func TestPricingSnapshotCostUSDUsesExactComponentsBeforeRoundedCredits(t *testin
 	}
 }
 
+func TestPricingSnapshotCostCNYUsesRecordedSettlementAmount(t *testing.T) {
+	got, ok := pricingSnapshotCostCNY(datatypes.JSON(`{"total_cost_cny":"0.0475272"}`))
+	want := decimal.RequireFromString("0.0475272")
+	if !ok || !got.Equal(want) {
+		t.Fatalf("pricingSnapshotCostCNY() = %s, %t; want %s, true", got, ok, want)
+	}
+}
+
+func TestAggregateInvocationBillsKeepsRecordedCNYTotal(t *testing.T) {
+	now := time.Now().UTC()
+	items := aggregateInvocationBills(
+		[]invocationPageRow{{RequestID: "request-1"}},
+		[]invocationBillRow{{
+			RequestID: "request-1", Status: "success", TotalPoints: 6601,
+			PricingSnapshot:  datatypes.JSON(`{"total_cost_usd":"0.006601","total_cost_cny":"0.0475272","cny_per_usd":"7.2"}`),
+			RequestCreatedAt: now, SettledAt: now,
+		}},
+	)
+	if len(items) != 1 || items[0].TotalCostCNY == nil || *items[0].TotalCostCNY != "0.0475272" {
+		t.Fatalf("aggregated items = %#v", items)
+	}
+}
+
+func TestInvocationPricingDetailsExposeActualTokenPricesAndSources(t *testing.T) {
+	bill := invocationBillRow{
+		BillingLane:   "private",
+		PricingSource: "upstream_model_price",
+		UsageSource:   "provider_usage",
+		PricingSnapshot: datatypes.JSON(`{
+			"input_price_usd_per_1m_tokens":"5",
+			"cache_read_price_usd_per_1m_tokens":"0.5",
+			"cache_write_price_usd_per_1m_tokens":"0",
+			"output_price_usd_per_1m_tokens":"30",
+			"input_cost_usd":"0.001995",
+			"cache_read_cost_usd":"0.004096",
+			"cache_write_cost_usd":"0",
+			"output_cost_usd":"0.00051",
+			"cny_per_usd":"7.2",
+			"billing_display_currency":"CNY",
+			"cache_read_price_source":"synced_model",
+			"cache_write_price_source":"organization_override"
+		}`),
+	}
+
+	details := invocationPricingDetails(bill)
+	if details == nil {
+		t.Fatal("invocationPricingDetails() = nil")
+	}
+	if details.BillingLane != "private" || details.PricingSource != "upstream_model_price" {
+		t.Fatalf("unexpected sources: %#v", details)
+	}
+	if details.CacheReadPriceUSDPer1MTokens == nil || *details.CacheReadPriceUSDPer1MTokens != "0.5" {
+		t.Fatalf("cache read price = %#v, want 0.5", details.CacheReadPriceUSDPer1MTokens)
+	}
+	if details.CacheReadCostUSD == nil || *details.CacheReadCostUSD != "0.004096" {
+		t.Fatalf("cache read cost = %#v, want 0.004096", details.CacheReadCostUSD)
+	}
+	if details.CNYPerUSD == nil || *details.CNYPerUSD != "7.2" {
+		t.Fatalf("call-time exchange rate = %#v, want 7.2", details.CNYPerUSD)
+	}
+	if details.BillingDisplayCurrency != "CNY" {
+		t.Fatalf("call-time billing currency = %q, want CNY", details.BillingDisplayCurrency)
+	}
+	if details.CacheReadPriceSource != "synced_model" || details.CacheWritePriceSource != "organization_override" {
+		t.Fatalf("unexpected cache price sources: %#v", details)
+	}
+}
+
+func TestInvocationPricingDetailsKeepPlatformSettlementWithoutInventingPrices(t *testing.T) {
+	details := invocationPricingDetails(invocationBillRow{BillingLane: "platform"})
+	if details == nil || details.BillingLane != "platform" {
+		t.Fatalf("platform details = %#v", details)
+	}
+	if details.InputPriceUSDPer1MTokens != nil || details.CacheReadPriceUSDPer1MTokens != nil || details.OutputPriceUSDPer1MTokens != nil {
+		t.Fatalf("platform settlement must not invent token prices: %#v", details)
+	}
+}
+
 func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {

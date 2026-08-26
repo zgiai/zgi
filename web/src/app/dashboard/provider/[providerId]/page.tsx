@@ -26,7 +26,7 @@ import type {
   UpdateCustomModelRequest,
 } from '@/services/types/model';
 import type { UpdateCustomProviderRequest } from '@/services/types/provider';
-import { ArrowRight, Info, RadioTower } from 'lucide-react';
+import { ArrowRight, CircleAlert, Info, RadioTower, RefreshCw } from 'lucide-react';
 import ModelsActionsBar from '@/components/providers/models-actions-bar';
 import ModelTypeChips from '@/components/providers/model-type-chips';
 import ModelsGroupTable from '@/components/providers/models-group-table';
@@ -64,7 +64,13 @@ export default function ModelPage() {
   // Data hooks
   const { provider: detail } = useProvider(provider);
   const [selectedUseCase, setSelectedUseCase] = useState<ModelUseCase | null>(null);
-  const { models: allModels, isLoading, isFetching: _isFetching } = useProviderModelsAll(provider);
+  const {
+    models: allModels,
+    isLoading,
+    isFetching,
+    error: modelsError,
+    refetch: refetchModels,
+  } = useProviderModelsAll(provider);
 
   const { updateCustomProvider, isUpdating } = useUpdateCustomProvider();
   const { deleteCustomProvider, isDeleting } = useDeleteCustomProvider();
@@ -166,6 +172,7 @@ export default function ModelPage() {
     () => allModels.some(model => !model.is_available),
     [allModels]
   );
+  const hasModelsLoadError = Boolean(modelsError && allModels.length === 0);
   useEffect(() => {
     // Clear selected use case if it's no longer available
     if (selectedUseCase !== null && !availableUseCases.has(selectedUseCase)) {
@@ -213,9 +220,7 @@ export default function ModelPage() {
   const { toggleBatchModels, isBatchToggling } = useBatchToggleModels();
   const isCustom = detail?.provider_type === 'custom';
   const needsChannelSetup = Boolean(
-    detail &&
-      !isCustom &&
-      shouldPromptProviderChannelSetup(detail, hasAnyConnectedModels)
+    detail && !isCustom && shouldPromptProviderChannelSetup(detail, hasAnyConnectedModels)
   );
   const { name, description } = useProviderDisplay(detail);
   const accountPermissions = useAccountPermissions();
@@ -425,6 +430,8 @@ export default function ModelPage() {
         await updateModelAction(pricingModel.id, {
           input_price: values.inputPrice,
           output_price: values.outputPrice,
+          cache_read_price: values.cacheReadPrice,
+          cache_write_price: values.cacheWritePrice,
         });
       } else {
         await configureModel({
@@ -513,80 +520,107 @@ export default function ModelPage() {
         onDelete={isCustom ? () => setIsDeleteDialogOpen(true) : undefined}
       />
 
-      {needsChannelSetup ? (
-        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3 sm:flex-row sm:items-center">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground ring-1 ring-border">
-              <RadioTower className="h-4 w-4" />
-            </span>
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-foreground">
-                {t('aiProviders.management.channelGuide.title', { provider: name })}
+      {!hasModelsLoadError &&
+        (needsChannelSetup ? (
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3 sm:flex-row sm:items-center">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground ring-1 ring-border">
+                <RadioTower className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-foreground">
+                  {t('aiProviders.management.channelGuide.title', { provider: name })}
+                </div>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  {t('aiProviders.management.channelGuide.description')}
+                </p>
               </div>
-              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                {t('aiProviders.management.channelGuide.description')}
-              </p>
             </div>
+            {canManageModels ? (
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto shrink-0 justify-start p-0 sm:ml-auto"
+                onClick={handleAdd}
+              >
+                {t('aiProviders.management.channelGuide.action')}
+                <ArrowRight className="ml-1 h-3.5 w-3.5" />
+              </Button>
+            ) : null}
           </div>
-          {canManageModels ? (
-            <Button
-              type="button"
-              variant="link"
-              size="sm"
-              className="h-auto shrink-0 justify-start p-0 sm:ml-auto"
-              onClick={handleAdd}
-            >
-              {t('aiProviders.management.channelGuide.action')}
-              <ArrowRight className="ml-1 h-3.5 w-3.5" />
-            </Button>
-          ) : null}
+        ) : (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Info className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              {t('aiProviders.management.strategyHint')}{' '}
+              {t('aiProviders.management.strategyDescription')}
+            </span>
+          </div>
+        ))}
+
+      {hasModelsLoadError ? (
+        <div className="flex min-h-64 flex-col items-center justify-center gap-4 rounded-lg border bg-muted/20 px-6 text-center">
+          <span className="inline-flex size-12 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+            <CircleAlert className="size-6" />
+          </span>
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-foreground">
+              {t('aiProviders.models.loadError', { error: modelsError ?? '' })}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {t('aiProviders.models.loadErrorDescription')}
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={isFetching}
+            onClick={() => void refetchModels()}
+          >
+            <RefreshCw className={`mr-2 size-4 ${isFetching ? 'animate-spin' : ''}`} />
+            {t('aiProviders.actions.retry')}
+          </Button>
         </div>
       ) : (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0" />
-          <span>
-            {t('aiProviders.management.strategyHint')}{' '}
-            {t('aiProviders.management.strategyDescription')}
-          </span>
+        <div className="space-y-2">
+          <ModelsActionsBar
+            totalCount={allModels.length}
+            visibleCount={officialVisible.length + extensibleVisible.length}
+            query={query}
+            onQueryChange={setQuery}
+            onEnableVisible={() => onToggleVisibleModels(true)}
+            onDisableVisible={() => onToggleVisibleModels(false)}
+            extraActions={
+              canManageModels && !IS_CLOUD && !isCustom ? (
+                <ModelUpdatesButton providerId={provider} />
+              ) : undefined
+            }
+            onAdd={canManageModels ? handleAdd : undefined}
+            addLabel={
+              isCustom
+                ? (t('aiProviders.models.actions.add') as string)
+                : selectedCount > 0
+                  ? (t('aiProviders.models.actions.addChannelForSelected', {
+                      count: selectedCount,
+                    }) as string)
+                  : (t('aiProviders.models.actions.addChannel') as string)
+            }
+            disabled={!canManageModels || isBatchToggling}
+            hasActiveFilters={hasActiveFilters}
+          />
+          <ModelTypeChips
+            availableTypes={availableUseCases}
+            selectedType={selectedUseCase}
+            onSelect={setSelectedUseCase}
+          />
         </div>
       )}
 
-      <div className="space-y-2">
-        <ModelsActionsBar
-          totalCount={allModels.length}
-          visibleCount={officialVisible.length + extensibleVisible.length}
-          query={query}
-          onQueryChange={setQuery}
-          onEnableVisible={() => onToggleVisibleModels(true)}
-          onDisableVisible={() => onToggleVisibleModels(false)}
-          extraActions={
-            canManageModels && !IS_CLOUD && !isCustom ? (
-              <ModelUpdatesButton providerId={provider} />
-            ) : undefined
-          }
-          onAdd={canManageModels ? handleAdd : undefined}
-          addLabel={
-            isCustom
-              ? (t('aiProviders.models.actions.add') as string)
-              : selectedCount > 0
-                ? (t('aiProviders.models.actions.addChannelForSelected', {
-                    count: selectedCount,
-                  }) as string)
-                : (t('aiProviders.models.actions.addChannel') as string)
-          }
-          disabled={!canManageModels || isBatchToggling}
-          hasActiveFilters={hasActiveFilters}
-        />
-        <ModelTypeChips
-          availableTypes={availableUseCases}
-          selectedType={selectedUseCase}
-          onSelect={setSelectedUseCase}
-        />
-      </div>
+      {!hasModelsLoadError && !hasAnyConnectedModels ? pendingModelsSection : null}
 
-      {!hasAnyConnectedModels ? pendingModelsSection : null}
-
-      {isCustom || hasAnyConnectedModels || !hasAnyPendingModels ? (
+      {!hasModelsLoadError && (isCustom || hasAnyConnectedModels || !hasAnyPendingModels) ? (
         <ModelsGroupTable
           title={t('aiProviders.models.groups.official')}
           tooltip={t('aiProviders.models.tooltips.official')}
@@ -645,9 +679,9 @@ export default function ModelPage() {
         />
       ) : null}
 
-      {hasAnyConnectedModels ? pendingModelsSection : null}
+      {!hasModelsLoadError && hasAnyConnectedModels ? pendingModelsSection : null}
 
-      {isCustom ? (
+      {!hasModelsLoadError && isCustom ? (
         <ModelsGroupTable
           title={t('aiProviders.models.groups.extensible')}
           tooltip={t('aiProviders.models.tooltips.extensible')}
@@ -704,7 +738,7 @@ export default function ModelPage() {
       ) : null}
 
       {/* Floating action bar for batch operations */}
-      {canManageModels && selectedCount > 0 && (
+      {!hasModelsLoadError && canManageModels && selectedCount > 0 && (
         <div className="fixed bottom-6 left-6 right-6 z-40">
           <div className="mx-auto max-w-5xl rounded-xl border bg-background/95 backdrop-blur-sm p-4 shadow-xl flex items-center justify-between">
             <div className="text-sm font-medium">

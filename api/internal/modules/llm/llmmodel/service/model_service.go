@@ -411,6 +411,14 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
+	costCacheRead, err := parseOptionalModelPrice(req.CacheReadPrice, "cache_read_price")
+	if err != nil {
+		return nil, err
+	}
+	costCacheWrite, err := parseOptionalModelPrice(req.CacheWritePrice, "cache_write_price")
+	if err != nil {
+		return nil, err
+	}
 
 	useCases := model.EnsureUseCases(req.UseCases, req.Endpoints)
 
@@ -437,26 +445,30 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 	}
 
 	m := &model.CustomModel{
-		OrganizationID:        organizationID,
-		ProviderID:            providerID,
-		Provider:              req.Provider,
-		Name:                  req.Name,
-		DisplayName:           req.DisplayName,
-		UseCases:              model.StringArray(useCases),
-		ContextWindow:         req.ContextWindow,
-		MaxOutputTokens:       req.MaxOutputTokens,
-		InputPrice:            costInput,
-		OutputPrice:           costOutput,
-		InputPriceConfigured:  modelPriceConfigured(req.InputPrice),
-		OutputPriceConfigured: modelPriceConfigured(req.OutputPrice),
-		KnowledgeCutoff:       req.KnowledgeCutoff,
-		Description:           req.Description,
-		IsActive:              true,
-		Endpoints:             endpoints,
-		Features:              features,
-		Tools:                 tools,
-		Parameters:            parameters,
-		ConfigParameters:      configParameters,
+		OrganizationID:            organizationID,
+		ProviderID:                providerID,
+		Provider:                  req.Provider,
+		Name:                      req.Name,
+		DisplayName:               req.DisplayName,
+		UseCases:                  model.StringArray(useCases),
+		ContextWindow:             req.ContextWindow,
+		MaxOutputTokens:           req.MaxOutputTokens,
+		InputPrice:                costInput,
+		OutputPrice:               costOutput,
+		CostCacheRead:             costCacheRead,
+		CostCacheWrite:            costCacheWrite,
+		InputPriceConfigured:      modelPriceConfigured(req.InputPrice),
+		OutputPriceConfigured:     modelPriceConfigured(req.OutputPrice),
+		CacheReadPriceConfigured:  modelPriceConfigured(req.CacheReadPrice),
+		CacheWritePriceConfigured: modelPriceConfigured(req.CacheWritePrice),
+		KnowledgeCutoff:           req.KnowledgeCutoff,
+		Description:               req.Description,
+		IsActive:                  true,
+		Endpoints:                 endpoints,
+		Features:                  features,
+		Tools:                     tools,
+		Parameters:                parameters,
+		ConfigParameters:          configParameters,
 	}
 
 	if err := s.customRepo.Create(ctx, m); err != nil {
@@ -527,6 +539,22 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 		}
 		m.OutputPrice = price
 		m.OutputPriceConfigured = modelPriceConfigured(*req.OutputPrice)
+	}
+	if req.CacheReadPrice != nil {
+		price, err := parseOptionalModelPrice(*req.CacheReadPrice, "cache_read_price")
+		if err != nil {
+			return nil, err
+		}
+		m.CostCacheRead = price
+		m.CacheReadPriceConfigured = modelPriceConfigured(*req.CacheReadPrice)
+	}
+	if req.CacheWritePrice != nil {
+		price, err := parseOptionalModelPrice(*req.CacheWritePrice, "cache_write_price")
+		if err != nil {
+			return nil, err
+		}
+		m.CostCacheWrite = price
+		m.CacheWritePriceConfigured = modelPriceConfigured(*req.CacheWritePrice)
 	}
 	if req.KnowledgeCutoff != nil {
 		m.KnowledgeCutoff = *req.KnowledgeCutoff
@@ -878,6 +906,8 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		// Convert decimal to float64 for custom models
 		customInputPrice, _ := m.InputPrice.Float64()
 		customOutputPrice, _ := m.OutputPrice.Float64()
+		customCacheReadPrice, _ := m.CostCacheRead.Float64()
+		customCacheWritePrice, _ := m.CostCacheWrite.Float64()
 
 		// Custom models are available if they have routes configured
 		customIsAvailable := availableModels.Supports(m.Provider, m.Name)
@@ -896,11 +926,15 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			OpenWeights:   false,
 
 			// Pricing (per million tokens)
-			Currency:              "USD",
-			InputPrice:            customInputPrice,
-			OutputPrice:           customOutputPrice,
-			InputPriceConfigured:  m.InputPriceConfigured,
-			OutputPriceConfigured: m.OutputPriceConfigured,
+			Currency:                  "USD",
+			InputPrice:                customInputPrice,
+			OutputPrice:               customOutputPrice,
+			InputPriceConfigured:      m.InputPriceConfigured,
+			OutputPriceConfigured:     m.OutputPriceConfigured,
+			CacheReadPrice:            customCacheReadPrice,
+			CacheWritePrice:           customCacheWritePrice,
+			CacheReadPriceConfigured:  m.CacheReadPriceConfigured,
+			CacheWritePriceConfigured: m.CacheWritePriceConfigured,
 
 			// Context
 			ContextWindow:   m.ContextWindow,

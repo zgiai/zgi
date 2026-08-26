@@ -182,7 +182,13 @@ export function useInvocationLog(params: GetInvocationLogParams, enabled = true)
     queryFn: () => statisticsService.getInvocationLog(params),
     enabled,
     staleTime: 60_000,
-    retry: false,
+    // Retry one transient read failure, but leave authorization and other
+    // deterministic client errors for the inline error state to surface.
+    retry: (failureCount, error) => {
+      if (failureCount >= 1 || !isAxiosError(error)) return false;
+      const status = error.response?.status;
+      return status === undefined || status === 429 || status >= 500;
+    },
   });
 
   useEffect(() => {
@@ -209,6 +215,8 @@ export function useInvocationLog(params: GetInvocationLogParams, enabled = true)
         ...item,
         attempt_count: toNumber(item.attempt_count),
         prompt_tokens: toNumber(item.prompt_tokens),
+        cache_read_tokens: toNumber(item.cache_read_tokens),
+        cache_write_tokens: toNumber(item.cache_write_tokens),
         completion_tokens: toNumber(item.completion_tokens),
         total_tokens: toNumber(item.total_tokens),
         total_points: normalizeAiCreditValue(toNumber(item.total_points), { precision: 3 }) ?? 0,

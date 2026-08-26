@@ -15,12 +15,18 @@ for (const [locale, usageMessages] of [
   ['en-US', enMessages.usage],
   ['zh-Hans', zhHansMessages.usage],
 ]) {
-  const visibleCopy = collectStrings(usageMessages).join('\n');
+  const visibleCopy = collectStrings({
+    ...usageMessages,
+    invocations: {
+      ...usageMessages.invocations,
+      details: undefined,
+    },
+  }).join('\n');
 
   assert.doesNotMatch(
     visibleCopy,
     /点数|\bpoints?\b|\bcredits?\b/i,
-    `${locale} usage copy must describe fiat cost instead of internal credits`
+    `${locale} non-detail usage copy must describe fiat cost instead of internal credits`
   );
 }
 

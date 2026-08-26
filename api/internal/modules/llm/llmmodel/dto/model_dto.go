@@ -103,6 +103,8 @@ type CreateCustomModelRequest struct {
 	MaxOutputTokens int    `json:"max_output_tokens"`
 	InputPrice      string `json:"input_price"`
 	OutputPrice     string `json:"output_price"`
+	CacheReadPrice  string `json:"cache_read_price"`
+	CacheWritePrice string `json:"cache_write_price"`
 	KnowledgeCutoff string `json:"knowledge_cutoff"`
 	Description     string `json:"description"`
 
@@ -121,6 +123,8 @@ type UpdateCustomModelRequest struct {
 	MaxOutputTokens *int     `json:"max_output_tokens"`
 	InputPrice      *string  `json:"input_price"`
 	OutputPrice     *string  `json:"output_price"`
+	CacheReadPrice  *string  `json:"cache_read_price"`
+	CacheWritePrice *string  `json:"cache_write_price"`
 	KnowledgeCutoff *string  `json:"knowledge_cutoff"`
 	Description     *string  `json:"description"`
 	IsActive        *bool    `json:"is_active"`

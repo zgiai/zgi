@@ -412,6 +412,9 @@ type SettlementResult struct {
 	OfficialPoints   int64  `json:"official_points"`
 	RemainingBalance int64  `json:"remaining_balance"`
 	Status           string `json:"status"`
+	TotalCostUSD     string `json:"total_cost_usd,omitempty"`
+	TotalCostCNY     string `json:"total_cost_cny,omitempty"`
+	CNYPerUSD        string `json:"cny_per_usd,omitempty"`
 }
 
 // SettlementError carries console-api settlement failure data for official streams.

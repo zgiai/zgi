@@ -1,15 +1,18 @@
 'use client';
 
 import { useState } from 'react';
+import { useLocale } from 'next-intl';
 import { useT } from '@/i18n/translations';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RechargeDialog } from '@/components/dashboard/recharge/recharge-dialog';
 import { useWallet } from '@/hooks/pay/use-wallet';
+import { formatRecordedCurrencyAmount } from '@/utils/billing-display';
 
 export function WalletCard() {
   const t = useT('dashboard');
+  const locale = useLocale();
   const [isRechargeDialogOpen, setIsRechargeDialogOpen] = useState(false);
   const { data: walletData, isLoading: isWalletLoading, refetch: refetchWallet } = useWallet();
 
@@ -33,7 +36,9 @@ export function WalletCard() {
             </>
           ) : (
             <>
-              <div className="text-2xl font-bold mb-1">¥ {balance.toFixed(2)}</div>
+              <div className="text-2xl font-bold mb-1">
+                {formatRecordedCurrencyAmount(balance, walletData?.currency || 'CNY', { locale })}
+              </div>
             </>
           )}
           <Button

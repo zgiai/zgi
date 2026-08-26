@@ -261,6 +261,7 @@ const messages: AiProvidersMessages = {
       description: '从左侧选择一个提供商以查看其模型',
     },
     loadError: '加载模型失败：{error}',
+    loadErrorDescription: '暂时无法获取模型列表，可在当前页面直接重试。',
     searchPlaceholder: '搜索模型...',
     features: {
       streaming: '流式输出',

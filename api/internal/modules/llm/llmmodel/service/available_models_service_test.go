@@ -982,17 +982,27 @@ func TestCreateCustomInvalidatesAvailableModelsCache(t *testing.T) {
 	}
 
 	created, err := svc.CreateCustom(context.Background(), organizationID, &llmmodeldto.CreateCustomModelRequest{
-		Provider:    "custom-openai",
-		ProviderID:  &providerID,
-		Name:        "custom-model",
-		DisplayName: "Custom Model",
-		UseCases:    []string{"chat"},
+		Provider:        "custom-openai",
+		ProviderID:      &providerID,
+		Name:            "custom-model",
+		DisplayName:     "Custom Model",
+		UseCases:        []string{"chat"},
+		InputPrice:      "1",
+		OutputPrice:     "2",
+		CacheReadPrice:  "0.25",
+		CacheWritePrice: "1.25",
 	})
 	if err != nil {
 		t.Fatalf("CreateCustom returned error: %v", err)
 	}
 	if containsUseCase(types.StringArray(created.UseCases), "workflow") {
 		t.Fatalf("private model use_cases = %v, want no workflow projection", created.UseCases)
+	}
+	if !created.CostCacheRead.Equal(decimal.RequireFromString("0.25")) || !created.CacheReadPriceConfigured {
+		t.Fatalf("cache read price = %s configured=%v, want 0.25 configured", created.CostCacheRead, created.CacheReadPriceConfigured)
+	}
+	if !created.CostCacheWrite.Equal(decimal.RequireFromString("1.25")) || !created.CacheWritePriceConfigured {
+		t.Fatalf("cache write price = %s configured=%v, want 1.25 configured", created.CostCacheWrite, created.CacheWritePriceConfigured)
 	}
 	if len(availableSvc.invalidated) != 1 || availableSvc.invalidated[0] != organizationID {
 		t.Fatalf("invalidated tenants = %v, want [%s]", availableSvc.invalidated, organizationID)
@@ -1061,14 +1071,24 @@ func TestUpdateCustomInvalidatesAvailableModelsCache(t *testing.T) {
 	}
 
 	displayName := "Renamed Model"
-	_, err := svc.UpdateCustom(context.Background(), organizationID, modelID, &llmmodeldto.UpdateCustomModelRequest{
-		DisplayName: &displayName,
+	cacheReadPrice := "0"
+	cacheWritePrice := ""
+	updated, err := svc.UpdateCustom(context.Background(), organizationID, modelID, &llmmodeldto.UpdateCustomModelRequest{
+		DisplayName:     &displayName,
+		CacheReadPrice:  &cacheReadPrice,
+		CacheWritePrice: &cacheWritePrice,
 	})
 	if err != nil {
 		t.Fatalf("UpdateCustom returned error: %v", err)
 	}
 	if len(availableSvc.invalidated) != 1 || availableSvc.invalidated[0] != organizationID {
 		t.Fatalf("invalidated tenants = %v, want [%s]", availableSvc.invalidated, organizationID)
+	}
+	if !updated.CostCacheRead.IsZero() || !updated.CacheReadPriceConfigured {
+		t.Fatalf("cache read price = %s configured=%v, want explicit free price", updated.CostCacheRead, updated.CacheReadPriceConfigured)
+	}
+	if !updated.CostCacheWrite.IsZero() || updated.CacheWritePriceConfigured {
+		t.Fatalf("cache write price = %s configured=%v, want unconfigured", updated.CostCacheWrite, updated.CacheWritePriceConfigured)
 	}
 }
 

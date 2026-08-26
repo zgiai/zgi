@@ -22,28 +22,50 @@ type InvocationLogSummary struct {
 }
 
 type InvocationLogItem struct {
-	InvocationID     string  `json:"invocation_id"`
-	InvocationSource string  `json:"invocation_source"`
-	AppID            *string `json:"app_id,omitempty"`
-	AppType          string  `json:"app_type"`
-	ModelName        string  `json:"model_name"`
-	ProviderName     string  `json:"provider_name"`
-	ChannelName      string  `json:"channel_name"`
-	Status           string  `json:"status"`
-	AttemptCount     int64   `json:"attempt_count"`
-	PromptTokens     int64   `json:"prompt_tokens"`
-	CacheReadTokens  int64   `json:"cache_read_tokens"`
-	CacheWriteTokens int64   `json:"cache_write_tokens"`
-	CompletionTokens int64   `json:"completion_tokens"`
-	TotalTokens      int64   `json:"total_tokens"`
-	TotalPoints      int64   `json:"total_points"`
-	TotalCostUSD     *string `json:"total_cost_usd,omitempty"`
-	DurationMS       int64   `json:"duration_ms"`
-	StartedAt        int64   `json:"started_at"`
-	SettledAt        int64   `json:"settled_at"`
-	ErrorCode        *string `json:"error_code,omitempty"`
-	ContentAvailable bool    `json:"content_available"`
-	ContentExpiresAt *int64  `json:"content_expires_at,omitempty"`
+	InvocationID     string                    `json:"invocation_id"`
+	InvocationSource string                    `json:"invocation_source"`
+	AppID            *string                   `json:"app_id,omitempty"`
+	AppType          string                    `json:"app_type"`
+	ModelName        string                    `json:"model_name"`
+	ProviderName     string                    `json:"provider_name"`
+	ChannelName      string                    `json:"channel_name"`
+	Status           string                    `json:"status"`
+	AttemptCount     int64                     `json:"attempt_count"`
+	PromptTokens     int64                     `json:"prompt_tokens"`
+	CacheReadTokens  int64                     `json:"cache_read_tokens"`
+	CacheWriteTokens int64                     `json:"cache_write_tokens"`
+	CompletionTokens int64                     `json:"completion_tokens"`
+	TotalTokens      int64                     `json:"total_tokens"`
+	TotalPoints      int64                     `json:"total_points"`
+	TotalCostUSD     *string                   `json:"total_cost_usd,omitempty"`
+	TotalCostCNY     *string                   `json:"total_cost_cny,omitempty"`
+	PricingDetails   *InvocationPricingDetails `json:"pricing_details,omitempty"`
+	DurationMS       int64                     `json:"duration_ms"`
+	StartedAt        int64                     `json:"started_at"`
+	SettledAt        int64                     `json:"settled_at"`
+	ErrorCode        *string                   `json:"error_code,omitempty"`
+	ContentAvailable bool                      `json:"content_available"`
+	ContentExpiresAt *int64                    `json:"content_expires_at,omitempty"`
+}
+
+type InvocationPricingDetails struct {
+	BillingLane                   string  `json:"billing_lane"`
+	PricingSource                 string  `json:"pricing_source,omitempty"`
+	UsageSource                   string  `json:"usage_source,omitempty"`
+	InputPriceUSDPer1MTokens      *string `json:"input_price_usd_per_1m_tokens,omitempty"`
+	CacheReadPriceUSDPer1MTokens  *string `json:"cache_read_price_usd_per_1m_tokens,omitempty"`
+	CacheWritePriceUSDPer1MTokens *string `json:"cache_write_price_usd_per_1m_tokens,omitempty"`
+	OutputPriceUSDPer1MTokens     *string `json:"output_price_usd_per_1m_tokens,omitempty"`
+	InputCostUSD                  *string `json:"input_cost_usd,omitempty"`
+	CacheReadCostUSD              *string `json:"cache_read_cost_usd,omitempty"`
+	CacheWriteCostUSD             *string `json:"cache_write_cost_usd,omitempty"`
+	OutputCostUSD                 *string `json:"output_cost_usd,omitempty"`
+	CNYPerUSD                     *string `json:"cny_per_usd,omitempty"`
+	BillingDisplayCurrency        string  `json:"billing_display_currency,omitempty"`
+	InputPriceSource              string  `json:"input_price_source,omitempty"`
+	CacheReadPriceSource          string  `json:"cache_read_price_source,omitempty"`
+	CacheWritePriceSource         string  `json:"cache_write_price_source,omitempty"`
+	OutputPriceSource             string  `json:"output_price_source,omitempty"`
 }
 
 type InvocationLogCursor struct {

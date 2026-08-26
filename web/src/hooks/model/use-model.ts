@@ -137,14 +137,17 @@ export function useProviderModelsAll(
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    retry: false,
+    retry: (failureCount, requestError) => isNetworkError(requestError) && failureCount < 1,
+    retryDelay: 500,
   });
 
   useEffect(() => {
     if (error) {
-      showErrorToast(t('messages.loadFailed'), error);
+      showErrorToast(t('messages.loadFailed'), error, {
+        id: `provider-models-load-failed:${provider || 'unknown'}`,
+      });
     }
-  }, [error, t]);
+  }, [error, provider, t]);
 
   return {
     models: (data?.data?.items ?? []).map(normalizeModel),

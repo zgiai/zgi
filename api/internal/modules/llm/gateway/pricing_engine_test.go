@@ -98,6 +98,54 @@ func TestPricingEngineQuoteTokenUsageSeparatesCacheComponents(t *testing.T) {
 	}
 }
 
+func TestPricingEngineQuoteTokenUsageUsesCustomModelCachePrices(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	if err := db.Exec(`CREATE TABLE llm_custom_models (
+		id text PRIMARY KEY,
+		provider text,
+		name text,
+		input_price decimal,
+		output_price decimal,
+		cost_cache_read decimal,
+		cost_cache_write decimal,
+		input_price_configured boolean,
+		output_price_configured boolean,
+		cache_read_price_configured boolean,
+		cache_write_price_configured boolean
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	modelID := uuid.New()
+	if err := db.Exec(`INSERT INTO llm_custom_models (
+		id, provider, name, input_price, output_price, cost_cache_read, cost_cache_write,
+		input_price_configured, output_price_configured,
+		cache_read_price_configured, cache_write_price_configured
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		modelID.String(), "custom-openai", "custom-model", "1", "2", "0.25", "1.25",
+		true, true, true, true,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	engine := NewPricingEngine(db).(cacheTokenPricingEngine)
+	quote, err := engine.QuoteTokenUsage(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceCustom,
+	}, TokenUsage{
+		InputTokens: 100, CacheReadTokens: 200, CacheWriteTokens: 300, OutputTokens: 400,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quote.CacheReadUSD.Equal(decimal.RequireFromString("0.00005")) {
+		t.Fatalf("cache read cost = %s, want 0.00005", quote.CacheReadUSD)
+	}
+	if !quote.CacheWriteUSD.Equal(decimal.RequireFromString("0.000375")) {
+		t.Fatalf("cache write cost = %s, want 0.000375", quote.CacheWriteUSD)
+	}
+}
+
 func insertPricingModelNamed(t *testing.T, db *gorm.DB, modelID uuid.UUID, provider string, name string, inputPrice string, outputPrice string, inputConfigured bool, outputConfigured bool, imagePrices string) {
 	t.Helper()
 	if imagePrices == "" {

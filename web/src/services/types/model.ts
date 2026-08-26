@@ -163,6 +163,8 @@ export interface ModelItem {
   cached_input_price?: number;
   cache_read_price?: number;
   cache_write_price?: number;
+  cache_read_price_configured?: boolean;
+  cache_write_price_configured?: boolean;
   synced_input_price?: number | null;
   synced_output_price?: number | null;
   synced_cache_read_price?: number | null;
@@ -274,6 +276,8 @@ export interface CreateCustomModelRequest {
   max_output_tokens?: number;
   input_price?: string;
   output_price?: string;
+  cache_read_price?: string;
+  cache_write_price?: string;
   knowledge_cutoff?: string;
   description?: string;
   endpoints?: ModelEndpoints;

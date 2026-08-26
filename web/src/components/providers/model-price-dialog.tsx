@@ -132,14 +132,24 @@ export function ModelPriceDialog({
               model.output_price_configured,
               billingDisplay
             ),
-      cacheReadPrice:
-        model.cache_read_price_override == null
+      cacheReadPrice: isSyncedModel
+        ? model.cache_read_price_override == null
           ? ''
-          : billingDisplayInputValueFromUSD(model.cache_read_price_override, true, billingDisplay),
-      cacheWritePrice:
-        model.cache_write_price_override == null
+          : billingDisplayInputValueFromUSD(model.cache_read_price_override, true, billingDisplay)
+        : billingDisplayInputValueFromUSD(
+            model.cache_read_price,
+            model.cache_read_price_configured,
+            billingDisplay
+          ),
+      cacheWritePrice: isSyncedModel
+        ? model.cache_write_price_override == null
           ? ''
-          : billingDisplayInputValueFromUSD(model.cache_write_price_override, true, billingDisplay),
+          : billingDisplayInputValueFromUSD(model.cache_write_price_override, true, billingDisplay)
+        : billingDisplayInputValueFromUSD(
+            model.cache_write_price,
+            model.cache_write_price_configured,
+            billingDisplay
+          ),
     });
   }, [billingDisplay, isImage, isInputOnly, isSyncedModel, model]);
 

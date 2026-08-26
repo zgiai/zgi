@@ -32,6 +32,9 @@ const (
 	headerOfficialPoints    = "X-ZGI-Official-Points"
 	headerRemainingBalance  = "X-ZGI-Remaining-Balance"
 	headerSettlementStatus  = "X-ZGI-Settlement-Status"
+	headerTotalCostUSD      = "X-ZGI-Total-Cost-USD"
+	headerTotalCostCNY      = "X-ZGI-Total-Cost-CNY"
+	headerCNYPerUSD         = "X-ZGI-CNY-Per-USD"
 	headerZGIRequestID      = "X-ZGI-Request-ID"
 	headerZGIModelName      = "X-ZGI-Model-Name"
 	headerZGIStreamStatus   = "X-ZGI-Stream-Status"
@@ -836,6 +839,9 @@ func settlementFromHeaders(headers http.Header) *adapter.SettlementResult {
 		OfficialPoints:   points,
 		RemainingBalance: remaining,
 		Status:           status,
+		TotalCostUSD:     strings.TrimSpace(headers.Get(headerTotalCostUSD)),
+		TotalCostCNY:     strings.TrimSpace(headers.Get(headerTotalCostCNY)),
+		CNYPerUSD:        strings.TrimSpace(headers.Get(headerCNYPerUSD)),
 	}
 }
 

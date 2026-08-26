@@ -131,6 +131,8 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 			"completion_tokens":              completionTokens,
 			"input_price_usd_per_1m_tokens":  model.InputPrice.String(),
 			"output_price_usd_per_1m_tokens": model.OutputPrice.String(),
+			"input_price_source":             configuredPriceSource(model.InputPriceOrganizationOverride),
+			"output_price_source":            configuredPriceSource(model.OutputPriceOrganizationOverride),
 			"input_price_configured":         model.InputPriceConfigured,
 			"output_price_configured":        model.OutputPriceConfigured,
 		})
@@ -211,6 +213,10 @@ func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef
 }
 
 func cachePriceSource(organizationOverride bool) string {
+	return configuredPriceSource(organizationOverride)
+}
+
+func configuredPriceSource(organizationOverride bool) string {
 	if organizationOverride {
 		return "organization_override"
 	}
@@ -396,6 +402,8 @@ func (e *pricingEngine) quoteTokensWithFallback(
 		"output_rule_source":             outputRule.PricingSource,
 		"input_price_from_model":         inputFromModel,
 		"output_price_from_model":        outputFromModel,
+		"input_price_source":             resolvedTokenPriceSource(inputFromModel, modelPriceOrganizationOverride(model, true), inputRule.PricingSource),
+		"output_price_source":            resolvedTokenPriceSource(outputFromModel, modelPriceOrganizationOverride(model, false), outputRule.PricingSource),
 	})
 
 	quote := newUSDQuote(inputUSD, outputUSD, source, ruleID, UsageSourceProviderUsage, snapshot)
@@ -408,6 +416,23 @@ func (e *pricingEngine) quoteTokensWithFallback(
 		inputRule.ID,
 		outputRule.ID,
 	), nil
+}
+
+func resolvedTokenPriceSource(fromModel bool, organizationOverride bool, fallbackSource PricingSource) string {
+	if fromModel {
+		return configuredPriceSource(organizationOverride)
+	}
+	return string(fallbackSource)
+}
+
+func modelPriceOrganizationOverride(model *pricingModelRecord, input bool) bool {
+	if model == nil {
+		return false
+	}
+	if input {
+		return model.InputPriceOrganizationOverride
+	}
+	return model.OutputPriceOrganizationOverride
 }
 
 func (e *pricingEngine) quoteImageWithFallback(

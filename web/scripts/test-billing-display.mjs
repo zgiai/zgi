@@ -8,6 +8,9 @@ import {
   billingDisplayInputValueFromUSD,
   formatBillingDisplayAmountFromUSD,
   formatBillingDisplayAmountFromNormalizedCredits,
+  formatRecordedBillingAmountFromUSD,
+  formatRecordedCurrencyAmount,
+  formatCatalogCurrencyAmount,
   getBillingDisplaySettings,
   normalizedAiCreditsToUSD,
 } from '../src/utils/billing-display.ts';
@@ -92,6 +95,27 @@ assert.equal(
   formatBillingDisplayAmountFromUSD('0.000167591', usdSettings),
   '$0.000167591',
   'exact settled USD strings must not be reconstructed from rounded integer credits'
+);
+
+assert.equal(
+  formatRecordedBillingAmountFromUSD('0.006601', 'CNY', '7.2', { locale: 'en-US' }),
+  '¥0.0475272',
+  'historical CNY display must use the exchange rate recorded with the call'
+);
+assert.equal(
+  formatRecordedBillingAmountFromUSD('0.006601', 'CNY', undefined, { locale: 'en-US' }),
+  '$0.006601',
+  'historical records without a rate must preserve their actual USD currency'
+);
+assert.match(
+  formatRecordedCurrencyAmount(100, 'CNY', { locale: 'en-US' }),
+  /CNY\s*100\.00/,
+  'commercial balances must display their own currency code'
+);
+assert.match(
+  formatCatalogCurrencyAmount(72, 'CNY', usdSettings, { locale: 'en-US' }),
+  /^≈USD\s*10\.29$/,
+  'current product catalog prices may follow the organization display currency using the current rate'
 );
 
 assert.equal(
@@ -296,6 +320,10 @@ const [enSettingsSource, zhHansSettingsSource] = await Promise.all([
   readFile(new URL('../src/i18n/modules/settings/en-US.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/i18n/modules/settings/zh-Hans.ts', import.meta.url), 'utf8'),
 ]);
+const [customModelDialogSource, providerModelPageSource] = await Promise.all([
+  readFile(new URL('../src/components/providers/custom-model-dialog.tsx', import.meta.url), 'utf8'),
+  readFile(new URL('../src/app/dashboard/provider/[providerId]/page.tsx', import.meta.url), 'utf8'),
+]);
 const tokenPriceCellSource = pricingFallbackSource.slice(
   pricingFallbackSource.indexOf('function TokenPriceCell'),
   pricingFallbackSource.indexOf('function ImagePriceCell')
@@ -340,6 +368,26 @@ assert.match(
   enSettingsSource,
   /cnyPerMillionShort: 'CNY \/ 1M tokens'/,
   'the English token price unit must follow CNY display mode'
+);
+assert.match(
+  customModelDialogSource,
+  /input_price: billingDisplayInputToUSD\(values\.input_price \?\? '', billingDisplay\)/,
+  'custom model display prices must be converted back to canonical USD before saving'
+);
+assert.match(
+  customModelDialogSource,
+  /cache_read_price: billingDisplayInputToUSD/,
+  'custom models must submit a distinct cache read price'
+);
+assert.match(
+  customModelDialogSource,
+  /cache_write_price: billingDisplayInputToUSD/,
+  'custom models must submit a distinct cache write price'
+);
+assert.match(
+  providerModelPageSource,
+  /cache_read_price: values\.cacheReadPrice,[\s\S]*cache_write_price: values\.cacheWritePrice/,
+  'the custom model price shortcut must persist both cache price fields'
 );
 
 console.log('Billing display checks passed.');

@@ -65,6 +65,7 @@
     "test:console-navigation-routes": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-console-navigation-routes.mjs",
     "test:app-sidebar-items": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-app-sidebar-items.mjs",
     "test:model-usage-app-types": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-model-usage-app-types.mjs",
+    "test:invocation-log-loading-state": "node scripts/test-invocation-log-loading-state.mjs",
     "test:route-access": "node scripts/test-route-access.mjs",
     "test:billing-display": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-billing-display.mjs && node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-usage-fiat-display.mjs",
     "test:work-layout-request-lifecycle": "node scripts/test-work-layout-request-lifecycle.mjs",
