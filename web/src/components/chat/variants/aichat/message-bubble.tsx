@@ -92,6 +92,7 @@ interface AIChatMessageBubbleProps {
   showAssistantModelMeta?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  showWorkflowFailureDetails?: boolean;
   showContextualOperationStatus?: boolean;
   enableToolGovernanceApprovals?: boolean;
   suppressPendingToolGovernanceApprovals?: boolean;
@@ -1169,6 +1170,7 @@ export function AIChatMessageBubble({
   showAssistantModelMeta = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  showWorkflowFailureDetails = true,
   showContextualOperationStatus = false,
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
@@ -1557,6 +1559,7 @@ export function AIChatMessageBubble({
             defaultOpen={shouldOpenTimelineByDefault}
             showMemoryKey={showMemoryKey}
             showSkillEventDetails={showSkillEventDetails}
+            showWorkflowFailureDetails={showWorkflowFailureDetails}
             enableToolGovernanceApprovals={enableToolGovernanceApprovals}
             suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
             messageStatus={message.status}

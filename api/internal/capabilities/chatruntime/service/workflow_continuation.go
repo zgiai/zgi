@@ -29,6 +29,8 @@ const (
 	workflowContinuationCheckpointInterval     = 750 * time.Millisecond
 	workflowContinuationCheckpointBytes        = 4 * 1024
 	workflowContinuationTerminalPersistTimeout = 10 * time.Second
+	publishedWorkflowFailureError              = "workflow run failed"
+	publishedWorkflowErrorVisibility           = "generic"
 )
 
 type WorkflowApprovalContinuation struct {
@@ -56,10 +58,11 @@ type WorkflowApprovalContinuation struct {
 }
 
 type WorkflowContinuationSummaryRequest struct {
-	WorkflowRunID string
-	Status        string
-	Outputs       map[string]interface{}
-	Error         string
+	WorkflowRunID        string
+	Status               string
+	Outputs              map[string]interface{}
+	Error                string
+	FailureDetailsHidden bool
 }
 
 func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error) {
@@ -157,6 +160,7 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 	if eventPayload == nil {
 		eventPayload = map[string]interface{}{}
 	}
+	applyPublishedWorkflowContinuationEventFailureExposure(continuation.Caller, eventType, eventPayload)
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -197,6 +201,7 @@ func (s *service) AppendWorkflowApprovalContinuationStreamEvent(ctx context.Cont
 	if eventPayload == nil {
 		eventPayload = map[string]interface{}{}
 	}
+	applyPublishedWorkflowContinuationEventFailureExposure(continuation.Caller, eventType, eventPayload)
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -262,10 +267,11 @@ func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, sco
 	if continuation == nil || continuation.MessageID == uuid.Nil || continuation.ConversationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
+	req = publishedWorkflowContinuationSummaryRequest(continuation.Caller, req)
 	if workflowContinuationInvocationMode(continuation) == "agent_task_tool" {
 		return s.continueWorkflowTaskInvocation(ctx, scope, continuation, req, onEvent)
 	}
-	if len(req.Outputs) == 0 {
+	if len(req.Outputs) == 0 && !(req.FailureDetailsHidden && workflowContinuationStatusFailedValue(req.Status)) {
 		answer := workflowNoDisplayableOutputAnswer(req.WorkflowRunID)
 		metadata, err := s.CompleteWorkflowApprovalContinuation(ctx, continuation, answer, workflowContinuationStatusCompleted)
 		if err != nil {
@@ -541,6 +547,56 @@ func workflowContinuationAllowsInlineApproval(caller Caller, continuation *Workf
 	}
 }
 
+func publishedWorkflowContinuationSummaryRequest(caller Caller, req WorkflowContinuationSummaryRequest) WorkflowContinuationSummaryRequest {
+	if !publishedWorkflowContinuationFailureDetailsHidden(caller) || !workflowContinuationStatusFailedValue(req.Status) {
+		return req
+	}
+	req.Error = publishedWorkflowFailureError
+	req.FailureDetailsHidden = true
+	return req
+}
+
+func applyPublishedWorkflowContinuationEventFailureExposure(caller Caller, eventType string, payload map[string]interface{}) {
+	if !publishedWorkflowContinuationFailureDetailsHidden(caller) || payload == nil {
+		return
+	}
+	if !workflowContinuationEventReportsFailure(eventType, payload) {
+		return
+	}
+	payload["error"] = publishedWorkflowFailureError
+	if _, exists := payload["message"]; exists {
+		payload["message"] = publishedWorkflowFailureError
+	}
+	payload["error_visibility"] = publishedWorkflowErrorVisibility
+}
+
+func publishedWorkflowContinuationFailureDetailsHidden(caller Caller) bool {
+	switch strings.ToLower(strings.TrimSpace(caller.Source)) {
+	case runtimemodel.ConversationSourceWebApp, runtimemodel.ConversationSourceExternalAPI:
+		return true
+	default:
+		return false
+	}
+}
+
+func workflowContinuationEventReportsFailure(eventType string, payload map[string]interface{}) bool {
+	eventType = strings.ToLower(strings.TrimSpace(eventType))
+	if eventType == "error" || strings.HasSuffix(eventType, "_failed") {
+		return true
+	}
+	status := strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload["status"])))
+	return status == "failed" || status == "error"
+}
+
+func workflowContinuationStatusFailedValue(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error":
+		return true
+	default:
+		return false
+	}
+}
+
 func workflowContinuationInvocationMode(continuation *WorkflowApprovalContinuation) string {
 	if continuation == nil {
 		return ""
@@ -662,6 +718,9 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 }
 
 func workflowTaskContinuationMessage(continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest) adapter.Message {
+	if continuation != nil {
+		req = publishedWorkflowContinuationSummaryRequest(continuation.Caller, req)
+	}
 	payload := map[string]interface{}{
 		"invocation_id":   continuation.InvocationID,
 		"workflow_run_id": firstNonEmptyString(req.WorkflowRunID, continuation.WorkflowRunID),
@@ -669,14 +728,19 @@ func workflowTaskContinuationMessage(continuation *WorkflowApprovalContinuation,
 		"outputs":         req.Outputs,
 		"error":           strings.TrimSpace(req.Error),
 	}
+	instructions := []string{
+		"The task workflow tool invocation for this same Agent turn has reached a terminal state.",
+		"Treat the JSON below as authoritative tool evidence. Continue the original Agent plan from this result; do not rerun the same workflow invocation.",
+		"You may answer the user if the task is complete, or use other already-authorized tools when the original request still requires work.",
+	}
+	if req.FailureDetailsHidden {
+		payload["error_visibility"] = publishedWorkflowErrorVisibility
+		instructions = append(instructions, "The failure reason is intentionally hidden. Tell the user only that the workflow run failed; do not include identifiers and do not state or infer a specific reason.")
+	}
+	instructions = append(instructions, "Workflow task result JSON:\n"+compactJSONForPrompt(payload, 24000))
 	return adapter.Message{
-		Role: "user",
-		Content: strings.Join([]string{
-			"The task workflow tool invocation for this same Agent turn has reached a terminal state.",
-			"Treat the JSON below as authoritative tool evidence. Continue the original Agent plan from this result; do not rerun the same workflow invocation.",
-			"You may answer the user if the task is complete, or use other already-authorized tools when the original request still requires work.",
-			"Workflow task result JSON:\n" + compactJSONForPrompt(payload, 24000),
-		}, "\n"),
+		Role:    "user",
+		Content: strings.Join(instructions, "\n"),
 	}
 }
 
@@ -719,6 +783,9 @@ func workflowContinuationMetadataWithoutUserInputRequest(metadata map[string]int
 }
 
 func workflowSummaryLLMRequest(message *runtimemodel.Message, continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest) *adapter.ChatRequest {
+	if continuation != nil {
+		req = publishedWorkflowContinuationSummaryRequest(continuation.Caller, req)
+	}
 	provider := ""
 	if message != nil && message.ModelProvider != nil {
 		provider = strings.TrimSpace(*message.ModelProvider)
@@ -742,6 +809,10 @@ func workflowSummaryLLMRequest(message *runtimemodel.Message, continuation *Work
 		userQuery = strings.TrimSpace(continuation.OriginalQuery)
 	}
 	content := fmt.Sprintf("Original user request:\n%s\n\nWorkflow run id:\n%s\n\nWorkflow status:\n%s\n\nWorkflow error:\n%s\n\nWorkflow outputs JSON:\n%s", userQuery, workflowRunID, status, errorText, outputsJSON)
+	systemPrompt := "You are writing the final response for an Agent after a task workflow completed. Use only the workflow outputs, workflow status, workflow error, and workflow_run_id provided by the user message. Do not invent results, files, approvals, or data that are not present. Do not answer the original user request yourself; treat it only as context for explaining the workflow result. If the workflow outputs do not contain the requested business result, say what the workflow actually returned and include the workflow_run_id. If the workflow failed, explain the failure briefly and include the workflow_run_id. If the workflow outputs are enough, summarize them clearly for the user."
+	if req.FailureDetailsHidden {
+		systemPrompt = "You are writing the final response for an Agent after a workflow failed. The failure reason is intentionally hidden. Respond in the user's language and tell the user only that the workflow run failed. Do not include identifiers and do not state or infer a specific reason."
+	}
 	chatReq := &adapter.ChatRequest{
 		Provider: provider,
 		Model:    model,
@@ -749,7 +820,7 @@ func workflowSummaryLLMRequest(message *runtimemodel.Message, continuation *Work
 		Messages: []adapter.Message{
 			{
 				Role:    "system",
-				Content: "You are writing the final response for an Agent after a task workflow completed. Use only the workflow outputs, workflow status, workflow error, and workflow_run_id provided by the user message. Do not invent results, files, approvals, or data that are not present. Do not answer the original user request yourself; treat it only as context for explaining the workflow result. If the workflow outputs do not contain the requested business result, say what the workflow actually returned and include the workflow_run_id. If the workflow failed, explain the failure briefly and include the workflow_run_id. If the workflow outputs are enough, summarize them clearly for the user.",
+				Content: systemPrompt,
 			},
 			{Role: "user", Content: content},
 		},

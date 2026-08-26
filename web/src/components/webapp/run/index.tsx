@@ -2127,6 +2127,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         <ExecutionTab
           items={runItems}
           showDetail={false}
+          showFailureDetails={false}
           showHeader={false}
           emptyTitle={t('run.notRunYet')}
           emptyDescription={t('run.executionEmptyDescription')}

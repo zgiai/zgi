@@ -60,6 +60,48 @@ func TestWorkflowSummaryLLMRequestUsesOriginalMessageModelAndWorkflowOutputs(t *
 	}
 }
 
+func TestWorkflowSummaryLLMRequestHidesPublishedFailureReason(t *testing.T) {
+	detail := "no enabled route for deepseek-chat"
+	for _, source := range []string{runtimemodel.ConversationSourceWebApp, runtimemodel.ConversationSourceExternalAPI} {
+		t.Run(source, func(t *testing.T) {
+			req := workflowSummaryLLMRequest(&runtimemodel.Message{}, &WorkflowApprovalContinuation{
+				WorkflowRunID: "run-1",
+				OriginalQuery: "请运行工作流",
+				Caller:        Caller{Source: source},
+			}, WorkflowContinuationSummaryRequest{
+				Status: "failed",
+				Error:  detail,
+			})
+			if len(req.Messages) != 2 {
+				t.Fatalf("messages len = %d, want 2", len(req.Messages))
+			}
+			systemPrompt, _ := req.Messages[0].Content.(string)
+			userPrompt, _ := req.Messages[1].Content.(string)
+			combined := systemPrompt + "\n" + userPrompt
+			if strings.Contains(combined, detail) {
+				t.Fatalf("published summary prompt exposed detailed error:\n%s", combined)
+			}
+			for _, want := range []string{publishedWorkflowFailureError, "only that the workflow run failed", "do not state or infer a specific reason"} {
+				if !strings.Contains(combined, want) {
+					t.Fatalf("published summary prompt missing %q:\n%s", want, combined)
+				}
+			}
+		})
+	}
+}
+
+func TestWorkflowSummaryLLMRequestKeepsConsoleDebugFailureReason(t *testing.T) {
+	detail := "no enabled route for deepseek-chat"
+	req := workflowSummaryLLMRequest(&runtimemodel.Message{}, &WorkflowApprovalContinuation{
+		WorkflowRunID: "run-1",
+		Caller:        Caller{Source: runtimemodel.ConversationSourceConsole},
+	}, WorkflowContinuationSummaryRequest{Status: "failed", Error: detail})
+	userPrompt, _ := req.Messages[1].Content.(string)
+	if !strings.Contains(userPrompt, detail) {
+		t.Fatalf("console summary prompt = %q, want detailed error", userPrompt)
+	}
+}
+
 func TestWorkflowContinuationMetadataWithStatusPreservesExistingFields(t *testing.T) {
 	runID := uuid.NewString()
 	metadata := workflowContinuationMetadataWithStatus(map[string]interface{}{
@@ -191,6 +233,47 @@ func TestWorkflowContinuationAppendStreamEventAddsRuntimeIDs(t *testing.T) {
 	}
 	if got := firstNonEmptyString(event.Payload["workflow_run_id"]); got != "workflow-run-1" {
 		t.Fatalf("workflow_run_id = %q, want workflow-run-1", got)
+	}
+}
+
+func TestWorkflowContinuationEventsHidePublishedFailureReason(t *testing.T) {
+	detail := "node failed: no enabled route for deepseek-chat"
+	for _, source := range []string{runtimemodel.ConversationSourceWebApp, runtimemodel.ConversationSourceExternalAPI} {
+		t.Run(source, func(t *testing.T) {
+			continuation := &WorkflowApprovalContinuation{
+				ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "workflow-run-1",
+				Caller: Caller{Source: source},
+			}
+			event, err := (&service{}).AppendWorkflowApprovalContinuationStreamEvent(t.Context(), continuation, "node_finished", map[string]interface{}{
+				"status": "failed", "error": detail, "message": detail,
+			})
+			if err != nil {
+				t.Fatalf("AppendWorkflowApprovalContinuationStreamEvent() error = %v", err)
+			}
+			if event.Payload["error"] != publishedWorkflowFailureError || event.Payload["message"] != publishedWorkflowFailureError {
+				t.Fatalf("event payload = %#v, want generic failure", event.Payload)
+			}
+			if event.Payload["error_visibility"] != publishedWorkflowErrorVisibility || strings.Contains(firstNonEmptyString(event.Payload["error"]), detail) {
+				t.Fatalf("event payload exposed detailed failure: %#v", event.Payload)
+			}
+		})
+	}
+}
+
+func TestWorkflowContinuationEventsKeepConsoleDebugFailureReason(t *testing.T) {
+	detail := "node failed: no enabled route for deepseek-chat"
+	continuation := &WorkflowApprovalContinuation{
+		ConversationID: uuid.New(), MessageID: uuid.New(), WorkflowRunID: "workflow-run-1",
+		Caller: Caller{Source: runtimemodel.ConversationSourceConsole},
+	}
+	event, err := (&service{}).AppendWorkflowApprovalContinuationStreamEvent(t.Context(), continuation, "workflow_failed", map[string]interface{}{
+		"status": "failed", "error": detail,
+	})
+	if err != nil {
+		t.Fatalf("AppendWorkflowApprovalContinuationStreamEvent() error = %v", err)
+	}
+	if event.Payload["error"] != detail {
+		t.Fatalf("console event payload = %#v, want detailed error", event.Payload)
 	}
 }
 

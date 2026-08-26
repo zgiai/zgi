@@ -47,6 +47,8 @@ interface MessageItemProps {
   showWorkflowNodeDetail?: boolean;
   /** Show workflow run monitor (hide entire workflow section if false) */
   showWorkflowDetail?: boolean;
+  /** Show node and workflow failure messages in the workflow run monitor */
+  showWorkflowFailureDetails?: boolean;
   /** Allow expanding workflow run summary to inspect node details */
   allowWorkflowDetailExpand?: boolean;
   /** Default open state for workflow run summary */
@@ -61,6 +63,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   message,
   showWorkflowNodeDetail = true,
   showWorkflowDetail = true,
+  showWorkflowFailureDetails = true,
   allowWorkflowDetailExpand = true,
   defaultWorkflowDetailOpen = true,
   showAvatar = true,
@@ -245,6 +248,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                 items={nodeItems}
                 error={message.WorkflowRunInfo?.error}
                 showDetail={showWorkflowNodeDetail}
+                showFailureDetails={showWorkflowFailureDetails}
                 allowExpand={allowWorkflowDetailExpand}
                 defaultOpen={defaultWorkflowDetailOpen}
               />
@@ -436,6 +440,7 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
     sameNodesTail &&
     sameImages &&
     prev.showWorkflowDetail === next.showWorkflowDetail &&
+    prev.showWorkflowFailureDetails === next.showWorkflowFailureDetails &&
     prev.showWorkflowNodeDetail === next.showWorkflowNodeDetail &&
     prev.allowWorkflowDetailExpand === next.allowWorkflowDetailExpand &&
     prev.defaultWorkflowDetailOpen === next.defaultWorkflowDetailOpen &&

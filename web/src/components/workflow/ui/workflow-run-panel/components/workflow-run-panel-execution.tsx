@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 interface ExecutionTabProps {
   items: WorkflowRunNodeListItem[];
   showDetail?: boolean;
+  showFailureDetails?: boolean;
   showHeader?: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
@@ -21,6 +22,7 @@ interface ExecutionTabProps {
 const ExecutionTab: React.FC<ExecutionTabProps> = ({
   items,
   showDetail = true,
+  showFailureDetails = true,
   showHeader = true,
   emptyTitle,
   emptyDescription,
@@ -41,7 +43,11 @@ const ExecutionTab: React.FC<ExecutionTabProps> = ({
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto p-4 scrollbar-thin">
-        <WorkflowRunNodesList showDetail={showDetail} items={items} />
+        <WorkflowRunNodesList
+          showDetail={showDetail}
+          showFailureDetails={showFailureDetails}
+          items={items}
+        />
       </div>
     </div>
   ) : (

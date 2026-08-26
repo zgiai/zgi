@@ -37,6 +37,7 @@
     "test:build-metadata-env": "node scripts/test-build-metadata-env.mjs",
     "test:contextual-page-metadata-budget": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-contextual-page-metadata-budget.mjs",
     "test:contextual-operation-status-surface": "node scripts/test-contextual-operation-status-surface.mjs",
+    "test:workflow-failure-detail-visibility": "node scripts/test-workflow-failure-detail-visibility.mjs",
     "test:agent-runtime-user-input-continuation": "node scripts/test-agent-runtime-user-input-continuation.mjs",
     "test:music-workbench": "node scripts/test-music-workbench.mjs",
     "test:agent-voice-input": "node scripts/test-agent-voice-input.mjs",

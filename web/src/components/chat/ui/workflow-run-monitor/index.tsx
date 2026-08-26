@@ -16,6 +16,7 @@ interface WorkflowRunMonitorProps {
   defaultOpen?: boolean;
   error?: string;
   showDetail?: boolean;
+  showFailureDetails?: boolean;
   allowExpand?: boolean;
 }
 
@@ -27,6 +28,7 @@ const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({
   defaultOpen,
   error,
   showDetail = true,
+  showFailureDetails = true,
   allowExpand = true,
 }) => {
   const [open, setOpen] = useState<boolean>(allowExpand ? (defaultOpen ?? true) : false);
@@ -109,14 +111,18 @@ const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({
 
       {allowExpand && open && items.length > 0 && (
         <div className="mt-2">
-          <WorkflowRunNodesList items={items} showDetail={showDetail} />
+          <WorkflowRunNodesList
+            items={items}
+            showDetail={showDetail}
+            showFailureDetails={showFailureDetails}
+          />
         </div>
       )}
-      {status === 'error' && (
+      {showFailureDetails && status === 'error' && error ? (
         <div className="mt-2">
           <div className="text-xs text-destructive">{error}</div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 };
