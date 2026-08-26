@@ -150,3 +150,39 @@ func TestWebAppDirectSSEErrorUsesGenericMessage(t *testing.T) {
 		t.Fatalf("public direct SSE error = %s, want generic failure message %q", body, workflowPublicFailureMessage)
 	}
 }
+
+func TestPublicFailureEventWithoutStatusIsRedacted(t *testing.T) {
+	const privateDetail = "private loop provider failure"
+	input := map[string]interface{}{
+		"node_id": "loop-1",
+		"error":   privateDetail,
+		"outputs": map[string]interface{}{"failure_reason": privateDetail},
+	}
+
+	projected := projectWorkflowEventDataForInvocation(string(InvokeFromWebApp), "loop_failed", input)
+	if strings.Contains(fmt.Sprint(projected), privateDetail) {
+		t.Fatalf("projected failure event exposed detail without status: %#v", projected)
+	}
+	if outputs, ok := projected["outputs"].(map[string]interface{}); !ok || len(outputs) != 0 {
+		t.Fatalf("projected failure outputs = %#v, want empty", projected["outputs"])
+	}
+	if input["error"] != privateDetail {
+		t.Fatalf("input diagnostics were mutated: %#v", input)
+	}
+}
+
+func TestExternalAPIFailureIsRedacted(t *testing.T) {
+	const privateDetail = "private external api provider failure"
+	input := map[string]interface{}{
+		"status": "failed",
+		"error":  privateDetail,
+	}
+
+	projected := projectWorkflowEventDataForInvocation(string(InvokeFromExternalAPI), workflowpause.EventWorkflowFinished, input)
+	if strings.Contains(fmt.Sprint(projected), privateDetail) {
+		t.Fatalf("external API projection exposed detail: %#v", projected)
+	}
+	if input["error"] != privateDetail {
+		t.Fatalf("input diagnostics were mutated: %#v", input)
+	}
+}

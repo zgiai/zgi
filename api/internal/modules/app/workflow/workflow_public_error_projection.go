@@ -42,9 +42,10 @@ func projectWorkflowEventDataForInvocation(invokeFrom, eventType string, input m
 		data["message"] = workflowPublicFailureMessage
 		data["error"] = workflowPublicFailurePayload()
 	case workflowpause.EventNodeFinished,
-		"iteration_completed", "iteration_failed",
-		"loop_completed", "loop_failed":
+		"iteration_completed", "loop_completed":
 		data = projectWorkflowExecutionEventError(data)
+	case "iteration_failed", "loop_failed":
+		data = failureprojection.ProjectPublicPayload(data, workflowPublicFailureMessage, true)
 	case "workflow_snapshot":
 		redactWorkflowSnapshotErrors(data)
 	}
@@ -53,7 +54,7 @@ func projectWorkflowEventDataForInvocation(invokeFrom, eventType string, input m
 
 func workflowInvocationHidesFailureDetails(invokeFrom string) bool {
 	switch strings.ToLower(strings.TrimSpace(invokeFrom)) {
-	case string(InvokeFromWebApp), "app-run":
+	case string(InvokeFromWebApp), string(InvokeFromExternalAPI), "app-run":
 		return true
 	default:
 		return false

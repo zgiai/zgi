@@ -2,7 +2,10 @@
 // the original diagnostic data for durable logs and authorized debug views.
 package failureprojection
 
-import "strings"
+import (
+	"reflect"
+	"strings"
+)
 
 // ProjectPublicPayload returns a deep copy with diagnostic failure fields
 // replaced by message. Terminal projections also discard outputs that could
@@ -44,6 +47,38 @@ func cloneValue(value interface{}) interface{} {
 			out = append(out, cloneValue(item))
 		}
 		return out
+	}
+
+	// Event producers may use named map and slice types (for example gin.H
+	// and []gin.H). Normalize those containers so nested diagnostics cannot
+	// bypass the recursive projection through their dynamic Go type.
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() {
+		return nil
+	}
+	switch reflected.Kind() {
+	case reflect.Map:
+		if reflected.Type().Key().Kind() != reflect.String {
+			return value
+		}
+		if reflected.IsNil() {
+			return map[string]interface{}(nil)
+		}
+		out := make(map[string]interface{}, reflected.Len())
+		iterator := reflected.MapRange()
+		for iterator.Next() {
+			out[iterator.Key().String()] = cloneValue(iterator.Value().Interface())
+		}
+		return out
+	case reflect.Array, reflect.Slice:
+		if reflected.Kind() == reflect.Slice && reflected.IsNil() {
+			return []interface{}(nil)
+		}
+		out := make([]interface{}, 0, reflected.Len())
+		for index := 0; index < reflected.Len(); index++ {
+			out = append(out, cloneValue(reflected.Index(index).Interface()))
+		}
+		return out
 	default:
 		return value
 	}
@@ -55,19 +90,21 @@ func redactFields(payload map[string]interface{}, message string) {
 			payload[key] = message
 			continue
 		}
-		switch typed := value.(type) {
-		case map[string]interface{}:
-			redactFields(typed, message)
-		case []map[string]interface{}:
-			for _, item := range typed {
-				redactFields(item, message)
-			}
-		case []interface{}:
-			for _, item := range typed {
-				if child, ok := item.(map[string]interface{}); ok {
-					redactFields(child, message)
-				}
-			}
+		redactValue(value, message)
+	}
+}
+
+func redactValue(value interface{}, message string) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		redactFields(typed, message)
+	case []map[string]interface{}:
+		for _, item := range typed {
+			redactFields(item, message)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			redactValue(item, message)
 		}
 	}
 }
