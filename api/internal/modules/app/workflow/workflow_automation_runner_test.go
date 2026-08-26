@@ -46,6 +46,29 @@ func TestAutomationWorkflowRunOutcomePropagatesExecutionFailure(t *testing.T) {
 			wantStatus: string(workflowdto.WorkflowRunStatusPaused),
 		},
 		{
+			name:       "stopped result",
+			result:     &WorkflowExecutionResult{Status: "stopped"},
+			wantStatus: string(workflowdto.WorkflowRunStatusStopped),
+		},
+		{
+			name:       "stopped result cancellation",
+			result:     &WorkflowExecutionResult{Status: "stopped", Error: context.Canceled},
+			wantStatus: string(workflowdto.WorkflowRunStatusStopped),
+		},
+		{
+			name:       "stopped executor cancellation",
+			result:     &WorkflowExecutionResult{Status: "stopped", Error: context.Canceled},
+			execErr:    context.Canceled,
+			wantStatus: string(workflowdto.WorkflowRunStatusStopped),
+		},
+		{
+			name:       "stopped result with non-cancellation executor error",
+			result:     &WorkflowExecutionResult{Status: "stopped"},
+			execErr:    providerErr,
+			wantStatus: string(workflowdto.WorkflowRunStatusFailed),
+			wantErr:    providerErr,
+		},
+		{
 			name:       "successful result",
 			result:     &WorkflowExecutionResult{Status: "succeeded"},
 			wantStatus: string(workflowdto.WorkflowRunStatusSucceeded),

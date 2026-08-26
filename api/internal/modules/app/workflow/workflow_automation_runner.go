@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -318,6 +319,11 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 }
 
 func automationWorkflowRunOutcome(result *WorkflowExecutionResult, execErr error) (string, error) {
+	if result != nil &&
+		strings.EqualFold(strings.TrimSpace(result.Status), string(dto.WorkflowRunStatusStopped)) &&
+		(execErr == nil || errors.Is(execErr, context.Canceled)) {
+		return string(dto.WorkflowRunStatusStopped), nil
+	}
 	if execErr != nil {
 		return string(dto.WorkflowRunStatusFailed), execErr
 	}
@@ -334,10 +340,7 @@ func automationWorkflowRunOutcome(result *WorkflowExecutionResult, execErr error
 		}
 		return string(dto.WorkflowRunStatusFailed), fmt.Errorf("workflow execution failed")
 	case string(dto.WorkflowRunStatusStopped):
-		if result.Error != nil {
-			return string(dto.WorkflowRunStatusStopped), result.Error
-		}
-		return string(dto.WorkflowRunStatusStopped), fmt.Errorf("workflow execution stopped")
+		return string(dto.WorkflowRunStatusStopped), nil
 	default:
 		if result.Error != nil {
 			return string(dto.WorkflowRunStatusFailed), result.Error
