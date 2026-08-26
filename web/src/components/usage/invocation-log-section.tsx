@@ -41,6 +41,7 @@ import type {
   InvocationPricingDetails,
 } from '@/services/types/statistics';
 import {
+  calculateRecordedTokenCostUSD,
   formatBillingDisplayAmountFromNormalizedCredits,
   formatRecordedBillingAmount,
   formatRecordedBillingAmountFromUSD,
@@ -744,7 +745,12 @@ function pricingComponents(
       labelKey: labelKeys.input,
       tokens: item.prompt_tokens,
       unitPrice: details?.input_price_usd_per_1m_tokens,
-      cost: details?.input_cost_usd,
+      cost:
+        details?.input_cost_usd ??
+        calculateRecordedTokenCostUSD(
+          item.prompt_tokens,
+          details?.input_price_usd_per_1m_tokens
+        ),
       source: details?.input_price_source ?? details?.pricing_source,
     },
     {
@@ -752,7 +758,12 @@ function pricingComponents(
       labelKey: labelKeys.cacheRead,
       tokens: item.cache_read_tokens,
       unitPrice: details?.cache_read_price_usd_per_1m_tokens,
-      cost: details?.cache_read_cost_usd,
+      cost:
+        details?.cache_read_cost_usd ??
+        calculateRecordedTokenCostUSD(
+          item.cache_read_tokens,
+          details?.cache_read_price_usd_per_1m_tokens
+        ),
       source: details?.cache_read_price_source ?? details?.pricing_source,
     },
     {
@@ -760,7 +771,12 @@ function pricingComponents(
       labelKey: labelKeys.cacheWrite,
       tokens: item.cache_write_tokens,
       unitPrice: details?.cache_write_price_usd_per_1m_tokens,
-      cost: details?.cache_write_cost_usd,
+      cost:
+        details?.cache_write_cost_usd ??
+        calculateRecordedTokenCostUSD(
+          item.cache_write_tokens,
+          details?.cache_write_price_usd_per_1m_tokens
+        ),
       source: details?.cache_write_price_source ?? details?.pricing_source,
     },
     {
@@ -768,7 +784,12 @@ function pricingComponents(
       labelKey: labelKeys.output,
       tokens: item.completion_tokens,
       unitPrice: details?.output_price_usd_per_1m_tokens,
-      cost: details?.output_cost_usd,
+      cost:
+        details?.output_cost_usd ??
+        calculateRecordedTokenCostUSD(
+          item.completion_tokens,
+          details?.output_price_usd_per_1m_tokens
+        ),
       source: details?.output_price_source ?? details?.pricing_source,
     },
   ];

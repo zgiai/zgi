@@ -4,6 +4,7 @@ import { URL } from 'node:url';
 
 import {
   DEFAULT_BILLING_DISPLAY,
+  calculateRecordedTokenCostUSD,
   billingDisplayInputToUSD,
   billingDisplayInputValueFromUSD,
   formatBillingDisplayAmountFromUSD,
@@ -33,6 +34,22 @@ assert.equal(
   'usage token counts must use grouping separators without K/M abbreviation'
 );
 assert.equal(formatTokenCount(0, 'en-US'), '0', 'zero token usage must remain visible');
+
+assert.equal(
+  calculateRecordedTokenCostUSD(11_895, '5'),
+  '0.059475',
+  'historical component subtotals must be reconstructed from the recorded unit price'
+);
+assert.equal(
+  calculateRecordedTokenCostUSD(68, '30'),
+  '0.00204',
+  'historical output subtotals must preserve exact decimal arithmetic'
+);
+assert.equal(
+  calculateRecordedTokenCostUSD(11_895, undefined),
+  undefined,
+  'missing recorded prices must not fall back to current model pricing'
+);
 
 assert.deepEqual(
   getBillingDisplaySettings(),

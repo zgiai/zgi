@@ -207,6 +207,13 @@ func TestPricingEngineQuoteTokensUsesStoredModelPricesWhenConfigured(t *testing.
 	if quote.PricingSource != PricingSourceUpstreamModelPrice {
 		t.Fatalf("pricing source = %q, want upstream", quote.PricingSource)
 	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(quote.PricingSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot["input_cost_usd"] != "0.001" || snapshot["output_cost_usd"] != "0.002" {
+		t.Fatalf("component costs missing from token pricing snapshot: %#v", snapshot)
+	}
 }
 
 func TestPricingEngineQuoteTokensPrefersOrganizationOverridePrices(t *testing.T) {

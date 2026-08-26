@@ -23,6 +23,25 @@ export const DEFAULT_BILLING_DISPLAY: BillingDisplaySettings = {
 
 export const NORMALIZED_AI_CREDITS_PER_USD = 1_000;
 const BILLING_DECIMAL_PLACES = 12;
+const TOKENS_PER_MILLION = 1_000_000;
+
+/** Rebuilds a historical subtotal using only values recorded on that invocation. */
+export function calculateRecordedTokenCostUSD(
+  tokens: number,
+  recordedPriceUSDPer1MTokens: string | undefined
+): string | undefined {
+  if (!Number.isFinite(tokens) || tokens < 0 || recordedPriceUSDPer1MTokens === undefined) {
+    return undefined;
+  }
+  try {
+    return new Decimal(tokens)
+      .times(recordedPriceUSDPer1MTokens)
+      .div(TOKENS_PER_MILLION)
+      .toString();
+  } catch {
+    return undefined;
+  }
+}
 
 export function getBillingDisplaySettings(
   organization?: Pick<Organization, 'billing_display_currency' | 'usd_to_cny_rate'> | null

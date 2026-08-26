@@ -131,6 +131,8 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 			"completion_tokens":              completionTokens,
 			"input_price_usd_per_1m_tokens":  model.InputPrice.String(),
 			"output_price_usd_per_1m_tokens": model.OutputPrice.String(),
+			"input_cost_usd":                 inputUSD.String(),
+			"output_cost_usd":                outputUSD.String(),
 			"input_price_source":             configuredPriceSource(model.InputPriceOrganizationOverride),
 			"output_price_source":            configuredPriceSource(model.OutputPriceOrganizationOverride),
 			"input_price_configured":         model.InputPriceConfigured,
@@ -396,6 +398,8 @@ func (e *pricingEngine) quoteTokensWithFallback(
 		"completion_tokens":              completionTokens,
 		"input_price_usd_per_1m_tokens":  inputPrice.String(),
 		"output_price_usd_per_1m_tokens": outputPrice.String(),
+		"input_cost_usd":                 inputUSD.String(),
+		"output_cost_usd":                outputUSD.String(),
 		"input_rule_id":                  inputRule.ID,
 		"output_rule_id":                 outputRule.ID,
 		"input_rule_source":              inputRule.PricingSource,
@@ -824,6 +828,8 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 	if usageSource == "" {
 		usageSource = UsageSourceProviderUsage
 	}
+	inputUSD := tokenUSD(quote.InputTokenPriceUSDPer1M, promptTokens)
+	outputUSD := tokenUSD(quote.OutputTokenPriceUSDPer1M, completionTokens)
 	snapshot := buildPricingSnapshot(map[string]interface{}{
 		"pricing_source":                 quote.PricingSource,
 		"usage_source":                   usageSource,
@@ -831,6 +837,8 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 		"completion_tokens":              completionTokens,
 		"input_price_usd_per_1m_tokens":  quote.InputTokenPriceUSDPer1M.String(),
 		"output_price_usd_per_1m_tokens": quote.OutputTokenPriceUSDPer1M.String(),
+		"input_cost_usd":                 inputUSD.String(),
+		"output_cost_usd":                outputUSD.String(),
 		"input_price_resolved":           quote.InputTokenPriceResolved,
 		"output_price_resolved":          quote.OutputTokenPriceResolved,
 		"input_rule_id":                  quote.InputRuleID,
@@ -839,8 +847,8 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 		"locked_pricing":                 true,
 	})
 	repriced := newUSDQuote(
-		tokenUSD(quote.InputTokenPriceUSDPer1M, promptTokens),
-		tokenUSD(quote.OutputTokenPriceUSDPer1M, completionTokens),
+		inputUSD,
+		outputUSD,
 		quote.PricingSource,
 		quote.RuleID,
 		usageSource,
