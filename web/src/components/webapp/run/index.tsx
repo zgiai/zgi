@@ -216,8 +216,11 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const t = useT('webapp');
   const globalT = useT();
   const { isOffline, markOffline } = useWebAppOfflineState();
-  const { getWorkflowRunErrorText, notifyBillingError } = useWorkflowBillingFeedback('webapp');
+  const { getWorkflowRunErrorText } = useWorkflowBillingFeedback('webapp');
   const precheckMutation = useWebAppPrecheck(versionUuid);
+  const notifyPublishedWorkflowFailure = useCallback(() => {
+    toast.error(t('run.failed'));
+  }, [t]);
 
   const [runItems, setRunItems] = useState<WorkflowRunNodeListItem[]>([]);
   const [streamedText, setStreamedText] = useState<string>('');
@@ -1172,8 +1175,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       const variableMap: Record<string, unknown> | undefined =
         execMeta && typeof execMeta === 'object'
           ? ((execMeta as Record<string, unknown>)['loop_variable_map'] as
-              | Record<string, unknown>
-              | undefined)
+              Record<string, unknown> | undefined)
           : undefined;
       const roundDurations = getWorkflowRunRoundDurationMap(d, 'loop');
       const sess = loopSessions.current.get(key) ?? {
@@ -1258,7 +1260,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       if (status === 'success' || status === 'succeeded' || status === 'completed') {
         toast.success(t('run.completed'));
       } else if (status === 'failed' || status === 'error') {
-        notifyBillingError(data['error']);
+        notifyPublishedWorkflowFailure();
       }
     },
     onError: payload => {
@@ -1277,8 +1279,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       resetApprovalRuntime();
       setQuestionAnswerSubmitting(false);
       throttler.flush();
-      const msg = getWorkflowRunErrorText(payload) ?? t('run.failed');
-      toast.error(msg);
+      notifyPublishedWorkflowFailure();
     },
   });
 
@@ -1488,7 +1489,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
             typeof data.status === 'string' ? data.status : eventStatus
           ).toLowerCase();
           if (status === 'failed' || status === 'error') {
-            notifyBillingError(data.error);
+            notifyPublishedWorkflowFailure();
           }
           break;
         }
@@ -1503,7 +1504,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           workflowRunEventsActiveRef.current = false;
           workflowFinishedRef.current = true;
           throttler.flush();
-          toast.error(getWorkflowRunErrorText(payload) ?? t('run.failed'));
+          notifyPublishedWorkflowFailure();
           break;
         }
       }
@@ -1517,10 +1518,9 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       markApprovalPausedNodes,
       markQuestionAnswerPausedNodes,
       normalizeOutputs,
-      notifyBillingError,
+      notifyPublishedWorkflowFailure,
       rememberWorkflowRunId,
       resetApprovalRuntime,
-      t,
       throttler,
     ]
   );
@@ -1702,11 +1702,9 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       try {
         await approvalSubmitMutation.mutateAsync(payload);
         setApprovalSubmitted(approvalEntry.key, payload.action);
-      } catch (error) {
+      } catch {
         setApprovalWaiting(approvalEntry.key);
-        toast.error(
-          error instanceof Error ? error.message : globalT('nodes.approval.runtime.submitFailed')
-        );
+        toast.error(globalT('nodes.approval.runtime.submitFailed'));
       }
     },
     [
@@ -1798,7 +1796,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           markOffline();
           return;
         }
-        toast.error(err instanceof Error ? err.message : t('run.startFailed'));
+        toast.error(t('run.startFailed'));
       }
     },
     [
@@ -1870,7 +1868,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           markOffline();
           return;
         }
-        toast.error(err instanceof Error ? err.message : t('run.startFailed'));
+        toast.error(t('run.startFailed'));
       }
     },
     [

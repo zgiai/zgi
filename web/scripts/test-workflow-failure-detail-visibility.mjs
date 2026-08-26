@@ -27,6 +27,16 @@ assert.match(
   'published task workflow webapps should hide node failure details'
 );
 assert.match(
+  webappRun,
+  /const notifyPublishedWorkflowFailure = useCallback\(\(\) => \{[\s\S]*?toast\.error\(t\('run\.failed'\)\)/,
+  'published workflow failures should use a generic localized toast'
+);
+assert.doesNotMatch(
+  webappRun,
+  /notifyBillingError\(|toast\.error\(getWorkflowRunErrorText\(|toast\.error\([^\n]*(?:err|error)\.message/,
+  'published workflow toasts should never expose raw execution errors'
+);
+assert.match(
   workflowMonitor,
   /showFailureDetails && status === 'error' && error/,
   'workflow-level failure text should not mount when failure details are hidden'
