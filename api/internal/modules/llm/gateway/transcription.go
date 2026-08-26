@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,19 +35,6 @@ type TranscriptionRequest struct {
 type TranscriptionResponse struct {
 	RequestID string `json:"request_id"`
 	Text      string `json:"text"`
-}
-
-type clientReadTracker struct {
-	src     io.Reader
-	readErr error
-}
-
-func (r *clientReadTracker) Read(p []byte) (int, error) {
-	n, err := r.src.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) && r.readErr == nil {
-		r.readErr = err
-	}
-	return n, err
 }
 
 // Transcribe routes one PCM stream through the selected official or private channel.
@@ -111,43 +99,25 @@ func (s *llmGatewayServiceImpl) Transcribe(
 		}
 
 		if selection.UseSystemProvider {
-			billing := s.beginPlatformMediaUsage(ctx, apiKey, selection, shadowOrganizationID, requestID, "transcription", false)
-			callContext := withPlatformProxyMetadata(ctx, billing)
-			audio := &clientReadTracker{src: request.Audio}
+			callContext := context.WithValue(ctx, platformProxyContextKey{}, platformProxyMetadata{
+				BillingOrganizationID: shadowOrganizationID.String(),
+				RequestID:             requestID,
+				APIKeyID:              strings.TrimSpace(apiKey.ID),
+				ModelName:             request.Model,
+				ProviderName:          selection.Provider.Provider,
+			})
 			result, err := transcriptionAdapter.Transcribe(callContext, &adapter.TranscriptionRequest{
 				RequestID: requestID,
 				Model:     request.Model,
-				Audio:     audio,
+				Audio:     request.Audio,
 			})
 			if err != nil {
-				failureCode := ""
-				if audio.readErr != nil && errors.Is(err, audio.readErr) {
-					failureCode = platformMediaClientInputFailureCode
-				}
-				s.recordPlatformMediaUsageWithFailureCode(billing, nil, err, failureCode)
-				if s.invocationContent != nil {
-					s.invocationContent.RecordIdentity(requestID, shadowOrganizationID.String(), "transcription", request, nil, "", "")
-				}
-				if audio.readErr != nil && errors.Is(err, audio.readErr) {
-					return nil, NewClientIOError(err)
-				}
-				reportLLMProviderFailure(ctx, err, "llm.provider.request_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
 				return nil, err
 			}
 			if result == nil {
-				missingResponseErr := fmt.Errorf("%w: transcription provider returned no response", adapter.ErrUpstreamError)
-				s.recordPlatformMediaUsage(billing, nil, missingResponseErr)
-				if s.invocationContent != nil {
-					s.invocationContent.RecordIdentity(requestID, shadowOrganizationID.String(), "transcription", request, nil, "", "")
-				}
-				return nil, missingResponseErr
+				return nil, fmt.Errorf("%w: transcription provider returned no response", adapter.ErrUpstreamError)
 			}
-			s.recordPlatformMediaUsage(billing, result.Settlement, nil)
-			response := &TranscriptionResponse{RequestID: result.RequestID, Text: result.Text}
-			if s.invocationContent != nil {
-				s.invocationContent.RecordIdentity(requestID, shadowOrganizationID.String(), "transcription", request, response, "", "")
-			}
-			return response, nil
+			return &TranscriptionResponse{RequestID: result.RequestID, Text: result.Text}, nil
 		}
 
 		estimatedUsage := transcriptionMeteredUsage(transcriptionMaxDuration.Milliseconds())

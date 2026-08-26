@@ -29,21 +29,6 @@ type SpeechRequest struct {
 	ResponseFormat string `json:"response_format"`
 }
 
-// clientWriteTracker remembers downstream delivery failures so they are
-// not attributed to the upstream model provider.
-type clientWriteTracker struct {
-	dst      io.Writer
-	writeErr error
-}
-
-func (w *clientWriteTracker) Write(p []byte) (int, error) {
-	n, err := w.dst.Write(p)
-	if err != nil && w.writeErr == nil {
-		w.writeErr = err
-	}
-	return n, err
-}
-
 // GenerateSpeech routes one MP3 stream through the selected official or private channel.
 func (s *llmGatewayServiceImpl) GenerateSpeech(
 	ctx context.Context,
@@ -112,39 +97,21 @@ func (s *llmGatewayServiceImpl) GenerateSpeech(
 		}
 
 		if selection.UseSystemProvider {
-			billing := s.beginPlatformMediaUsage(ctx, apiKey, selection, shadowOrganizationID, requestID, "speech", true)
-			callContext := withPlatformProxyMetadata(ctx, billing)
-			destination := &clientWriteTracker{dst: dst}
-			settlement, generateErr := speechAdapter.GenerateSpeech(callContext, &adapter.SpeechRequest{
+			callContext := context.WithValue(ctx, platformProxyContextKey{}, platformProxyMetadata{
+				BillingOrganizationID: shadowOrganizationID.String(),
+				RequestID:             requestID,
+				APIKeyID:              strings.TrimSpace(apiKey.ID),
+				ModelName:             request.Model,
+				ProviderName:          selection.Provider.Provider,
+				IsStreaming:           true,
+			})
+			return speechAdapter.GenerateSpeech(callContext, &adapter.SpeechRequest{
 				RequestID:      requestID,
 				Model:          request.Model,
 				Input:          request.Input,
 				Voice:          request.Voice,
 				ResponseFormat: request.ResponseFormat,
-			}, destination)
-			err = generateErr
-			failureCode := ""
-			if err != nil && destination.writeErr != nil && errors.Is(err, destination.writeErr) {
-				failureCode = platformMediaClientWriteFailureCode
-			}
-			s.recordPlatformMediaUsageWithFailureCode(billing, settlement, err, failureCode)
-			if err != nil && (destination.writeErr == nil || !errors.Is(err, destination.writeErr)) {
-				reportLLMProviderFailure(ctx, err, "llm.provider.stream_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
-			}
-			if s.invocationContent != nil {
-				status := "delivered"
-				if err != nil {
-					status = "failed"
-				}
-				s.invocationContent.RecordIdentity(
-					requestID, shadowOrganizationID.String(), "speech", request,
-					map[string]any{"status": status, "response_format": request.ResponseFormat, "voice": request.Voice}, "", status,
-				)
-			}
-			if err != nil && destination.writeErr != nil && errors.Is(err, destination.writeErr) {
-				return NewClientIOError(err)
-			}
-			return err
+			}, dst)
 		}
 
 		usage := MeteredUsage{
@@ -176,7 +143,7 @@ func (s *llmGatewayServiceImpl) GenerateSpeech(
 		if err := s.activateUpstreamProbeForAttempt(ctx, selection, billingCtx); err != nil {
 			return err
 		}
-		_, err = speechAdapter.GenerateSpeech(ctx, &adapter.SpeechRequest{
+		err = speechAdapter.GenerateSpeech(ctx, &adapter.SpeechRequest{
 			RequestID:      requestID,
 			Model:          request.Model,
 			Input:          request.Input,

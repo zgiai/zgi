@@ -87,18 +87,6 @@ const CHANNEL_SETUP_OPTIONS: ChannelSetupOption[] = [
     lockProtocol: true,
   },
   {
-    id: 'minimax',
-    category: 'common',
-    kind: 'direct',
-    labelKey: 'dialog.setup.providers.minimax.label',
-    descriptionKey: 'dialog.setup.providers.minimax.description',
-    capabilityKey: 'dialog.setup.providers.minimax.capabilities',
-    channelProvider: 'minimax',
-    providerFilter: 'minimax',
-    icon: 'minimax',
-    lockProtocol: true,
-  },
-  {
     id: 'doubao',
     category: 'common',
     kind: 'direct',
