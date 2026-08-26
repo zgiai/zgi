@@ -203,7 +203,7 @@ func TestWorkflowTaskContinuationMessageHidesPublishedFailureOutputs(t *testing.
 		InvocationID:  "invocation-1",
 		Caller:        Caller{Source: runtimemodel.ConversationSourceWebApp},
 	}, WorkflowContinuationSummaryRequest{
-		Status:  "failed",
+		Status:  "exception",
 		Error:   detail,
 		Outputs: map[string]interface{}{"error_detail": detail},
 	})
@@ -269,7 +269,7 @@ func TestWorkflowContinuationEventsHidePublishedFailureReason(t *testing.T) {
 				Caller: Caller{Source: source},
 			}
 			event, err := (&service{}).AppendWorkflowApprovalContinuationStreamEvent(t.Context(), continuation, "node_finished", map[string]interface{}{
-				"status": "failed", "error": detail, "message": detail,
+				"status": "exception", "error": detail, "message": detail,
 				"outputs": map[string]interface{}{"failure_reason": detail},
 			})
 			if err != nil {

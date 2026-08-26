@@ -52,6 +52,20 @@ func TestPublicWorkflowSSEFailurePayloadsAreRedacted(t *testing.T) {
 			},
 		},
 		{
+			name:      "node exception event",
+			eventType: workflowpause.EventNodeFinished,
+			data: map[string]interface{}{
+				"status": "exception",
+				"error":  privateDetail,
+				"outputs": map[string]interface{}{
+					"failure_reason": privateDetail,
+				},
+				"process_data": map[string]interface{}{
+					"provider_error": privateDetail,
+				},
+			},
+		},
+		{
 			name:      "failed iteration completion",
 			eventType: "iteration_completed",
 			data: map[string]interface{}{

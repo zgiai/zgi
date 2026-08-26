@@ -7,6 +7,17 @@ import (
 	"strings"
 )
 
+// IsFailureStatus reports whether an execution status represents a failure
+// whose diagnostic fields must be projected at a public boundary.
+func IsFailureStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "exception":
+		return true
+	default:
+		return false
+	}
+}
+
 // ProjectPublicPayload returns a deep copy with diagnostic failure fields
 // replaced by message. Terminal projections also discard outputs that could
 // carry an alternate copy of the failure reason.

@@ -634,12 +634,11 @@ func TestRunAgentWorkflowHidesFailureDetailsOnPublishedSurfaces(t *testing.T) {
 		t.Run(source, func(t *testing.T) {
 			runner := &fakeWorkflowRunner{
 				result: &automationaction.WorkflowRunResult{
-					WorkflowRunID: "run-failed", WorkflowID: "workflow-1", AgentID: "agent-1", Status: "failed",
+					WorkflowRunID: "run-failed", WorkflowID: "workflow-1", AgentID: "agent-1", Status: "exception",
 					Outputs: map[string]interface{}{"failure_reason": detail},
 				},
-				err: errors.New(detail),
 				emitEvents: []automationaction.WorkflowRunEvent{
-					{Type: "node_finished", Payload: map[string]interface{}{"status": "failed", "error": detail, "outputs": map[string]interface{}{"provider_error": detail}}},
+					{Type: "node_finished", Payload: map[string]interface{}{"status": "exception", "error": detail, "outputs": map[string]interface{}{"provider_error": detail}}},
 					{Type: "workflow_failed", Payload: map[string]interface{}{"status": "failed", "error": detail, "message": detail, "outputs": map[string]interface{}{"failure_reason": detail}}},
 				},
 			}

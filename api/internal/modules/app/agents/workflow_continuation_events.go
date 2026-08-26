@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
-	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 )
 
 func shouldSummarizeAgentWorkflowContinuation(continuation *runtimeservice.WorkflowApprovalContinuation, status string, outputs map[string]interface{}) bool {
@@ -53,8 +55,11 @@ func agentWorkflowContinuationRunIDFromMetadata(metadata map[string]interface{})
 }
 
 func agentWorkflowRunLogTerminal(status string) bool {
+	if failureprojection.IsFailureStatus(status) {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "succeeded", "failed", "stopped", "expired", "partial-succeeded":
+	case "succeeded", "stopped", "expired", "partial-succeeded":
 		return true
 	default:
 		return false
@@ -62,8 +67,11 @@ func agentWorkflowRunLogTerminal(status string) bool {
 }
 
 func agentWorkflowRunLogFailed(status string) bool {
+	if failureprojection.IsFailureStatus(status) {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "failed", "stopped", "expired":
+	case "stopped", "expired":
 		return true
 	default:
 		return false
@@ -192,7 +200,7 @@ func copyMapForAgentWorkflowContinuation(input map[string]interface{}) map[strin
 }
 
 func agentWorkflowContinuationAnswer(continuation *runtimeservice.WorkflowApprovalContinuation, workflowRunID, status string, outputs map[string]interface{}, errorMessage *string) string {
-	if strings.EqualFold(strings.TrimSpace(status), "failed") {
+	if agentWorkflowRunLogFailed(status) {
 		if runtimeservice.WorkflowContinuationFailureDetailsHidden(continuation) {
 			return "Workflow run failed."
 		}

@@ -78,7 +78,7 @@ func TestAgentWorkflowContinuationAnswerHidesPublishedFailureReason(t *testing.T
 	detail := "node failed: private provider route"
 	got := agentWorkflowContinuationAnswer(&runtimeservice.WorkflowApprovalContinuation{
 		Caller: runtimeservice.Caller{Source: runtimemodel.ConversationSourceWebApp},
-	}, "run-secret", "failed", nil, &detail)
+	}, "run-secret", "exception", nil, &detail)
 	if got != "Workflow run failed." || strings.Contains(got, detail) || strings.Contains(got, "run-secret") {
 		t.Fatalf("published failure answer = %q, want generic failure only", got)
 	}
@@ -149,6 +149,9 @@ func TestCompletionContinuationStatus(t *testing.T) {
 	if got := completionContinuationStatus("stopped"); got != "failed" {
 		t.Fatalf("completionContinuationStatus(stopped) = %q, want failed", got)
 	}
+	if got := completionContinuationStatus("exception"); got != "failed" {
+		t.Fatalf("completionContinuationStatus(exception) = %q, want failed", got)
+	}
 	if got := completionContinuationStatus("succeeded"); got != "completed" {
 		t.Fatalf("completionContinuationStatus(succeeded) = %q, want completed", got)
 	}
@@ -177,7 +180,7 @@ func TestNormalizeAgentWorkflowQuestionInputsPreservesQuestionIdentity(t *testin
 }
 
 func TestAgentWorkflowRunLogTerminal(t *testing.T) {
-	for _, status := range []string{"succeeded", "failed", "stopped", "partial-succeeded"} {
+	for _, status := range []string{"succeeded", "failed", "exception", "stopped", "partial-succeeded"} {
 		if !agentWorkflowRunLogTerminal(status) {
 			t.Fatalf("agentWorkflowRunLogTerminal(%q) = false, want true", status)
 		}

@@ -6,6 +6,19 @@ import (
 	"testing"
 )
 
+func TestIsFailureStatus(t *testing.T) {
+	for _, status := range []string{"failed", "ERROR", " exception "} {
+		if !IsFailureStatus(status) {
+			t.Fatalf("IsFailureStatus(%q) = false, want true", status)
+		}
+	}
+	for _, status := range []string{"", "running", "succeeded", "stopped"} {
+		if IsFailureStatus(status) {
+			t.Fatalf("IsFailureStatus(%q) = true, want false", status)
+		}
+	}
+}
+
 func TestProjectPublicPayloadRedactsNestedDetailsWithoutMutatingInput(t *testing.T) {
 	const detail = "private provider route"
 	input := map[string]interface{}{

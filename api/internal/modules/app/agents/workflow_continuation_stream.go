@@ -506,7 +506,7 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 		return
 	}
 	status := "direct_output"
-	if strings.EqualFold(strings.TrimSpace(run.Status), "failed") {
+	if agentWorkflowRunLogFailed(run.Status) {
 		status = "failed"
 	}
 	if _, err := h.chatRuntimeService.UpdateWorkflowApprovalContinuationStatus(ctx, continuation, status); err != nil {

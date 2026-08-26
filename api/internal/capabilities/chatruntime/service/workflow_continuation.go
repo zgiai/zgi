@@ -610,13 +610,15 @@ func workflowContinuationEventReportsFailure(eventType string, payload map[strin
 	if eventType == "error" || strings.HasSuffix(eventType, "_failed") {
 		return true
 	}
-	status := strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload["status"])))
-	return status == "failed" || status == "error"
+	return failureprojection.IsFailureStatus(firstNonEmptyString(payload["status"]))
 }
 
 func workflowContinuationStatusFailedValue(status string) bool {
+	if failureprojection.IsFailureStatus(status) {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "failed", "error", "expired":
+	case "expired":
 		return true
 	default:
 		return false

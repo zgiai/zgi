@@ -30,54 +30,31 @@ func (stub *agentRuntimeWorkflowNodeDiagnosticStub) GetByWorkflowRunID(_ context
 
 func TestAgentRuntimeWorkflowDiagnosticsRestoresDetailedFailureOnlyForAuthorizedLogs(t *testing.T) {
 	workspaceID := uuid.New()
-	agentID := uuid.New()
+	parentAgentID := uuid.New()
+	workflowAgentID := uuid.New()
+	messageID := uuid.New()
+	conversationID := uuid.New()
 	runID := uuid.New().String()
+	workflowID := uuid.New().String()
+	invocationID := "invocation-1"
+	bindingID := "binding-1"
 	rawRunError := "provider rejected model route: upstream request id req-private"
 	rawNodeError := "provider quota exhausted for deployment private-deployment"
 	rawOutputs := `{"failure_reason":"private provider failure","partial":"diagnostic output"}`
 	rawNodeOutputs := `{"provider_error":"private node failure"}`
 	createdAt := time.Unix(1_700_000_000, 0)
-
-	handler := &AgentRuntimeLogsHandler{
-		workflowRunLogs: &agentRuntimeWorkflowRunDiagnosticStub{logs: map[string]*WorkflowRunLog{
-			runID: {
-				ID:          runID,
-				TenantID:    workspaceID.String(),
-				AgentID:     agentID.String(),
-				WorkflowID:  uuid.New().String(),
-				Status:      dto.WorkflowRunStatusFailed,
-				Version:     "published",
-				Outputs:     &rawOutputs,
-				Error:       &rawRunError,
-				ElapsedTime: 1250,
-				CreatedAt:   createdAt,
-			},
-		}},
-		workflowNodeRuntimeLogs: &agentRuntimeWorkflowNodeDiagnosticStub{logs: map[string][]WorkflowNodeRuntimeLog{
-			runID: {{
-				ID:            uuid.New().String(),
-				TenantID:      workspaceID.String(),
-				AgentID:       agentID.String(),
-				NodeID:        "llm-1",
-				NodeType:      "llm",
-				Title:         "LLM",
-				Status:        "failed",
-				Outputs:       &rawNodeOutputs,
-				Error:         &rawNodeError,
-				ElapsedTime:   800,
-				CreatedAt:     createdAt,
-				CreatedByRole: "account",
-			}},
-		}},
-	}
 	message := &runtimemodel.Message{
-		ID:             uuid.New(),
-		ConversationID: uuid.New(),
+		ID:             messageID,
+		ConversationID: conversationID,
 		Status:         runtimemodel.MessageStatusCompleted,
 		Answer:         "工作流运行报错了。",
 		Metadata: map[string]interface{}{
 			"workflow_runs": []interface{}{map[string]interface{}{
 				"workflow_run_id": runID,
+				"workflow_id":     workflowID,
+				"agent_id":        workflowAgentID.String(),
+				"invocation_id":   invocationID,
+				"binding_id":      bindingID,
 				"status":          "failed",
 				"error":           "workflow run failed",
 				"outputs":         map[string]interface{}{},
@@ -92,11 +69,47 @@ func TestAgentRuntimeWorkflowDiagnosticsRestoresDetailedFailureOnlyForAuthorized
 		UpdatedAt: createdAt.Add(2 * time.Second),
 	}
 
+	handler := &AgentRuntimeLogsHandler{
+		workflowRunLogs: &agentRuntimeWorkflowRunDiagnosticStub{logs: map[string]*WorkflowRunLog{
+			runID: {
+				ID:                   runID,
+				TenantID:             workspaceID.String(),
+				AgentID:              workflowAgentID.String(),
+				WorkflowID:           workflowID,
+				Status:               dto.WorkflowRunStatusFailed,
+				Version:              "published",
+				Outputs:              &rawOutputs,
+				Error:                &rawRunError,
+				ElapsedTime:          1250,
+				CreatedAt:            createdAt,
+				ParentConversationID: optionalStringPointer(conversationID.String()),
+				ParentMessageID:      optionalStringPointer(messageID.String()),
+				ParentInvocationID:   optionalStringPointer(invocationID),
+				InvocationBindingID:  optionalStringPointer(bindingID),
+			},
+		}},
+		workflowNodeRuntimeLogs: &agentRuntimeWorkflowNodeDiagnosticStub{logs: map[string][]WorkflowNodeRuntimeLog{
+			runID: {{
+				ID:            uuid.New().String(),
+				TenantID:      workspaceID.String(),
+				AgentID:       workflowAgentID.String(),
+				NodeID:        "llm-1",
+				NodeType:      "llm",
+				Title:         "LLM",
+				Status:        "exception",
+				Outputs:       &rawNodeOutputs,
+				Error:         &rawNodeError,
+				ElapsedTime:   800,
+				CreatedAt:     createdAt,
+				CreatedByRole: "account",
+			}},
+		}},
+	}
 	enriched := handler.withAgentRuntimeWorkflowDiagnostics(
 		context.Background(),
 		message,
 		runtimeservice.Scope{WorkspaceID: &workspaceID},
-		agentID,
+		parentAgentID,
 	)
 	steps := buildAgentRuntimeSteps(enriched)
 	if len(steps) != 2 {
@@ -156,5 +169,65 @@ func TestAgentRuntimeWorkflowDiagnosticsRejectsRunOutsideAuthorizedScope(t *test
 	runs := runtimeSkillInvocations(enriched.Metadata["workflow_runs"])
 	if got := runtimeString(runs[0]["error"]); got != "workflow run failed" {
 		t.Fatalf("cross-workspace diagnostic error = %q, want generic stored value", got)
+	}
+}
+
+func TestAgentRuntimeWorkflowDiagnosticsRejectsMismatchedInvocationLineage(t *testing.T) {
+	workspaceID := uuid.New()
+	parentAgentID := uuid.New()
+	messageID := uuid.New()
+	conversationID := uuid.New()
+	runID := uuid.New().String()
+	workflowAgentID := uuid.New().String()
+	workflowID := uuid.New().String()
+	rawError := "private workflow diagnostic"
+
+	tests := []struct {
+		name            string
+		parentMessageID string
+		bindingID       string
+	}{
+		{name: "different parent message", parentMessageID: uuid.New().String(), bindingID: "binding-1"},
+		{name: "different invocation binding", parentMessageID: messageID.String(), bindingID: "binding-other"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := &AgentRuntimeLogsHandler{workflowRunLogs: &agentRuntimeWorkflowRunDiagnosticStub{logs: map[string]*WorkflowRunLog{
+				runID: {
+					ID:                   runID,
+					TenantID:             workspaceID.String(),
+					AgentID:              workflowAgentID,
+					WorkflowID:           workflowID,
+					ParentConversationID: optionalStringPointer(conversationID.String()),
+					ParentMessageID:      optionalStringPointer(tt.parentMessageID),
+					ParentInvocationID:   optionalStringPointer("invocation-1"),
+					InvocationBindingID:  optionalStringPointer(tt.bindingID),
+					Error:                &rawError,
+				},
+			}}}
+			message := &runtimemodel.Message{
+				ID:             messageID,
+				ConversationID: conversationID,
+				Metadata: map[string]interface{}{"workflow_runs": []interface{}{map[string]interface{}{
+					"workflow_run_id": runID,
+					"workflow_id":     workflowID,
+					"agent_id":        workflowAgentID,
+					"invocation_id":   "invocation-1",
+					"binding_id":      "binding-1",
+					"error":           "workflow run failed",
+				}}},
+			}
+
+			enriched := handler.withAgentRuntimeWorkflowDiagnostics(
+				t.Context(),
+				message,
+				runtimeservice.Scope{WorkspaceID: &workspaceID},
+				parentAgentID,
+			)
+			runs := runtimeSkillInvocations(enriched.Metadata["workflow_runs"])
+			if got := runtimeString(runs[0]["error"]); got != "workflow run failed" {
+				t.Fatalf("mismatched lineage diagnostic error = %q, want generic stored value", got)
+			}
+		})
 	}
 }

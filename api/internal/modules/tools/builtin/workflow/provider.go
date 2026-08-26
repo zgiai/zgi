@@ -472,7 +472,7 @@ func applyPublishedWorkflowResultFailureExposure(runtime *tools.ToolRuntime, pay
 	if !publishedWorkflowFailureDetailsHidden(runtime) || payload == nil {
 		return
 	}
-	if !strings.EqualFold(stringValue(payload, "status"), "failed") {
+	if !failureprojection.IsFailureStatus(stringValue(payload, "status")) {
 		return
 	}
 	projected := failureprojection.ProjectPublicPayload(payload, publishedWorkflowError, true)
@@ -516,8 +516,7 @@ func workflowEventReportsFailure(eventType string, payload map[string]interface{
 	if eventType == "error" || strings.HasSuffix(eventType, "_failed") {
 		return true
 	}
-	status := strings.ToLower(stringValue(payload, "status"))
-	return status == "failed" || status == "error"
+	return failureprojection.IsFailureStatus(stringValue(payload, "status"))
 }
 
 func normalizeWorkflowStatus(status string, outputs map[string]interface{}) string {

@@ -80,8 +80,7 @@ func workflowRunEventProjectionInvokeFrom(run *WorkflowRunLog) string {
 }
 
 func workflowEventHasFailureStatus(data map[string]interface{}) bool {
-	status := strings.ToLower(strings.TrimSpace(workflowEventString(data["status"])))
-	return status == "failed" || status == "error"
+	return failureprojection.IsFailureStatus(workflowEventString(data["status"]))
 }
 
 func workflowPublicFailurePayload() map[string]interface{} {

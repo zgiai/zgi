@@ -21,15 +21,18 @@ func (h *AgentRuntimeLogsHandler) withAgentRuntimeWorkflowDiagnostics(
 	ctx context.Context,
 	message *runtimemodel.Message,
 	scope runtimeservice.Scope,
-	agentID uuid.UUID,
+	parentAgentID uuid.UUID,
 ) *runtimemodel.Message {
-	if h == nil || message == nil || h.workflowRunLogs == nil || scope.WorkspaceID == nil {
+	if h == nil || message == nil || h.workflowRunLogs == nil || scope.WorkspaceID == nil || parentAgentID == uuid.Nil {
 		return message
 	}
 	metadata := cloneAgentRuntimeDiagnosticMap(message.Metadata)
 	runs := runtimeSkillInvocations(metadata["workflow_runs"])
-	if continuationRunID := agentRuntimeContinuationWorkflowRunID(metadata); continuationRunID != "" && !agentRuntimeRunsContainID(runs, continuationRunID) {
-		runs = append(runs, map[string]interface{}{"workflow_run_id": continuationRunID})
+	if continuationRun := agentRuntimeContinuationWorkflowRun(metadata); continuationRun != nil {
+		continuationRunID := strings.TrimSpace(runtimeString(continuationRun["workflow_run_id"]))
+		if !agentRuntimeRunsContainID(runs, continuationRunID) {
+			runs = append(runs, continuationRun)
+		}
 	}
 	if len(runs) == 0 {
 		return message
@@ -44,7 +47,7 @@ func (h *AgentRuntimeLogsHandler) withAgentRuntimeWorkflowDiagnostics(
 			continue
 		}
 		runLog, err := h.workflowRunLogs.GetByID(ctx, runID)
-		if err != nil || runLog == nil || runLog.TenantID != scope.WorkspaceID.String() || runLog.AgentID != agentID.String() {
+		if err != nil || !agentRuntimeWorkflowRunBelongsToMessage(runCopy, runLog, message, scope.WorkspaceID.String()) {
 			enriched = append(enriched, runCopy)
 			continue
 		}
@@ -54,6 +57,35 @@ func (h *AgentRuntimeLogsHandler) withAgentRuntimeWorkflowDiagnostics(
 	messageCopy := *message
 	messageCopy.Metadata = metadata
 	return &messageCopy
+}
+
+func agentRuntimeWorkflowRunBelongsToMessage(run map[string]interface{}, runLog *WorkflowRunLog, message *runtimemodel.Message, workspaceID string) bool {
+	if runLog == nil || message == nil || strings.TrimSpace(runLog.TenantID) != strings.TrimSpace(workspaceID) {
+		return false
+	}
+	if strings.TrimSpace(getStringValue(runLog.ParentMessageID)) != message.ID.String() {
+		return false
+	}
+	if parentConversationID := strings.TrimSpace(getStringValue(runLog.ParentConversationID)); parentConversationID != "" && parentConversationID != message.ConversationID.String() {
+		return false
+	}
+
+	identities := []struct {
+		metadataKey string
+		storedValue string
+	}{
+		{metadataKey: "invocation_id", storedValue: getStringValue(runLog.ParentInvocationID)},
+		{metadataKey: "binding_id", storedValue: getStringValue(runLog.InvocationBindingID)},
+		{metadataKey: "workflow_id", storedValue: runLog.WorkflowID},
+		{metadataKey: "agent_id", storedValue: runLog.AgentID},
+	}
+	for _, identity := range identities {
+		expected := strings.TrimSpace(runtimeString(run[identity.metadataKey]))
+		if expected != "" && expected != strings.TrimSpace(identity.storedValue) {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *AgentRuntimeLogsHandler) enrichAgentRuntimeWorkflowRun(
@@ -130,9 +162,19 @@ func agentRuntimeWorkflowNodeDiagnostic(node WorkflowNodeRuntimeLog) map[string]
 	return diagnostic
 }
 
-func agentRuntimeContinuationWorkflowRunID(metadata map[string]interface{}) string {
+func agentRuntimeContinuationWorkflowRun(metadata map[string]interface{}) map[string]interface{} {
 	continuation := runtimeMap(metadata["agent_workflow_continuation"])
-	return strings.TrimSpace(runtimeString(continuation["workflow_run_id"]))
+	runID := strings.TrimSpace(runtimeString(continuation["workflow_run_id"]))
+	if runID == "" {
+		return nil
+	}
+	run := map[string]interface{}{"workflow_run_id": runID}
+	for _, key := range []string{"workflow_id", "agent_id", "invocation_id", "binding_id"} {
+		if value := strings.TrimSpace(runtimeString(continuation[key])); value != "" {
+			run[key] = value
+		}
+	}
+	return run
 }
 
 func agentRuntimeRunsContainID(runs []map[string]interface{}, runID string) bool {
