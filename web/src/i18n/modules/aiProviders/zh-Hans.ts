@@ -359,7 +359,7 @@ const messages: AiProvidersMessages = {
     actions: {
       enable: '启用',
       disable: '禁用',
-      edit: '编辑',
+      edit: '编辑模型',
       delete: '删除',
       enableSelected: '允许所选',
       disableSelected: '关闭所选',
@@ -409,7 +409,8 @@ const messages: AiProvidersMessages = {
       cancel: '取消',
       save: '保存',
       saving: '保存中...',
-      syncedPrices: '上游同步价（美元/1M）：输入 {input}，输出 {output}，缓存读取 {cacheRead}，缓存写入 {cacheWrite}',
+      syncedPrices:
+        '上游同步价（美元/1M）：输入 {input}，输出 {output}，缓存读取 {cacheRead}，缓存写入 {cacheWrite}',
       notProvided: '未提供',
     },
     table: {

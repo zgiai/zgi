@@ -23,6 +23,8 @@ export const DEFAULT_BILLING_DISPLAY: BillingDisplaySettings = {
 
 export const NORMALIZED_AI_CREDITS_PER_USD = 1_000;
 const BILLING_DECIMAL_PLACES = 12;
+const CANONICAL_PRICE_QUANTIZATION = new Decimal('0.000000000001');
+const DISPLAY_TAIL_RELATIVE_TOLERANCE = new Decimal('0.000000001');
 const TOKENS_PER_MILLION = 1_000_000;
 
 /** Rebuilds a historical subtotal using only values recorded on that invocation. */
@@ -185,7 +187,11 @@ export function formatRecordedBillingAmountFromUSD(
   try {
     const rate = new Decimal(recordedUSDToCNYRate);
     if (!rate.isPositive()) return formatRecordedBillingAmount(amountUSD, 'USD', options);
-    return formatRecordedBillingAmount(new Decimal(amountUSD).times(rate).toString(), 'CNY', options);
+    return formatRecordedBillingAmount(
+      new Decimal(amountUSD).times(rate).toString(),
+      'CNY',
+      options
+    );
   } catch {
     return formatRecordedBillingAmount(amountUSD, 'USD', options);
   }
@@ -250,16 +256,20 @@ export function formatCatalogCurrencyAmount(
 }
 
 export function billingDisplayInputValueFromUSD(
-  amountUSD: number | null | undefined,
+  amountUSD: number | string | null | undefined,
   configured: boolean | null | undefined,
   settings: BillingDisplaySettings
 ): string {
   if (!configured) return '';
-  if (amountUSD === undefined || amountUSD === null || !Number.isFinite(amountUSD)) return '0';
-  const displayAmount = new Decimal(amountUSD).times(
-    settings.currency === 'CNY' ? settings.usdToCnyRate : 1
-  );
-  return trimDecimal(displayAmount);
+  if (amountUSD === undefined || amountUSD === null) return '0';
+  try {
+    const displayAmount = new Decimal(amountUSD).times(
+      settings.currency === 'CNY' ? settings.usdToCnyRate : 1
+    );
+    return trimBillingDisplayInput(displayAmount, settings);
+  } catch {
+    return '0';
+  }
 }
 
 export function billingDisplayInputToUSD(
@@ -285,4 +295,27 @@ export function billingDisplayInputToUSD(
 
 function trimDecimal(value: Decimal): string {
   return value.toDecimalPlaces(BILLING_DECIMAL_PLACES).toFixed();
+}
+
+/**
+ * Removes the conversion tail introduced when a CNY input was persisted in a
+ * canonical USD column with 12 decimal places. The tolerance is derived from
+ * that storage quantum, so meaningful small prices are not rounded to zero.
+ */
+function trimBillingDisplayInput(value: Decimal, settings: BillingDisplaySettings): string {
+  if (settings.currency !== 'CNY') {
+    return trimDecimal(value);
+  }
+
+  const tolerance = CANONICAL_PRICE_QUANTIZATION.times(settings.usdToCnyRate).div(2);
+  for (let decimalPlaces = 0; decimalPlaces < BILLING_DECIMAL_PLACES; decimalPlaces += 1) {
+    const candidate = value.toDecimalPlaces(decimalPlaces);
+    if (!value.isZero() && candidate.isZero()) continue;
+    const difference = candidate.minus(value).abs();
+    const relativeDifference = value.isZero() ? new Decimal(0) : difference.div(value.abs());
+    if (difference.lte(tolerance) && relativeDifference.lte(DISPLAY_TAIL_RELATIVE_TOLERANCE)) {
+      return candidate.toFixed();
+    }
+  }
+  return trimDecimal(value);
 }

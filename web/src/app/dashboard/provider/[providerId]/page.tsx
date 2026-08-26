@@ -650,7 +650,6 @@ export default function ModelPage() {
           isBatchToggling={isBatchToggling}
           togglingModel={togglingModel}
           onToggleModel={onToggleModel}
-          onEditPrice={canManageModels ? openPriceDialog : undefined}
           onConfigureChannel={canManageModels && !isCustom ? handleConfigureChannel : undefined}
           searchQuery={query}
           hasTypeFilter={selectedUseCase !== null}
@@ -702,7 +701,6 @@ export default function ModelPage() {
           isBatchToggling={isBatchToggling}
           togglingModel={togglingModel}
           onToggleModel={onToggleModel}
-          onEditPrice={canManageModels ? openPriceDialog : undefined}
           searchQuery={query}
           hasTypeFilter={selectedUseCase !== null}
           readOnly

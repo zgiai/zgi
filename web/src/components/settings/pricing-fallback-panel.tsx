@@ -12,6 +12,7 @@ import {
   Type,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import Decimal from 'decimal.js-light';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -181,8 +182,11 @@ function normalizeRuleForSave(rule: PricingFallbackRule): PricingFallbackRule {
 
 function isValidNonNegativeNumber(value: string | undefined) {
   if (!value || value.trim() === '') return false;
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0;
+  try {
+    return !new Decimal(value).isNegative();
+  } catch {
+    return false;
+  }
 }
 
 function validateRules(rules: PricingFallbackRule[], t: (key: SettingsKey) => string) {
@@ -267,10 +271,7 @@ function tokenPriceDisplayValue(
   const price = cleanText(rule?.price_usd_per_1m_tokens);
   if (!price) return '';
 
-  const priceUSD = Number(price);
-  if (!Number.isFinite(priceUSD)) return '';
-
-  return billingDisplayInputValueFromUSD(priceUSD, true, billingDisplay);
+  return billingDisplayInputValueFromUSD(price, true, billingDisplay);
 }
 
 function tokenPriceUnit(billingDisplay: BillingDisplaySettings, t: (key: SettingsKey) => string) {

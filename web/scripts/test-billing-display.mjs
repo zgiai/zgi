@@ -104,6 +104,21 @@ assert.equal(
   'CNY model price conversion must preserve the canonical USD decimal value'
 );
 assert.equal(
+  billingDisplayInputToUSD('10', cnySettings),
+  '1.428571428571',
+  'CNY model prices must be stored at the canonical USD column precision'
+);
+assert.equal(
+  billingDisplayInputValueFromUSD('1.428571428571', true, cnySettings),
+  '10',
+  'CNY model price inputs must hide canonical USD storage quantization tails'
+);
+assert.equal(
+  billingDisplayInputValueFromUSD('0.000000000001', true, cnySettings),
+  '0.000000000007',
+  'quantization cleanup must not round meaningful tiny model prices to zero'
+);
+assert.equal(
   formatBillingDisplayAmountFromUSD(0.0001806, usdSettings),
   '$0.0001806',
   'small model prices must be displayed directly without truncation'
@@ -341,6 +356,10 @@ const [customModelDialogSource, providerModelPageSource] = await Promise.all([
   readFile(new URL('../src/components/providers/custom-model-dialog.tsx', import.meta.url), 'utf8'),
   readFile(new URL('../src/app/dashboard/provider/[providerId]/page.tsx', import.meta.url), 'utf8'),
 ]);
+const modelsGroupTableSource = await readFile(
+  new URL('../src/components/providers/models-group-table.tsx', import.meta.url),
+  'utf8'
+);
 const tokenPriceCellSource = pricingFallbackSource.slice(
   pricingFallbackSource.indexOf('function TokenPriceCell'),
   pricingFallbackSource.indexOf('function ImagePriceCell')
@@ -401,10 +420,20 @@ assert.match(
   /cache_write_price: billingDisplayInputToUSD/,
   'custom models must submit a distinct cache write price'
 );
+assert.doesNotMatch(
+  modelsGroupTableSource,
+  /onEditPrice|aiProviders\.models\.actions\.setPrice/,
+  'model tables must not expose a second price-only edit icon'
+);
 assert.match(
+  modelsGroupTableSource,
+  /TooltipContent>[\s\S]*aiProviders\.models\.actions\.edit/,
+  'the remaining complete model editor must identify itself with a tooltip'
+);
+assert.doesNotMatch(
   providerModelPageSource,
-  /cache_read_price: values\.cacheReadPrice,[\s\S]*cache_write_price: values\.cacheWritePrice/,
-  'the custom model price shortcut must persist both cache price fields'
+  /onEditPrice=/,
+  'provider pages must use the complete model editor instead of the price-only shortcut'
 );
 
 console.log('Billing display checks passed.');

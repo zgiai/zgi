@@ -373,7 +373,7 @@ const messages = {
     actions: {
       enable: 'Enable',
       disable: 'Disable',
-      edit: 'Edit',
+      edit: 'Edit model',
       delete: 'Delete',
       enableSelected: 'Allow Selected',
       disableSelected: 'Close Selected',
@@ -423,7 +423,8 @@ const messages = {
       cancel: 'Cancel',
       save: 'Save',
       saving: 'Saving...',
-      syncedPrices: 'Upstream prices (USD/1M): input {input}, output {output}, cache read {cacheRead}, cache write {cacheWrite}',
+      syncedPrices:
+        'Upstream prices (USD/1M): input {input}, output {output}, cache read {cacheRead}, cache write {cacheWrite}',
       notProvided: 'not provided',
     },
     table: {

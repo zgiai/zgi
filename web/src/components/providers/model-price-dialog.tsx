@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import Decimal from 'decimal.js-light';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -42,8 +43,11 @@ interface ModelPriceDialogProps {
 function priceValueInvalid(value: string): boolean {
   const trimmed = value.trim();
   if (trimmed === '') return false;
-  const parsed = Number(trimmed);
-  return !Number.isFinite(parsed) || parsed < 0;
+  try {
+    return new Decimal(trimmed).isNegative();
+  } catch {
+    return true;
+  }
 }
 
 export function ModelPriceDialog({

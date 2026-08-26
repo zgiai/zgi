@@ -1,4 +1,5 @@
 import type { ModelUseCase } from '@/services/types/model';
+import Decimal from 'decimal.js-light';
 import {
   type BillingDisplaySettings,
   DEFAULT_BILLING_DISPLAY,
@@ -57,7 +58,7 @@ interface StructuredModelPricing {
 
 interface VideoPriceDisplayRow {
   detail: string;
-  price: number;
+  price: string;
   unit: ModelPriceUnit;
   currency: string | null | undefined;
 }
@@ -195,7 +196,7 @@ function buildModelPriceDisplayItem(
 
 function buildSourceCurrencyModelPriceDisplayItem(
   label: ModelPriceLabel,
-  price: number,
+  price: number | string,
   sourceCurrency: string | null | undefined,
   unit: ModelPriceUnit,
   billingDisplay: BillingDisplaySettings,
@@ -207,18 +208,25 @@ function buildSourceCurrencyModelPriceDisplayItem(
     formattedValue: formatSourceCurrencyAmount(price, sourceCurrency, billingDisplay),
     unit,
     isConfigured: true,
-    isFree: price === 0,
+    isFree: decimalIsZero(price),
   };
 }
 
 function formatSourceCurrencyAmount(
-  price: number,
+  price: number | string,
   sourceCurrency: string | null | undefined,
   billingDisplay: BillingDisplaySettings
 ): string {
   const normalizedCurrency = sourceCurrency?.trim().toUpperCase();
-  const priceUSD = normalizedCurrency === 'CNY' ? price / billingDisplay.usdToCnyRate : price;
-  return formatBillingDisplayAmountFromUSD(priceUSD, billingDisplay);
+  try {
+    const priceUSD =
+      normalizedCurrency === 'CNY'
+        ? new Decimal(price).div(billingDisplay.usdToCnyRate)
+        : new Decimal(price);
+    return formatBillingDisplayAmountFromUSD(priceUSD.toString(), billingDisplay);
+  } catch {
+    return '-';
+  }
 }
 
 function getVideoPriceDisplayRows(
@@ -276,15 +284,28 @@ function flattenVideoRates(
 function videoRatePrice(
   rate: VideoGenerationPricingRate,
   billingUnit: string | null | undefined
-): number | null {
+): string | null {
   const rawPrice =
     billingUnit === 'second'
       ? rate.price_per_second
       : billingUnit === 'task'
         ? rate.price_per_task
         : rate.price_per_million_tokens;
-  const price = typeof rawPrice === 'string' ? Number(rawPrice) : rawPrice;
-  return typeof price === 'number' && Number.isFinite(price) && price >= 0 ? price : null;
+  if (rawPrice === undefined || rawPrice === null) return null;
+  try {
+    const price = new Decimal(rawPrice);
+    return price.isNegative() ? null : price.toString();
+  } catch {
+    return null;
+  }
+}
+
+function decimalIsZero(value: number | string): boolean {
+  try {
+    return new Decimal(value).isZero();
+  } catch {
+    return false;
+  }
 }
 
 function videoRateDetail(
