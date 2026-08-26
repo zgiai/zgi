@@ -167,10 +167,22 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 			}
 		}()
 	}
+	delegateAnswerBridge := newAutomationWorkflowDelegateAnswerBridge(
+		runCtx,
+		req,
+		target,
+		workflowRunLogID,
+		graphData,
+		inputs,
+		eventSink,
+	)
 	emitAutomationWorkflowStarted(eventSink, req, target, workflowRunLogID)
 
 	startedAt := time.Now()
 	executionResult, execErr := s.executor.ExecuteSimpleWorkflowWithRunIDAndCallbacks(runCtx, workflowRunLogID, graphData, inputs, graph_engine.EngineCallbacks{
+		Stream: func(nodeID string, event *workflowshared.RunStreamChunkEvent) {
+			delegateAnswerBridge.handleStreamChunk(nodeID, event)
+		},
 		Iteration: func(event *graph_engine.IterationEvent) {
 			emitAutomationWorkflowIterationEvent(eventSink, req, target, workflowRunLogID, nodeMetas, event)
 		},
@@ -178,15 +190,24 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 			emitAutomationWorkflowLoopEvent(eventSink, req, target, workflowRunLogID, nodeMetas, event)
 		},
 		InternalNode: func(event *graph_engine.NodeEvent) {
+			delegateAnswerBridge.handleInternalNode(event)
 			emitAutomationWorkflowInternalNodeEvent(eventSink, req, target, workflowRunLogID, nodeMap, event)
 		},
 		NodeStarted: func(nodeID string, nodeType string, inputs map[string]any) {
 			meta := automationWorkflowEventNodeMeta(nodeMetas, nodeID, nodeType)
 			emitAutomationWorkflowNodeStarted(eventSink, req, target, workflowRunLogID, meta, inputs)
+			delegateAnswerBridge.markNodeStarted(nodeID, nodeType)
 		},
 		NodeFinishedDetailed: func(event graph_engine.NodeFinishedEvent) {
 			meta := automationWorkflowEventNodeMeta(nodeMetas, event.NodeID, event.NodeType)
 			emitAutomationWorkflowNodeFinished(eventSink, req, target, workflowRunLogID, meta, event)
+			delegateAnswerBridge.markNodeFinished(event)
+		},
+		NodeSkipped: func(nodeID string, _ string) {
+			delegateAnswerBridge.markNodeSkipped(nodeID)
+		},
+		ReadyBatch: func(scope graph_engine.ReadyBatchScope, nodeIDs []string) {
+			delegateAnswerBridge.registerReadyBatch(scope, nodeIDs)
 		},
 	})
 	select {
@@ -216,13 +237,13 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 			zap.Error(err))
 	}
 
-	status := string(dto.WorkflowRunStatusSucceeded)
+	status, executionErr := automationWorkflowRunOutcome(executionResult, execErr)
 	errorMessage := ""
-	if execErr != nil {
-		status = string(dto.WorkflowRunStatusFailed)
-		errorMessage = execErr.Error()
-	} else if executionResult != nil && strings.EqualFold(strings.TrimSpace(executionResult.Status), string(dto.WorkflowRunStatusPaused)) {
-		status = string(dto.WorkflowRunStatusPaused)
+	if executionErr != nil {
+		errorMessage = executionErr.Error()
+	}
+	if status == string(dto.WorkflowRunStatusSucceeded) && !delegateAnswerBridge.streamed() {
+		emitAutomationWorkflowDelegateAnswer(eventSink, req, target, workflowRunLogID, outputs)
 	}
 
 	if status == string(dto.WorkflowRunStatusPaused) {
@@ -263,9 +284,9 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 	} else if err := s.UpdateWorkflowRunLogStatus(finalizeCtx, workflowRunLogID, status, outputs, elapsedTime, 0, totalSteps, errorMessage); err != nil {
 		return nil, fmt.Errorf("update automation workflow run log: %w", err)
 	}
-	if execErr != nil {
+	if executionErr != nil {
 		if !runtimeV2 {
-			emitAutomationWorkflowFailed(eventSink, req, target, workflowRunLogID, outputs, elapsedTime, execErr)
+			emitAutomationWorkflowFailed(eventSink, req, target, workflowRunLogID, outputs, elapsedTime, executionErr)
 		}
 		return &automationaction.WorkflowRunResult{
 			WorkflowRunID:  workflowRunLogID,
@@ -277,7 +298,7 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 			ElapsedTime:    elapsedTime,
 			InvocationID:   workflowInvocationID(req.Invocation),
 			InvocationMode: workflowInvocationMode(req.Invocation),
-		}, fmt.Errorf("workflow execution failed: %w", execErr)
+		}, fmt.Errorf("workflow execution failed: %w", executionErr)
 	}
 	if status != string(dto.WorkflowRunStatusPaused) && !runtimeV2 {
 		emitAutomationWorkflowFinished(eventSink, req, target, workflowRunLogID, outputs, elapsedTime)
@@ -294,6 +315,35 @@ func (s *WorkflowService) RunAutomationWorkflow(ctx context.Context, req automat
 		InvocationID:   workflowInvocationID(req.Invocation),
 		InvocationMode: workflowInvocationMode(req.Invocation),
 	}, nil
+}
+
+func automationWorkflowRunOutcome(result *WorkflowExecutionResult, execErr error) (string, error) {
+	if execErr != nil {
+		return string(dto.WorkflowRunStatusFailed), execErr
+	}
+	if result == nil {
+		return string(dto.WorkflowRunStatusFailed), fmt.Errorf("workflow execution returned no result")
+	}
+
+	switch strings.ToLower(strings.TrimSpace(result.Status)) {
+	case string(dto.WorkflowRunStatusPaused):
+		return string(dto.WorkflowRunStatusPaused), nil
+	case string(dto.WorkflowRunStatusFailed):
+		if result.Error != nil {
+			return string(dto.WorkflowRunStatusFailed), result.Error
+		}
+		return string(dto.WorkflowRunStatusFailed), fmt.Errorf("workflow execution failed")
+	case string(dto.WorkflowRunStatusStopped):
+		if result.Error != nil {
+			return string(dto.WorkflowRunStatusStopped), result.Error
+		}
+		return string(dto.WorkflowRunStatusStopped), fmt.Errorf("workflow execution stopped")
+	default:
+		if result.Error != nil {
+			return string(dto.WorkflowRunStatusFailed), result.Error
+		}
+		return string(dto.WorkflowRunStatusSucceeded), nil
+	}
 }
 
 func workflowInvocationID(invocation *automationaction.WorkflowInvocationContext) string {
@@ -366,6 +416,34 @@ func emitAutomationWorkflowNodeFinished(sink automationaction.WorkflowRunEventSi
 		payload["error"] = event.Err.Error()
 	}
 	emitAutomationWorkflowEvent(sink, automationWorkflowEventNodeFinished, payload)
+}
+
+func emitAutomationWorkflowDelegateAnswer(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}) {
+	if workflowInvocationMode(req.Invocation) != automationaction.WorkflowInvocationModeAgentDelegate {
+		return
+	}
+	answer, _ := outputs["answer"].(string)
+	if strings.TrimSpace(answer) == "" {
+		return
+	}
+
+	now := time.Now()
+	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
+		"id":            workflowRunID,
+		"message_id":    workflowRunID,
+		"answer":        answer,
+		"created_at":    now.Unix(),
+		"created_at_ms": now.UnixMilli(),
+	})
+	if req.Invocation != nil {
+		if conversationID := strings.TrimSpace(req.Invocation.ParentConversationID); conversationID != "" {
+			payload["conversation_id"] = conversationID
+		}
+		if messageID := strings.TrimSpace(req.Invocation.ParentMessageID); messageID != "" {
+			payload["message_id"] = messageID
+		}
+	}
+	emitAutomationWorkflowEvent(sink, "message", payload)
 }
 
 func emitAutomationWorkflowIterationEvent(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, nodeMetas map[string]automationWorkflowNodeMeta, event *graph_engine.IterationEvent) {

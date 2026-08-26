@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,6 +12,232 @@ import (
 	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 )
+
+func TestAutomationWorkflowRunOutcomePropagatesExecutionFailure(t *testing.T) {
+	providerErr := errors.New("model route unavailable")
+	tests := []struct {
+		name       string
+		result     *WorkflowExecutionResult
+		execErr    error
+		wantStatus string
+		wantErr    error
+	}{
+		{
+			name:       "executor error",
+			result:     &WorkflowExecutionResult{Status: "succeeded"},
+			execErr:    providerErr,
+			wantStatus: string(workflowdto.WorkflowRunStatusFailed),
+			wantErr:    providerErr,
+		},
+		{
+			name:       "failed result error",
+			result:     &WorkflowExecutionResult{Status: "failed", Error: providerErr},
+			wantStatus: string(workflowdto.WorkflowRunStatusFailed),
+			wantErr:    providerErr,
+		},
+		{
+			name:       "failed result without error",
+			result:     &WorkflowExecutionResult{Status: "failed"},
+			wantStatus: string(workflowdto.WorkflowRunStatusFailed),
+		},
+		{
+			name:       "paused result",
+			result:     &WorkflowExecutionResult{Status: "paused"},
+			wantStatus: string(workflowdto.WorkflowRunStatusPaused),
+		},
+		{
+			name:       "successful result",
+			result:     &WorkflowExecutionResult{Status: "succeeded"},
+			wantStatus: string(workflowdto.WorkflowRunStatusSucceeded),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, err := automationWorkflowRunOutcome(tt.result, tt.execErr)
+			if status != tt.wantStatus {
+				t.Fatalf("status = %q, want %q", status, tt.wantStatus)
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Fatalf("error = %v, want error wrapping %v", err, tt.wantErr)
+			}
+			if tt.wantStatus == string(workflowdto.WorkflowRunStatusFailed) && err == nil {
+				t.Fatal("error = nil, want workflow failure")
+			}
+			if tt.wantStatus != string(workflowdto.WorkflowRunStatusFailed) && err != nil {
+				t.Fatalf("error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestEmitAutomationWorkflowDelegateAnswerUsesParentMessage(t *testing.T) {
+	req := automationWorkflowEventTestRequest()
+	req.Invocation = &automationaction.WorkflowInvocationContext{
+		Mode:                 automationaction.WorkflowInvocationModeAgentDelegate,
+		ParentConversationID: "conversation-1",
+		ParentMessageID:      "message-1",
+	}
+	var events []automationaction.WorkflowRunEvent
+
+	emitAutomationWorkflowDelegateAnswer(func(event automationaction.WorkflowRunEvent) {
+		events = append(events, event)
+	}, req, automationWorkflowEventTestWorkflow(), "run-1", map[string]interface{}{
+		"answer": "workflow answer\n",
+	})
+
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one delegate message", events)
+	}
+	event := events[0]
+	if event.Type != "message" {
+		t.Fatalf("event type = %q, want message", event.Type)
+	}
+	if event.Payload["answer"] != "workflow answer\n" {
+		t.Fatalf("answer = %#v, want original workflow output", event.Payload["answer"])
+	}
+	if event.Payload["conversation_id"] != "conversation-1" || event.Payload["message_id"] != "message-1" {
+		t.Fatalf("message parent = %#v, want conversation-1/message-1", event.Payload)
+	}
+}
+
+func TestEmitAutomationWorkflowDelegateAnswerSkipsTaskAndEmptyOutput(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		outputs map[string]interface{}
+	}{
+		{name: "task workflow", mode: automationaction.WorkflowInvocationModeAgentTaskTool, outputs: map[string]interface{}{"answer": "hidden"}},
+		{name: "empty delegate output", mode: automationaction.WorkflowInvocationModeAgentDelegate, outputs: map[string]interface{}{"answer": "  "}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := automationWorkflowEventTestRequest()
+			req.Invocation = &automationaction.WorkflowInvocationContext{Mode: tt.mode}
+			emitted := false
+			emitAutomationWorkflowDelegateAnswer(func(automationaction.WorkflowRunEvent) {
+				emitted = true
+			}, req, automationWorkflowEventTestWorkflow(), "run-1", tt.outputs)
+			if emitted {
+				t.Fatal("delegate answer emitted for non-displayable output")
+			}
+		})
+	}
+}
+
+func TestAutomationWorkflowDelegateAnswerBridgeEmitsChunkSynchronously(t *testing.T) {
+	req := automationWorkflowEventTestRequest()
+	req.Invocation = &automationaction.WorkflowInvocationContext{
+		Mode:                 automationaction.WorkflowInvocationModeAgentDelegate,
+		ParentConversationID: "conversation-1",
+		ParentMessageID:      "message-1",
+	}
+	nodes := []interface{}{
+		map[string]interface{}{"id": "start", "data": map[string]interface{}{"type": "start"}},
+		map[string]interface{}{"id": "llm", "data": map[string]interface{}{"type": "llm"}},
+		map[string]interface{}{"id": "answer", "data": map[string]interface{}{"type": "answer", "answer": "{{#llm.text#}}"}},
+	}
+	nodeMap := map[string]map[string]interface{}{}
+	for _, rawNode := range nodes {
+		node := rawNode.(map[string]interface{})
+		nodeMap[node["id"].(string)] = node
+	}
+	streamGraph := &workflowStreamGraph{
+		GraphData: map[string]interface{}{
+			"nodes": nodes,
+			"edges": []interface{}{
+				map[string]interface{}{"source": "start", "sourceHandle": workflowDefaultOutputHandle, "target": "llm"},
+				map[string]interface{}{"source": "llm", "sourceHandle": workflowDefaultOutputHandle, "target": "answer"},
+			},
+		},
+		NodeMap:        nodeMap,
+		RuntimeNodeMap: nodeMap,
+		EdgeMap: map[string]map[string][]string{
+			"start": {workflowDefaultOutputHandle: {"llm"}},
+			"llm":   {workflowDefaultOutputHandle: {"answer"}},
+		},
+		RuntimeEdgeMap: map[string]map[string][]string{
+			"start": {workflowDefaultOutputHandle: {"llm"}},
+			"llm":   {workflowDefaultOutputHandle: {"answer"}},
+		},
+		StartNodeID: "start",
+	}
+	streamGraph.WatchConfig = collectStreamSelectorWatchConfig(nodeMap)
+
+	var events []automationaction.WorkflowRunEvent
+	bridge := &automationWorkflowDelegateAnswerBridge{
+		req: req, workflow: automationWorkflowEventTestWorkflow(), workflowRunID: "run-1",
+		eventSink:   func(event automationaction.WorkflowRunEvent) { events = append(events, event) },
+		streamGraph: streamGraph,
+	}
+	bridge.coordinator = newAnswerOutputCoordinatorWithEmitter(
+		"CONVERSATION_WORKFLOW",
+		"run-1",
+		map[string]interface{}{"sys.conversation_id": "conversation-1"},
+		streamGraph,
+		bridge.emitStreamEvent,
+	)
+
+	bridge.handleStreamChunk("llm", &workflowshared.RunStreamChunkEvent{
+		ChunkContent:         "live chunk",
+		FromVariableSelector: []string{"llm", "text"},
+	})
+	if !bridge.streamed() {
+		t.Fatal("streamed() = false, want live delegate chunk")
+	}
+	if len(events) != 1 || events[0].Type != "message" || events[0].Payload["answer"] != "live chunk" {
+		t.Fatalf("events = %#v, want one synchronous delegate message", events)
+	}
+	if events[0].Payload["conversation_id"] != "conversation-1" || events[0].Payload["message_id"] != "message-1" {
+		t.Fatalf("message parent = %#v, want parent Agent turn", events[0].Payload)
+	}
+}
+
+func TestNewAutomationWorkflowDelegateAnswerBridgeAcceptsPreparedGraphData(t *testing.T) {
+	req := automationaction.WorkflowRunRequest{
+		Invocation: &automationaction.WorkflowInvocationContext{
+			Mode:                 automationaction.WorkflowInvocationModeAgentDelegate,
+			ParentConversationID: "conversation-1",
+			ParentMessageID:      "message-1",
+		},
+	}
+	graphData := map[string]interface{}{
+		"nodes": []interface{}{
+			map[string]interface{}{"id": "start", "data": map[string]interface{}{"type": "start"}},
+			map[string]interface{}{"id": "llm", "data": map[string]interface{}{"type": "llm"}},
+			map[string]interface{}{"id": "answer", "data": map[string]interface{}{"type": "answer", "answer": "{{#llm.text#}}"}},
+		},
+		"edges": []interface{}{
+			map[string]interface{}{"source": "start", "sourceHandle": workflowDefaultOutputHandle, "target": "llm"},
+			map[string]interface{}{"source": "llm", "sourceHandle": workflowDefaultOutputHandle, "target": "answer"},
+		},
+	}
+
+	var events []automationaction.WorkflowRunEvent
+	workflow := automationWorkflowEventTestWorkflow()
+	workflow.Type = workflowdto.WorkflowTypeChat
+	bridge := newAutomationWorkflowDelegateAnswerBridge(
+		context.Background(),
+		req,
+		workflow,
+		"run-1",
+		graphData,
+		map[string]interface{}{"sys.conversation_id": "conversation-1"},
+		func(event automationaction.WorkflowRunEvent) { events = append(events, event) },
+	)
+	if bridge == nil {
+		t.Fatal("bridge = nil, want prepared Agent delegate stream")
+	}
+
+	bridge.handleStreamChunk("llm", &workflowshared.RunStreamChunkEvent{
+		ChunkContent:         "live chunk",
+		FromVariableSelector: []string{"llm", "text"},
+	})
+	if len(events) != 1 || events[0].Type != "message" || events[0].Payload["answer"] != "live chunk" {
+		t.Fatalf("events = %#v, want live message from prepared graph", events)
+	}
+}
 
 func TestWorkflowRunTriggeredFrom(t *testing.T) {
 	tests := []struct {

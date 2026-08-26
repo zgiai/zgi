@@ -438,6 +438,7 @@ export interface AIChatPresentationTextItem extends AIChatPresentationPosition {
   segment_id: string;
   content: string;
   content_phase: AIChatPresentationContentPhase;
+  presentation_role?: 'final_output';
   created_at_ms?: number;
 }
 
@@ -636,6 +637,7 @@ export interface AIChatMessageChunkEventData extends AIChatPresentationPosition 
   segment_id?: string;
   segment_content?: string;
   content_phase?: AIChatPresentationContentPhase;
+  presentation_role?: 'final_output';
   __sensitiveOutputBlocked?: boolean;
 }
 

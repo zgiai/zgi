@@ -396,6 +396,47 @@ func TestRunAgentTaskWorkflowDoesNotRelayAnswerTransportEvents(t *testing.T) {
 	}
 }
 
+func TestRunAgentConversationalWorkflowRelaysOnlyOrderedMessageChunks(t *testing.T) {
+	runner := &fakeWorkflowRunner{
+		emitEvents: []automationaction.WorkflowRunEvent{
+			{Type: "workflow_started", Payload: map[string]interface{}{"workflow_run_id": "run-1"}, Sequence: 1},
+			{Type: "message", Payload: map[string]interface{}{"answer": "workflow answer"}, Sequence: 2},
+			{Type: "text_chunk", Payload: map[string]interface{}{"text": "workflow answer"}, Sequence: 3},
+			{Type: "message_end", Payload: map[string]interface{}{"answer": "workflow answer"}, Sequence: 4},
+			{Type: "workflow_finished", Payload: map[string]interface{}{"workflow_run_id": "run-1"}, Sequence: 5},
+		},
+		result: &automationaction.WorkflowRunResult{
+			WorkflowRunID: "run-1",
+			WorkflowID:    "workflow-1",
+			AgentID:       "agent-1",
+			Status:        "succeeded",
+			Outputs:       map[string]interface{}{"answer": "workflow answer"},
+		},
+	}
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, runner, map[string]interface{}{
+		"binding_id": "chat-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "CONVERSATIONAL_WORKFLOW", "version_strategy": "latest_published",
+	})
+	var events []workflowevents.Event
+	ctx := workflowevents.WithEmitter(t.Context(), func(event workflowevents.Event) {
+		events = append(events, event)
+	})
+	conversationID := "conversation-1"
+	messageID := "message-1"
+	_, err := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
+		"binding_id": "chat-flow", "inputs": map[string]interface{}{"query": "write a poem"},
+	}, &conversationID, nil, &messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 || events[0].Type != "workflow_started" || events[1].Type != "message" || events[2].Type != "workflow_finished" {
+		t.Fatalf("events = %#v, want lifecycle events with only the conversation message chunk", events)
+	}
+	if events[1].Payload["answer"] != "workflow answer" || events[1].Payload["invocation_mode"] != automationaction.WorkflowInvocationModeAgentDelegate {
+		t.Fatalf("message event = %#v, want delegated workflow answer", events[1])
+	}
+}
+
 func TestListAgentWorkflowsReturnsStartInputSchema(t *testing.T) {
 	runtimeTool := workflowRuntimeToolWithBinding(t, ToolListAgentWorkflows, &fakeWorkflowRunner{}, map[string]interface{}{
 		"binding_id":        "task-flow",

@@ -183,7 +183,7 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 	}
 	if emitter := workflowevents.FromContext(ctx); emitter != nil {
 		runReq.EventSink = func(event automationaction.WorkflowRunEvent) {
-			if invocation.Mode == automationaction.WorkflowInvocationModeAgentTaskTool && isWorkflowAnswerTransportEvent(event.Type) {
+			if suppressAgentWorkflowAnswerTransport(invocation.Mode, event.Type) {
 				return
 			}
 			payload := make(map[string]interface{}, len(event.Payload)+3)
@@ -336,6 +336,24 @@ func isWorkflowAnswerTransportEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
 	case "message", "text_chunk", "text_replace", "message_end":
 		return true
+	default:
+		return false
+	}
+}
+
+func suppressAgentWorkflowAnswerTransport(invocationMode string, eventType string) bool {
+	if !isWorkflowAnswerTransportEvent(eventType) {
+		return false
+	}
+
+	switch strings.TrimSpace(invocationMode) {
+	case automationaction.WorkflowInvocationModeAgentTaskTool:
+		return true
+	case automationaction.WorkflowInvocationModeAgentDelegate:
+		// The parent Agent owns message_end and replacement semantics, but ordered
+		// conversation message chunks must cross this boundary immediately so the
+		// delegated workflow can take over the visible answer stream.
+		return strings.TrimSpace(eventType) != "message"
 	default:
 		return false
 	}
