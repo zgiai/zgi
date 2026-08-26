@@ -97,6 +97,7 @@ func isCreateRouteInputError(err error) bool {
 		"unsupported test method ",
 		"use case is unsupported for channel validation",
 		"is not supported by this adapter",
+		"requires channel_provider",
 		"api_base_url is required",
 		"api_key is required",
 	}

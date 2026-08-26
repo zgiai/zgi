@@ -410,6 +410,8 @@ func llmModelFromPrivateModel(customModel *llmmodel.CustomModel) *llmmodel.LLMMo
 		ChatCompletions:   customModel.ChatCompletions,
 		Embeddings:        customModel.Embeddings,
 		ImageGeneration:   customModel.ImageGeneration,
+		SpeechGeneration:  customModel.SpeechGeneration,
+		Transcription:     customModel.Transcription,
 		Responses:         customModel.Responses,
 		ContextWindow:     customModel.ContextWindow,
 		MaxOutputTokens:   customModel.MaxOutputTokens,

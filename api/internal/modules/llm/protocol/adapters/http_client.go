@@ -66,6 +66,34 @@ func NewHTTPClientFromConfig(config *AdapterConfig, timeout time.Duration, maxRe
 	return NewHTTPClientWithOptions(timeout, maxRetries, opts)
 }
 
+// ValidateOutboundBaseURL applies the same URL policy used by HTTP adapters to
+// non-HTTP transports such as WebSocket handshakes.
+func ValidateOutboundBaseURL(ctx context.Context, rawURL string, config *AdapterConfig) error {
+	if config == nil || !config.GuardOutboundURL {
+		return nil
+	}
+	policy := urlguard.Policy{
+		AllowPrivate: config.AllowPrivateBaseURL,
+		GuardDNS:     config.GuardOutboundDNS,
+	}
+	if err := urlguard.ValidateBaseURL(ctx, rawURL, policy); err != nil {
+		return fmt.Errorf("blocked unsafe target: %w", err)
+	}
+	return nil
+}
+
+// OutboundDialContext returns a DNS-rebinding-safe dialer when DNS guarding is
+// enabled. A nil result lets the caller retain its transport default.
+func OutboundDialContext(config *AdapterConfig) func(context.Context, string, string) (net.Conn, error) {
+	if config == nil || !config.GuardOutboundURL || !config.GuardOutboundDNS {
+		return nil
+	}
+	return guardedDialContext(urlguard.Policy{
+		AllowPrivate: config.AllowPrivateBaseURL,
+		GuardDNS:     true,
+	})
+}
+
 func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPClientOptions) *HTTPClient {
 	if timeout == 0 {
 		timeout = 60 * time.Second

@@ -82,12 +82,18 @@ func (f *fakeBillingProvider) CheckPrivateChannelBalance(ctx context.Context, or
 }
 
 type fakePricingEngine struct {
-	tokenQuote PricingQuote
-	imageQuote PricingQuote
-	tokenErr   error
-	imageErr   error
-	lastModel  PricingModelRef
-	tokenCalls int
+	tokenQuote       PricingQuote
+	imageQuote       PricingQuote
+	meteredQuote     PricingQuote
+	tokenErr         error
+	imageErr         error
+	meteredErr       error
+	meteredQuoteFunc func(MeteredUsage) (PricingQuote, error)
+	lastModel        PricingModelRef
+	lastMeteredUsage MeteredUsage
+	meteredUsages    []MeteredUsage
+	tokenCalls       int
+	meteredCalls     int
 }
 
 func (f *fakePricingEngine) QuoteTokens(ctx context.Context, model PricingModelRef, promptTokens, completionTokens int) (PricingQuote, error) {
@@ -105,6 +111,20 @@ func (f *fakePricingEngine) QuoteImage(ctx context.Context, model PricingModelRe
 		return PricingQuote{}, f.imageErr
 	}
 	return f.imageQuote, nil
+}
+
+func (f *fakePricingEngine) QuoteMetered(ctx context.Context, model PricingModelRef, usage MeteredUsage) (PricingQuote, error) {
+	f.meteredCalls++
+	f.lastModel = model
+	f.lastMeteredUsage = usage
+	f.meteredUsages = append(f.meteredUsages, usage)
+	if f.meteredQuoteFunc != nil {
+		return f.meteredQuoteFunc(usage)
+	}
+	if f.meteredErr != nil {
+		return PricingQuote{}, f.meteredErr
+	}
+	return f.meteredQuote, nil
 }
 
 func TestBillingRouting_CheckBalanceAndPreDeduct_Private_UsesLocalBilling(t *testing.T) {

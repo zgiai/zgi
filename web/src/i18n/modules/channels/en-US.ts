@@ -196,6 +196,18 @@ const messages = {
             'Connect native DashScope capabilities for Qwen text, vision, image, rerank, and multimodal models.',
           capabilities: 'Text, vision, image, rerank',
         },
+        doubao: {
+          label: 'Volcengine Doubao',
+          description:
+            'Connect native ModelArk capabilities for Doubao text, embedding, image, and video models.',
+          capabilities: 'Text, embeddings, image, video',
+        },
+        doubaoSpeech: {
+          label: 'Doubao Speech',
+          description:
+            'Connect the official Doubao Speech service with a Speech Console API key for synthesis and streaming recognition.',
+          capabilities: 'Speech synthesis, speech recognition',
+        },
         deepseek: {
           label: 'DeepSeek',
           description:
@@ -289,6 +301,8 @@ const messages = {
       initialFundsDefault: 'Internal company channels default to $100. Adjust it for the use case.',
       providerLocked:
         'The adapter is locked to the current provider. Create a channel from Channels to choose another protocol.',
+      doubaoSpeechBaseUrl:
+        'TTS uses HTTPS. STT switches to WSS at runtime, so you do not need to enter a WebSocket URL.',
       sharedCredentialIsolation:
         'This channel currently shares a credential with {count} channels. Changing the provider, API base URL, or API key creates a separate credential for this channel; the other channels stay unchanged.',
       priority: 'Lower numbers are routed first.',
@@ -369,6 +383,7 @@ const messages = {
       qwen: 'Alibaba Cloud (Qwen)',
       moonshotaiCn: 'Moonshot AI (Kimi)',
       doubao: 'Volcengine (Doubao)',
+      doubaoSpeech: 'Doubao Speech',
       google: 'Google (Gemini)',
     },
     protocolGroups: {
@@ -377,6 +392,7 @@ const messages = {
       vertical: 'Vertical providers',
     },
     protocolNotes: {
+      doubaoSpeech: 'Use an API key from the Doubao Speech Console, not a ModelArk API key.',
       google:
         'Gemini text mode and Vertex image mode require different API key and API base URL settings.',
     },

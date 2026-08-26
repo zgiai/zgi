@@ -17,20 +17,25 @@ import (
 )
 
 const (
-	capabilityCacheTTL         = 5 * time.Minute
-	sampledValidationSize      = 5
-	sampledValidationMinPass   = 4
-	validationModeFull         = "full"
-	validationModeSampled      = "sampled"
-	validationModeMetadataOnly = "metadata_only"
-	testMethodChat             = "chat"
-	testMethodEmbedding        = "embedding"
-	testMethodImageGeneration  = "image-gen"
-	testMethodMetadata         = "metadata"
-	testMethodRerank           = "rerank"
-	testMethodVideoGeneration  = "video-gen"
-	openAICompatibleProvider   = "openai-compatible"
-	defaultImageProbeSize      = "1024x1024"
+	capabilityCacheTTL          = 5 * time.Minute
+	sampledValidationSize       = 5
+	sampledValidationMinPass    = 4
+	validationModeFull          = "full"
+	validationModeSampled       = "sampled"
+	validationModeMetadataOnly  = "metadata_only"
+	testMethodChat              = "chat"
+	testMethodEmbedding         = "embedding"
+	testMethodImageGeneration   = "image-gen"
+	testMethodMetadata          = "metadata"
+	testMethodMusicGeneration   = "music-gen"
+	testMethodRerank            = "rerank"
+	testMethodSpeechGeneration  = "text-to-speech"
+	testMethodTranscription     = "speech-to-text"
+	testMethodVideoGeneration   = "video-gen"
+	openAICompatibleProvider    = "openai-compatible"
+	doubaoChannelProvider       = "doubao"
+	doubaoSpeechChannelProvider = "doubao-speech"
+	defaultImageProbeSize       = "1024x1024"
 )
 
 type modelLookupRepository interface {
@@ -264,11 +269,15 @@ func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, cha
 		}
 	}
 
-	if useCase == testMethodImageGeneration && !explicitTestMethod {
-		return v.skipImageModelTest(capabilities[0]), nil
-	}
-	if useCase == testMethodVideoGeneration {
+	switch useCase {
+	case testMethodImageGeneration:
+		if !explicitTestMethod {
+			return v.skipImageModelTest(capabilities[0]), nil
+		}
+	case testMethodVideoGeneration:
 		return v.skipVideoModelTest(capabilities[0]), nil
+	case testMethodMusicGeneration, testMethodSpeechGeneration, testMethodTranscription:
+		return v.skipMediaModelTest(capabilities[0]), nil
 	}
 
 	adapterInstance, err := v.newAdapterForProvider(spec.AdapterKey, apiBaseURL, apiKey)
@@ -485,6 +494,18 @@ func (v *Validator) skipVideoModelTest(capability modelCapability) *TestResult {
 	}
 }
 
+func (v *Validator) skipMediaModelTest(capability modelCapability) *TestResult {
+	return &TestResult{
+		Success:        false,
+		Status:         TestStatusSkipped,
+		Message:        "music and audio models require a real feature test in their workspace",
+		ResponseTimeMs: 0,
+		Model:          capability.Model,
+		UseCase:        capability.UseCase,
+		TestMethod:     capability.UseCase,
+	}
+}
+
 func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID uuid.UUID, spec Spec, apiBaseURL string, models []string) ([]modelCapability, error) {
 	if v.modelRepo == nil && v.privateModels == nil {
 		return nil, fmt.Errorf("model repository is required for validation")
@@ -583,8 +604,24 @@ func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID
 		}
 		resolved = append(resolved, capability)
 	}
+	if err := validateDoubaoCredentialScope(spec.Name, resolved); err != nil {
+		return nil, err
+	}
 
 	return resolved, nil
+}
+
+func validateDoubaoCredentialScope(channelProvider string, capabilities []modelCapability) error {
+	for _, capability := range capabilities {
+		isSpeech := capability.UseCase == testMethodSpeechGeneration || capability.UseCase == testMethodTranscription
+		switch {
+		case channelProvider == doubaoChannelProvider && isSpeech:
+			return fmt.Errorf("model %q requires channel_provider %q", capability.Model, doubaoSpeechChannelProvider)
+		case channelProvider == doubaoSpeechChannelProvider && !isSpeech:
+			return fmt.Errorf("model %q requires channel_provider %q", capability.Model, doubaoChannelProvider)
+		}
+	}
+	return nil
 }
 
 func capabilityCacheScope(spec Spec, apiBaseURL string) string {
@@ -795,6 +832,12 @@ func inferValidationUseCase(modelRecord *llmmodelmodel.LLMModel) (string, error)
 		return testMethodImageGeneration, nil
 	case modelRecord.Videos || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseVideoGen)):
 		return testMethodVideoGeneration, nil
+	case modelRecord.MusicGeneration || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseMusicGen)):
+		return testMethodMusicGeneration, nil
+	case modelRecord.SpeechGeneration || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseTextToSpeech)):
+		return testMethodSpeechGeneration, nil
+	case modelRecord.Transcription || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseSpeechToText)):
+		return testMethodTranscription, nil
 	case modelRecord.IsLLM() || modelRecord.ChatCompletions || modelRecord.Responses || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseVision)) || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseReasoning)) || modelRecord.HasUseCase(string(llmmodelmodel.UseCaseFuncCalling)):
 		return testMethodChat, nil
 	default:
@@ -817,6 +860,12 @@ func inferValidationUseCaseFromCustomModel(modelRecord *llmmodelmodel.CustomMode
 		return testMethodImageGeneration, nil
 	case containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseVideoGen)):
 		return testMethodVideoGeneration, nil
+	case containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseMusicGen)):
+		return testMethodMusicGeneration, nil
+	case modelRecord.SpeechGeneration || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseTextToSpeech)):
+		return testMethodSpeechGeneration, nil
+	case modelRecord.Transcription || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseSpeechToText)):
+		return testMethodTranscription, nil
 	case modelRecord.ChatCompletions || modelRecord.Responses || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseTextChat)) || containsUseCase(modelRecord.UseCases, "chat") || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseVision)) || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseReasoning)) || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseFuncCalling)):
 		return testMethodChat, nil
 	default:

@@ -36,6 +36,35 @@ func TestResolve_DoubaoUsesDedicatedAdapter(t *testing.T) {
 	}
 }
 
+func TestResolve_DoubaoSpeechUsesSpeechChannelAndDoubaoCatalog(t *testing.T) {
+	spec, err := Resolve("doubao-speech")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if spec.Name != "doubao-speech" {
+		t.Fatalf("spec.Name = %q, want %q", spec.Name, "doubao-speech")
+	}
+	if spec.AdapterKey != "doubao-speech" {
+		t.Fatalf("spec.AdapterKey = %q, want %q", spec.AdapterKey, "doubao-speech")
+	}
+	if spec.LookupProvider != "doubao" {
+		t.Fatalf("spec.LookupProvider = %q, want %q", spec.LookupProvider, "doubao")
+	}
+}
+
+func TestValidateConnectionFields_DoubaoSpeechRejectsWebSocketBaseURL(t *testing.T) {
+	for _, baseURL := range []string{
+		"ws://openspeech.bytedance.com",
+		"wss://openspeech.bytedance.com",
+	} {
+		err := validateDoubaoSpeechBaseURL(baseURL)
+		if err == nil {
+			t.Fatalf("validateDoubaoSpeechBaseURL(%q) error = nil, want error", baseURL)
+		}
+	}
+}
+
 func TestResolve_SiliconFlowUsesItsOwnCatalogProvider(t *testing.T) {
 	spec, err := Resolve("siliconflow")
 	if err != nil {
