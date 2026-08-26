@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -71,6 +72,9 @@ func TestWorkflowSummaryLLMRequestHidesPublishedFailureReason(t *testing.T) {
 			}, WorkflowContinuationSummaryRequest{
 				Status: "failed",
 				Error:  detail,
+				Outputs: map[string]interface{}{
+					"failure_reason": detail,
+				},
 			})
 			if len(req.Messages) != 2 {
 				t.Fatalf("messages len = %d, want 2", len(req.Messages))
@@ -192,6 +196,26 @@ func TestWorkflowTaskContinuationMessageCarriesStructuredToolEvidence(t *testing
 	}
 }
 
+func TestWorkflowTaskContinuationMessageHidesPublishedFailureOutputs(t *testing.T) {
+	detail := "provider route secret"
+	message := workflowTaskContinuationMessage(&WorkflowApprovalContinuation{
+		WorkflowRunID: "run-1",
+		InvocationID:  "invocation-1",
+		Caller:        Caller{Source: runtimemodel.ConversationSourceWebApp},
+	}, WorkflowContinuationSummaryRequest{
+		Status:  "failed",
+		Error:   detail,
+		Outputs: map[string]interface{}{"error_detail": detail},
+	})
+	content, _ := message.Content.(string)
+	if strings.Contains(content, detail) {
+		t.Fatalf("published task continuation message exposed failure detail:\n%s", content)
+	}
+	if !strings.Contains(content, publishedWorkflowFailureError) || !strings.Contains(content, "only that the workflow run failed") {
+		t.Fatalf("published task continuation message = %q, want generic failure instruction", content)
+	}
+}
+
 func TestValidateWorkflowContinuationBindingMatchesBindingAndAgent(t *testing.T) {
 	continuation := &WorkflowApprovalContinuation{BindingID: "binding-1", AgentID: "agent-1"}
 	bindings := []AgentWorkflowBinding{{BindingID: "binding-1", AgentID: "agent-other"}}
@@ -246,6 +270,7 @@ func TestWorkflowContinuationEventsHidePublishedFailureReason(t *testing.T) {
 			}
 			event, err := (&service{}).AppendWorkflowApprovalContinuationStreamEvent(t.Context(), continuation, "node_finished", map[string]interface{}{
 				"status": "failed", "error": detail, "message": detail,
+				"outputs": map[string]interface{}{"failure_reason": detail},
 			})
 			if err != nil {
 				t.Fatalf("AppendWorkflowApprovalContinuationStreamEvent() error = %v", err)
@@ -253,10 +278,28 @@ func TestWorkflowContinuationEventsHidePublishedFailureReason(t *testing.T) {
 			if event.Payload["error"] != publishedWorkflowFailureError || event.Payload["message"] != publishedWorkflowFailureError {
 				t.Fatalf("event payload = %#v, want generic failure", event.Payload)
 			}
-			if event.Payload["error_visibility"] != publishedWorkflowErrorVisibility || strings.Contains(firstNonEmptyString(event.Payload["error"]), detail) {
+			if event.Payload["error_visibility"] != publishedWorkflowErrorVisibility || strings.Contains(fmt.Sprint(event.Payload), detail) {
 				t.Fatalf("event payload exposed detailed failure: %#v", event.Payload)
 			}
 		})
+	}
+}
+
+func TestProjectWorkflowContinuationEventProtectsFallbackEmission(t *testing.T) {
+	detail := "fallback persistence failure: database secret"
+	continuation := &WorkflowApprovalContinuation{Caller: Caller{Source: runtimemodel.ConversationSourceWebApp}}
+	event := ProjectWorkflowContinuationEvent(continuation, StreamEvent{
+		EventType: "error",
+		Payload: map[string]interface{}{
+			"message": detail,
+			"outputs": map[string]interface{}{"provider_error": detail},
+		},
+	})
+	if strings.Contains(fmt.Sprint(event.Payload), detail) {
+		t.Fatalf("fallback event exposed detailed failure: %#v", event.Payload)
+	}
+	if event.Payload["message"] != publishedWorkflowFailureError || event.Payload["error"] != publishedWorkflowFailureError {
+		t.Fatalf("fallback event = %#v, want generic failure", event.Payload)
 	}
 }
 

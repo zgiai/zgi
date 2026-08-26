@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -34,6 +35,9 @@ func TestPublicWorkflowSSEFailurePayloadsAreRedacted(t *testing.T) {
 			data: map[string]interface{}{
 				"status": "failed",
 				"error":  map[string]interface{}{"message": privateDetail},
+				"outputs": map[string]interface{}{
+					"failure_reason": privateDetail,
+				},
 			},
 		},
 		{
@@ -42,6 +46,9 @@ func TestPublicWorkflowSSEFailurePayloadsAreRedacted(t *testing.T) {
 			data: map[string]interface{}{
 				"status": "failed",
 				"error":  privateDetail,
+				"process_data": map[string]interface{}{
+					"provider_error": privateDetail,
+				},
 			},
 		},
 		{
@@ -96,11 +103,12 @@ func TestPublicWorkflowSnapshotRedactsErrorsWithoutMutatingStoredData(t *testing
 	const privateDetail = "persisted internal workflow error"
 	input := map[string]interface{}{
 		"workflow_run": map[string]interface{}{
-			"status": "failed",
-			"error":  privateDetail,
+			"status":  "failed",
+			"error":   privateDetail,
+			"outputs": map[string]interface{}{"error_detail": privateDetail},
 		},
 		"nodes": []map[string]interface{}{
-			{"status": "failed", "error": privateDetail},
+			{"status": "failed", "error": privateDetail, "outputs": map[string]interface{}{"failure_reason": privateDetail}},
 		},
 	}
 
@@ -109,9 +117,15 @@ func TestPublicWorkflowSnapshotRedactsErrorsWithoutMutatingStoredData(t *testing
 	if projectedRun["error"] != workflowPublicFailureMessage {
 		t.Fatalf("projected workflow error = %#v, want %q", projectedRun["error"], workflowPublicFailureMessage)
 	}
+	if outputs, ok := projectedRun["outputs"].(map[string]interface{}); !ok || len(outputs) != 0 {
+		t.Fatalf("projected failed workflow outputs = %#v, want empty", projectedRun["outputs"])
+	}
 	projectedNodes := projected["nodes"].([]map[string]interface{})
 	if projectedNodes[0]["error"] != workflowPublicFailureMessage {
 		t.Fatalf("projected node error = %#v, want %q", projectedNodes[0]["error"], workflowPublicFailureMessage)
+	}
+	if strings.Contains(fmt.Sprint(projectedNodes[0]), privateDetail) {
+		t.Fatalf("projected node exposed nested failure detail: %#v", projectedNodes[0])
 	}
 
 	storedRun := input["workflow_run"].(map[string]interface{})

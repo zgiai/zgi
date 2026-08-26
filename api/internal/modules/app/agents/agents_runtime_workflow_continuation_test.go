@@ -2,8 +2,11 @@ package agents
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
@@ -39,11 +42,18 @@ func TestShouldSummarizeAgentWorkflowContinuation(t *testing.T) {
 			want:      false,
 		},
 		{
-			name:      "failed task workflow direct failure answer",
+			name:      "failed task workflow resumes agent loop",
 			agentType: "WORKFLOW",
 			status:    "failed",
 			outputs:   map[string]interface{}{"answer": "partial"},
-			want:      false,
+			want:      true,
+		},
+		{
+			name:      "failed delegated workflow resumes agent loop",
+			agentType: "CONVERSATIONAL_WORKFLOW",
+			status:    "failed",
+			outputs:   map[string]interface{}{"answer": "partial"},
+			want:      true,
 		},
 		{
 			name:      "stopped task workflow direct failure answer",
@@ -62,6 +72,74 @@ func TestShouldSummarizeAgentWorkflowContinuation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgentWorkflowContinuationAnswerHidesPublishedFailureReason(t *testing.T) {
+	detail := "node failed: private provider route"
+	got := agentWorkflowContinuationAnswer(&runtimeservice.WorkflowApprovalContinuation{
+		Caller: runtimeservice.Caller{Source: runtimemodel.ConversationSourceWebApp},
+	}, "run-secret", "failed", nil, &detail)
+	if got != "Workflow run failed." || strings.Contains(got, detail) || strings.Contains(got, "run-secret") {
+		t.Fatalf("published failure answer = %q, want generic failure only", got)
+	}
+
+	debug := agentWorkflowContinuationAnswer(&runtimeservice.WorkflowApprovalContinuation{
+		Caller: runtimeservice.Caller{Source: runtimemodel.ConversationSourceConsole},
+	}, "run-debug", "failed", nil, &detail)
+	if !strings.Contains(debug, detail) || !strings.Contains(debug, "run-debug") {
+		t.Fatalf("debug failure answer = %q, want diagnostic detail", debug)
+	}
+}
+
+func TestEmitAgentWorkflowContinuationEventProjectsPublishedFailure(t *testing.T) {
+	detail := "append failed: storage secret"
+	continuation := &runtimeservice.WorkflowApprovalContinuation{
+		Caller: runtimeservice.Caller{Source: runtimemodel.ConversationSourceWebApp},
+	}
+	var received runtimeservice.StreamEvent
+	emitAgentWorkflowContinuationEvent(continuation, func(event runtimeservice.StreamEvent) error {
+		received = event
+		return nil
+	}, &runtimeservice.StreamEvent{EventType: "error", Payload: map[string]interface{}{"message": detail}})
+	if strings.Contains(received.Payload["message"].(string), detail) {
+		t.Fatalf("published continuation event exposed detail: %#v", received.Payload)
+	}
+}
+
+func TestFailAgentWorkflowContinuationPersistsAndEmitsGenericPublishedFailure(t *testing.T) {
+	detail := "workflow continuation stopped: database secret"
+	runtimeService := &recordingWorkflowContinuationFailureService{}
+	handler := &AgentsHandler{chatRuntimeService: runtimeService}
+	continuation := &runtimeservice.WorkflowApprovalContinuation{
+		WorkflowRunID: "run-1",
+		Caller:        runtimeservice.Caller{Source: runtimemodel.ConversationSourceWebApp},
+	}
+	var events []runtimeservice.StreamEvent
+	handler.failAgentWorkflowContinuation(t.Context(), continuation, errors.New(detail), func(event runtimeservice.StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	if runtimeService.failureMessage != "workflow run failed" {
+		t.Fatalf("persisted failure message = %q, want generic", runtimeService.failureMessage)
+	}
+	if len(events) != 2 || strings.Contains(events[0].Payload["message"].(string), detail) {
+		t.Fatalf("published failure events = %#v, want generic error and message_end", events)
+	}
+}
+
+type recordingWorkflowContinuationFailureService struct {
+	runtimeservice.Service
+	failureMessage string
+}
+
+func (s *recordingWorkflowContinuationFailureService) FailWorkflowApprovalContinuation(_ context.Context, _ *runtimeservice.WorkflowApprovalContinuation, message string) (map[string]interface{}, error) {
+	s.failureMessage = message
+	return map[string]interface{}{"status": "failed"}, nil
+}
+
+func (s *recordingWorkflowContinuationFailureService) AppendWorkflowApprovalContinuationStreamEvent(_ context.Context, _ *runtimeservice.WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*runtimeservice.StreamEvent, error) {
+	return &runtimeservice.StreamEvent{EventType: eventType, Payload: payload}, nil
 }
 
 func TestCompletionContinuationStatus(t *testing.T) {

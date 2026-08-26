@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 )
 
@@ -28,19 +29,22 @@ func projectWorkflowEventDataForInvocation(invokeFrom, eventType string, input m
 
 	switch eventType {
 	case workflowpause.EventError:
+		data = failureprojection.ProjectPublicPayload(data, workflowPublicFailureMessage, true)
 		data["message"] = workflowPublicFailureMessage
 		data["error"] = workflowPublicFailurePayload()
 	case workflowpause.EventWorkflowFinished:
 		if workflowEventHasFailureStatus(data) {
+			data = failureprojection.ProjectPublicPayload(data, workflowPublicFailureMessage, true)
 			data["error"] = workflowPublicFailurePayload()
 		}
 	case "workflow_failed":
+		data = failureprojection.ProjectPublicPayload(data, workflowPublicFailureMessage, true)
 		data["message"] = workflowPublicFailureMessage
 		data["error"] = workflowPublicFailurePayload()
 	case workflowpause.EventNodeFinished,
 		"iteration_completed", "iteration_failed",
 		"loop_completed", "loop_failed":
-		redactWorkflowExecutionEventError(data)
+		data = projectWorkflowExecutionEventError(data)
 	case "workflow_snapshot":
 		redactWorkflowSnapshotErrors(data)
 	}
@@ -83,31 +87,27 @@ func workflowPublicFailurePayload() map[string]interface{} {
 	return map[string]interface{}{"message": workflowPublicFailureMessage}
 }
 
-func redactWorkflowExecutionEventError(data map[string]interface{}) {
+func projectWorkflowExecutionEventError(data map[string]interface{}) map[string]interface{} {
 	if !workflowEventHasFailureStatus(data) {
-		return
+		return data
 	}
-	if _, exists := data["error"]; exists {
-		data["error"] = workflowPublicFailureMessage
-	}
+	return failureprojection.ProjectPublicPayload(data, workflowPublicFailureMessage, true)
 }
 
 func redactWorkflowSnapshotErrors(data map[string]interface{}) {
 	if run, ok := data["workflow_run"].(map[string]interface{}); ok && workflowEventHasFailureStatus(run) {
-		if _, exists := run["error"]; exists {
-			run["error"] = workflowPublicFailureMessage
-		}
+		data["workflow_run"] = failureprojection.ProjectPublicPayload(run, workflowPublicFailureMessage, true)
 	}
 
 	switch nodes := data["nodes"].(type) {
 	case []map[string]interface{}:
-		for _, node := range nodes {
-			redactWorkflowExecutionEventError(node)
+		for index, node := range nodes {
+			nodes[index] = projectWorkflowExecutionEventError(node)
 		}
 	case []interface{}:
-		for _, item := range nodes {
+		for index, item := range nodes {
 			if node, ok := item.(map[string]interface{}); ok {
-				redactWorkflowExecutionEventError(node)
+				nodes[index] = projectWorkflowExecutionEventError(node)
 			}
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/gorm"
 )
@@ -156,11 +157,7 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 	if continuation == nil || continuation.MessageID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
-	eventPayload := copyStringAnyMap(payload)
-	if eventPayload == nil {
-		eventPayload = map[string]interface{}{}
-	}
-	applyPublishedWorkflowContinuationEventFailureExposure(continuation.Caller, eventType, eventPayload)
+	eventPayload := projectWorkflowContinuationEventPayload(continuation.Caller, eventType, payload)
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -197,11 +194,7 @@ func (s *service) AppendWorkflowApprovalContinuationStreamEvent(ctx context.Cont
 	if continuation == nil || continuation.MessageID == uuid.Nil || continuation.ConversationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
-	eventPayload := copyStringAnyMap(payload)
-	if eventPayload == nil {
-		eventPayload = map[string]interface{}{}
-	}
-	applyPublishedWorkflowContinuationEventFailureExposure(continuation.Caller, eventType, eventPayload)
+	eventPayload := projectWorkflowContinuationEventPayload(continuation.Caller, eventType, payload)
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -268,7 +261,7 @@ func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, sco
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
 	req = publishedWorkflowContinuationSummaryRequest(continuation.Caller, req)
-	if workflowContinuationInvocationMode(continuation) == "agent_task_tool" {
+	if workflowContinuationInvocationMode(continuation) == "agent_task_tool" || workflowContinuationStatusFailedValue(req.Status) {
 		return s.continueWorkflowTaskInvocation(ctx, scope, continuation, req, onEvent)
 	}
 	if len(req.Outputs) == 0 && !(req.FailureDetailsHidden && workflowContinuationStatusFailedValue(req.Status)) {
@@ -497,6 +490,7 @@ func (s *service) FailWorkflowApprovalContinuation(ctx context.Context, continua
 	if message == "" {
 		message = "workflow approval continuation failed"
 	}
+	message = ProjectWorkflowContinuationFailureMessage(continuation, message)
 	metadata := workflowContinuationMetadataWithoutUserInputRequest(continuation.Metadata)
 	metadata = workflowContinuationMetadataWithStatus(metadata, workflowContinuationStatusFailed)
 	continuation.Metadata = metadata
@@ -552,22 +546,54 @@ func publishedWorkflowContinuationSummaryRequest(caller Caller, req WorkflowCont
 		return req
 	}
 	req.Error = publishedWorkflowFailureError
+	req.Outputs = map[string]interface{}{}
 	req.FailureDetailsHidden = true
 	return req
 }
 
-func applyPublishedWorkflowContinuationEventFailureExposure(caller Caller, eventType string, payload map[string]interface{}) {
-	if !publishedWorkflowContinuationFailureDetailsHidden(caller) || payload == nil {
-		return
+// ProjectWorkflowContinuationEvent applies the published-surface failure policy
+// at the final stream boundary. Callers should use it even when persistence has
+// already projected the event so fallback emission cannot bypass redaction.
+func ProjectWorkflowContinuationEvent(continuation *WorkflowApprovalContinuation, event StreamEvent) StreamEvent {
+	projected := event
+	caller := Caller{}
+	if continuation != nil {
+		caller = continuation.Caller
 	}
-	if !workflowContinuationEventReportsFailure(eventType, payload) {
-		return
+	projected.Payload = projectWorkflowContinuationEventPayload(caller, event.EventType, event.Payload)
+	return projected
+}
+
+// ProjectWorkflowContinuationFailureMessage returns the message safe to persist
+// and expose for a workflow continuation on the current runtime surface.
+func ProjectWorkflowContinuationFailureMessage(continuation *WorkflowApprovalContinuation, message string) string {
+	if WorkflowContinuationFailureDetailsHidden(continuation) {
+		return publishedWorkflowFailureError
 	}
-	payload["error"] = publishedWorkflowFailureError
-	if _, exists := payload["message"]; exists {
-		payload["message"] = publishedWorkflowFailureError
+	return strings.TrimSpace(message)
+}
+
+// WorkflowContinuationFailureDetailsHidden reports whether the continuation is
+// running on a published surface where workflow diagnostics are private.
+func WorkflowContinuationFailureDetailsHidden(continuation *WorkflowApprovalContinuation) bool {
+	return continuation != nil && publishedWorkflowContinuationFailureDetailsHidden(continuation.Caller)
+}
+
+func projectWorkflowContinuationEventPayload(caller Caller, eventType string, payload map[string]interface{}) map[string]interface{} {
+	if !publishedWorkflowContinuationFailureDetailsHidden(caller) || !workflowContinuationEventReportsFailure(eventType, payload) {
+		eventPayload := copyStringAnyMap(payload)
+		if eventPayload == nil {
+			eventPayload = map[string]interface{}{}
+		}
+		return eventPayload
 	}
-	payload["error_visibility"] = publishedWorkflowErrorVisibility
+	eventPayload := failureprojection.ProjectPublicPayload(
+		payload,
+		publishedWorkflowFailureError,
+		true,
+	)
+	eventPayload["error_visibility"] = publishedWorkflowErrorVisibility
+	return eventPayload
 }
 
 func publishedWorkflowContinuationFailureDetailsHidden(caller Caller) bool {
@@ -590,7 +616,7 @@ func workflowContinuationEventReportsFailure(eventType string, payload map[strin
 
 func workflowContinuationStatusFailedValue(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "failed", "error":
+	case "failed", "error", "expired":
 		return true
 	default:
 		return false

@@ -599,6 +599,7 @@ func TestRunAgentWorkflowReturnsFailedSummary(t *testing.T) {
 			WorkflowID:    "workflow-1",
 			AgentID:       "agent-1",
 			Status:        "failed",
+			Outputs:       map[string]interface{}{"failure_reason": detail},
 		},
 		err: errors.New(detail),
 		emitEvents: []automationaction.WorkflowRunEvent{{
@@ -634,11 +635,12 @@ func TestRunAgentWorkflowHidesFailureDetailsOnPublishedSurfaces(t *testing.T) {
 			runner := &fakeWorkflowRunner{
 				result: &automationaction.WorkflowRunResult{
 					WorkflowRunID: "run-failed", WorkflowID: "workflow-1", AgentID: "agent-1", Status: "failed",
+					Outputs: map[string]interface{}{"failure_reason": detail},
 				},
 				err: errors.New(detail),
 				emitEvents: []automationaction.WorkflowRunEvent{
-					{Type: "node_finished", Payload: map[string]interface{}{"status": "failed", "error": detail}},
-					{Type: "workflow_failed", Payload: map[string]interface{}{"status": "failed", "error": detail, "message": detail}},
+					{Type: "node_finished", Payload: map[string]interface{}{"status": "failed", "error": detail, "outputs": map[string]interface{}{"provider_error": detail}}},
+					{Type: "workflow_failed", Payload: map[string]interface{}{"status": "failed", "error": detail, "message": detail, "outputs": map[string]interface{}{"failure_reason": detail}}},
 				},
 			}
 			runtimeTool := workflowRuntimeToolWithSource(t, ToolRunAgentWorkflow, runner, source)
@@ -656,6 +658,9 @@ func TestRunAgentWorkflowHidesFailureDetailsOnPublishedSurfaces(t *testing.T) {
 			payload := messages[0].Data
 			if payload["error"] != publishedWorkflowError || payload[workflowErrorVisibilityKey] != workflowErrorGeneric {
 				t.Fatalf("payload = %#v, want generic published failure", payload)
+			}
+			if outputs, ok := payload["outputs"].(map[string]interface{}); !ok || len(outputs) != 0 {
+				t.Fatalf("published failure outputs = %#v, want empty", payload["outputs"])
 			}
 			if len(events) != 2 {
 				t.Fatalf("events = %#v, want two workflow failure events", events)

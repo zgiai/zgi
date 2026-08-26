@@ -12,10 +12,10 @@ import (
 )
 
 func shouldSummarizeAgentWorkflowContinuation(continuation *runtimeservice.WorkflowApprovalContinuation, status string, outputs map[string]interface{}) bool {
-	if agentWorkflowContinuationMode(continuation) != "agent_task_tool" {
-		return false
-	}
 	if agentWorkflowRunLogFailed(status) {
+		return !strings.EqualFold(strings.TrimSpace(status), "stopped")
+	}
+	if agentWorkflowContinuationMode(continuation) != "agent_task_tool" {
 		return false
 	}
 	return len(outputs) > 0
@@ -191,8 +191,11 @@ func copyMapForAgentWorkflowContinuation(input map[string]interface{}) map[strin
 	return out
 }
 
-func agentWorkflowContinuationAnswer(agentType, workflowRunID, status string, outputs map[string]interface{}, errorMessage *string) string {
+func agentWorkflowContinuationAnswer(continuation *runtimeservice.WorkflowApprovalContinuation, workflowRunID, status string, outputs map[string]interface{}, errorMessage *string) string {
 	if strings.EqualFold(strings.TrimSpace(status), "failed") {
+		if runtimeservice.WorkflowContinuationFailureDetailsHidden(continuation) {
+			return "Workflow run failed."
+		}
 		message := ""
 		if errorMessage != nil {
 			message = strings.TrimSpace(*errorMessage)
@@ -203,6 +206,10 @@ func agentWorkflowContinuationAnswer(agentType, workflowRunID, status string, ou
 		return fmt.Sprintf("Workflow run failed. workflow_run_id: %s\n\nError: %s", workflowRunID, message)
 	}
 	primary := primaryAgentWorkflowOutput(outputs)
+	agentType := ""
+	if continuation != nil {
+		agentType = continuation.AgentType
+	}
 	if strings.EqualFold(strings.TrimSpace(agentType), "CONVERSATIONAL_WORKFLOW") {
 		if primary != "" {
 			return primary

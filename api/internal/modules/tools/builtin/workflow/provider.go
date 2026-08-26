@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
@@ -474,7 +475,13 @@ func applyPublishedWorkflowResultFailureExposure(runtime *tools.ToolRuntime, pay
 	if !strings.EqualFold(stringValue(payload, "status"), "failed") {
 		return
 	}
-	payload["error"] = publishedWorkflowError
+	projected := failureprojection.ProjectPublicPayload(payload, publishedWorkflowError, true)
+	for key := range payload {
+		delete(payload, key)
+	}
+	for key, value := range projected {
+		payload[key] = value
+	}
 	payload[workflowErrorVisibilityKey] = workflowErrorGeneric
 }
 
@@ -485,9 +492,12 @@ func applyPublishedWorkflowEventFailureExposure(runtime *tools.ToolRuntime, even
 	if !workflowEventReportsFailure(eventType, payload) {
 		return
 	}
-	payload["error"] = publishedWorkflowError
-	if _, exists := payload["message"]; exists {
-		payload["message"] = publishedWorkflowError
+	projected := failureprojection.ProjectPublicPayload(payload, publishedWorkflowError, true)
+	for key := range payload {
+		delete(payload, key)
+	}
+	for key, value := range projected {
+		payload[key] = value
 	}
 	payload[workflowErrorVisibilityKey] = workflowErrorGeneric
 }
