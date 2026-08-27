@@ -3,7 +3,16 @@
 import { useEffect, useId, type MouseEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { BrainCircuit, History, House, ListTodo, RadioTower, Settings2, X } from 'lucide-react';
+import {
+  BrainCircuit,
+  History,
+  House,
+  ListTodo,
+  Loader2,
+  RadioTower,
+  Settings2,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -18,6 +27,7 @@ import { DigitalHumanFeatureGate } from '@/components/digital-human/feature-gate
 import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
 import { DigitalHumanHeader } from '@/components/digital-human/digital-human-header';
 import { DigitalHumanSidebar } from '@/components/digital-human/digital-human-sidebar';
+import { useDigitalHuman } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -42,7 +52,11 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
   const testChatControlsPortalId = useId();
   const draftIsDirty = useDigitalHumanDraftStore(state => Boolean(state.editors[id]?.isDirty));
   const permissions = useAccountPermissions();
-  const isConfigurationPage = pathname.startsWith(`/console/digital-humans/${id}/configuration`);
+  const detailQuery = useDigitalHuman(id);
+  const configurationHref = `/console/digital-humans/${id}/configuration`;
+  const isConfigurationPage = pathname.startsWith(configurationHref);
+  const isInitialSetup = Boolean(detailQuery.data?.data && !detailQuery.data.data.published);
+  const restrictToConfiguration = detailQuery.isLoading || isInitialSetup;
 
   useEffect(() => {
     if (!draftIsDirty) return;
@@ -50,6 +64,12 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [draftIsDirty]);
+
+  useEffect(() => {
+    if (isInitialSetup && !isConfigurationPage) {
+      router.replace(configurationHref);
+    }
+  }, [configurationHref, isConfigurationPage, isInitialSetup, router]);
 
   const navigateAfterSaving = async (event: MouseEvent<HTMLAnchorElement>, href: string) => {
     const draftEditor = useDigitalHumanDraftStore.getState().editors[id];
@@ -77,19 +97,20 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
     router.replace(buildCurrentHref(params), { scroll: false });
   };
 
-  const mobileItems = [
+  const configurationItem = {
+    href: configurationHref,
+    label: t('tabs.configuration'),
+    icon: Settings2,
+    active: isConfigurationPage,
+  };
+  const publishedMobileItems = [
     {
       href: `/console/digital-humans/${id}`,
       label: t('tabs.dashboard'),
       icon: House,
       active: pathname === `/console/digital-humans/${id}`,
     },
-    {
-      href: `/console/digital-humans/${id}/configuration`,
-      label: t('tabs.configuration'),
-      icon: Settings2,
-      active: pathname.startsWith(`/console/digital-humans/${id}/configuration`),
-    },
+    configurationItem,
     {
       href: `/console/digital-humans/${id}/channels`,
       label: t('tabs.channels'),
@@ -119,6 +140,8 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
         ]
       : []),
   ];
+  const mobileItems = restrictToConfiguration ? [configurationItem] : publishedMobileItems;
+  const routeGuardPending = !isConfigurationPage && restrictToConfiguration;
 
   return (
     <div className="flex h-full min-h-0 min-w-0 bg-background">
@@ -150,10 +173,22 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
             );
           })}
         </nav>
-        <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          {routeGuardPending ? (
+            <div
+              className="flex min-h-full items-center justify-center gap-2 text-sm text-muted-foreground"
+              role="status"
+            >
+              <Loader2 className="size-4 animate-spin" />
+              {isInitialSetup ? t('initialSetup.redirecting') : t('loading')}
+            </div>
+          ) : (
+            children
+          )}
+        </div>
       </div>
 
-      {permissions.hasPermission('digital_human.run') ? (
+      {detailQuery.data?.data.published && permissions.hasPermission('digital_human.run') ? (
         <Sheet
           open={searchParams.get(testChatParam) === '1'}
           onOpenChange={open => {

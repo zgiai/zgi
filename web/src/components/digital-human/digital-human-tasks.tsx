@@ -51,6 +51,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
+import { digitalHumanTaskDisplayStatus } from '@/components/digital-human/digital-human-task-presentation';
 import {
   useDigitalHumanTaskDetail,
   useDigitalHumanTaskMutations,
@@ -255,20 +256,20 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           />
         ) : (
           <>
-            <div className="hidden grid-cols-[minmax(260px,2fr)_110px_110px_minmax(180px,1fr)_170px_170px] gap-4 border-b bg-muted/20 px-5 py-3 text-xs font-medium text-muted-foreground lg:grid">
+            <div className="hidden grid-cols-[minmax(240px,2fr)_105px_90px_130px_160px_130px] gap-4 border-b bg-muted/20 px-5 py-3 text-xs font-medium text-muted-foreground xl:grid">
               <span>{t('tasks.columns.name')}</span>
               <span>{t('tasks.columns.status')}</span>
               <span>{t('tasks.columns.priority')}</span>
               <span>{t('tasks.columns.schedule')}</span>
+              <span>{t('tasks.columns.nextRun')}</span>
               <span>{t('tasks.columns.lastResult')}</span>
-              <span>{t('tasks.columns.updated')}</span>
             </div>
             <div className="divide-y">
               {items.map(task => (
                 <button
                   key={task.id}
                   type="button"
-                  className="grid w-full gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:grid-cols-[minmax(260px,2fr)_110px_110px_minmax(180px,1fr)_170px_170px] lg:items-center lg:gap-4 lg:px-5"
+                  className="grid w-full gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring xl:grid-cols-[minmax(240px,2fr)_105px_90px_130px_160px_130px] xl:items-center xl:gap-4 xl:px-5"
                   onClick={() => setSelectedTaskID(task.id)}
                 >
                   <div className="min-w-0">
@@ -287,13 +288,13 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                   <TaskListCell label={t('tasks.columns.schedule')}>
                     <TaskScheduleLabel task={task} />
                   </TaskListCell>
+                  <TaskListCell label={t('tasks.columns.nextRun')}>
+                    {task.next_run_at ? formatDate(task.next_run_at) : '—'}
+                  </TaskListCell>
                   <TaskListCell label={t('tasks.columns.lastResult')}>
                     {task.last_run_status
                       ? t(`tasks.runStatus.${normalizeRunStatus(task.last_run_status)}`)
                       : t('tasks.neverRun')}
-                  </TaskListCell>
-                  <TaskListCell label={t('tasks.columns.updated')}>
-                    {formatDate(task.updated_at)}
                   </TaskListCell>
                 </button>
               ))}
@@ -360,32 +361,27 @@ function TaskFilter({
 
 function TaskListCell({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-4 text-xs text-muted-foreground lg:block">
-      <span className="shrink-0 font-medium text-foreground/70 lg:hidden">{label}</span>
-      <div className="min-w-0 text-right lg:text-left">{children}</div>
+    <div className="flex min-w-0 items-center justify-between gap-4 text-xs text-muted-foreground xl:block">
+      <span className="shrink-0 font-medium text-foreground/70 xl:hidden">{label}</span>
+      <div className="min-w-0 text-right xl:text-left">{children}</div>
     </div>
   );
 }
 
 function TaskStatusBadge({ task }: { task: DigitalHumanTask }) {
   const t = useT('digitalHumans');
+  const status = digitalHumanTaskDisplayStatus(task);
   const variant =
-    task.work_status === 'completed'
+    status === 'completed' || status === 'recurring_active'
       ? 'success'
-      : task.work_status === 'blocked' || task.work_status === 'canceled'
+      : status === 'blocked' || status === 'canceled'
         ? 'destructive'
-        : task.work_status === 'in_progress'
+        : status === 'in_progress'
           ? 'info'
-          : task.work_status === 'proposed'
+          : status === 'proposed' || status === 'waiting'
             ? 'warning'
             : 'subtle';
-  return (
-    <Badge variant={variant}>
-      {task.lifecycle_status === 'paused' && task.work_status === 'pending'
-        ? t('tasks.status.paused')
-        : t(`tasks.status.${task.work_status}`)}
-    </Badge>
-  );
+  return <Badge variant={variant}>{t(`tasks.status.${status}`)}</Badge>;
 }
 
 function PriorityBadge({ priority }: { priority: DigitalHumanTaskPriority }) {
@@ -405,18 +401,9 @@ function TaskScheduleLabel({ task }: { task: DigitalHumanTask }) {
     return <span>{t('tasks.schedule.manual')}</span>;
   }
   if (task.schedule.type === 'once') {
-    return (
-      <span>
-        {task.schedule.run_at ? formatDate(task.schedule.run_at) : t('tasks.schedule.once')}
-      </span>
-    );
+    return <span>{t('tasks.schedule.once')}</span>;
   }
-  return (
-    <span className="flex flex-col">
-      <span>{task.schedule.cron}</span>
-      <span>{task.schedule.timezone}</span>
-    </span>
-  );
+  return <span>{t('tasks.schedule.cron')}</span>;
 }
 
 function TaskState({
@@ -1027,6 +1014,7 @@ const taskActivityActions = [
   'archive',
   'run_finished',
   'proposal_expired',
+  'status_repaired',
 ] as const;
 type TaskActivityAction = (typeof taskActivityActions)[number];
 function isTaskActivityAction(value: string): value is TaskActivityAction {

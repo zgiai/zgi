@@ -255,6 +255,31 @@ assert.match(
   /DigitalHumanDashboard[\s\S]*id=\{digitalHumanId\}/,
   'DigitalHuman detail root must render the operational workspace dashboard'
 );
+assert.match(
+  list,
+  /item\.published_version_id[\s\S]*digital-humans\/\$\{item\.id\}[\s\S]*digital-humans\/\$\{item\.id\}\/configuration[\s\S]*router\.push\(`\/console\/digital-humans\/\$\{id\}\/configuration`\)/,
+  'Unpublished DigitalHumans must enter initial configuration instead of the operational workspace'
+);
+assert.match(
+  layout,
+  /useDigitalHuman\(id\)[\s\S]*isInitialSetup[\s\S]*router\.replace\(configurationHref\)[\s\S]*routeGuardPending[\s\S]*initialSetup\.redirecting/,
+  'Unpublished DigitalHuman routes must redirect to configuration without rendering child pages first'
+);
+assert.match(
+  sidebar,
+  /isInitialSetup[\s\S]*restrictToConfiguration[\s\S]*navItems = restrictToConfiguration \? \[configurationItem\] : publishedNavItems/,
+  'Unpublished DigitalHumans must hide operational sidebar destinations'
+);
+assert.match(
+  configuration,
+  /isInitialSetup[\s\S]*initialSetupChecks[\s\S]*initialSetup\.title[\s\S]*initialSetup\.progress/,
+  'Initial configuration must expose required-field progress until the first publish'
+);
+assert.match(
+  header,
+  /detail\?\.published \? \([\s\S]*DigitalHumanVersionPopover[\s\S]*detail\?\.published && permissions\.hasPermission\('digital_human\.run'\)/,
+  'Version management and test chat must remain hidden until the first publish'
+);
 assert.doesNotMatch(
   detailPage,
   /redirect\(/,
@@ -262,8 +287,13 @@ assert.doesNotMatch(
 );
 assert.match(
   dashboard,
-  /useDigitalHuman\(id\)[\s\S]*useDigitalHumanTasks\(id\)[\s\S]*useDigitalHumanRuns\(id\)[\s\S]*useDigitalHumanChannels\(id, true\)/,
+  /useDigitalHuman\(id\)[\s\S]*useDigitalHumanTasks\(id, currentLocalDayRunWindow\(\)\)[\s\S]*useDigitalHumanRuns\(id\)[\s\S]*useDigitalHumanChannels\(id, true\)/,
   'DigitalHuman dashboard must derive identity, tasks, runs, and connection state from live data'
+);
+assert.match(
+  dashboard,
+  /successful_run_count[\s\S]*dashboard\.completedToday/,
+  'DigitalHuman dashboard must count successful task executions today rather than terminal task records'
 );
 assert.match(
   dashboard,
@@ -768,8 +798,18 @@ assert.match(
 );
 assert.match(
   tasks,
-  /TaskListCell label=[\s\S]*sm:grid-cols/,
+  /xl:grid-cols[\s\S]*TaskListCell label=/,
   'DigitalHuman tasks must provide mobile row labels and responsive table layout'
+);
+assert.match(
+  tasks,
+  /tasks\.columns\.nextRun[\s\S]*task\.next_run_at[\s\S]*tasks\.columns\.lastResult/,
+  'DigitalHuman task rows must separate the next occurrence from the latest result'
+);
+assert.match(
+  dashboard,
+  /digitalHumanTaskDisplayStatus[\s\S]*tasks\.columns\.nextRun/,
+  'DigitalHuman workbench must present recurring lifecycle state and next occurrence separately'
 );
 assert.match(
   channels,

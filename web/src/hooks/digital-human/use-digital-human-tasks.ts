@@ -12,6 +12,8 @@ export interface DigitalHumanTaskFilters {
   status?: string[];
   priority?: string[];
   schedule_type?: string;
+  run_finished_after?: string;
+  run_finished_before?: string;
 }
 
 export function useDigitalHumanTasks(id: string, filters: DigitalHumanTaskFilters = {}) {

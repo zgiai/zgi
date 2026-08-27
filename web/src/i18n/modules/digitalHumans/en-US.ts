@@ -350,6 +350,13 @@ const messages = {
       },
     },
   },
+  initialSetup: {
+    title: 'Complete the first publish',
+    description:
+      'Complete the required settings and publish to unlock the workspace, connections, tasks, logs, and memory.',
+    progress: '{ready}/{total} complete',
+    redirecting: 'Opening initial configuration…',
+  },
   configuration: {
     identity: 'Identity and rules',
     identityDescription: 'Runtime identity is published as an immutable version.',
@@ -468,6 +475,32 @@ const messages = {
       custom: 'Custom Skills',
       noMatch: 'No matching Skills.',
       save: 'Save',
+    },
+    exa: {
+      credentialTitle: 'Exa API token',
+      loading: 'Loading configuration…',
+      loadFailed: 'Configuration could not be loaded. Try again later.',
+      notConfigured: 'Not configured; web search remains unavailable after publishing',
+      enabled: 'Configured and enabled',
+      disabled: 'Configured but disabled',
+      configureCredential: 'Configure token',
+      editCredential: 'Manage token',
+      retry: 'Retry',
+      dialogTitle: 'Configure Exa web search',
+      dialogDescription:
+        'The token is used only by this digital human at runtime and is never written to published versions or conversations.',
+      apiToken: 'API token',
+      openDocs: 'Open Exa API docs',
+      tokenPlaceholder: 'Paste an Exa API token',
+      keepTokenPlaceholder: 'Leave blank to keep the current token',
+      tokenHint:
+        'The token will not be shown again. Enter a new token whenever it needs replacing.',
+      enableTitle: 'Allow runtime use',
+      enableDescription:
+        'Turning this off keeps the token but removes web search from the runtime.',
+      save: 'Save configuration',
+      saving: 'Saving…',
+      errors: { save: 'Exa web search configuration could not be saved.' },
     },
     knowledge: {
       dialogDescription: 'Choose knowledge bases this digital human may search and reference.',
@@ -891,6 +924,7 @@ const messages = {
       status: 'Status',
       priority: 'Priority',
       schedule: 'Schedule',
+      nextRun: 'Next run',
       lastResult: 'Latest result',
       updated: 'Updated',
     },
@@ -903,6 +937,8 @@ const messages = {
       completed: 'Completed',
       canceled: 'Canceled',
       paused: 'Paused',
+      recurring_active: 'Active',
+      manual_ready: 'Ready to run',
     },
     priority: { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' },
     schedule: { manual: 'Manual', once: 'One time', cron: 'Recurring' },
@@ -993,6 +1029,7 @@ const messages = {
       archive: 'Task archived',
       run_finished: 'Task run finished',
       proposal_expired: 'Proposal expired after seven days without confirmation',
+      status_repaired: 'Recurring task schedule restored',
     },
   },
   memory: {

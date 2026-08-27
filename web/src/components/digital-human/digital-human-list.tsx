@@ -8,10 +8,7 @@ import { toast } from 'sonner';
 import { DigitalHumanBasicInfoDialog } from '@/components/digital-human/digital-human-basic-info-dialog';
 import { IconInput } from '@/components/common/icon-input';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
-import {
-  createTextIconValue,
-  type IconValue,
-} from '@/components/common/icon-input/types';
+import { createTextIconValue, type IconValue } from '@/components/common/icon-input/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -114,7 +111,11 @@ function DigitalHumanCard({
   return (
     <div className="relative h-48">
       <Link
-        href={`/console/digital-humans/${item.id}`}
+        href={
+          item.published_version_id
+            ? `/console/digital-humans/${item.id}`
+            : `/console/digital-humans/${item.id}/configuration`
+        }
         className="block h-full rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         <Card className="flex h-full flex-col border border-border/80 shadow-sm transition-colors hover:border-border hover:bg-muted/20 hover:shadow-sm">
@@ -184,11 +185,7 @@ function DigitalHumanCard({
         </div>
       ) : null}
 
-      <DigitalHumanBasicInfoDialog
-        definition={item}
-        open={editOpen}
-        onOpenChange={setEditOpen}
-      />
+      <DigitalHumanBasicInfoDialog definition={item} open={editOpen} onOpenChange={setEditOpen} />
     </div>
   );
 }
@@ -256,7 +253,7 @@ function CreateDigitalHumanDialog({
     });
     const id = response.data?.definition.id;
     onOpenChange(false);
-    if (id) router.push(`/console/digital-humans/${id}`);
+    if (id) router.push(`/console/digital-humans/${id}/configuration`);
   };
 
   return (

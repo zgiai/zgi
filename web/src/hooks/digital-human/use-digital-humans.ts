@@ -19,6 +19,7 @@ import type {
   UpdateDigitalHumanDraftRequest,
   UpdateDigitalHumanRequest,
   UpdateDigitalHumanPersonaTemplateRequest,
+  UpdateDigitalHumanDirectSkillConfigurationRequest,
 } from '@/services/types/digital-human';
 import { getErrorMessage } from '@/utils/error-notifications';
 
@@ -115,6 +116,29 @@ export function useDigitalHumanBindingCandidates(
       Boolean(id) &&
       (params.type !== 'database_table' || Boolean(params.parent_resource_id)),
     staleTime: 15_000,
+  });
+}
+
+export function useDigitalHumanExaWebSearchConfiguration(id: string, enabled = true) {
+  return useQuery({
+    queryKey: DIGITAL_HUMAN_KEYS.exaWebSearchConfiguration(id),
+    queryFn: () => digitalHumanService.getExaWebSearchConfiguration(id),
+    enabled: enabled && Boolean(id),
+    staleTime: 10_000,
+  });
+}
+
+export function useUpdateDigitalHumanExaWebSearchConfiguration(id: string) {
+  const t = useT('digitalHumans');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: UpdateDigitalHumanDirectSkillConfigurationRequest) =>
+      digitalHumanService.updateExaWebSearchConfiguration(id, request),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: DIGITAL_HUMAN_KEYS.exaWebSearchConfiguration(id),
+      }),
+    onError: error => mutationError(error, t('bindings.exa.errors.save')),
   });
 }
 

@@ -19,6 +19,7 @@ import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { getAgentTextIconDisplay } from '@/components/agents/agent-runtime/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
+import { digitalHumanTaskDisplayStatus } from '@/components/digital-human/digital-human-task-presentation';
 import { useDigitalHumanChannels } from '@/hooks/digital-human/use-digital-human-channels';
 import { useDigitalHumanTasks } from '@/hooks/digital-human/use-digital-human-tasks';
 import { useDigitalHuman, useDigitalHumanRuns } from '@/hooks/digital-human/use-digital-humans';
@@ -49,7 +50,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
   const detail = useDigitalHuman(id);
-  const tasks = useDigitalHumanTasks(id);
+  const tasks = useDigitalHumanTasks(id, currentLocalDayRunWindow());
   const runs = useDigitalHumanRuns(id);
   const channels = useDigitalHumanChannels(id, true);
   const [refreshState, setRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>(
@@ -127,9 +128,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
       !attentionTaskIds.has(task.id)
   );
   const attentionCount = attentionTasks.length + failedTaskRuns.length + failedDeliveries.length;
-  const todayCompleted = taskItems.filter(
-    task => task.work_status === 'completed' && isSameLocalDay(task.updated_at, new Date())
-  ).length;
+  const todayCompleted = tasks.data?.data.successful_run_count ?? 0;
   const dashboardStatus = resolveDashboardStatus({
     definitionStatus: definition.status,
     published: Boolean(published),
@@ -257,7 +256,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
           title={currentTask?.name ?? activeRun?.query ?? t('dashboard.noCurrentFocus')}
           meta={
             currentTask
-              ? t(`tasks.status.${currentTask.work_status}`)
+              ? t(`tasks.status.${digitalHumanTaskDisplayStatus(currentTask)}`)
               : activeRun
                 ? t(`status.${activeRun.status}`)
                 : undefined
@@ -268,7 +267,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
         <FocusBlock
           label={t('dashboard.nextUp')}
           title={nextTask?.name ?? t('dashboard.noNextTask')}
-          meta={nextTask ? formatTaskSchedule(nextTask, locale, t) : undefined}
+          meta={nextTask ? formatTaskNextRun(nextTask, locale, t) : undefined}
         />
         <div className="flex items-center border-t p-4 sm:hidden">
           {activeRun ? (
@@ -721,10 +720,11 @@ function TaskTable({
   const t = useT('digitalHumans');
   return (
     <div>
-      <div className="hidden grid-cols-[minmax(220px,1.5fr)_100px_150px_130px] gap-4 border-b bg-muted/20 px-5 py-2.5 text-xs font-medium text-muted-foreground md:grid">
+      <div className="hidden grid-cols-[minmax(220px,1.5fr)_105px_120px_150px_125px] gap-4 border-b bg-muted/20 px-5 py-2.5 text-xs font-medium text-muted-foreground lg:grid">
         <span>{t('tasks.columns.name')}</span>
         <span>{t('tasks.columns.status')}</span>
         <span>{t('tasks.columns.schedule')}</span>
+        <span>{t('tasks.columns.nextRun')}</span>
         <span>{t('tasks.columns.lastResult')}</span>
       </div>
       <div className="divide-y">
@@ -732,7 +732,7 @@ function TaskTable({
           <Link
             key={task.id}
             href={`/console/digital-humans/${id}/tasks?task=${task.id}`}
-            className="grid min-w-0 gap-3 px-5 py-3.5 outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[minmax(220px,1.5fr)_100px_150px_130px] md:items-center md:gap-4"
+            className="grid min-w-0 gap-3 px-5 py-3.5 outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:grid-cols-[minmax(220px,1.5fr)_105px_120px_150px_125px] lg:items-center lg:gap-4"
           >
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">{task.name}</p>
@@ -745,7 +745,10 @@ function TaskTable({
               <TaskStatusBadge task={task} />
             </DashboardTaskCell>
             <DashboardTaskCell label={t('tasks.columns.schedule')}>
-              {formatTaskSchedule(task, locale, t)}
+              {formatTaskSchedule(task, t)}
+            </DashboardTaskCell>
+            <DashboardTaskCell label={t('tasks.columns.nextRun')}>
+              {task.next_run_at ? formatDateTime(new Date(task.next_run_at), locale) : '—'}
             </DashboardTaskCell>
             <DashboardTaskCell label={t('tasks.columns.lastResult')}>
               {task.last_run_status
@@ -779,27 +782,24 @@ function dashboardTaskSourceLabel(
 
 function DashboardTaskCell({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-4 text-xs text-muted-foreground md:block">
-      <span className="font-medium text-foreground/70 md:hidden">{label}</span>
-      <div className="min-w-0 text-right md:text-left">{children}</div>
+    <div className="flex min-w-0 items-center justify-between gap-4 text-xs text-muted-foreground lg:block">
+      <span className="font-medium text-foreground/70 lg:hidden">{label}</span>
+      <div className="min-w-0 text-right lg:text-left">{children}</div>
     </div>
   );
 }
 
 function TaskStatusBadge({ task }: { task: DigitalHumanTask }) {
   const t = useT('digitalHumans');
-  const status =
-    task.lifecycle_status === 'paused' && task.work_status === 'pending'
-      ? 'paused'
-      : task.work_status;
+  const status = digitalHumanTaskDisplayStatus(task);
   const variant =
-    task.work_status === 'completed'
+    status === 'completed' || status === 'recurring_active'
       ? 'success'
-      : task.work_status === 'blocked'
+      : status === 'blocked' || status === 'canceled'
         ? 'destructive'
-        : task.work_status === 'proposed' || task.work_status === 'waiting'
+        : status === 'proposed' || status === 'waiting'
           ? 'warning'
-          : task.work_status === 'in_progress'
+          : status === 'in_progress'
             ? 'info'
             : 'subtle';
   return <Badge variant={variant}>{t(`tasks.status.${status}`)}</Badge>;
@@ -963,13 +963,21 @@ function taskNextTimestamp(task: DigitalHumanTask) {
 
 function formatTaskSchedule(
   task: DigitalHumanTask,
-  locale: string,
   t: ReturnType<typeof useT<'digitalHumans'>>
 ) {
   if (task.schedule.type === 'manual') return t('tasks.schedule.manual');
   if (task.schedule.type === 'cron') return t('tasks.schedule.cron');
-  const value = task.next_run_at ?? task.schedule.run_at;
-  return value ? formatDateTime(new Date(value), locale) : t('tasks.schedule.once');
+  return t('tasks.schedule.once');
+}
+
+function formatTaskNextRun(
+  task: DigitalHumanTask,
+  locale: string,
+  t: ReturnType<typeof useT<'digitalHumans'>>
+) {
+  if (task.next_run_at) return formatDateTime(new Date(task.next_run_at), locale);
+  if (task.schedule.type === 'manual') return t('tasks.status.manual_ready');
+  return t('tasks.neverRun');
 }
 
 function normalizeRunStatus(
@@ -990,14 +998,14 @@ function normalizeRunStatus(
   return 'queued';
 }
 
-function isSameLocalDay(value: string | undefined, day: Date) {
-  if (!value) return false;
-  const date = new Date(value);
-  return (
-    date.getFullYear() === day.getFullYear() &&
-    date.getMonth() === day.getMonth() &&
-    date.getDate() === day.getDate()
-  );
+function currentLocalDayRunWindow() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return {
+    run_finished_after: start.toISOString(),
+    run_finished_before: end.toISOString(),
+  };
 }
 
 function formatFullDate(value: Date, locale: string) {

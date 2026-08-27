@@ -25,20 +25,23 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
   const permissions = useAccountPermissions();
   const [isCollapsed, setIsCollapsed] = usePersistentSidebarCollapse('digitalHuman', true);
   const configurationHref = `/console/digital-humans/${id}/configuration`;
-  const navItems: ResourceSidebarNavItem[] = [
+  const isInitialSetup = Boolean(detail.data?.data && !detail.data.data.published);
+  const restrictToConfiguration = detail.isLoading || isInitialSetup;
+  const configurationItem: ResourceSidebarNavItem = {
+    title: t('digitalHumans.tabs.configuration'),
+    href: configurationHref,
+    icon: Settings2,
+    isActive: currentPathname =>
+      currentPathname.startsWith(`/console/digital-humans/${id}/configuration`),
+  };
+  const publishedNavItems: ResourceSidebarNavItem[] = [
     {
       title: t('digitalHumans.tabs.dashboard'),
       href: `/console/digital-humans/${id}`,
       icon: House,
       isActive: currentPathname => currentPathname === `/console/digital-humans/${id}`,
     },
-    {
-      title: t('digitalHumans.tabs.configuration'),
-      href: configurationHref,
-      icon: Settings2,
-      isActive: currentPathname =>
-        currentPathname.startsWith(`/console/digital-humans/${id}/configuration`),
-    },
+    configurationItem,
     {
       title: t('digitalHumans.tabs.channels'),
       href: `/console/digital-humans/${id}/channels`,
@@ -64,6 +67,7 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
         ]
       : []),
   ];
+  const navItems = restrictToConfiguration ? [configurationItem] : publishedNavItems;
 
   return (
     <ResourceSidebar

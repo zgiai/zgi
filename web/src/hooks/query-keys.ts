@@ -108,6 +108,8 @@ export const DIGITAL_HUMAN_KEYS = {
   draftBindings: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'draft-bindings'] as const,
   bindingCandidates: (id: string, params: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'binding-candidates', params] as const,
+  exaWebSearchConfiguration: (id: string) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'direct-skills', 'exa-web-search'] as const,
   runs: (id: string, params?: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'runs', params].filter(Boolean),
   run: (id: string, runId: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'run', runId] as const,
@@ -124,8 +126,10 @@ export const DIGITAL_HUMAN_KEYS = {
   tasks: (id: string, params?: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'tasks', params].filter(Boolean),
   task: (id: string, taskId: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'task', taskId] as const,
-  taskRuns: (id: string, taskId: string) => [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'runs'] as const,
-  taskActivities: (id: string, taskId: string) => [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'activities'] as const,
+  taskRuns: (id: string, taskId: string) =>
+    [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'runs'] as const,
+  taskActivities: (id: string, taskId: string) =>
+    [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'activities'] as const,
   channelTaskPolicy: (id: string, installationId: string) =>
     [...DIGITAL_HUMAN_KEYS.channelInstallations(id), installationId, 'task-policy'] as const,
 } as const;

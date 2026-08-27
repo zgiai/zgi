@@ -236,6 +236,20 @@ export interface DigitalHumanResourceCandidateList {
   total: number;
 }
 
+export interface DigitalHumanDirectSkillConfiguration {
+  skill_id: string;
+  configured: boolean;
+  enabled: boolean;
+  revision: number;
+  updated_at?: string;
+}
+
+export interface UpdateDigitalHumanDirectSkillConfigurationRequest {
+  api_token?: string;
+  enabled: boolean;
+  expected_revision: number;
+}
+
 export interface DigitalHumanRun {
   id: string;
   digital_human_id: string;
@@ -558,6 +572,7 @@ export interface DigitalHumanTask {
 export interface DigitalHumanTaskList {
   items: DigitalHumanTask[];
   counts: Partial<Record<DigitalHumanTaskStatus, number>>;
+  successful_run_count: number;
   total: number;
   page: number;
   page_size: number;

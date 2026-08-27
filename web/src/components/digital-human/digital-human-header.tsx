@@ -305,30 +305,32 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
             </Tooltip>
           ) : null}
 
-          <DigitalHumanVersionPopover
-            open={versionsOpen}
-            onOpenChange={nextOpen => {
-              setVersionsOpen(nextOpen);
-              if (!nextOpen) setSelectedVersionId('');
-            }}
-            isLoading={versionsQuery.isLoading}
-            isLoadingPreview={restorePreviewQuery.isLoading}
-            isRestoring={mutations.restoreVersion.isPending}
-            hasUnpublishedChanges={hasUnpublishedChanges}
-            hasLocalDraftChanges={isDirty}
-            isDraftSaving={Boolean(draftEditor?.isSaving)}
-            draftUpdatedAt={detail?.draft.updated_at}
-            currentVersionId={detail?.published?.id}
-            versions={versionsQuery.data?.data.items ?? []}
-            selectedVersionId={selectedVersionId}
-            restorePreview={restorePreviewQuery.data?.data}
-            canRestore={permissions.hasPermission('digital_human.update')}
-            onSelectVersion={setSelectedVersionId}
-            onCancelPreview={() => setSelectedVersionId('')}
-            onRestore={() => void restoreVersion()}
-          />
+          {detail?.published ? (
+            <DigitalHumanVersionPopover
+              open={versionsOpen}
+              onOpenChange={nextOpen => {
+                setVersionsOpen(nextOpen);
+                if (!nextOpen) setSelectedVersionId('');
+              }}
+              isLoading={versionsQuery.isLoading}
+              isLoadingPreview={restorePreviewQuery.isLoading}
+              isRestoring={mutations.restoreVersion.isPending}
+              hasUnpublishedChanges={hasUnpublishedChanges}
+              hasLocalDraftChanges={isDirty}
+              isDraftSaving={Boolean(draftEditor?.isSaving)}
+              draftUpdatedAt={detail?.draft.updated_at}
+              currentVersionId={detail.published.id}
+              versions={versionsQuery.data?.data.items ?? []}
+              selectedVersionId={selectedVersionId}
+              restorePreview={restorePreviewQuery.data?.data}
+              canRestore={permissions.hasPermission('digital_human.update')}
+              onSelectVersion={setSelectedVersionId}
+              onCancelPreview={() => setSelectedVersionId('')}
+              onRestore={() => void restoreVersion()}
+            />
+          ) : null}
 
-          {permissions.hasPermission('digital_human.run') ? (
+          {detail?.published && permissions.hasPermission('digital_human.run') ? (
             <Button
               size="sm"
               className="inline-flex items-center gap-1.5 border border-emerald-600/30 bg-emerald-600 px-2 text-white shadow-none hover:border-emerald-700 hover:bg-emerald-700 sm:px-3.5"
@@ -441,7 +443,6 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
         open={basicInfoOpen}
         onOpenChange={setBasicInfoOpen}
       />
-
     </>
   );
 }
@@ -642,9 +643,7 @@ function DigitalHumanVersionPopover({
                       <span>{t('versionHistory.confirmDiscard')}</span>
                     </label>
                   ) : (
-                    <p className="text-xs text-muted-foreground">
-                      {t('versionHistory.noChanges')}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{t('versionHistory.noChanges')}</p>
                   )}
                 </div>
               ) : null}

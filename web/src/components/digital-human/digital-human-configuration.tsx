@@ -11,7 +11,9 @@ import {
 import {
   AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
   ChevronRight,
+  CircleDashed,
   CircleHelp,
   Loader2,
   MessageSquareText,
@@ -240,205 +242,256 @@ function ConfigurationEditor({
     model: selectedModel?.model ?? '',
   };
   const modelUnavailable = Boolean(model && !selectedModel && !availableModels.isLoading);
+  const isInitialSetup = !detail.published;
+  const initialSetupChecks = [
+    { label: t('fields.identityName'), ready: Boolean(identityName.trim()) },
+    { label: t('fields.persona'), ready: Boolean(persona.trim()) },
+    { label: t('fields.rules'), ready: normalizedRules.length > 0 },
+    { label: t('settings.modelTitle'), ready: Boolean(model.trim()) && !modelUnavailable },
+  ];
+  const initialSetupReadyCount = initialSetupChecks.filter(check => check.ready).length;
   return (
-    <div className="grid min-h-full min-w-0 bg-background lg:h-full lg:min-h-0 lg:grid-cols-2 lg:divide-x">
-      <section className="min-h-0 min-w-0 border-b lg:h-full lg:overflow-y-auto lg:border-b-0">
-        {activePanel === null ? (
-          <div className="min-w-0">
-            <section id="configuration-model" className="border-b p-4 md:p-5">
-              <h2 className="mb-3 text-sm font-semibold">{t('settings.modelTitle')}</h2>
-              <ModelSelector
-                modelType="text-chat"
-                availabilityUseCase="agent-runtime"
-                preferredUseCase="agent"
-                capabilityFilter={{ features_tool_call: true }}
-                modelsOverride={models}
-                value={modelValue}
-                onChange={value => setModel(value.model)}
-                placeholder={t('settings.modelPlaceholder')}
-                disabled={!canUpdate || availableModels.isLoading}
-                hasError={modelUnavailable}
-                className="w-full"
-              />
-              {modelUnavailable ? (
-                <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                  <span>{t('settings.modelUnavailable')}</span>
-                </div>
-              ) : null}
-            </section>
-
-            <section id="configuration-identity" className="space-y-5 border-b p-4 md:p-5">
-              <div>
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold">{t('settings.behaviorTitle')}</h3>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {t('settings.behaviorDescription')}
-                    </p>
-                  </div>
-                  {canUpdate ? (
-                    <PersonaTemplateActions
-                      identityName={identityName}
-                      persona={persona}
-                      goals={normalizedGoals}
-                      rules={normalizedRules}
-                      onApply={(nextIdentityName, nextPersona, nextGoals, nextRules) => {
-                        setIdentityName(nextIdentityName);
-                        setPersona(nextPersona);
-                        setGoals(nextGoals.length > 0 ? nextGoals : ['']);
-                        setRules(nextRules.length > 0 ? nextRules : ['']);
-                      }}
-                    />
-                  ) : null}
-                </div>
-                <div className="space-y-4">
-                  <Field
-                    label={t('fields.identityName')}
-                    description={t('settings.identityNameDescription')}
-                    required
-                  >
-                    <Input
-                      value={identityName}
-                      onChange={event => setIdentityName(event.target.value)}
-                      disabled={!canUpdate}
-                      placeholder={t('settings.identityNamePlaceholder')}
-                      aria-label={t('fields.identityName')}
-                      aria-required="true"
-                    />
-                  </Field>
-                  <Field
-                    label={t('fields.persona')}
-                    description={t('settings.personaDescription')}
-                    required
-                  >
-                    <Textarea
-                      rows={5}
-                      value={persona}
-                      onChange={event => setPersona(event.target.value)}
-                      disabled={!canUpdate}
-                      placeholder={t('settings.personaPlaceholder')}
-                      aria-label={t('fields.persona')}
-                      aria-required="true"
-                    />
-                  </Field>
-                  <Field
-                    label={t('fields.rules')}
-                    description={t('settings.rulesDescription')}
-                    required
-                    action={
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 shrink-0 gap-1.5 px-2.5"
-                        onClick={() => setRules([...rules, ''])}
-                        disabled={!canUpdate}
-                      >
-                        <Plus className="size-3.5" />
-                        {t('settings.addRule')}
-                      </Button>
-                    }
-                  >
-                    <RulesEditor
-                      rules={rules}
-                      onChange={setRules}
-                      disabled={!canUpdate}
-                      required
-                      removeLabel={t('settings.removeRule')}
-                      placeholder={t('settings.rulesPlaceholder')}
-                    />
-                  </Field>
-                  <Field
-                    label={t('fields.goals')}
-                    description={t('settings.goalsDescription')}
-                    action={
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 shrink-0 gap-1.5 px-2.5"
-                        onClick={() => setGoals([...goals, ''])}
-                        disabled={!canUpdate}
-                      >
-                        <Plus className="size-3.5" />
-                        {t('settings.addGoal')}
-                      </Button>
-                    }
-                  >
-                    <RulesEditor
-                      rules={goals}
-                      onChange={setGoals}
-                      disabled={!canUpdate}
-                      removeLabel={t('settings.removeGoal')}
-                      placeholder={t('settings.goalsPlaceholder')}
-                    />
-                  </Field>
-                </div>
-              </div>
-            </section>
-
-            <div className="p-4 md:p-5">
-              <div className="overflow-hidden rounded-xl border bg-card">
-                <ConfigurationMenuItem
-                  id="configuration-behavior"
-                  icon={<MessageSquareText className="size-4" />}
-                  title={t('preferences.channelResponseTitle')}
-                  description={t('preferences.channelResponseDescription')}
-                  summary={t('configurationHub.responseEnabledCount', {
-                    count: Number(intermediateMessagesEnabled) + Number(acknowledgementEnabled),
-                  })}
-                  onClick={() => setActivePanel('response')}
-                  last
-                />
+    <div className="flex min-h-full min-w-0 flex-col bg-background lg:h-full lg:min-h-0">
+      {isInitialSetup ? (
+        <section className="shrink-0 border-b bg-primary/[0.035] px-4 py-3 md:px-5">
+          <div className="mx-auto flex max-w-[1440px] flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Sparkles className="size-4" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold">{t('initialSetup.title')}</h2>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  {t('initialSetup.description')}
+                </p>
               </div>
             </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pl-11 text-xs xl:shrink-0 xl:pl-0">
+              {initialSetupChecks.map(check => (
+                <span
+                  key={check.label}
+                  className={cn(
+                    'inline-flex items-center gap-1.5',
+                    check.ready ? 'text-success' : 'text-muted-foreground'
+                  )}
+                >
+                  {check.ready ? (
+                    <CheckCircle2 className="size-3.5" />
+                  ) : (
+                    <CircleDashed className="size-3.5" />
+                  )}
+                  {check.label}
+                </span>
+              ))}
+              <span className="text-muted-foreground">
+                {t('initialSetup.progress', {
+                  ready: initialSetupReadyCount,
+                  total: initialSetupChecks.length,
+                })}
+              </span>
+            </div>
           </div>
-        ) : (
-          <div className="min-w-0">
-            <ConfigurationPanelHeader
-              title={t('preferences.channelResponseTitle')}
-              onBack={() => setActivePanel(null)}
-              backLabel={t('configurationHub.backToSettings')}
-            />
-            {activePanel === 'response' ? (
+        </section>
+      ) : null}
+      <div className="grid min-h-0 min-w-0 flex-1 lg:grid-cols-2 lg:divide-x">
+        <section className="min-h-0 min-w-0 border-b lg:h-full lg:overflow-y-auto lg:border-b-0">
+          {activePanel === null ? (
+            <div className="min-w-0">
+              <section id="configuration-model" className="border-b p-4 md:p-5">
+                <h2 className="mb-3 text-sm font-semibold">{t('settings.modelTitle')}</h2>
+                <ModelSelector
+                  modelType="text-chat"
+                  availabilityUseCase="agent-runtime"
+                  preferredUseCase="agent"
+                  capabilityFilter={{ features_tool_call: true }}
+                  modelsOverride={models}
+                  value={modelValue}
+                  onChange={value => setModel(value.model)}
+                  placeholder={t('settings.modelPlaceholder')}
+                  disabled={!canUpdate || availableModels.isLoading}
+                  hasError={modelUnavailable}
+                  className="w-full"
+                />
+                {modelUnavailable ? (
+                  <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    <span>{t('settings.modelUnavailable')}</span>
+                  </div>
+                ) : null}
+              </section>
+
+              <section id="configuration-identity" className="space-y-5 border-b p-4 md:p-5">
+                <div>
+                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">{t('settings.behaviorTitle')}</h3>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {t('settings.behaviorDescription')}
+                      </p>
+                    </div>
+                    {canUpdate ? (
+                      <PersonaTemplateActions
+                        identityName={identityName}
+                        persona={persona}
+                        goals={normalizedGoals}
+                        rules={normalizedRules}
+                        onApply={(nextIdentityName, nextPersona, nextGoals, nextRules) => {
+                          setIdentityName(nextIdentityName);
+                          setPersona(nextPersona);
+                          setGoals(nextGoals.length > 0 ? nextGoals : ['']);
+                          setRules(nextRules.length > 0 ? nextRules : ['']);
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <div className="space-y-4">
+                    <Field
+                      label={t('fields.identityName')}
+                      description={t('settings.identityNameDescription')}
+                      required
+                    >
+                      <Input
+                        value={identityName}
+                        onChange={event => setIdentityName(event.target.value)}
+                        disabled={!canUpdate}
+                        placeholder={t('settings.identityNamePlaceholder')}
+                        aria-label={t('fields.identityName')}
+                        aria-required="true"
+                      />
+                    </Field>
+                    <Field
+                      label={t('fields.persona')}
+                      description={t('settings.personaDescription')}
+                      required
+                    >
+                      <Textarea
+                        rows={5}
+                        value={persona}
+                        onChange={event => setPersona(event.target.value)}
+                        disabled={!canUpdate}
+                        placeholder={t('settings.personaPlaceholder')}
+                        aria-label={t('fields.persona')}
+                        aria-required="true"
+                      />
+                    </Field>
+                    <Field
+                      label={t('fields.rules')}
+                      description={t('settings.rulesDescription')}
+                      required
+                      action={
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 shrink-0 gap-1.5 px-2.5"
+                          onClick={() => setRules([...rules, ''])}
+                          disabled={!canUpdate}
+                        >
+                          <Plus className="size-3.5" />
+                          {t('settings.addRule')}
+                        </Button>
+                      }
+                    >
+                      <RulesEditor
+                        rules={rules}
+                        onChange={setRules}
+                        disabled={!canUpdate}
+                        required
+                        removeLabel={t('settings.removeRule')}
+                        placeholder={t('settings.rulesPlaceholder')}
+                      />
+                    </Field>
+                    <Field
+                      label={t('fields.goals')}
+                      description={t('settings.goalsDescription')}
+                      action={
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 shrink-0 gap-1.5 px-2.5"
+                          onClick={() => setGoals([...goals, ''])}
+                          disabled={!canUpdate}
+                        >
+                          <Plus className="size-3.5" />
+                          {t('settings.addGoal')}
+                        </Button>
+                      }
+                    >
+                      <RulesEditor
+                        rules={goals}
+                        onChange={setGoals}
+                        disabled={!canUpdate}
+                        removeLabel={t('settings.removeGoal')}
+                        placeholder={t('settings.goalsPlaceholder')}
+                      />
+                    </Field>
+                  </div>
+                </div>
+              </section>
+
               <div className="p-4 md:p-5">
-                <p className="mb-4 text-xs leading-5 text-muted-foreground">
-                  {t('preferences.channelResponseDescription')}
-                </p>
-                <div className="min-w-0 divide-y rounded-lg border px-4">
-                  <PreferenceSwitch
-                    title={t('preferences.intermediateMessages')}
-                    description={t('preferences.intermediateMessagesDescription')}
-                    checked={intermediateMessagesEnabled}
-                    onCheckedChange={setIntermediateMessagesEnabled}
-                    disabled={!canUpdate}
-                  />
-                  <PreferenceSwitch
-                    title={t('preferences.acknowledgement')}
-                    description={t('preferences.acknowledgementDescription')}
-                    checked={acknowledgementEnabled}
-                    onCheckedChange={setAcknowledgementEnabled}
-                    disabled={!canUpdate}
+                <div className="overflow-hidden rounded-xl border bg-card">
+                  <ConfigurationMenuItem
+                    id="configuration-behavior"
+                    icon={<MessageSquareText className="size-4" />}
+                    title={t('preferences.channelResponseTitle')}
+                    description={t('preferences.channelResponseDescription')}
+                    summary={t('configurationHub.responseEnabledCount', {
+                      count: Number(intermediateMessagesEnabled) + Number(acknowledgementEnabled),
+                    })}
+                    onClick={() => setActivePanel('response')}
+                    last
                   />
                 </div>
               </div>
-            ) : null}
-          </div>
-        )}
-      </section>
+            </div>
+          ) : (
+            <div className="min-w-0">
+              <ConfigurationPanelHeader
+                title={t('preferences.channelResponseTitle')}
+                onBack={() => setActivePanel(null)}
+                backLabel={t('configurationHub.backToSettings')}
+              />
+              {activePanel === 'response' ? (
+                <div className="p-4 md:p-5">
+                  <p className="mb-4 text-xs leading-5 text-muted-foreground">
+                    {t('preferences.channelResponseDescription')}
+                  </p>
+                  <div className="min-w-0 divide-y rounded-lg border px-4">
+                    <PreferenceSwitch
+                      title={t('preferences.intermediateMessages')}
+                      description={t('preferences.intermediateMessagesDescription')}
+                      checked={intermediateMessagesEnabled}
+                      onCheckedChange={setIntermediateMessagesEnabled}
+                      disabled={!canUpdate}
+                    />
+                    <PreferenceSwitch
+                      title={t('preferences.acknowledgement')}
+                      description={t('preferences.acknowledgementDescription')}
+                      checked={acknowledgementEnabled}
+                      onCheckedChange={setAcknowledgementEnabled}
+                      disabled={!canUpdate}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </section>
 
-      <section
-        id="configuration-capabilities"
-        className="min-h-0 min-w-0 scroll-mt-14 bg-muted/[0.08] lg:h-full lg:overflow-y-auto"
-      >
-        <div className="flex h-12 items-center border-b bg-background px-4 md:px-5">
-          <h2 className="text-sm font-semibold">{t('capabilities.title')}</h2>
-        </div>
-        <div className="p-4 md:p-5">
-          <DigitalHumanResourceBindings id={id} />
-        </div>
-      </section>
+        <section
+          id="configuration-capabilities"
+          className="min-h-0 min-w-0 scroll-mt-14 bg-muted/[0.08] lg:h-full lg:overflow-y-auto"
+        >
+          <div className="flex h-12 items-center border-b bg-background px-4 md:px-5">
+            <h2 className="text-sm font-semibold">{t('capabilities.title')}</h2>
+          </div>
+          <div className="p-4 md:p-5">
+            <DigitalHumanResourceBindings id={id} />
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -578,12 +631,7 @@ function RulesEditor({
   };
 
   return (
-    <div
-      className="space-y-3"
-      data-rules-editor
-      role="group"
-      aria-required={required || undefined}
-    >
+    <div className="space-y-3" data-rules-editor role="group" aria-required={required || undefined}>
       <div className="space-y-2">
         {rules.map((rule, index) => (
           <div

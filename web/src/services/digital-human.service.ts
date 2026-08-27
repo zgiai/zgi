@@ -42,6 +42,8 @@ import type {
   DigitalHumanTaskActivity,
   DigitalHumanTaskPage,
   DigitalHumanChannelTaskPolicy,
+  DigitalHumanDirectSkillConfiguration,
+  UpdateDigitalHumanDirectSkillConfigurationRequest,
 } from './types/digital-human';
 
 class DigitalHumanService extends BaseService {
@@ -168,6 +170,19 @@ class DigitalHumanService extends BaseService {
       expected_draft_lock_version: expectedDraftLockVersion,
       items,
     });
+  }
+
+  getExaWebSearchConfiguration(
+    id: string
+  ): Promise<ApiResponseData<DigitalHumanDirectSkillConfiguration>> {
+    return this.request('get', `/digital-humans/${id}/direct-skills/exa-web-search`);
+  }
+
+  updateExaWebSearchConfiguration(
+    id: string,
+    data: UpdateDigitalHumanDirectSkillConfigurationRequest
+  ): Promise<ApiResponseData<DigitalHumanDirectSkillConfiguration>> {
+    return this.request('put', `/digital-humans/${id}/direct-skills/exa-web-search`, data);
   }
 
   submitInvocation(
@@ -298,12 +313,24 @@ class DigitalHumanService extends BaseService {
 
   listTasks(
     id: string,
-    params?: { page?: number; page_size?: number; query?: string; status?: string[]; priority?: string[]; schedule_type?: string }
+    params?: {
+      page?: number;
+      page_size?: number;
+      query?: string;
+      status?: string[];
+      priority?: string[];
+      schedule_type?: string;
+      run_finished_after?: string;
+      run_finished_before?: string;
+    }
   ): Promise<ApiResponseData<DigitalHumanTaskList>> {
     return this.request('get', `/digital-humans/${id}/tasks`, undefined, { params });
   }
 
-  createTask(id: string, data: CreateDigitalHumanTaskRequest): Promise<ApiResponseData<DigitalHumanTask>> {
+  createTask(
+    id: string,
+    data: CreateDigitalHumanTaskRequest
+  ): Promise<ApiResponseData<DigitalHumanTask>> {
     return this.request('post', `/digital-humans/${id}/tasks`, data);
   }
 
@@ -311,28 +338,60 @@ class DigitalHumanService extends BaseService {
     return this.request('get', `/digital-humans/${id}/tasks/${taskId}`);
   }
 
-  updateTask(id: string, taskId: string, data: UpdateDigitalHumanTaskRequest): Promise<ApiResponseData<DigitalHumanTask>> {
+  updateTask(
+    id: string,
+    taskId: string,
+    data: UpdateDigitalHumanTaskRequest
+  ): Promise<ApiResponseData<DigitalHumanTask>> {
     return this.request('patch', `/digital-humans/${id}/tasks/${taskId}`, data);
   }
 
-  applyTaskAction(id: string, taskId: string, action: string, expectedRevision: number): Promise<ApiResponseData<DigitalHumanTask>> {
-    return this.request('post', `/digital-humans/${id}/tasks/${taskId}/actions/${action}`, { expected_revision: expectedRevision });
+  applyTaskAction(
+    id: string,
+    taskId: string,
+    action: string,
+    expectedRevision: number
+  ): Promise<ApiResponseData<DigitalHumanTask>> {
+    return this.request('post', `/digital-humans/${id}/tasks/${taskId}/actions/${action}`, {
+      expected_revision: expectedRevision,
+    });
   }
 
-  listTaskRuns(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>> {
+  listTaskRuns(
+    id: string,
+    taskId: string
+  ): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>> {
     return this.request('get', `/digital-humans/${id}/tasks/${taskId}/runs`);
   }
 
-  listTaskActivities(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
+  listTaskActivities(
+    id: string,
+    taskId: string
+  ): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
     return this.request('get', `/digital-humans/${id}/tasks/${taskId}/activities`);
   }
 
-  getChannelTaskPolicy(id: string, installationId: string): Promise<ApiResponseData<DigitalHumanChannelTaskPolicy>> {
-    return this.request('get', `/digital-humans/${id}/channels/installations/${installationId}/task-policy`);
+  getChannelTaskPolicy(
+    id: string,
+    installationId: string
+  ): Promise<ApiResponseData<DigitalHumanChannelTaskPolicy>> {
+    return this.request(
+      'get',
+      `/digital-humans/${id}/channels/installations/${installationId}/task-policy`
+    );
   }
 
-  updateChannelTaskPolicy(id: string, installationId: string, enabled: boolean, expectedRevision: number): Promise<ApiResponseData<DigitalHumanChannelTaskPolicy>> {
-    return this.request('put', `/digital-humans/${id}/channels/installations/${installationId}/task-policy`, { enabled, expected_revision: expectedRevision });
+  updateChannelTaskPolicy(
+    id: string,
+    installationId: string,
+    enabled: boolean,
+    expectedRevision: number
+  ): Promise<ApiResponseData<DigitalHumanChannelTaskPolicy>> {
+    return this.request(
+      'put',
+      `/digital-humans/${id}/channels/installations/${installationId}/task-policy`,
+      { enabled, expected_revision: expectedRevision }
+    );
   }
 }
 
