@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -42,6 +43,17 @@ func (h *TaskHandler) list(c *gin.Context) {
 		return
 	}
 	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
+	var err error
+	query.RunFinishedAfter, err = optionalRFC3339Query(c.Query("run_finished_after"))
+	if err != nil {
+		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.task.list"))
+		return
+	}
+	query.RunFinishedBefore, err = optionalRFC3339Query(c.Query("run_finished_before"))
+	if err != nil || query.RunFinishedAfter != nil && query.RunFinishedBefore != nil && !query.RunFinishedBefore.After(*query.RunFinishedAfter) {
+		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.task.list"))
+		return
+	}
 	for _, value := range append(c.QueryArray("status"), c.QueryArray("status[]")...) {
 		query.Statuses = append(query.Statuses, TaskWorkStatus(value))
 	}
@@ -54,6 +66,18 @@ func (h *TaskHandler) list(c *gin.Context) {
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func optionalRFC3339Query(raw string) (*time.Time, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }
 
 func (h *TaskHandler) create(c *gin.Context) {

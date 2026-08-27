@@ -191,15 +191,20 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 			}
 			retryRunID = retry.ID
 		}
-		if task.WorkStatus != nil && *task.WorkStatus == automationmodel.AutomationWorkStatusInProgress {
+		workStatus := automationmodel.AutomationWorkStatus("")
+		if task.WorkStatus != nil {
+			workStatus = *task.WorkStatus
+		}
+		if succeeded && task.ScheduleType == automationmodel.AutomationScheduleTypeCron &&
+			task.Status == automationmodel.AutomationTaskStatusActive &&
+			(workStatus == automationmodel.AutomationWorkStatusInProgress || workStatus == automationmodel.AutomationWorkStatusCompleted) {
+			updates["work_status"] = automationmodel.AutomationWorkStatusPending
+			updates["revision"] = gorm.Expr("revision + 1")
+		} else if workStatus == automationmodel.AutomationWorkStatusInProgress {
 			if succeeded {
-				if task.ScheduleType == automationmodel.AutomationScheduleTypeCron {
-					updates["work_status"] = automationmodel.AutomationWorkStatusPending
-				} else {
-					updates["work_status"] = automationmodel.AutomationWorkStatusCompleted
-					updates["status"] = automationmodel.AutomationTaskStatusCompleted
-					updates["next_run_at"] = nil
-				}
+				updates["work_status"] = automationmodel.AutomationWorkStatusCompleted
+				updates["status"] = automationmodel.AutomationTaskStatusCompleted
+				updates["next_run_at"] = nil
 			} else if willRetry {
 				updates["work_status"] = automationmodel.AutomationWorkStatusInProgress
 				updates["status"] = automationmodel.AutomationTaskStatusActive

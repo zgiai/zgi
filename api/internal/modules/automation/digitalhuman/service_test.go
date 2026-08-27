@@ -137,6 +137,29 @@ func TestServiceStoresCanonicalCronSchedule(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsCompletingAnActiveRecurringTask(t *testing.T) {
+	service, _, scope, digitalHumanID := newTaskService(t)
+	created, err := service.CreateTask(t.Context(), scope, digitalHumanID, digitalhuman.CreateTaskRequest{
+		Name: "Daily reminder", Goal: "Remind the source conversation every day",
+		Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleCron, Cron: "0 8 * * *", Timezone: "Asia/Shanghai"},
+	}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: scope.ActorID.String(), OperationID: uuid.New(), Source: "console"})
+	if err != nil {
+		t.Fatalf("CreateTask(cron) error = %v", err)
+	}
+
+	_, err = service.SetTaskWorkStatus(
+		t.Context(), scope, digitalHumanID, created.ID, digitalhuman.TaskWorkStatusCompleted, created.Revision,
+		digitalhuman.TaskMutationContext{ActorType: "digital_human", ActorRef: digitalHumanID.String(), OperationID: uuid.New(), Source: "schedule"},
+	)
+	if !errors.Is(err, digitalhuman.ErrTaskPolicyRejected) {
+		t.Fatalf("SetTaskWorkStatus(completed) error = %v, want policy rejection", err)
+	}
+	stored, err := service.GetTask(t.Context(), scope, digitalHumanID, created.ID, "")
+	if err != nil || stored.WorkStatus != digitalhuman.TaskWorkStatusPending || stored.LifecycleStatus != string(automationmodel.AutomationTaskStatusActive) {
+		t.Fatalf("stored recurring task = %#v, error = %v", stored, err)
+	}
+}
+
 func TestServiceListTasksAppliesHistoryWindow(t *testing.T) {
 	service, _, scope, digitalHumanID := newTaskService(t)
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
@@ -175,6 +198,54 @@ func TestServiceListTasksAppliesHistoryWindow(t *testing.T) {
 	}
 	if result.Total != 1 || len(result.Items) != 1 || result.Items[0].ID != recent.ID {
 		t.Fatalf("history items = %#v, want only recent task %s; old = %s, open = %s", result.Items, recent.ID, old.ID, open.ID)
+	}
+}
+
+func TestServiceListTasksCountsSuccessfulRunsWithinWindow(t *testing.T) {
+	service, _, scope, digitalHumanID := newTaskService(t)
+	start := time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	createTask := func(subjectID uuid.UUID, name string) *digitalhuman.Task {
+		t.Helper()
+		task, err := service.CreateTask(t.Context(), scope, subjectID, digitalhuman.CreateTaskRequest{
+			Name: name, Goal: "Exercise the task summary", Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleCron, Cron: "0 8 * * *", Timezone: "UTC"},
+		}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: scope.ActorID.String(), OperationID: uuid.New(), Source: "console"})
+		if err != nil {
+			t.Fatalf("CreateTask(%q) error = %v", name, err)
+		}
+		return task
+	}
+	currentTask := createTask(digitalHumanID, "Daily reminder")
+	otherTask := createTask(uuid.New(), "Other digital human")
+	createRun := func(taskID uuid.UUID, status automationmodel.AutomationTaskRunStatus, finishedAt time.Time) {
+		t.Helper()
+		run := &automationmodel.AutomationTaskRun{
+			TaskID: taskID.String(), TriggerSource: automationmodel.AutomationTriggerSourceScheduler,
+			ScheduledFor: finishedAt.Add(-time.Minute), FinishedAt: &finishedAt, Status: status,
+		}
+		if err := service.db.Create(run).Error; err != nil {
+			t.Fatalf("create task run: %v", err)
+		}
+	}
+	createRun(currentTask.ID, automationmodel.AutomationTaskRunStatusSucceeded, start.Add(8*time.Hour))
+	createRun(currentTask.ID, automationmodel.AutomationTaskRunStatusFailed, start.Add(9*time.Hour))
+	createRun(currentTask.ID, automationmodel.AutomationTaskRunStatusSucceeded, start.Add(-time.Second))
+	createRun(currentTask.ID, automationmodel.AutomationTaskRunStatusSucceeded, end)
+	createRun(otherTask.ID, automationmodel.AutomationTaskRunStatusSucceeded, start.Add(10*time.Hour))
+
+	result, err := service.ListTasks(t.Context(), scope, digitalHumanID, digitalhuman.TaskListQuery{
+		RunFinishedAfter: &start, RunFinishedBefore: &end, Page: 1, PageSize: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListTasks(run window) error = %v", err)
+	}
+	if result.SuccessfulRunCount != 1 {
+		t.Fatalf("SuccessfulRunCount = %d, want 1", result.SuccessfulRunCount)
+	}
+	if _, err := service.ListTasks(t.Context(), scope, digitalHumanID, digitalhuman.TaskListQuery{
+		RunFinishedAfter: &end, RunFinishedBefore: &start,
+	}); !errors.Is(err, digitalhuman.ErrInvalidRequest) {
+		t.Fatalf("ListTasks(invalid run window) error = %v, want invalid request", err)
 	}
 }
 

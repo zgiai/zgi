@@ -103,6 +103,10 @@ func (s *Service) ListTasks(ctx context.Context, scope digitalhuman.Scope, digit
 	for _, row := range countRows {
 		counts[digitalhuman.TaskWorkStatus(row.Status)] = row.Count
 	}
+	successfulRunCount, err := s.countSuccessfulRuns(ctx, scope, digitalHumanID, query)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]*digitalhuman.Task, 0, len(rows))
 	for _, row := range rows {
 		item, err := publicTask(row)
@@ -111,7 +115,30 @@ func (s *Service) ListTasks(ctx context.Context, scope digitalhuman.Scope, digit
 		}
 		items = append(items, item)
 	}
-	return &digitalhuman.TaskListResult{Items: items, Counts: counts, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
+	return &digitalhuman.TaskListResult{Items: items, Counts: counts, SuccessfulRunCount: successfulRunCount, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
+}
+
+func (s *Service) countSuccessfulRuns(ctx context.Context, scope digitalhuman.Scope, digitalHumanID uuid.UUID, query digitalhuman.TaskListQuery) (int64, error) {
+	if query.RunFinishedAfter == nil && query.RunFinishedBefore == nil {
+		return 0, nil
+	}
+	if query.RunFinishedAfter != nil && query.RunFinishedBefore != nil && !query.RunFinishedBefore.After(*query.RunFinishedAfter) {
+		return 0, digitalhuman.ErrInvalidRequest
+	}
+	taskIDs := s.taskQuery(ctx, scope, digitalHumanID, query.SourceConversationID).Select("id")
+	runs := s.db.WithContext(ctx).Model(&automationmodel.AutomationTaskRun{}).
+		Where("task_id IN (?) AND status = ?", taskIDs, automationmodel.AutomationTaskRunStatusSucceeded)
+	if query.RunFinishedAfter != nil {
+		runs = runs.Where("finished_at >= ?", query.RunFinishedAfter.UTC())
+	}
+	if query.RunFinishedBefore != nil {
+		runs = runs.Where("finished_at < ?", query.RunFinishedBefore.UTC())
+	}
+	var count int64
+	if err := runs.Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("count successful digital human task runs: %w", err)
+	}
+	return count, nil
 }
 
 func (s *Service) CreateTask(ctx context.Context, scope digitalhuman.Scope, digitalHumanID uuid.UUID, req digitalhuman.CreateTaskRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
@@ -404,6 +431,11 @@ func (s *Service) setStatus(ctx context.Context, scope digitalhuman.Scope, digit
 		}
 		if loaded.Revision != revision {
 			return digitalhuman.ErrTaskConflict
+		}
+		if loaded.ScheduleType == automationmodel.AutomationScheduleTypeCron &&
+			loaded.Status == automationmodel.AutomationTaskStatusActive &&
+			status == digitalhuman.TaskWorkStatusCompleted {
+			return digitalhuman.ErrTaskPolicyRejected
 		}
 		value := automationmodel.AutomationWorkStatus(status)
 		loaded.WorkStatus = &value

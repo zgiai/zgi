@@ -90,6 +90,8 @@ type TaskListQuery struct {
 	Query                string
 	UpdatedAfter         *time.Time
 	UpdatedBefore        *time.Time
+	RunFinishedAfter     *time.Time
+	RunFinishedBefore    *time.Time
 	Page                 int
 	PageSize             int
 	SourceConversationID string
@@ -97,12 +99,13 @@ type TaskListQuery struct {
 
 // TaskListResult is a page of tasks and state summary counts.
 type TaskListResult struct {
-	Items    []*Task                  `json:"items"`
-	Counts   map[TaskWorkStatus]int64 `json:"counts"`
-	Total    int64                    `json:"total"`
-	Page     int                      `json:"page"`
-	PageSize int                      `json:"page_size"`
-	HasMore  bool                     `json:"has_more"`
+	Items              []*Task                  `json:"items"`
+	Counts             map[TaskWorkStatus]int64 `json:"counts"`
+	SuccessfulRunCount int64                    `json:"successful_run_count"`
+	Total              int64                    `json:"total"`
+	Page               int                      `json:"page"`
+	PageSize           int                      `json:"page_size"`
+	HasMore            bool                     `json:"has_more"`
 }
 
 // CreateTaskRequest contains only product fields; subject and delivery

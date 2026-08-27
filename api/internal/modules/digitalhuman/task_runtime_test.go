@@ -109,7 +109,7 @@ func TestTaskRuntimeManualAndCurrentScheduleAreWritable(t *testing.T) {
 	}
 }
 
-func TestScheduledTaskRuntimeMayOnlyUpdateCurrentTaskTerminalIntent(t *testing.T) {
+func TestScheduledTaskRuntimeMayOnlyMarkCurrentTaskWaitingOrBlocked(t *testing.T) {
 	statuses := []TaskWorkStatus{}
 	provider := NewTaskRuntimeProvider(taskRuntimeService{statusCalls: &statuses})
 	run, scheduled := taskRuntimeFixture(invocation.OriginSchedule)
@@ -129,8 +129,14 @@ func TestScheduledTaskRuntimeMayOnlyUpdateCurrentTaskTerminalIntent(t *testing.T
 	complete := manage.Handler(t.Context(), adapter.ToolCall{ID: "complete", Function: adapter.FunctionCall{
 		Name: taskManageToolName, Arguments: `{"action":"set_status","task_id":"` + taskID.String() + `","expected_revision":1,"status":"completed"}`,
 	}})
-	if complete.Status != "success" || len(statuses) != 1 || statuses[0] != TaskWorkStatusCompleted {
+	if complete.Status != "failed" || len(statuses) != 0 {
 		t.Fatalf("scheduled complete result = %#v, statuses = %v", complete, statuses)
+	}
+	waiting := manage.Handler(t.Context(), adapter.ToolCall{ID: "waiting", Function: adapter.FunctionCall{
+		Name: taskManageToolName, Arguments: `{"action":"set_status","task_id":"` + taskID.String() + `","expected_revision":1,"status":"waiting"}`,
+	}})
+	if waiting.Status != "success" || len(statuses) != 1 || statuses[0] != TaskWorkStatusWaiting {
+		t.Fatalf("scheduled waiting result = %#v, statuses = %v", waiting, statuses)
 	}
 }
 

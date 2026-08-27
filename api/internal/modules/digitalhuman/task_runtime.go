@@ -104,7 +104,7 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 		"Never claim a task mutation succeeded unless the task tool reports success. Use the returned revision for subsequent mutations.",
 	}
 	if boundary.currentTaskID != uuid.Nil {
-		guidance = append(guidance, "This is a scheduled execution. You may only update the current task to waiting, blocked, or completed; do not create, confirm, reschedule, rerun, or cancel tasks from this run.")
+		guidance = append(guidance, "This is a scheduled execution. The scheduler owns successful completion: do not mark the task completed. You may only update the current task to waiting or blocked when the work genuinely cannot finish; do not create, confirm, reschedule, rerun, or cancel tasks from this run.")
 	}
 	if boundary.conversationID != "" {
 		conversationScope := "current external conversation"
@@ -389,7 +389,7 @@ func scheduledTaskMutationAllowed(args manageTaskArguments, currentTaskID uuid.U
 		return false
 	}
 	switch args.Status {
-	case TaskWorkStatusWaiting, TaskWorkStatusBlocked, TaskWorkStatusCompleted:
+	case TaskWorkStatusWaiting, TaskWorkStatusBlocked:
 		return true
 	default:
 		return false

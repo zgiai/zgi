@@ -53,6 +53,31 @@ func TestReconcilerCompletesTaskOnlyAfterDigitalHumanTerminalState(t *testing.T)
 	}
 }
 
+func TestReconcilerRestoresActiveRecurringTaskAfterSuccessfulOccurrence(t *testing.T) {
+	db := newReconcilerDB(t)
+	dispatcher := &recordingDispatcher{}
+	runner := &reconcilerRunner{state: &automationaction.DigitalHumanRunState{Status: "succeeded", Result: "reminder sent"}}
+	task, _, _ := createPendingExternalRun(t, db, 1)
+	nextRunAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	completed := automationmodel.AutomationWorkStatusCompleted
+	task.ScheduleType = automationmodel.AutomationScheduleTypeCron
+	task.ScheduleConfig = map[string]any{"cron_expr": "0 8 * * *"}
+	task.Timezone = "Asia/Shanghai"
+	task.WorkStatus = &completed
+	task.NextRunAt = &nextRunAt
+	if err := db.Save(task).Error; err != nil {
+		t.Fatalf("save recurring task: %v", err)
+	}
+	handler := NewReconcileHandler(db, dispatcher, func() automationaction.AutomationDigitalHumanRunner { return runner })
+
+	if err := handler.Handle(t.Context(), nil); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if err := db.First(task, "id = ?", task.ID).Error; err != nil || task.WorkStatus == nil || *task.WorkStatus != automationmodel.AutomationWorkStatusPending || task.Status != automationmodel.AutomationTaskStatusActive || task.NextRunAt == nil || !task.NextRunAt.Equal(nextRunAt) {
+		t.Fatalf("recurring task = %#v, error = %v", task, err)
+	}
+}
+
 func TestReconcilerRetriesFailureWithoutCompletingTask(t *testing.T) {
 	db := newReconcilerDB(t)
 	dispatcher := &recordingDispatcher{}
