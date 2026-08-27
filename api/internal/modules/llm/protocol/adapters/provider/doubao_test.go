@@ -75,7 +75,7 @@ func TestDoubaoAdapterGenerateSpeechUsesNativeV3Protocol(t *testing.T) {
 	}
 
 	var audio bytes.Buffer
-	_, err = a.GenerateSpeech(t.Context(), &adapter.SpeechRequest{
+	err = a.GenerateSpeech(t.Context(), &adapter.SpeechRequest{
 		Model:          "seed-tts-2.0",
 		Input:          "你好。",
 		Voice:          "voice-id",
