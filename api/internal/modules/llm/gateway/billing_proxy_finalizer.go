@@ -120,6 +120,21 @@ func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter
 		values["exchange_rate_source"] = "console_settlement"
 		changed = true
 	}
+	for key, raw := range map[string]string{
+		"input_price_usd_per_1m_tokens":       settlement.InputPriceUSDPer1MTokens,
+		"cache_read_price_usd_per_1m_tokens":  settlement.CacheReadPriceUSDPer1MTokens,
+		"cache_write_price_usd_per_1m_tokens": settlement.CacheWritePriceUSDPer1MTokens,
+		"output_price_usd_per_1m_tokens":      settlement.OutputPriceUSDPer1MTokens,
+		"input_cost_usd":                      settlement.InputCostUSD,
+		"cache_read_cost_usd":                 settlement.CacheReadCostUSD,
+		"cache_write_cost_usd":                settlement.CacheWriteCostUSD,
+		"output_cost_usd":                     settlement.OutputCostUSD,
+	} {
+		if value, ok := parseNonNegativeBillingDecimal(raw); ok {
+			values[key] = value.String()
+			changed = true
+		}
+	}
 	if changed {
 		bc.PricingSnapshot = buildPricingSnapshot(values)
 	}

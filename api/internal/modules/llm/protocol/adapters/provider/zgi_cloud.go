@@ -28,17 +28,25 @@ const (
 	zgiCloudAudioContentType      = "audio/mpeg"
 	zgiCloudMP3Format             = "mp3"
 
-	headerSettlementID      = "X-ZGI-Settlement-ID"
-	headerOfficialPoints    = "X-ZGI-Official-Points"
-	headerRemainingBalance  = "X-ZGI-Remaining-Balance"
-	headerSettlementStatus  = "X-ZGI-Settlement-Status"
-	headerTotalCostUSD      = "X-ZGI-Total-Cost-USD"
-	headerTotalCostCNY      = "X-ZGI-Total-Cost-CNY"
-	headerCNYPerUSD         = "X-ZGI-CNY-Per-USD"
-	headerZGIRequestID      = "X-ZGI-Request-ID"
-	headerZGIModelName      = "X-ZGI-Model-Name"
-	headerZGIStreamStatus   = "X-ZGI-Stream-Status"
-	zgiStreamStatusComplete = "complete"
+	headerSettlementID       = "X-ZGI-Settlement-ID"
+	headerOfficialPoints     = "X-ZGI-Official-Points"
+	headerRemainingBalance   = "X-ZGI-Remaining-Balance"
+	headerSettlementStatus   = "X-ZGI-Settlement-Status"
+	headerTotalCostUSD       = "X-ZGI-Total-Cost-USD"
+	headerTotalCostCNY       = "X-ZGI-Total-Cost-CNY"
+	headerCNYPerUSD          = "X-ZGI-CNY-Per-USD"
+	headerInputPriceUSD      = "X-ZGI-Input-Price-USD-Per-1M-Tokens"
+	headerCacheReadPriceUSD  = "X-ZGI-Cache-Read-Price-USD-Per-1M-Tokens"
+	headerCacheWritePriceUSD = "X-ZGI-Cache-Write-Price-USD-Per-1M-Tokens"
+	headerOutputPriceUSD     = "X-ZGI-Output-Price-USD-Per-1M-Tokens"
+	headerInputCostUSD       = "X-ZGI-Input-Cost-USD"
+	headerCacheReadCostUSD   = "X-ZGI-Cache-Read-Cost-USD"
+	headerCacheWriteCostUSD  = "X-ZGI-Cache-Write-Cost-USD"
+	headerOutputCostUSD      = "X-ZGI-Output-Cost-USD"
+	headerZGIRequestID       = "X-ZGI-Request-ID"
+	headerZGIModelName       = "X-ZGI-Model-Name"
+	headerZGIStreamStatus    = "X-ZGI-Stream-Status"
+	zgiStreamStatusComplete  = "complete"
 
 	eventZGISettlement      = "zgi.settlement"
 	eventZGISettlementError = "zgi.settlement_error"
@@ -835,13 +843,21 @@ func settlementFromHeaders(headers http.Header) *adapter.SettlementResult {
 	points, _ := strconv.ParseInt(pointsRaw, 10, 64)
 	remaining, _ := strconv.ParseInt(strings.TrimSpace(headers.Get(headerRemainingBalance)), 10, 64)
 	return &adapter.SettlementResult{
-		SettlementID:     settlementID,
-		OfficialPoints:   points,
-		RemainingBalance: remaining,
-		Status:           status,
-		TotalCostUSD:     strings.TrimSpace(headers.Get(headerTotalCostUSD)),
-		TotalCostCNY:     strings.TrimSpace(headers.Get(headerTotalCostCNY)),
-		CNYPerUSD:        strings.TrimSpace(headers.Get(headerCNYPerUSD)),
+		SettlementID:                  settlementID,
+		OfficialPoints:                points,
+		RemainingBalance:              remaining,
+		Status:                        status,
+		TotalCostUSD:                  strings.TrimSpace(headers.Get(headerTotalCostUSD)),
+		TotalCostCNY:                  strings.TrimSpace(headers.Get(headerTotalCostCNY)),
+		CNYPerUSD:                     strings.TrimSpace(headers.Get(headerCNYPerUSD)),
+		InputPriceUSDPer1MTokens:      strings.TrimSpace(headers.Get(headerInputPriceUSD)),
+		CacheReadPriceUSDPer1MTokens:  strings.TrimSpace(headers.Get(headerCacheReadPriceUSD)),
+		CacheWritePriceUSDPer1MTokens: strings.TrimSpace(headers.Get(headerCacheWritePriceUSD)),
+		OutputPriceUSDPer1MTokens:     strings.TrimSpace(headers.Get(headerOutputPriceUSD)),
+		InputCostUSD:                  strings.TrimSpace(headers.Get(headerInputCostUSD)),
+		CacheReadCostUSD:              strings.TrimSpace(headers.Get(headerCacheReadCostUSD)),
+		CacheWriteCostUSD:             strings.TrimSpace(headers.Get(headerCacheWriteCostUSD)),
+		OutputCostUSD:                 strings.TrimSpace(headers.Get(headerOutputCostUSD)),
 	}
 }
 

@@ -408,13 +408,21 @@ func maxUsageToken(value int) int {
 
 // SettlementResult carries console-api settlement data for official traffic.
 type SettlementResult struct {
-	SettlementID     string `json:"settlement_id"`
-	OfficialPoints   int64  `json:"official_points"`
-	RemainingBalance int64  `json:"remaining_balance"`
-	Status           string `json:"status"`
-	TotalCostUSD     string `json:"total_cost_usd,omitempty"`
-	TotalCostCNY     string `json:"total_cost_cny,omitempty"`
-	CNYPerUSD        string `json:"cny_per_usd,omitempty"`
+	SettlementID                  string `json:"settlement_id"`
+	OfficialPoints                int64  `json:"official_points"`
+	RemainingBalance              int64  `json:"remaining_balance"`
+	Status                        string `json:"status"`
+	TotalCostUSD                  string `json:"total_cost_usd,omitempty"`
+	TotalCostCNY                  string `json:"total_cost_cny,omitempty"`
+	CNYPerUSD                     string `json:"cny_per_usd,omitempty"`
+	InputPriceUSDPer1MTokens      string `json:"input_price_usd_per_1m_tokens,omitempty"`
+	CacheReadPriceUSDPer1MTokens  string `json:"cache_read_price_usd_per_1m_tokens,omitempty"`
+	CacheWritePriceUSDPer1MTokens string `json:"cache_write_price_usd_per_1m_tokens,omitempty"`
+	OutputPriceUSDPer1MTokens     string `json:"output_price_usd_per_1m_tokens,omitempty"`
+	InputCostUSD                  string `json:"input_cost_usd,omitempty"`
+	CacheReadCostUSD              string `json:"cache_read_cost_usd,omitempty"`
+	CacheWriteCostUSD             string `json:"cache_write_cost_usd,omitempty"`
+	OutputCostUSD                 string `json:"output_cost_usd,omitempty"`
 }
 
 // SettlementError carries console-api settlement failure data for official streams.

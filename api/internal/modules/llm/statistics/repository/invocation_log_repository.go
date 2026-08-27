@@ -26,12 +26,17 @@ type invocationLogFilters struct {
 }
 
 type invocationLogSummaryRow struct {
-	InvocationCount int64 `gorm:"column:invocation_count"`
-	APICount        int64 `gorm:"column:api_count"`
-	ProductCount    int64 `gorm:"column:product_count"`
-	UnknownCount    int64 `gorm:"column:unknown_count"`
-	TotalTokens     int64 `gorm:"column:total_tokens"`
-	TotalPoints     int64 `gorm:"column:total_points"`
+	InvocationCount  int64  `gorm:"column:invocation_count"`
+	APICount         int64  `gorm:"column:api_count"`
+	ProductCount     int64  `gorm:"column:product_count"`
+	UnknownCount     int64  `gorm:"column:unknown_count"`
+	TotalTokens      int64  `gorm:"column:total_tokens"`
+	TotalPoints      int64  `gorm:"column:total_points"`
+	CostBearingCount int64  `gorm:"column:cost_bearing_count"`
+	ExactUSDCount    int64  `gorm:"column:exact_usd_count"`
+	ExactCNYCount    int64  `gorm:"column:exact_cny_count"`
+	TotalCostUSD     string `gorm:"column:total_cost_usd"`
+	TotalCostCNY     string `gorm:"column:total_cost_cny"`
 }
 
 type invocationPageRow struct {
@@ -183,26 +188,75 @@ func (r *statisticsRepositoryImpl) queryInvocationContentAvailability(ctx contex
 
 func (r *statisticsRepositoryImpl) queryInvocationLogSummary(ctx context.Context, filters invocationLogFilters) (dto.InvocationLogSummary, error) {
 	var row invocationLogSummaryRow
-	query := r.db.WithContext(ctx).Table(usageBillTable + " b").Select(`
+	selectClause := `
 		COUNT(DISTINCT b.request_id) AS invocation_count,
 		COUNT(DISTINCT CASE WHEN b.invocation_source = 'api' THEN b.request_id END) AS api_count,
 		COUNT(DISTINCT CASE WHEN b.invocation_source = 'product' THEN b.request_id END) AS product_count,
 		COUNT(DISTINCT CASE WHEN b.invocation_source = 'unknown' THEN b.request_id END) AS unknown_count,
 		COALESCE(SUM(b.total_tokens), 0) AS total_tokens,
-		COALESCE(SUM(b.total_points), 0) AS total_points
-	`)
+		COALESCE(SUM(b.total_points), 0) AS total_points`
+	hasPricingSnapshot := r.db.Migrator().HasColumn(usageBillTable, "pricing_snapshot")
+	if hasPricingSnapshot {
+		selectClause += invocationSummaryCostSelect(r.db.Dialector.Name())
+	}
+	query := r.db.WithContext(ctx).Table(usageBillTable + " b").Select(selectClause)
 	query = applyInvocationLogFilters(query, "b", filters)
 	if err := query.Scan(&row).Error; err != nil {
 		return dto.InvocationLogSummary{}, err
 	}
-	return dto.InvocationLogSummary{
+	summary := dto.InvocationLogSummary{
 		InvocationCount: row.InvocationCount,
 		APICount:        row.APICount,
 		ProductCount:    row.ProductCount,
 		UnknownCount:    row.UnknownCount,
 		TotalTokens:     row.TotalTokens,
 		TotalPoints:     row.TotalPoints,
-	}, nil
+	}
+	if hasPricingSnapshot && row.CostBearingCount == row.ExactUSDCount {
+		value := row.TotalCostUSD
+		summary.TotalCostUSD = &value
+	}
+	if hasPricingSnapshot && row.CostBearingCount == row.ExactCNYCount {
+		value := row.TotalCostCNY
+		summary.TotalCostCNY = &value
+	}
+	return summary, nil
+}
+
+func invocationSummaryCostSelect(dialect string) string {
+	jsonValue := func(key string) string {
+		if dialect == "postgres" {
+			return fmt.Sprintf("NULLIF(BTRIM(b.pricing_snapshot ->> '%s'), '')", key)
+		}
+		return fmt.Sprintf("NULLIF(TRIM(json_extract(b.pricing_snapshot, '$.%s')), '')", key)
+	}
+	decimalValue := func(value string) string {
+		if dialect == "postgres" {
+			return "CAST(" + value + " AS NUMERIC)"
+		}
+		return "CAST(" + value + " AS REAL)"
+	}
+
+	totalUSD := jsonValue("total_cost_usd")
+	componentKeys := []string{"input_cost_usd", "cache_read_cost_usd", "cache_write_cost_usd", "output_cost_usd"}
+	componentValues := make([]string, 0, len(componentKeys))
+	componentPresence := make([]string, 0, len(componentKeys))
+	for _, key := range componentKeys {
+		value := jsonValue(key)
+		componentValues = append(componentValues, "COALESCE("+decimalValue(value)+", 0)")
+		componentPresence = append(componentPresence, value+" IS NOT NULL")
+	}
+	exactUSD := "CASE WHEN " + totalUSD + " IS NOT NULL THEN " + decimalValue(totalUSD) +
+		" WHEN " + strings.Join(componentPresence, " OR ") + " THEN " + strings.Join(componentValues, " + ") + " END"
+	totalCNY := jsonValue("total_cost_cny")
+	exactCNY := "CASE WHEN " + totalCNY + " IS NOT NULL THEN " + decimalValue(totalCNY) + " END"
+
+	return fmt.Sprintf(`,
+		COALESCE(SUM(CASE WHEN b.total_points > 0 THEN 1 ELSE 0 END), 0) AS cost_bearing_count,
+		COALESCE(SUM(CASE WHEN b.total_points > 0 AND (%[1]s) IS NOT NULL THEN 1 ELSE 0 END), 0) AS exact_usd_count,
+		COALESCE(SUM(CASE WHEN b.total_points > 0 AND (%[2]s) IS NOT NULL THEN 1 ELSE 0 END), 0) AS exact_cny_count,
+		CAST(COALESCE(SUM(COALESCE((%[1]s), 0)), 0) AS TEXT) AS total_cost_usd,
+		CAST(COALESCE(SUM(COALESCE((%[2]s), 0)), 0) AS TEXT) AS total_cost_cny`, exactUSD, exactCNY)
 }
 
 func (r *statisticsRepositoryImpl) queryInvocationPage(ctx context.Context, filters invocationLogFilters, req *dto.InvocationLogRequest) ([]invocationPageRow, bool, error) {

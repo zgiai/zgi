@@ -49,6 +49,103 @@ func TestAggregateInvocationBillsKeepsRecordedCNYTotal(t *testing.T) {
 	}
 }
 
+func TestInvocationLogSummaryAggregatesRecordedCallTimeCurrencyTotals(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_usage_bills (
+		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, invocation_source TEXT NOT NULL,
+		app_type TEXT, model_name TEXT NOT NULL, total_tokens INTEGER NOT NULL,
+		total_points INTEGER NOT NULL, pricing_snapshot JSON NOT NULL DEFAULT '{}',
+		request_created_at DATETIME NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+	rows := []map[string]any{
+		{
+			"request_id": "request-1", "organization_id": "org-1", "invocation_source": "product",
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1","total_cost_cny":"0.7","cny_per_usd":"7"}`),
+			"request_created_at": started,
+		},
+		{
+			"request_id": "request-2", "organization_id": "org-1", "invocation_source": "product",
+			"model_name": "model-a", "total_tokens": 200, "total_points": 200,
+			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.2","total_cost_cny":"1.6","cny_per_usd":"8"}`),
+			"request_created_at": started.Add(time.Minute),
+		},
+	}
+	if err := db.Table(usageBillTable).Create(rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &statisticsRepositoryImpl{db: db}
+	summary, err := repo.queryInvocationLogSummary(context.Background(), invocationLogFilters{
+		OrganizationID: "org-1",
+		StartTime:      started.Add(-time.Hour).Unix(),
+		EndTime:        started.Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.TotalCostUSD == nil || decimal.RequireFromString(*summary.TotalCostUSD).Cmp(decimal.RequireFromString("0.3")) != 0 {
+		t.Fatalf("total USD = %#v, want 0.3", summary.TotalCostUSD)
+	}
+	if summary.TotalCostCNY == nil || decimal.RequireFromString(*summary.TotalCostCNY).Cmp(decimal.RequireFromString("2.3")) != 0 {
+		t.Fatalf("total CNY = %#v, want recorded call-time total 2.3", summary.TotalCostCNY)
+	}
+}
+
+func TestInvocationLogSummaryOmitsCNYWhenAnyBillLacksRecordedConversion(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_usage_bills (
+		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, invocation_source TEXT NOT NULL,
+		app_type TEXT, model_name TEXT NOT NULL, total_tokens INTEGER NOT NULL,
+		total_points INTEGER NOT NULL, pricing_snapshot JSON NOT NULL DEFAULT '{}',
+		request_created_at DATETIME NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+	rows := []map[string]any{
+		{
+			"request_id": "request-recorded", "organization_id": "org-1", "invocation_source": "product",
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1","total_cost_cny":"0.7"}`),
+			"request_created_at": started,
+		},
+		{
+			"request_id": "request-usd-only", "organization_id": "org-1", "invocation_source": "product",
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1"}`),
+			"request_created_at": started.Add(time.Minute),
+		},
+	}
+	if err := db.Table(usageBillTable).Create(rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &statisticsRepositoryImpl{db: db}
+	summary, err := repo.queryInvocationLogSummary(context.Background(), invocationLogFilters{
+		OrganizationID: "org-1",
+		StartTime:      started.Add(-time.Hour).Unix(),
+		EndTime:        started.Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.TotalCostUSD == nil || summary.TotalCostCNY != nil {
+		t.Fatalf("mixed snapshot summary = %#v; want exact USD and no CNY conversion", summary)
+	}
+}
+
 func TestInvocationPricingDetailsExposeActualTokenPricesAndSources(t *testing.T) {
 	bill := invocationBillRow{
 		BillingLane:   "private",

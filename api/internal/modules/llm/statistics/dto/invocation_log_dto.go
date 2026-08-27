@@ -13,12 +13,14 @@ type InvocationLogRequest struct {
 }
 
 type InvocationLogSummary struct {
-	InvocationCount int64 `json:"invocation_count"`
-	APICount        int64 `json:"api_count"`
-	ProductCount    int64 `json:"product_count"`
-	UnknownCount    int64 `json:"unknown_count"`
-	TotalTokens     int64 `json:"total_tokens"`
-	TotalPoints     int64 `json:"total_points"`
+	InvocationCount int64   `json:"invocation_count"`
+	APICount        int64   `json:"api_count"`
+	ProductCount    int64   `json:"product_count"`
+	UnknownCount    int64   `json:"unknown_count"`
+	TotalTokens     int64   `json:"total_tokens"`
+	TotalPoints     int64   `json:"total_points"`
+	TotalCostUSD    *string `json:"total_cost_usd,omitempty"`
+	TotalCostCNY    *string `json:"total_cost_cny,omitempty"`
 }
 
 type InvocationLogItem struct {

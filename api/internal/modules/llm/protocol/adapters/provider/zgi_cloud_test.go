@@ -385,6 +385,10 @@ func TestZGICloudAdapterChatCompletion_ForwardsToConsoleInternal(t *testing.T) {
 		w.Header().Set(headerTotalCostUSD, "0.006601")
 		w.Header().Set(headerTotalCostCNY, "0.0475272")
 		w.Header().Set(headerCNYPerUSD, "7.2")
+		w.Header().Set(headerInputPriceUSD, "5")
+		w.Header().Set(headerOutputPriceUSD, "30")
+		w.Header().Set(headerInputCostUSD, "0.000055")
+		w.Header().Set(headerOutputCostUSD, "0.00021")
 		fmt.Fprint(w, `{
 			"id":"chatcmpl-zgi-cloud-1",
 			"object":"chat.completion",
@@ -435,6 +439,9 @@ func TestZGICloudAdapterChatCompletion_ForwardsToConsoleInternal(t *testing.T) {
 	}
 	if resp.Settlement.TotalCostUSD != "0.006601" || resp.Settlement.TotalCostCNY != "0.0475272" || resp.Settlement.CNYPerUSD != "7.2" {
 		t.Fatalf("settlement cost snapshot = %+v", resp.Settlement)
+	}
+	if resp.Settlement.InputPriceUSDPer1MTokens != "5" || resp.Settlement.OutputPriceUSDPer1MTokens != "30" || resp.Settlement.InputCostUSD != "0.000055" || resp.Settlement.OutputCostUSD != "0.00021" {
+		t.Fatalf("settlement component pricing = %+v", resp.Settlement)
 	}
 }
 

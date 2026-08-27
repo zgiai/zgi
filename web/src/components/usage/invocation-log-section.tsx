@@ -152,7 +152,7 @@ export function InvocationLogSection({
     });
   };
   const formatCost = (value: number) =>
-    formatBillingDisplayAmountFromNormalizedCredits(value, DEFAULT_BILLING_DISPLAY, { locale });
+    formatInvocationSummaryCost(summary, billingDisplay, value, locale);
 
   return (
     <Card className="border-border/80 shadow-sm">
@@ -559,18 +559,8 @@ function BillingBreakdown({
   const isPlatform = details?.billing_lane === 'platform';
   const components = pricingComponents(item, details);
   const completeComponents = components.filter(isCompletePricingComponent);
-  const formula = isPlatform
-    ? billingDisplay.currency === 'CNY' && details?.cny_per_usd
-      ? t('usage.invocations.details.platformFormulaCNY', {
-          points: formatAiCreditValue(item.total_points, { locale }),
-          rate: details.cny_per_usd,
-          cost: formulaTotalCost,
-        })
-      : t('usage.invocations.details.platformFormula', {
-          points: formatAiCreditValue(item.total_points, { locale }),
-          cost: formulaTotalCost,
-        })
-    : completeComponents.length > 0
+  const componentFormula =
+    completeComponents.length > 0
       ? `${completeComponents
           .map(component =>
             t('usage.invocations.details.componentFormula', {
@@ -587,6 +577,20 @@ function BillingBreakdown({
             ' + '
           )} ${t('usage.invocations.details.componentTotalFormula', { cost: formulaTotalCost })}`
       : undefined;
+  let formula = componentFormula;
+  if (!formula && isPlatform) {
+    formula =
+      billingDisplay.currency === 'CNY' && details?.cny_per_usd
+        ? t('usage.invocations.details.platformFormulaCNY', {
+            points: formatAiCreditValue(item.total_points, { locale }),
+            rate: details.cny_per_usd,
+            cost: formulaTotalCost,
+          })
+        : t('usage.invocations.details.platformFormula', {
+            points: formatAiCreditValue(item.total_points, { locale }),
+            cost: formulaTotalCost,
+          });
+  }
 
   return (
     <div className="mt-3 space-y-3 rounded-lg border p-4">
@@ -603,7 +607,7 @@ function BillingBreakdown({
         </Badge>
       </div>
 
-      {isPlatform ? (
+      {isPlatform && completeComponents.length === 0 ? (
         <p className="text-xs text-muted-foreground">
           {t('usage.invocations.details.platformBreakdownUnavailable')}
         </p>
@@ -747,10 +751,7 @@ function pricingComponents(
       unitPrice: details?.input_price_usd_per_1m_tokens,
       cost:
         details?.input_cost_usd ??
-        calculateRecordedTokenCostUSD(
-          item.prompt_tokens,
-          details?.input_price_usd_per_1m_tokens
-        ),
+        calculateRecordedTokenCostUSD(item.prompt_tokens, details?.input_price_usd_per_1m_tokens),
       source: details?.input_price_source ?? details?.pricing_source,
     },
     {
@@ -805,12 +806,9 @@ function formatHistoricalUSD(
   recordedRate: string | undefined,
   locale?: Intl.LocalesArgument
 ): string {
-  return formatRecordedBillingAmountFromUSD(
-    value,
-    billingDisplay.currency,
-    recordedRate,
-    { locale }
-  );
+  return formatRecordedBillingAmountFromUSD(value, billingDisplay.currency, recordedRate, {
+    locale,
+  });
 }
 
 function formatInvocationCost(
@@ -834,6 +832,28 @@ function formatInvocationCost(
     DEFAULT_BILLING_DISPLAY,
     { locale }
   );
+}
+
+function formatInvocationSummaryCost(
+  summary: InvocationLogSummary | undefined,
+  billingDisplay: BillingDisplaySettings,
+  fallbackPoints: number,
+  locale?: Intl.LocalesArgument
+): string {
+  if (billingDisplay.currency === 'CNY' && summary?.total_cost_cny) {
+    return formatRecordedBillingAmount(summary.total_cost_cny, 'CNY', { locale });
+  }
+  if (summary?.total_cost_usd) {
+    return formatRecordedBillingAmountFromUSD(
+      summary.total_cost_usd,
+      billingDisplay.currency,
+      billingDisplay.usdToCnyRate,
+      { locale }
+    );
+  }
+  return formatBillingDisplayAmountFromNormalizedCredits(fallbackPoints, billingDisplay, {
+    locale,
+  });
 }
 
 function pricingSourceKey(

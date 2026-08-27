@@ -134,6 +134,8 @@ export interface InvocationLogSummary {
   unknown_count: number;
   total_tokens: number;
   total_points: number;
+  total_cost_usd?: string;
+  total_cost_cny?: string;
 }
 
 export interface InvocationLogItem {

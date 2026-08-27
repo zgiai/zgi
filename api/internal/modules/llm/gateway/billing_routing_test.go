@@ -38,9 +38,15 @@ type fakeBillingProvider struct {
 func TestApplyPlatformSettlementCostSnapshotRecordsCallTimeCurrencyFacts(t *testing.T) {
 	bc := &BillingContext{}
 	applyPlatformSettlementCostSnapshot(bc, &adapter.SettlementResult{
-		TotalCostUSD: "0.006601",
-		TotalCostCNY: "0.0475272",
-		CNYPerUSD:    "7.2",
+		TotalCostUSD:                  "0.006601",
+		TotalCostCNY:                  "0.0475272",
+		CNYPerUSD:                     "7.2",
+		InputPriceUSDPer1MTokens:      "5",
+		CacheWritePriceUSDPer1MTokens: "2.5",
+		OutputPriceUSDPer1MTokens:     "30",
+		InputCostUSD:                  "0.00001",
+		CacheWriteCostUSD:             "0.004096",
+		OutputCostUSD:                 "0.002495",
 	})
 
 	if !bc.TotalUSD.Equal(decimal.RequireFromString("0.006601")) {
@@ -55,6 +61,12 @@ func TestApplyPlatformSettlementCostSnapshotRecordsCallTimeCurrencyFacts(t *test
 	}
 	if snapshot["exchange_rate_source"] != "console_settlement" {
 		t.Fatalf("exchange rate source = %#v", snapshot["exchange_rate_source"])
+	}
+	if snapshot["input_price_usd_per_1m_tokens"] != "5" || snapshot["cache_write_price_usd_per_1m_tokens"] != "2.5" || snapshot["output_price_usd_per_1m_tokens"] != "30" {
+		t.Fatalf("component prices missing from pricing snapshot: %#v", snapshot)
+	}
+	if snapshot["input_cost_usd"] != "0.00001" || snapshot["cache_write_cost_usd"] != "0.004096" || snapshot["output_cost_usd"] != "0.002495" {
+		t.Fatalf("component costs missing from pricing snapshot: %#v", snapshot)
 	}
 }
 
