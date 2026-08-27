@@ -268,6 +268,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		digitalhuman.WithTaskRuntime(digitalhuman.NewTaskRuntimeProvider(deps.Tasks)),
 		digitalhuman.WithChannelTransientDispatcher(transientDispatcher),
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
+		digitalhuman.WithDirectSkillRuntime(digitalhuman.NewExaDirectSkillProvider(repository, deps.CredentialCipher, nil)),
 	)
 	digitalhuman.RegisterRunTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)
 	if err := deps.Scheduler.RegisterTask(&digitalhuman.ReconcileTask{}, digitalhuman.NewReconcileHandler(runtime)); err != nil {

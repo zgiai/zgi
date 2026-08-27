@@ -82,6 +82,13 @@ func (s *RuntimeService) ListResourceCandidates(ctx context.Context, scope Scope
 		if err != nil {
 			return nil, applicationError(err, "digital_human.bindings.candidates")
 		}
+		if s.directSkills != nil {
+			directCandidates, directErr := s.directSkills.Candidates()
+			if directErr != nil {
+				return nil, applicationError(directErr, "digital_human.bindings.candidates")
+			}
+			candidates = append(candidates, directCandidates...)
+		}
 	} else {
 		candidates, err = store.ListResourceCandidates(ctx, scope, digitalHumanID, query)
 		if err != nil {

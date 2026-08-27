@@ -68,6 +68,7 @@ type RuntimeService struct {
 	memory         MemoryRuntimeProvider
 	tasks          TaskRuntimeProvider
 	channelContext ChannelContextRuntimeProvider
+	directSkills   DirectSkillRuntimeProvider
 	now            func() time.Time
 }
 
@@ -110,6 +111,12 @@ func WithChannelTransientDispatcher(dispatcher ChannelTransientDispatcher) Runti
 // channel invocations without affecting other runtime surfaces.
 func WithChannelContextRuntime(provider ChannelContextRuntimeProvider) RuntimeServiceOption {
 	return func(service *RuntimeService) { service.channelContext = provider }
+}
+
+// WithDirectSkillRuntime attaches DigitalHuman-owned experimental capabilities
+// without making them available to Agent or the shared Skill catalog.
+func WithDirectSkillRuntime(provider DirectSkillRuntimeProvider) RuntimeServiceOption {
+	return func(service *RuntimeService) { service.directSkills = provider }
 }
 
 func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
@@ -323,6 +330,20 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
 			}
 			config.RuntimeTools = append(config.RuntimeTools, taskPreparation.Tools...)
+		}
+	}
+	if s.directSkills != nil {
+		directPreparation, directErr := s.directSkills.Prepare(ctx, run, resolved, event)
+		if directErr != nil {
+			_ = s.store.FailRun(ctx, run.ID, "digital_human.direct_skill.prepare_failed", "The DigitalHuman could not prepare a configured direct Skill.", s.now())
+			return directErr
+		}
+		if directPreparation != nil {
+			defer directPreparation.Destroy()
+			if addendum := strings.TrimSpace(directPreparation.SystemPromptAddendum); addendum != "" {
+				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
+			}
+			config.RuntimeTools = append(config.RuntimeTools, directPreparation.Tools...)
 		}
 	}
 	chatRequest := runtimedto.ChatRequest{

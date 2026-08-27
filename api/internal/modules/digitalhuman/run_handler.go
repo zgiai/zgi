@@ -22,6 +22,8 @@ type RuntimeHandlerService interface {
 	ListRuns(context.Context, Scope, uuid.UUID, ListQuery) (*RunListResult, error)
 	CancelRun(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
 	ListResourceCandidates(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
+	GetDirectSkillConfiguration(context.Context, Scope, uuid.UUID, string) (*DirectSkillConfiguration, error)
+	UpdateDirectSkillConfiguration(context.Context, Scope, uuid.UUID, string, UpdateDirectSkillConfigurationRequest) (*DirectSkillConfiguration, error)
 	ListConversations(context.Context, Scope, uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error)
 	SearchConversations(context.Context, Scope, uuid.UUID, string, int) ([]*runtimeservice.SearchResult, error)
 	GetConversation(context.Context, Scope, uuid.UUID, uuid.UUID) (*runtimemodel.Conversation, error)
@@ -51,6 +53,8 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group := router.Group("/digital-humans/:id")
 	group.POST("/invocations", h.SubmitManual)
 	group.GET("/draft/binding-candidates", h.ListResourceCandidates)
+	group.GET("/direct-skills/exa-web-search", h.GetExaWebSearchConfiguration)
+	group.PUT("/direct-skills/exa-web-search", h.UpdateExaWebSearchConfiguration)
 	group.GET("/runs", h.ListRuns)
 	group.GET("/runs/:run_id", h.GetRun)
 	group.GET("/runs/:run_id/runtime-log", h.GetRunRuntimeLog)
@@ -63,6 +67,36 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/runtime/conversations/:conversation_id/messages", h.ListConversationMessages)
 	group.POST("/runtime/conversations/:conversation_id/stop", h.StopConversation)
 	group.GET("/runtime/conversations/:conversation_id/events", h.StreamConversationEvents)
+}
+
+func (h *RuntimeHandler) GetExaWebSearchConfiguration(c *gin.Context) {
+	scope, digitalHumanID, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.GetDirectSkillConfiguration(c.Request.Context(), scope, digitalHumanID, DirectSkillExaWebSearch)
+	if err != nil {
+		h.base.writeError(c, applicationError(err, "digital_human.direct_skill.exa.get"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (h *RuntimeHandler) UpdateExaWebSearchConfiguration(c *gin.Context) {
+	scope, digitalHumanID, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	var request UpdateDirectSkillConfigurationRequest
+	if !h.base.decode(c, &request) {
+		return
+	}
+	result, err := h.service.UpdateDirectSkillConfiguration(c.Request.Context(), scope, digitalHumanID, DirectSkillExaWebSearch, request)
+	if err != nil {
+		h.base.writeError(c, applicationError(err, "digital_human.direct_skill.exa.update"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
 // ListResourceCandidates returns safe, version-pinned choices for the draft editor.
