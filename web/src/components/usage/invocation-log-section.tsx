@@ -559,38 +559,29 @@ function BillingBreakdown({
   const isPlatform = details?.billing_lane === 'platform';
   const components = pricingComponents(item, details);
   const completeComponents = components.filter(isCompletePricingComponent);
-  const componentFormula =
-    completeComponents.length > 0
-      ? `${completeComponents
-          .map(component =>
-            t('usage.invocations.details.componentFormula', {
-              tokens: formatTokenCount(component.tokens, locale),
-              unitPrice: formatHistoricalUSD(
-                component.unitPrice,
-                billingDisplay,
-                details?.cny_per_usd,
-                locale
-              ),
-            })
-          )
-          .join(
-            ' + '
-          )} ${t('usage.invocations.details.componentTotalFormula', { cost: formulaTotalCost })}`
-      : undefined;
-  let formula = componentFormula;
-  if (!formula && isPlatform) {
-    formula =
-      billingDisplay.currency === 'CNY' && details?.cny_per_usd
-        ? t('usage.invocations.details.platformFormulaCNY', {
-            points: formatAiCreditValue(item.total_points, { locale }),
-            rate: details.cny_per_usd,
-            cost: formulaTotalCost,
-          })
-        : t('usage.invocations.details.platformFormula', {
-            points: formatAiCreditValue(item.total_points, { locale }),
-            cost: formulaTotalCost,
-          });
+  if (completeComponents.length === 0) {
+    return (
+      <div className="mt-3 rounded-lg border p-4 text-sm text-muted-foreground">
+        {t('usage.invocations.details.historicalDetailsUnavailable')}
+      </div>
+    );
   }
+  const componentFormula = `${completeComponents
+    .map(component =>
+      t('usage.invocations.details.componentFormula', {
+        tokens: formatTokenCount(component.tokens, locale),
+        unitPrice: formatHistoricalUSD(
+          component.unitPrice,
+          billingDisplay,
+          details?.cny_per_usd,
+          locale
+        ),
+      })
+    )
+    .join(
+      ' + '
+    )} ${t('usage.invocations.details.componentTotalFormula', { cost: formulaTotalCost })}`;
+  const formula = componentFormula;
 
   return (
     <div className="mt-3 space-y-3 rounded-lg border p-4">
@@ -606,16 +597,6 @@ function BillingBreakdown({
               : t('usage.invocations.details.privateSettlement')}
         </Badge>
       </div>
-
-      {isPlatform && completeComponents.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {t('usage.invocations.details.platformBreakdownUnavailable')}
-        </p>
-      ) : !details ? (
-        <p className="text-xs text-muted-foreground">
-          {t('usage.invocations.details.historicalBreakdownUnavailable')}
-        </p>
-      ) : null}
 
       {item.total_cost_usd || item.total_cost_cny || details?.cny_per_usd ? (
         <DetailValues
@@ -743,42 +724,45 @@ function pricingComponents(
     cacheWrite: 'usage.invocations.details.cacheWriteTokens',
     output: 'usage.invocations.details.completionTokens',
   } as const;
+  const inputUnitPrice = details?.input_price_usd_per_1m_tokens;
+  const cacheReadUnitPrice =
+    details?.cache_read_price_usd_per_1m_tokens ??
+    (item.cache_read_tokens > 0 ? inputUnitPrice : undefined);
+  const cacheWriteUnitPrice =
+    details?.cache_write_price_usd_per_1m_tokens ??
+    (item.cache_write_tokens > 0 ? inputUnitPrice : undefined);
   const components: PricingComponent[] = [
     {
       key: 'input',
       labelKey: labelKeys.input,
       tokens: item.prompt_tokens,
-      unitPrice: details?.input_price_usd_per_1m_tokens,
+      unitPrice: inputUnitPrice,
       cost:
         details?.input_cost_usd ??
-        calculateRecordedTokenCostUSD(item.prompt_tokens, details?.input_price_usd_per_1m_tokens),
+        calculateRecordedTokenCostUSD(item.prompt_tokens, inputUnitPrice),
       source: details?.input_price_source ?? details?.pricing_source,
     },
     {
       key: 'cacheRead',
       labelKey: labelKeys.cacheRead,
       tokens: item.cache_read_tokens,
-      unitPrice: details?.cache_read_price_usd_per_1m_tokens,
+      unitPrice: cacheReadUnitPrice,
       cost:
         details?.cache_read_cost_usd ??
-        calculateRecordedTokenCostUSD(
-          item.cache_read_tokens,
-          details?.cache_read_price_usd_per_1m_tokens
-        ),
-      source: details?.cache_read_price_source ?? details?.pricing_source,
+        calculateRecordedTokenCostUSD(item.cache_read_tokens, cacheReadUnitPrice),
+      source:
+        details?.cache_read_price_source ?? details?.input_price_source ?? details?.pricing_source,
     },
     {
       key: 'cacheWrite',
       labelKey: labelKeys.cacheWrite,
       tokens: item.cache_write_tokens,
-      unitPrice: details?.cache_write_price_usd_per_1m_tokens,
+      unitPrice: cacheWriteUnitPrice,
       cost:
         details?.cache_write_cost_usd ??
-        calculateRecordedTokenCostUSD(
-          item.cache_write_tokens,
-          details?.cache_write_price_usd_per_1m_tokens
-        ),
-      source: details?.cache_write_price_source ?? details?.pricing_source,
+        calculateRecordedTokenCostUSD(item.cache_write_tokens, cacheWriteUnitPrice),
+      source:
+        details?.cache_write_price_source ?? details?.input_price_source ?? details?.pricing_source,
     },
     {
       key: 'output',
