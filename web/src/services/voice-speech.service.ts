@@ -25,6 +25,8 @@ function validateSpeechRequest(targetID: string, input: string) {
   };
 }
 
+const SPEECH_GENERATION_TIMEOUT_MS = 120000;
+
 const streamConfig = (signal: AbortSignal) => ({
   adapter: 'fetch' as const,
   responseType: 'stream' as const,
@@ -32,6 +34,7 @@ const streamConfig = (signal: AbortSignal) => ({
   retryAttemptsOverride: 0,
   signal,
   skipErrorHandling: true,
+  timeout: SPEECH_GENERATION_TIMEOUT_MS,
 });
 
 export async function generateAgentDraftSpeech(
