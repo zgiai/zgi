@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // TripleMentionRepository handles CRUD for kb_triple_mentions
@@ -24,7 +25,7 @@ func (r *TripleMentionRepository) CreateBatch(ctx context.Context, triples []*mo
 	if len(triples) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).CreateInBatches(triples, 100).Error
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(triples, 100).Error
 }
 
 // FindPendingByKBID retrieves all pending triple mentions for a specific knowledge base with a limit
@@ -49,7 +50,7 @@ func (r *TripleMentionRepository) FindBySegmentID(ctx context.Context, segmentID
 }
 
 // UpdateStatus updates the status and entity links
-func (r *TripleMentionRepository) UpdateStatus(ctx context.Context, tripleID uuid.UUID, status string, headEntityID, tailEntityID *uuid.UUID) error {
+func (r *TripleMentionRepository) UpdateStatus(ctx context.Context, tripleID uuid.UUID, status string, headEntityID, tailEntityID, relationshipID *uuid.UUID) error {
 	updates := map[string]interface{}{
 		"status": status,
 	}
@@ -58,6 +59,9 @@ func (r *TripleMentionRepository) UpdateStatus(ctx context.Context, tripleID uui
 	}
 	if tailEntityID != nil {
 		updates["tail_entity_id"] = tailEntityID
+	}
+	if relationshipID != nil {
+		updates["relationship_id"] = relationshipID
 	}
 	return r.db.WithContext(ctx).Model(&model.TripleMention{}).Where("id = ?", tripleID).Updates(updates).Error
 }
@@ -81,6 +85,13 @@ func (r *TripleMentionRepository) SoftDeleteByDocumentSegments(ctx context.Conte
 	return r.db.WithContext(ctx).Model(&model.TripleMention{}).
 		Where("segment_id IN (SELECT id FROM document_segments WHERE document_id = ?)", documentID).
 		Updates(updates).Error
+}
+
+func (r *TripleMentionRepository) SoftDeleteByDocumentID(ctx context.Context, documentID uuid.UUID) error {
+	now := time.Now().UTC()
+	return r.db.WithContext(ctx).Model(&model.TripleMention{}).
+		Where("is_deleted = ? AND (document_id = ? OR (document_id IS NULL AND segment_id IN (SELECT id FROM document_segments WHERE document_id = ?)))", false, documentID, documentID).
+		Updates(map[string]any{"is_deleted": true, "deleted_at": now}).Error
 }
 
 // DeleteByKBID deletes all triple mentions for a knowledge base

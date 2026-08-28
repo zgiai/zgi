@@ -23,12 +23,12 @@ export interface WebAppFeatures {
   suggested_questions_after_answer: {
     enabled: boolean;
   };
-  text_to_speech: {
+  text_to_speech?: {
     enabled: boolean;
-    language: string;
-    voice: string;
+    language?: string;
+    voice?: string;
   };
-  speech_to_text: {
+  speech_to_text?: {
     enabled: boolean;
   };
   retriever_resource: {
@@ -120,6 +120,37 @@ export interface WebAppRuntimeCapability {
   private_audience_enabled: boolean;
   supported_subject_types: string[];
   version_uuid?: string;
+}
+
+export type WebAppAgentMemorySourceKind = 'legacy' | 'explicit' | 'automatic' | 'manager';
+
+export interface WebAppAgentMemoryValue {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  max_chars: number;
+  enabled: boolean;
+  sort_order: number;
+  content: string;
+  revision: number;
+  source_kind?: WebAppAgentMemorySourceKind;
+  last_operation_id?: string;
+  undoable_until?: number;
+  updated_at: number;
+}
+
+export interface WebAppAgentMemoryExport {
+  agent_id: string;
+  user_scope: 'account';
+  user_id: string;
+  exported_at: number;
+  values: WebAppAgentMemoryValue[];
+}
+
+export interface WebAppAgentMemoryUndoResponse {
+  operation_id: string;
+  value?: WebAppAgentMemoryValue;
 }
 
 export interface WebAppRunRequest {

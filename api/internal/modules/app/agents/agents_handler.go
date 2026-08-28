@@ -42,6 +42,8 @@ type AgentsHandler struct {
 	chatRuntimeService         runtimeservice.Service
 	modelPrechecker            llmclient.AppModelPrechecker
 	workflowContinuationRunner workflowContinuationRunner
+	voiceService               *VoiceService
+	speechService              *SpeechService
 }
 
 type workflowContinuationRunner interface {
@@ -76,6 +78,14 @@ func (h *AgentsHandler) SetFileService(fileService interfaces.FileService) {
 
 func (h *AgentsHandler) SetModelPrechecker(modelPrechecker llmclient.AppModelPrechecker) {
 	h.modelPrechecker = modelPrechecker
+}
+
+func (h *AgentsHandler) SetVoiceService(voiceService *VoiceService) {
+	h.voiceService = voiceService
+}
+
+func (h *AgentsHandler) SetSpeechService(speechService *SpeechService) {
+	h.speechService = speechService
 }
 
 func (h *AgentsHandler) SetWorkflowContinuationRunner(runner interface {
@@ -579,6 +589,36 @@ func (h *AgentsHandler) ListAgentSkillBindingCandidates(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) ListAgentIntegrationConnectionBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentIntegrationConnectionCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentIntegrationConnectionCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) ListAgentKnowledgeBindingCandidates(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -700,7 +740,7 @@ func (h *AgentsHandler) ReplaceAgentMemorySlots(c *gin.Context) {
 		Slots []dto.AgentMemorySlotConfig `json:"slots" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 	result, err := h.appService.ReplaceAgentMemorySlots(c.Request.Context(), c.Param("agent_id"), accountID.String(), req.Slots)
@@ -709,6 +749,28 @@ func (h *AgentsHandler) ReplaceAgentMemorySlots(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"slots": result})
+}
+
+func (h *AgentsHandler) UpdateAgentMemoryConfig(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if _, ok := h.requireAgentManageAccess(c, accountID.String()); !ok {
+		return
+	}
+	var req dto.AgentMemoryConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.UpdateAgentMemoryConfig(c.Request.Context(), c.Param("agent_id"), accountID.String(), req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 func (h *AgentsHandler) ListAgentMemoryValues(c *gin.Context) {
@@ -736,7 +798,7 @@ func (h *AgentsHandler) UpdateAgentMemoryValue(c *gin.Context) {
 	}
 	var req dto.UpdateAgentMemoryValueRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 	result, err := h.appService.UpdateAgentMemoryValue(c.Request.Context(), c.Param("agent_id"), accountID.String(), req)
@@ -976,12 +1038,34 @@ func (h *AgentsHandler) GetWebAppRuntimeConfig(c *gin.Context) {
 		h.failWebAppRuntime(c, err)
 		return
 	}
+	voiceEnabled := false
+	if h.voiceService != nil {
+		voiceEnabled, err = h.voiceService.Available(c.Request.Context(), result.OrganizationID)
+		if err != nil {
+			logger.WarnContext(c.Request.Context(), "failed to resolve web app voice capability", "web_app_id", result.WebAppID, "error", err)
+			voiceEnabled = false
+		}
+	}
+	speechEnabled := false
+	if h.speechService != nil {
+		speechEnabled, err = h.speechService.Available(c.Request.Context(), result.OrganizationID)
+		if err != nil {
+			logger.WarnContext(c.Request.Context(), "failed to resolve web app speech capability", "web_app_id", result.WebAppID, "error", err)
+			speechEnabled = false
+		}
+	}
 	response.Success(c, gin.H{
 		"variables": []interface{}{},
 		"features": gin.H{
 			"agent_type":          result.AgentType,
 			"runtime":             "chat",
 			"suggested_questions": result.Config.SuggestedQuestions,
+			"speech_to_text": gin.H{
+				"enabled": voiceEnabled,
+			},
+			"text_to_speech": gin.H{
+				"enabled": speechEnabled,
+			},
 		},
 		"config": gin.H{
 			"agent_id":   result.AgentID,

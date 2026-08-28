@@ -31,12 +31,28 @@ const (
 	operationPlanOutcomesKey               = "outcomes"
 	operationPlanActionAttemptsKey         = "action_attempts"
 	operationPlanEffectLedgerKey           = "effect_ledger"
+	operationPlanServerProjectedToolKey    = "_server_projected_tool_name"
+	operationPlanServerProjectedEpochKey   = "_server_projected_ledger_epoch"
+	operationPlanServerProjectedBindingKey = "_server_projected_binding_fingerprint"
+	operationPlanExternalActionEffectType  = "external.action.completed"
 
 	operationPlanCandidateSelectionPolicyKey           = "candidate_selection_policy"
 	operationPlanCandidateSelectionAtMostOnePerField   = "at_most_one_per_binding_field"
 	operationPlanCandidateSelectionPolicyDetailKey     = "candidate_selection_policy_detail"
 	operationPlanCandidateSelectionAtMostOneDetailText = "choose at most one current-workspace candidate for each requested binding field"
 )
+
+type operationPlanProjectedActionMatch struct {
+	PhaseIndex         int
+	PhaseID            string
+	OutcomeID          string
+	IntegrationID      string
+	ActionID           string
+	ConnectionID       string
+	LedgerEpoch        string
+	BindingFingerprint string
+	TargetArguments    map[string]interface{}
+}
 
 func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strategy *AIChatTurnStrategy) map[string]interface{} {
 	if parts == nil || strategy == nil {
@@ -1675,7 +1691,25 @@ func operationPlanCompleteInvocationPhase(plan map[string]interface{}, invocatio
 	phaseID := strings.TrimSpace(stringFromAny(arguments["plan_phase_id"]))
 	phases := mapSliceFromAny(plan["phases"])
 	match := -1
-	if phaseID != "" {
+	externalAction := operationPlanInvocationIsProjectedExternalAction(invocation)
+	projectedExternalAction := externalAction && operationPlanInvocationHasServerProjectionEvidence(invocation)
+	if externalAction && !projectedExternalAction && phaseID != "" {
+		for _, phase := range phases {
+			if strings.TrimSpace(stringFromAny(phase["id"])) == phaseID &&
+				operationPlanExpectedActionIsServerProjected(mapFromOperationContext(phase["expected_action"])) {
+				projectedExternalAction = true
+				break
+			}
+		}
+	}
+	if projectedExternalAction {
+		projectedMatch, ok := operationPlanMatchProjectedExternalActionInvocation(plan, invocation)
+		if !ok {
+			return false
+		}
+		match = projectedMatch.PhaseIndex
+		phaseID = projectedMatch.PhaseID
+	} else if phaseID != "" {
 		for index, phase := range phases {
 			if strings.TrimSpace(stringFromAny(phase["id"])) != phaseID || !operationPlanPhaseOpen(phase) {
 				continue
@@ -1688,8 +1722,10 @@ func operationPlanCompleteInvocationPhase(plan map[string]interface{}, invocatio
 		toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
 		actualTarget := operationPlanInvocationExpectedActionTarget(invocation)
 		for index, phase := range phases {
+			expected := mapFromOperationContext(phase["expected_action"])
 			if !operationPlanPhaseOpen(phase) ||
-				!operationPlanExpectedActionMatches(mapFromOperationContext(phase["expected_action"]), skillID, toolName, actualTarget) {
+				(externalAction && operationPlanExpectedActionIsServerProjected(expected)) ||
+				!operationPlanExpectedActionMatches(expected, skillID, toolName, actualTarget) {
 				continue
 			}
 			if match >= 0 {
@@ -1706,7 +1742,11 @@ func operationPlanCompleteInvocationPhase(plan map[string]interface{}, invocatio
 	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
 	actualTarget := operationPlanInvocationExpectedActionTarget(invocation)
 	expected := mapFromOperationContext(phases[match]["expected_action"])
-	if len(expected) > 0 {
+	if projectedExternalAction {
+		// The strict server-owned phase, Action, target, and ledger-epoch match
+		// above is the completion proof. Do not fall back to the advisory generic
+		// expected_action matcher for projected external operations.
+	} else if len(expected) > 0 {
 		if !operationPlanExpectedActionMatches(expected, skillID, toolName, actualTarget) {
 			return false
 		}
@@ -1746,6 +1786,159 @@ func operationPlanPhaseOpen(phase map[string]interface{}) bool {
 	default:
 		return false
 	}
+}
+
+func operationPlanInvocationIsProjectedExternalAction(invocation map[string]interface{}) bool {
+	return strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") &&
+		strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skills.SkillExternalApps) &&
+		strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), "execute_action")
+}
+
+func operationPlanInvocationHasServerProjectionEvidence(invocation map[string]interface{}) bool {
+	arguments := mapFromOperationContext(invocation["arguments"])
+	return strings.TrimSpace(stringFromAny(arguments[operationPlanServerProjectedEpochKey])) != "" ||
+		strings.TrimSpace(stringFromAny(arguments[operationPlanServerProjectedBindingKey])) != ""
+}
+
+func operationPlanExpectedActionIsServerProjected(expected map[string]interface{}) bool {
+	return strings.EqualFold(strings.TrimSpace(stringFromAny(expected["skill_id"])), skills.SkillExternalApps) &&
+		strings.EqualFold(strings.TrimSpace(stringFromAny(expected["tool_name"])), "execute_action") &&
+		strings.TrimSpace(stringFromAny(expected[operationPlanServerProjectedToolKey])) != ""
+}
+
+func operationPlanMatchProjectedExternalActionInvocation(
+	plan map[string]interface{},
+	invocation map[string]interface{},
+) (operationPlanProjectedActionMatch, bool) {
+	if len(plan) == 0 || !operationPlanInvocationIsProjectedExternalAction(invocation) ||
+		!operationPlanProjectedExternalInvocationSucceeded(invocation) {
+		return operationPlanProjectedActionMatch{}, false
+	}
+	arguments := mapFromOperationContext(invocation["arguments"])
+	phaseID := strings.TrimSpace(stringFromAny(arguments["plan_phase_id"]))
+	ledgerEpoch := strings.TrimSpace(stringFromAny(arguments[operationPlanServerProjectedEpochKey]))
+	bindingFingerprint := strings.TrimSpace(stringFromAny(arguments[operationPlanServerProjectedBindingKey]))
+	if phaseID == "" || ledgerEpoch == "" || bindingFingerprint == "" {
+		return operationPlanProjectedActionMatch{}, false
+	}
+	integrationID, actionID, connectionID, identityConsistent := operationPlanProjectedInvocationIdentity(invocation)
+	if !identityConsistent || integrationID == "" || actionID == "" {
+		return operationPlanProjectedActionMatch{}, false
+	}
+	actualTarget := copyStringAnyMap(mapFromOperationContext(arguments["operation_plan_target"]))
+	if actualTarget == nil {
+		actualTarget = map[string]interface{}{}
+	}
+	for index, phase := range mapSliceFromAny(plan["phases"]) {
+		if strings.TrimSpace(stringFromAny(phase["id"])) != phaseID || !operationPlanPhaseOpen(phase) {
+			continue
+		}
+		expected := mapFromOperationContext(phase["expected_action"])
+		if !operationPlanExpectedActionIsServerProjected(expected) {
+			return operationPlanProjectedActionMatch{}, false
+		}
+		phaseEpoch := strings.TrimSpace(stringFromAny(phase[operationPlanServerProjectedEpochKey]))
+		if phaseEpoch == "" || phaseEpoch != ledgerEpoch {
+			return operationPlanProjectedActionMatch{}, false
+		}
+		expectedFingerprint := strings.TrimSpace(stringFromAny(expected[operationPlanServerProjectedBindingKey]))
+		if expectedFingerprint == "" || expectedFingerprint != bindingFingerprint {
+			return operationPlanProjectedActionMatch{}, false
+		}
+		expectedTarget := mapFromOperationContext(expected["target"])
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(expectedTarget["integration_id"])), integrationID) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(expectedTarget["action_id"])), actionID) {
+			return operationPlanProjectedActionMatch{}, false
+		}
+		expectedTargetArguments := copyStringAnyMap(mapFromOperationContext(expected["target_arguments"]))
+		if expectedTargetArguments == nil {
+			expectedTargetArguments = map[string]interface{}{}
+		}
+		if !operationPlanExactTargetArgumentsEqual(expectedTargetArguments, actualTarget) {
+			return operationPlanProjectedActionMatch{}, false
+		}
+		return operationPlanProjectedActionMatch{
+			PhaseIndex:         index,
+			PhaseID:            phaseID,
+			OutcomeID:          strings.TrimSpace(stringFromAny(phase["outcome_id"])),
+			IntegrationID:      integrationID,
+			ActionID:           actionID,
+			ConnectionID:       connectionID,
+			LedgerEpoch:        ledgerEpoch,
+			BindingFingerprint: bindingFingerprint,
+			TargetArguments:    expectedTargetArguments,
+		}, true
+	}
+	return operationPlanProjectedActionMatch{}, false
+}
+
+func operationPlanProjectedExternalInvocationSucceeded(invocation map[string]interface{}) bool {
+	if operationPlanNormalizeStepStatus(stringFromAny(invocation["status"])) != operationPlanStepStatusCompleted ||
+		operationPlanInvocationResultSignalsFailure(invocation) {
+		return false
+	}
+	return operationPlanProjectedExternalAttemptStatus(invocation) == operationPlanStepStatusCompleted
+}
+
+func operationPlanProjectedExternalAttemptStatus(invocation map[string]interface{}) string {
+	result := mapFromOperationContext(invocation["result"])
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(result["operation_status"]))) {
+	case "completed", "already_completed", "succeeded":
+		if raw, exists := result["provider_success_confirmed"]; exists {
+			confirmed, valid := raw.(bool)
+			if !valid || !confirmed {
+				return operationPlanStepStatusPending
+			}
+		}
+		return operationPlanStepStatusCompleted
+	case "failed", "failure", "failed_safe", "partially_succeeded", "partially_completed", "partially_failed", "partial", "rejected", "cancelled", "canceled":
+		return operationPlanStepStatusFailed
+	default:
+		// Missing, partial, outcome_unknown, executing, and every unrecognized
+		// provider state remain pending even when the wrapper call itself returned
+		// successfully. This preserves the distinction between a known provider
+		// failure and an operation whose effect is not yet known.
+		return operationPlanStepStatusPending
+	}
+}
+
+func operationPlanProjectedInvocationIdentity(invocation map[string]interface{}) (string, string, string, bool) {
+	integrationID := ""
+	actionID := ""
+	connectionID := ""
+	for _, source := range []map[string]interface{}{
+		mapFromOperationContext(invocation["arguments"]),
+		mapFromOperationContext(invocation["result"]),
+	} {
+		candidateIntegrationID := strings.TrimSpace(stringFromAny(source["integration_id"]))
+		candidateActionID := strings.TrimSpace(stringFromAny(source["action_id"]))
+		if integrationID == "" && actionID == "" && candidateIntegrationID != "" && candidateActionID != "" {
+			integrationID = candidateIntegrationID
+			actionID = candidateActionID
+		} else if candidateIntegrationID != "" && candidateActionID != "" &&
+			(!strings.EqualFold(candidateIntegrationID, integrationID) || !strings.EqualFold(candidateActionID, actionID)) {
+			return "", "", "", false
+		}
+		if connectionID == "" && strings.EqualFold(candidateIntegrationID, integrationID) && strings.EqualFold(candidateActionID, actionID) {
+			connectionID = strings.TrimSpace(stringFromAny(source["connection_id"]))
+		} else if candidateConnectionID := strings.TrimSpace(stringFromAny(source["connection_id"])); candidateConnectionID != "" && connectionID != "" && candidateConnectionID != connectionID {
+			return "", "", "", false
+		}
+	}
+	return integrationID, actionID, connectionID, integrationID != "" && actionID != ""
+}
+
+func operationPlanExactTargetArgumentsEqual(expected map[string]interface{}, actual map[string]interface{}) bool {
+	if len(expected) != len(actual) {
+		return false
+	}
+	for path, expectedValue := range expected {
+		actualValue, exists := actual[path]
+		if !exists || strings.TrimSpace(stringFromAny(expectedValue)) != strings.TrimSpace(stringFromAny(actualValue)) {
+			return false
+		}
+	}
+	return true
 }
 
 func operationPlanCurrentOpenPhaseID(phases []map[string]interface{}) string {
@@ -2633,6 +2826,9 @@ func operationPlanStatusFromInvocation(invocation map[string]interface{}) string
 	}
 	if operationPlanInvocationResultSignalsFailure(invocation) {
 		return operationPlanStepStatusFailed
+	}
+	if operationPlanInvocationIsProjectedExternalAction(invocation) {
+		return operationPlanProjectedExternalAttemptStatus(invocation)
 	}
 	if !operationPlanInvocationHasRuntimeStateSnapshot(invocation) {
 		return operationPlanStepStatusPending

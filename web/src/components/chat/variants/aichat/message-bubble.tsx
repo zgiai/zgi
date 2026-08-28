@@ -17,6 +17,7 @@ import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
 import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
 import { useT } from '@/i18n/translations';
@@ -65,6 +66,7 @@ import {
   presentationProjectionFromMetadata,
   splitAnswerAroundTimeline,
 } from '@/components/chat/controllers/aichat/presentation-order';
+import type { AIChatSpeechPlaybackController } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
 
 interface AIChatMessageBubbleProps {
   message: AIChatMessage;
@@ -91,9 +93,11 @@ interface AIChatMessageBubbleProps {
   showAssistantModelMeta?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  showWorkflowFailureDetails?: boolean;
   showContextualOperationStatus?: boolean;
   enableToolGovernanceApprovals?: boolean;
   suppressPendingToolGovernanceApprovals?: boolean;
+  speechPlayback?: AIChatSpeechPlaybackController;
 }
 
 const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
@@ -896,49 +900,104 @@ interface AIChatHistoryImagePreviewProps {
 function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
   const t = useT('webapp');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const { previewUrl, isLoading, error } = useFileOriginalPreviewUrl(file.id, {
-    enabled: Boolean(file.id),
-  });
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
+  const { previewUrl, isLoading, isFetching, error, isMissing, refetch } =
+    useFileOriginalPreviewUrl(file.id, {
+      enabled: Boolean(file.id),
+    });
   const isFiltered = file.content_status === 'filtered';
-  const isError = file.parse_status === 'error' || Boolean(error);
+  const isError = file.parse_status === 'error' || Boolean(error) || imageLoadFailed;
+  const canPreview = Boolean(previewUrl) && !isError && !isFiltered;
+  const canRetry =
+    !isLoading && !isFetching && !isFiltered && ((Boolean(error) && !isMissing) || imageLoadFailed);
+  const canInteract = canPreview || canRetry;
+  const showUnavailableTooltip = !isLoading && !isFetching && (isError || isFiltered);
   const title =
     file.error ||
     error ||
+    (imageLoadFailed ? t('consoleChat.attachments.previewLoadError') : '') ||
     (file.filtered_reason === 'model_without_vision'
       ? t('consoleChat.attachments.filteredModelWithoutVision')
       : file.name);
 
+  useEffect(() => {
+    setImageLoadFailed(false);
+  }, [previewUrl]);
+
+  useEffect(() => {
+    if (!canPreview && isPreviewOpen) {
+      setIsPreviewOpen(false);
+    }
+  }, [canPreview, isPreviewOpen]);
+
+  const handleImageLoadError = () => {
+    setImageLoadFailed(true);
+    setIsPreviewOpen(false);
+  };
+
+  const previewButton = (
+    <button
+      type="button"
+      className={cn(
+        'relative size-24 overflow-hidden rounded-lg border bg-background/70 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        isError || isFiltered ? 'border-destructive/40' : 'border-border',
+        canPreview
+          ? 'cursor-zoom-in'
+          : canRetry
+            ? 'cursor-pointer'
+            : showUnavailableTooltip
+              ? 'cursor-help'
+              : 'cursor-default'
+      )}
+      aria-label={title || file.name}
+      disabled={!canInteract}
+      onClick={() => {
+        if (canPreview) {
+          setIsPreviewOpen(true);
+          return;
+        }
+        if (canRetry) {
+          setImageLoadFailed(false);
+          refetch();
+        }
+      }}
+    >
+      {previewUrl && !imageLoadFailed ? (
+        <img
+          src={previewUrl}
+          alt={file.name}
+          className="h-full w-full object-cover"
+          onError={handleImageLoadError}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+          {isLoading || isFetching ? (
+            <Loader2 className="size-5 animate-spin" />
+          ) : isError || isFiltered ? (
+            <AlertCircle className="size-5 text-destructive" />
+          ) : (
+            <FileImage className="size-5" />
+          )}
+        </div>
+      )}
+    </button>
+  );
+
   return (
     <>
-      <button
-        type="button"
-        className={cn(
-          'relative size-24 overflow-hidden rounded-lg border bg-background/70 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          isError || isFiltered ? 'border-destructive/40' : 'border-border',
-          previewUrl || isError || isFiltered ? 'cursor-pointer' : 'cursor-default'
-        )}
-        title={title}
-        onClick={() => {
-          if (previewUrl || isError || isFiltered) {
-            setIsPreviewOpen(true);
-          }
-        }}
-      >
-        {previewUrl ? (
-          <img src={previewUrl} alt={file.name} className="h-full w-full object-cover" />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-            {isLoading ? (
-              <Loader2 className="size-5 animate-spin" />
-            ) : isError || isFiltered ? (
-              <AlertCircle className="size-5 text-destructive" />
-            ) : (
-              <FileImage className="size-5" />
-            )}
-          </div>
-        )}
-      </button>
-      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+      {showUnavailableTooltip ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex rounded-lg">{previewButton}</span>
+          </TooltipTrigger>
+          <TooltipContent side="top" variant="destructive" className="max-w-xs">
+            {title || t('consoleChat.attachments.previewLoadError')}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        previewButton
+      )}
+      <Dialog open={isPreviewOpen && canPreview} onOpenChange={setIsPreviewOpen}>
         <DialogContent className="max-h-[90vh] max-w-[90vw] overflow-hidden p-0">
           <DialogHeader className="border-b px-4 py-3">
             <DialogTitle className="truncate text-sm">{file.name}</DialogTitle>
@@ -949,6 +1008,7 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
                 src={previewUrl}
                 alt={file.name}
                 className="max-h-[calc(90vh-96px)] max-w-full object-contain"
+                onError={handleImageLoadError}
               />
             ) : (
               <div className="flex max-w-sm flex-col items-center gap-2 text-center text-sm text-muted-foreground">
@@ -985,7 +1045,9 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   const isExpiredTemporaryFile = useGeneratedFileExpired(file);
   const { data: managedFileDetail, error: managedFileError } = useFileDetail(managedFileId, {
     enabled: isManagedFile && Boolean(managedFileId),
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retryOnMount: false,
     skipErrorHandling: true,
   });
   const isArchivedManagedFile = Boolean(managedFileDetail?.data?.file?.is_archived);
@@ -1167,9 +1229,11 @@ export function AIChatMessageBubble({
   showAssistantModelMeta = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  showWorkflowFailureDetails = true,
   showContextualOperationStatus = false,
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
+  speechPlayback,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const tGlobal = useT();
@@ -1554,6 +1618,7 @@ export function AIChatMessageBubble({
             defaultOpen={shouldOpenTimelineByDefault}
             showMemoryKey={showMemoryKey}
             showSkillEventDetails={showSkillEventDetails}
+            showWorkflowFailureDetails={showWorkflowFailureDetails}
             enableToolGovernanceApprovals={enableToolGovernanceApprovals}
             suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
             messageStatus={message.status}
@@ -1647,6 +1712,12 @@ export function AIChatMessageBubble({
             canSwitchBranch={canSwitchBranch}
             onRegenerate={() => onRegenerate?.(message)}
             onSwitchBranch={onSwitchBranch}
+            speechPhase={
+              speechPlayback?.state.messageId === message.id ? speechPlayback.state.phase : 'idle'
+            }
+            onToggleSpeech={
+              speechPlayback ? () => speechPlayback.toggle(message.id, answer) : undefined
+            }
           />
         ) : null}
       </div>

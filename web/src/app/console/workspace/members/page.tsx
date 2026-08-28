@@ -28,10 +28,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { WorkspaceMemberPermissionsDialog } from '@/components/member/workspace-member-permissions-dialog';
 import type { WorkspaceMemberAccount } from '@/services/types/workspace';
 import { useLocale } from '@/hooks/use-locale';
-import { pickLocale } from '@/utils/tool-helpers';
 import type { Role } from '@/services/types/organization';
 import { PermissionDeniedState } from '@/components/common/permission-gate-state';
-import { workspaceMemberRoleForAssignableRole } from '@/utils/workspace-role-templates';
+import {
+  getWorkspaceRoleDisplayName,
+  workspaceMemberRoleForAssignableRole,
+} from '@/utils/workspace-role-templates';
 import { normalizeWorkspaceMemberRole } from '@/utils/role-labels';
 import { getOrganizationDisplayName } from '@/utils/organization-display';
 
@@ -80,8 +82,7 @@ export default function WorkspaceMembersPage() {
     const normalizedRole = normalizeWorkspaceMemberRole(role);
     return normalizedRole === 'owner' || normalizedRole === 'admin';
   };
-  const getRoleDisplayName = (role: Role) =>
-    role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
+  const getRoleDisplayName = (role: Role) => getWorkspaceRoleDisplayName(role, locale);
 
   useEffect(() => {
     if (currentPage > totalPages) {

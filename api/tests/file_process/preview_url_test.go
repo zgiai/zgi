@@ -112,6 +112,10 @@ func TestGetFileOriginalPreviewURL_SupportsGeneratedFileFormats(t *testing.T) {
 		{name: "json", extension: "json", mimeType: "application/json"},
 		{name: "docx", extension: "docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
 		{name: "xlsx", extension: "xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{name: "mp4", extension: "mp4", mimeType: "video/mp4"},
+		{name: "mp4 octet-stream", extension: "mp4", mimeType: "application/octet-stream"},
+		{name: "m4a", extension: "m4a", mimeType: "audio/mp4"},
+		{name: "m4a octet-stream", extension: "m4a", mimeType: "application/octet-stream"},
 	}
 
 	for _, tt := range tests {
@@ -516,6 +520,10 @@ func (s *previewURLFileService) GetUploadConfig() *interfaces.FileUploadConfigRe
 }
 
 func (s *previewURLFileService) UploadFile(context.Context, string, []byte, string, string, string, filemodel.CreatedByRole, *interfaces.FileSource, *string, bool, bool) (*dto.UploadFile, error) {
+	return nil, nil
+}
+
+func (s *previewURLFileService) ReplaceFileContent(context.Context, string, string, []byte, string, string, string) (*dto.UploadFile, error) {
 	return nil, nil
 }
 

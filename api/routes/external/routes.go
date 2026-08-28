@@ -7,10 +7,13 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"gorm.io/gorm"
 )
@@ -32,6 +35,9 @@ type ExternalRouteDeps struct {
 	KnowledgeService      *datasetservice.KnowledgeRetrievalService
 	ResourcePermission    interfaces.ResourcePermissionService
 	WorkflowEngineFactory *graph_engine.EngineFactory
+	SkillManifestResolver skills.ToolGovernanceManifestResolver
+	IntegrationRegistry   *integrations.Registry
+	ActionProjections     integrationmetatools.ActionProjectionResolver
 }
 
 // RegisterExternalRoutes registers all external API routes
@@ -63,6 +69,9 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 			deps.KnowledgeService,
 			deps.ResourcePermission,
 			deps.WorkflowEngineFactory,
+			deps.SkillManifestResolver,
+			deps.IntegrationRegistry,
+			deps.ActionProjections,
 		)
 	}
 

@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	modelCategoryImage             = "image"
 	modelCategoryResponses         = "responses"
 	modelCategoryAnthropicMessages = "anthropic_messages"
 )
@@ -415,6 +416,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		}
 		streamChan, err := call(ctx, providerAdapter)
 		if err != nil {
+			setBillingFailure(billingCtx, err)
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
 			}

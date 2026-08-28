@@ -5,6 +5,7 @@ export type ModelType =
   | 'moderation'
   | 'speech2text'
   | 'tts'
+  | 'music'
   | 'text2video'
   | 'text2img';
 
@@ -16,6 +17,7 @@ export type ModelUseCase =
   | 'rerank'
   | 'speech-to-text'
   | 'text-to-speech'
+  | 'music-gen'
   | 'realtime-audio'
   | 'video-gen'
   | 'moderation'
@@ -128,6 +130,8 @@ export interface ModelPerformance {
   [key: string]: number | undefined;
 }
 
+export type ModelPricing = Record<string, unknown>;
+
 export interface ModelUsageGuidelines {
   recommended_use_cases?: string[];
   limitations?: string[];
@@ -157,6 +161,7 @@ export interface ModelItem {
   input_price_configured?: boolean;
   output_price_configured?: boolean;
   cached_input_price?: number;
+  pricing?: ModelPricing | null;
   context_window: number;
   max_output_tokens: number;
   max_input_tokens?: number;
@@ -164,6 +169,12 @@ export interface ModelItem {
   features: ModelFeatures;
   tools: ModelTools;
   parameters?: ModelParameters; // Optional, might be removed in later cleanup
+  capabilities?: Record<string, unknown>;
+  default_parameters?: Record<string, unknown>;
+  config_parameters?: ModelConfigParameter[] | Record<string, unknown>;
+  parameters_metadata?: ModelConfigParameter[] | Record<string, unknown>;
+  supported_parameters?: string[] | ModelConfigParameter[] | Record<string, unknown>;
+  video?: Record<string, unknown>;
   use_cases: ModelUseCase[] | null;
   input_modalities: string[];
   output_modalities: string[];
@@ -292,6 +303,7 @@ export interface ParameterRuleItem extends ModelConfigParameter {
   label?: LocalizedText;
   help?: LocalizedText;
   options?: string[];
+  option_labels?: Record<string, LocalizedText>;
 }
 
 // Batch toggle models request (with specific models array)

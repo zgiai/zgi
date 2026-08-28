@@ -42,6 +42,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 	appCtx *AppContext,
 	req *adapter.ChatRequest,
 ) (*adapter.ChatResponse, error) {
+	ctx = applyInvocationContentPrivacy(ctx, appCtx)
 	startTime := time.Now()
 	requestID := uuid.New().String()
 	ctx = logger.WithFields(ctx,
@@ -294,6 +295,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 	appCtx *AppContext,
 	req *adapter.ChatRequest,
 ) (<-chan adapter.StreamResponse, error) {
+	ctx = applyInvocationContentPrivacy(ctx, appCtx)
 	startTime := time.Now()
 	requestID := uuid.New().String()
 	ctx = logger.WithFields(ctx,
@@ -476,6 +478,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	}
 	streamChan, err := providerAdapter.ChatCompletionStream(ctx, normalizedReq)
 	if err != nil {
+		setBillingFailure(billingCtx, err)
 		if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 			s.traceStreamingChatCompletion(ctx, traceReq, "", startTime, time.Now(), billingCtx, 0, 0, rollbackErr)
 			return nil, rollbackErr

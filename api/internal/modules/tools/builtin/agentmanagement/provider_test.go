@@ -278,6 +278,12 @@ func TestReplaceAgentKnowledgeBindingsPreservesOtherConfigFields(t *testing.T) {
 			KnowledgeDatasetIDs: []string{"dataset-old"},
 			DatabaseBindings:    []dto.AgentDatabaseBinding{{DataSourceID: "db-1", TableIDs: []string{"table-1"}}},
 			WorkflowBindings:    []dto.AgentWorkflowBinding{{BindingID: "workflow-1", AgentID: "workflow-1", WorkflowID: "wf-1", VersionStrategy: "latest_published"}},
+			IntegrationBindings: []dto.AgentIntegrationBinding{{
+				ConnectionID:     "connection-1",
+				IntegrationID:    "web-search",
+				AccessMode:       "read",
+				AllowedActionIDs: []string{"web.search"},
+			}},
 		},
 	}
 	service := &fakeAgentManagementService{
@@ -319,6 +325,9 @@ func TestReplaceAgentKnowledgeBindingsPreservesOtherConfigFields(t *testing.T) {
 	}
 	if !reflect.DeepEqual(service.lastConfigRequest.WorkflowBindings, current.Config.WorkflowBindings) {
 		t.Fatalf("WorkflowBindings = %#v, want preserved %#v", service.lastConfigRequest.WorkflowBindings, current.Config.WorkflowBindings)
+	}
+	if !reflect.DeepEqual(service.lastConfigRequest.IntegrationBindings, current.Config.IntegrationBindings) {
+		t.Fatalf("IntegrationBindings = %#v, want preserved %#v", service.lastConfigRequest.IntegrationBindings, current.Config.IntegrationBindings)
 	}
 	if len(messages) != 1 || messages[0].Data["workspace_id"] != "agent-workspace" {
 		t.Fatalf("payload = %#v, want agent workspace", messages)
@@ -3860,6 +3869,10 @@ func (s *fakeAgentManagementService) ListAgentWorkflowBindingCandidates(context.
 		return s.workflowCandidatesResp, nil
 	}
 	return &dto.AgentWorkflowBindingCandidatesResponse{}, nil
+}
+
+func (s *fakeAgentManagementService) ListAgentIntegrationConnectionCandidates(context.Context, string, string, dto.AgentIntegrationConnectionCandidatesRequest) (*dto.AgentIntegrationConnectionCandidatesResponse, error) {
+	return nil, nil
 }
 
 func (s *fakeAgentManagementService) ListAgentMemorySlots(context.Context, string, string) ([]dto.AgentMemorySlotConfig, error) {

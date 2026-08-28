@@ -84,25 +84,33 @@ type StopConversationResponse struct {
 }
 
 type SkillResponse struct {
-	SkillID          string                `json:"skill_id"`
-	Source           string                `json:"source"`
-	Name             string                `json:"name"`
-	Description      string                `json:"description"`
-	WhenToUse        string                `json:"when_to_use"`
-	Display          SkillDisplayResponse  `json:"display"`
-	RuntimeType      string                `json:"runtime_type"`
-	Enabled          bool                  `json:"enabled"`
-	HasTools         bool                  `json:"has_tools"`
-	HasReferences    bool                  `json:"has_references"`
-	HasScripts       bool                  `json:"has_scripts"`
-	ScriptsSupported bool                  `json:"scripts_supported"`
-	MaxCallsPerTurn  int                   `json:"max_calls_per_turn"`
-	TimeoutSeconds   int                   `json:"timeout_seconds"`
-	Status           string                `json:"status"`
-	ValidationError  string                `json:"validation_error,omitempty"`
-	SupportedCallers []string              `json:"supported_callers,omitempty"`
-	RequiredConfig   []string              `json:"required_config,omitempty"`
-	Exposure         SkillExposureResponse `json:"exposure"`
+	SkillID                 string                                `json:"skill_id"`
+	Source                  string                                `json:"source"`
+	Name                    string                                `json:"name"`
+	Description             string                                `json:"description"`
+	WhenToUse               string                                `json:"when_to_use"`
+	Display                 SkillDisplayResponse                  `json:"display"`
+	RuntimeType             string                                `json:"runtime_type"`
+	Enabled                 bool                                  `json:"enabled"`
+	HasTools                bool                                  `json:"has_tools"`
+	HasReferences           bool                                  `json:"has_references"`
+	HasScripts              bool                                  `json:"has_scripts"`
+	ScriptsSupported        bool                                  `json:"scripts_supported"`
+	MaxCallsPerTurn         int                                   `json:"max_calls_per_turn"`
+	TimeoutSeconds          int                                   `json:"timeout_seconds"`
+	Status                  string                                `json:"status"`
+	ValidationError         string                                `json:"validation_error,omitempty"`
+	SupportedCallers        []string                              `json:"supported_callers,omitempty"`
+	RequiredConfig          []string                              `json:"required_config,omitempty"`
+	DependencyType          string                                `json:"dependency_type"`
+	IntegrationRequirements []SkillIntegrationRequirementResponse `json:"integration_requirements,omitempty"`
+	Exposure                SkillExposureResponse                 `json:"exposure"`
+}
+
+type SkillIntegrationRequirementResponse struct {
+	IntegrationID string   `json:"integration_id"`
+	ActionIDs     []string `json:"action_ids,omitempty"`
+	Required      bool     `json:"required"`
 }
 
 type SkillExposureResponse struct {

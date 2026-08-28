@@ -7,6 +7,10 @@ import type {
   WorkspaceQuotaData,
   GetInvocationLogParams,
   InvocationLogData,
+  InvocationContentSettings,
+  UpdateInvocationContentSettingsInput,
+  InvocationContentPurgeResult,
+  InvocationContentDetail,
 } from './types/statistics';
 
 /**
@@ -30,6 +34,24 @@ class StatisticsService extends BaseService {
 
   getInvocationLog(params: GetInvocationLogParams): Promise<ApiResponseData<InvocationLogData>> {
     return this.request('get', '/invocations', undefined, { params });
+  }
+
+  getInvocationContentSettings(): Promise<ApiResponseData<InvocationContentSettings>> {
+    return this.request('get', '/invocation-content/settings');
+  }
+
+  updateInvocationContentSettings(
+    input: UpdateInvocationContentSettingsInput
+  ): Promise<ApiResponseData<InvocationContentSettings>> {
+    return this.request('put', '/invocation-content/settings', input);
+  }
+
+  purgeInvocationContent(): Promise<ApiResponseData<InvocationContentPurgeResult>> {
+    return this.request('delete', '/invocation-content');
+  }
+
+  getInvocationContent(invocationId: string): Promise<ApiResponseData<InvocationContentDetail>> {
+    return this.request('get', `/invocations/${encodeURIComponent(invocationId)}/content`);
   }
 
   /**

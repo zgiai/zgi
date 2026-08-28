@@ -8,12 +8,13 @@ import {
 
 const siteMapRoutes = new Set(ZGI_CONSOLE_SITE_MAP.map(route => route.href));
 
-for (const href of ['/console/workflows', '/console/skills']) {
+for (const href of ['/console/workflows', '/console/skills', '/console/integrations']) {
   assert.equal(siteMapRoutes.has(href), true, `site map must include ${href}`);
   assert.equal(normalizeZGIConsoleNavigationHref(href), href, `${href} must be navigable`);
 }
 
 for (const href of [
+  '/console/integrations/oauth/result',
   '/console/workflows/workflow-1',
   '/console/workflows/workflow-1/logs',
   '/console/workflows/workflow-1/api/keys',
@@ -38,7 +39,6 @@ for (const href of [
   '/console/settings',
   '/console/db/database-1/table',
   '/console/files/file-1',
-  '/console/integrations',
   '/console/workflows/workflow-1/api/unknown',
 ]) {
   assert.equal(normalizeZGIConsoleNavigationHref(href), null, `${href} must remain blocked`);

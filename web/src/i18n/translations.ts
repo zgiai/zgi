@@ -67,10 +67,10 @@ type ShiftingKeys<T, P extends string> = P extends `${infer Head}.${infer Tail}`
  * Scoped translation function type.
  * Provides type-safe translations for a specific namespace scope.
  */
-export type ScopedTranslations<P extends string> = (
-  key: ShiftingKeys<Messages, P>,
-  values?: Record<string, unknown>
-) => string;
+export interface ScopedTranslations<P extends string> {
+  (key: ShiftingKeys<Messages, P>, values?: Record<string, unknown>): string;
+  raw: (key: ShiftingKeys<Messages, P>) => unknown;
+}
 
 /**
  * Extract sub-keys for a specific namespace.

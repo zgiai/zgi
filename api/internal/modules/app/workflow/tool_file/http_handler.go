@@ -1,13 +1,17 @@
 package tool_file
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
@@ -18,6 +22,8 @@ type HTTPHandler struct {
 	manager   *ToolFileManager
 	signature *FileSignature
 }
+
+const maxDirectToolFileURLTTL = time.Hour
 
 func NewHTTPHandler(manager *ToolFileManager) *HTTPHandler {
 	return &HTTPHandler{
@@ -65,6 +71,28 @@ func (h *HTTPHandler) GetToolFile(c *gin.Context) {
 		}
 	}
 
+	download := shouldDownloadToolFile(c.Query("download"))
+	if shouldDirectDeliverToolFile(c.Query("delivery")) && !download && expiresAt != "" {
+		ttl, err := directToolFileURLTTL(expiresAt, time.Now())
+		if err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		directURL, supported, err := h.manager.GetPresignedFileURL(c.Request.Context(), toolFileID, ttl)
+		if err != nil {
+			if errors.Is(err, errToolFileDirectURL) {
+				response.Fail(c, response.ErrSystemError)
+			} else {
+				response.Fail(c, response.ErrFileNotFound)
+			}
+			return
+		}
+		if supported {
+			c.Redirect(http.StatusTemporaryRedirect, directURL)
+			return
+		}
+	}
+
 	fileData, mimeType, err := h.manager.GetFileBinary(c.Request.Context(), toolFileID)
 	if err != nil {
 		response.Fail(c, response.ErrFileNotFound)
@@ -73,12 +101,34 @@ func (h *HTTPHandler) GetToolFile(c *gin.Context) {
 
 	contentType := toolFileResponseContentType(mimeType)
 	c.Header("Content-Type", contentType)
-	if shouldDownloadToolFile(c.Query("download")) {
+	if download {
 		filename := toolFileDownloadFilename(c.Request.Context(), h.manager, toolFileID, rawToolFileID)
 		c.Header("Content-Disposition", toolFileContentDisposition(filename))
 	}
-	c.Header("Content-Length", strconv.Itoa(len(fileData)))
-	c.Data(http.StatusOK, contentType, fileData)
+	http.ServeContent(c.Writer, c.Request, rawToolFileID, time.Time{}, bytes.NewReader(fileData))
+}
+
+func shouldDirectDeliverToolFile(raw string) bool {
+	return strings.EqualFold(strings.TrimSpace(raw), "direct")
+}
+
+func directToolFileURLTTL(rawExpiresAt string, now time.Time) (time.Duration, error) {
+	expiresAt, err := strconv.ParseInt(rawExpiresAt, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid file URL expiry: %w", err)
+	}
+	if expiresAt == 0 {
+		return maxDirectToolFileURLTTL, nil
+	}
+
+	ttl := time.Unix(expiresAt, 0).Sub(now)
+	if ttl <= 0 {
+		return 0, fmt.Errorf("file URL has expired")
+	}
+	if ttl > maxDirectToolFileURLTTL {
+		return maxDirectToolFileURLTTL, nil
+	}
+	return ttl, nil
 }
 
 func toolFileResponseContentType(mimeType string) string {

@@ -9,6 +9,7 @@ type InvocationLogRequest struct {
 	CursorTime       *string `form:"cursor_time"`
 	CursorID         *string `form:"cursor_id" binding:"omitempty,max=100"`
 	Limit            int     `form:"limit" binding:"omitempty,min=1,max=100"`
+	IncludeSummary   *bool   `form:"include_summary"`
 }
 
 type InvocationLogSummary struct {
@@ -37,6 +38,8 @@ type InvocationLogItem struct {
 	StartedAt        int64   `json:"started_at"`
 	SettledAt        int64   `json:"settled_at"`
 	ErrorCode        *string `json:"error_code,omitempty"`
+	ContentAvailable bool    `json:"content_available"`
+	ContentExpiresAt *int64  `json:"content_expires_at,omitempty"`
 }
 
 type InvocationLogCursor struct {

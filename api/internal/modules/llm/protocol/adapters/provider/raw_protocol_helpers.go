@@ -51,6 +51,8 @@ type openAIUsageShape struct {
 	InputTokens      int `json:"input_tokens"`
 	OutputTokens     int `json:"output_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	VideoTokens      int `json:"video_tokens"`
+	TotalVideoTokens int `json:"total_video_tokens"`
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 }
@@ -66,9 +68,15 @@ func (u openAIUsageShape) toAdapterUsage() *adapter.Usage {
 	}
 	totalTokens := u.TotalTokens
 	if totalTokens == 0 {
+		totalTokens = u.VideoTokens
+	}
+	if totalTokens == 0 {
+		totalTokens = u.TotalVideoTokens
+	}
+	if totalTokens == 0 {
 		totalTokens = promptTokens + completionTokens
 	}
-	if promptTokens == 0 && completionTokens == 0 {
+	if promptTokens == 0 && completionTokens == 0 && totalTokens == 0 {
 		return nil
 	}
 	return &adapter.Usage{

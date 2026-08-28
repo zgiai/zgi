@@ -328,6 +328,7 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
               showWorkflowNodeDetail={showWorkflowNodeDetail}
               showWorkflowRunHeader={showWorkflowRunHeader}
               showWorkflowDetail={showWorkflowDetail}
+              showWorkflowFailureDetails={surface !== 'webapp'}
               hideCompletedWorkflowDetail={hideCompletedWorkflowDetail}
               allowWorkflowDetailExpand={allowWorkflowDetailExpand}
               defaultWorkflowDetailOpen={defaultWorkflowDetailOpen}

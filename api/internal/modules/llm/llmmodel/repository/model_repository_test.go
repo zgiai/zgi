@@ -36,6 +36,31 @@ func TestListAvailableFilteredExcludesDeprecatedModels(t *testing.T) {
 	}
 }
 
+func TestListAvailableFilteredPreservesMusicGenerationCapability(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	createModelRepositoryTestTable(t, db)
+
+	insertModelRepositoryTestModel(t, db, "11111111-1111-1111-1111-111111111111", "minimax", "music-3.0", "Music 3.0", "active")
+	if err := db.Table("llm_models").Where("name = ?", "music-3.0").Update("music_generation", true).Error; err != nil {
+		t.Fatalf("enable music generation: %v", err)
+	}
+
+	repo := NewModelRepository(db)
+	models, err := repo.ListAvailableFiltered(t.Context(), "minimax", "")
+	if err != nil {
+		t.Fatalf("ListAvailableFiltered() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models length = %d, want 1", len(models))
+	}
+	if !models[0].MusicGeneration {
+		t.Fatal("MusicGeneration = false, want true")
+	}
+}
+
 func TestListWithProviderIDAndStatusQualifiesModelStatus(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
@@ -110,6 +135,7 @@ func createFullModelRepositoryTestTable(t *testing.T, db *gorm.DB) {
 			image_generation BOOLEAN DEFAULT false,
 			speech_generation BOOLEAN DEFAULT false,
 			transcription BOOLEAN DEFAULT false,
+			music_generation BOOLEAN DEFAULT false,
 			translation BOOLEAN DEFAULT false,
 			moderation BOOLEAN DEFAULT false,
 			videos BOOLEAN DEFAULT false,
@@ -168,56 +194,7 @@ func createFullModelRepositoryTestTable(t *testing.T, db *gorm.DB) {
 
 func createModelRepositoryTestTable(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	if err := db.Exec(`
-		CREATE TABLE llm_models (
-			id TEXT PRIMARY KEY,
-			provider TEXT,
-			name TEXT,
-			display_name TEXT,
-			status TEXT,
-			use_cases TEXT DEFAULT '{}',
-			reasoning BOOLEAN DEFAULT false,
-			function_calling BOOLEAN DEFAULT false,
-			structured_output BOOLEAN DEFAULT false,
-			temperature BOOLEAN DEFAULT false,
-			top_p BOOLEAN DEFAULT false,
-			presence_penalty BOOLEAN DEFAULT false,
-			frequency_penalty BOOLEAN DEFAULT false,
-			logit_bias BOOLEAN DEFAULT false,
-			seed BOOLEAN DEFAULT false,
-			stop BOOLEAN DEFAULT false,
-			max_stop_sequences INTEGER DEFAULT 0,
-			vision BOOLEAN DEFAULT false,
-			json_mode BOOLEAN DEFAULT false,
-			streaming BOOLEAN DEFAULT false,
-			chat_completions BOOLEAN DEFAULT false,
-			embeddings BOOLEAN DEFAULT false,
-			image_generation BOOLEAN DEFAULT false,
-			speech_generation BOOLEAN DEFAULT false,
-			transcription BOOLEAN DEFAULT false,
-			moderation BOOLEAN DEFAULT false,
-			realtime BOOLEAN DEFAULT false,
-			batch BOOLEAN DEFAULT false,
-			assistants BOOLEAN DEFAULT false,
-			responses BOOLEAN DEFAULT false,
-			system_prompt BOOLEAN DEFAULT false,
-			logprobs BOOLEAN DEFAULT false,
-			web_search BOOLEAN DEFAULT false,
-			file_search BOOLEAN DEFAULT false,
-			code_interpreter BOOLEAN DEFAULT false,
-			computer_use BOOLEAN DEFAULT false,
-			mcp BOOLEAN DEFAULT false,
-			parallel_tool_calls BOOLEAN DEFAULT false,
-			reasoning_effort BOOLEAN DEFAULT false,
-			context_window INTEGER DEFAULT 0,
-			max_output_tokens INTEGER DEFAULT 0,
-			is_active BOOLEAN DEFAULT true,
-			sort_order INTEGER DEFAULT 0,
-			deleted_at DATETIME
-		)
-	`).Error; err != nil {
-		t.Fatalf("create llm_models: %v", err)
-	}
+	createFullModelRepositoryTestTable(t, db)
 }
 
 func createModelRepositoryProviderTestTable(t *testing.T, db *gorm.DB) {

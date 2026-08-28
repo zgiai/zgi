@@ -83,6 +83,8 @@ export interface RetrievalConfigModalProps {
   onSaveAsTest?: (config: InternalRetrievalConfig) => void;
   /** Whether graph search is enabled for this dataset */
   isGraphEnabled?: boolean;
+  /** Reason graph search cannot currently be selected */
+  graphUnavailableReason?: string;
 }
 
 export interface ExternalRetrievalConfigModalProps {

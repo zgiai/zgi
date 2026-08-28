@@ -9,6 +9,7 @@ import {
   Maximize2,
   Minimize2,
   Paperclip,
+  PlugZap,
   Send,
   Settings2,
   Shield,
@@ -46,6 +47,9 @@ import {
   tAttachmentForSurface,
   type AIChatComposerSurface,
 } from '@/components/chat/variants/aichat/input-area-utils';
+import { AIChatVoiceInputControl } from '@/components/chat/variants/aichat/voice/voice-input-control';
+import type { AIChatVoiceInputController } from '@/components/chat/variants/aichat/voice/use-agent-voice-input';
+import { AIChatSpeechAutoPlayControl } from '@/components/chat/variants/aichat/voice/speech-auto-play-control';
 
 interface AIChatInputToolbarProps {
   modelSelectorValue: AIChatModelValue;
@@ -76,6 +80,10 @@ interface AIChatInputToolbarProps {
   toolGovernancePermissionTier?: AIChatToolGovernancePermissionTier;
   enableUpload?: boolean;
   showFileLibraryPicker?: boolean;
+  showConnectedApps?: boolean;
+  connectedAppsLabel?: string;
+  connectedAppsSelectedCount?: number;
+  connectedAppsAttentionRequired?: boolean;
   showSkillManagement?: boolean;
   skillManagementLabel?: string;
   surface?: AIChatComposerSurface;
@@ -84,12 +92,18 @@ interface AIChatInputToolbarProps {
   onUploadDocument: () => void;
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
+  onOpenConnectedApps?: () => void;
   onOpenSkillManagement?: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
   onToggleComposerExpanded?: () => void;
   onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
   onSend: () => void | Promise<void>;
   onStop: () => void;
+  voiceInput?: AIChatVoiceInputController;
+  speechAutoPlay?: {
+    enabled: boolean;
+    onEnabledChange: (enabled: boolean) => void;
+  };
 }
 
 const TOOL_GOVERNANCE_PERMISSION_TIERS: AIChatToolGovernancePermissionTier[] = [
@@ -175,6 +189,10 @@ export function AIChatInputToolbar({
   toolGovernancePermissionTier = 'basic',
   enableUpload = true,
   showFileLibraryPicker = true,
+  showConnectedApps = false,
+  connectedAppsLabel,
+  connectedAppsSelectedCount = 0,
+  connectedAppsAttentionRequired = false,
   showSkillManagement = false,
   skillManagementLabel,
   surface = 'aichat',
@@ -183,12 +201,15 @@ export function AIChatInputToolbar({
   onUploadDocument,
   onUploadImage,
   onSelectFromFiles,
+  onOpenConnectedApps,
   onOpenSkillManagement,
   onMemoryEnabledChange,
   onToggleComposerExpanded,
   onToolGovernancePermissionTierChange,
   onSend,
   onStop,
+  voiceInput,
+  speechAutoPlay,
 }: AIChatInputToolbarProps) {
   const t = useT('webapp');
   const showStopButton = canStop ?? isSending;
@@ -309,6 +330,8 @@ export function AIChatInputToolbar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {speechAutoPlay ? <AIChatSpeechAutoPlayControl {...speechAutoPlay} /> : null}
+        {voiceInput ? <AIChatVoiceInputControl {...voiceInput} /> : null}
         {showMemoryToggle ? (
           <AIChatMemoryModule disabled={isSending} onEnabledChange={onMemoryEnabledChange} />
         ) : null}
@@ -380,6 +403,37 @@ export function AIChatInputToolbar({
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
+        ) : null}
+        {showConnectedApps && onOpenConnectedApps && connectedAppsLabel ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                isIcon
+                variant="ghost"
+                className={cn(
+                  'relative size-8 rounded-full',
+                  connectedAppsAttentionRequired && 'text-warning'
+                )}
+                onClick={onOpenConnectedApps}
+                aria-label={connectedAppsLabel}
+              >
+                <PlugZap className="size-4" />
+                {connectedAppsSelectedCount > 0 ? (
+                  <span
+                    className={cn(
+                      'absolute -right-0.5 -top-0.5 flex min-w-4 items-center justify-center rounded-full border border-background bg-primary px-1 text-[9px] font-semibold leading-[14px] text-primary-foreground',
+                      connectedAppsAttentionRequired && 'bg-warning text-warning-foreground'
+                    )}
+                    aria-hidden="true"
+                  >
+                    {connectedAppsSelectedCount > 9 ? '9+' : connectedAppsSelectedCount}
+                  </span>
+                ) : null}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{connectedAppsLabel}</TooltipContent>
+          </Tooltip>
         ) : null}
         {showSkillManagement && onOpenSkillManagement && skillManagementLabel ? (
           <Tooltip>

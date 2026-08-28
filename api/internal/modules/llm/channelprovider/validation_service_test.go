@@ -695,6 +695,14 @@ func TestValidatorValidateModelsForCreation_ScopesGlobalModelsToChannelProvider(
 					"text-chat",
 				},
 			},
+			"doubao-seedance-2-0-fast-260128": {
+				Model:    "doubao-seedance-2-0-fast-260128",
+				Provider: "doubao",
+				UseCases: llmmodelmodel.StringArray{
+					string(llmmodelmodel.UseCaseVideoGen),
+				},
+				Videos: true,
+			},
 		},
 	}
 	validator := NewValidator(nil, nil)
@@ -729,6 +737,31 @@ func TestValidatorValidateModelsForCreation_ScopesGlobalModelsToChannelProvider(
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+
+	result, err = validator.ValidateModelsForCreation(
+		context.Background(),
+		uuid.Nil,
+		"openai",
+		"key",
+		"https://api.openai.com/v1",
+		[]string{"doubao-seedance-2-0-fast-260128"},
+	)
+	require.Error(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, err.Error(), "doubao-seedance-2-0-fast-260128")
+
+	result, err = validator.ValidateModelsForCreation(
+		context.Background(),
+		uuid.Nil,
+		"openai",
+		"key",
+		"https://api.agicto.cn/v1",
+		[]string{"doubao-seedance-2-0-fast-260128"},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+	require.Equal(t, []string{"doubao-seedance-2-0-fast-260128"}, result.NormalizedModels)
 }
 
 func TestValidatorTestModel_RejectsConflictingTestMethod(t *testing.T) {
@@ -1031,6 +1064,131 @@ func TestValidatorValidateModelsForCreation_ImageModelUsesLocalMetadataOnly(t *t
 	require.Equal(t, 1, result.Report[keyValidatedCount])
 	require.Equal(t, 1, result.Report[keyPassedCount])
 	require.Equal(t, []string{}, result.Report[keyProbedModels])
+}
+
+func TestValidatorValidateModelsForCreation_AllowsMusicAndAudioModels(t *testing.T) {
+	modelRepo := &fakeModelLookupRepo{models: map[string]*llmmodelmodel.LLMModel{
+		"music-2.6": {
+			Model: "music-2.6", Provider: "minimax",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseMusicGen)}, MusicGeneration: true,
+		},
+		"music-3.0": {
+			Model: "music-3.0", Provider: "minimax",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseMusicGen)}, MusicGeneration: true,
+		},
+		"seed-tts-2.0": {
+			Model: "seed-tts-2.0", Provider: "doubao",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseTextToSpeech)}, SpeechGeneration: true,
+		},
+		"volc.seedasr.sauc.duration": {
+			Model: "volc.seedasr.sauc.duration", Provider: "doubao",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseSpeechToText)}, Transcription: true,
+		},
+	}}
+
+	for _, test := range []struct {
+		name     string
+		provider string
+		models   []string
+	}{
+		{name: "minimax music", provider: "minimax", models: []string{"music-2.6", "music-3.0"}},
+		{name: "doubao audio", provider: "doubao-speech", models: []string{"seed-tts-2.0", "volc.seedasr.sauc.duration"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			validator := NewValidator(nil, nil)
+			validator.modelRepo = modelRepo
+
+			result, err := validator.ValidateModelsForCreation(
+				t.Context(), uuid.Nil, test.provider, "key", "", test.models,
+			)
+			require.NoError(t, err)
+			require.Equal(t, test.models, result.NormalizedModels)
+			require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
+		})
+	}
+}
+
+func TestValidatorValidateModelsForCreation_EnforcesDoubaoCredentialScopes(t *testing.T) {
+	modelRepo := &fakeModelLookupRepo{models: map[string]*llmmodelmodel.LLMModel{
+		"doubao-seed-2.0-lite": {
+			Model: "doubao-seed-2.0-lite", Provider: "doubao",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseTextChat)}, ChatCompletions: true,
+		},
+		"seed-tts-2.0": {
+			Model: "seed-tts-2.0", Provider: "doubao",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseTextToSpeech)}, SpeechGeneration: true,
+		},
+		"volc.seedasr.sauc.duration": {
+			Model: "volc.seedasr.sauc.duration", Provider: "doubao",
+			UseCases: llmmodelmodel.StringArray{string(llmmodelmodel.UseCaseSpeechToText)}, Transcription: true,
+		},
+	}}
+
+	for _, test := range []struct {
+		name     string
+		provider string
+		models   []string
+		wantErr  string
+	}{
+		{name: "ark accepts ark models", provider: "doubao", models: []string{"doubao-seed-2.0-lite"}},
+		{name: "ark rejects speech models", provider: "doubao", models: []string{"seed-tts-2.0"}, wantErr: `model "seed-tts-2.0" requires channel_provider "doubao-speech"`},
+		{name: "speech accepts tts and stt", provider: "doubao-speech", models: []string{"seed-tts-2.0", "volc.seedasr.sauc.duration"}},
+		{name: "speech rejects ark models", provider: "doubao-speech", models: []string{"doubao-seed-2.0-lite"}, wantErr: `model "doubao-seed-2.0-lite" requires channel_provider "doubao"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			validator := NewValidator(nil, nil)
+			validator.modelRepo = modelRepo
+
+			result, err := validator.ValidateModelsForCreation(
+				t.Context(), uuid.Nil, test.provider, "key", "", test.models,
+			)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.models, result.NormalizedModels)
+		})
+	}
+}
+
+func TestValidatorTestModel_SkipsMusicAndAudioWorkspaceModels(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		provider string
+		useCase  llmmodelmodel.UseCase
+		model    *llmmodelmodel.LLMModel
+	}{
+		{
+			name: "music", provider: "minimax", useCase: llmmodelmodel.UseCaseMusicGen,
+			model: &llmmodelmodel.LLMModel{Model: "music-3.0", Provider: "minimax", MusicGeneration: true, SupportsStreaming: true},
+		},
+		{
+			name: "speech", provider: "doubao-speech", useCase: llmmodelmodel.UseCaseTextToSpeech,
+			model: &llmmodelmodel.LLMModel{Model: "seed-tts-2.0", Provider: "doubao", SpeechGeneration: true, SupportsStreaming: true},
+		},
+		{
+			name: "transcription", provider: "doubao-speech", useCase: llmmodelmodel.UseCaseSpeechToText,
+			model: &llmmodelmodel.LLMModel{Model: "volc.seedasr.sauc.duration", Provider: "doubao", Transcription: true, SupportsStreaming: true},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.model.UseCases = llmmodelmodel.StringArray{string(test.useCase)}
+			fakeAdapter := &fakeValidationAdapter{}
+			validator := NewValidator(nil, nil)
+			validator.modelRepo = &fakeModelLookupRepo{models: map[string]*llmmodelmodel.LLMModel{test.model.Model: test.model}}
+			validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+				return fakeAdapter, nil
+			}
+
+			result, err := validator.TestModel(t.Context(), uuid.Nil, test.provider, "key", "", test.model.Model, "", nil)
+			require.NoError(t, err)
+			require.Equal(t, TestStatusSkipped, result.Status)
+			require.Equal(t, string(test.useCase), result.UseCase)
+			require.Zero(t, fakeAdapter.chatCalls)
+			require.Zero(t, fakeAdapter.streamCalls)
+		})
+	}
 }
 
 func TestValidatorValidateModelsForCreation_UsesLocalMetadataOnlyAndIgnoresListing(t *testing.T) {

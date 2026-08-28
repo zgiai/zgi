@@ -77,6 +77,7 @@ type PublishedModel struct {
 	IsSystemEnabled        bool
 	SupportedParameters    json.RawMessage
 	ConfigParameters       json.RawMessage
+	DefaultParameters      llmmodel.JSONObject
 	Endpoints              *llmmodel.ModelEndpoints
 	EndpointsAuthoritative bool
 	Features               *llmmodel.ModelFeatures
@@ -654,6 +655,9 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	if len(model.ConfigParameters) > 0 && hasColumn(db, "llm_models", "config_parameters") {
 		values["config_parameters"] = serializeConfigParameters(model.ConfigParameters)
 	}
+	if len(model.DefaultParameters) > 0 && hasColumn(db, "llm_models", "default_parameters") {
+		values["default_parameters"] = serializeJSONMap(map[string]interface{}(model.DefaultParameters))
+	}
 	applyPublishedLifecycleColumns(db, values, model)
 
 	endpointColumns := endpointColumnsForPublishedModel(useCases, model.Endpoints, model.EndpointsAuthoritative)
@@ -725,6 +729,7 @@ func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.Mod
 			resolved.Moderation = resolved.Moderation || endpoints.Moderation
 			resolved.Videos = resolved.Videos || endpoints.Videos
 			resolved.ImageEdit = resolved.ImageEdit || endpoints.ImageEdit
+			resolved.MusicGeneration = resolved.MusicGeneration || endpoints.MusicGeneration
 		}
 	}
 
@@ -744,6 +749,7 @@ func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.Mod
 		"moderation":        resolved.Moderation,
 		"videos":            resolved.Videos,
 		"image_edit":        resolved.ImageEdit,
+		"music_generation":  resolved.MusicGeneration,
 	}
 }
 

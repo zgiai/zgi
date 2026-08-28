@@ -643,6 +643,40 @@ func normalizeAgentWorkflowBindings(input []dto.AgentWorkflowBinding) []dto.Agen
 	return out
 }
 
+func normalizeAgentIntegrationBindings(input []dto.AgentIntegrationBinding) []dto.AgentIntegrationBinding {
+	byIntegrationID := make(map[string]dto.AgentIntegrationBinding, len(input))
+	for _, binding := range input {
+		connectionID := strings.ToLower(strings.TrimSpace(binding.ConnectionID))
+		integrationID := strings.ToLower(strings.TrimSpace(binding.IntegrationID))
+		if connectionID == "" || integrationID == "" {
+			continue
+		}
+		accessMode := strings.ToLower(strings.TrimSpace(binding.AccessMode))
+		if accessMode == "" {
+			accessMode = "read"
+		}
+		if accessMode != "read" && accessMode != "write" {
+			continue
+		}
+		byIntegrationID[integrationID] = dto.AgentIntegrationBinding{
+			ConnectionID:     connectionID,
+			IntegrationID:    integrationID,
+			AccessMode:       accessMode,
+			AllowedActionIDs: normalizeStringIDs(binding.AllowedActionIDs),
+		}
+	}
+	integrationIDs := make([]string, 0, len(byIntegrationID))
+	for integrationID := range byIntegrationID {
+		integrationIDs = append(integrationIDs, integrationID)
+	}
+	sort.Strings(integrationIDs)
+	out := make([]dto.AgentIntegrationBinding, 0, len(integrationIDs))
+	for _, integrationID := range integrationIDs {
+		out = append(out, byIntegrationID[integrationID])
+	}
+	return out
+}
+
 func workflowStartInputsFromGraph(graph string) []dto.AgentWorkflowStartInput {
 	graph = strings.TrimSpace(graph)
 	if graph == "" {
@@ -849,6 +883,7 @@ func resolveAgentBindingAuthorizations(
 		current.KnowledgeDatasetIDs,
 		current.DatabaseBindings,
 		current.WorkflowBindings,
+		current.IntegrationBindings,
 	)
 	previousByKey := agentBindingAuthorizationMap(bindingAuthorizationsForRuntimeMode(previous))
 	providedByKey := agentBindingAuthorizationMap(normalizeAgentBindingAuthorizations(current.BindingAuthorizations))
@@ -884,7 +919,7 @@ func resolveAgentBindingAuthorizations(
 }
 
 func bindingAuthorizationsForRuntimeMode(mode dto.AgentRuntimeModeConfig) []dto.AgentBindingAuthorization {
-	desired := agentBindingAuthorizationDescriptors(mode.KnowledgeDatasetIDs, mode.DatabaseBindings, mode.WorkflowBindings)
+	desired := agentBindingAuthorizationDescriptors(mode.KnowledgeDatasetIDs, mode.DatabaseBindings, mode.WorkflowBindings, mode.IntegrationBindings)
 	explicitByKey := agentBindingAuthorizationMap(normalizeAgentBindingAuthorizations(mode.BindingAuthorizations))
 	legacyByKey := agentBindingAuthorizationMap(legacyBindingAuthorizations(
 		desired,
@@ -913,6 +948,7 @@ func agentBindingAuthorizationDescriptors(
 	knowledgeDatasetIDs []string,
 	databaseBindings []dto.AgentDatabaseBinding,
 	workflowBindings []dto.AgentWorkflowBinding,
+	integrationBindings []dto.AgentIntegrationBinding,
 ) []dto.AgentBindingAuthorization {
 	descriptors := make([]dto.AgentBindingAuthorization, 0)
 	for _, datasetID := range normalizeStringIDs(knowledgeDatasetIDs) {
@@ -948,6 +984,15 @@ func agentBindingAuthorizationDescriptors(
 			ResourceID:       workflow.BindingID,
 			ParentResourceID: workflow.AgentID,
 			AccessMode:       "execute",
+		})
+	}
+	for _, integration := range normalizeAgentIntegrationBindings(integrationBindings) {
+		descriptors = append(descriptors, dto.AgentBindingAuthorization{
+			BindingType:      string(agentbindings.BindingTypeIntegrationConnection),
+			ResourceID:       integration.ConnectionID,
+			ParentResourceID: integration.IntegrationID,
+			AccessMode:       integration.AccessMode,
+			AllowedActionIDs: append([]string(nil), integration.AllowedActionIDs...),
 		})
 	}
 	return normalizeAgentBindingAuthorizations(descriptors)
@@ -991,6 +1036,11 @@ func normalizeAgentBindingAuthorizations(input []dto.AgentBindingAuthorization) 
 		authorization.ResourceID = strings.TrimSpace(authorization.ResourceID)
 		authorization.ParentResourceID = strings.TrimSpace(authorization.ParentResourceID)
 		authorization.AccessMode = strings.TrimSpace(authorization.AccessMode)
+		if agentbindings.BindingType(authorization.BindingType) == agentbindings.BindingTypeIntegrationConnection {
+			authorization.AllowedActionIDs = normalizeStringIDs(authorization.AllowedActionIDs)
+		} else {
+			authorization.AllowedActionIDs = nil
+		}
 		authorization.BoundByAccountID = strings.TrimSpace(authorization.BoundByAccountID)
 		if authorization.BindingType == "" || authorization.ResourceID == "" || authorization.AccessMode == "" {
 			continue
@@ -1016,12 +1066,16 @@ func agentBindingAuthorizationMap(input []dto.AgentBindingAuthorization) map[str
 }
 
 func agentBindingAuthorizationKey(authorization dto.AgentBindingAuthorization) string {
-	return agentBindingItemKey(
+	key := agentBindingItemKey(
 		strings.TrimSpace(authorization.BindingType),
 		strings.TrimSpace(authorization.ParentResourceID),
 		strings.TrimSpace(authorization.ResourceID),
 		strings.TrimSpace(authorization.AccessMode),
 	)
+	if agentbindings.BindingType(strings.TrimSpace(authorization.BindingType)) == agentbindings.BindingTypeIntegrationConnection {
+		key += "\x00" + strings.Join(normalizeStringIDs(authorization.AllowedActionIDs), "\x00")
+	}
+	return key
 }
 
 func validAgentBindingAuthorization(authorization dto.AgentBindingAuthorization) bool {
@@ -1035,21 +1089,26 @@ func agentBindingAuthorizationsFromRows(rows []agentbindings.Binding) []dto.Agen
 		case agentbindings.BindingTypeKnowledgeDataset,
 			agentbindings.BindingTypeDatabase,
 			agentbindings.BindingTypeDatabaseTable,
-			agentbindings.BindingTypeWorkflow:
+			agentbindings.BindingTypeWorkflow,
+			agentbindings.BindingTypeIntegrationConnection:
 		default:
 			continue
 		}
 		if row.AuthorizedBy == nil || row.AuthorizedAt == nil || *row.AuthorizedBy == uuid.Nil {
 			continue
 		}
-		authorizations = append(authorizations, dto.AgentBindingAuthorization{
+		authorization := dto.AgentBindingAuthorization{
 			BindingType:      string(row.BindingType),
 			ResourceID:       row.ResourceID,
 			ParentResourceID: row.ParentResourceID,
 			AccessMode:       row.AccessMode,
 			BoundByAccountID: row.AuthorizedBy.String(),
 			BoundAtUnix:      row.AuthorizedAt.Unix(),
-		})
+		}
+		if row.BindingType == agentbindings.BindingTypeIntegrationConnection {
+			authorization.AllowedActionIDs = agentbindings.IntegrationAllowedActionIDs(row)
+		}
+		authorizations = append(authorizations, authorization)
 	}
 	return normalizeAgentBindingAuthorizations(authorizations)
 }
@@ -1159,6 +1218,23 @@ func workflowBindingsEqual(left []dto.AgentWorkflowBinding, right []dto.AgentWor
 	return true
 }
 
+func integrationBindingsEqual(left []dto.AgentIntegrationBinding, right []dto.AgentIntegrationBinding) bool {
+	left = normalizeAgentIntegrationBindings(left)
+	right = normalizeAgentIntegrationBindings(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].ConnectionID != right[i].ConnectionID ||
+			left[i].IntegrationID != right[i].IntegrationID ||
+			left[i].AccessMode != right[i].AccessMode ||
+			!stringIDsEqual(left[i].AllowedActionIDs, right[i].AllowedActionIDs) {
+			return false
+		}
+	}
+	return true
+}
+
 func agentDatabaseBindingsFromSnapshot(value interface{}) []dto.AgentDatabaseBinding {
 	payload, err := json.Marshal(value)
 	if err != nil {
@@ -1181,4 +1257,16 @@ func agentWorkflowBindingsFromSnapshot(value interface{}) []dto.AgentWorkflowBin
 		return []dto.AgentWorkflowBinding{}
 	}
 	return normalizeAgentWorkflowBindings(bindings)
+}
+
+func agentIntegrationBindingsFromSnapshot(value interface{}) []dto.AgentIntegrationBinding {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return []dto.AgentIntegrationBinding{}
+	}
+	var bindings []dto.AgentIntegrationBinding
+	if err := json.Unmarshal(payload, &bindings); err != nil {
+		return []dto.AgentIntegrationBinding{}
+	}
+	return normalizeAgentIntegrationBindings(bindings)
 }

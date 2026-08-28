@@ -853,6 +853,116 @@ func TestAdapterRerank_GTERerank_UsesNativeAPI(t *testing.T) {
 	}
 }
 
+func TestAdapterCreateImage_AddsReferenceImageContentForQwenImage(t *testing.T) {
+	t.Helper()
+
+	n := 2
+	var (
+		gotPath    string
+		gotAuth    string
+		gotPayload map[string]any
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"output":{"choices":[{"message":{"role":"assistant","content":[{"image":"https://cdn.example.com/out.png"}]}}]},
+			"usage":{"image_count":1}
+		}`)
+	}))
+	defer server.Close()
+
+	a, err := newTestAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v1",
+	})
+	if err != nil {
+		t.Fatalf("newTestAdapter() error = %v", err)
+	}
+
+	resp, err := a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:             "qwen-image-plus",
+		Prompt:            "change the style",
+		Size:              "1024x1024",
+		N:                 &n,
+		ReferenceImageURL: "https://files.example.com/reference.png?sign=1",
+	})
+	if err != nil {
+		t.Fatalf("CreateImage() error = %v", err)
+	}
+
+	if gotPath != "/api/v1/services/aigc/multimodal-generation/generation" {
+		t.Fatalf("path = %q, want %q", gotPath, "/api/v1/services/aigc/multimodal-generation/generation")
+	}
+	if gotAuth != "Bearer test-key" {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer test-key")
+	}
+	if got := gotPayload["model"]; got != "qwen-image-plus" {
+		t.Fatalf("payload.model = %#v, want %q", got, "qwen-image-plus")
+	}
+	input, ok := gotPayload["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload.input = %#v, want object", gotPayload["input"])
+	}
+	messages, ok := input["messages"].([]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("payload.input.messages = %#v, want one message", input["messages"])
+	}
+	message, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("message = %#v, want object", messages[0])
+	}
+	content, ok := message["content"].([]any)
+	if !ok || len(content) != 2 {
+		t.Fatalf("message.content = %#v, want text plus reference image", message["content"])
+	}
+	if got := content[0].(map[string]any)["image"]; got != "https://files.example.com/reference.png?sign=1" {
+		t.Fatalf("content[0].image = %#v, want reference image url", got)
+	}
+	if got := content[1].(map[string]any)["text"]; got != "change the style" {
+		t.Fatalf("content[1].text = %#v, want prompt", got)
+	}
+	parameters, ok := gotPayload["parameters"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload.parameters = %#v, want object", gotPayload["parameters"])
+	}
+	if got := parameters["size"]; got != "1024*1024" {
+		t.Fatalf("payload.parameters.size = %#v, want normalized size", got)
+	}
+	if got := parameters["n"]; got != float64(n) {
+		t.Fatalf("payload.parameters.n = %#v, want %d", got, n)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].URL != "https://cdn.example.com/out.png" {
+		t.Fatalf("response data = %#v, want generated image url", resp.Data)
+	}
+}
+
+func TestAdapterCreateImage_RejectsInvalidReferenceImageURLForQwenImage(t *testing.T) {
+	t.Helper()
+
+	a, err := newTestAdapter(&adapter.AdapterConfig{APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("newTestAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:             "qwen-image-plus",
+		Prompt:            "change the style",
+		ReferenceImageURL: "file:///tmp/reference.png",
+	})
+	if !errors.Is(err, adapter.ErrInvalidRequest) {
+		t.Fatalf("CreateImage() error = %v, want ErrInvalidRequest", err)
+	}
+}
+
 func TestAdapterListModels_UsesUpstreamModelsEndpointWithoutGuessingCapabilities(t *testing.T) {
 	t.Helper()
 

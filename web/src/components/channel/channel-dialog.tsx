@@ -30,6 +30,7 @@ import ChannelProviderSelector, {
   getChannelProviderOption,
 } from '@/components/channel/channel-provider-selector';
 import { ProviderIcon } from '@/components/common/provider-icon';
+import { isDoubaoSpeechModel } from '@/components/channel/channel-model-scope';
 import {
   CHANNEL_INITIAL_CREDIT_MAX,
   CHANNEL_POINTS_PER_USD,
@@ -41,6 +42,7 @@ const DEFAULT_INITIAL_FUNDS_USD = '100.00';
 
 type ChannelSetupCategory = 'common' | 'aggregator' | 'advanced';
 type ChannelSetupKind = 'direct' | 'aggregator' | 'compatible' | 'local' | 'custom';
+type ChannelModelScope = 'speech' | 'non-speech';
 
 interface ChannelSetupOption {
   id: string;
@@ -51,6 +53,7 @@ interface ChannelSetupOption {
   capabilityKey: string;
   channelProvider: string;
   providerFilter?: string;
+  modelScope?: ChannelModelScope;
   icon?: string;
   defaultApiBaseUrl?: string;
   lockProtocol?: boolean;
@@ -81,6 +84,33 @@ const CHANNEL_SETUP_OPTIONS: ChannelSetupOption[] = [
     channelProvider: 'qwen',
     providerFilter: 'qwen',
     icon: 'qwen',
+    lockProtocol: true,
+  },
+  {
+    id: 'doubao',
+    category: 'common',
+    kind: 'direct',
+    labelKey: 'dialog.setup.providers.doubao.label',
+    descriptionKey: 'dialog.setup.providers.doubao.description',
+    capabilityKey: 'dialog.setup.providers.doubao.capabilities',
+    channelProvider: 'doubao',
+    providerFilter: 'doubao',
+    modelScope: 'non-speech',
+    icon: 'doubao',
+    lockProtocol: true,
+  },
+  {
+    id: 'doubao-speech',
+    category: 'common',
+    kind: 'direct',
+    labelKey: 'dialog.setup.providers.doubaoSpeech.label',
+    descriptionKey: 'dialog.setup.providers.doubaoSpeech.description',
+    capabilityKey: 'dialog.setup.providers.doubaoSpeech.capabilities',
+    channelProvider: 'doubao-speech',
+    providerFilter: 'doubao',
+    modelScope: 'speech',
+    icon: 'doubao',
+    defaultApiBaseUrl: 'https://openspeech.bytedance.com',
     lockProtocol: true,
   },
   {
@@ -396,12 +426,22 @@ function ChannelForm({
     () => selectedProviderOption?.provider || getMappedProvider(channelProvider),
     [channelProvider, selectedProviderOption]
   );
-  const effectiveProviderFilter =
-    mode === 'create' && setupOption?.providerFilter
-      ? setupOption.providerFilter
-      : lockChannelProvider
-        ? mappedProvider
-        : undefined;
+  const currentSetupOption = setupOption ?? getSetupOption(channelProvider);
+  const effectiveProviderFilter = currentSetupOption?.providerFilter
+    ? currentSetupOption.providerFilter
+    : lockChannelProvider
+      ? mappedProvider
+      : undefined;
+  const effectiveModelFilter = React.useMemo(() => {
+    switch (currentSetupOption?.modelScope) {
+      case 'speech':
+        return isDoubaoSpeechModel;
+      case 'non-speech':
+        return (model: ModelItem) => !isDoubaoSpeechModel(model);
+      default:
+        return undefined;
+    }
+  }, [currentSetupOption?.modelScope]);
 
   // Stable callbacks to prevent child component re-renders when parent re-renders
 
@@ -772,6 +812,11 @@ function ChannelForm({
               onChange={e => setApiBaseUrl(e.target.value)}
               placeholder={apiBaseUrlPlaceholder}
             />
+            {channelProvider === 'doubao-speech' && (
+              <p className="text-xs text-muted-foreground">
+                {t('dialog.hints.doubaoSpeechBaseUrl')}
+              </p>
+            )}
           </div>
           {mode === 'create' && (
             <div className="space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3">
@@ -890,6 +935,7 @@ function ChannelForm({
             preferredProvider={effectiveProviderFilter || mappedProvider}
             autoCollapseOthers={(effectiveProviderFilter || mappedProvider) !== 'all'}
             providerFilter={effectiveProviderFilter}
+            itemFilter={effectiveModelFilter}
             selectionPolicy="catalog"
           />
         </div>

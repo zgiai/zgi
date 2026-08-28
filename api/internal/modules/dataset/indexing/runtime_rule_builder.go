@@ -27,8 +27,8 @@ func (b *RuntimeRuleBuilder) BuildElementGroupRule() (string, map[string]interfa
 		"table_child_max_chars": 256,
 		"subchunk_segmentation": map[string]interface{}{
 			"separator":     "\n",
-			"max_tokens":    220,
-			"chunk_overlap": 30,
+			"max_tokens":    DefaultParagraphChildMaxChars,
+			"chunk_overlap": DefaultParagraphChildOverlapChars,
 		},
 	}
 }

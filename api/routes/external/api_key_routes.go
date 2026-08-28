@@ -15,11 +15,14 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	"github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
@@ -27,7 +30,7 @@ import (
 )
 
 // RegisterAPIKeyRoutes registers external API routes with API key authentication
-func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory) {
+func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory, manifestResolver skills.ToolGovernanceManifestResolver, integrationRegistry *integrations.Registry, actionProjections integrationmetatools.ActionProjectionResolver) {
 	// Create repositories
 	workflowRepo := workflow.NewWorkflowRepository(db)
 	workflowRunLogRepo := workflow.NewWorkflowRunLogRepository(db)
@@ -74,15 +77,16 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		fileService,
 		contentExtractor,
 		enterpriseService,
-		newExternalSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService),
+		newExternalSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolver),
 		memoryService,
 		agentMemoryService,
+		actionProjections,
 	)
 	var defaultModelResolver llmdefaultservice.DefaultModelResolver
 	if graphFlowService != nil {
 		defaultModelResolver = graphFlowService.DefaultModelSvc
 	}
-	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
+	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db, integrationRegistry)
 	agentHandler := agents.NewAgentsHandler(agentService, nil, accountService, enterpriseService, db, chatRuntimeService)
 	agentHandler.SetFileService(fileService)
 	agentHandler.SetWorkflowContinuationRunner(internalWorkflowHandler)
@@ -90,6 +94,30 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	externalGroup := r.Group("/v1")
 	externalGroup.Use(middleware.APIKeyAuthMiddleware(db))
 	externalGroup.Use(middleware.APIKeyUsageLoggingMiddleware(db)) // Log API key usage
+	withAgentAPIKeyContext := func(handler gin.HandlerFunc) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			value, exists := c.Get("api_key_info")
+			keyInfo, ok := value.(*middleware.APIKeyInfo)
+			if !exists || !ok || keyInfo == nil {
+				c.AbortWithStatus(401)
+				return
+			}
+			util.SetWorkspaceScopeCompat(c, keyInfo.TenantID.String())
+			c.Set("workspace_id", keyInfo.TenantID.String())
+			if enterpriseService != nil {
+				if org, err := enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), keyInfo.TenantID.String()); err == nil && org != nil && org.ID != "" {
+					util.SetOrganizationID(c, org.ID)
+				} else {
+					util.SetOrganizationID(c, keyInfo.TenantID.String())
+				}
+			} else {
+				util.SetOrganizationID(c, keyInfo.TenantID.String())
+			}
+			c.Set("account_id", keyInfo.ID.String())
+			c.Set("agent_id", keyInfo.AgentID.String())
+			handler(c)
+		}
+	}
 	{
 		// Workflow execution endpoint: delegate to internal handler RunPublishedWorkflow
 		externalGroup.POST("/workflows/run", func(c *gin.Context) {
@@ -165,6 +193,12 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 			}
 			agentHandler.ChatAPIKeyAgent(c)
 		})
+		externalGroup.GET("/agents/memory", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemory))
+		externalGroup.GET("/agents/memory/export", withAgentAPIKeyContext(agentHandler.ExportAPIKeyAgentMemory))
+		externalGroup.PUT("/agents/memory/:key", withAgentAPIKeyContext(agentHandler.PutAPIKeyAgentMemory))
+		externalGroup.DELETE("/agents/memory/:key", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentMemoryValue))
+		externalGroup.DELETE("/agents/memory", withAgentAPIKeyContext(agentHandler.DeleteAllAPIKeyAgentMemory))
+		externalGroup.POST("/agents/memory/operations/:operation_id/undo", withAgentAPIKeyContext(agentHandler.UndoAPIKeyAgentMemoryOperation))
 		externalGroup.GET("/agents/conversations/:conversation_id/events", func(c *gin.Context) {
 			if v, exists := c.Get("api_key_info"); exists {
 				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {

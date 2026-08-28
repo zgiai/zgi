@@ -10,9 +10,12 @@ import (
 
 	"github.com/google/uuid"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"gorm.io/gorm/clause"
 )
 
@@ -120,6 +123,221 @@ func (s *agentsService) ListAgentSkillCandidates(ctx context.Context, agentID, a
 	resp.HasMore = page*limit < resp.Total
 	resp.Count = len(resp.Data)
 	return resp, nil
+}
+
+func (s *agentsService) ListAgentIntegrationConnectionCandidates(
+	ctx context.Context,
+	agentID string,
+	accountID string,
+	req dto.AgentIntegrationConnectionCandidatesRequest,
+) (*dto.AgentIntegrationConnectionCandidatesResponse, error) {
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	if err != nil {
+		return nil, err
+	}
+	if s.integrationConnections == nil || s.integrationAccess == nil || s.integrationActions == nil || s.integrationActionPolicies == nil {
+		return nil, fmt.Errorf("integration connection candidate service is not configured")
+	}
+	organizationID, err := uuid.Parse(strings.TrimSpace(s.organizationIDForAgentWorkspace(ctx, ag.TenantID.String())))
+	if err != nil || organizationID == uuid.Nil {
+		return nil, fmt.Errorf("integration connection candidate organization is invalid")
+	}
+	workspaceID := ag.TenantID
+	limit := normalizeAgentBindingCandidateLimit(req.Limit)
+	page := normalizeAgentBindingCandidatePage(req.Page)
+	integrationID := strings.ToLower(strings.TrimSpace(req.IntegrationID))
+	resp := &dto.AgentIntegrationConnectionCandidatesResponse{
+		AgentID:         ag.ID.String(),
+		WorkspaceID:     ag.TenantID.String(),
+		Query:           strings.TrimSpace(req.Query),
+		IntegrationID:   integrationID,
+		Page:            page,
+		Limit:           limit,
+		IncludeSelected: req.IncludeSelected,
+		Data:            []dto.AgentIntegrationConnectionCandidate{},
+	}
+	selectedBindings := normalizeAgentIntegrationBindings(agentRuntimeModeFromConfig(cfg).IntegrationBindings)
+	selectedByConnectionID := make(map[string]dto.AgentIntegrationBinding, len(selectedBindings))
+	for _, binding := range selectedBindings {
+		selectedByConnectionID[strings.ToLower(strings.TrimSpace(binding.ConnectionID))] = binding
+	}
+	connections, err := s.integrationConnections.List(ctx, organizationID, integrations.ConnectionListFilter{IntegrationID: integrationID})
+	if err != nil {
+		return nil, fmt.Errorf("list agent integration connection candidates: %w", err)
+	}
+	candidates := make([]dto.AgentIntegrationConnectionCandidate, 0, len(connections))
+	queryText := strings.ToLower(strings.TrimSpace(req.Query))
+	for _, connection := range connections {
+		if connection == nil || connection.ID == uuid.Nil {
+			continue
+		}
+		// Agent runtimes can outlive the account that configured them and can
+		// execute from published or anonymous surfaces. Never offer a personal
+		// account credential as an Agent binding, even to its current owner.
+		if !agentIntegrationCredentialSourceAllowed(connection.CredentialSource) {
+			continue
+		}
+		connectionID := connection.ID.String()
+		selected, isSelected := selectedByConnectionID[connectionID]
+		if isSelected && !req.IncludeSelected {
+			continue
+		}
+		if queryText != "" && !matchesAgentCandidateQuery(queryText, connection.Name, connection.IntegrationID, connection.DriverID) {
+			continue
+		}
+		available := s.integrationAccess.AuthorizeAgentConnectionPreference(ctx, organizationID, &workspaceID, connection.ID) == nil
+		availableActionIDs := []string{}
+		availableAccessMode := ""
+		actionEffects := map[string]toolgovernance.Effect{}
+		if available {
+			availableActionIDs, availableAccessMode, actionEffects, err = s.agentIntegrationCandidateActions(ctx, organizationID, workspaceID, connection)
+			if err != nil {
+				return nil, err
+			}
+			available = len(availableActionIDs) > 0
+		}
+		if !available {
+			// Only an already-selected connection may remain visible for repair,
+			// and only after a health-independent shared-grant check. Personal
+			// and account-only grants are never valid for Agent execution.
+			if !isSelected || !req.IncludeSelected || s.integrationAccess.AuthorizeAgentConnectionVisibility(ctx, organizationID, &workspaceID, connection.ID) != nil {
+				continue
+			}
+		}
+		candidate := dto.AgentIntegrationConnectionCandidate{
+			ConnectionID:        connectionID,
+			IntegrationID:       strings.ToLower(strings.TrimSpace(connection.IntegrationID)),
+			DriverID:            strings.ToLower(strings.TrimSpace(connection.DriverID)),
+			AuthMethodID:        strings.ToLower(strings.TrimSpace(connection.AuthMethodID)),
+			Name:                strings.TrimSpace(connection.Name),
+			Status:              strings.ToLower(strings.TrimSpace(string(connection.Status))),
+			CredentialSource:    strings.ToLower(strings.TrimSpace(string(connection.CredentialSource))),
+			IsDefault:           connection.IsDefault,
+			AvailableAccessMode: availableAccessMode,
+			AvailableActionIDs:  availableActionIDs,
+			UpdatedAt:           connection.UpdatedAt.Unix(),
+		}
+		if !available {
+			candidate.Status = "invalid"
+		}
+		if isSelected {
+			candidate.Selected = true
+			candidate.AccessMode = selected.AccessMode
+			candidate.AllowedActionIDs = append([]string(nil), selected.AllowedActionIDs...)
+			if !agentIntegrationSelectionWithinAvailability(selected, availableAccessMode, availableActionIDs, actionEffects) {
+				candidate.Status = "invalid"
+			}
+		}
+		candidates = append(candidates, candidate)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Selected != candidates[j].Selected {
+			return candidates[i].Selected
+		}
+		if candidates[i].IsDefault != candidates[j].IsDefault {
+			return candidates[i].IsDefault
+		}
+		if left, right := strings.ToLower(candidates[i].Name), strings.ToLower(candidates[j].Name); left != right {
+			return left < right
+		}
+		return candidates[i].ConnectionID < candidates[j].ConnectionID
+	})
+	resp.Total = len(candidates)
+	resp.Data = agentCandidatePage(candidates, page, limit)
+	resp.HasMore = page*limit < resp.Total
+	resp.Count = len(resp.Data)
+	return resp, nil
+}
+
+func (s *agentsService) agentIntegrationCandidateActions(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	workspaceID uuid.UUID,
+	connection *integrations.IntegrationConnection,
+) ([]string, string, map[string]toolgovernance.Effect, error) {
+	actionIDs := []string{}
+	actionEffects := map[string]toolgovernance.Effect{}
+	accessMode := ""
+	for _, action := range s.integrationActions.Actions(connection.IntegrationID) {
+		if !agentIntegrationActionSupportsCaller(action, tools.ToolInvokeFromAgent) {
+			continue
+		}
+		if !integrations.ActionSupportsAuthMethod(action, connection.AuthMethodID) {
+			continue
+		}
+		decision, err := s.integrationActionPolicies.Resolve(ctx, organizationID.String(), connection.IntegrationID, action)
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("resolve Agent integration action policy %s/%s: %w", connection.IntegrationID, action.ID, err)
+		}
+		if !decision.Enabled || (action.DataEgress && !decision.DataEgressAllowed) {
+			continue
+		}
+		if err := s.integrationAccess.AuthorizeAgentConnectionActionPreference(
+			ctx,
+			organizationID,
+			&workspaceID,
+			connection.ID,
+			connection.IntegrationID,
+			action.ID,
+			action.Effect,
+		); err != nil {
+			continue
+		}
+		actionID := strings.ToLower(strings.TrimSpace(action.ID))
+		if actionID == "" {
+			continue
+		}
+		effect := toolgovernance.NormalizeEffect(action.Effect)
+		actionIDs = append(actionIDs, actionID)
+		actionEffects[actionID] = effect
+		if effect == toolgovernance.EffectRead {
+			if accessMode == "" {
+				accessMode = "read"
+			}
+		} else {
+			accessMode = "write"
+		}
+	}
+	sort.Strings(actionIDs)
+	return actionIDs, accessMode, actionEffects, nil
+}
+
+func agentIntegrationActionSupportsCaller(action integrations.ActionDefinition, caller tools.ToolInvokeFrom) bool {
+	if len(action.SupportedCallers) == 0 {
+		return true
+	}
+	for _, supported := range action.SupportedCallers {
+		if supported == caller {
+			return true
+		}
+	}
+	return false
+}
+
+func agentIntegrationSelectionWithinAvailability(
+	selected dto.AgentIntegrationBinding,
+	availableAccessMode string,
+	availableActionIDs []string,
+	actionEffects map[string]toolgovernance.Effect,
+) bool {
+	selectedMode := strings.ToLower(strings.TrimSpace(selected.AccessMode))
+	if availableAccessMode == "" || (selectedMode == "write" && availableAccessMode != "write") {
+		return false
+	}
+	available := make(map[string]struct{}, len(availableActionIDs))
+	for _, actionID := range availableActionIDs {
+		available[actionID] = struct{}{}
+	}
+	for _, rawActionID := range selected.AllowedActionIDs {
+		actionID := strings.ToLower(strings.TrimSpace(rawActionID))
+		if _, ok := available[actionID]; !ok {
+			return false
+		}
+		if selectedMode == "read" && actionEffects[actionID] != toolgovernance.EffectRead {
+			return false
+		}
+	}
+	return len(selected.AllowedActionIDs) > 0
 }
 
 func (s *agentsService) listAgentSkillCandidatesForWorkspace(ctx context.Context, workspaceID, accountID string) ([]dto.AgentSkillCandidate, error) {

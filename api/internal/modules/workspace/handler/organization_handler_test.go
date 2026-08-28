@@ -2095,6 +2095,48 @@ func TestGetOrganizationMembersRejectsNonAdminWorkspaceManager(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, recorder.Code)
 }
 
+func TestFailWorkspaceRoleRequestReturnsStableErrorCodes(t *testing.T) {
+	testCases := []struct {
+		name       string
+		err        error
+		expected   response.ErrorCode
+		httpStatus int
+	}{
+		{name: "name required", err: workspace_service.ErrWorkspaceRoleNameRequired, expected: response.ErrWorkspaceRoleTemplateNameRequired, httpStatus: http.StatusBadRequest},
+		{name: "name too long", err: workspace_service.ErrWorkspaceRoleNameTooLong, expected: response.ErrWorkspaceRoleTemplateNameTooLong, httpStatus: http.StatusBadRequest},
+		{name: "description too long", err: workspace_service.ErrWorkspaceRoleDescriptionTooLong, expected: response.ErrWorkspaceRoleTemplateDescriptionTooLong, httpStatus: http.StatusBadRequest},
+		{name: "invalid request", err: workspace_service.ErrInvalidWorkspaceRoleTemplate, expected: response.ErrWorkspaceRoleTemplateInvalidRequest, httpStatus: http.StatusBadRequest},
+		{name: "duplicate name", err: workspace_service.ErrRoleNameExists, expected: response.ErrWorkspaceRoleTemplateNameExists, httpStatus: http.StatusConflict},
+		{name: "reserved name", err: workspace_service.ErrWorkspaceRoleNameReserved, expected: response.ErrWorkspaceRoleTemplateReservedName, httpStatus: http.StatusBadRequest},
+		{name: "template in use", err: workspace_service.ErrWorkspaceRoleInUse, expected: response.ErrWorkspaceRoleTemplateInUse, httpStatus: http.StatusConflict},
+		{name: "last template", err: workspace_service.ErrCannotDeleteLastWorkspaceRoleTemplate, expected: response.ErrWorkspaceRoleTemplateLastRemaining, httpStatus: http.StatusConflict},
+		{name: "built-in immutable", err: workspace_service.ErrCannotUpdateBuiltinRole, expected: response.ErrWorkspaceRoleTemplateBuiltinImmutable, httpStatus: http.StatusConflict},
+		{name: "not found", err: workspace_service.ErrWorkspaceRoleTemplateNotFound, expected: response.ErrWorkspaceRoleTemplateNotFound, httpStatus: http.StatusNotFound},
+		{name: "deleted", err: workspace_service.ErrWorkspaceRoleTemplateDeleted, expected: response.ErrWorkspaceRoleTemplateDeleted, httpStatus: http.StatusNotFound},
+		{name: "owner not applicable", err: workspace_service.ErrCannotApplyOwnerRoleTemplate, expected: response.ErrWorkspaceRoleTemplateOwnerNotApplicable, httpStatus: http.StatusBadRequest},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/roles")
+
+			handled := failWorkspaceRoleRequest(c, errors.Join(errors.New("workspace role operation failed"), testCase.err))
+
+			require.True(t, handled)
+			require.Equal(t, testCase.httpStatus, recorder.Code)
+
+			var body response.Response
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+			require.Equal(t, strconv.Itoa(testCase.expected.Code), body.Code)
+			require.Equal(t, testCase.expected.Message, body.Message)
+		})
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/roles")
+	require.False(t, failWorkspaceRoleRequest(c, errors.New("database unavailable")))
+	require.Empty(t, recorder.Body.String())
+}
+
 func TestOrganizationRoutesRegisterCurrentMemberDetail(t *testing.T) {
 	t.Parallel()
 

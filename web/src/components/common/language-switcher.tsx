@@ -14,8 +14,10 @@ import {
 import { Check, Languages } from 'lucide-react';
 import { useUpdateInterfaceLanguage } from '@/hooks/use-update-interface-language';
 import { useAuthStore } from '@/store/auth-store';
+import { useT } from '@/i18n';
 
 export function LanguageSwitcher({ className }: { className?: string }) {
+  const t = useT('common');
   const { locale, isEnabled, setLocale } = useLocale();
   const { mutate } = useUpdateInterfaceLanguage();
   const isAuthenticated = useAuthStore.use.isAuthenticated();
@@ -32,7 +34,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
   }
 
   const trigger = (
-    <Button variant="ghost" size="sm" className={className} aria-label="Switch language">
+    <Button variant="ghost" size="sm" className={className} aria-label={t('switchLanguage')}>
       <Languages className="h-4 w-4" />
       <span className="hidden sm:inline-block">{getLocaleLabel(locale)}</span>
     </Button>

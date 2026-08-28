@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -17,7 +18,41 @@ import (
 	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	dataset_indexing "github.com/zgiai/zgi/api/internal/modules/dataset/indexing"
 	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 )
+
+func TestDatasetGraphCapabilityRouteReturnsSanitizedHealth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	checkedAt := time.Date(2026, time.July, 22, 4, 0, 0, 0, time.UTC)
+	reader := &fakeGraphCapabilityReader{capability: system_service.GraphRuntimeCapability{
+		State:     system_service.GraphRuntimeStateReady,
+		Available: true,
+		Message:   "Knowledge graph services are ready.",
+		CheckedAt: checkedAt,
+	}}
+	router := gin.New()
+	router.GET("/datasets/graph-capability", newGraphCapabilityHandler(reader))
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/datasets/graph-capability", nil))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := decodeJSONBody(t, rec)
+	require.Equal(t, "0", body["code"])
+	data := body["data"].(map[string]any)
+	require.Equal(t, "ready", data["state"])
+	require.Equal(t, true, data["available"])
+	require.NotContains(t, string(rec.Body.Bytes()), "neo4j://")
+	require.NotContains(t, string(rec.Body.Bytes()), "password")
+}
+
+type fakeGraphCapabilityReader struct {
+	capability system_service.GraphRuntimeCapability
+}
+
+func (f *fakeGraphCapabilityReader) Capability(context.Context) system_service.GraphRuntimeCapability {
+	return f.capability
+}
 
 func TestDatasetGraphHandlerRejectsInvalidDatasetIDBeforePermissionCheck(t *testing.T) {
 	router, datasetService, graphService := newDatasetGraphTestRouter(datasetGraphTestOptions{})
@@ -83,11 +118,16 @@ func TestDatasetGraphHandlerRejectsUnauthorizedDatasetWorkspace(t *testing.T) {
 }
 
 func TestDatasetGraphHandlerReturnsGraphAfterWorkspacePermissionCheck(t *testing.T) {
+	availableRevision := int64(3)
 	router, datasetService, graphService := newDatasetGraphTestRouter(datasetGraphTestOptions{
 		dataset: &dataset_model.Dataset{
-			ID:             "11111111-1111-1111-1111-111111111111",
-			OrganizationID: "organization-1",
-			WorkspaceID:    "workspace-1",
+			ID:                               "11111111-1111-1111-1111-111111111111",
+			OrganizationID:                   "organization-1",
+			WorkspaceID:                      "workspace-1",
+			EnableGraphFlow:                  true,
+			GraphAvailableRevision:           &availableRevision,
+			GraphVisibilityRevision:          2,
+			GraphProjectedVisibilityRevision: 2,
 		},
 		hasPermission: true,
 		graphResponse: &graphflow_model.GraphDataResponse{
@@ -111,6 +151,100 @@ func TestDatasetGraphHandlerReturnsGraphAfterWorkspacePermissionCheck(t *testing
 	require.Equal(t, "account-1", datasetService.checkAccountID)
 	require.Equal(t, "workspace-1", datasetService.checkWorkspaceID)
 	require.Equal(t, 1, graphService.calls)
+}
+
+func TestDatasetGraphHandlerRejectsStaleVisibilityProjection(t *testing.T) {
+	availableRevision := int64(3)
+	router, _, graphService := newDatasetGraphTestRouter(datasetGraphTestOptions{
+		dataset: &dataset_model.Dataset{
+			ID:                               "11111111-1111-1111-1111-111111111111",
+			OrganizationID:                   "organization-1",
+			WorkspaceID:                      "workspace-1",
+			EnableGraphFlow:                  true,
+			GraphAvailableRevision:           &availableRevision,
+			GraphVisibilityRevision:          3,
+			GraphProjectedVisibilityRevision: 2,
+		},
+		hasPermission: true,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/datasets/11111111-1111-1111-1111-111111111111/graph", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	body := decodeJSONBody(t, rec)
+	require.Equal(t, "graph_visibility_not_ready", body["code"])
+	require.Zero(t, graphService.calls)
+}
+
+func TestDatasetGraphHandlerRejectsQueryAboveHardLimit(t *testing.T) {
+	router, _, graphService := newDatasetGraphTestRouter(datasetGraphTestOptions{
+		dataset:       readyDatasetGraphFixture(),
+		hasPermission: true,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/datasets/11111111-1111-1111-1111-111111111111/graph?node_limit=501", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	body := decodeJSONBody(t, rec)
+	require.Equal(t, "graph_query_limit_exceeded", body["code"])
+	require.Zero(t, graphService.calls)
+}
+
+func TestDatasetGraphHandlerPassesBoundedQueryAndCursor(t *testing.T) {
+	router, _, graphService := newDatasetGraphTestRouter(datasetGraphTestOptions{
+		dataset:       readyDatasetGraphFixture(),
+		hasPermission: true,
+	})
+
+	target := "/datasets/11111111-1111-1111-1111-111111111111/graph?keyword=alice&category=Person&document_id=doc-1&seed_node_id=ent%3Aseed&hop_depth=2&node_limit=25&edge_limit=50&cursor=ent%3Acursor&overview=true"
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, graphflow_model.GraphQuery{
+		Keyword:    "alice",
+		Category:   "Person",
+		DocumentID: "doc-1",
+		SeedNodeID: "ent:seed",
+		HopDepth:   2,
+		NodeLimit:  25,
+		EdgeLimit:  50,
+		Cursor:     "ent:cursor",
+		Overview:   true,
+	}, graphService.query)
+}
+
+func TestDatasetGraphHandlerAllowsFullOverviewLimits(t *testing.T) {
+	router, _, graphService := newDatasetGraphTestRouter(datasetGraphTestOptions{
+		dataset:       readyDatasetGraphFixture(),
+		hasPermission: true,
+	})
+
+	target := "/datasets/11111111-1111-1111-1111-111111111111/graph?overview=true&node_limit=1266&edge_limit=3798"
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 1266, graphService.query.NodeLimit)
+	require.Equal(t, 3798, graphService.query.EdgeLimit)
+	require.True(t, graphService.query.Overview)
+}
+
+func readyDatasetGraphFixture() *dataset_model.Dataset {
+	availableRevision := int64(3)
+	return &dataset_model.Dataset{
+		ID:                               "11111111-1111-1111-1111-111111111111",
+		OrganizationID:                   "organization-1",
+		WorkspaceID:                      "workspace-1",
+		EnableGraphFlow:                  true,
+		GraphAvailableRevision:           &availableRevision,
+		GraphVisibilityRevision:          2,
+		GraphProjectedVisibilityRevision: 2,
+	}
 }
 
 func TestDatasetGraphHandlerReturnsNotFoundForMissingDataset(t *testing.T) {
@@ -349,6 +483,7 @@ func (s *fakeDatasetGraphPermissionService) CheckDatasetPermission(ctx context.C
 type fakeDatasetGraphService struct {
 	response *graphflow_model.GraphDataResponse
 	calls    int
+	query    graphflow_model.GraphQuery
 }
 
 func (s *fakeDatasetGraphService) GetGraphData(ctx context.Context, datasetID string) (*graphflow_model.GraphDataResponse, error) {
@@ -357,6 +492,11 @@ func (s *fakeDatasetGraphService) GetGraphData(ctx context.Context, datasetID st
 		return s.response, nil
 	}
 	return &graphflow_model.GraphDataResponse{}, nil
+}
+
+func (s *fakeDatasetGraphService) QueryGraphData(ctx context.Context, datasetID string, query graphflow_model.GraphQuery) (*graphflow_model.GraphDataResponse, error) {
+	s.query = query
+	return s.GetGraphData(ctx, datasetID)
 }
 
 type fakeContentParseRunQueryService struct {

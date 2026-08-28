@@ -8,6 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/aichat/handler"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
@@ -35,7 +36,7 @@ func NewModuleWithDependencies(
 	workspacePerms service.WorkspacePermissionService,
 	memoryService *memorymodule.Service,
 	agentMemoryService *agentmemory.Service,
-	skillRuntimes ...*skills.Runtime,
+	optionalServices ...interface{},
 ) *Module {
 	modelPrechecker, ok := llmClient.(llmclient.AppModelPrechecker)
 	if !ok {
@@ -47,8 +48,23 @@ func NewModuleWithDependencies(
 		titleGenerator = titlegen.NewService(llmClient, defaultModelSvc)
 	}
 	var skillRuntime *skills.Runtime
-	if len(skillRuntimes) > 0 {
-		skillRuntime = skillRuntimes[0]
+	var integrationPreferences service.AIChatIntegrationPreferenceResolver
+	var externalActionProjections integrationmetatools.ActionProjectionResolver
+	for _, dependency := range optionalServices {
+		switch typed := dependency.(type) {
+		case *skills.Runtime:
+			if skillRuntime == nil {
+				skillRuntime = typed
+			}
+		case service.AIChatIntegrationPreferenceResolver:
+			if integrationPreferences == nil {
+				integrationPreferences = typed
+			}
+		case integrationmetatools.ActionProjectionResolver:
+			if externalActionProjections == nil {
+				externalActionProjections = typed
+			}
+		}
 	}
 	if skillRuntime != nil {
 		if err := skillRuntime.ValidateCatalog(context.Background()); err != nil {
@@ -66,6 +82,8 @@ func NewModuleWithDependencies(
 		skillRuntime,
 		memoryService,
 		agentMemoryService,
+		integrationPreferences,
+		externalActionProjections,
 	)
 	if _, err := svc.CleanupStaleActiveMessages(context.Background()); err != nil {
 		logger.Warn("failed to cleanup stale aichat messages", err)

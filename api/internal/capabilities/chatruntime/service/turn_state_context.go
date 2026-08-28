@@ -47,6 +47,9 @@ func currentTurnAuthoritativeStatePayload(message *runtimemodel.Message) map[str
 	if turnState := turnStateContinuationSummary(message); len(turnState) > 0 {
 		payload["turn_state"] = turnState
 	}
+	if taskFacts := userInputTaskFactsForMessage(message); len(taskFacts) > 0 {
+		payload["task_facts"] = taskFacts
+	}
 	if artifacts := currentTurnGeneratedArtifactsSummary(message); len(artifacts) > 0 {
 		payload["generated_artifacts"] = mapsToInterfaceSlice(artifacts)
 		payload["generated_artifact_count"] = len(artifacts)
@@ -60,6 +63,17 @@ func currentTurnAuthoritativeStatePayload(message *runtimemodel.Message) map[str
 		}
 	}
 	return payload
+}
+
+func userInputTaskFactsForMessage(message *runtimemodel.Message) map[string]interface{} {
+	if message == nil || len(message.Metadata) == 0 {
+		return nil
+	}
+	responses := mapSliceFromAny(message.Metadata["user_input_responses"])
+	if len(responses) > 0 {
+		return userInputTaskFactsFromResponses(responses)
+	}
+	return copyStringAnyMap(mapFromOperationContext(message.Metadata["task_facts"]))
 }
 
 func currentTurnGeneratedArtifactsSummary(message *runtimemodel.Message) []map[string]interface{} {

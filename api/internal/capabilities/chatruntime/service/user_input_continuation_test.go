@@ -61,6 +61,72 @@ func TestUserInputContinuationMessageRequiresPlanRevisionBeforeBusinessTools(t *
 	}
 }
 
+func TestUserInputContinuationMessageCarriesCumulativeClarificationFacts(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query: "创建一个日程",
+		Metadata: map[string]interface{}{
+			"user_input_responses": []interface{}{
+				map[string]interface{}{
+					"request_id": "ask-date", "message": "哪一天？",
+					"answers": []interface{}{map[string]interface{}{"question_id": "date", "question": "哪一天？", "value": "8月2日"}},
+				},
+				map[string]interface{}{
+					"request_id": "ask-time", "message": "几点？",
+					"answers": []interface{}{map[string]interface{}{"question_id": "time", "question": "几点？", "value": "晚上7点"}},
+				},
+			},
+		},
+	}
+	continuation := userInputContinuationMessage(
+		message,
+		map[string]interface{}{"message": "标题是什么？"},
+		map[string]interface{}{
+			"request_id": "ask-title",
+			"answers":    []interface{}{map[string]interface{}{"question_id": "title", "value": "回家"}},
+		},
+	)
+	content := stringFromAny(continuation.Content)
+	for _, want := range []string{"clarification_history", "8月2日", "晚上7点", "cumulative and authoritative"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("continuation message = %q, want %q", content, want)
+		}
+	}
+
+	state := currentTurnAuthoritativeStatePayload(message)
+	facts := mapFromOperationContext(state["task_facts"])
+	if got := intValueFromAny(facts["fact_count"]); got != 2 {
+		t.Fatalf("task_facts.fact_count = %d, want 2; facts=%#v", got, facts)
+	}
+}
+
+func TestResolveUserInputContinuationMetadataPersistsCumulativeTaskFacts(t *testing.T) {
+	source := map[string]interface{}{
+		"user_input_responses": []interface{}{map[string]interface{}{
+			"request_id": "ask-date", "message": "哪一天？",
+			"answers": []interface{}{map[string]interface{}{"question_id": "date", "value": "8月2日"}},
+		}},
+	}
+	metadata := resolveUserInputContinuationMetadata(
+		source,
+		"message-1",
+		map[string]interface{}{"message": "几点？"},
+		map[string]interface{}{
+			"request_id": "ask-time", "message": "几点？", "answered_at": int64(1), "answer_count": 1,
+			"answers": []interface{}{map[string]interface{}{"question_id": "time", "value": "晚上7点"}},
+		},
+	)
+	facts := mapFromOperationContext(metadata["task_facts"])
+	if got := intValueFromAny(facts["fact_count"]); got != 2 {
+		t.Fatalf("task_facts.fact_count = %d, want 2; facts=%#v", got, facts)
+	}
+	encoded := compactJSONForPrompt(facts, 4000)
+	for _, want := range []string{"8月2日", "晚上7点"} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("task facts = %s, want %q", encoded, want)
+		}
+	}
+}
+
 func TestBeginUserInputContinuationResumesCurrentLeafWithoutCreatingMessage(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()

@@ -45,6 +45,142 @@ func TestToolGovernanceDecisionPayloadIncludesAssetOperationAudit(t *testing.T) 
 	}
 }
 
+func TestToolGovernanceDecisionPayloadSurfacesDynamicActionIdentityWithoutDuplicatingArguments(t *testing.T) {
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-external-1",
+		Manifest: toolgovernance.Manifest{
+			ToolID:              "feishu.message.send",
+			Effect:              toolgovernance.EffectCreate,
+			RiskLevel:           toolgovernance.RiskLevelHigh,
+			DataEgress:          true,
+			ExternalDestination: "open.feishu.cn",
+		},
+		SkillID:      "external-apps",
+		ToolName:     "execute_action",
+		ProviderType: "connector",
+		ProviderID:   "external-integrations",
+		Arguments: map[string]interface{}{
+			"integration_id":       "feishu",
+			"action_id":            "feishu.message.send",
+			"connection_id":        "33333333-3333-3333-3333-333333333333",
+			"connection_name":      "Team Feishu",
+			"connection_selection": "preferred",
+			"arguments": map[string]interface{}{
+				"message": "private content that stays inside frozen_invocation",
+			},
+		},
+	})
+	payload := ToolGovernanceDecisionPayload(PayloadIDs{ConversationID: "conversation-1", MessageID: "message-1"}, skills.SkillTrace{
+		Kind: "tool_governance", SkillID: "external-apps", ToolName: "execute_action",
+		Status: string(toolgovernance.DecisionStatusNeedsApproval),
+		Governance: &toolgovernance.Decision{
+			Status: toolgovernance.DecisionStatusNeedsApproval, RequiresApproval: true,
+			Manifest: frozenManifest(frozen), FrozenInvocation: &frozen,
+		},
+	})
+
+	if payload["integration_id"] != "feishu" || payload["action_id"] != "feishu.message.send" ||
+		payload["connection_name"] != "Team Feishu" || payload["connection_selection"] != "preferred" ||
+		payload["tool_id"] != "feishu.message.send" || payload["external_destination"] != "open.feishu.cn" {
+		t.Fatalf("dynamic approval identity = %#v", payload)
+	}
+	if _, exposed := payload["connection_id"]; exposed {
+		t.Fatalf("dynamic approval duplicated internal connection id: %#v", payload)
+	}
+	if _, exposed := payload["arguments"]; exposed {
+		t.Fatalf("dynamic action arguments must remain inside the frozen invocation: %#v", payload["arguments"])
+	}
+}
+
+func TestToolGovernanceDecisionPayloadSealsDetachedFrozenInvocation(t *testing.T) {
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-feishu-send",
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "feishu.message.send_user",
+			Effect:                  toolgovernance.EffectExternalSend,
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			DataEgress:              true,
+			ExternalDestination:     "open.feishu.cn",
+			ApprovalEveryInvocation: true,
+		},
+		SkillID:      "external-apps",
+		ToolName:     "execute_action",
+		ProviderType: "connector",
+		ProviderID:   "external-integrations",
+		Arguments: map[string]interface{}{
+			"integration_id": "feishu",
+			"action_id":      "feishu.message.send_user",
+			"arguments":      map[string]interface{}{"recipient_type": "self", "text": "你好"},
+		},
+	})
+	frozen.Arguments["connection_name"] = "yy"
+	decision := &toolgovernance.Decision{
+		Status:           toolgovernance.DecisionStatusNeedsApproval,
+		RequiresApproval: true,
+		CorrelationID:    "corr-feishu-send",
+		Manifest:         frozenManifest(frozen),
+		FrozenInvocation: &frozen,
+		ApprovalEvent:    &toolgovernance.ApprovalEvent{CorrelationID: "corr-feishu-send", FrozenInvocation: &frozen},
+	}
+
+	payload := ToolGovernanceDecisionPayload(PayloadIDs{}, skills.SkillTrace{
+		SkillID: "external-apps", ToolName: "execute_action", Governance: decision,
+	})
+	governance, ok := payload["governance"].(*toolgovernance.Decision)
+	if !ok || governance.FrozenInvocation == nil || governance.ApprovalEvent == nil ||
+		governance.ApprovalEvent.FrozenInvocation == nil {
+		t.Fatalf("sealed governance payload = %#v", payload["governance"])
+	}
+	if !toolgovernance.FrozenInvocationHashMatches(*governance.FrozenInvocation) ||
+		!toolgovernance.FrozenInvocationHashMatches(*governance.ApprovalEvent.FrozenInvocation) {
+		t.Fatal("payload frozen invocation must be sealed before approval persistence")
+	}
+	if governance.FrozenInvocation.Hash != governance.ApprovalEvent.FrozenInvocation.Hash {
+		t.Fatalf("decision hash %q != approval event hash %q",
+			governance.FrozenInvocation.Hash, governance.ApprovalEvent.FrozenInvocation.Hash)
+	}
+
+	governance.FrozenInvocation.Arguments["connection_name"] = "changed"
+	if governance.ApprovalEvent.FrozenInvocation.Arguments["connection_name"] != "yy" {
+		t.Fatal("decision and approval event frozen invocations must not share argument maps")
+	}
+	if decision.FrozenInvocation.Hash == governance.FrozenInvocation.Hash {
+		t.Fatal("transport sealing must not mutate or silently repair the runtime decision")
+	}
+}
+
+func TestToolGovernanceDecisionPayloadDoesNotResealAfterApproval(t *testing.T) {
+	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
+		CorrelationID: "corr-approved",
+		Manifest: toolgovernance.Manifest{
+			ToolID: "feishu.message.send_user", Effect: toolgovernance.EffectExternalSend,
+			RiskLevel: toolgovernance.RiskLevelHigh,
+		},
+		SkillID: "external-apps", ToolName: "execute_action",
+		Arguments: map[string]interface{}{"action_id": "feishu.message.send_user"},
+	})
+	frozen.Arguments["action_id"] = "feishu.message.send_message"
+	payload := ToolGovernanceDecisionPayload(PayloadIDs{}, skills.SkillTrace{
+		Governance: &toolgovernance.Decision{
+			Status:                  toolgovernance.DecisionStatusAllowed,
+			RequiresApproval:        false,
+			FrozenInvocation:        &frozen,
+			ApprovedByCorrelationID: "corr-approved",
+		},
+	})
+	governance := payload["governance"].(*toolgovernance.Decision)
+	if toolgovernance.FrozenInvocationHashMatches(*governance.FrozenInvocation) {
+		t.Fatal("an approved invocation must be verified, never silently resealed")
+	}
+}
+
+func frozenManifest(frozen toolgovernance.FrozenInvocation) toolgovernance.Manifest {
+	return toolgovernance.Manifest{
+		ToolID: frozen.ToolID, Effect: frozen.Effect, RiskLevel: frozen.RiskLevel,
+		DataEgress: frozen.DataEgress, ExternalDestination: frozen.ExternalDestination,
+	}
+}
+
 func TestSkillCallErrorPayloadPreservesGuardrailBlockedStatus(t *testing.T) {
 	payload := SkillCallErrorPayload(PayloadIDs{
 		ConversationID: "conversation-1",
@@ -62,6 +198,40 @@ func TestSkillCallErrorPayloadPreservesGuardrailBlockedStatus(t *testing.T) {
 	}
 	if payload["kind"] != "guardrail" {
 		t.Fatalf("kind = %#v, want guardrail", payload["kind"])
+	}
+}
+
+func TestSkillCallErrorPayloadIncludesStableErrorCode(t *testing.T) {
+	payload := SkillCallErrorPayload(PayloadIDs{
+		ConversationID: "conversation-1",
+		MessageID:      "message-1",
+	}, skills.SkillTrace{
+		Kind:      "tool_call",
+		SkillID:   "external-apps",
+		ToolName:  "execute_action",
+		Status:    "error",
+		Error:     "integration_auth_invalid",
+		ErrorCode: "integration_auth_invalid",
+	}, "error", true)
+
+	if got := payload["error_code"]; got != "integration_auth_invalid" {
+		t.Fatalf("error_code = %#v, want integration_auth_invalid", got)
+	}
+	if got := payload["message"]; got != "integration_auth_invalid" {
+		t.Fatalf("message = %#v, want safe stable code", got)
+	}
+}
+
+func TestSkillCallErrorPayloadOmitsEmptyErrorCode(t *testing.T) {
+	payload := SkillCallErrorPayload(PayloadIDs{}, skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  "calculator",
+		ToolName: "calculate",
+		Status:   "error",
+		Error:    "ordinary tool failure",
+	}, "error", true)
+	if _, exists := payload["error_code"]; exists {
+		t.Fatalf("ordinary error payload unexpectedly contains error_code: %#v", payload)
 	}
 }
 
@@ -1174,5 +1344,68 @@ func TestSummarizeToolResultCompactsVisibleFilesPayload(t *testing.T) {
 	}
 	if _, ok := files[0]["content_preview"]; ok {
 		t.Fatalf("content_preview should not be included in compact trace file: %#v", files[0])
+	}
+}
+
+func TestSummarizeToolResultPreservesConfirmedExternalActionFacts(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillExternalApps, "execute_action", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"integration_id": "feishu", "action_id": "feishu.calendar.event.create",
+			"plan_phase_id":   "create-event",
+			"connection_name": "我的飞书", "operation_status": "completed",
+			"result_count": 1, "attempt_count": 1, "provider_request_id": "request-1",
+			"result": map[string]interface{}{
+				"provider": "feishu", "request_id": "request-1",
+				"event": map[string]interface{}{
+					"event_id": "event-1", "summary": "回家",
+					"start_time": map[string]interface{}{"timestamp": "1785687600", "timezone": "Asia/Shanghai"},
+					"end_time":   map[string]interface{}{"timestamp": "1785691200", "timezone": "Asia/Shanghai"},
+				},
+			},
+		},
+	}})
+	if result["action_id"] != "feishu.calendar.event.create" || result["plan_phase_id"] != "create-event" || result["provider_success_confirmed"] != true {
+		t.Fatalf("external action summary = %#v", result)
+	}
+	providerResult := recordFromAny(result["provider_result"])
+	event := recordFromAny(providerResult["event"])
+	if event["event_id"] != "event-1" || event["summary"] != "回家" {
+		t.Fatalf("provider event summary = %#v", providerResult)
+	}
+	if _, leaked := result["result"]; leaked {
+		t.Fatalf("raw provider result leaked into trace summary: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultPreservesExternalActionGuideGuardFacts(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillExternalApps, "get_action_guide", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"integration_id":    "wecom",
+			"action_id":         "wecom.message.send",
+			"plan_phase_id":     "send-message",
+			"connection_name":   "企业微信连接",
+			"effect":            "external_send",
+			"availability":      "runtime_verification_required",
+			"can_execute":       true,
+			"requires_approval": true,
+			"required_arguments": []interface{}{
+				map[string]interface{}{"name": "user_id", "type": "string"},
+				map[string]interface{}{"name": "content", "type": "string"},
+			},
+		},
+	}})
+	if result["integration_id"] != "wecom" || result["action_id"] != "wecom.message.send" ||
+		result["plan_phase_id"] != "send-message" ||
+		result["connection_name"] != "企业微信连接" || result["effect"] != "external_send" {
+		t.Fatalf("guide identity summary = %#v", result)
+	}
+	if result["availability"] != "runtime_verification_required" || result["can_execute"] != true ||
+		result["requires_approval"] != true || result["required_argument_count"] != 2 {
+		t.Fatalf("guide guard summary = %#v", result)
+	}
+	if _, leaked := result["required_arguments"]; leaked {
+		t.Fatalf("full guide argument schema leaked into trace summary: %#v", result)
 	}
 }

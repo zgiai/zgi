@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/internal/dto"
+	graphflow_extractor "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/extractor"
 	graphflow_model "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	graphflow_repo "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/repository"
 	graphflow_worker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
@@ -290,15 +291,16 @@ func (s *segmentServiceImpl) CreateSegment(ctx context.Context, documentID, data
 
 			if parseErr1 == nil && parseErr2 == nil && parseErr3 == nil && parseErr4 == nil {
 				graphFlowTask := &graphflow_model.GraphFlowTask{
-					ID:         uuid.New(),
-					KBID:       dsUUID,
-					TenantID:   tenantUUID,
-					DocumentID: docUUID,
-					SegmentID:  &segUUID,
-					TaskType:   "extraction",
-					Status:     "waiting",
-					Progress:   0,
-					CreatedAt:  time.Now(),
+					ID:                 uuid.New(),
+					KBID:               dsUUID,
+					TenantID:           tenantUUID,
+					DocumentID:         docUUID,
+					SegmentID:          &segUUID,
+					TaskType:           "extraction",
+					ExtractionStrategy: graphflow_extractor.StrategyLLM,
+					Status:             "waiting",
+					Progress:           0,
+					CreatedAt:          time.Now(),
 				}
 
 				if err := s.graphFlowTaskRepo.CreateTask(backgroundCtx, graphFlowTask); err != nil {

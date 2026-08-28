@@ -299,6 +299,37 @@ func TestAvailableModels_ListAvailableDoesNotBootstrapOfficialRoute(t *testing.T
 	}
 }
 
+func TestAvailableModels_ReturnsMusicGenerationCapability(t *testing.T) {
+	organizationID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:              uuid.New(),
+		Provider:        "minimax",
+		Model:           "music-3.0",
+		ModelName:       "Music 3.0",
+		IsActive:        true,
+		MusicGeneration: true,
+		UseCases:        types.StringArray{string(llmmodel.UseCaseMusicGen)},
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{"music-3.0"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "minimax", Model: "music-3.0"}},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
+
+	models, err := svc.ListAvailable(t.Context(), organizationID, "minimax", string(llmmodel.UseCaseMusicGen))
+	if err != nil {
+		t.Fatalf("ListAvailable() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models length = %d, want 1", len(models))
+	}
+	if !models[0].Endpoints.MusicGeneration {
+		t.Fatal("Endpoints.MusicGeneration = false, want true")
+	}
+}
+
 func TestAvailableModels_AgentRequiresCatalogTagOnPlatformRoute(t *testing.T) {
 	organizationID := uuid.New()
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
@@ -689,6 +720,8 @@ func TestAvailableModels_ListAvailableCachesResponseAndInvalidatesTenant(t *test
 		UseCases:          types.StringArray{"text-chat"},
 		ChatCompletions:   true,
 		SupportsStreaming: true,
+		InputModalities:   types.JSONArray{"text", "image"},
+		OutputModalities:  types.JSONArray{"text"},
 	}}}
 	configRepo := &availableConfigRepoFake{}
 	customRepo := &availableCustomRepoFake{}
@@ -755,6 +788,8 @@ func TestAvailableModels_ListAvailableJSONCachesEncodedResponse(t *testing.T) {
 		UseCases:          types.StringArray{"text-chat"},
 		ChatCompletions:   true,
 		SupportsStreaming: true,
+		InputModalities:   types.JSONArray{"text", "image"},
+		OutputModalities:  types.JSONArray{"text"},
 	}}}
 	configRepo := &availableConfigRepoFake{}
 	customRepo := &availableCustomRepoFake{}
@@ -786,6 +821,12 @@ func TestAvailableModels_ListAvailableJSONCachesEncodedResponse(t *testing.T) {
 	}
 	if decoded.Code != "0" || decoded.Data.Total != 1 || len(decoded.Data.Items) != 1 {
 		t.Fatalf("decoded response = code %q total %d items %d, want code 0 total 1 items 1", decoded.Code, decoded.Data.Total, len(decoded.Data.Items))
+	}
+	if !reflect.DeepEqual(decoded.Data.Items[0].InputModalities, []string{"text", "image"}) {
+		t.Fatalf("input_modalities = %#v, want text/image", decoded.Data.Items[0].InputModalities)
+	}
+	if !reflect.DeepEqual(decoded.Data.Items[0].OutputModalities, []string{"text"}) {
+		t.Fatalf("output_modalities = %#v, want text", decoded.Data.Items[0].OutputModalities)
 	}
 
 	second, err := jsonSvc.ListAvailableJSON(context.Background(), organizationID, "openai", "text-chat")

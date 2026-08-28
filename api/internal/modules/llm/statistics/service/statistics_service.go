@@ -2,23 +2,104 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/repository"
+	"gorm.io/gorm"
 )
 
 const maxUnixSeconds = int64(9999999999)
 
+const (
+	minInvocationContentRetentionDays = 1
+	maxInvocationContentRetentionDays = 30
+)
+
 type statisticsServiceImpl struct {
-	statisticsRepo repository.StatisticsRepository
+	statisticsRepo                   repository.StatisticsRepository
+	onInvocationContentSettingsSaved InvocationContentSettingsSaved
 }
 
-func NewStatisticsService(statisticsRepo repository.StatisticsRepository) StatisticsService {
+// InvocationContentSettingsSaved is called after the organization setting is
+// committed so request-path caches can be updated without coupling the service
+// to a particular gateway implementation.
+type InvocationContentSettingsSaved func(organizationID string, enabled bool, retentionDays int)
+
+func (s *statisticsServiceImpl) GetInvocationContentSettings(ctx context.Context, organizationID string) (*dto.InvocationContentSettings, error) {
+	cfg := appconfig.Current().LLMInvocationContent
+	state, err := s.statisticsRepo.GetInvocationContentSettings(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get invocation content settings: %w", err)
+	}
+	retentionDays := cfg.RetentionDays
+	if state.RetentionDays != nil {
+		retentionDays = *state.RetentionDays
+	}
+	return &dto.InvocationContentSettings{
+		Available: true, Enabled: state.Enabled, MaxBytes: cfg.MaxBytes,
+		RetentionDays: retentionDays, StoredCount: state.StoredCount,
+		StoredCountCapped: state.StoredCountCapped,
+	}, nil
+}
+
+func (s *statisticsServiceImpl) UpdateInvocationContentSettings(ctx context.Context, organizationID string, req *dto.UpdateInvocationContentSettingsRequest) (*dto.InvocationContentSettings, error) {
+	if req == nil || (req.Enabled == nil && req.RetentionDays == nil) ||
+		(req.RetentionDays != nil && (*req.RetentionDays < minInvocationContentRetentionDays || *req.RetentionDays > maxInvocationContentRetentionDays)) {
+		return nil, ErrInvalidInvocationContentSettings
+	}
+	current, err := s.GetInvocationContentSettings(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	enabled := current.Enabled
+	retentionDays := current.RetentionDays
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	if req.RetentionDays != nil {
+		retentionDays = *req.RetentionDays
+	}
+	if err := s.statisticsRepo.UpdateInvocationContentSettings(ctx, organizationID, enabled, retentionDays); err != nil {
+		return nil, fmt.Errorf("failed to update invocation content settings: %w", err)
+	}
+	if s.onInvocationContentSettingsSaved != nil {
+		s.onInvocationContentSettingsSaved(organizationID, enabled, retentionDays)
+	}
+	return s.GetInvocationContentSettings(ctx, organizationID)
+}
+
+func (s *statisticsServiceImpl) PurgeInvocationContent(ctx context.Context, organizationID, accountID string) (*dto.InvocationContentPurgeResult, error) {
+	deleted, hasMore, err := s.statisticsRepo.PurgeInvocationContent(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to purge invocation content: %w", err)
+	}
+	return &dto.InvocationContentPurgeResult{DeletedCount: deleted, HasMore: hasMore}, nil
+}
+
+func (s *statisticsServiceImpl) GetInvocationContent(ctx context.Context, organizationID, accountID, invocationID string) (*dto.InvocationContentDetail, error) {
+	invocationID = strings.TrimSpace(invocationID)
+	if invocationID == "" || len(invocationID) > 100 {
+		return nil, ErrInvocationContentNotFound
+	}
+	result, err := s.statisticsRepo.GetInvocationContent(ctx, organizationID, accountID, invocationID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrInvocationContentNotFound
+		}
+		return nil, fmt.Errorf("failed to get invocation content: %w", err)
+	}
+	return result, nil
+}
+
+func NewStatisticsService(statisticsRepo repository.StatisticsRepository, onInvocationContentSettingsSaved InvocationContentSettingsSaved) StatisticsService {
 	return &statisticsServiceImpl{
-		statisticsRepo: statisticsRepo,
+		statisticsRepo:                   statisticsRepo,
+		onInvocationContentSettingsSaved: onInvocationContentSettingsSaved,
 	}
 }
 

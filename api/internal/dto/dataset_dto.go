@@ -37,37 +37,44 @@ type GetDatasetsListRequest struct {
 
 // DatasetCreateRequest represents request for creating dataset
 type DatasetCreateRequest struct {
-	WorkspaceID            *string                `json:"workspace_id"`
-	Name                   string                 `json:"name" binding:"required"`
-	Description            string                 `json:"description"`
-	Provider               string                 `json:"provider"`
-	Permission             *string                `json:"permission"`
-	EmbeddingModel         *string                `json:"embedding_model"`
-	EmbeddingModelProvider *string                `json:"embedding_model_provider"`
-	RetrievalConfig        map[string]interface{} `json:"retrieval_config"`
-	Icon                   *string                `json:"icon"`
-	IconType               *string                `json:"icon_type"`
-	IconBackground         *string                `json:"icon_background"`
-	FolderID               *string                `json:"folder_id"`
-	EntityModel            *string                `json:"entity_model"`
-	EntityModelProvider    *string                `json:"entity_model_provider"`
-	EnableGraphFlow        bool                   `json:"enable_graph_flow"`
+	WorkspaceID                 *string                `json:"workspace_id"`
+	Name                        string                 `json:"name" binding:"required"`
+	Description                 string                 `json:"description"`
+	Provider                    string                 `json:"provider"`
+	Permission                  *string                `json:"permission"`
+	EmbeddingModel              *string                `json:"embedding_model"`
+	EmbeddingModelProvider      *string                `json:"embedding_model_provider"`
+	RetrievalConfig             map[string]interface{} `json:"retrieval_config"`
+	Icon                        *string                `json:"icon"`
+	IconType                    *string                `json:"icon_type"`
+	IconBackground              *string                `json:"icon_background"`
+	FolderID                    *string                `json:"folder_id"`
+	EntityModel                 *string                `json:"entity_model"`
+	EntityModelProvider         *string                `json:"entity_model_provider"`
+	EnableGraphFlow             bool                   `json:"enable_graph_flow"`
+	GraphEmbeddingModel         *string                `json:"graph_embedding_model"`
+	GraphEmbeddingModelProvider *string                `json:"graph_embedding_model_provider"`
+	GraphEmbeddingDimension     *int                   `json:"graph_embedding_dimension"`
 }
 
 // DatasetUpdateRequest represents request for updating dataset
 type DatasetUpdateRequest struct {
-	Name                   *string                `json:"name"`
-	Description            *string                `json:"description"`
-	EmbeddingModel         *string                `json:"embedding_model"`
-	EmbeddingModelProvider *string                `json:"embedding_model_provider"`
-	RetrievalConfig        map[string]interface{} `json:"retrieval_config"`
-	Icon                   *string                `json:"icon"`
-	IconType               *string                `json:"icon_type"`
-	IconBackground         *string                `json:"icon_background"`
-	WorkspaceID            *string                `json:"workspace_id"`
-	EntityModel            *string                `json:"entity_model"`
-	EntityModelProvider    *string                `json:"entity_model_provider"`
-	EnableGraphFlow        *bool                  `json:"enable_graph_flow"`
+	Name                        *string                `json:"name"`
+	Description                 *string                `json:"description"`
+	EmbeddingModel              *string                `json:"embedding_model"`
+	EmbeddingModelProvider      *string                `json:"embedding_model_provider"`
+	RetrievalConfig             map[string]interface{} `json:"retrieval_config"`
+	Icon                        *string                `json:"icon"`
+	IconType                    *string                `json:"icon_type"`
+	IconBackground              *string                `json:"icon_background"`
+	WorkspaceID                 *string                `json:"workspace_id"`
+	EntityModel                 *string                `json:"entity_model"`
+	EntityModelProvider         *string                `json:"entity_model_provider"`
+	EnableGraphFlow             *bool                  `json:"enable_graph_flow"`
+	ConfirmGraphRebuild         bool                   `json:"confirm_graph_rebuild"`
+	GraphEmbeddingModel         *string                `json:"graph_embedding_model"`
+	GraphEmbeddingModelProvider *string                `json:"graph_embedding_model_provider"`
+	GraphEmbeddingDimension     *int                   `json:"graph_embedding_dimension"`
 }
 
 // DatasetListResponse represents response for dataset list
@@ -155,40 +162,54 @@ type IndexingEstimateResponse struct {
 
 // DatasetResponse represents dataset response DTO
 type DatasetResponse struct {
-	ID                     string                 `json:"id"`
-	WorkspaceID            string                 `json:"workspace_id"`
-	Name                   string                 `json:"name"`
-	Description            *string                `json:"description"`
-	Provider               string                 `json:"provider"`
-	CreatedBy              string                 `json:"created_by"`
-	CreatedAt              time.Time              `json:"created_at"`
-	UpdatedBy              *string                `json:"updated_by"`
-	UpdatedAt              time.Time              `json:"updated_at"`
-	Owner                  *string                `json:"owner"`
-	EmbeddingModel         *string                `json:"embedding_model"`
-	EmbeddingModelProvider *string                `json:"embedding_model_provider"`
-	CollectionBindingID    *string                `json:"collection_binding_id"`
-	RetrievalConfig        map[string]interface{} `json:"retrieval_config"`
-	IconType               *string                `json:"icon_type"`
-	Icon                   *string                `json:"icon"`
-	IconBackground         *string                `json:"icon_background"`
-	IconURL                string                 `json:"icon_url,omitempty"`
-	AppCount               int                    `json:"app_count"`
-	DocumentCount          int                    `json:"document_count"`
-	AvailableDocumentCount int                    `json:"available_document_count"`
-	AvailableSegmentCount  int                    `json:"available_segment_count"`
-	WordCount              int                    `json:"word_count"`
-	OwnerAccount           map[string]interface{} `json:"owner_account"`
-	Tags                   []interface{}          `json:"tags"`
-	DocForm                string                 `json:"doc_form"`
-	EmbeddingAvailable     bool                   `json:"embedding_available"`
-	PartialMemberList      []interface{}          `json:"partial_member_list"`
-	WorkspaceInfo          *SimpleWorkspaceInfo   `json:"workspace_info,omitempty"`
-	IsEditor               bool                   `json:"is_editor"`
-	CanEdit                bool                   `json:"can_edit"` // NEW: Indicates if current user can edit this dataset
-	EntityModel            *string                `json:"entity_model"`
-	EntityModelProvider    *string                `json:"entity_model_provider"`
-	EnableGraphFlow        bool                   `json:"enable_graph_flow"`
+	ID                               string                  `json:"id"`
+	WorkspaceID                      string                  `json:"workspace_id"`
+	Name                             string                  `json:"name"`
+	Description                      *string                 `json:"description"`
+	Provider                         string                  `json:"provider"`
+	CreatedBy                        string                  `json:"created_by"`
+	CreatedAt                        time.Time               `json:"created_at"`
+	UpdatedBy                        *string                 `json:"updated_by"`
+	UpdatedAt                        time.Time               `json:"updated_at"`
+	Owner                            *string                 `json:"owner"`
+	EmbeddingModel                   *string                 `json:"embedding_model"`
+	EmbeddingModelProvider           *string                 `json:"embedding_model_provider"`
+	CollectionBindingID              *string                 `json:"collection_binding_id"`
+	RetrievalConfig                  map[string]interface{}  `json:"retrieval_config"`
+	IconType                         *string                 `json:"icon_type"`
+	Icon                             *string                 `json:"icon"`
+	IconBackground                   *string                 `json:"icon_background"`
+	IconURL                          string                  `json:"icon_url,omitempty"`
+	AppCount                         int                     `json:"app_count"`
+	DocumentCount                    int                     `json:"document_count"`
+	AvailableDocumentCount           int                     `json:"available_document_count"`
+	AvailableSegmentCount            int                     `json:"available_segment_count"`
+	WordCount                        int                     `json:"word_count"`
+	OwnerAccount                     map[string]interface{}  `json:"owner_account"`
+	Tags                             []interface{}           `json:"tags"`
+	DocForm                          string                  `json:"doc_form"`
+	EmbeddingAvailable               bool                    `json:"embedding_available"`
+	PartialMemberList                []interface{}           `json:"partial_member_list"`
+	WorkspaceInfo                    *SimpleWorkspaceInfo    `json:"workspace_info,omitempty"`
+	IsEditor                         bool                    `json:"is_editor"`
+	CanEdit                          bool                    `json:"can_edit"` // NEW: Indicates if current user can edit this dataset
+	EntityModel                      *string                 `json:"entity_model"`
+	EntityModelProvider              *string                 `json:"entity_model_provider"`
+	EnableGraphFlow                  bool                    `json:"enable_graph_flow"`
+	GraphStatus                      string                  `json:"graph_status"`
+	GraphRevision                    int64                   `json:"graph_revision"`
+	GraphAvailableRevision           *int64                  `json:"graph_available_revision"`
+	GraphVisibilityRevision          int64                   `json:"graph_visibility_revision"`
+	GraphProjectedVisibilityRevision int64                   `json:"graph_projected_visibility_revision"`
+	GraphProgress                    int                     `json:"graph_progress"`
+	GraphEmbedding                   *GraphEmbeddingResponse `json:"graph_embedding,omitempty"`
+}
+
+type GraphEmbeddingResponse struct {
+	Mode          string  `json:"mode"`
+	ModelProvider *string `json:"model_provider"`
+	Model         *string `json:"model"`
+	Dimension     int     `json:"dimension"`
 }
 
 // MarshalJSON implements custom JSON marshaling to generate icon URLs

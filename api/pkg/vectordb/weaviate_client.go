@@ -7,13 +7,24 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"golang.org/x/sync/errgroup"
+)
+
+const (
+	weaviateAutoSchemaWriteAttempts = 3
+	weaviateSchemaCreateAttempts    = 3
+	weaviateSchemaReadyAttempts     = 6
+	weaviateRetryBaseDelay          = 50 * time.Millisecond
 )
 
 // WeaviateClient represents a Weaviate vector database client
@@ -22,6 +33,11 @@ type WeaviateClient struct {
 	apiKey     string
 	httpClient *http.Client
 	batchSize  int
+}
+
+type ObjectPropertyUpdate struct {
+	ID         string
+	Properties map[string]interface{}
 }
 
 // NewWeaviateClient creates a new Weaviate client using configuration
@@ -54,37 +70,50 @@ func (c *WeaviateClient) StoreVector(ctx context.Context, id, className string, 
 		return fmt.Errorf("failed to marshal vector object: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/objects", c.endpoint)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
+	for attempt := 0; attempt < weaviateAutoSchemaWriteAttempts; attempt++ {
+		requestURL := fmt.Sprintf("%s/v1/objects", c.endpoint)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
 
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
-	}
+		req.Header.Set("Content-Type", "application/json")
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+		}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to store vector in weaviate: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		// Read response body for detailed error information
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to store vector in weaviate: %w", err)
+		}
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("weaviate returned status code: %d, response: %s", resp.StatusCode, string(body))
+		_ = resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+			logger.Info("Vector stored in Weaviate", map[string]interface{}{
+				"id":          id,
+				"class":       className,
+				"vector_size": len(vector),
+				"status_code": resp.StatusCode,
+			})
+			return nil
+		}
+
+		if attempt+1 >= weaviateAutoSchemaWriteAttempts || !weaviateAutoSchemaAlreadyExists(body) {
+			return fmt.Errorf("weaviate returned status code: %d, response: %s", resp.StatusCode, string(body))
+		}
+
+		logger.Warn("Retrying vector write after Weaviate auto-schema conflict", map[string]interface{}{
+			"id":      id,
+			"class":   className,
+			"attempt": attempt + 2,
+		})
+		if err := waitForWeaviateRetry(ctx, attempt); err != nil {
+			return fmt.Errorf("wait to retry vector write: %w", err)
+		}
 	}
 
-	logger.Info("Vector stored in Weaviate", map[string]interface{}{
-		"id":          id,
-		"class":       className,
-		"vector_size": len(vector),
-		"status_code": resp.StatusCode,
-	})
-
-	return nil
+	return fmt.Errorf("weaviate vector write attempts exhausted")
 }
 
 // DeleteVector deletes a vector object from Weaviate. Missing objects are treated as already deleted.
@@ -130,6 +159,82 @@ func (c *WeaviateClient) DeleteVector(ctx context.Context, id, className string)
 	})
 
 	return nil
+}
+
+func (c *WeaviateClient) UpdateObjectProperties(ctx context.Context, id, className string, properties map[string]interface{}) error {
+	if c.endpoint == "" {
+		return fmt.Errorf("weaviate endpoint not configured")
+	}
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(className) == "" {
+		return fmt.Errorf("weaviate object identity is required")
+	}
+	payload, err := json.Marshal(map[string]interface{}{"properties": properties})
+	if err != nil {
+		return fmt.Errorf("failed to marshal weaviate property update: %w", err)
+	}
+	url := fmt.Sprintf("%s/v1/objects/%s/%s", c.endpoint, className, id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewBuffer(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create weaviate property request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to update weaviate properties: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("weaviate property update returned status code: %d, response: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// UpdateObjectPropertiesBatch applies independent PATCH operations with
+// bounded concurrency. Weaviate's object batch endpoint is intended for object
+// creation/upsert and can replace vector data, so visibility-only updates keep
+// using PATCH while avoiding one fully sequential network round trip per
+// entity.
+func (c *WeaviateClient) UpdateObjectPropertiesBatch(
+	ctx context.Context,
+	className string,
+	updates []ObjectPropertyUpdate,
+	concurrency int,
+	progress func(completed, total int),
+) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > 32 {
+		concurrency = 32
+	}
+
+	group, groupContext := errgroup.WithContext(ctx)
+	group.SetLimit(concurrency)
+	var completed atomic.Int64
+	var progressMu sync.Mutex
+	for i := range updates {
+		update := updates[i]
+		group.Go(func() error {
+			if err := c.UpdateObjectProperties(groupContext, update.ID, className, update.Properties); err != nil {
+				return err
+			}
+			count := int(completed.Add(1))
+			if progress != nil && (count%100 == 0 || count == len(updates)) {
+				progressMu.Lock()
+				progress(count, len(updates))
+				progressMu.Unlock()
+			}
+			return nil
+		})
+	}
+	return group.Wait()
 }
 
 // StoreVectors stores vectors with metadata in Weaviate using the batch objects API.
@@ -746,44 +851,127 @@ func (c *WeaviateClient) CreateClass(ctx context.Context, className string, prop
 		return fmt.Errorf("failed to marshal class schema: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/v1/schema", c.endpoint)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+	for attempt := 0; attempt < weaviateSchemaCreateAttempts; attempt++ {
+		ready, err := c.isClassReady(ctx, className)
+		if err != nil {
+			return fmt.Errorf("check Weaviate class %s: %w", className, err)
+		}
+		if ready {
+			return nil
+		}
+
+		requestURL := fmt.Sprintf("%s/v1/schema", c.endpoint)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to create class in weaviate: %w", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+			logger.Info("Class created in Weaviate", map[string]interface{}{
+				"class":       className,
+				"status_code": resp.StatusCode,
+			})
+			return nil
+		}
+
+		// Concurrent creators can receive an already-exists response before the
+		// winning schema write is visible. Confirm it, then retry creation if the
+		// class never appears instead of turning the transient race into a hard
+		// failure.
+		if !weaviateClassAlreadyExists(body) {
+			return fmt.Errorf("weaviate returned status code: %d, response: %s", resp.StatusCode, string(body))
+		}
+		logger.Info("Class creation raced with another request", map[string]interface{}{
+			"class":    className,
+			"response": string(body),
+			"attempt":  attempt + 1,
+		})
+		ready, err = c.waitForClassReady(ctx, className)
+		if err != nil {
+			return fmt.Errorf("wait for existing Weaviate class %s: %w", className, err)
+		}
+		if ready {
+			return nil
+		}
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	return fmt.Errorf("Weaviate class %s did not become visible after %d create attempts", className, weaviateSchemaCreateAttempts)
+}
+
+func weaviateClassAlreadyExists(body []byte) bool {
+	return strings.Contains(strings.ToLower(string(body)), "already exists")
+}
+
+func weaviateAutoSchemaAlreadyExists(body []byte) bool {
+	message := strings.ToLower(string(body))
+	return strings.Contains(message, "auto-schema") && strings.Contains(message, "already exists")
+}
+
+func waitForWeaviateRetry(ctx context.Context, attempt int) error {
+	delay := weaviateRetryBaseDelay * time.Duration(1<<attempt)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (c *WeaviateClient) waitForClassReady(ctx context.Context, className string) (bool, error) {
+	for attempt := 0; attempt < weaviateSchemaReadyAttempts; attempt++ {
+		ready, err := c.isClassReady(ctx, className)
+		if err != nil {
+			return false, err
+		}
+		if ready {
+			return true, nil
+		}
+		if attempt+1 < weaviateSchemaReadyAttempts {
+			if err := waitForWeaviateRetry(ctx, attempt); err != nil {
+				return false, err
+			}
+		}
+	}
+	return false, nil
+}
+
+func (c *WeaviateClient) isClassReady(ctx context.Context, className string) (bool, error) {
+	requestURL := fmt.Sprintf("%s/v1/schema/%s", c.endpoint, neturl.PathEscape(className))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to create class readiness request: %w", err)
+	}
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to create class in weaviate: %w", err)
+		return false, fmt.Errorf("failed to check Weaviate class readiness: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		// Read response body for detailed error information
-		body, _ := io.ReadAll(resp.Body)
-
-		// Class might already exist, which is fine
-		if resp.StatusCode == http.StatusUnprocessableEntity {
-			logger.Info("Class creation failed (might already exist)", map[string]interface{}{
-				"class":    className,
-				"response": string(body),
-			})
-			return nil
-		}
-		return fmt.Errorf("weaviate returned status code: %d, response: %s", resp.StatusCode, string(body))
+	if resp.StatusCode == http.StatusOK {
+		return true, nil
 	}
-
-	logger.Info("Class created in Weaviate", map[string]interface{}{
-		"class":       className,
-		"status_code": resp.StatusCode,
-	})
-
-	return nil
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	return false, fmt.Errorf("weaviate class readiness returned status code: %d, response: %s", resp.StatusCode, string(body))
 }
 
 // HealthCheck checks if Weaviate is accessible
@@ -998,16 +1186,19 @@ func (c *WeaviateClient) deleteObjectsByFieldBatch(ctx context.Context, payload 
 }
 
 func isWeaviateMissingClassResponse(statusCode int, body []byte) bool {
-	if statusCode < http.StatusBadRequest || statusCode >= http.StatusInternalServerError {
+	if statusCode < http.StatusBadRequest {
 		return false
 	}
 
 	message := strings.ToLower(string(body))
-	return strings.Contains(message, "class") &&
-		(strings.Contains(message, "not found") ||
-			strings.Contains(message, "not exist") ||
-			strings.Contains(message, "does not exist") ||
-			strings.Contains(message, "could not find"))
+	if strings.Contains(message, "non-existing index") {
+		return true
+	}
+	missing := strings.Contains(message, "not found") ||
+		strings.Contains(message, "not exist") ||
+		strings.Contains(message, "does not exist") ||
+		strings.Contains(message, "could not find")
+	return missing && (strings.Contains(message, "class") || strings.Contains(message, "index"))
 }
 
 // DeleteObjectByID deletes a single object by its ID
@@ -1045,6 +1236,14 @@ func (c *WeaviateClient) DeleteObjectByID(ctx context.Context, className, object
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		// Read response body for detailed error information
 		body, _ := io.ReadAll(resp.Body)
+		if isWeaviateMissingClassResponse(resp.StatusCode, body) {
+			logger.Info("Weaviate class missing during object deletion, treating as already clean", map[string]interface{}{
+				"class":       className,
+				"object_id":   objectID,
+				"status_code": resp.StatusCode,
+			})
+			return nil
+		}
 		return fmt.Errorf("weaviate returned status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -39,18 +40,19 @@ import (
 
 // AppContext contains app-specific context for tracking usage by apps (agents/datasets)
 type AppContext struct {
-	AppID              *uuid.UUID // App ID (agent or dataset)
-	AppType            *string    // App type: "agent" or "dataset"
-	ModelUseCase       *string    // Optional explicit model routing contract
-	AccountID          *uuid.UUID // User account ID who is using the app
-	WorkspaceID        *string    // Optional workspace subject for workspace-level quota billing
-	BillingSubjectType *string    // Optional billing subject override for app-scoped calls
-	SessionID          string
-	ConversationID     string
-	WorkflowID         string
-	WorkflowRunID      string
-	NodeID             string
-	NodeType           string
+	AppID                     *uuid.UUID // App ID (agent or dataset)
+	AppType                   *string    // App type: "agent" or "dataset"
+	ModelUseCase              *string    // Optional explicit model routing contract
+	AccountID                 *uuid.UUID // User account ID who is using the app
+	WorkspaceID               *string    // Optional workspace subject for workspace-level quota billing
+	BillingSubjectType        *string    // Optional billing subject override for app-scoped calls
+	SessionID                 string
+	ConversationID            string
+	WorkflowID                string
+	WorkflowRunID             string
+	NodeID                    string
+	NodeType                  string
+	SuppressInvocationContent bool
 }
 
 // LLMGatewayService defines the interface for LLM gateway operations
@@ -84,6 +86,21 @@ type LLMGatewayService interface {
 
 	// Rerank handles rerank requests
 	Rerank(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.RerankRequest) (*adapter.RerankResponse, error)
+
+	// Transcribe converts a PCM audio stream into final editable text.
+	Transcribe(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *TranscriptionRequest) (*TranscriptionResponse, error)
+
+	// GenerateSpeech converts complete text into a streamed MP3 response.
+	GenerateSpeech(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *SpeechRequest, dst io.Writer) error
+
+	// GenerateMusic creates one complete MP3 track.
+	GenerateMusic(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *MusicRequest, dst io.Writer) error
+
+	// GenerateLyrics creates complete lyrics for a later music generation call.
+	GenerateLyrics(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, req *LyricsRequest) (*adapter.LyricsResult, error)
+
+	// CompensateMusicDelivery resolves billing after a generated track cannot be delivered.
+	CompensateMusicDelivery(ctx context.Context, apiKey *apikeymodel.TenantAPIKey, requestID string) error
 
 	// ListAvailableModels lists available models for the API key
 	ListAvailableModels(ctx context.Context, apiKey *apikeymodel.TenantAPIKey) ([]adapter.Model, error)
@@ -132,6 +149,7 @@ type llmGatewayServiceImpl struct {
 	officialCreditChecker paymentservice.OfficialCreditChecker
 	policyPrompt          llmPolicyPromptInjector
 	upstreamState         *upstreamstate.Service
+	invocationContent     *invocationContentRecorder
 }
 
 func (s *llmGatewayServiceImpl) isModelRoutable(ctx context.Context, organizationID uuid.UUID, modelName string) (bool, error) {
@@ -228,6 +246,7 @@ func NewLLMGatewayServiceWithCrypto(
 		billing = remoteBilling
 		logger.Info("llm gateway remote billing enabled", "grpc_addr", grpcAddr)
 	}
+	startInvocationContentCleanup(db)
 
 	return &llmGatewayServiceImpl{
 		db:                    db,
@@ -244,6 +263,7 @@ func NewLLMGatewayServiceWithCrypto(
 		officialCreditChecker: paymentservice.NewConsoleOfficialCreditChecker(),
 		policyPrompt:          newLLMPolicyPromptInjector(cfg.LLMPolicyPrompt),
 		upstreamState:         upstreamStateService,
+		invocationContent:     newInvocationContentRecorder(db, cfg.LLMInvocationContent),
 	}, nil
 }
 
@@ -532,7 +552,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		}
 		s.recordUpstreamProviderError(ctx, nil, billingCtx, lastError)
 		billingCtx.Status = billingContextStatusError
-		billingCtx.ErrorMessage = lastError.Error()
+		setBillingFailure(billingCtx, lastError)
 		billingCtx.PromptTokens = 0
 		billingCtx.CompletionTokens = 0
 		billingCtx.TotalTokens = 0
@@ -579,7 +599,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			if !useSystemProvider {
 				billingCtx.Status = billingContextStatusPartial
 			}
-			billingCtx.ErrorMessage = missingUsageErr.Error()
+			setBillingFailure(billingCtx, missingUsageErr)
 			billingCtx.PromptTokens = 0
 			billingCtx.CompletionTokens = 0
 			billingCtx.TotalTokens = 0
@@ -887,7 +907,9 @@ func (s *llmGatewayServiceImpl) validateRerankRequest(req *adapter.RerankRequest
 // createAdapterConfig creates adapter configuration from provider selection
 func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection, organizationID ...uuid.UUID) *adapter.AdapterConfig {
 	adapterProvider := selection.ChannelProvider
-	if spec, err := channelprovider.Resolve(selection.ChannelProvider); err == nil {
+	if strings.TrimSpace(selection.AdapterProviderOverride) != "" {
+		adapterProvider = strings.TrimSpace(selection.AdapterProviderOverride)
+	} else if spec, err := channelprovider.Resolve(selection.ChannelProvider); err == nil {
 		adapterProvider = spec.AdapterKey
 	}
 	llmConfig := appconfig.Current().LLM
@@ -902,7 +924,12 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,
 		AllowPrivateBaseURL: selection.UseSystemProvider || channelprovider.AllowsPrivateBaseURL(selection.ChannelProvider),
 	}
-
+	if len(selection.ParamOverride) > 0 {
+		config.CustomParams = make(map[string]interface{}, len(selection.ParamOverride))
+		for key, value := range selection.ParamOverride {
+			config.CustomParams[key] = value
+		}
+	}
 	// In V2 architecture, API key is already decrypted and passed through ProviderSelection
 	if selection.APIKey != "" {
 		config.APIKey = selection.APIKey

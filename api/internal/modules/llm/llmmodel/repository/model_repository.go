@@ -12,7 +12,7 @@ type modelRepository struct {
 	db *gorm.DB
 }
 
-const availableModelColumns = "id, provider, name, display_name, status, use_cases, reasoning, function_calling, structured_output, temperature, top_p, presence_penalty, frequency_penalty, logit_bias, seed, stop, max_stop_sequences, vision, json_mode, streaming, chat_completions, embeddings, image_generation, speech_generation, transcription, moderation, realtime, batch, assistants, responses, system_prompt, logprobs, web_search, file_search, code_interpreter, computer_use, mcp, parallel_tool_calls, reasoning_effort, context_window, max_output_tokens, is_active"
+const availableModelColumns = "id, provider, name, display_name, status, use_cases, reasoning, function_calling, structured_output, temperature, top_p, presence_penalty, frequency_penalty, logit_bias, seed, stop, max_stop_sequences, vision, json_mode, streaming, chat_completions, embeddings, image_generation, speech_generation, transcription, music_generation, moderation, realtime, batch, assistants, responses, videos, image_edit, system_prompt, logprobs, web_search, file_search, code_interpreter, computer_use, mcp, parallel_tool_calls, reasoning_effort, context_window, max_output_tokens, input_modalities, output_modalities, supported_parameters, default_parameters, config_parameters, pricing, is_active"
 
 // NewModelRepository creates a new global model repository
 func NewModelRepository(db *gorm.DB) ModelRepository {

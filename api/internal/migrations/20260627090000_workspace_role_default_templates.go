@@ -23,7 +23,7 @@ ALTER TABLE public.roles
 const addWorkspaceRoleSystemKeyIndexSQL = `
 CREATE UNIQUE INDEX IF NOT EXISTS uk_roles_group_system_key
 ON public.roles (group_id, system_key)
-WHERE system_key IS NOT NULL
+WHERE system_key IS NOT NULL AND status != 'deleted'
 `
 
 func init() {
@@ -292,7 +292,7 @@ func uniqueWorkspaceRoleTemplateName(db *gorm.DB, organizationID, preferredName,
 func workspaceRoleTemplateNameAvailable(db *gorm.DB, organizationID, name string) bool {
 	var count int64
 	if err := db.Table("public.roles").
-		Where("group_id = ?::uuid AND name = ?", organizationID, name).
+		Where("group_id = ?::uuid AND name = ? AND status != ?", organizationID, name, workspace_model.WorkspaceCustomRoleStatusDeleted).
 		Count(&count).Error; err != nil {
 		return false
 	}

@@ -24,6 +24,7 @@
     <a href="#why-zgi">Why ZGI</a> &middot;
     <a href="#from-build-to-runtime">How it works</a> &middot;
     <a href="#core-capabilities">Capabilities</a> &middot;
+    <a href="#product-tour">Product Tour</a> &middot;
     <a href="#quick-start">Quick Start</a> &middot;
     <a href="#development">Development</a> &middot;
     <a href="#documentation">Docs</a> &middot;
@@ -32,7 +33,7 @@
   </sub>
 </p>
 
-![ZGI visual workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
+![ZGI Agent Studio configuring a contract review agent](docs/assets/product-tour/zgi-agent-studio-en.webp)
 
 ## Why ZGI
 
@@ -72,6 +73,45 @@ Operate with permissions, logs, and batch testing
 | **Model gateway** | Manage providers, channels, credentials, defaults, routing policies, quotas, and pricing metadata in one place. |
 | **Publishing and governance** | Expose agents through WebApp, App Center, API keys, or internal calls, with workspace permissions, runtime logs, and reusable batch tests. |
 | **Self-hosted runtime** | Run the console, API, sandbox, runner, PostgreSQL, and Redis locally or in your own infrastructure. |
+
+## Product Tour
+
+The views below continue from Agent Studio into orchestration, business data,
+execution, model governance, and grounded enterprise knowledge.
+
+### Orchestrate executable workflows
+
+Connect document extraction, retrieval, models, tools, approvals, and outputs on
+a visual canvas.
+
+![ZGI visual workflow editor](docs/assets/zgi-workflow-editor-api-enrichment.png)
+
+### Analyze business data in natural language
+
+Select approved data tables and turn a plain-language question into traceable
+KPIs, risks, and recommended actions.
+
+![ZGI natural-language database analysis for renewal risk](docs/assets/product-tour/zgi-data-analysis-en.webp)
+
+### Inspect execution results
+
+Review run status, duration, steps, and structured output to understand what the
+workflow ran and what it returned.
+
+![ZGI workflow execution result with structured risk findings](docs/assets/product-tour/zgi-run-results-en.webp)
+
+### Govern models and channels
+
+Manage providers, channels, routing policies, and availability from one place.
+
+![ZGI Model Gateway provider and channel management](docs/assets/product-tour/zgi-model-gateway-en.webp)
+
+### Ground agents in company files
+
+Upload and process files, then link them to approved knowledge bases that agents
+and workflows can use.
+
+![ZGI file management and knowledge base linking](docs/assets/product-tour/zgi-files-knowledge-en.webp)
 
 ## Quick Start
 
@@ -135,11 +175,16 @@ make dev-web
 
 ## Documentation
 
+- [LLM invocation content audit](docs/llm-invocation-content-audit.md)
+
 Read the product documentation at [`docs.zgi.ai`](https://docs.zgi.ai).
 
 Repository-local README files are kept for development and contribution notes.
 For deployment behavior such as the embedded system skill catalog, see
 [`docker/README.md`](docker/README.md#system-skill-catalog).
+For external application Connections, credential rotation, grants, health, and
+AIChat usage, see [`docs/external-integrations.md`](docs/external-integrations.md).
+The Exa-specific setup is documented in [`docs/web-search.md`](docs/web-search.md).
 
 ## Contributing
 

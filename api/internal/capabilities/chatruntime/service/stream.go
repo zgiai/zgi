@@ -83,16 +83,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			return nil, newFinalizedStreamError(err)
 		}
 	}
-	agentMemoryUsage, err := s.runNativeAgentMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
-	preflightUsage := mergeUsage(userMemoryUsage, agentMemoryUsage)
-	if err != nil {
-		if s.isStoppedContext(runCtx, prepared.Message.ID) {
-			_ = s.persistStoppedAnswer(persistCtx, prepared, "", preflightUsage)
-			return nil, ErrMessageStopped
-		}
-		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-		return nil, newFinalizedStreamError(err)
-	}
+	preflightUsage := userMemoryUsage
 
 	if prepared.toolLoopEnabled() {
 		answer, usage, err := s.runPreparedToolStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
@@ -101,8 +92,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			var pendingGovernance *skillloop.ToolGovernancePendingError
 			if errors.As(err, &pendingGovernance) {
 				metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
-				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
-					return nil, ownershipErr
+				if persistErr != nil {
+					return nil, s.finalizeToolGovernanceApprovalPersistenceError(persistCtx, prepared, persistErr, eventCallback)
 				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil
@@ -322,6 +313,7 @@ func (s *service) StreamConversationEventsForCaller(ctx context.Context, scope S
 		for _, event := range events {
 			lastID = event.ID
 			event = hydrateStreamEventGeneratedFileURL(event)
+			event = publicExternalActionStreamEvent(event)
 			if err := onEvent(event); err != nil {
 				return err
 			}
@@ -532,6 +524,9 @@ func newBillingAppContext(prepared *PreparedChat) *llmclient.AppContext {
 		ConversationID:     prepared.Conversation.ID.String(),
 		ModelUseCase:       preparedModelUseCase(prepared),
 	}
+	if prepared.parts != nil && prepared.parts.AgentMemoryEnabled {
+		appCtx.SuppressInvocationContent = true
+	}
 	if prepared.Conversation.WorkspaceID != nil {
 		appCtx.WorkspaceID = prepared.Conversation.WorkspaceID.String()
 	}
@@ -724,14 +719,14 @@ func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, e
 	if suppressClientStreamEvent(event.EventType, event.Payload) {
 		return
 	}
-	event.hydratePayloadEnvelope()
+	publicEvent := publicExternalActionStreamEvent(*event)
 	if err := onEvent(StreamEvent{
-		ID:          event.ID,
-		EventType:   event.EventType,
-		Payload:     event.Payload,
-		CreatedAt:   event.CreatedAt,
-		CreatedAtMS: event.CreatedAtMS,
-		Sequence:    event.Sequence,
+		ID:          publicEvent.ID,
+		EventType:   publicEvent.EventType,
+		Payload:     publicEvent.Payload,
+		CreatedAt:   publicEvent.CreatedAt,
+		CreatedAtMS: publicEvent.CreatedAtMS,
+		Sequence:    publicEvent.Sequence,
 	}); err != nil {
 		logger.WarnContext(context.WithoutCancel(ctx), "failed to deliver aichat stream event to client", "message_id", messageID.String(), "event_type", event.EventType, err)
 	}
@@ -757,6 +752,7 @@ func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedCh
 		}
 	}
 	prepared.Message.Answer = answer
+	s.scheduleAgentMemoryExtractionBestEffort(ctx, prepared)
 	return nil
 }
 
@@ -944,13 +940,14 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 			"content_len", timelineDebugTextLen(event.Payload["content"]),
 		)
 	}
+	publicEvent := publicExternalActionStreamEvent(*event)
 	if err := onEvent(StreamEvent{
-		ID:          event.ID,
-		EventType:   event.EventType,
-		Payload:     event.Payload,
-		CreatedAt:   event.CreatedAt,
-		CreatedAtMS: event.CreatedAtMS,
-		Sequence:    event.Sequence,
+		ID:          publicEvent.ID,
+		EventType:   publicEvent.EventType,
+		Payload:     publicEvent.Payload,
+		CreatedAt:   publicEvent.CreatedAt,
+		CreatedAtMS: publicEvent.CreatedAtMS,
+		Sequence:    publicEvent.Sequence,
 	}); err != nil {
 		logger.WarnContext(context.WithoutCancel(ctx), "failed to deliver aichat stream event to client", "message_id", prepared.Message.ID.String(), "event_type", eventType, err)
 	}

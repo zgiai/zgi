@@ -17,6 +17,8 @@ type AsyncBatchHitTestingRequest struct {
 	Queries                []string               `json:"queries" binding:"required"`
 	RetrievalModel         map[string]interface{} `json:"retrieval_model,omitempty"`
 	ExternalRetrievalModel map[string]interface{} `json:"external_retrieval_model,omitempty"`
+	RetrievalMode          string                 `json:"retrieval_mode,omitempty"`
+	FallbackPolicy         string                 `json:"fallback_policy,omitempty"`
 }
 
 // AsyncBatchHitTestingResponse represents the response for async batch hit testing initiation

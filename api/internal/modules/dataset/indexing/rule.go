@@ -5,6 +5,15 @@ import (
 	"encoding/json"
 )
 
+// Paragraph parent-child chunking uses character counts despite the legacy
+// max_tokens field names in persisted process rules.
+const (
+	DefaultParagraphParentMaxChars     = 1500
+	DefaultParagraphParentOverlapChars = 100
+	DefaultParagraphChildMaxChars      = 256
+	DefaultParagraphChildOverlapChars  = 30
+)
+
 // Rule struct represents processing rules
 type Rule struct {
 	PreProcessingRules   []PreProcessingRule       `json:"pre_processing_rules"`
@@ -63,8 +72,8 @@ func ParseRule(rulesMap map[string]interface{}) (*Rule, error) {
 
 	// Parse segmentation with default values
 	segmentation := SegmentationRule{
-		MaxTokens:    500,  // Default value
-		ChunkOverlap: 0,    // Default value
+		MaxTokens:    DefaultParagraphParentMaxChars,
+		ChunkOverlap: DefaultParagraphParentOverlapChars,
 		Separator:    "\n", // Default value
 	}
 	if segmentationMap, ok := rulesMap["segmentation"].(map[string]interface{}); ok {
@@ -102,8 +111,8 @@ func ParseRule(rulesMap map[string]interface{}) (*Rule, error) {
 
 	// Parse subchunk_segmentation with default values
 	subchunkSegmentation := SubchunkSegmentationRule{
-		MaxTokens:    100,  // Default value for subchunk
-		ChunkOverlap: 20,   // Default value for subchunk
+		MaxTokens:    DefaultParagraphChildMaxChars,
+		ChunkOverlap: DefaultParagraphChildOverlapChars,
 		Separator:    "\n", // Default value for subchunk
 	}
 	if subchunkSegmentationMap, ok := rulesMap["subchunk_segmentation"].(map[string]interface{}); ok {

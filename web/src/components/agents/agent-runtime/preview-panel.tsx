@@ -1,6 +1,6 @@
 'use client';
 
-import { useId } from 'react';
+import { useCallback, useId } from 'react';
 import { Eye, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AIChatModelPrecheckWarning } from '@/components/aichat/model-precheck-warning';
@@ -17,6 +17,8 @@ import type {
 import { useT } from '@/i18n';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import { useAgentDraftModelPrecheck } from '@/hooks/agent/use-agent-draft-model-precheck';
+import { transcribeAgentDraftVoice } from '@/services/voice-transcription.service';
+import { generateAgentDraftSpeech } from '@/services/voice-speech.service';
 import {
   allowSendAfterAgentModelPrecheck,
   visibleAgentModelPrecheckWarnings,
@@ -34,6 +36,8 @@ interface AgentRuntimePreviewPanelProps {
   openingGuideBrand: OpeningGuideBrand;
   homeTitle: string;
   openingStatement: string;
+  voiceInputEnabled: boolean;
+  speechEnabled: boolean;
   surfaceMode?: 'inline' | 'sheet';
   onOpenMemoryValues: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
@@ -53,6 +57,8 @@ export function AgentRuntimePreviewPanel({
   openingGuideBrand,
   homeTitle,
   openingStatement,
+  voiceInputEnabled,
+  speechEnabled,
   surfaceMode = 'inline',
   onOpenMemoryValues,
   onModelChange,
@@ -67,6 +73,14 @@ export function AgentRuntimePreviewPanel({
     modelSelectorValue.model
   );
   const warnings = visibleAgentModelPrecheckWarnings(modelPrecheck.data);
+  const handleVoiceTranscription = useCallback(
+    (audio: ArrayBuffer, signal: AbortSignal) => transcribeAgentDraftVoice(agentId, audio, signal),
+    [agentId]
+  );
+  const handleSpeechSynthesis = useCallback(
+    (input: string, signal: AbortSignal) => generateAgentDraftSpeech(agentId, input, signal),
+    [agentId]
+  );
   const handleBeforeSend = async () => {
     if (beforeSend && !(await beforeSend())) {
       return false;
@@ -149,6 +163,8 @@ export function AgentRuntimePreviewPanel({
           openingGuideBrand={openingGuideBrand}
           homeTitle={homeTitle}
           homeDescription={openingStatement}
+          voiceTranscriber={voiceInputEnabled ? handleVoiceTranscription : undefined}
+          speechSynthesizer={speechEnabled ? handleSpeechSynthesis : undefined}
         />
       </div>
     </section>

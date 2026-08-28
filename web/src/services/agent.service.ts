@@ -23,6 +23,7 @@ import type {
   AgentMemoryValuesResponse,
   UpdateAgentMemoryValueRequest,
   AgentMemoryValue,
+  AgentMemoryConfigResponse,
   PublishAgentResponse,
   PublishAgentRequest,
   AgentPublishedVersionsResponse,
@@ -41,6 +42,7 @@ import type {
   AgentRuntimeSurfaceAuthorizationResponse,
   UpdateAgentRuntimeSurfacesRequest,
 } from './types/agent';
+import type { AgentIntegrationConnectionCandidatesResponse } from './types/integration';
 import type { WebAppRunRequest, WebAppRunSseCallbacks } from './types/webapp';
 import type {
   AgentBindingMutationConfirmation,
@@ -211,6 +213,22 @@ class AgentService extends BaseService {
     });
   }
 
+  getAgentIntegrationConnectionCandidates(
+    agentId: string,
+    params?: {
+      query?: string;
+      integration_id?: string;
+      page?: number;
+      limit?: number;
+      include_selected?: boolean;
+    }
+  ): Promise<ApiResponseData<AgentIntegrationConnectionCandidatesResponse>> {
+    return this.request('get', `/agents/${agentId}/candidates/integration-connections`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+      params,
+    });
+  }
+
   getAgentSkillBindingCandidates(
     agentId: string,
     params?: { query?: string; source?: 'system' | 'custom'; page?: number; limit?: number }
@@ -283,6 +301,20 @@ class AgentService extends BaseService {
         headers: { 'Content-Type': 'application/json' },
       }
     );
+  }
+
+  updateAgentMemoryConfig(
+    agentId: string,
+    payload: {
+      enabled: boolean;
+      auto_extraction_enabled: boolean;
+      slots: AgentMemorySlotConfig[];
+      config_revision?: string;
+    }
+  ): Promise<ApiResponseData<AgentMemoryConfigResponse>> {
+    return this.request('put', `/agents/${agentId}/memory/config`, payload, {
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   getAgentMemoryValues(agentId: string): Promise<ApiResponseData<AgentMemoryValuesResponse>> {

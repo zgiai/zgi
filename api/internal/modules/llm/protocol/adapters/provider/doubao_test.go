@@ -1,18 +1,93 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 const doubaoSeedreamLiteTestModel = doubaoSeedreamModelPrefix + "-5-0-lite-260128"
+
+func TestDoubaoAdapterGenerateSpeechUsesNativeV3Protocol(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/api/v3/tts/unidirectional"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("X-Api-Key"), "test-key"; got != want {
+			t.Errorf("X-Api-Key = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("X-Api-Resource-Id"), "seed-tts-2.0"; got != want {
+			t.Errorf("X-Api-Resource-Id = %q, want %q", got, want)
+		}
+		if got, want := r.Header.Get("X-Control-Require-Usage-Tokens-Return"), "*"; got != want {
+			t.Errorf("usage header = %q, want %q", got, want)
+		}
+
+		var payload struct {
+			Request struct {
+				Text        string `json:"text"`
+				Speaker     string `json:"speaker"`
+				AudioParams struct {
+					Format     string `json:"format"`
+					SampleRate int    `json:"sample_rate"`
+				} `json:"audio_params"`
+			} `json:"req_params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if got, want := payload.Request.Text, "你好。"; got != want {
+			t.Errorf("text = %q, want %q", got, want)
+		}
+		if got, want := payload.Request.Speaker, "voice-id"; got != want {
+			t.Errorf("speaker = %q, want %q", got, want)
+		}
+		if got, want := payload.Request.AudioParams.Format, "mp3"; got != want {
+			t.Errorf("format = %q, want %q", got, want)
+		}
+		if got, want := payload.Request.AudioParams.SampleRate, 24000; got != want {
+			t.Errorf("sample rate = %d, want %d", got, want)
+		}
+
+		_, _ = fmt.Fprintf(w, "{\"code\":0,\"data\":%q}\n", base64.StdEncoding.EncodeToString([]byte("MP3-A")))
+		_, _ = fmt.Fprintf(w, "{\"code\":0,\"data\":%q}\n", base64.StdEncoding.EncodeToString([]byte("MP3-B")))
+		_, _ = fmt.Fprintln(w, `{"code":20000000,"message":"OK"}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey: "test-key",
+		CustomParams: map[string]interface{}{
+			"audio_base_url": server.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	var audio bytes.Buffer
+	err = a.GenerateSpeech(t.Context(), &adapter.SpeechRequest{
+		Model:          "seed-tts-2.0",
+		Input:          "你好。",
+		Voice:          "voice-id",
+		ResponseFormat: "mp3",
+	}, &audio)
+	if err != nil {
+		t.Fatalf("GenerateSpeech() error = %v", err)
+	}
+	if got, want := audio.String(), "MP3-AMP3-B"; got != want {
+		t.Fatalf("audio = %q, want %q", got, want)
+	}
+}
 
 func TestDoubaoAdapterChatCompletion_UsesArkChatCompletions(t *testing.T) {
 	t.Helper()
@@ -237,6 +312,49 @@ func TestDoubaoAdapterCreateImage_UsesArkImagesAndSeedreamNormalization(t *testi
 	}
 }
 
+func TestDoubaoAdapterCreateImage_AddsReferenceImageForSeedream(t *testing.T) {
+	t.Helper()
+
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"created":1732083164,
+			"data":[{"url":"https://cdn.example.com/image.png"}]
+		}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:             doubaoSeedreamLiteTestModel,
+		Prompt:            "change the style",
+		Size:              "1024x1024",
+		ReferenceImageURL: "https://files.example.com/reference.png?sign=1",
+	})
+	if err != nil {
+		t.Fatalf("CreateImage() error = %v", err)
+	}
+	if got := gotPayload["image"]; got != "https://files.example.com/reference.png?sign=1" {
+		t.Fatalf("payload.image = %#v, want reference url", got)
+	}
+	if _, exists := gotPayload["image_urls"]; exists {
+		t.Fatalf("payload.image_urls must not be sent for Ark Seedream image generation: %#v", gotPayload["image_urls"])
+	}
+}
+
 func TestDoubaoAdapterCreateImage_SeedreamMultiImageUsesSequentialOptions(t *testing.T) {
 	t.Helper()
 
@@ -455,6 +573,252 @@ func TestDoubaoAdapterCreateImage_NonSeedreamMultiImageDoesNotAppendPrompt(t *te
 	}
 }
 
+func TestDoubaoAdapterCreateVideo_UsesArkVideoTasks(t *testing.T) {
+	t.Helper()
+
+	var (
+		gotAuth    string
+		gotPath    string
+		gotPayload map[string]any
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"id":"task_video_123",
+			"status":"running"
+		}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	duration := 4
+	generateAudio := false
+	resp, err := a.CreateVideo(context.Background(), &adapter.VideoRequest{
+		Model:         "doubao-seedance-2-0-mini-260615",
+		Prompt:        "a bear by the sea",
+		FirstFrameURL: "https://cdn.example.com/first.png",
+		LastFrameURL:  "https://cdn.example.com/last.png",
+		Ratio:         "1:1",
+		Resolution:    "720p",
+		Duration:      &duration,
+		GenerateAudio: &generateAudio,
+	})
+	if err != nil {
+		t.Fatalf("CreateVideo() error = %v", err)
+	}
+
+	if gotAuth != "Bearer test-key" {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer test-key")
+	}
+	if gotPath != "/api/v3/contents/generations/tasks" {
+		t.Fatalf("path = %q, want %q", gotPath, "/api/v3/contents/generations/tasks")
+	}
+	if got := gotPayload["model"]; got != "doubao-seedance-2-0-mini-260615" {
+		t.Fatalf("payload.model = %#v, want model", got)
+	}
+	if got := gotPayload["resolution"]; got != "720p" {
+		t.Fatalf("payload.resolution = %#v, want 720p", got)
+	}
+	if got := gotPayload["duration"]; got != float64(duration) {
+		t.Fatalf("payload.duration = %#v, want %d", got, duration)
+	}
+	if got := gotPayload["generate_audio"]; got != generateAudio {
+		t.Fatalf("payload.generate_audio = %#v, want false", got)
+	}
+	content, ok := gotPayload["content"].([]any)
+	if !ok || len(content) != 3 {
+		t.Fatalf("payload.content = %#v, want text plus two image entries", gotPayload["content"])
+	}
+	if got := content[1].(map[string]any)["role"]; got != doubaoVideoContentRoleFirstFrame {
+		t.Fatalf("first image role = %#v, want first_frame", got)
+	}
+	if got := content[2].(map[string]any)["role"]; got != doubaoVideoContentRoleLastFrame {
+		t.Fatalf("last image role = %#v, want last_frame", got)
+	}
+	if resp.TaskID != "task_video_123" || resp.Status != "running" {
+		t.Fatalf("response = %#v, want task id and running status", resp)
+	}
+}
+
+func TestDoubaoAdapterCreateVideo_UsesReferenceMediaRoles(t *testing.T) {
+	t.Helper()
+
+	var gotPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"task_video_123","status":"running"}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	duration := 5
+	_, err = a.CreateVideo(context.Background(), &adapter.VideoRequest{
+		Model:          "doubao-seedance-2-0-260128",
+		Prompt:         "bamboo bells",
+		ReferenceURLs:  []string{"https://cdn.example.com/bamboo.png", "https://cdn.example.com/bell.mp3"},
+		ReferenceTypes: []string{"image", "audio"},
+		Duration:       &duration,
+	})
+	if err != nil {
+		t.Fatalf("CreateVideo() error = %v", err)
+	}
+
+	content, ok := gotPayload["content"].([]any)
+	if !ok || len(content) != 3 {
+		t.Fatalf("payload.content = %#v, want text plus reference image/audio", gotPayload["content"])
+	}
+	if got := content[1].(map[string]any)["role"]; got != doubaoVideoContentRoleReferenceImage {
+		t.Fatalf("image role = %#v, want reference_image", got)
+	}
+	if got := content[2].(map[string]any)["role"]; got != doubaoVideoContentRoleReferenceAudio {
+		t.Fatalf("audio role = %#v, want reference_audio", got)
+	}
+}
+
+func TestBuildOpenAICompatibleVideoPayload_ForwardsReferenceMedia(t *testing.T) {
+	payload := buildOpenAICompatibleVideoPayload(&adapter.VideoRequest{
+		Model:          "video-model",
+		Prompt:         "prompt",
+		ReferenceURLs:  []string{"https://cdn.example.com/ref.png", "https://cdn.example.com/ref.mp3"},
+		ReferenceTypes: []string{"image", "audio"},
+	})
+
+	if _, exists := payload["image_urls"]; exists {
+		t.Fatalf("payload.image_urls = %#v, want omitted for omni references", payload["image_urls"])
+	}
+	urls, ok := payload["reference_urls"].([]string)
+	if !ok || len(urls) != 2 {
+		t.Fatalf("payload.reference_urls = %#v, want two reference urls", payload["reference_urls"])
+	}
+	types, ok := payload["reference_types"].([]string)
+	if !ok || len(types) != 2 || types[0] != "image" || types[1] != "audio" {
+		t.Fatalf("payload.reference_types = %#v, want image/audio", payload["reference_types"])
+	}
+}
+
+func TestDoubaoAdapterCreateVideo_ReturnsBodyError(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"error":{"code":"invalid_api_key","message":"Please Provide key from the platform!","type":"invalid_request_error"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateVideo(context.Background(), &adapter.VideoRequest{
+		Model:  "doubao-seedance-2-0-mini-260615",
+		Prompt: "a bear by the sea",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Please Provide key from the platform") {
+		t.Fatalf("CreateVideo() error = %v, want upstream body error", err)
+	}
+}
+
+func TestDoubaoAdapterCreateVideo_ReturnsInvalidImageMessageBeforeTaskIDFallback(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"error": {
+				"code": "InvalidParameter",
+				"message": "Error while downloading image, error: expected the width to be at least 300px, but received a 153x161px image instead",
+				"param": "image_url",
+				"type": "BadRequest"
+			}
+		}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateVideo(context.Background(), &adapter.VideoRequest{
+		Model:  "doubao-seedance-2-0-mini-260615",
+		Prompt: "a bear by the sea",
+	})
+	const want = "Error while downloading image, error: expected the width to be at least 300px, but received a 153x161px image instead"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("CreateVideo() error = %v, want upstream invalid image message", err)
+	}
+	if strings.Contains(err.Error(), "task id") {
+		t.Fatalf("CreateVideo() error = %v, should not fall back to task id error", err)
+	}
+}
+
+func TestDoubaoAdapterGetVideoTask_UsesArkVideoTaskDetail(t *testing.T) {
+	t.Helper()
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"task_id":"task_video_123",
+			"status":"succeeded",
+			"data":[{"url":"https://cdn.example.com/video.mp4"}]
+		}`)
+	}))
+	defer server.Close()
+
+	a, err := NewDoubaoAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/api/v3",
+	})
+	if err != nil {
+		t.Fatalf("NewDoubaoAdapter() error = %v", err)
+	}
+
+	resp, err := a.GetVideoTask(context.Background(), &adapter.VideoTaskRequest{TaskID: "task/video 123"})
+	if err != nil {
+		t.Fatalf("GetVideoTask() error = %v", err)
+	}
+
+	if gotPath != "/api/v3/contents/generations/tasks/task%2Fvideo%20123" {
+		t.Fatalf("path = %q, want escaped task path", gotPath)
+	}
+	if resp.TaskID != "task_video_123" || resp.VideoURL != "https://cdn.example.com/video.mp4" {
+		t.Fatalf("response = %#v, want task id and video url", resp)
+	}
+}
 func TestDoubaoAdapterListModels_NormalizesRemoteCatalog(t *testing.T) {
 	t.Helper()
 
@@ -501,6 +865,9 @@ func TestDoubaoAdapterListModels_NormalizesRemoteCatalog(t *testing.T) {
 	if models[2].Type != "image" {
 		t.Fatalf("models[2].Type = %q, want %q", models[2].Type, "image")
 	}
+	if model := normalizeDoubaoModel("doubao-seedance-2-0-mini-260615"); model.Type != "video" {
+		t.Fatalf("seedance model type = %q, want video", model.Type)
+	}
 }
 
 func TestDoubaoAdapterListModels_UnsupportedEndpointReturnsCapabilityUnsupported(t *testing.T) {
@@ -544,5 +911,37 @@ func TestDoubaoAdapterGetProviderInfo(t *testing.T) {
 	}
 	if info.BaseURL != doubaoDefaultBaseURL {
 		t.Fatalf("info.BaseURL = %q, want %q", info.BaseURL, doubaoDefaultBaseURL)
+	}
+}
+
+func TestNewAdapter_CreatesDoubaoSpeechFromSharedImplementation(t *testing.T) {
+	instance, err := adapter.NewAdapter(&adapter.AdapterConfig{
+		ProviderName: "doubao-speech",
+		APIKey:       "test-key",
+		BaseURL:      "https://openspeech.bytedance.com",
+	})
+	if err != nil {
+		t.Fatalf("NewAdapter() error = %v", err)
+	}
+	if _, ok := instance.(*DoubaoAdapter); !ok {
+		t.Fatalf("adapter type = %T, want *DoubaoAdapter", instance)
+	}
+}
+
+func TestDoubaoAudioBaseURL_UsesSpeechChannelBaseURL(t *testing.T) {
+	config := &adapter.AdapterConfig{
+		ProviderName: "doubao-speech",
+		BaseURL:      "https://speech.example.com/api/v3/",
+	}
+
+	if got, want := doubaoAudioBaseURL(config), "https://speech.example.com/api/v3"; got != want {
+		t.Fatalf("doubaoAudioBaseURL() = %q, want %q", got, want)
+	}
+	endpoint, err := resolveDoubaoAudioWebSocketEndpoint(config, doubaoTranscriptionPath)
+	if err != nil {
+		t.Fatalf("resolveDoubaoAudioWebSocketEndpoint() error = %v", err)
+	}
+	if want := "wss://speech.example.com/api/v3/sauc/bigmodel_nostream"; endpoint != want {
+		t.Fatalf("endpoint = %q, want %q", endpoint, want)
 	}
 }

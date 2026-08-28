@@ -63,6 +63,7 @@ func TestAgentsRoutes_ResourceCandidatePickersUseAgentScopedGETs(t *testing.T) {
 		`appsGroup.GET("/:agent_id/candidates/workflows", appHandler.ListAgentWorkflowBindingCandidates)`,
 		`appsGroup.GET("/:agent_id/candidates/databases", appHandler.ListAgentDatabaseBindingCandidates)`,
 		`appsGroup.GET("/:agent_id/candidates/databases/:data_source_id/tables", appHandler.ListAgentDatabaseTableBindingCandidates)`,
+		`appsGroup.GET("/:agent_id/candidates/integration-connections", appHandler.ListAgentIntegrationConnectionBindingCandidates)`,
 	}
 	for _, want := range wants {
 		if !strings.Contains(text, want) {

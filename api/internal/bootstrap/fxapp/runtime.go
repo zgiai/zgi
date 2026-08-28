@@ -16,8 +16,10 @@ import (
 	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	graphflowworker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
+	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
+	videoservice "github.com/zgiai/zgi/api/internal/modules/video/service"
 	"github.com/zgiai/zgi/api/internal/observability"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/queue"
@@ -40,6 +42,8 @@ type runtimeParams struct {
 	GraphFlowService    *graphflow.Service
 	WorkflowTestService *workflowtest.Service
 	LLMClient           llmclient.LLMClient
+	ImageTaskPoller     *imageservice.TaskPoller
+	VideoTaskPoller     *videoservice.TaskPoller
 	TaskManager         *queue.TaskManager
 	TaskHandlerRegistry *container.TaskHandlerRegistrar
 	Scheduler           *pkgscheduler.Scheduler
@@ -93,10 +97,20 @@ func registerRoutes(params routeParams) {
 }
 
 func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
+	graphLifecycle := params.ServiceContainer.GetGraphLifecycleService()
+	_ = params.ServiceContainer.GetGraphVisibilityService()
+	graphRuntimeHealth := params.ServiceContainer.GetGraphRuntimeHealthService()
+
 	graphflowworker.RegisterGraphFlowHandlers(
 		params.TaskHandlerRegistry,
 		params.GraphFlowService,
 		params.TaskManager,
+	)
+	outboxReconciler := graphflowworker.NewOutboxReconciler(
+		params.GraphFlowService.DB,
+		graphflowworker.NewRunOutboxHandler(params.GraphFlowService, params.TaskManager),
+		graphflowworker.NewVisibilityHandler(params.GraphFlowService),
+		graphflowworker.NewDatasetPurgeHandler(params.GraphFlowService),
 	)
 
 	if params.Scheduler != nil {
@@ -112,8 +126,19 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		system_service.NewCloudBootstrapRunner(params.Config, params.BootstrapService),
 		params.Logger,
 	)
+	if params.Config != nil && params.Config.ExternalIntegrations.Enabled && params.ServiceContainer != nil {
+		RegisterIntegrationAuditCompletionLifecycle(lc, params.ServiceContainer.GetIntegrationExecutor(), params.Logger)
+		RegisterIntegrationOAuthMaintenanceLifecycle(lc, params.ServiceContainer.GetIntegrationOAuthFlowService(), params.Logger)
+		RegisterIntegrationOAuthRecoveryLifecycle(lc, params.ServiceContainer.GetIntegrationOAuthRecoveryService(), params.Logger)
+	}
+	RegisterGraphRuntimeHealthLifecycle(lc, graphRuntimeHealth)
+	RegisterGraphEvidenceRepairLifecycle(lc, params.GraphFlowService, params.Logger)
+	RegisterGraphOutboxReconcilerLifecycle(lc, outboxReconciler, params.Logger)
+	RegisterGraphRunReconcilerLifecycle(lc, graphLifecycle, params.Logger)
 	registerOpenTelemetryLifecycle(lc, params.OpenTelemetry, params.Logger)
 	RegisterWorkflowTestLocalWorkerLifecycle(lc, params.Config, params.WorkflowTestService, params.LLMClient, params.Logger)
+	RegisterVideoRuntimeTaskPollerLifecycle(lc, params.VideoTaskPoller, params.Logger)
+	RegisterImageRuntimeTaskPollerLifecycle(lc, params.ImageTaskPoller, params.Logger)
 	RegisterTaskManagerLifecycle(lc, params.TaskManager, params.TaskHandlerRegistry, params.Logger)
 	RegisterSchedulerLifecycle(lc, params.Scheduler, params.Logger)
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
@@ -122,6 +147,293 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	registerZGIReporterLifecycle(lc, params.ZGIReporter, params.Logger)
 
 	return nil
+}
+
+// IntegrationOAuthRecoveryRunner drains encrypted OAuth token recovery work.
+type IntegrationOAuthRecoveryRunner interface {
+	RunOAuthRecovery(ctx context.Context)
+}
+
+// RegisterIntegrationOAuthRecoveryLifecycle runs durable token recovery for
+// the API process lifetime. Redis processing leases make this safe on every
+// API instance.
+func RegisterIntegrationOAuthRecoveryLifecycle(
+	lc fx.Lifecycle,
+	runner IntegrationOAuthRecoveryRunner,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			workerCtx, workerCancel := context.WithCancel(context.Background())
+			cancel = workerCancel
+			done = make(chan struct{})
+			go func() {
+				defer close(done)
+				runner.RunOAuthRecovery(workerCtx)
+			}()
+			log.Info("Started integration OAuth recovery")
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if cancel == nil {
+				return nil
+			}
+			cancel()
+			select {
+			case <-done:
+				log.Info("Stopped integration OAuth recovery")
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	})
+}
+
+// IntegrationOAuthMaintenanceRunner expires and removes short-lived OAuth
+// authorization artifacts.
+type IntegrationOAuthMaintenanceRunner interface {
+	RunOAuthMaintenance(ctx context.Context)
+}
+
+// RegisterIntegrationOAuthMaintenanceLifecycle runs the OAuth cleanup worker
+// for the API process lifetime. The repository owns the multi-instance lease.
+func RegisterIntegrationOAuthMaintenanceLifecycle(
+	lc fx.Lifecycle,
+	runner IntegrationOAuthMaintenanceRunner,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			workerCtx, workerCancel := context.WithCancel(context.Background())
+			cancel = workerCancel
+			done = make(chan struct{})
+			go func() {
+				defer close(done)
+				runner.RunOAuthMaintenance(workerCtx)
+			}()
+			log.Info("Started integration OAuth maintenance")
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if cancel == nil {
+				return nil
+			}
+			cancel()
+			select {
+			case <-done:
+				log.Info("Stopped integration OAuth maintenance")
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	})
+}
+
+func RegisterGraphEvidenceRepairLifecycle(
+	lc fx.Lifecycle,
+	service *graphflow.Service,
+	log *zap.Logger,
+) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if service == nil {
+				return nil
+			}
+			repairedDatasets, err := service.RepairLegacyEvidenceProvenance(ctx)
+			if err != nil {
+				log.Warn("Legacy graph evidence repair failed", zap.Error(err))
+				return nil
+			}
+			if repairedDatasets > 0 {
+				log.Info("Legacy graph evidence repaired", zap.Int("dataset_count", repairedDatasets))
+			}
+			return nil
+		},
+	})
+}
+
+func RegisterGraphRunReconcilerLifecycle(
+	lc fx.Lifecycle,
+	lifecycle *graphflow.LifecycleService,
+	log *zap.Logger,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if lifecycle == nil {
+				return nil
+			}
+			if err := lifecycle.ReconcileActiveRuns(ctx); err != nil {
+				log.Warn("Initial graph run reconciliation failed", zap.Error(err))
+			}
+			monitorContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			go func() {
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-monitorContext.Done():
+						return
+					case <-ticker.C:
+						if err := lifecycle.ReconcileActiveRuns(monitorContext); err != nil {
+							log.Warn("Graph run reconciliation failed", zap.Error(err))
+						}
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
+}
+
+// IntegrationAuditCompletionRecoveryRunner drains persisted integration audit completions.
+type IntegrationAuditCompletionRecoveryRunner interface {
+	RunCompletionRecovery(ctx context.Context)
+}
+
+// RegisterIntegrationAuditCompletionLifecycle runs completion recovery for the API process lifetime.
+func RegisterIntegrationAuditCompletionLifecycle(
+	lc fx.Lifecycle,
+	runner IntegrationAuditCompletionRecoveryRunner,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			workerCtx, workerCancel := context.WithCancel(context.Background())
+			cancel = workerCancel
+			done = make(chan struct{})
+			go func() {
+				defer close(done)
+				runner.RunCompletionRecovery(workerCtx)
+			}()
+			log.Info("Started integration audit completion recovery")
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if cancel == nil {
+				return nil
+			}
+			cancel()
+			select {
+			case <-done:
+				log.Info("Stopped integration audit completion recovery")
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	})
+}
+
+func RegisterGraphOutboxReconcilerLifecycle(
+	lc fx.Lifecycle,
+	reconciler *graphflowworker.OutboxReconciler,
+	log *zap.Logger,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := reconciler.RunOnce(ctx); err != nil {
+				log.Warn("Initial graph outbox reconciliation failed", zap.Error(err))
+			}
+			monitorContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			go func() {
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-monitorContext.Done():
+						return
+					case <-ticker.C:
+						if err := reconciler.RunOnce(monitorContext); err != nil {
+							log.Warn("Graph outbox reconciliation failed", zap.Error(err))
+						}
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
+}
+
+func RegisterGraphRuntimeHealthLifecycle(
+	lc fx.Lifecycle,
+	health *system_service.GraphRuntimeHealthService,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			if health == nil {
+				return nil
+			}
+			monitorContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			go func() {
+				initialContext, initialCancel := context.WithTimeout(monitorContext, 10*time.Second)
+				health.Check(initialContext)
+				initialCancel()
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-monitorContext.Done():
+						return
+					case <-ticker.C:
+						checkContext, checkCancel := context.WithTimeout(monitorContext, 10*time.Second)
+						health.Check(checkContext)
+						checkCancel()
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
 }
 
 // RegisterCloudBootstrapLifecycle runs cloud bootstrap before network listeners start.
@@ -298,6 +610,68 @@ func registerZGIReporterLifecycle(lc fx.Lifecycle, reporter *observability.ZGIRe
 			defer cancel()
 			if err := reporter.Flush(flushCtx); err != nil {
 				log.Warn("failed to flush ZGI Reporter", zap.Error(err))
+			}
+			return nil
+		},
+	})
+}
+
+func RegisterVideoRuntimeTaskPollerLifecycle(
+	lc fx.Lifecycle,
+	poller *videoservice.TaskPoller,
+	log *zap.Logger,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			if poller == nil {
+				if log != nil {
+					log.Info("Video runtime task poller skipped")
+				}
+				return nil
+			}
+			var pollerCtx context.Context
+			pollerCtx, cancel = context.WithCancel(context.Background())
+			go poller.Start(pollerCtx)
+			if log != nil {
+				log.Info("Video runtime task poller started")
+			}
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
+}
+
+func RegisterImageRuntimeTaskPollerLifecycle(
+	lc fx.Lifecycle,
+	poller *imageservice.TaskPoller,
+	log *zap.Logger,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			if poller == nil {
+				if log != nil {
+					log.Info("Image runtime task poller skipped")
+				}
+				return nil
+			}
+			var pollerCtx context.Context
+			pollerCtx, cancel = context.WithCancel(context.Background())
+			go poller.Start(pollerCtx)
+			if log != nil {
+				log.Info("Image runtime task poller started")
+			}
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
 			}
 			return nil
 		},

@@ -154,11 +154,12 @@ func knowledgeRetrieveRequest(scope dataset_service.KnowledgeScope, params map[s
 		return dataset_service.KnowledgeRetrieveRequest{}, fmt.Errorf("dataset_ids are required")
 	}
 	return dataset_service.KnowledgeRetrieveRequest{
-		Scope:         scope,
-		Query:         query,
-		DatasetIDs:    datasetIDs,
-		TopK:          intValue(params, "top_k", defaultKnowledgeToolTopK),
-		RetrievalMode: stringValue(params, "retrieval_mode"),
+		Scope:          scope,
+		Query:          query,
+		DatasetIDs:     datasetIDs,
+		TopK:           intValue(params, "top_k", defaultKnowledgeToolTopK),
+		RetrievalMode:  stringValue(params, "retrieval_mode"),
+		FallbackPolicy: stringValue(params, "fallback_policy"),
 	}, nil
 }
 
@@ -168,10 +169,11 @@ func agentKnowledgeRetrieveRequest(scope dataset_service.KnowledgeScope, params 
 		return dataset_service.KnowledgeRetrieveRequest{}, fmt.Errorf("query is required")
 	}
 	return dataset_service.KnowledgeRetrieveRequest{
-		Scope:         scope,
-		Query:         query,
-		TopK:          intValue(params, "top_k", defaultKnowledgeToolTopK),
-		RetrievalMode: stringValue(params, "retrieval_mode"),
+		Scope:          scope,
+		Query:          query,
+		TopK:           intValue(params, "top_k", defaultKnowledgeToolTopK),
+		RetrievalMode:  stringValue(params, "retrieval_mode"),
+		FallbackPolicy: stringValue(params, "fallback_policy"),
 	}, nil
 }
 
@@ -197,6 +199,17 @@ func retrievalMessages(response *dataset_service.KnowledgeRetrieveResponse) ([]t
 	}
 	if len(response.Warnings) > 0 {
 		payload["warnings"] = response.Warnings
+	}
+	if len(response.GraphExecutions) == 1 {
+		execution := response.GraphExecutions[0]
+		payload["retrieval_execution"] = map[string]interface{}{
+			"requested_method":    execution.RequestedMethod,
+			"actual_method":       execution.ActualMethod,
+			"fallback_policy":     execution.FallbackPolicy,
+			"fallback_reason":     execution.FallbackReason,
+			"graph_revision":      execution.GraphRevision,
+			"visibility_revision": execution.VisibilityRevision,
+		}
 	}
 	return []tools.ToolInvokeMessage{
 		builtin.CreateJSONMessage(payload),
@@ -262,15 +275,16 @@ func knowledgeToolParameters(kind string) []tools.ToolParameter {
 	limit := numberParam("limit", "Limit", "Maximum number of knowledge bases to list. Defaults to 20 and is capped at 100.")
 	topK := numberParam("top_k", "Top K", "Maximum number of retrieved chunks. Defaults to 5 and is capped at 20.")
 	retrievalMode := selectParam("retrieval_mode", "Retrieval mode", "Optional retrieval mode. Omit for the default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"})
+	fallbackPolicy := selectParam("fallback_policy", "Fallback policy", "Graph retrieval defaults to no fallback. Select vector only when an explicit downgrade is acceptable.", []string{"none", "vector"})
 	datasetIDs := stringParam("dataset_ids", "Dataset IDs", "Required knowledge base IDs selected after listing. Pass a JSON array or comma-separated string.", true)
 
 	switch kind {
 	case ToolListAccessibleKnowledge:
 		return []tools.ToolParameter{query, limit}
 	case ToolRetrieveKnowledge:
-		return []tools.ToolParameter{query, datasetIDs, topK, retrievalMode}
+		return []tools.ToolParameter{query, datasetIDs, topK, retrievalMode, fallbackPolicy}
 	case ToolRetrieveAgentKnowledge:
-		return []tools.ToolParameter{query, topK, retrievalMode}
+		return []tools.ToolParameter{query, topK, retrievalMode, fallbackPolicy}
 	default:
 		return nil
 	}

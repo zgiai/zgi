@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -22,14 +23,14 @@ func isUnsetOrganizationID(organizationID string) bool {
 	return strings.TrimSpace(organizationID) == "" || strings.TrimSpace(organizationID) == uuid.Nil.String()
 }
 
-// llmClientImpl implements the LLMClient interface
+// llmClientImpl implements model calls and manages their system API keys.
 type llmClientImpl struct {
 	gateway    gateway.LLMGatewayService
 	apiKeyRepo apikeyrepo.APIKeyRepository
 	db         *gorm.DB
 }
 
-// New creates a new LLMClient instance
+// New creates a model client.
 func New(
 	gateway gateway.LLMGatewayService,
 	apiKeyRepo apikeyrepo.APIKeyRepository,
@@ -40,6 +41,101 @@ func New(
 		apiKeyRepo: apiKeyRepo,
 		db:         db,
 	}
+}
+
+// Transcribe calls the model gateway with an organization-owned system key.
+// The PCM stream is consumed once and is never retried by this client.
+func (c *llmClientImpl) Transcribe(ctx context.Context, organizationID string, req *adapter.TranscriptionRequest) (*adapter.TranscriptionResponse, error) {
+	if req == nil || req.Audio == nil || strings.TrimSpace(req.Model) == "" {
+		return nil, fmt.Errorf("%w: transcription model and audio are required", adapter.ErrInvalidRequest)
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system API key: %w", err)
+	}
+	result, err := c.gateway.Transcribe(ctx, apiKey, &gateway.TranscriptionRequest{
+		Model: req.Model,
+		Audio: req.Audio,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("%w: transcription gateway returned no response", adapter.ErrUpstreamError)
+	}
+	return &adapter.TranscriptionResponse{
+		RequestID: result.RequestID,
+		Text:      result.Text,
+	}, nil
+}
+
+// GenerateSpeech calls the model gateway with an organization-owned system key.
+// The caller owns the destination and cancellation lifecycle.
+func (c *llmClientImpl) GenerateSpeech(ctx context.Context, organizationID string, req *adapter.SpeechRequest, dst io.Writer) error {
+	if req == nil ||
+		strings.TrimSpace(req.Model) == "" ||
+		strings.TrimSpace(req.Input) == "" ||
+		strings.TrimSpace(req.Voice) == "" ||
+		strings.TrimSpace(req.ResponseFormat) != "mp3" ||
+		dst == nil {
+		return fmt.Errorf("%w: speech model, input, voice, mp3 format, and destination are required", adapter.ErrInvalidRequest)
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return fmt.Errorf("failed to get system API key: %w", err)
+	}
+	return c.gateway.GenerateSpeech(ctx, apiKey, &gateway.SpeechRequest{
+		Model:          req.Model,
+		Input:          req.Input,
+		Voice:          req.Voice,
+		ResponseFormat: req.ResponseFormat,
+	}, dst)
+}
+
+// GenerateMusic calls the model gateway with an organization-owned
+// system key. The caller owns the stable request ID and destination lifecycle.
+func (c *llmClientImpl) GenerateMusic(ctx context.Context, organizationID string, req *adapter.MusicRequest, dst io.Writer) error {
+	if req == nil {
+		return fmt.Errorf("%w: music request is required", adapter.ErrInvalidRequest)
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return fmt.Errorf("failed to get system API key: %w", err)
+	}
+	return c.gateway.GenerateMusic(ctx, apiKey, &gateway.MusicRequest{
+		RequestID:      req.RequestID,
+		Model:          req.Model,
+		Mode:           req.Mode,
+		Prompt:         req.Prompt,
+		Lyrics:         req.Lyrics,
+		ResponseFormat: req.ResponseFormat,
+	}, dst)
+}
+
+// GenerateLyrics calls the model gateway over the same official HTTP route as
+// music generation.
+func (c *llmClientImpl) GenerateLyrics(ctx context.Context, organizationID string, req *adapter.LyricsRequest) (*adapter.LyricsResult, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: lyrics request is required", adapter.ErrInvalidRequest)
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system API key: %w", err)
+	}
+	return c.gateway.GenerateLyrics(ctx, apiKey, &gateway.LyricsRequest{
+		RequestID: req.RequestID,
+		Model:     req.Model,
+		Prompt:    req.Prompt,
+	})
+}
+
+// CompensateMusicDelivery resolves one request without rerunning model selection.
+func (c *llmClientImpl) CompensateMusicDelivery(ctx context.Context, organizationID, requestID string) error {
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return fmt.Errorf("failed to get system API key: %w", err)
+	}
+	return c.gateway.CompensateMusicDelivery(ctx, apiKey, requestID)
 }
 
 // Chat performs a non-streaming chat completion request
@@ -218,6 +314,58 @@ func (c *llmClientImpl) AppCreateImage(ctx context.Context, appCtx *AppContext, 
 	}
 
 	return c.gateway.CreateImageWithAppContext(ctx, apiKey, gwAppCtx, req)
+}
+
+// AppCreateVideo performs an asynchronous video generation request with app context.
+func (c *llmClientImpl) AppCreateVideo(ctx context.Context, appCtx *AppContext, req *adapter.VideoRequest) (*adapter.VideoResponse, error) {
+	if err := appCtx.Validate(); err != nil {
+		return nil, err
+	}
+	organizationID, err := c.resolveOrganizationID(ctx, appCtx)
+	if err != nil {
+		return nil, err
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system API key: %w", err)
+	}
+	gwAppCtx, err := c.buildGatewayAppContext(appCtx)
+	if err != nil {
+		return nil, err
+	}
+	videoGateway, ok := c.gateway.(interface {
+		CreateVideoWithAppContext(context.Context, *apikeymodel.TenantAPIKey, *gateway.AppContext, *adapter.VideoRequest) (*adapter.VideoResponse, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("%w: video generation is not enabled", adapter.ErrCapabilityUnsupported)
+	}
+	return videoGateway.CreateVideoWithAppContext(ctx, apiKey, gwAppCtx, req)
+}
+
+// AppGetVideoTask queries an asynchronous video generation task with app context.
+func (c *llmClientImpl) AppGetVideoTask(ctx context.Context, appCtx *AppContext, req *adapter.VideoTaskRequest) (*adapter.VideoResponse, error) {
+	if err := appCtx.Validate(); err != nil {
+		return nil, err
+	}
+	organizationID, err := c.resolveOrganizationID(ctx, appCtx)
+	if err != nil {
+		return nil, err
+	}
+	apiKey, err := c.getOrCreateSystemKey(ctx, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get system API key: %w", err)
+	}
+	gwAppCtx, err := c.buildGatewayAppContext(appCtx)
+	if err != nil {
+		return nil, err
+	}
+	videoGateway, ok := c.gateway.(interface {
+		GetVideoTaskWithAppContext(context.Context, *apikeymodel.TenantAPIKey, *gateway.AppContext, *adapter.VideoTaskRequest) (*adapter.VideoResponse, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("%w: video task query is not enabled", adapter.ErrCapabilityUnsupported)
+	}
+	return videoGateway.GetVideoTaskWithAppContext(ctx, apiKey, gwAppCtx, req)
 }
 
 // AppRerank performs reranking with app context
@@ -420,15 +568,16 @@ func (c *llmClientImpl) buildGatewayAppContext(appCtx *AppContext) (*gateway.App
 	}
 
 	gatewayCtx := &gateway.AppContext{
-		AppID:          &appUUID,
-		AppType:        &appCtx.AppType,
-		AccountID:      &accountUUID,
-		SessionID:      appCtx.SessionID,
-		ConversationID: appCtx.ConversationID,
-		WorkflowID:     appCtx.WorkflowID,
-		WorkflowRunID:  appCtx.WorkflowRunID,
-		NodeID:         appCtx.NodeID,
-		NodeType:       appCtx.NodeType,
+		AppID:                     &appUUID,
+		AppType:                   &appCtx.AppType,
+		AccountID:                 &accountUUID,
+		SessionID:                 appCtx.SessionID,
+		ConversationID:            appCtx.ConversationID,
+		WorkflowID:                appCtx.WorkflowID,
+		WorkflowRunID:             appCtx.WorkflowRunID,
+		NodeID:                    appCtx.NodeID,
+		NodeType:                  appCtx.NodeType,
+		SuppressInvocationContent: appCtx.SuppressInvocationContent,
 	}
 	if appCtx.BillingSubjectType != "" {
 		billingSubjectType := appCtx.BillingSubjectType

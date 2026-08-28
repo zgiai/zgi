@@ -69,6 +69,7 @@ func (s *featureService) fillFromEnv(sf *model.SystemFeature) {
 	sf.EnableSocialOAuthLogin = features.EnableSocialOAuthLogin
 	sf.IsAllowRegister = features.AllowRegister
 	sf.IsAllowCreateWorkspace = features.AllowCreateWorkspace
+	sf.EnableExternalIntegrations = cfg.ExternalIntegrations.Enabled
 
 	sf.IsEmailSetup = config.HasEmailDeliveryConfig(cfg)
 	sf.IsPublicDeployment = s.IsPublicDeployment()

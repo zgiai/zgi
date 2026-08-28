@@ -1,4 +1,4 @@
-import type { SearchMethod } from '@/services/types/dataset';
+import type { HitTestingResponse, SearchMethod } from '@/services/types/dataset';
 
 export interface Response {
   code: string;
@@ -21,7 +21,8 @@ export interface BatchTestData {
 export interface ResultElement {
   finished_at: number;
   query: string;
-  result: ResultResult;
+  result?: ResultResult;
+  error?: string;
   started_at: number;
   status: string;
 }
@@ -30,6 +31,7 @@ export interface ResultResult {
   elapsed_time: number;
   query: Query;
   records: Record[];
+  graph_execution?: HitTestingResponse['graph_execution'];
 }
 
 export interface Query {
@@ -142,7 +144,10 @@ export interface BatchHitTestingRequest {
     score_threshold: number;
     return_full_doc?: boolean | null;
     pre_qa_extension?: boolean | null;
+    fallback_policy?: 'none' | 'vector';
   };
+  retrieval_mode?: 'graph' | 'hybrid' | 'vector';
+  fallback_policy?: 'none' | 'vector';
 }
 
 export interface BatchHitTestingResponse {

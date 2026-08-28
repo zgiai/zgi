@@ -714,6 +714,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			InputPriceConfigured:  m.InputPriceConfigured,
 			OutputPriceConfigured: m.OutputPriceConfigured,
 			CachedInputPrice:      cachedInputPrice,
+			Pricing:               append([]byte(nil), m.Pricing...),
 
 			// Context
 			ContextWindow:   m.ContextWindow,
@@ -727,11 +728,16 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 				Assistants:       m.Assistants,
 				Batch:            m.Batch,
 				Embeddings:       m.Embeddings,
+				FineTuning:       m.FineTuning,
 				Vision:           m.SupportsVision,
 				ImageGeneration:  m.ImageGeneration,
 				SpeechGeneration: m.SpeechGeneration,
 				Transcription:    m.Transcription,
+				Translation:      m.Translation,
+				MusicGeneration:  m.MusicGeneration,
 				Moderation:       m.Moderation,
+				Videos:           m.Videos,
+				ImageEdit:        m.ImageEdit,
 			},
 			Features: model.ModelFeatures{
 				Streaming:        m.SupportsStreaming,
@@ -777,6 +783,9 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			UpdatedAt:            m.UpdatedAt.Unix(),
 			SupportedParameters:  supportedParams,
 			ParametersMetadata:   m.SupportedParameters,
+			ConfigParameters:     model.NormalizeConfigParameters(m.ConfigParameters),
+			DefaultParameters:    cloneModelJSONObject(m.DefaultParameters),
+			Capabilities:         capabilitiesFromModelDefaults(m.DefaultParameters),
 		}
 
 		// Apply tenant config if exists
@@ -871,6 +880,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 				Transcription:    m.Transcription,
 				Translation:      m.Translation,
 				Moderation:       m.Moderation,
+				Videos:           m.HasUseCase(string(model.UseCaseVideoGen)),
 			},
 			Features: model.ModelFeatures{
 				Streaming:        m.SupportsStreaming,
@@ -1203,4 +1213,61 @@ func getCurrencyOrDefault(currency string) string {
 		return currency
 	}
 	return "USD"
+}
+
+func cloneModelJSONObject(src model.JSONObject) model.JSONObject {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(model.JSONObject, len(src))
+	for key, value := range src {
+		dst[key] = cloneModelJSONValue(value)
+	}
+	return dst
+}
+
+func cloneModelJSONValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case model.JSONObject:
+		return cloneModelJSONObject(typed)
+	case map[string]interface{}:
+		cloned := make(map[string]interface{}, len(typed))
+		for key, nested := range typed {
+			cloned[key] = cloneModelJSONValue(nested)
+		}
+		return cloned
+	case []interface{}:
+		cloned := make([]interface{}, len(typed))
+		for i, nested := range typed {
+			cloned[i] = cloneModelJSONValue(nested)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+func capabilitiesFromModelDefaults(defaults model.JSONObject) model.JSONObject {
+	if len(defaults) == 0 {
+		return nil
+	}
+	raw, ok := defaults["capabilities"]
+	if !ok {
+		return nil
+	}
+	switch capabilities := raw.(type) {
+	case model.JSONObject:
+		return cloneModelJSONObject(capabilities)
+	case map[string]interface{}:
+		if len(capabilities) == 0 {
+			return nil
+		}
+		cloned, ok := cloneModelJSONValue(capabilities).(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		return model.JSONObject(cloned)
+	default:
+		return nil
+	}
 }

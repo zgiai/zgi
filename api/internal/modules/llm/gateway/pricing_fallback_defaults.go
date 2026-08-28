@@ -20,10 +20,13 @@ import (
 type PricingOperation string
 
 const (
-	PricingOperationChat      PricingOperation = "chat"
-	PricingOperationEmbedding PricingOperation = "embedding"
-	PricingOperationRerank    PricingOperation = "rerank"
-	PricingOperationImage     PricingOperation = "image_generation"
+	PricingOperationChat          PricingOperation = "chat"
+	PricingOperationEmbedding     PricingOperation = "embedding"
+	PricingOperationRerank        PricingOperation = "rerank"
+	PricingOperationImage         PricingOperation = "image_generation"
+	PricingOperationVideo         PricingOperation = "video_generation"
+	PricingOperationSpeech        PricingOperation = "speech_generation"
+	PricingOperationTranscription PricingOperation = "transcription"
 )
 
 type PricingMeter string
@@ -368,7 +371,7 @@ func normalizePricingFallbackOverrideRules(rules []PricingFallbackRule) ([]Prici
 
 func validatePricingFallbackRule(rule PricingFallbackRule, index int) error {
 	switch rule.Operation {
-	case PricingOperationChat, PricingOperationEmbedding, PricingOperationRerank, PricingOperationImage:
+	case PricingOperationChat, PricingOperationEmbedding, PricingOperationRerank, PricingOperationImage, PricingOperationVideo:
 	default:
 		return fmt.Errorf("override_rules[%d].operation is invalid", index)
 	}

@@ -352,15 +352,19 @@ export function AgentRuntimePromptPanel({
 
   const promptTemplates = useMemo(
     () =>
-      PROMPT_TEMPLATE_KEYS.map(key => ({
-        key,
-        title: t(`prompt.templateLabels.${key}` as never),
-        description: t(`prompt.templateDescriptions.${key}` as never),
-        category: t(
-          `prompt.templateCategories.${PROMPT_TEMPLATE_CATEGORY_KEYS[key]}` as never
-        ),
-        prompt: t(`prompt.templates.${key}` as never),
-      })),
+      PROMPT_TEMPLATE_KEYS.map(key => {
+        const rawPrompt = t.raw(`prompt.templates.${key}` as never);
+
+        return {
+          key,
+          title: t(`prompt.templateLabels.${key}` as never),
+          description: t(`prompt.templateDescriptions.${key}` as never),
+          category: t(
+            `prompt.templateCategories.${PROMPT_TEMPLATE_CATEGORY_KEYS[key]}` as never
+          ),
+          prompt: typeof rawPrompt === 'string' ? rawPrompt : '',
+        };
+      }),
     [t]
   );
 

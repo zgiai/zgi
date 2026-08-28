@@ -27,8 +27,12 @@ export function toModelParams(
 }
 
 export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequest): string {
+  const editablePayload = { ...payload };
+  delete editablePayload.agent_memory_config_revision;
+
   const editableMemorySlots = (payload.agent_memory_slots ?? []).map(slot => ({
     key: slot.key,
+    name: slot.name ?? '',
     description: slot.description,
     max_chars: slot.max_chars,
     enabled: slot.enabled,
@@ -36,11 +40,14 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
   }));
 
   return JSON.stringify({
-    ...payload,
+    ...editablePayload,
     enabled_skill_ids: [...payload.enabled_skill_ids].sort(),
     knowledge_dataset_ids: [...(payload.knowledge_dataset_ids ?? [])].sort(),
     workflow_bindings: [...(payload.workflow_bindings ?? [])].sort((left, right) =>
       left.binding_id.localeCompare(right.binding_id)
+    ),
+    integration_bindings: [...(payload.integration_bindings ?? [])].sort((left, right) =>
+      left.integration_id.localeCompare(right.integration_id)
     ),
     agent_memory_slots: editableMemorySlots.sort((left, right) =>
       left.key.localeCompare(right.key)
@@ -90,7 +97,8 @@ export function getAgentTextIconDisplay(
   try {
     const parsed = JSON.parse(trimmed) as { icon?: unknown; icon_background?: unknown };
     return {
-      text: typeof parsed.icon === 'string' && parsed.icon.trim() ? parsed.icon.trim() : fallback.text,
+      text:
+        typeof parsed.icon === 'string' && parsed.icon.trim() ? parsed.icon.trim() : fallback.text,
       background:
         typeof parsed.icon_background === 'string' && parsed.icon_background.trim()
           ? parsed.icon_background.trim()

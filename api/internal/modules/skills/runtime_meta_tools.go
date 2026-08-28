@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 func MetaTools() []llmadapter.Tool {
@@ -38,8 +39,8 @@ func MetaToolsForSkillStateWithOptions(resolved *ResolvedSkills, loadedSkillIDs 
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
 		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
 	}
-	if toolSkillIDs, toolNames, pairs, contracts, hasUntyped := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
-		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs, contracts, hasUntyped))
+	if toolSkillIDs, toolNames, pairs, contracts := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
+		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs, contracts))
 	}
 	return tools
 }
@@ -142,7 +143,7 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 		finalAnswerMetaTool(),
 	}
 	if includeToolCaller {
-		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil, true))
+		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil))
 	}
 	return tools
 }
@@ -152,25 +153,13 @@ func updatePlanMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Replace the user-visible outcome contract only when the requested result structure changes, a failure invalidates the current route, or the user changes the goal. Ordinary tool success is reconciled automatically and must not trigger this tool. Prefer outcomes; plan is a compatibility projection.",
+			Description: "Replace the user-visible outcome contract when its structure changes, or patch existing phase bindings before a projected external Action. Use phase_updates for server-owned existing phases so omitted phases and hidden attestations are preserved. Ordinary tool success is reconciled automatically and must not trigger this tool.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"explanation": map[string]interface{}{"type": "string"},
-					"plan": map[string]interface{}{
-						"type": "array",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"id":            map[string]interface{}{"type": "string"},
-								"step":          map[string]interface{}{"type": "string"},
-								"status":        map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
-								"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-								"note":          map[string]interface{}{"type": "string"},
-							},
-							"required": []string{"step", "status"},
-						},
-					},
+					"explanation":   map[string]interface{}{"type": "string"},
+					"plan":          planSnapshotSchema(),
+					"phase_updates": phaseUpdateSchema(),
 					"outcomes": map[string]interface{}{
 						"type": "array",
 						"items": map[string]interface{}{
@@ -194,6 +183,27 @@ func updatePlanMetaTool() llmadapter.Tool {
 			},
 		},
 	}
+}
+
+func phaseUpdateSchema() map[string]interface{} {
+	item := evidenceMapCopy(planSnapshotSchema()["items"])
+	item["required"] = []string{"id"}
+	return map[string]interface{}{
+		"type":        "array",
+		"description": "Patch existing phases by exact ID. Unmentioned phases and all server-owned binding data remain unchanged. Prefer this for projected external Action expected_action bindings.",
+		"minItems":    1,
+		"maxItems":    16,
+		"items":       item,
+	}
+}
+
+func evidenceMapCopy(value interface{}) map[string]interface{} {
+	raw, _ := value.(map[string]interface{})
+	out := make(map[string]interface{}, len(raw))
+	for key, item := range raw {
+		out[key] = item
+	}
+	return out
 }
 
 func loadSkillMetaTool(skillIDs []string) llmadapter.Tool {
@@ -435,28 +445,38 @@ func finalAnswerMetaToolWithOptions(options MetaToolOptions) llmadapter.Tool {
 func planSnapshotSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type":        "array",
-		"description": "Optional execution plan snapshot for audit. It does not determine whether the final answer is accepted.",
+		"description": "Execution plan snapshot. It is normally audit metadata, but before any projected external Action it is the required completeness ledger: preserve every required outcome phase and bind tool phases with expected_action before execution.",
 		"maxItems":    16,
 		"items": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"id":            map[string]interface{}{"type": "string"},
-				"step":          map[string]interface{}{"type": "string"},
-				"status":        map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+				"id":     map[string]interface{}{"type": "string"},
+				"step":   map[string]interface{}{"type": "string"},
+				"status": map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+				"completion_mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"tool", "final_answer", "non_tool"},
+					"description": "Classify a phase that intentionally has no expected_action as final-answer-only or non-tool work. Use tool when expected_action is present.",
+				},
 				"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 				"note":          map[string]interface{}{"type": "string"},
 				"expected_action": map[string]interface{}{
 					"type":        "object",
-					"description": "Optional structured action expected to complete this phase. Use exact loaded skill/tool IDs and stable target resource IDs when known.",
+					"description": "Optional structured action expected to complete this phase. For a projected external Action, provide its exact exposed tool_name; the server supplies the hidden skill and Action identity. Use stable target resource IDs when known.",
 					"properties": map[string]interface{}{
-						"skill_id":  map[string]interface{}{"type": "string"},
+						"skill_id":  map[string]interface{}{"type": "string", "description": "Optional for a projected external Action; required for ordinary skill tools."},
 						"tool_name": map[string]interface{}{"type": "string"},
 						"target": map[string]interface{}{
 							"type":                 "object",
 							"additionalProperties": map[string]interface{}{"type": "string"},
 						},
+						"target_arguments": map[string]interface{}{
+							"type":                 "object",
+							"description":          "Optional stable Action target values keyed by their exact business-argument path (for example recipient_ref or calendar.id). The server keeps only paths authorized by the projected Action binding.",
+							"additionalProperties": map[string]interface{}{"type": "string"},
+						},
 					},
-					"required": []string{"skill_id", "tool_name"},
+					"required": []string{"tool_name"},
 				},
 			},
 			"required": []string{"step", "status"},
@@ -464,76 +484,68 @@ func planSnapshotSchema() map[string]interface{} {
 	}
 }
 
-func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string, contracts []SkillToolArgumentContract, hasUntypedTools bool) llmadapter.Tool {
+func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string, contracts []SkillToolArgumentContract) llmadapter.Tool {
 	description := "Call a tool allowed by a loaded skill after reading its instructions."
 	if len(pairs) > 0 {
 		description += " Allowed skill/tool pairs: " + strings.Join(pairs, "; ") + "."
 	}
-	argumentsSchema := callSkillToolArgumentsSchema(contracts, hasUntypedTools)
+	argumentsSchema := map[string]interface{}{
+		"type":        "object",
+		"description": "Arguments for the selected skill tool. Pass an object that satisfies that exact skill/tool pair's parameters.",
+	}
+	parameters := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"skill_id":      stringSchema("The loaded skill ID that allows the tool.", skillIDs),
+			"tool_name":     stringSchema("The allowed tool name to call.", toolNames),
+			"plan_phase_id": map[string]interface{}{"type": "string", "description": "Optional outcome-phase ID. Include it only when this tool's successful result is sufficient to complete that phase; omit it for prerequisite reads, inspections, and helper calls."},
+			"completion_intent": map[string]interface{}{
+				"type":        "string",
+				"enum":        []string{"continue", "finalize_if_success"},
+				"description": "Use finalize_if_success only when this exact tool call is the final remaining user-requested effect and all prerequisites are already complete. It never bypasses approval or proves success by itself.",
+			},
+			"arguments": argumentsSchema,
+		},
+		"required": []string{"skill_id", "tool_name", "arguments"},
+	}
+	if branches := callSkillToolPairBranches(contracts); len(branches) > 0 {
+		parameters["oneOf"] = branches
+	}
 	return llmadapter.Tool{
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolCallSkillTool,
 			Description: description,
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"skill_id":      stringSchema("The loaded skill ID that allows the tool.", skillIDs),
-					"tool_name":     stringSchema("The allowed tool name to call.", toolNames),
-					"plan_phase_id": map[string]interface{}{"type": "string", "description": "Optional outcome-phase ID. Include it only when this tool's successful result is sufficient to complete that phase; omit it for prerequisite reads, inspections, and helper calls."},
-					"completion_intent": map[string]interface{}{
-						"type":        "string",
-						"enum":        []string{"continue", "finalize_if_success"},
-						"description": "Use finalize_if_success only when this exact tool call is the final remaining user-requested effect and all prerequisites are already complete. It never bypasses approval or proves success by itself.",
-					},
-					"arguments": argumentsSchema,
-				},
-				"required": []string{"skill_id", "tool_name", "arguments"},
-			},
+			Parameters:  parameters,
 		},
 	}
 }
 
-func callSkillToolArgumentsSchema(contracts []SkillToolArgumentContract, hasUntypedTools bool) map[string]interface{} {
-	schema := map[string]interface{}{
-		"type":        "object",
-		"description": "Arguments for the selected skill tool. Pass a non-empty object that satisfies the selected tool's required parameters.",
-	}
-	if len(contracts) == 0 {
-		return schema
-	}
-	options := make([]interface{}, 0, len(contracts)+1)
+func callSkillToolPairBranches(contracts []SkillToolArgumentContract) []interface{} {
+	options := make([]interface{}, 0, len(contracts))
+	seen := make(map[string]struct{}, len(contracts))
 	for _, contract := range contracts {
-		if len(contract.Schema) == 0 {
+		skillID := normalizeSkillID(contract.SkillID)
+		toolName := strings.TrimSpace(contract.ToolName)
+		if skillID == "" || toolName == "" || len(contract.Schema) == 0 {
 			continue
 		}
-		options = append(options, contract.Schema)
-	}
-	if hasUntypedTools {
+		key := skillID + "/" + toolName
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
 		options = append(options, map[string]interface{}{
-			"type":        "object",
-			"description": "Arguments for a skill tool that does not expose a structured argument schema.",
+			"type": "object",
+			"properties": map[string]interface{}{
+				"skill_id":  map[string]interface{}{"const": skillID},
+				"tool_name": map[string]interface{}{"const": toolName},
+				"arguments": contract.Schema,
+			},
+			"required": []string{"skill_id", "tool_name", "arguments"},
 		})
 	}
-	if len(options) == 0 {
-		return schema
-	}
-	if hasUntypedTools || hasOptionalOnlyContract(contracts) {
-		schema["anyOf"] = options
-	} else {
-		schema["oneOf"] = options
-	}
-	return schema
-}
-
-func hasOptionalOnlyContract(contracts []SkillToolArgumentContract) bool {
-	for _, contract := range contracts {
-		required, _ := contract.Schema["required"].([]string)
-		if len(required) == 0 {
-			return true
-		}
-	}
-	return false
+	return options
 }
 
 func stringSchema(description string, values []string) map[string]interface{} {
@@ -621,9 +633,9 @@ func loadedReferenceOptions(resolved *ResolvedSkills, loaded map[string]struct{}
 	return skillIDs, paths
 }
 
-func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string, []SkillToolArgumentContract, bool) {
+func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string, []SkillToolArgumentContract) {
 	if resolved == nil || len(loaded) == 0 {
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, nil
 	}
 	skillSeen := map[string]struct{}{}
 	toolSeen := map[string]struct{}{}
@@ -631,7 +643,6 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 	toolNames := []string{}
 	pairs := []string{}
 	contracts := []SkillToolArgumentContract{}
-	hasUntyped := false
 	for _, doc := range resolved.Skills {
 		skillID := normalizeSkillID(doc.Metadata.ID)
 		if _, ok := loaded[skillID]; !ok || len(doc.Tools) == 0 {
@@ -652,10 +663,32 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 				toolSeen[name] = struct{}{}
 				toolNames = append(toolNames, name)
 			}
-			if contract, ok := SkillToolArgumentContractFor(skillID, name); ok {
+			if len(tool.InputSchema) > 0 {
+				modelSchema := tools.ModelVisibleJSONSchema(tool.InputSchema)
+				if len(modelSchema) == 0 {
+					modelSchema = map[string]interface{}{
+						"type":                 "object",
+						"properties":           map[string]interface{}{},
+						"additionalProperties": false,
+					}
+				}
+				contracts = append(contracts, SkillToolArgumentContract{
+					SkillID:     skillID,
+					ToolName:    name,
+					Description: tool.RuntimeDescription,
+					Schema:      modelSchema,
+				})
+			} else if contract, ok := SkillToolArgumentContractFor(skillID, name); ok {
 				contracts = append(contracts, contract)
 			} else {
-				hasUntyped = true
+				contracts = append(contracts, SkillToolArgumentContract{
+					SkillID:  skillID,
+					ToolName: name,
+					Schema: map[string]interface{}{
+						"type":        "object",
+						"description": "Arguments for a skill tool that does not expose a structured argument schema.",
+					},
+				})
 			}
 		}
 		sort.Strings(docToolNames)
@@ -671,5 +704,5 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 		right := contracts[j].SkillID + "/" + contracts[j].ToolName
 		return left < right
 	})
-	return skillIDs, toolNames, pairs, contracts, hasUntyped
+	return skillIDs, toolNames, pairs, contracts
 }

@@ -7,9 +7,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	datalibrarymodel "github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
+	graphmodel "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/model"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+type DocumentGraphVisibilityRepository interface {
+	UpdateDocumentsRetrievalState(ctx context.Context, datasetID string, documentIDs []string, accountID string, enabled bool) (int64, bool, error)
+}
 
 // DocumentRepository defines the interface for document repository
 type DocumentRepository interface {
@@ -1183,6 +1191,140 @@ func (r *DocumentRepositoryImpl) DisableDocuments(ctx context.Context, datasetID
 			Where("dataset_id = ? AND document_id IN ?", datasetID, documentIDs).
 			Updates(updates).Error
 	})
+}
+
+func (r *DocumentRepositoryImpl) UpdateDocumentsRetrievalState(
+	ctx context.Context,
+	datasetID string,
+	documentIDs []string,
+	accountID string,
+	enabled bool,
+) (int64, bool, error) {
+	if len(documentIDs) == 0 {
+		return 0, false, nil
+	}
+
+	var revision int64
+	var changed bool
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var dataset model.Dataset
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&dataset, "id = ?", datasetID).Error; err != nil {
+			return err
+		}
+
+		targetDocumentIDs := documentIDs
+		if enabled {
+			var err error
+			targetDocumentIDs, err = r.enableableDocumentIDs(ctx, tx, datasetID, documentIDs)
+			if err != nil {
+				return err
+			}
+		}
+		if len(targetDocumentIDs) == 0 {
+			revision = dataset.GraphVisibilityRevision
+			return nil
+		}
+
+		now := time.Now().UTC()
+		documentUpdates := map[string]any{
+			"enabled":     enabled,
+			"updated_at":  now,
+			"disabled_at": nil,
+			"disabled_by": nil,
+		}
+		if !enabled {
+			documentUpdates["disabled_at"] = now
+			documentUpdates["disabled_by"] = accountID
+		}
+		if err := tx.Model(&model.Document{}).
+			Where("dataset_id = ? AND id IN ?", datasetID, targetDocumentIDs).
+			Updates(documentUpdates).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.DocumentSegment{}).
+			Where("dataset_id = ? AND document_id IN ?", datasetID, targetDocumentIDs).
+			Updates(documentUpdates).Error; err != nil {
+			return err
+		}
+
+		var refs []datalibrarymodel.KnowledgeBaseAssetRef
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("dataset_id = ? AND dataset_document_id IN ? AND deleted_at IS NULL", datasetID, targetDocumentIDs).
+			Find(&refs).Error; err != nil {
+			return err
+		}
+		changedDocumentIDs := make([]string, 0, len(refs))
+		changedRefIDs := make([]string, 0, len(refs))
+		for _, ref := range refs {
+			if ref.OrganizationID != dataset.OrganizationID ||
+				(dataset.WorkspaceID != "" && (ref.WorkspaceID == nil || *ref.WorkspaceID != dataset.WorkspaceID)) {
+				return fmt.Errorf("graph flow tenant scope mismatch")
+			}
+			if ref.RetrievalEnabled == enabled {
+				continue
+			}
+			if err := tx.Model(&datalibrarymodel.KnowledgeBaseAssetRef{}).
+				Where("id = ?", ref.ID).
+				Update("retrieval_enabled", enabled).Error; err != nil {
+				return err
+			}
+			changedRefIDs = append(changedRefIDs, ref.ID.String())
+			if ref.DatasetDocumentID != nil {
+				changedDocumentIDs = append(changedDocumentIDs, ref.DatasetDocumentID.String())
+			}
+		}
+		if len(changedRefIDs) == 0 {
+			revision = dataset.GraphVisibilityRevision
+			return nil
+		}
+
+		revision = dataset.GraphVisibilityRevision + 1
+		if err := tx.Model(&model.Dataset{}).Where("id = ?", datasetID).Updates(map[string]any{
+			"graph_visibility_revision": revision,
+			"graph_updated_at":          now,
+		}).Error; err != nil {
+			return err
+		}
+
+		organizationID, err := uuid.Parse(dataset.OrganizationID)
+		if err != nil {
+			return fmt.Errorf("invalid dataset organization id: %w", err)
+		}
+		var workspaceID *uuid.UUID
+		if dataset.WorkspaceID != "" {
+			parsedWorkspaceID, err := uuid.Parse(dataset.WorkspaceID)
+			if err != nil {
+				return fmt.Errorf("invalid dataset workspace id: %w", err)
+			}
+			workspaceID = &parsedWorkspaceID
+		}
+		parsedDatasetID, err := uuid.Parse(datasetID)
+		if err != nil {
+			return fmt.Errorf("invalid dataset id: %w", err)
+		}
+		event := &graphmodel.GraphOutboxEvent{
+			OrganizationID: organizationID,
+			WorkspaceID:    workspaceID,
+			DatasetID:      parsedDatasetID,
+			EventType:      graphmodel.GraphOutboxEventVisibility,
+			AggregateKey:   fmt.Sprintf("visibility:%s:%d", datasetID, revision),
+			Payload: map[string]any{
+				"dataset_id":        datasetID,
+				"document_ids":      changedDocumentIDs,
+				"source_ref_ids":    changedRefIDs,
+				"retrieval_enabled": enabled,
+				"revision":          revision,
+			},
+			Status:      graphmodel.GraphOutboxStatusPending,
+			AvailableAt: now,
+		}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(event).Error; err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	return revision, changed, err
 }
 
 // ArchiveDocuments archives multiple documents by setting their archived flag to true

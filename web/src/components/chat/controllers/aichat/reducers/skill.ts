@@ -271,6 +271,34 @@ function upsertMemoryTimelineItem(
 ): AIChatAgenticTimelineItem[] {
   const baseTimeline = removeTransientProgressItems(timeline);
   const presentationPosition = presentationPositionFromPayload(payload);
+  const isAutomaticAgentMemory =
+    payload.memory_scope === 'agent' && payload.source_kind === 'automatic';
+  if (isAutomaticAgentMemory) {
+    const itemId = `memory-auto-${payload.message_id}`;
+    const existingIndex = baseTimeline.findIndex(
+      item => item.type === 'memory_event' && item.id === itemId
+    );
+    const existing = existingIndex >= 0 ? baseTimeline[existingIndex] : undefined;
+    const existingKeys = existing?.type === 'memory_event' ? existing.event.keys ?? [] : [];
+    const keys = Array.from(
+      new Set([...existingKeys, ...(payload.key ? [payload.key] : [])].filter(Boolean))
+    );
+    const merged: AIChatAgenticTimelineItem = {
+      id: itemId,
+      type: 'memory_event',
+      event: {
+        ...(existing?.type === 'memory_event' ? existing.event : {}),
+        ...payload,
+        keys,
+        operation_count: keys.length,
+      },
+      created_at: payload.created_at ?? existing?.created_at,
+      event_id: eventId ?? (existing && 'event_id' in existing ? existing.event_id : null),
+      ...presentationPosition,
+    };
+    if (existingIndex < 0) return [...baseTimeline, merged];
+    return baseTimeline.map((item, index) => (index === existingIndex ? merged : item));
+  }
   const itemId =
     eventId ??
     `memory-${payload.action}-${payload.entry_id ?? 'entry'}-${payload.created_at ?? Date.now()}`;
@@ -1044,6 +1072,7 @@ function toolGovernanceDecisionEventFromSkillCall(
     execution_status: payload.status ?? (payload.message ? 'error' : 'success'),
     execution_error:
       'message' in payload && payload.status === 'error' ? payload.message : undefined,
+    execution_error_code: payload.error_code,
     execution_message: payload.message,
     execution_duration_ms: payload.duration_ms,
     execution_result: 'result' in payload ? payload.result : undefined,
@@ -1119,6 +1148,7 @@ export function applySkillCallEndState(
       status: payload.status ?? 'success',
       duration_ms: payload.duration_ms,
       message: payload.message,
+      error_code: payload.error_code,
       result: payload.result,
       governance: payload.governance,
       asset_operation_audit: payload.asset_operation_audit,
@@ -1164,6 +1194,7 @@ export function applySkillCallErrorState(
       duration_ms: payload.duration_ms,
       message: payload.message,
       error: payload.status === 'blocked' ? undefined : payload.message,
+      error_code: payload.error_code,
       governance: payload.governance,
       asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,

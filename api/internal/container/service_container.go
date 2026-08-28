@@ -3,9 +3,11 @@ package container
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
@@ -31,6 +33,17 @@ import (
 	file_repo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 	file_service "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	dingtalk_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/dingtalk"
+	exa_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/exa"
+	feishu_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
+	github_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/github"
+	gmail_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/gmail"
+	mail_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/mail"
+	wecom_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/wecom"
+	x_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/x"
+	integration_metatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
+	integration_tools "github.com/zgiai/zgi/api/internal/modules/integrations/toolprovider"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 	pluginrunner_client "github.com/zgiai/zgi/api/internal/modules/pluginrunner/client"
 	pluginrunner_repo "github.com/zgiai/zgi/api/internal/modules/pluginrunner/repository"
@@ -67,6 +80,7 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
+	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
 	filegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
 	files_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
@@ -211,6 +225,37 @@ type ServiceContainer struct {
 	// Tool engine
 	toolEngine *tools.ToolEngine
 
+	// External integrations
+	integrationRegistry             *integrations.Registry
+	integrationExecutor             *integrations.Executor
+	integrationExecutionRepo        *integrations.GormExecutionRepository
+	integrationOperationReceiptRepo *integrations.GormOperationReceiptRepository
+	integrationConnectionRepo       *integrations.GormConnectionRepository
+	integrationCredentialCipher     integrations.CredentialCipher
+	integrationConnectionResolver   *integrations.DefaultConnectionResolver
+	integrationRuntimeResolver      integrations.ConnectionResolver
+	integrationConnectionService    *integrations.DefaultConnectionService
+	integrationConnectionTester     *integrations.AuditedConnectionTester
+	integrationConnectionGrantRepo  *integrations.GormConnectionGrantRepository
+	integrationConnectionAccess     *integrations.DefaultConnectionAccessService
+	integrationAIChatPreferenceRepo *integrations.GormAIChatIntegrationPreferenceRepository
+	integrationAIChatPreferences    *integrations.DefaultAIChatIntegrationPreferenceService
+	integrationActionProjections    *integration_metatools.ActionProjectionService
+	integrationConnectionHealthRepo *integrations.GormConnectionHealthRepository
+	integrationConnectionHealth     *integrations.DefaultConnectionHealthService
+	integrationActionPolicyRepo     *integrations.GormActionPolicyRepository
+	integrationActionPolicy         *integrations.DefaultActionPolicyService
+	integrationDailyQuota           integrations.DailyQuota
+	integrationOAuthClientRepo      *integrations.GormOAuthClientConfigRepository
+	integrationOAuthClients         *integrations.OAuthClientConfigService
+	integrationOAuthStateRepo       *integrations.GormOAuthStateRepository
+	integrationOAuthStates          *integrations.OAuthStateService
+	integrationOAuthFlowRepo        *integrations.GormOAuthFlowRepository
+	integrationOAuthFlows           *integrations.OAuthFlowService
+	integrationOAuthRevoker         *integrations.OAuthConnectionRevoker
+	integrationOAuthRecoveryOutbox  *integrations.SplitOAuthRecoveryOutbox
+	integrationOAuthRecovery        *integrations.OAuthRecoveryService
+
 	// Account memory
 	memoryService      *memory.Service
 	agentMemoryService *agentmemory.Service
@@ -226,7 +271,10 @@ type ServiceContainer struct {
 	defaultModelService llmdefaultsvc.DefaultModelService
 
 	// GraphFlow service
-	graphFlowService *graphflow.Service
+	graphFlowService       *graphflow.Service
+	graphLifecycleService  *graphflow.LifecycleService
+	graphVisibilityService *graphflow.VisibilityService
+	graphRuntimeHealth     *system_service.GraphRuntimeHealthService
 
 	// Automation definition service
 	automationDefinitionService automationdefinition.Service
@@ -821,6 +869,36 @@ func (c *ServiceContainer) GetLLMClient() llm_client.LLMClient {
 	return c.llmClient
 }
 
+// GetMusicGenerator returns the model generation capability consumed by Music.
+func (c *ServiceContainer) GetMusicGenerator() musicmodule.Generator {
+	c.initLLMClient()
+	generator, ok := c.llmClient.(musicmodule.Generator)
+	if !ok {
+		panic("llm client does not support music generation")
+	}
+	return generator
+}
+
+// GetMusicLyricsGenerator returns the Console-backed structured lyrics capability.
+func (c *ServiceContainer) GetMusicLyricsGenerator() musicmodule.LyricsGenerator {
+	c.initLLMClient()
+	generator, ok := c.llmClient.(musicmodule.LyricsGenerator)
+	if !ok {
+		panic("llm client does not support lyrics generation")
+	}
+	return generator
+}
+
+// GetMusicDeliveryCompensator returns the billing resolution capability consumed by Music.
+func (c *ServiceContainer) GetMusicDeliveryCompensator() musicmodule.DeliveryCompensator {
+	c.initLLMClient()
+	compensator, ok := c.llmClient.(musicmodule.DeliveryCompensator)
+	if !ok {
+		panic("llm client does not support music delivery compensation")
+	}
+	return compensator
+}
+
 // EnsureLLMClient initializes LLM client once and enforces fail-fast in CLOUD mode.
 func (c *ServiceContainer) EnsureLLMClient() error {
 	c.initLLMClient()
@@ -902,7 +980,7 @@ func (c *ServiceContainer) GetAccountInstallationService() pluginrunner_service.
 	return c.accountInstallationService
 }
 
-// GetToolManager returns the tool manager for builtin and plugin runner tools
+// GetToolManager returns the tool manager for builtin, connector, and plugin runner tools.
 func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 	if c.toolManager == nil {
 		// Create plugin runner adapter if plugin runner is enabled
@@ -926,10 +1004,609 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		_ = c.toolManager.RegisterProvider(files_tools.NewProvider(c.GetFileService(), c.GetContentExtractor(), c.GetOrganizationService(), files_tools.WithFileListService(c.GetFileFolderService())))
 		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
 		_ = c.toolManager.RegisterProvider(imagegenerator_tools.NewProvider(c.GetFileService(), c.GetLLMClient(), c.GetDefaultModelService()))
+		if c.externalIntegrationsEnabled() {
+			providers, err := integration_tools.NewProviders(c.GetIntegrationRegistry(), c.GetIntegrationExecutor())
+			if err != nil {
+				panic(fmt.Sprintf("initialize external integration tool providers: %v", err))
+			}
+			for _, provider := range providers {
+				if err := c.toolManager.RegisterProvider(provider); err != nil {
+					panic(fmt.Sprintf("register external integration tool provider %s: %v", provider.IntegrationID(), err))
+				}
+			}
+			metaProvider, err := integration_metatools.NewProvider(
+				c.GetIntegrationRegistry(),
+				c.GetIntegrationExecutor(),
+				c.GetIntegrationConnectionRepository(),
+				c.GetIntegrationConnectionAccessService(),
+				c.GetIntegrationActionPolicyService(),
+			)
+			if err != nil {
+				panic(fmt.Sprintf("initialize external integration meta tools: %v", err))
+			}
+			if err := c.toolManager.RegisterProvider(metaProvider); err != nil {
+				panic(fmt.Sprintf("register external integration meta tools: %v", err))
+			}
+		}
 
-		logger.Info("ToolManager initialized with builtin providers")
+		logger.Info("ToolManager initialized with registered providers")
 	}
 	return c.toolManager
+}
+
+func (c *ServiceContainer) GetIntegrationRegistry() *integrations.Registry {
+	if c.integrationRegistry != nil {
+		return c.integrationRegistry
+	}
+	registry := integrations.NewRegistry()
+	if c.config != nil && c.config.ExternalIntegrations.Enabled {
+		adapter, err := exa_integration.New(exa_integration.Config{
+			Timeout:              time.Duration(c.config.WebSearch.Exa.TimeoutSeconds) * time.Second,
+			MaxResults:           c.config.WebSearch.Exa.MaxResults,
+			DefaultSearchType:    c.config.WebSearch.Exa.DefaultSearchType,
+			MaxFetchURLs:         c.config.WebSearch.Exa.MaxFetchURLs,
+			MaxContentCharacters: c.config.WebSearch.Exa.MaxContentCharacters,
+		}, nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize Exa adapter: %v", err))
+		}
+		if err := registry.Register(integrations.Registration{
+			Definition: exa_integration.ProviderDefinition(c.config.WebSearch.Exa.DefaultSearchType),
+			Adapter:    adapter,
+		}); err != nil {
+			panic(fmt.Sprintf("register Exa web search integration: %v", err))
+		}
+	}
+	if c.config != nil && c.config.ExternalIntegrations.Enabled {
+		adapter, err := github_integration.New(nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize GitHub adapter: %v", err))
+		}
+		if err := registry.Register(integrations.Registration{
+			Definition:       github_integration.ProviderDefinition(),
+			Adapter:          adapter,
+			ConnectionTester: adapter,
+			HealthProbe:      adapter,
+		}); err != nil {
+			panic(fmt.Sprintf("register GitHub integration: %v", err))
+		}
+		gmailAdapter, err := gmail_integration.New(nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize Gmail adapter: %v", err))
+		}
+		if err := registry.Register(integrations.Registration{
+			Definition:       gmail_integration.ProviderDefinition(),
+			Adapter:          gmailAdapter,
+			ConnectionTester: gmailAdapter,
+			HealthProbe:      gmailAdapter,
+			OAuth2Provider:   gmailAdapter,
+		}); err != nil {
+			panic(fmt.Sprintf("register Gmail integration: %v", err))
+		}
+		feishuAdapter, err := feishu_integration.New(nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize Feishu adapter: %v", err))
+		}
+		if err := registry.Register(integrations.Registration{
+			Definition:       feishu_integration.ProviderDefinition(),
+			Adapter:          feishuAdapter,
+			ConnectionTester: feishuAdapter,
+			HealthProbe:      feishuAdapter,
+			OAuth2Provider:   feishuAdapter,
+		}); err != nil {
+			panic(fmt.Sprintf("register Feishu integration: %v", err))
+		}
+		xAdapter, err := x_integration.New(nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize X adapter: %v", err))
+		}
+		if err := registry.Register(integrations.Registration{
+			Definition:       x_integration.ProviderDefinition(),
+			Adapter:          xAdapter,
+			ConnectionTester: xAdapter,
+			HealthProbe:      xAdapter,
+			OAuth2Provider:   xAdapter,
+		}); err != nil {
+			panic(fmt.Sprintf("register X integration: %v", err))
+		}
+		mailAdapter := mail_integration.New()
+		for _, definition := range mail_integration.ProviderDefinitions() {
+			if err := registry.Register(integrations.Registration{
+				Definition:          definition,
+				Adapter:             mailAdapter,
+				ConnectionTester:    mailAdapter,
+				CredentialValidator: mailAdapter,
+				HealthProbe:         mailAdapter,
+			}); err != nil {
+				panic(fmt.Sprintf("register %s mail integration: %v", definition.ID, err))
+			}
+		}
+		wecomAdapter, err := wecom_integration.New(nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize WeCom adapter: %v", err))
+		}
+		if err := registry.Register(integrations.Registration{
+			Definition:          wecom_integration.ProviderDefinition(),
+			Adapter:             wecomAdapter,
+			ConnectionTester:    wecomAdapter,
+			CredentialValidator: wecomAdapter,
+			HealthProbe:         wecomAdapter,
+		}); err != nil {
+			panic(fmt.Sprintf("register WeCom integration: %v", err))
+		}
+		dingtalkAdapter, err := dingtalk_integration.New(nil)
+		if err != nil {
+			panic(fmt.Sprintf("initialize DingTalk adapter: %v", err))
+		}
+		if err := registry.Register(integrations.Registration{
+			Definition:          dingtalk_integration.ProviderDefinition(),
+			Adapter:             dingtalkAdapter,
+			ConnectionTester:    dingtalkAdapter,
+			CredentialValidator: dingtalkAdapter,
+			HealthProbe:         dingtalkAdapter,
+		}); err != nil {
+			panic(fmt.Sprintf("register DingTalk integration: %v", err))
+		}
+	}
+	c.integrationRegistry = registry
+	return c.integrationRegistry
+}
+
+func (c *ServiceContainer) externalIntegrationsEnabled() bool {
+	return c != nil && c.config != nil && c.config.ExternalIntegrations.Enabled
+}
+
+func (c *ServiceContainer) integrationOAuthDeploymentClients() ([]integrations.OAuthDeploymentClient, error) {
+	if c == nil || c.config == nil || len(c.config.ExternalIntegrations.OAuth.Clients) == 0 {
+		return nil, nil
+	}
+	registry := c.GetIntegrationRegistry()
+	clients := make([]integrations.OAuthDeploymentClient, 0, len(c.config.ExternalIntegrations.OAuth.Clients))
+	seen := make(map[string]struct{}, len(c.config.ExternalIntegrations.OAuth.Clients))
+	for rawKey, configured := range c.config.ExternalIntegrations.OAuth.Clients {
+		integrationID, authMethodID, err := parseIntegrationOAuthClientKey(rawKey)
+		if err != nil {
+			return nil, err
+		}
+		definition, ok := registry.ProviderDefinition(integrationID)
+		if !ok {
+			return nil, fmt.Errorf("OAuth deployment client %q references an unavailable provider", rawKey)
+		}
+		canonicalID := ""
+		for _, method := range definition.AuthMethods {
+			if method.Type != integrations.AuthMethodTypeOAuth2 || method.OAuth == nil {
+				continue
+			}
+			if method.ID == authMethodID || method.OAuth.ClientConfigID == authMethodID {
+				canonicalID = method.OAuth.ClientConfigID
+				if canonicalID == "" {
+					canonicalID = method.ID
+				}
+				break
+			}
+		}
+		if canonicalID == "" {
+			return nil, fmt.Errorf("OAuth deployment client %q references an unavailable auth configuration", rawKey)
+		}
+		identity := integrationID + "\x00" + canonicalID
+		if _, duplicate := seen[identity]; duplicate {
+			return nil, fmt.Errorf("OAuth deployment client %q duplicates another OAuth client configuration", rawKey)
+		}
+		seen[identity] = struct{}{}
+		values := make(map[string]any, len(configured.Config))
+		for key, value := range configured.Config {
+			values[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
+		}
+		clients = append(clients, integrations.OAuthDeploymentClient{
+			IntegrationID: integrationID,
+			DriverID:      definition.DriverID,
+			AuthMethodID:  canonicalID,
+			ClientID:      configured.ClientID,
+			ClientSecret:  configured.ClientSecret,
+			Config:        values,
+		})
+	}
+	return clients, nil
+}
+
+func parseIntegrationOAuthClientKey(raw string) (string, string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "", "", fmt.Errorf("OAuth deployment client key is empty")
+	}
+	normalized := strings.ReplaceAll(value, "/", ":")
+	parts := strings.Split(normalized, ":")
+	if len(parts) == 1 {
+		parts = []string{parts[0], parts[0]}
+	}
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", "", fmt.Errorf("OAuth deployment client key %q must use integration_id:client_config_id", raw)
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
+}
+
+func (c *ServiceContainer) authorizeIntegrationOAuthCallback(
+	ctx context.Context,
+	request integrations.OAuthCallbackAuthorizationRequest,
+) error {
+	if c == nil || c.db == nil || request.OrganizationID == uuid.Nil || request.AccountID == uuid.Nil {
+		return integrations.NewError(integrations.ErrorCodeAccessDenied, "integration OAuth callback is not authorized", nil)
+	}
+	var activeMembers int64
+	if err := c.db.WithContext(ctx).
+		Table("members").
+		Where(
+			"organization_id = ? AND account_id = ? AND status = ?",
+			request.OrganizationID.String(),
+			request.AccountID.String(),
+			"active",
+		).
+		Count(&activeMembers).Error; err != nil || activeMembers != 1 {
+		return integrations.NewError(integrations.ErrorCodeAccessDenied, "integration OAuth callback is not authorized", err)
+	}
+	switch request.CredentialSource {
+	case integrations.ConnectionCredentialSourceAccount:
+		return nil
+	case integrations.ConnectionCredentialSourceOrganization:
+		allowed, err := c.GetAccountServiceAdapter().IsOrganizationAdminOrOwner(
+			ctx,
+			request.OrganizationID.String(),
+			request.AccountID.String(),
+		)
+		if err != nil || !allowed {
+			return integrations.NewError(integrations.ErrorCodeAccessDenied, "integration OAuth callback requires an organization administrator", err)
+		}
+		return nil
+	default:
+		return integrations.NewError(integrations.ErrorCodeAccessDenied, "integration OAuth credential scope is unsupported", nil)
+	}
+}
+
+func (c *ServiceContainer) GetIntegrationExecutionRepository() *integrations.GormExecutionRepository {
+	if c.integrationExecutionRepo == nil {
+		c.integrationExecutionRepo = integrations.NewGormExecutionRepository(c.db)
+	}
+	return c.integrationExecutionRepo
+}
+
+func (c *ServiceContainer) GetIntegrationOperationReceiptRepository() *integrations.GormOperationReceiptRepository {
+	if c.integrationOperationReceiptRepo == nil {
+		c.integrationOperationReceiptRepo = integrations.NewGormOperationReceiptRepository(c.db)
+	}
+	return c.integrationOperationReceiptRepo
+}
+
+func (c *ServiceContainer) GetIntegrationConnectionRepository() *integrations.GormConnectionRepository {
+	if c.integrationConnectionRepo == nil {
+		c.integrationConnectionRepo = integrations.NewGormConnectionRepository(c.db)
+	}
+	return c.integrationConnectionRepo
+}
+
+func (c *ServiceContainer) GetIntegrationConnectionGrantRepository() *integrations.GormConnectionGrantRepository {
+	if c.integrationConnectionGrantRepo == nil {
+		c.integrationConnectionGrantRepo = integrations.NewGormConnectionGrantRepository(c.db)
+	}
+	return c.integrationConnectionGrantRepo
+}
+
+func (c *ServiceContainer) GetIntegrationConnectionAccessService() *integrations.DefaultConnectionAccessService {
+	if c.integrationConnectionAccess == nil {
+		c.integrationConnectionAccess = integrations.NewConnectionAccessService(
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationConnectionGrantRepository(),
+		)
+	}
+	return c.integrationConnectionAccess
+}
+
+func (c *ServiceContainer) GetIntegrationAIChatPreferenceRepository() *integrations.GormAIChatIntegrationPreferenceRepository {
+	if c.integrationAIChatPreferenceRepo == nil {
+		c.integrationAIChatPreferenceRepo = integrations.NewGormAIChatIntegrationPreferenceRepository(c.db)
+	}
+	return c.integrationAIChatPreferenceRepo
+}
+
+func (c *ServiceContainer) GetIntegrationAIChatPreferenceService() *integrations.DefaultAIChatIntegrationPreferenceService {
+	if c.integrationAIChatPreferences == nil {
+		c.integrationAIChatPreferences = integrations.NewAIChatIntegrationPreferenceService(
+			c.GetIntegrationAIChatPreferenceRepository(),
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationConnectionAccessService(),
+		)
+	}
+	return c.integrationAIChatPreferences
+}
+
+func (c *ServiceContainer) GetIntegrationActionProjectionService() *integration_metatools.ActionProjectionService {
+	if c.integrationActionProjections == nil {
+		service, err := integration_metatools.NewActionProjectionService(
+			c.GetIntegrationRegistry(),
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationConnectionAccessService(),
+			c.GetIntegrationActionPolicyService(),
+		)
+		if err != nil {
+			panic(fmt.Sprintf("initialize integration Action projection service: %v", err))
+		}
+		c.integrationActionProjections = service
+	}
+	return c.integrationActionProjections
+}
+
+func (c *ServiceContainer) GetIntegrationConnectionHealthRepository() *integrations.GormConnectionHealthRepository {
+	if c.integrationConnectionHealthRepo == nil {
+		c.integrationConnectionHealthRepo = integrations.NewGormConnectionHealthRepository(c.db)
+	}
+	return c.integrationConnectionHealthRepo
+}
+
+func (c *ServiceContainer) GetIntegrationConnectionHealthService() *integrations.DefaultConnectionHealthService {
+	if c.integrationConnectionHealth == nil {
+		failureThreshold := 3
+		if c.config != nil && c.config.ExternalIntegrations.Health.FailureThreshold > 0 {
+			failureThreshold = c.config.ExternalIntegrations.Health.FailureThreshold
+		}
+		c.integrationConnectionHealth = integrations.NewConnectionHealthService(c.GetIntegrationConnectionHealthRepository()).
+			WithFailureThreshold(failureThreshold)
+	}
+	return c.integrationConnectionHealth
+}
+
+func (c *ServiceContainer) GetIntegrationCredentialCipher() integrations.CredentialCipher {
+	if c.integrationCredentialCipher == nil {
+		activeKeyID := "legacy"
+		keys := map[string]string{}
+		if c.config != nil {
+			activeKeyID = strings.TrimSpace(c.config.ExternalIntegrations.CredentialActiveKeyID)
+			for keyID, key := range c.config.ExternalIntegrations.CredentialKeys {
+				keys[keyID] = key
+			}
+			if len(keys) == 0 && strings.TrimSpace(c.config.Encryption.APIKeyEncryptionKey) != "" {
+				keys["legacy"] = c.config.Encryption.APIKeyEncryptionKey
+				activeKeyID = "legacy"
+			}
+		}
+		cipher, err := integrations.NewCredentialKeyring(activeKeyID, keys)
+		if err != nil {
+			panic(fmt.Sprintf("initialize integration credential cipher: %v", err))
+		}
+		c.integrationCredentialCipher = cipher
+	}
+	return c.integrationCredentialCipher
+}
+
+func (c *ServiceContainer) GetIntegrationConnectionResolver() *integrations.DefaultConnectionResolver {
+	if c.integrationConnectionResolver == nil {
+		c.integrationConnectionResolver = integrations.NewConnectionResolver(
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationCredentialCipher(),
+		)
+	}
+	return c.integrationConnectionResolver
+}
+
+func (c *ServiceContainer) GetIntegrationOAuthClientRepository() *integrations.GormOAuthClientConfigRepository {
+	if c.integrationOAuthClientRepo == nil {
+		c.integrationOAuthClientRepo = integrations.NewGormOAuthClientConfigRepository(c.db)
+	}
+	return c.integrationOAuthClientRepo
+}
+
+func (c *ServiceContainer) GetIntegrationOAuthClientService() *integrations.OAuthClientConfigService {
+	if c.integrationOAuthClients == nil {
+		deploymentClients, err := c.integrationOAuthDeploymentClients()
+		if err != nil {
+			panic(fmt.Sprintf("initialize integration OAuth deployment clients: %v", err))
+		}
+		c.integrationOAuthClients = integrations.NewOAuthClientConfigService(
+			c.GetIntegrationOAuthClientRepository(),
+			c.GetIntegrationCredentialCipher(),
+			c.GetIntegrationRegistry(),
+			deploymentClients,
+		).
+			WithConnectionRepository(c.GetIntegrationConnectionRepository()).
+			WithFlowImpactRepository(c.GetIntegrationOAuthFlowRepository()).
+			WithRecoveryImpactRepository(c.GetIntegrationOAuthRecoveryOutbox())
+	}
+	return c.integrationOAuthClients
+}
+
+func (c *ServiceContainer) GetIntegrationOAuthStateRepository() *integrations.GormOAuthStateRepository {
+	if c.integrationOAuthStateRepo == nil {
+		c.integrationOAuthStateRepo = integrations.NewGormOAuthStateRepository(c.db)
+	}
+	return c.integrationOAuthStateRepo
+}
+
+func (c *ServiceContainer) GetIntegrationOAuthStateService() *integrations.OAuthStateService {
+	if c.integrationOAuthStates == nil {
+		ttl := 10 * time.Minute
+		callbackURL := ""
+		if c.config != nil {
+			if c.config.ExternalIntegrations.OAuth.FlowTTLSeconds > 0 {
+				ttl = time.Duration(c.config.ExternalIntegrations.OAuth.FlowTTLSeconds) * time.Second
+			}
+			callbackURL = strings.TrimSpace(c.config.ExternalIntegrations.OAuth.CallbackURL)
+		}
+		c.integrationOAuthStates = integrations.NewOAuthStateService(
+			c.GetIntegrationOAuthStateRepository(),
+			c.GetIntegrationCredentialCipher(),
+			ttl,
+		).WithAllowedRedirectURIs([]string{callbackURL})
+	}
+	return c.integrationOAuthStates
+}
+
+func (c *ServiceContainer) GetIntegrationOAuthFlowRepository() *integrations.GormOAuthFlowRepository {
+	if c.integrationOAuthFlowRepo == nil {
+		c.integrationOAuthFlowRepo = integrations.NewGormOAuthFlowRepository(c.db)
+	}
+	return c.integrationOAuthFlowRepo
+}
+
+func (c *ServiceContainer) GetIntegrationOAuthFlowService() *integrations.OAuthFlowService {
+	if c.integrationOAuthFlows == nil {
+		ttl := 10 * time.Minute
+		if c.config != nil && c.config.ExternalIntegrations.OAuth.FlowTTLSeconds > 0 {
+			ttl = time.Duration(c.config.ExternalIntegrations.OAuth.FlowTTLSeconds) * time.Second
+		}
+		c.integrationOAuthFlows = integrations.NewOAuthFlowService(
+			c.GetIntegrationOAuthFlowRepository(),
+			c.GetIntegrationOAuthStateService(),
+			c.GetIntegrationRegistry(),
+			c.GetIntegrationOAuthClientService(),
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationCredentialCipher(),
+		).
+			WithFlowTTL(ttl).
+			WithOAuthRecovery(c.GetIntegrationOAuthRecoveryService()).
+			WithCallbackAuthorizer(integrations.OAuthCallbackAuthorizerFunc(c.authorizeIntegrationOAuthCallback))
+	}
+	return c.integrationOAuthFlows
+}
+
+func (c *ServiceContainer) GetIntegrationOAuthRevoker() *integrations.OAuthConnectionRevoker {
+	if c.integrationOAuthRevoker == nil {
+		c.integrationOAuthRevoker = integrations.NewOAuthConnectionRevoker(
+			c.GetIntegrationCredentialCipher(),
+			c.GetIntegrationRegistry(),
+			c.GetIntegrationOAuthClientService(),
+		)
+	}
+	return c.integrationOAuthRevoker
+}
+
+func (c *ServiceContainer) GetIntegrationOAuthRecoveryOutbox() *integrations.SplitOAuthRecoveryOutbox {
+	if c.integrationOAuthRecoveryOutbox == nil {
+		durableOutbox := integrations.NewDatabaseOAuthRecoveryOutbox(c.GetDB())
+		refreshOutbox := integrations.NewRedisOAuthRecoveryOutbox(redisPkg.GetClient())
+		c.integrationOAuthRecoveryOutbox = integrations.NewSplitOAuthRecoveryOutbox(durableOutbox, refreshOutbox)
+	}
+	return c.integrationOAuthRecoveryOutbox
+}
+
+func (c *ServiceContainer) GetIntegrationOAuthRecoveryService() *integrations.OAuthRecoveryService {
+	if c.integrationOAuthRecovery == nil {
+		c.integrationOAuthRecovery = integrations.NewOAuthRecoveryService(
+			c.GetIntegrationOAuthRecoveryOutbox(),
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationOAuthRevoker(),
+			c.GetIntegrationCredentialCipher(),
+		).WithFlowRepository(c.GetIntegrationOAuthFlowRepository())
+	}
+	return c.integrationOAuthRecovery
+}
+
+func (c *ServiceContainer) GetIntegrationRuntimeConnectionResolver() integrations.ConnectionResolver {
+	if c.integrationRuntimeResolver == nil {
+		refreshWindow := 10 * time.Minute
+		if c.config != nil && c.config.ExternalIntegrations.OAuth.RefreshWindowSeconds > 0 {
+			refreshWindow = time.Duration(c.config.ExternalIntegrations.OAuth.RefreshWindowSeconds) * time.Second
+		}
+		c.integrationRuntimeResolver = integrations.NewOAuthRefreshingConnectionResolver(
+			c.GetIntegrationConnectionResolver(),
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationCredentialCipher(),
+			c.GetIntegrationRegistry(),
+			c.GetIntegrationOAuthClientService(),
+			integrations.NewRedisOAuthRefreshLocker(redisPkg.GetClient()),
+			refreshWindow,
+		).WithOAuthRecovery(c.GetIntegrationOAuthRecoveryService())
+	}
+	return c.integrationRuntimeResolver
+}
+
+func (c *ServiceContainer) GetIntegrationActionPolicyService() *integrations.DefaultActionPolicyService {
+	if c.integrationActionPolicy == nil {
+		if c.integrationActionPolicyRepo == nil {
+			c.integrationActionPolicyRepo = integrations.NewGormActionPolicyRepository(c.db)
+		}
+		c.integrationActionPolicy = integrations.NewActionPolicyService(c.integrationActionPolicyRepo, c.GetIntegrationRegistry())
+	}
+	return c.integrationActionPolicy
+}
+
+func (c *ServiceContainer) GetIntegrationConnectionTester() *integrations.AuditedConnectionTester {
+	if c.integrationConnectionTester == nil {
+		timeout := 20 * time.Second
+		if c.config != nil && c.config.ExternalIntegrations.TimeoutSeconds > 0 {
+			timeout = time.Duration(c.config.ExternalIntegrations.TimeoutSeconds) * time.Second
+		}
+		c.integrationConnectionTester = integrations.NewAuditedConnectionTester(
+			c.GetIntegrationRegistry(),
+			c.GetIntegrationExecutionRepository(),
+			timeout,
+		).
+			WithDailyQuota(c.getIntegrationDailyQuota()).
+			WithCompletionOutbox(integrations.NewRedisExecutionCompletionOutbox(redisPkg.GetClient()))
+	}
+	return c.integrationConnectionTester
+}
+
+func (c *ServiceContainer) GetIntegrationConnectionService() *integrations.DefaultConnectionService {
+	if c.integrationConnectionService == nil {
+		failureThreshold := 3
+		if c.config != nil {
+			if c.config.ExternalIntegrations.Health.FailureThreshold > 0 {
+				failureThreshold = c.config.ExternalIntegrations.Health.FailureThreshold
+			}
+		}
+		c.integrationConnectionService = integrations.NewConnectionService(
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationCredentialCipher(),
+			c.GetIntegrationRegistry(),
+			c.GetIntegrationRuntimeConnectionResolver(),
+			c.GetIntegrationConnectionTester(),
+		).
+			WithHealthRecorder(c.GetIntegrationConnectionHealthService()).
+			WithHealthFailureThreshold(failureThreshold).
+			WithConnectionRevoker(c.GetIntegrationOAuthRevoker()).
+			WithOAuthRecovery(c.GetIntegrationOAuthRecoveryService())
+	}
+	return c.integrationConnectionService
+}
+
+func (c *ServiceContainer) getIntegrationDailyQuota() integrations.DailyQuota {
+	if c.integrationDailyQuota == nil {
+		limit := 1000
+		if c.config != nil && c.config.ExternalIntegrations.OrgDailyLimit > 0 {
+			limit = c.config.ExternalIntegrations.OrgDailyLimit
+		}
+		c.integrationDailyQuota = integrations.NewRedisDailyQuota(redisPkg.GetClient(), limit)
+	}
+	return c.integrationDailyQuota
+}
+
+func (c *ServiceContainer) GetIntegrationExecutor() *integrations.Executor {
+	if c.integrationExecutor == nil {
+		timeout := 20 * time.Second
+		masterKey := ""
+		if c.config != nil {
+			if c.config.ExternalIntegrations.TimeoutSeconds > 0 {
+				timeout = time.Duration(c.config.ExternalIntegrations.TimeoutSeconds) * time.Second
+			}
+			masterKey = c.config.ExternalIntegrations.CredentialKeys[c.config.ExternalIntegrations.CredentialActiveKeyID]
+			if masterKey == "" {
+				masterKey = c.config.Encryption.APIKeyEncryptionKey
+			}
+		}
+		c.integrationExecutor = integrations.NewExecutor(
+			c.GetIntegrationRegistry(),
+			c.GetIntegrationExecutionRepository(),
+			c.getIntegrationDailyQuota(),
+			integrations.DefaultSafetyChecker{},
+			integrations.DeriveAuditHMACKey(masterKey),
+			timeout,
+		).
+			WithOperationReceiptRepository(c.GetIntegrationOperationReceiptRepository()).
+			WithCompletionOutbox(integrations.NewRedisExecutionCompletionOutbox(redisPkg.GetClient())).
+			WithConnectionResolver(c.GetIntegrationRuntimeConnectionResolver()).
+			WithActionPolicyResolver(c.GetIntegrationActionPolicyService()).
+			WithConnectionAccessAuthorizer(c.GetIntegrationConnectionAccessService()).
+			WithConnectionHealthSignalSink(c.GetIntegrationConnectionHealthService())
+	}
+	return c.integrationExecutor
 }
 
 // GetToolEngine returns the tool engine
@@ -1019,6 +1696,31 @@ func (c *ServiceContainer) GetGraphFlowService() *graphflow.Service {
 		)
 	}
 	return c.graphFlowService
+}
+
+// GetGraphLifecycleService returns the durable GraphFlow lifecycle service.
+func (c *ServiceContainer) GetGraphLifecycleService() *graphflow.LifecycleService {
+	if c.graphLifecycleService == nil {
+		c.graphLifecycleService = graphflow.NewLifecycleService(c.db)
+	}
+	return c.graphLifecycleService
+}
+
+// GetGraphVisibilityService returns the GraphFlow visibility service.
+func (c *ServiceContainer) GetGraphVisibilityService() *graphflow.VisibilityService {
+	if c.graphVisibilityService == nil {
+		c.graphVisibilityService = graphflow.NewVisibilityService(c.db)
+	}
+	return c.graphVisibilityService
+}
+
+// GetGraphRuntimeHealthService returns the sanitized graph runtime health service.
+func (c *ServiceContainer) GetGraphRuntimeHealthService() *system_service.GraphRuntimeHealthService {
+	if c.graphRuntimeHealth == nil {
+		graphService := c.GetGraphFlowService()
+		c.graphRuntimeHealth = system_service.NewGraphRuntimeHealthService(graphService.Neo4jClient)
+	}
+	return c.graphRuntimeHealth
 }
 
 func (c *ServiceContainer) SetAutomationDefinitionService(service automationdefinition.Service) {

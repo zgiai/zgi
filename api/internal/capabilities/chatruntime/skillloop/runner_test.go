@@ -604,6 +604,10 @@ func TestTerminalProjectionCompactValuePrioritizesStableKeysDeterministically(t 
 	input := map[string]interface{}{
 		"status": "success", "code": "ok", "message": "done", "summary": "stable",
 		"agent_id": "agent-1", "file_id": "file-1", "system_prompt_digest": "sha256:prompt",
+		"operation_status": "completed", "provider_success_confirmed": true,
+		"provider_result": map[string]interface{}{
+			"event": map[string]interface{}{"event_id": "event-1", "summary": "未来七天日程"},
+		},
 		"updated_fields": []interface{}{"system_prompt", "description"},
 	}
 	for index := 0; index < 40; index++ {
@@ -619,6 +623,12 @@ func TestTerminalProjectionCompactValuePrioritizesStableKeysDeterministically(t 
 	for _, key := range []string{"status", "code", "message", "summary", "agent_id", "file_id", "system_prompt_digest", "updated_fields"} {
 		if _, ok := projected[key]; !ok {
 			t.Fatalf("projection omitted priority key %q: %#v", key, projected)
+		}
+	}
+	stable := terminalProjectionStableSummary(input)
+	for _, key := range []string{"operation_status", "provider_success_confirmed", "provider_result"} {
+		if _, ok := stable[key]; !ok {
+			t.Fatalf("stable projection omitted provider key %q: %#v", key, stable)
 		}
 	}
 }
@@ -1699,6 +1709,60 @@ func TestRunnerAcceptsFinalAnswerWithoutPlanSnapshotWhenCurrentPlanHasOpenPhases
 	}
 	if failedFinalAnswers != 0 || successFinalAnswers != 1 {
 		t.Fatalf("final answer traces failed=%d success=%d; traces=%#v", failedFinalAnswers, successFinalAnswers, traces)
+	}
+}
+
+func TestRunnerExplicitFinalAnswerUsesSafeTerminalAfterExternalRetryExhaustion(t *testing.T) {
+	finalCall := func(callID string, answer string) adapter.ToolCall {
+		arguments, err := json.Marshal(map[string]interface{}{"answer": answer})
+		if err != nil {
+			t.Fatalf("marshal final answer: %v", err)
+		}
+		return adapter.ToolCall{
+			ID:   callID,
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      skills.MetaToolFinalAnswer,
+				Arguments: string(arguments),
+			},
+		}
+	}
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{finalCall("final-1", "消息已经发送。")}}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{finalCall("final-2", "消息确实已经发送。")}}}}},
+	}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntimeWithCatalog(nil, nil, ""),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-explicit-exhausted", "msg-explicit-exhausted", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "发送企业微信消息"}},
+	})
+	evidence := map[string]interface{}{
+		"latest_user_request": "发送企业微信消息",
+		"skill_invocations": []interface{}{map[string]interface{}{
+			"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+			"result": map[string]interface{}{
+				"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
+			},
+		}},
+	}
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:                  prepared,
+		Resolved:                  runnerTestResolvedSkills(),
+		PreferExplicitFinalAnswer: true,
+		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
+	})
+	if err != nil {
+		t.Fatalf("Run() exposed terminal guard error after explicit retry exhaustion: %v", err)
+	}
+	if !strings.Contains(answer, "外部操作未完成") || !strings.Contains(answer, "不能视为已发送或已完成") {
+		t.Fatalf("answer = %q, want safe explicit final answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want exactly one retry", fakeLLM.appChatCalls)
 	}
 }
 
@@ -3858,6 +3922,18 @@ Use the calculator tool.
 					},
 				}},
 			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_bad_3", "limited-calculator", "evaluate_expression", map[string]interface{}{
+								"expression": "1/",
+							}),
+						},
+					},
+				}},
+			},
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I cannot evaluate that expression without corrected input."}}}},
 		},
 	}
@@ -3919,8 +3995,11 @@ Use the calculator tool.
 			trace.ToolName == "evaluate_expression" &&
 			trace.Arguments["reason_code"] == skillToolRetryNoProgressCode &&
 			strings.Contains(trace.Error, "same tool call with the same arguments already failed") {
-			if trace.Arguments["retry_count"] != 2 {
-				t.Fatalf("no-progress retry_count = %#v, want 2", trace.Arguments["retry_count"])
+			if trace.Arguments["termination_reason"] == nil {
+				continue
+			}
+			if trace.Arguments["retry_count"] != 3 {
+				t.Fatalf("no-progress retry_count = %#v, want 3", trace.Arguments["retry_count"])
 			}
 			if trace.Arguments["termination_reason"] != "retry_no_progress" {
 				t.Fatalf("no-progress termination_reason = %#v, want retry_no_progress", trace.Arguments["termination_reason"])
@@ -3935,8 +4014,8 @@ Use the calculator tool.
 	if !foundNoProgress {
 		t.Fatalf("traces = %#v, want repeated failed tool call no-progress evidence", traces)
 	}
-	if fakeLLM.appChatCalls != 4 {
-		t.Fatalf("AppChat calls = %d, want load, first failure, blocked retry, final answer", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 5 {
+		t.Fatalf("AppChat calls = %d, want load, first failure, warning retry, blocked retry, final answer", fakeLLM.appChatCalls)
 	}
 	lastRequest := fakeLLM.appChatRequests[len(fakeLLM.appChatRequests)-1]
 	if len(lastRequest.Tools) != 0 || lastRequest.ToolChoice != nil {
@@ -4091,6 +4170,13 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 			},
 		}
 	}
+	providerFailure := func(argumentFingerprint string) skills.SkillTrace {
+		value := trace("external-apps", "execute_action", "arguments", argumentFingerprint, "object")
+		value.Arguments["recovery_kind"] = "provider_validation"
+		value.Arguments["provider_error_code"] = "99992402"
+		value.Arguments["invalid_fields"] = []string{"page_size"}
+		return value
+	}
 
 	tests := []struct {
 		name     string
@@ -4132,6 +4218,11 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 			previous: trace("file-generator", "generate_file", "transient", "sha256:before", "object"),
 			current:  trace("file-generator", "generate_file", "transient", "sha256:after", "object"),
 		},
+		{
+			name:     "same provider validation is not progress despite changed arguments",
+			previous: providerFailure("sha256:before"),
+			current:  providerFailure("sha256:after"),
+		},
 	}
 
 	for _, test := range tests {
@@ -4140,6 +4231,27 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 				t.Fatalf("recoverableSkillFailureMadeProgress() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestRepeatedProviderValidationFailureRequiresSameCodeAndFields(t *testing.T) {
+	trace := func(code string, fields []string) skills.SkillTrace {
+		return skills.SkillTrace{
+			Kind: "tool_call", SkillID: "external-apps", ToolName: "execute_action", Status: "error",
+			Arguments: map[string]interface{}{
+				"recovery_kind": "provider_validation", "provider_error_code": code, "invalid_fields": fields,
+			},
+		}
+	}
+	previous := trace("99992402", []string{"page_size"})
+	if !repeatedProviderValidationFailure(previous, trace("99992402", []string{"page_size"})) {
+		t.Fatal("identical provider validation failure was not detected")
+	}
+	if repeatedProviderValidationFailure(previous, trace("99992402", []string{"start_time"})) {
+		t.Fatal("different invalid field was treated as an identical provider failure")
+	}
+	if repeatedProviderValidationFailure(previous, trace("other", []string{"page_size"})) {
+		t.Fatal("different provider error code was treated as identical")
 	}
 }
 
@@ -4547,6 +4659,21 @@ Use the calculator tool.
 				},
 			}},
 		},
+		{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{
+						runnerTestSkillToolCall(
+							"call_bad_2",
+							"limited-calculator",
+							"evaluate_expression",
+							map[string]interface{}{"expression": "1/"},
+						),
+					},
+				},
+			}},
+		},
 		responses[1],
 	}...)
 	fakeLLM := &runnerTestLLMClient{appChatResponses: responses}
@@ -4592,8 +4719,8 @@ Use the calculator tool.
 	if findRunnerTestEvent(events, EventSkillCallError) == nil {
 		t.Fatalf("events = %#v, want skill error event for failed tool evidence", events)
 	}
-	if fakeLLM.appChatCalls != 4 {
-		t.Fatalf("AppChat calls = %d, want load, first failure, no-progress retry, and explanation", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 5 {
+		t.Fatalf("AppChat calls = %d, want load, first failure, corrective retry, blocked retry, and explanation", fakeLLM.appChatCalls)
 	}
 	lastRequest := fakeLLM.appChatRequests[len(fakeLLM.appChatRequests)-1]
 	if len(lastRequest.Tools) != 0 || lastRequest.ToolChoice != nil {
@@ -4833,6 +4960,335 @@ Use the workflow tool.
 	nodeStarted := findRunnerTestEvent(events, EventWorkflowNodeStarted)
 	if nodeStarted == nil || nodeStarted.Payload["node_id"] != "node-1" {
 		t.Fatalf("events = %#v, want node_started node-1", events)
+	}
+}
+
+func TestRunnerConversationalWorkflowSuccessTakesOverAnswer(t *testing.T) {
+	ctx := t.Context()
+	workflowRunner := &runnerTestWorkflowRunner{
+		events: []automationaction.WorkflowRunEvent{
+			{
+				Type: EventWorkflowStarted,
+				Payload: map[string]interface{}{
+					"workflow_run_id": "run-delegate-success",
+					"status":          "running",
+				},
+			},
+			{
+				Type: EventMessage,
+				Payload: map[string]interface{}{
+					"answer": "answer from ",
+				},
+			},
+			{
+				Type: EventMessage,
+				Payload: map[string]interface{}{
+					"answer": "workflow",
+				},
+			},
+			{
+				Type: EventWorkflowFinished,
+				Payload: map[string]interface{}{
+					"workflow_run_id": "run-delegate-success",
+					"status":          "succeeded",
+				},
+			},
+		},
+		result: &automationaction.WorkflowRunResult{
+			WorkflowRunID: "run-delegate-success",
+			WorkflowID:    "workflow-1",
+			AgentID:       "agent-1",
+			Status:        "succeeded",
+			Outputs:       map[string]interface{}{"answer": "answer from workflow"},
+		},
+	}
+	runtime, resolved := newRunnerTestAgentWorkflowRuntime(t, ctx, workflowRunner)
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
+			ID: "call_load", Type: "function", Function: adapter.FunctionCall{Name: skills.MetaToolLoadSkill, Arguments: `{"skill_id":"agent-workflow"}`},
+		}}}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{
+			runnerTestSkillToolCall("call_workflow", "agent-workflow", "run_agent_workflow", map[string]interface{}{
+				"binding_id": "chat-flow", "inputs": map[string]interface{}{"query": "run workflow"},
+			}),
+		}}}}},
+	}}
+	var events []Event
+	runner := &Runner{
+		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+
+	answer, _, err := runner.Run(ctx, runnerTestAgentWorkflowRequest(resolved))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "answer from workflow" {
+		t.Fatalf("answer = %q, want workflow answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want workflow to terminate Agent loop after tool call", fakeLLM.appChatCalls)
+	}
+	messageChunks := make([]string, 0, 2)
+	unownedMessages := 0
+	firstMessageIndex := -1
+	workflowFinishedIndex := -1
+	for index, event := range events {
+		if event.Type == EventMessage {
+			if event.Payload["presentation_role"] != agentWorkflowDelegatePresentationRole {
+				unownedMessages++
+				continue
+			}
+			if firstMessageIndex == -1 {
+				firstMessageIndex = index
+			}
+			chunk, _ := event.Payload["answer"].(string)
+			messageChunks = append(messageChunks, chunk)
+		}
+		if event.Type == EventWorkflowFinished {
+			workflowFinishedIndex = index
+		}
+	}
+	if got := strings.Join(messageChunks, ""); got != "answer from workflow" {
+		t.Fatalf("streamed answer = %q, want exact workflow answer; events = %#v", got, events)
+	}
+	if len(messageChunks) != 2 {
+		t.Fatalf("message event count = %d, want two live workflow chunks; events = %#v", len(messageChunks), events)
+	}
+	if unownedMessages != 0 {
+		t.Fatalf("unowned message count = %d, want no duplicate parent answer; events = %#v", unownedMessages, events)
+	}
+	if firstMessageIndex < 0 || workflowFinishedIndex < 0 || firstMessageIndex >= workflowFinishedIndex {
+		t.Fatalf("event order = %#v, want first workflow answer chunk before workflow_finished", events)
+	}
+}
+
+func TestRunnerConversationalWorkflowStreamMismatchFallsBackWithoutDuplicate(t *testing.T) {
+	ctx := t.Context()
+	workflowRunner := &runnerTestWorkflowRunner{
+		events: []automationaction.WorkflowRunEvent{
+			{Type: EventMessage, Payload: map[string]interface{}{"answer": "stale workflow output"}},
+			{Type: EventWorkflowFinished, Payload: map[string]interface{}{"workflow_run_id": "run-delegate-mismatch", "status": "succeeded"}},
+		},
+		result: &automationaction.WorkflowRunResult{
+			WorkflowRunID: "run-delegate-mismatch",
+			WorkflowID:    "workflow-1",
+			AgentID:       "agent-1",
+			Status:        "succeeded",
+			Outputs:       map[string]interface{}{"answer": "authoritative workflow output"},
+		},
+	}
+	runtime, resolved := newRunnerTestAgentWorkflowRuntime(t, ctx, workflowRunner)
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
+			ID: "call_load", Type: "function", Function: adapter.FunctionCall{Name: skills.MetaToolLoadSkill, Arguments: `{"skill_id":"agent-workflow"}`},
+		}}}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{
+			runnerTestSkillToolCall("call_workflow", "agent-workflow", "run_agent_workflow", map[string]interface{}{
+				"binding_id": "chat-flow", "inputs": map[string]interface{}{"query": "run workflow"},
+			}),
+		}}}}},
+	}}
+	var events []Event
+	runner := &Runner{
+		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+
+	answer, _, err := runner.Run(ctx, runnerTestAgentWorkflowRequest(resolved))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "authoritative workflow output" {
+		t.Fatalf("answer = %q, want authoritative workflow output", answer)
+	}
+	retractIndex := -1
+	finalIndex := -1
+	for index, event := range events {
+		if event.Type == EventMessageRetract && event.Payload["presentation_disposition"] == "discard" {
+			retractIndex = index
+		}
+		if event.Type == EventMessage && event.Payload["answer"] == "authoritative workflow output" {
+			finalIndex = index
+		}
+	}
+	if retractIndex < 0 || finalIndex <= retractIndex {
+		t.Fatalf("events = %#v, want stale stream retracted before authoritative fallback", events)
+	}
+}
+
+func TestRunnerConversationalWorkflowFailureRetractsPartialBeforeAgentRecovery(t *testing.T) {
+	ctx := t.Context()
+	workflowRunner := &runnerTestWorkflowRunner{
+		events: []automationaction.WorkflowRunEvent{
+			{Type: EventMessage, Payload: map[string]interface{}{"answer": "partial workflow output"}},
+			{Type: EventWorkflowFailed, Payload: map[string]interface{}{"workflow_run_id": "run-delegate-failed", "status": "failed"}},
+		},
+		result: &automationaction.WorkflowRunResult{
+			WorkflowRunID: "run-delegate-failed", WorkflowID: "workflow-1", AgentID: "agent-1", Status: "failed",
+		},
+		err: errors.New("private provider failure"),
+	}
+	runtime, resolved := newRunnerTestAgentWorkflowRuntime(t, ctx, workflowRunner)
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
+			ID: "call_load", Type: "function", Function: adapter.FunctionCall{Name: skills.MetaToolLoadSkill, Arguments: `{"skill_id":"agent-workflow"}`},
+		}}}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{
+			runnerTestSkillToolCall("call_workflow", "agent-workflow", "run_agent_workflow", map[string]interface{}{
+				"binding_id": "chat-flow", "inputs": map[string]interface{}{"query": "run workflow"},
+			}),
+		}}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The workflow run failed."}}}},
+	}}
+	var events []Event
+	runner := &Runner{
+		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+
+	answer, _, err := runner.Run(ctx, runnerTestAgentWorkflowRequest(resolved))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "The workflow run failed." {
+		t.Fatalf("answer = %q, want Agent recovery answer", answer)
+	}
+	retractIndex := -1
+	recoveryIndex := -1
+	for index, event := range events {
+		if event.Type == EventMessageRetract && event.Payload["presentation_disposition"] == "discard" {
+			retractIndex = index
+		}
+		if event.Type == EventMessage && event.Payload["answer"] == "The workflow run failed." {
+			recoveryIndex = index
+		}
+	}
+	if retractIndex < 0 || recoveryIndex <= retractIndex {
+		t.Fatalf("events = %#v, want partial workflow output retracted before Agent recovery", events)
+	}
+}
+
+func TestRunnerConversationalWorkflowAbnormalResultReturnsToAgentLoop(t *testing.T) {
+	tests := []struct {
+		name        string
+		result      *automationaction.WorkflowRunResult
+		err         error
+		agentAnswer string
+	}{
+		{
+			name: "failed workflow",
+			result: &automationaction.WorkflowRunResult{
+				WorkflowRunID: "run-delegate-failed", WorkflowID: "workflow-1", AgentID: "agent-1", Status: "failed", Outputs: map[string]interface{}{},
+			},
+			err:         errors.New("model route unavailable"),
+			agentAnswer: "The workflow run failed.",
+		},
+		{
+			name: "successful workflow without output",
+			result: &automationaction.WorkflowRunResult{
+				WorkflowRunID: "run-delegate-empty", WorkflowID: "workflow-1", AgentID: "agent-1", Status: "succeeded", Outputs: map[string]interface{}{},
+			},
+			agentAnswer: "The conversational workflow could not produce an answer.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			workflowRunner := &runnerTestWorkflowRunner{result: tt.result, err: tt.err}
+			runtime, resolved := newRunnerTestAgentWorkflowRuntime(t, ctx, workflowRunner)
+			fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+				{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{
+					ID: "call_load", Type: "function", Function: adapter.FunctionCall{Name: skills.MetaToolLoadSkill, Arguments: `{"skill_id":"agent-workflow"}`},
+				}}}}}},
+				{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{
+					runnerTestSkillToolCall("call_workflow", "agent-workflow", "run_agent_workflow", map[string]interface{}{
+						"binding_id": "chat-flow", "inputs": map[string]interface{}{"query": "run workflow"},
+					}),
+				}}}}},
+				{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: tt.agentAnswer}}}},
+			}}
+			runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+
+			answer, _, err := runner.Run(ctx, runnerTestAgentWorkflowRequest(resolved))
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if answer != tt.agentAnswer {
+				t.Fatalf("answer = %q, want Agent model failure explanation", answer)
+			}
+			if fakeLLM.appChatCalls != 3 {
+				t.Fatalf("AppChat calls = %d, want Agent loop to resume after abnormal workflow", fakeLLM.appChatCalls)
+			}
+			if tt.err != nil {
+				if runnerTestRequestContains(fakeLLM.appChatRequests[2], "model route unavailable") {
+					t.Fatal("published Agent model request exposed the workflow failure reason")
+				}
+				if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "workflow run failed") {
+					t.Fatal("published Agent model request did not contain the generic workflow failure")
+				}
+			}
+		})
+	}
+}
+
+func newRunnerTestAgentWorkflowRuntime(t *testing.T, ctx context.Context, workflowRunner automationaction.AutomationWorkflowRunner) (*skills.Runtime, *skills.ResolvedSkills) {
+	t.Helper()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, "agent-workflow", `---
+name: agent-workflow
+description: Run Agent-bound workflows.
+when_to_use: Use when testing Agent workflow delegation.
+provider_type: builtin
+provider_id: workflow
+runtime_type: tool
+tools:
+  - run_agent_workflow
+---
+
+# Agent Workflow
+
+Use the workflow tool.
+`)
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(workflowbuiltin.NewProvider(func() automationaction.AutomationWorkflowRunner {
+		return workflowRunner
+	})); err != nil {
+		t.Fatalf("register workflow provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"agent-workflow"})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	return runtime, resolved
+}
+
+func runnerTestAgentWorkflowRequest(resolved *skills.ResolvedSkills) RunRequest {
+	return RunRequest{
+		Prepared: NewPreparedChat("conv-delegate", "msg-delegate", "", "auto", &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "run workflow"}},
+		}),
+		Resolved: resolved,
+		ExecutionContext: skills.ExecutionContext{
+			OrganizationID: "org-1", UserID: "account-1", ConversationID: "conv-delegate", MessageID: "msg-delegate", InvokeFrom: tools.ToolInvokeFromAgent,
+			RuntimeParameters: map[string]interface{}{
+				"organization_id": "org-1", "workspace_id": "workspace-1", "agent_runtime_source": "webapp",
+				"workflow_bindings": []map[string]interface{}{{
+					"binding_id": "chat-flow", "agent_id": "agent-1", "workflow_id": "workflow-1", "agent_type": "CONVERSATIONAL_WORKFLOW", "version_strategy": "latest_published", "timeout_seconds": 60,
+				}},
+			},
+		},
 	}
 }
 
@@ -5680,6 +6136,52 @@ func runnerTestSkillToolCall(callID string, skillID string, toolName string, arg
 	}
 }
 
+func TestRunnerRetriesWhenReadyExternalGuideWasNotExecuted(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The DingTalk role function is unavailable."}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Please provide the role search criteria required by the selected action."}}}},
+	}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "query DingTalk notification status"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			return map[string]interface{}{
+				"latest_user_request": "query DingTalk notification status",
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+					"result": map[string]interface{}{
+						"integration_id": "dingtalk", "action_id": "dingtalk.message.delivery.get", "availability": "ready",
+						"required_arguments": []interface{}{map[string]interface{}{"name": "message_ref", "type": "string"}},
+					},
+				}},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Please provide the role search criteria required by the selected action." {
+		t.Fatalf("answer = %q", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 2 ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "external-apps/execute_action") {
+		t.Fatal("second request did not contain the external-action completion correction")
+	}
+}
+
 type runnerTestLLMClient struct {
 	appChatResponses            []*adapter.ChatResponse
 	appChatErrors               []error
@@ -5695,6 +6197,8 @@ type runnerTestLLMClient struct {
 
 type runnerTestWorkflowRunner struct {
 	events []automationaction.WorkflowRunEvent
+	result *automationaction.WorkflowRunResult
+	err    error
 }
 
 type runnerGovernedFilesProvider struct {
@@ -6778,13 +7282,17 @@ func (f *runnerTestWorkflowRunner) RunAutomationWorkflow(ctx context.Context, re
 			req.EventSink(event)
 		}
 	}
+	if f.result != nil {
+		result := *f.result
+		return &result, f.err
+	}
 	return &automationaction.WorkflowRunResult{
 		WorkflowRunID: "run-1",
 		WorkflowID:    req.WorkflowRef.WorkflowID,
 		AgentID:       req.WorkflowRef.AgentID,
 		Status:        "succeeded",
 		Outputs:       map[string]interface{}{},
-	}, nil
+	}, f.err
 }
 
 func findRunnerTestEvent(events []Event, eventType string) *Event {

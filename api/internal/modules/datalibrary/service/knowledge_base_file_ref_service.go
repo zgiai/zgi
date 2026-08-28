@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	datalibRepo "github.com/zgiai/zgi/api/internal/modules/datalibrary/repository"
 	datasetModel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	fileModel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	"github.com/zgiai/zgi/api/pkg/vectordb"
 )
 
 const (
@@ -240,6 +242,7 @@ type knowledgeBaseFileRefService struct {
 	documents           knowledgeBaseFileDocumentReader
 	embeddingGeneration DocumentChunkEmbeddingService
 	processingProgress  knowledgeBaseFileProcessingProgressUpdater
+	vectorDB            vectordb.VectorDB
 }
 
 func NewKnowledgeBaseFileRefService(
@@ -254,6 +257,7 @@ func NewKnowledgeBaseFileRefService(
 	var documentReader knowledgeBaseFileDocumentReader
 	var embeddingGeneration DocumentChunkEmbeddingService
 	var processingProgress knowledgeBaseFileProcessingProgressUpdater
+	var vectorDB vectordb.VectorDB
 	for _, dep := range optionalDeps {
 		switch typed := dep.(type) {
 		case knowledgeBaseFileDocumentReader:
@@ -262,6 +266,8 @@ func NewKnowledgeBaseFileRefService(
 			embeddingGeneration = typed
 		case knowledgeBaseFileProcessingProgressUpdater:
 			processingProgress = typed
+		case vectordb.VectorDB:
+			vectorDB = typed
 		}
 	}
 	return &knowledgeBaseFileRefService{
@@ -274,6 +280,7 @@ func NewKnowledgeBaseFileRefService(
 		documents:           documentReader,
 		embeddingGeneration: embeddingGeneration,
 		processingProgress:  processingProgress,
+		vectorDB:            vectorDB,
 	}
 }
 
@@ -486,10 +493,14 @@ func (s *knowledgeBaseFileRefService) CreateRefs(ctx context.Context, req Knowle
 	if dataset == nil || dataset.OrganizationID != req.OrganizationID {
 		return nil, ErrDatasetNotFound
 	}
+	if err := s.ensureDatasetVectorClass(ctx, dataset.ID); err != nil {
+		return nil, err
+	}
 	result := &KnowledgeBaseFileRefCreateResult{Items: make([]*KnowledgeBaseFileRefCreateItem, 0, len(req.AssetIDs))}
+	syncBatchID := uuid.New()
 	for _, assetID := range req.AssetIDs {
 		item := &KnowledgeBaseFileRefCreateItem{AssetID: assetID}
-		ref, syncRunID, generationNo, reason, err := s.createOneRef(ctx, dataset, req, assetID)
+		ref, syncRunID, generationNo, reason, err := s.createOneRef(ctx, dataset, req, assetID, syncBatchID)
 		if err != nil {
 			return nil, err
 		}
@@ -665,6 +676,9 @@ func (s *knowledgeBaseFileRefService) RetryRef(ctx context.Context, req Knowledg
 	if reason != "" {
 		return &KnowledgeBaseFileRefCreateItem{AssetID: asset.ID, Ref: newKnowledgeBaseAssetRefView(ref), Success: false, Reason: reason, GenerationNo: generationNo}, nil
 	}
+	if err := s.ensureDatasetVectorClass(ctx, dataset.ID); err != nil {
+		return nil, err
+	}
 	syncRunID := uuid.New()
 	ref, err = s.refs.MarkPending(ctx, req.OrganizationID, ref.ID, syncRunID, nil, nil)
 	if err != nil {
@@ -680,6 +694,28 @@ func (s *knowledgeBaseFileRefService) RetryRef(ctx context.Context, req Knowledg
 		GenerationNo: generationNo,
 		Success:      true,
 	}, nil
+}
+
+func (s *knowledgeBaseFileRefService) ensureDatasetVectorClass(ctx context.Context, datasetID string) error {
+	if s.vectorDB == nil {
+		return fmt.Errorf("vector database is not configured")
+	}
+	className := datasetModel.GenCollectionNameByID(datasetID)
+	if err := s.vectorDB.CreateClass(ctx, className, knowledgeBaseVectorClassProperties()); err != nil {
+		return fmt.Errorf("ensure dataset vector class %s: %w", className, err)
+	}
+	return nil
+}
+
+func knowledgeBaseVectorClassProperties() []map[string]interface{} {
+	return []map[string]interface{}{
+		{
+			"name":            "text",
+			"dataType":        []string{"text"},
+			"tokenization":    "gse_ch",
+			"indexSearchable": true,
+		},
+	}
 }
 
 func (s *knowledgeBaseFileRefService) MarkRefSyncFailed(ctx context.Context, req KnowledgeBaseFileRefSyncFailureRequest) (*KnowledgeBaseAssetRefView, error) {
@@ -754,7 +790,7 @@ func (s *knowledgeBaseFileRefService) getScopedRef(ctx context.Context, req Know
 	return ref, nil
 }
 
-func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset *datasetModel.Dataset, req KnowledgeBaseFileRefCreateRequest, assetID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, uuid.UUID, int64, string, error) {
+func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset *datasetModel.Dataset, req KnowledgeBaseFileRefCreateRequest, assetID uuid.UUID, syncBatchID uuid.UUID) (*datalibModel.KnowledgeBaseAssetRef, uuid.UUID, int64, string, error) {
 	if assetID == uuid.Nil {
 		return nil, uuid.Nil, 0, FileCandidateReasonNotReady, nil
 	}
@@ -783,6 +819,7 @@ func (s *knowledgeBaseFileRefService) createOneRef(ctx context.Context, dataset 
 		AssetID:        asset.ID,
 		SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusPending,
 		SyncRunID:      &syncRunID,
+		SyncBatchID:    &syncBatchID,
 		CreatedBy:      req.CreatedBy,
 		MetadataJSON: map[string]any{
 			"source":        "file_asset_sync",

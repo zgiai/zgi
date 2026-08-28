@@ -38,14 +38,16 @@ const (
 
 // Organization enterprise group model
 type Organization struct {
-	ID                     string                 `gorm:"type:varchar(255);primaryKey" json:"id"`
-	Name                   string                 `gorm:"type:varchar(255);not null" json:"name"`
-	ShortName              *string                `gorm:"type:varchar(255)" json:"short_name"`
-	Status                 OrganizationStatus     `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
-	BillingDisplayCurrency BillingDisplayCurrency `gorm:"type:varchar(3);not null;default:'USD'" json:"billing_display_currency"`
-	USDToCNYRate           decimal.Decimal        `gorm:"type:numeric(18,6);not null;default:7" json:"usd_to_cny_rate"`
-	CreatedAt              time.Time              `json:"created_at"`
-	UpdatedAt              time.Time              `json:"updated_at"`
+	ID                       string                 `gorm:"type:varchar(255);primaryKey" json:"id"`
+	Name                     string                 `gorm:"type:varchar(255);not null" json:"name"`
+	ShortName                *string                `gorm:"type:varchar(255)" json:"short_name"`
+	Status                   OrganizationStatus     `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
+	BillingDisplayCurrency   BillingDisplayCurrency `gorm:"type:varchar(3);not null;default:'USD'" json:"billing_display_currency"`
+	USDToCNYRate             decimal.Decimal        `gorm:"type:numeric(18,6);not null;default:7" json:"usd_to_cny_rate"`
+	LLMContentCaptureEnabled bool                   `gorm:"not null;default:false" json:"llm_content_capture_enabled"`
+	LLMContentRetentionDays  *int                   `json:"llm_content_retention_days"`
+	CreatedAt                time.Time              `json:"created_at"`
+	UpdatedAt                time.Time              `json:"updated_at"`
 
 	// Relationships - commented out for modular architecture
 	// TenantJoins  []EnterpriseGroupTenantJoin  `gorm:"foreignKey:GroupID" json:"-"`
@@ -797,19 +799,21 @@ func readonlyWorkspaceMemberPermissionStrings() []string {
 }
 
 type WorkspaceCustomRole struct {
-	ID              string                      `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
-	OrganizationID  string                      `gorm:"column:group_id;type:uuid;not null;index" json:"organization_id"`
-	Name            string                      `gorm:"type:varchar(255);not null" json:"name"`
-	NameI18n        map[string]string           `gorm:"column:name_i18n;type:jsonb;serializer:json;not null;default:'{}'" json:"name_i18n,omitempty"`
-	Description     *string                     `gorm:"type:text" json:"description,omitempty"`
-	DescriptionI18n map[string]string           `gorm:"column:description_i18n;type:jsonb;serializer:json;not null;default:'{}'" json:"description_i18n,omitempty"`
-	Status          WorkspaceCustomRoleStatus   `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
-	Permissions     []string                    `gorm:"type:jsonb;serializer:json;not null;default:'[]'" json:"permissions"`
-	SystemKey       *string                     `gorm:"column:system_key;type:varchar(64)" json:"system_key,omitempty"`
-	TemplateOrigin  WorkspaceRoleTemplateOrigin `gorm:"column:template_origin;type:varchar(32);not null;default:'custom'" json:"template_origin"`
-	CreatedBy       string                      `gorm:"type:uuid;not null" json:"created_by"`
-	CreatedAt       time.Time                   `json:"created_at"`
-	UpdatedAt       time.Time                   `json:"updated_at"`
+	ID                    string                      `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
+	OrganizationID        string                      `gorm:"column:group_id;type:uuid;not null;index" json:"organization_id"`
+	Name                  string                      `gorm:"type:varchar(255);not null" json:"name"`
+	NameI18n              map[string]string           `gorm:"column:name_i18n;type:jsonb;serializer:json;not null;default:'{}'" json:"name_i18n,omitempty"`
+	NameCustomized        bool                        `gorm:"column:name_customized;not null;default:false" json:"name_customized"`
+	Description           *string                     `gorm:"type:text" json:"description,omitempty"`
+	DescriptionI18n       map[string]string           `gorm:"column:description_i18n;type:jsonb;serializer:json;not null;default:'{}'" json:"description_i18n,omitempty"`
+	DescriptionCustomized bool                        `gorm:"column:description_customized;not null;default:false" json:"description_customized"`
+	Status                WorkspaceCustomRoleStatus   `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
+	Permissions           []string                    `gorm:"type:jsonb;serializer:json;not null;default:'[]'" json:"permissions"`
+	SystemKey             *string                     `gorm:"column:system_key;type:varchar(64)" json:"system_key,omitempty"`
+	TemplateOrigin        WorkspaceRoleTemplateOrigin `gorm:"column:template_origin;type:varchar(32);not null;default:'custom'" json:"template_origin"`
+	CreatedBy             string                      `gorm:"type:uuid;not null" json:"created_by"`
+	CreatedAt             time.Time                   `json:"created_at"`
+	UpdatedAt             time.Time                   `json:"updated_at"`
 }
 
 func (WorkspaceCustomRole) TableName() string {

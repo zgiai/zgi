@@ -1,10 +1,14 @@
 package v1
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/aichat"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
@@ -17,16 +21,18 @@ import (
 
 // AIChatRouteDeps contains dependencies required by AIChat routes.
 type AIChatRouteDeps struct {
-	DB                         *gorm.DB
-	LLMClient                  llmclient.LLMClient
-	DefaultModelService        llmdefaultservice.DefaultModelService
-	FileService                chatruntime.FileLookupService
-	ContentExtractor           chatruntime.ContentExtractionService
-	WorkspacePermissionService chatruntime.WorkspacePermissionService
-	MemoryService              *memorymodule.Service
-	AgentMemoryService         *agentmemory.Service
-	SkillRuntime               *skills.Runtime
-	AccountService             interfaces.AccountService
+	DB                           *gorm.DB
+	LLMClient                    llmclient.LLMClient
+	DefaultModelService          llmdefaultservice.DefaultModelService
+	FileService                  chatruntime.FileLookupService
+	ContentExtractor             chatruntime.ContentExtractionService
+	WorkspacePermissionService   chatruntime.WorkspacePermissionService
+	MemoryService                *memorymodule.Service
+	AgentMemoryService           *agentmemory.Service
+	SkillRuntime                 *skills.Runtime
+	AccountService               interfaces.AccountService
+	IntegrationPreferences       *integrations.DefaultAIChatIntegrationPreferenceService
+	IntegrationActionProjections integrationmetatools.ActionProjectionResolver
 }
 
 func RegisterAIChatRoutes(router *gin.RouterGroup, deps AIChatRouteDeps) chatruntime.Service {
@@ -61,6 +67,26 @@ func RegisterAIChatRoutes(router *gin.RouterGroup, deps AIChatRouteDeps) chatrun
 		panic("aichat routes require account service")
 	}
 
+	preferenceResolver := chatruntime.AIChatIntegrationPreferenceResolver(nil)
+	if deps.IntegrationPreferences != nil {
+		preferenceResolver = chatruntime.AIChatIntegrationPreferenceResolverFunc(func(ctx context.Context, scope chatruntime.Scope) (chatruntime.AIChatIntegrationRuntimePreferences, error) {
+			items, err := deps.IntegrationPreferences.List(ctx, scope.OrganizationID, scope.AccountID, scope.WorkspaceID)
+			if err != nil {
+				return chatruntime.AIChatIntegrationRuntimePreferences{}, err
+			}
+			selected := make(map[string][]string, len(items))
+			preferred := make(map[string]string, len(items))
+			for _, item := range items {
+				selected[item.IntegrationID] = append([]string(nil), item.SelectedConnectionIDs...)
+				if item.PreferredConnectionID != nil {
+					preferred[item.IntegrationID] = item.PreferredConnectionID.String()
+				}
+			}
+			return chatruntime.AIChatIntegrationRuntimePreferences{
+				SelectedConnectionIDs: selected, PreferredConnectionIDs: preferred,
+			}, nil
+		})
+	}
 	module := aichat.NewModuleWithDependencies(
 		deps.DB,
 		deps.LLMClient,
@@ -71,10 +97,13 @@ func RegisterAIChatRoutes(router *gin.RouterGroup, deps AIChatRouteDeps) chatrun
 		deps.MemoryService,
 		deps.AgentMemoryService,
 		deps.SkillRuntime,
+		preferenceResolver,
+		deps.IntegrationActionProjections,
 	)
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
+	group.Use(aichatWorkspaceScopeMiddleware(deps.DB, deps.AccountService))
 	module.RegisterRoutes(group)
 	logger.Info("AIChat routes registered", "path", "/console/api/aichat/*")
 	return module.Service

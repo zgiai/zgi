@@ -40,6 +40,7 @@ type Config struct {
 	Encryption             EncryptionConfig
 	Observability          ObservabilityConfig
 	OpenTelemetry          OpenTelemetryConfig
+	LLMInvocationContent   LLMInvocationContentConfig
 	ModelMeta              ModelMetaConfig
 	Neo4j                  Neo4jConfig
 	Sentry                 SentryConfig
@@ -56,6 +57,8 @@ type Config struct {
 	Automation             AutomationConfig
 	Tooling                ToolingConfig
 	ChatRuntime            ChatRuntimeConfig
+	WebSearch              WebSearchConfig
+	ExternalIntegrations   ExternalIntegrationsConfig
 
 	source *envSource
 }
@@ -181,6 +184,7 @@ type PluginRunnerConfig struct {
 type TaskQueueConfig struct {
 	RedisDB                 int           `json:"redis_db"`
 	Concurrency             int           `json:"concurrency"`
+	GraphFlowConcurrency    int           `json:"graphflow_concurrency"`
 	Retention               time.Duration `json:"-"`
 	EnvPrefix               string        `json:"env_prefix"`
 	WorkflowTestTaskBackend string        `json:"workflow_test_task_backend"`
@@ -312,6 +316,15 @@ type OpenTelemetryConfig struct {
 	LLMLangfuseAttributes bool              `json:"llm_langfuse_attributes"`
 	LLMCaptureContent     string            `json:"llm_capture_content"`
 	LLMCaptureMaxChars    int               `json:"llm_capture_max_chars"`
+}
+
+// LLMInvocationContentConfig controls the optional business audit copy of LLM
+// inputs and outputs. It is independent from OpenTelemetry/Langfuse tracing.
+type LLMInvocationContentConfig struct {
+	MaxBytes      int `json:"max_bytes"`
+	RetentionDays int `json:"retention_days"`
+	QueueSize     int `json:"queue_size"`
+	BatchSize     int `json:"batch_size"`
 }
 
 type ModelMetaConfig struct {
@@ -455,4 +468,56 @@ type AutomationConfig struct {
 
 type ToolingConfig struct {
 	DryRun bool `json:"dry_run"`
+}
+
+// ExternalIntegrationsConfig controls the provider/connection runtime shared
+// by every external application, including Web Search.
+type ExternalIntegrationsConfig struct {
+	Enabled               bool                            `json:"enabled"`
+	OrgDailyLimit         int                             `json:"org_daily_limit"`
+	TimeoutSeconds        int                             `json:"timeout_seconds"`
+	CredentialActiveKeyID string                          `json:"credential_active_key_id"`
+	CredentialKeys        map[string]string               `json:"-"`
+	Health                ExternalIntegrationHealthConfig `json:"health"`
+	OAuth                 ExternalIntegrationOAuthConfig  `json:"oauth"`
+}
+
+type ExternalIntegrationHealthConfig struct {
+	FailureThreshold int `json:"failure_threshold"`
+}
+
+type ExternalIntegrationOAuthConfig struct {
+	RefreshWindowSeconds int `json:"refresh_window_seconds"`
+	FlowTTLSeconds       int `json:"flow_ttl_seconds"`
+	// CallbackURL is the exact, server-owned redirect URI registered with
+	// providers. It must never be derived from an inbound Host header.
+	CallbackURL string `json:"callback_url"`
+	// ResultURL is the console page shown after the server has consumed the
+	// provider callback. It never receives authorization codes or tokens.
+	ResultURL string `json:"result_url"`
+	// Clients are optional deployment-level OAuth applications. Organization
+	// client configurations, when present, take precedence at runtime.
+	Clients map[string]ExternalIntegrationOAuthClientConfig `json:"-"`
+}
+
+type ExternalIntegrationOAuthClientConfig struct {
+	ClientID     string            `json:"-"`
+	ClientSecret string            `json:"-"`
+	Config       map[string]string `json:"-"`
+}
+
+// WebSearchConfig contains Exa-specific runtime limits. Web Search registration
+// follows ExternalIntegrationsConfig.Enabled, and credentials are supplied by
+// encrypted organization or account Connections.
+type WebSearchConfig struct {
+	Provider string    `json:"provider"`
+	Exa      ExaConfig `json:"exa"`
+}
+
+type ExaConfig struct {
+	TimeoutSeconds       int    `json:"timeout_seconds"`
+	MaxResults           int    `json:"max_results"`
+	DefaultSearchType    string `json:"default_search_type"`
+	MaxFetchURLs         int    `json:"max_fetch_urls"`
+	MaxContentCharacters int    `json:"max_content_characters"`
 }

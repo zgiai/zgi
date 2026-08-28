@@ -1,11 +1,17 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
+	"net/http"
+	"net/textproto"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +30,8 @@ type OpenAIAdapter struct {
 	baseURL    string
 	exactURL   bool
 }
+
+const openAIImageEditDefaultInputFidelity = "high"
 
 // NewOpenAIAdapter creates an OpenAI adapter
 func NewOpenAIAdapter(config *adapter.AdapterConfig) (*OpenAIAdapter, error) {
@@ -402,6 +410,13 @@ func buildOpenAICompatibleEmbeddingsPayload(request *adapter.EmbeddingsRequest) 
 
 // CreateImage executes image generation request
 func (a *OpenAIAdapter) CreateImage(ctx context.Context, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
+	if len(request.ReferenceImageBytes) > 0 {
+		return a.createOpenAIImageEdit(ctx, request)
+	}
+	if strings.TrimSpace(request.ReferenceImageURL) != "" {
+		return nil, fmt.Errorf("%w: openai image edits require reference image bytes", adapter.ErrInvalidRequest)
+	}
+
 	url := a.requestURL("/images/generations")
 	headers := a.buildHeaders()
 
@@ -447,6 +462,250 @@ func (a *OpenAIAdapter) CreateImage(ctx context.Context, request *adapter.ImageR
 	}
 
 	return &response, nil
+}
+
+func (a *OpenAIAdapter) createOpenAIImageEdit(ctx context.Context, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
+	if !a.openAIImageEditModelSupportsReference(request.Model) {
+		return nil, fmt.Errorf("%w: reference image is not supported for openai image model %s", adapter.ErrCapabilityUnsupported, request.Model)
+	}
+	if err := a.validateOpenAIImageEditSize(request.Model, request.Size); err != nil {
+		return nil, err
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("model", request.Model); err != nil {
+		return nil, fmt.Errorf("failed to write multipart model field: %w", err)
+	}
+	if err := writer.WriteField("prompt", request.Prompt); err != nil {
+		return nil, fmt.Errorf("failed to write multipart prompt field: %w", err)
+	}
+	filename := strings.TrimSpace(request.ReferenceImageFilename)
+	if filename == "" {
+		filename = "reference-image"
+	}
+	mimeType := strings.TrimSpace(request.ReferenceImageMimeType)
+	if mimeType == "" {
+		mimeType = http.DetectContentType(request.ReferenceImageBytes)
+	}
+	if err := writeOpenAIImageEditFilePart(writer, "image", filename, mimeType, request.ReferenceImageBytes); err != nil {
+		return nil, err
+	}
+	if request.N != nil {
+		if err := writer.WriteField("n", strconv.Itoa(*request.N)); err != nil {
+			return nil, fmt.Errorf("failed to write multipart n field: %w", err)
+		}
+	}
+	if strings.TrimSpace(request.Size) != "" {
+		if err := writer.WriteField("size", request.Size); err != nil {
+			return nil, fmt.Errorf("failed to write multipart size field: %w", err)
+		}
+	}
+	if strings.TrimSpace(request.Quality) != "" {
+		if err := writer.WriteField("quality", request.Quality); err != nil {
+			return nil, fmt.Errorf("failed to write multipart quality field: %w", err)
+		}
+	}
+	if strings.TrimSpace(request.User) != "" {
+		if err := writer.WriteField("user", request.User); err != nil {
+			return nil, fmt.Errorf("failed to write multipart user field: %w", err)
+		}
+	}
+	if _, ok := request.AdditionalParameters["input_fidelity"]; !ok {
+		if err := writer.WriteField("input_fidelity", openAIImageEditDefaultInputFidelity); err != nil {
+			return nil, fmt.Errorf("failed to write multipart input_fidelity field: %w", err)
+		}
+	}
+	for k, v := range request.AdditionalParameters {
+		if openAIImageEditReservedField(k) {
+			continue
+		}
+		value, ok := openAIImageEditMultipartScalar(v)
+		if !ok {
+			continue
+		}
+		if err := writer.WriteField(k, value); err != nil {
+			return nil, fmt.Errorf("failed to write multipart %s field: %w", k, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close multipart body: %w", err)
+	}
+
+	headers := a.buildHeaders()
+	headers["Content-Type"] = writer.FormDataContentType()
+	resp, err := a.httpClient.DoRawRequestDetailed(ctx, "POST", a.requestURL("/images/edits"), headers, bytes.NewReader(body.Bytes()))
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		return nil, a.handleError(resp.StatusCode, resp.Body)
+	}
+	var response adapter.ImageResponse
+	if err := json.Unmarshal(resp.Body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &response, nil
+}
+
+func writeOpenAIImageEditFilePart(writer *multipart.Writer, fieldName, filename, mimeType string, content []byte) error {
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, escapeMultipartQuotedString(fieldName), escapeMultipartQuotedString(filename)))
+	if strings.TrimSpace(mimeType) != "" {
+		header.Set("Content-Type", mimeType)
+	}
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		return fmt.Errorf("failed to create multipart image field: %w", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		return fmt.Errorf("failed to write multipart image field: %w", err)
+	}
+	return nil
+}
+
+func escapeMultipartQuotedString(value string) string {
+	return strings.NewReplacer("\\", "\\\\", `"`, "\\\"").Replace(value)
+}
+
+func openAIImageEditModelSupportsReference(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image")
+}
+
+func (a *OpenAIAdapter) openAIImageEditModelSupportsReference(model string) bool {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	if openAIImageEditModelSupportsReference(normalizedModel) {
+		return true
+	}
+	return a.openAICompatibleQwenImageModel(normalizedModel)
+}
+
+func validateOpenAIImageEditSize(size string) error {
+	switch strings.TrimSpace(size) {
+	case "", "auto", "1024x1024", "1024x1536", "1536x1024":
+		return nil
+	default:
+		return fmt.Errorf("%w: openai image edits do not support size %s", adapter.ErrInvalidRequest, size)
+	}
+}
+
+func (a *OpenAIAdapter) validateOpenAIImageEditSize(model string, size string) error {
+	if a.openAICompatibleQwenImageModel(model) {
+		return nil
+	}
+	return validateOpenAIImageEditSize(size)
+}
+
+func (a *OpenAIAdapter) openAICompatibleQwenImageModel(model string) bool {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	if !strings.HasPrefix(normalizedModel, "qwen-image") {
+		return false
+	}
+	providerName := ""
+	if a != nil && a.config != nil {
+		providerName = strings.ToLower(strings.TrimSpace(a.config.ProviderName))
+	}
+	return providerName == "openai-compatible" || providerName == "agicto"
+}
+
+func openAIImageEditReservedField(field string) bool {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "model", "prompt", "image", "mask", "n", "size", "quality", "user":
+		return true
+	default:
+		return false
+	}
+}
+
+func openAIImageEditMultipartScalar(value interface{}) (string, bool) {
+	switch v := value.(type) {
+	case nil:
+		return "", false
+	case string:
+		return v, true
+	case bool:
+		return strconv.FormatBool(v), true
+	case int:
+		return strconv.Itoa(v), true
+	case int8:
+		return strconv.FormatInt(int64(v), 10), true
+	case int16:
+		return strconv.FormatInt(int64(v), 10), true
+	case int32:
+		return strconv.FormatInt(int64(v), 10), true
+	case int64:
+		return strconv.FormatInt(v, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10), true
+	case uint64:
+		return strconv.FormatUint(v, 10), true
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32), true
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64), true
+	case json.Number:
+		return v.String(), true
+	default:
+		return "", false
+	}
+}
+
+// CreateVideo executes asynchronous video generation request.
+func (a *OpenAIAdapter) CreateVideo(ctx context.Context, request *adapter.VideoRequest) (*adapter.VideoResponse, error) {
+	url := a.requestURL("/videos/generations")
+	headers := a.buildHeaders()
+
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, headers, buildOpenAICompatibleVideoPayload(request))
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if statusCode != 200 {
+		return nil, a.handleError(statusCode, respBody)
+	}
+	response, err := decodeOpenAICompatibleVideoResponse(respBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return response, nil
+}
+
+// GetVideoTask queries an asynchronous video generation task.
+func (a *OpenAIAdapter) GetVideoTask(ctx context.Context, request *adapter.VideoTaskRequest) (*adapter.VideoResponse, error) {
+	if request == nil || strings.TrimSpace(request.TaskID) == "" {
+		return nil, fmt.Errorf("%w: task_id is required", adapter.ErrInvalidRequest)
+	}
+	path := "/videos/generations/" + url.PathEscape(strings.TrimSpace(request.TaskID))
+	query := url.Values{}
+	if strings.TrimSpace(request.Model) != "" {
+		query.Set("model", strings.TrimSpace(request.Model))
+	}
+	for k, v := range request.AdditionalParameters {
+		if text, ok := v.(string); ok && strings.TrimSpace(text) != "" {
+			query.Set(k, strings.TrimSpace(text))
+		}
+	}
+	fullURL := a.requestURL(path)
+	if encoded := query.Encode(); encoded != "" {
+		fullURL += "?" + encoded
+	}
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "GET", fullURL, a.buildHeaders(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if statusCode != 200 {
+		return nil, a.handleError(statusCode, respBody)
+	}
+	response, err := decodeOpenAICompatibleVideoResponse(respBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return response, nil
 }
 
 // Rerank executes rerank request (not natively supported by OpenAI)

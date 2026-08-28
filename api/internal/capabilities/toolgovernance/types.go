@@ -74,8 +74,12 @@ type Manifest struct {
 	Reversible              bool             `json:"reversible" yaml:"reversible"`
 	BulkSensitive           bool             `json:"bulk_sensitive" yaml:"bulk_sensitive"`
 	ExternalSideEffect      bool             `json:"external_side_effect" yaml:"external_side_effect"`
+	DataEgress              bool             `json:"data_egress" yaml:"data_egress"`
+	ExternalDestination     string           `json:"external_destination,omitempty" yaml:"external_destination"`
+	SensitiveDataAllowed    bool             `json:"sensitive_data_allowed" yaml:"sensitive_data_allowed"`
 	PermissionScopes        []string         `json:"permission_scopes,omitempty" yaml:"permission_scopes"`
 	DefaultApprovalPolicy   ApprovalPolicy   `json:"default_approval_policy" yaml:"default_approval_policy"`
+	ApprovalEveryInvocation bool             `json:"approval_every_invocation" yaml:"approval_every_invocation"`
 	AllowedPermissionTiers  []PermissionTier `json:"allowed_permission_tiers,omitempty" yaml:"allowed_permission_tiers"`
 	AuditRequired           bool             `json:"audit_required" yaml:"audit_required"`
 	IdempotencyRequired     bool             `json:"idempotency_required" yaml:"idempotency_required"`
@@ -100,6 +104,9 @@ type SessionGrant struct {
 	ToolID                string     `json:"tool_id"`
 	Effect                Effect     `json:"effect"`
 	AssetType             string     `json:"asset_type,omitempty"`
+	DataEgress            bool       `json:"data_egress"`
+	ExternalDestination   string     `json:"external_destination,omitempty"`
+	SensitiveDataAllowed  bool       `json:"sensitive_data_allowed"`
 	Assets                []AssetRef `json:"assets,omitempty"`
 	RiskLevel             RiskLevel  `json:"risk_level"`
 	ApprovalCorrelationID string     `json:"approval_correlation_id,omitempty"`
@@ -123,21 +130,25 @@ type Preauthorization struct {
 }
 
 type ApprovalEvent struct {
-	Type               string            `json:"type"`
-	CorrelationID      string            `json:"correlation_id"`
-	ToolID             string            `json:"tool_id"`
-	SkillID            string            `json:"skill_id,omitempty"`
-	Domain             string            `json:"domain,omitempty"`
-	Effect             Effect            `json:"effect"`
-	AssetType          string            `json:"asset_type,omitempty"`
-	RiskLevel          RiskLevel         `json:"risk_level"`
-	Assets             []AssetRef        `json:"assets,omitempty"`
-	Reversible         bool              `json:"reversible"`
-	BulkSensitive      bool              `json:"bulk_sensitive"`
-	ExternalSideEffect bool              `json:"external_side_effect"`
-	PermissionTier     PermissionTier    `json:"permission_tier"`
-	Grant              SessionGrant      `json:"grant"`
-	FrozenInvocation   *FrozenInvocation `json:"frozen_invocation,omitempty"`
+	Type                    string            `json:"type"`
+	CorrelationID           string            `json:"correlation_id"`
+	ToolID                  string            `json:"tool_id"`
+	SkillID                 string            `json:"skill_id,omitempty"`
+	Domain                  string            `json:"domain,omitempty"`
+	Effect                  Effect            `json:"effect"`
+	AssetType               string            `json:"asset_type,omitempty"`
+	RiskLevel               RiskLevel         `json:"risk_level"`
+	Assets                  []AssetRef        `json:"assets,omitempty"`
+	Reversible              bool              `json:"reversible"`
+	BulkSensitive           bool              `json:"bulk_sensitive"`
+	ExternalSideEffect      bool              `json:"external_side_effect"`
+	DataEgress              bool              `json:"data_egress"`
+	ExternalDestination     string            `json:"external_destination,omitempty"`
+	SensitiveDataAllowed    bool              `json:"sensitive_data_allowed"`
+	ApprovalEveryInvocation bool              `json:"approval_every_invocation,omitempty"`
+	PermissionTier          PermissionTier    `json:"permission_tier"`
+	Grant                   SessionGrant      `json:"grant"`
+	FrozenInvocation        *FrozenInvocation `json:"frozen_invocation,omitempty"`
 }
 
 type Decision struct {

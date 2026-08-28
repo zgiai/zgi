@@ -1,4 +1,4 @@
-import type { NavigationMessages } from './en-US';
+﻿import type { NavigationMessages } from './en-US';
 
 const messages: NavigationMessages = {
   home: '首页',
@@ -24,6 +24,7 @@ const messages: NavigationMessages = {
   workflowAgents: '工作流',
   prompts: '提示词',
   skills: '技能',
+  integrations: '连接中心',
   dbs: '数据库',
   files: '文件管理',
   chat: '对话',
@@ -47,6 +48,8 @@ const messages: NavigationMessages = {
   app: '应用',
   task: '定时任务',
   image: '绘图',
+  video: '视频',
+  music: '音乐',
   resources: '资产',
   developer: '开发者',
   tools: '能力中心',

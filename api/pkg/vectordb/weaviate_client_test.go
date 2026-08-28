@@ -3,14 +3,78 @@ package vectordb
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/config"
 )
+
+func TestUpdateObjectPropertiesBatchUsesBoundedConcurrencyAndReportsProgress(t *testing.T) {
+	var active atomic.Int64
+	var maxActive atomic.Int64
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Errorf("method = %q, want PATCH", r.Method)
+		}
+		current := active.Add(1)
+		defer active.Add(-1)
+		requests.Add(1)
+		for {
+			maximum := maxActive.Load()
+			if current <= maximum || maxActive.CompareAndSwap(maximum, current) {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	updates := make([]ObjectPropertyUpdate, 205)
+	for i := range updates {
+		updates[i] = ObjectPropertyUpdate{
+			ID:         fmt.Sprintf("entity-%d", i),
+			Properties: map[string]interface{}{"active_source_count": 1},
+		}
+	}
+	lastProgress := 0
+	var progressRegressed atomic.Bool
+	var wrongProgressTotal atomic.Bool
+	if err := client.UpdateObjectPropertiesBatch(context.Background(), "Dataset_1", updates, 4, func(completed, total int) {
+		if completed < lastProgress {
+			progressRegressed.Store(true)
+		}
+		if total != len(updates) {
+			wrongProgressTotal.Store(true)
+		}
+		lastProgress = completed
+	}); err != nil {
+		t.Fatalf("UpdateObjectPropertiesBatch returned error: %v", err)
+	}
+	if requests.Load() != int64(len(updates)) {
+		t.Fatalf("requests=%d, want %d", requests.Load(), len(updates))
+	}
+	if maxActive.Load() > 4 || maxActive.Load() < 2 {
+		t.Fatalf("max concurrency=%d, want between 2 and 4", maxActive.Load())
+	}
+	if lastProgress != len(updates) {
+		t.Fatalf("last progress=%d, want %d", lastProgress, len(updates))
+	}
+	if progressRegressed.Load() {
+		t.Fatal("batch property update progress regressed")
+	}
+	if wrongProgressTotal.Load() {
+		t.Fatal("batch property update reported an incorrect total")
+	}
+}
 
 func TestWeaviateDeleteVector(t *testing.T) {
 	var gotMethod, gotPath, gotAuth string
@@ -52,6 +116,125 @@ func TestWeaviateDeleteVectorTreatsNotFoundAsSuccess(t *testing.T) {
 
 	if err := client.DeleteVector(context.Background(), "missing-node", "Dataset_1"); err != nil {
 		t.Fatalf("DeleteVector returned error for not found: %v", err)
+	}
+}
+
+func TestWeaviateStoreVectorRetriesAutoSchemaConflict(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/objects" {
+			t.Fatalf("request = %s %s, want POST /v1/objects", r.Method, r.URL.Path)
+		}
+		if requests.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":[{"message":"invalid object: auto-schema: create collection: class name Vector_index_1_Node already exists"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	err := client.StoreVector(context.Background(), "node-1", "Vector_index_1_Node", map[string]interface{}{"text": "hello"}, []float64{0.1})
+	if err != nil {
+		t.Fatalf("StoreVector returned error after a transient auto-schema conflict: %v", err)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("requests = %d, want 2", requests.Load())
+	}
+}
+
+func TestWeaviateStoreVectorDoesNotRetryOtherServerErrors(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":[{"message":"storage unavailable"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	err := client.StoreVector(context.Background(), "node-1", "Vector_index_1_Node", map[string]interface{}{"text": "hello"}, []float64{0.1})
+	if err == nil || !strings.Contains(err.Error(), "storage unavailable") {
+		t.Fatalf("StoreVector error = %v, want storage failure", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests = %d, want 1", requests.Load())
+	}
+}
+
+func TestWeaviateCreateClassTreatsAlreadyExistsServerErrorAsSuccess(t *testing.T) {
+	var schemaReads atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/schema":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":[{"message":"invalid object: auto-schema: create collection: class name Vector_index_1_Node already exists"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/schema/Vector_index_1_Node":
+			if schemaReads.Add(1) == 1 {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	if err := client.CreateClass(context.Background(), "Vector_index_1_Node", nil); err != nil {
+		t.Fatalf("CreateClass returned error for an existing class: %v", err)
+	}
+	if schemaReads.Load() != 2 {
+		t.Fatalf("schema reads = %d, want 2", schemaReads.Load())
+	}
+}
+
+func TestWeaviateCreateClassRetriesCreationWhenConflictNeverBecomesVisible(t *testing.T) {
+	var schemaReads atomic.Int64
+	var schemaWrites atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/schema/Vector_index_1_Node":
+			schemaReads.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/schema":
+			if schemaWrites.Add(1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":[{"message":"class Vector_index_1_Node already exists"}]}`))
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected request = %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	if err := client.CreateClass(context.Background(), "Vector_index_1_Node", nil); err != nil {
+		t.Fatalf("CreateClass returned error after retrying an invisible conflict: %v", err)
+	}
+	if schemaWrites.Load() != 2 {
+		t.Fatalf("schema writes = %d, want 2", schemaWrites.Load())
+	}
+	if schemaReads.Load() < weaviateSchemaReadyAttempts+2 {
+		t.Fatalf("schema reads = %d, want readiness checks followed by a new create attempt", schemaReads.Load())
+	}
+}
+
+func TestWeaviateCreateClassKeepsOtherServerErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":[{"message":"storage unavailable"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	err := client.CreateClass(context.Background(), "Vector_index_1_Node", nil)
+	if err == nil || !strings.Contains(err.Error(), "storage unavailable") {
+		t.Fatalf("CreateClass error = %v, want storage failure", err)
 	}
 }
 
@@ -189,6 +372,34 @@ func TestWeaviateDeleteObjectsByFieldDoesNotTreatEndpointNotFoundAsMissingClass(
 
 	if err := client.DeleteObjectsByField(context.Background(), "Dataset_1", "document_id", "doc-1"); err == nil {
 		t.Fatalf("endpoint 404 should return an error")
+	}
+}
+
+func TestWeaviateDeleteObjectByIDTreatsMissingIndexAsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":[{"message":"delete from non-existing index for Entity_1"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+
+	if err := client.DeleteObjectByID(context.Background(), "Entity_1", "entity-1"); err != nil {
+		t.Fatalf("DeleteObjectByID should treat a missing index as already clean: %v", err)
+	}
+}
+
+func TestWeaviateDeleteObjectByIDDoesNotHideUnrelatedServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":[{"message":"storage unavailable"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+
+	if err := client.DeleteObjectByID(context.Background(), "Entity_1", "entity-1"); err == nil {
+		t.Fatal("DeleteObjectByID should return unrelated server errors")
 	}
 }
 

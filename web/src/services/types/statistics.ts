@@ -145,6 +145,8 @@ export interface InvocationLogItem {
   started_at: number;
   settled_at: number;
   error_code?: string;
+  content_available: boolean;
+  content_expires_at?: number;
   input?: unknown;
   output?: unknown;
 }
@@ -169,4 +171,38 @@ export interface GetInvocationLogParams {
   cursor_time?: string;
   cursor_id?: string;
   limit?: number;
+  include_summary?: boolean;
+}
+
+export interface InvocationContentSettings {
+  /** @deprecated Always true; retained for rolling-deploy compatibility. */
+  available: boolean;
+  enabled: boolean;
+  max_bytes: number;
+  retention_days: number;
+  stored_count: number;
+  stored_count_capped: boolean;
+}
+
+export interface UpdateInvocationContentSettingsInput {
+  enabled: boolean;
+  retention_days: number;
+}
+
+export interface InvocationContentPurgeResult {
+  deleted_count: number;
+  has_more: boolean;
+}
+
+export interface InvocationContentDetail {
+  invocation_id: string;
+  input_text: string;
+  output_text: string;
+  input_json: string;
+  output_json: string;
+  content_status: 'available' | string;
+  input_truncated: boolean;
+  output_truncated: boolean;
+  redaction_version: string;
+  expires_at: number;
 }

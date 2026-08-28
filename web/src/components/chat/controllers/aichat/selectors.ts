@@ -1,5 +1,6 @@
 import type {
   AIChatConversation,
+  AIChatMemoryMutationEventData,
   AIChatMessage,
   AIChatSkillInvocation,
   AIChatToolGovernanceDecisionEventData,
@@ -153,6 +154,7 @@ function toolGovernanceEventFromInvocation(
     execution_status: invocation.status,
     execution_error:
       invocation.status === 'error' ? (invocation.error ?? invocation.message) : undefined,
+    execution_error_code: invocation.error_code,
     execution_message: invocation.message,
     execution_duration_ms: invocation.duration_ms,
     execution_result: invocation.result,
@@ -360,6 +362,70 @@ function workflowTimelineFromMessage(message: AIChatMessage): AIChatAgenticTimel
     .filter((item): item is AIChatAgenticTimelineItem => item !== null);
 }
 
+function memoryMutationEventFromInvocation(
+  message: AIChatMessage,
+  invocation: AIChatSkillInvocation
+): AIChatMemoryMutationEventData {
+  const action = invocation.action === 'clear' ? 'clear' : 'update';
+  return {
+    conversation_id: message.conversation_id,
+    message_id: message.id,
+    memory_scope: invocation.memory_scope === 'account' ? 'account' : 'agent',
+    action,
+    key: invocation.key,
+    display_name: invocation.display_name,
+    status: invocation.status,
+    source_kind: invocation.source_kind,
+    operation_id: invocation.operation_id,
+    revision: invocation.revision,
+    undoable_until: invocation.undoable_until,
+    created_at: invocation.created_at,
+  };
+}
+
+function memoryTimelineFromInvocations(
+  message: AIChatMessage,
+  invocations: AIChatSkillInvocation[]
+): AIChatAgenticTimelineItem[] {
+  const items: AIChatAgenticTimelineItem[] = [];
+  for (const [index, invocation] of invocations.entries()) {
+    if (invocation.kind !== 'memory_mutation') continue;
+    const event = memoryMutationEventFromInvocation(message, invocation);
+    const isAutomaticAgentMemory =
+      event.memory_scope === 'agent' && event.source_kind === 'automatic';
+    if (isAutomaticAgentMemory) {
+      const itemID = `history-memory-auto-${message.id}`;
+      const existingIndex = items.findIndex(
+        item => item.type === 'memory_event' && item.id === itemID
+      );
+      const existing = existingIndex >= 0 ? items[existingIndex] : undefined;
+      const existingKeys = existing?.type === 'memory_event' ? (existing.event.keys ?? []) : [];
+      const keys = Array.from(new Set([...existingKeys, ...(event.key ? [event.key] : [])]));
+      const merged: AIChatAgenticTimelineItem = {
+        id: itemID,
+        type: 'memory_event',
+        event: { ...event, keys, operation_count: keys.length },
+        created_at: event.created_at ?? existing?.created_at,
+        event_id: null,
+      };
+      if (existingIndex >= 0) {
+        items[existingIndex] = merged;
+      } else {
+        items.push(merged);
+      }
+      continue;
+    }
+    items.push({
+      id: `history-memory-${message.id}-${invocation.operation_id ?? index}`,
+      type: 'memory_event',
+      event,
+      created_at: event.created_at,
+      event_id: null,
+    });
+  }
+  return items;
+}
+
 export function hasRunningMessageState(
   streamingByMessageId: Record<string, AIChatStreamingMessageState>,
   conversationId: string
@@ -452,47 +518,51 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
       .filter((correlationId): correlationId is string => Boolean(correlationId))
   );
 
-  const skillTimeline = invocations.map((invocation, index): AIChatAgenticTimelineItem => {
-    const correlationId = governanceCorrelationIdFromInvocation(invocation) ?? String(index);
-    const hasGovernance = Boolean(invocation.governance);
-    const shouldRenderAsGovernanceDecision =
-      invocation.kind === 'tool_governance' ||
-      (!isTerminalGovernedToolExecutionInvocation(invocation) &&
-        isTerminalGovernedSkillInvocation(invocation)) ||
-      (hasGovernance && !governanceCorrelationIds.has(correlationId)) ||
-      (isPendingToolGovernanceInvocation(invocation) &&
-        !governanceCorrelationIds.has(correlationId));
+  const memoryTimeline = memoryTimelineFromInvocations(message, invocations);
 
-    if (shouldRenderAsGovernanceDecision) {
+  const skillTimeline = invocations
+    .filter(invocation => invocation.kind !== 'memory_mutation')
+    .map((invocation, index): AIChatAgenticTimelineItem => {
+      const correlationId = governanceCorrelationIdFromInvocation(invocation) ?? String(index);
+      const hasGovernance = Boolean(invocation.governance);
+      const shouldRenderAsGovernanceDecision =
+        invocation.kind === 'tool_governance' ||
+        (!isTerminalGovernedToolExecutionInvocation(invocation) &&
+          isTerminalGovernedSkillInvocation(invocation)) ||
+        (hasGovernance && !governanceCorrelationIds.has(correlationId)) ||
+        (isPendingToolGovernanceInvocation(invocation) &&
+          !governanceCorrelationIds.has(correlationId));
+
+      if (shouldRenderAsGovernanceDecision) {
+        return {
+          id: `history-governance-${message.id}-${correlationId}`,
+          type: 'tool_governance_decision',
+          event: toolGovernanceEventFromInvocation(message, invocation),
+          created_at: invocation.created_at,
+        };
+      }
+      if (invocation.kind === 'intermediate_answer' && invocation.message) {
+        const sensitiveOutputBlocked =
+          isSensitiveOutputBlockedValue(invocation.title) ||
+          isSensitiveOutputBlockedValue(invocation.message);
+        return {
+          id: `history-intermediate-${message.id}-${invocation.answer_id ?? index}`,
+          type: 'intermediate_answer',
+          answer_id: invocation.answer_id,
+          title: sensitiveOutputBlocked ? undefined : invocation.title,
+          content: sensitiveOutputBlocked ? '' : invocation.message,
+          sensitiveOutputBlocked,
+          status: invocation.status === 'success' ? 'success' : undefined,
+          created_at: invocation.created_at,
+        };
+      }
       return {
-        id: `history-governance-${message.id}-${correlationId}`,
-        type: 'tool_governance_decision',
-        event: toolGovernanceEventFromInvocation(message, invocation),
+        id: `history-skill-${message.id}-${index}`,
+        type: 'skill_event',
+        invocation,
         created_at: invocation.created_at,
       };
-    }
-    if (invocation.kind === 'intermediate_answer' && invocation.message) {
-      const sensitiveOutputBlocked =
-        isSensitiveOutputBlockedValue(invocation.title) ||
-        isSensitiveOutputBlockedValue(invocation.message);
-      return {
-        id: `history-intermediate-${message.id}-${invocation.answer_id ?? index}`,
-        type: 'intermediate_answer',
-        answer_id: invocation.answer_id,
-        title: sensitiveOutputBlocked ? undefined : invocation.title,
-        content: sensitiveOutputBlocked ? '' : invocation.message,
-        sensitiveOutputBlocked,
-        status: invocation.status === 'success' ? 'success' : undefined,
-        created_at: invocation.created_at,
-      };
-    }
-    return {
-      id: `history-skill-${message.id}-${index}`,
-      type: 'skill_event',
-      invocation,
-      created_at: invocation.created_at,
-    };
-  });
+    });
 
   const responseRequestIds = new Set(
     (message.metadata?.user_input_responses ?? [])
@@ -553,6 +623,7 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
   return sortTimelineItems(
     dedupeTimelineItems([
       ...skillTimeline,
+      ...memoryTimeline,
       ...pendingUserInputTimeline,
       ...userInputTimeline,
       ...workflowTimelineFromMessage(message),
@@ -1006,7 +1077,10 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
     case 'user_input_response':
       return ['user-input-response', item.request_id ?? item.id].join(':');
     case 'memory_event':
-      return ['memory', item.event_id ?? item.id].join(':');
+      if (item.event.memory_scope === 'agent' && item.event.source_kind === 'automatic') {
+        return ['memory-auto', item.event.message_id].join(':');
+      }
+      return ['memory', item.event.operation_id ?? item.event_id ?? item.id].join(':');
     case 'tool_governance_decision':
       return ['governance', governanceCorrelationId(item.event) || item.id].join(':');
     case 'workflow_run':

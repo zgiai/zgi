@@ -1,4 +1,5 @@
 import type { IconType } from '@/utils/icon-helpers';
+import type { AgentIntegrationConnectionBinding } from '@/services/types/integration';
 
 // Agent type enumeration
 export enum AgentType {
@@ -201,7 +202,9 @@ export interface AgentRuntimeConfig {
   enabled_skill_ids: string[];
   use_memory: boolean;
   agent_memory_enabled?: boolean;
+  agent_memory_auto_extraction_enabled?: boolean;
   agent_memory_slots?: AgentMemorySlotConfig[];
+  agent_memory_config_revision?: string;
   file_upload_enabled: boolean;
   home_title: string;
   opening_statement: string;
@@ -212,6 +215,7 @@ export interface AgentRuntimeConfig {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  integration_bindings?: AgentIntegrationConnectionBinding[];
   binding_revision?: string;
   binding_health?: AgentBindingHealth;
   updated_at: number;
@@ -222,7 +226,8 @@ export type AgentBindingType =
   | 'knowledge_dataset'
   | 'database'
   | 'database_table'
-  | 'workflow';
+  | 'workflow'
+  | 'integration_connection';
 
 export type AgentBindingStatus = 'active' | 'suspended' | 'unavailable';
 
@@ -393,6 +398,14 @@ export interface AgentMemorySlotConfig {
 
 export interface AgentMemoryValue extends AgentMemorySlotConfig {
   content: string;
+  revision: number;
+  source_kind: 'legacy' | 'explicit' | 'automatic' | 'manager';
+  source_conversation_id?: string;
+  source_message_id?: string;
+  source_completed_at?: number;
+  extractor_version?: string;
+  last_operation_id?: string;
+  undoable_until?: number | null;
 }
 
 export interface AgentMemoryValuesResponse {
@@ -404,6 +417,14 @@ export interface AgentMemoryValuesResponse {
 export interface UpdateAgentMemoryValueRequest {
   key: string;
   content: string;
+  expected_revision?: number;
+}
+
+export interface AgentMemoryConfigResponse {
+  enabled: boolean;
+  auto_extraction_enabled: boolean;
+  slots: AgentMemorySlotConfig[];
+  config_revision: string;
 }
 
 export interface UpdateAgentRuntimeConfigRequest {
@@ -414,7 +435,9 @@ export interface UpdateAgentRuntimeConfigRequest {
   enabled_skill_ids: string[];
   use_memory: boolean;
   agent_memory_enabled?: boolean;
+  agent_memory_auto_extraction_enabled?: boolean;
   agent_memory_slots?: AgentMemorySlotConfig[];
+  agent_memory_config_revision?: string;
   file_upload_enabled: boolean;
   home_title: string;
   opening_statement: string;
@@ -425,6 +448,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  integration_bindings?: AgentIntegrationConnectionBinding[];
   binding_revision?: string;
 }
 

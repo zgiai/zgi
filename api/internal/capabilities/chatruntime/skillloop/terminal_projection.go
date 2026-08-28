@@ -198,10 +198,12 @@ func terminalProjectionUpdatedFields(value interface{}) []string {
 
 var terminalProjectionStableKeys = []string{
 	"status", "decision", "outcome", "code", "error_code", "message", "summary",
-	"operation", "action", "skill_id", "tool_name", "invocation_id", "correlation_id", "runtime_id", "plan_phase_id",
+	"operation", "action", "integration_id", "action_id", "operation_status", "provider_success_confirmed",
+	"skill_id", "tool_name", "invocation_id", "correlation_id", "runtime_id", "plan_phase_id",
 	"agent_id", "agent_name", "asset_id", "resource_id", "file_id", "artifact_id", "workflow_id", "conversation_id", "target_id",
 	"filename", "name", "format", "mime_type", "size", "content_sha256", "content_summary", "content_chars",
-	"system_prompt_digest", "updated_fields", "success_count", "failed_count", "target_count", "result", "latest_tool_result",
+	"event_id", "organizer_calendar_id", "start_time", "end_time", "app_link", "connection_name", "connection_display_name",
+	"system_prompt_digest", "updated_fields", "success_count", "failed_count", "target_count", "provider_result", "event", "result", "latest_tool_result",
 }
 
 var terminalProjectionPriorityKeys = []string{

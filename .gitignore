@@ -25,8 +25,12 @@ qa-artifacts/
 outputs/
 .local/
 .gstack/
+.codex-local-*.log
+.codex-run-*.ps1
+%SystemDrive%/
 specs/
 /plan/
+%SystemDrive%/
 scripts/rag_evaluation/.env
 scripts/rag_evaluation/__pycache__/
 scripts/rag_evaluation/input/

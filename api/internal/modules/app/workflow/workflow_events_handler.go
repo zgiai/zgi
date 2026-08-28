@@ -80,7 +80,12 @@ func (h *WorkflowHandler) GetWorkflowRunEvents(c *gin.Context) {
 			return
 		}
 		lastSequence = snapshot.Sequence
-		sendWorkflowSSEStoredEvent(c.Request.Context(), c.Writer, snapshot)
+		sendWorkflowSSEStoredEventForInvocation(
+			c.Request.Context(),
+			c.Writer,
+			workflowRunEventProjectionInvokeFrom(run),
+			snapshot,
+		)
 		if workflowSnapshotIsTerminal(snapshot) {
 			return
 		}
@@ -456,7 +461,12 @@ func (h *WorkflowHandler) sendWorkflowRunEvents(c *gin.Context, service *workflo
 			replayBytes += len(encoded)
 		}
 		replayCount++
-		sendWorkflowSSEStoredEvent(c.Request.Context(), c.Writer, event)
+		sendWorkflowSSEStoredEventForInvocation(
+			c.Request.Context(),
+			c.Writer,
+			workflowRunEventProjectionInvokeFrom(run),
+			event,
+		)
 		if event.Event == workflowpause.EventWorkflowFinished {
 			recordWorkflowReplay(c.Request.Context(), replayCount, replayBytes)
 			return lastSequence, true

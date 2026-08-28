@@ -66,6 +66,34 @@ func NewHTTPClientFromConfig(config *AdapterConfig, timeout time.Duration, maxRe
 	return NewHTTPClientWithOptions(timeout, maxRetries, opts)
 }
 
+// ValidateOutboundBaseURL applies the same URL policy used by HTTP adapters to
+// non-HTTP transports such as WebSocket handshakes.
+func ValidateOutboundBaseURL(ctx context.Context, rawURL string, config *AdapterConfig) error {
+	if config == nil || !config.GuardOutboundURL {
+		return nil
+	}
+	policy := urlguard.Policy{
+		AllowPrivate: config.AllowPrivateBaseURL,
+		GuardDNS:     config.GuardOutboundDNS,
+	}
+	if err := urlguard.ValidateBaseURL(ctx, rawURL, policy); err != nil {
+		return fmt.Errorf("blocked unsafe target: %w", err)
+	}
+	return nil
+}
+
+// OutboundDialContext returns a DNS-rebinding-safe dialer when DNS guarding is
+// enabled. A nil result lets the caller retain its transport default.
+func OutboundDialContext(config *AdapterConfig) func(context.Context, string, string) (net.Conn, error) {
+	if config == nil || !config.GuardOutboundURL || !config.GuardOutboundDNS {
+		return nil
+	}
+	return guardedDialContext(urlguard.Policy{
+		AllowPrivate: config.AllowPrivateBaseURL,
+		GuardDNS:     true,
+	})
+}
+
 func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPClientOptions) *HTTPClient {
 	if timeout == 0 {
 		timeout = 60 * time.Second
@@ -323,6 +351,50 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries: %w", c.maxRetries, lastErr)
 	}
 	return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries", c.maxRetries)
+}
+
+// DoRawRequestDetailed sends one non-replayable request without retrying.
+// Callers retain responsibility for choosing a content type appropriate to the body.
+func (c *HTTPClient) DoRawRequestDetailed(
+	ctx context.Context,
+	method string,
+	targetURL string,
+	headers map[string]string,
+	body io.Reader,
+) (*HTTPResponse, error) {
+	if c == nil || c.client == nil {
+		return nil, fmt.Errorf("http client is not initialized")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.validateOutboundURL(ctx, req.URL); err != nil {
+		return nil, err
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	if c.authHook != nil {
+		c.authHook(req)
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	return &HTTPResponse{
+		Body:       responseBody,
+		StatusCode: resp.StatusCode,
+		Header:     resp.Header.Clone(),
+	}, nil
 }
 
 func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {

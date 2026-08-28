@@ -70,6 +70,7 @@ func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) 
 		skills.SkillAgentWorkflow,
 		skills.SkillUserMemory,
 		skills.SkillIntentRouter,
+		"web-search",
 		skills.SkillCalculator,
 		skills.SkillCalculator,
 		"  time  ",
@@ -311,6 +312,16 @@ func TestAgentMemoryReplaceRequestPreservesInvalidRowsForValidation(t *testing.T
 	}
 }
 
+func TestAgentMemoryRuntimeSlotsPreserveDisplayName(t *testing.T) {
+	slots := agentMemoryRuntimeSlots([]dto.AgentMemorySlotConfig{
+		{Key: "project_context", Name: "项目背景", Description: "Long-running project context", MaxChars: 500, Enabled: true},
+	})
+
+	if len(slots) != 1 || slots[0].Key != "project_context" || slots[0].Name != "项目背景" {
+		t.Fatalf("runtime slots = %#v, want display name preserved", slots)
+	}
+}
+
 func TestAgentMemoryReplaceRequestCanDropHistoricalIDsForRollback(t *testing.T) {
 	req := agentMemoryReplaceRequestFromConfig([]dto.AgentMemorySlotConfig{
 		{ID: "stale-slot-id", Key: "profile", Name: "用户资料", Enabled: true},
@@ -383,6 +394,24 @@ func TestApplyAgentConfigRequestToDraftDoesNotPersistDraftMemorySlots(t *testing
 	}
 	if !mode.AgentMemoryEnabled {
 		t.Fatal("mode AgentMemoryEnabled = false, want true")
+	}
+}
+
+func TestAgentConfigRequestDistinguishesOmittedAndEmptyMemorySlots(t *testing.T) {
+	var omitted dto.AgentConfigRequest
+	if err := json.Unmarshal([]byte(`{}`), &omitted); err != nil {
+		t.Fatal(err)
+	}
+	if omitted.AgentMemorySlots != nil {
+		t.Fatalf("omitted AgentMemorySlots = %#v, want nil for legacy clients", omitted.AgentMemorySlots)
+	}
+
+	var empty dto.AgentConfigRequest
+	if err := json.Unmarshal([]byte(`{"agent_memory_slots":[]}`), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.AgentMemorySlots == nil || len(*empty.AgentMemorySlots) != 0 {
+		t.Fatalf("explicit empty AgentMemorySlots = %#v, want non-nil empty slice", empty.AgentMemorySlots)
 	}
 }
 
@@ -553,5 +582,27 @@ func TestApplyAgentConfigRequestCanRestoreSnapshotBindingGrant(t *testing.T) {
 	}
 	if len(mode.DatabaseBindings) != 1 || !reflect.DeepEqual(mode.DatabaseBindings[0].WritableTableIDs, []string{"table-1"}) {
 		t.Fatalf("database bindings = %#v, want writable table-1", mode.DatabaseBindings)
+	}
+}
+
+func TestAgentKnowledgeRetrievalConfigPreservesGraphExecutionPolicy(t *testing.T) {
+	config := normalizeAgentKnowledgeRetrievalConfig(map[string]interface{}{
+		"search_method": "graph",
+		"top_k":         float64(8),
+	})
+	if config["search_method"] != "graph" {
+		t.Fatalf("search_method = %v, want graph", config["search_method"])
+	}
+	if config["fallback_policy"] != "none" {
+		t.Fatalf("fallback_policy = %v, want none", config["fallback_policy"])
+	}
+
+	snapshot := map[string]interface{}{"knowledge_retrieval_config": config}
+	restored := agentConfigResponseFromSnapshot("agent-id", snapshot)
+	if restored.KnowledgeRetrievalConfig["search_method"] != "graph" {
+		t.Fatalf("restored search_method = %v, want graph", restored.KnowledgeRetrievalConfig["search_method"])
+	}
+	if restored.KnowledgeRetrievalConfig["fallback_policy"] != "none" {
+		t.Fatalf("restored fallback_policy = %v, want none", restored.KnowledgeRetrievalConfig["fallback_policy"])
 	}
 }

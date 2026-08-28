@@ -2058,6 +2058,8 @@ const messages = {
         'Configuration saved with {count} binding issue(s). Review them before publishing.',
       saveFailed: 'Save failed',
       saveFailedDraftKept: 'Save failed. Your changes are kept.',
+      saveBindingsInvalid:
+        'This configuration contains an invalid resource binding. Review the highlighted external app or resource, then save again.',
       modelUnavailable: 'The current model is unavailable. Select another model.',
       noGeneratedSuggestions: 'No usable request examples were generated',
       suggestionsGenerated: 'Request examples generated',
@@ -2073,6 +2075,8 @@ const messages = {
         'Resource status changed. Review the latest rollback impact and retry.',
       bindingRevisionRebased:
         'Bindings changed elsewhere. Non-binding edits were kept and server bindings were applied: {resources}',
+      memoryRevisionChanged:
+        'Memory settings changed elsewhere. Your draft was kept; refresh and review it before saving again.',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
       fixMemorySlotsBeforeSave: 'Fix memory item keys before saving.',
       fixMemorySlotsBeforePublish: 'Fix memory item keys before publishing.',
@@ -2238,6 +2242,7 @@ const messages = {
       knowledge: 'Knowledge',
       databases: 'Databases',
       workflows: 'Workflows',
+      integrations: 'External apps',
       files: 'Files',
       memory: 'Memory',
     },
@@ -2321,7 +2326,10 @@ const messages = {
         knowledge_dataset: 'Knowledge base',
         database: 'Database',
         database_table: 'Database table',
+        writable_database_table: 'Writable database table',
         workflow: 'Workflow',
+        integration_connection: 'External app connection',
+        integration_action: 'External app action',
       },
       accessModes: {
         read: 'Read',
@@ -2334,10 +2342,15 @@ const messages = {
         resourceMovedWorkspace: 'The resource was moved to another workspace.',
         authorizationRevoked: 'The binding authorization or required access was revoked.',
         resolutionFailed: 'The current resource status could not be resolved.',
+        integrationConnectionDisabled: 'This external app connection is disabled.',
+        integrationConnectionUnavailable:
+          'This external app connection or one of its action grants is unavailable.',
+        unknown: 'The binding issue has no public reason.',
       },
       suggestions: {
         removeOrReplace: 'Remove this binding or replace it with an available resource.',
         restoreOrRemove: 'Restore access or remove this binding.',
+        unknown: 'Review or replace this binding.',
       },
     },
     knowledge: {
@@ -2491,6 +2504,43 @@ const messages = {
       cancel: 'Cancel',
       confirm: 'Save',
     },
+    integration: {
+      emptySelected: 'No external app connection has been added to this Agent yet.',
+      add: 'Add external app',
+      remove: 'Remove {name}',
+      helpText:
+        'Choose an available organization-authorized connection and specify which actions this Agent may perform.',
+      dialogTitle: 'Add external app',
+      dialogDescription:
+        'Choose at most one organization connection for each external app, then select the actions this Agent may perform.',
+      searchPlaceholder: 'Search connections or external apps',
+      loadFailedTitle: 'Failed to load external app connections',
+      loadFailedDescription: 'Available external app connections are temporarily unavailable.',
+      retryLoad: 'Reload',
+      emptyTitle: 'No available external app connections',
+      emptyDescription:
+        'Ask an organization administrator to create, test, and grant you access to a connection first.',
+      unavailableConnection: 'External app connection unavailable',
+      unnamedConnection: 'Unnamed connection',
+      unknownExternalApp: 'External app',
+      unknownAction: 'Unknown action',
+      unavailableDescription:
+        'This connection is no longer selectable. Its original binding is preserved until you remove it.',
+      connectionStatus: '{integration} · {status}',
+      connectionDescription: '{integration} · {count} actions allowed',
+      allowedActions: 'Allowed actions',
+      actionRequired: 'Select at least one action.',
+      actionUnavailable: 'Action grant unavailable',
+      noActionDescription: 'No action description',
+      cancel: 'Cancel',
+      confirm: 'Save',
+      status: {
+        pending: 'Pending',
+        active: 'Active',
+        invalid: 'Invalid',
+        disabled: 'Disabled',
+      },
+    },
     suggestions: {
       generate: 'Generate',
       add: 'Add request example',
@@ -2510,6 +2560,9 @@ const messages = {
       agentTitle: 'Memory',
       agentDescription:
         'Define what the Agent should remember for each user. Each memory item has a stable ID and an optional display name.',
+      autoExtractionTitle: 'Organize and update memory automatically',
+      autoExtractionDescription:
+        'Once enabled, the Agent identifies user information, preferences, and requests worth keeping from conversations and updates memory automatically, helping future responses feel more relevant. This may add model calls during a conversation or after it becomes idle, increasing token usage.',
       emptySlots: 'No memory items configured yet.',
       addSlot: 'Add memory item',
       addCustomSlot: 'Custom item',

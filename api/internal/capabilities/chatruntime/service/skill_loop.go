@@ -12,9 +12,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -50,6 +52,8 @@ func (s *service) runPreparedToolLoop(
 	if s.llmClient == nil {
 		return "", nil, fmt.Errorf("llm client is not configured")
 	}
+	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
+	runtimeTools := s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)
 	resolved := &skills.ResolvedSkills{}
 	if chatPartsBusinessSkillsEnabled(prepared.parts) {
 		if s.skillRuntime == nil {
@@ -71,11 +75,10 @@ func (s *service) runPreparedToolLoop(
 		if len(resolved.Skills) == 0 {
 			return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 		}
-	} else if prepared.parts == nil || !prepared.parts.ProtocolToolsEnabled {
+	} else if (prepared.parts == nil || !prepared.parts.ProtocolToolsEnabled) && len(runtimeTools) == 0 {
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 
-	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	contextManager, err := s.newAgentContextManager(ctx, prepared)
 	if err != nil {
 		return "", nil, err
@@ -133,22 +136,41 @@ func (s *service) runPreparedToolLoop(
 	}
 	authorizeSkillStep := s.currentAgentSkillStepAuthorizer(prepared)
 	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
+	if len(runtimeTools) > 0 {
+		proactiveAllowed := prepared.parts.AgentMemoryAutoExtractionEnabled && globalAgentMemoryAutoExtractionEnabled()
+		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
+	}
+	executionContext := s.skillExecutionContext(prepared)
+	var externalActionProjections []integrationmetatools.ActionProjection
+	if nativeLoop {
+		externalActionProjections = s.resolveExternalActionProjections(ctx, prepared, resolved, executionContext)
+	}
+	nativeExternalActionTools := externalActionNativeToolProjections(externalActionProjections)
 	var nativeToolSet *skills.NativeToolSet
 	var nativeSkillSession *skills.NativeSkillSession
 	if nativeLoop {
 		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, additionalSystemMessages)
+		reservedNativeToolNames := nativeProjectionReservedToolNames(runtimeTools)
 		toolSetOptions := skills.NativeToolSetOptions{
-			TenantID:         prepared.Scope.OrganizationID.String(),
-			BudgetChars:      budgetChars,
-			BudgetTokens:     budgetTokens,
-			PrioritySkillIDs: nativeSkillPriorityIDs(prepared, resolved),
-			AuthorizeSkill:   authorizeSkillStep,
-			EstimateTokens:   estimateNativeTokens,
+			TenantID:          prepared.Scope.OrganizationID.String(),
+			BudgetChars:       budgetChars,
+			BudgetTokens:      budgetTokens,
+			PrioritySkillIDs:  nativeSkillPriorityIDs(prepared, resolved),
+			AuthorizeSkill:    authorizeSkillStep,
+			EstimateTokens:    estimateNativeTokens,
+			ReservedToolNames: reservedNativeToolNames,
 		}
 		protocol := nativeSkillProtocolForPrepared(prepared)
 		prepared.Message.Metadata["native_skill_protocol"] = protocol
-		if protocol == skills.NativeSkillProtocolProgressiveV1 {
+		if len(resolved.Skills) == 0 {
+			projected := skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{}}
+			nativeToolSet = &projected
+			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillDiagnostics(projected)
+		} else if protocol == skills.NativeSkillProtocolProgressiveV1 {
 			initialSkillIDs := nativeInitialActiveSkillIDs(prepared, resolved)
+			if len(nativeExternalActionTools) > 0 {
+				initialSkillIDs = appendUniqueNativeSkillID(initialSkillIDs, skills.SkillExternalApps)
+			}
 			prioritySkillIDs := skills.RankNativeSkillIDs(resolved, nativeSkillSelectionText(prepared), initialSkillIDs)
 			// Initial skills already receive their full instructions and schemas. Rank
 			// the remaining skills first so deterministic activation does not consume
@@ -169,11 +191,13 @@ func (s *service) runPreparedToolLoop(
 			}
 			nativeSkillSession = skills.NewNativeSkillSession(s.skillRuntime, resolved, catalog, toolSetOptions)
 			nativeSkillSession.Activate(ctx, initialSkillIDs, "runtime_preload")
+			projectExternalActionNativeToolsToSession(nativeSkillSession, nativeExternalActionTools, reservedNativeToolNames, estimateNativeTokens)
 			projected := nativeSkillSession.ToolSet()
 			nativeToolSet = &projected
 			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)
 		} else {
 			projected := s.skillRuntime.BuildNativeToolSet(ctx, resolved, toolSetOptions)
+			projectExternalActionNativeTools(&projected, nativeExternalActionTools, reservedNativeToolNames, estimateNativeTokens)
 			nativeToolSet = &projected
 			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillDiagnostics(projected)
 		}
@@ -186,6 +210,8 @@ func (s *service) runPreparedToolLoop(
 			"active_skill_ids", nativeToolSet.ActiveSkillIDs,
 			"provider_tool_count", len(nativeToolSet.ProviderTools),
 			"skipped_skills", nativeToolSet.SkippedSkills,
+			"skipped_tools", nativeToolSet.SkippedTools,
+			"external_action_candidate_count", len(externalActionProjections),
 			"instruction_chars", nativeToolSet.InstructionChars,
 			"schema_chars", nativeToolSet.SchemaChars,
 			"budget_chars", nativeToolSet.BudgetChars,
@@ -205,12 +231,13 @@ func (s *service) runPreparedToolLoop(
 	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                       loopPrepared,
 		Resolved:                       resolved,
-		ProtocolToolsOnly:              len(resolved.Skills) == 0,
+		ProtocolToolsOnly:              len(resolved.Skills) == 0 && len(runtimeTools) == 0,
 		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
 		NativeAgentLoop:                nativeLoop,
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
-		ExecutionContext:               s.skillExecutionContext(prepared),
+		RuntimeTools:                   runtimeTools,
+		ExecutionContext:               executionContext,
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
 		AdditionalSystemMessages:       additionalSystemMessages,
@@ -238,6 +265,207 @@ func (s *service) runPreparedToolLoop(
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
 	return answer, usage, err
+}
+
+func (s *service) resolveExternalActionProjections(
+	ctx context.Context,
+	prepared *PreparedChat,
+	resolved *skills.ResolvedSkills,
+	execution skills.ExecutionContext,
+) []integrationmetatools.ActionProjection {
+	if s == nil || s.externalActionProjections == nil || prepared == nil || resolved == nil {
+		return nil
+	}
+	if _, active := resolved.Get(skills.SkillExternalApps); !active {
+		return nil
+	}
+	query := ""
+	if prepared.parts != nil {
+		query = strings.TrimSpace(prepared.parts.Query)
+	}
+	projections, err := s.externalActionProjections.ProjectActions(ctx, integrationmetatools.ActionProjectionRequest{
+		ExecutionContext: execution,
+		Query:            query,
+		PinnedActionKeys: externalActionPinnedPlanKeys(prepared.Message.Metadata),
+	})
+	if err != nil {
+		// The existing external-apps catalog remains available as the safe
+		// fallback. A projection failure must not broaden access or fail an
+		// otherwise unrelated chat turn.
+		logger.WarnContext(ctx, "external Action projection unavailable", "error", err)
+		return nil
+	}
+	return projections
+}
+
+func externalActionPinnedPlanKeys(metadata map[string]interface{}) []string {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	seen := map[string]struct{}{}
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		status := strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"])))
+		if status == "completed" || status == "skipped" || status == "failed" {
+			continue
+		}
+		expected := mapFromOperationContext(phase["expected_action"])
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(expected["skill_id"])), skills.SkillExternalApps) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(expected["tool_name"])), integrationmetatools.ToolExecuteAction) {
+			continue
+		}
+		target := mapFromOperationContext(expected["target"])
+		integrationID := strings.ToLower(strings.TrimSpace(stringFromAny(target["integration_id"])))
+		actionID := strings.ToLower(strings.TrimSpace(stringFromAny(target["action_id"])))
+		if integrationID != "" && actionID != "" {
+			seen[integrationID+":"+actionID] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for key := range seen {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func externalActionNativeToolProjections(input []integrationmetatools.ActionProjection) []skills.NativeToolProjection {
+	out := make([]skills.NativeToolProjection, 0, len(input))
+	for _, projection := range input {
+		integrationID := strings.ToLower(strings.TrimSpace(projection.IntegrationID))
+		actionID := strings.ToLower(strings.TrimSpace(projection.ActionID))
+		toolName := strings.TrimSpace(projection.ToolName)
+		schemaHash := strings.TrimSpace(projection.SchemaHash)
+		schemaRevision := strings.TrimSpace(projection.SchemaRevision)
+		catalogRevision := strings.TrimSpace(projection.CatalogRevision)
+		if integrationID == "" || actionID == "" || toolName == "" || len(projection.InputSchema) == 0 ||
+			schemaHash == "" || schemaRevision == "" || catalogRevision == "" {
+			continue
+		}
+		fixed := map[string]interface{}{
+			"integration_id":         integrationID,
+			"action_id":              actionID,
+			"action_schema_hash":     schemaHash,
+			"action_schema_revision": schemaRevision,
+			"catalog_revision":       catalogRevision,
+		}
+		if connectionID := strings.TrimSpace(projection.ConnectionID); connectionID != "" {
+			fixed["connection_id"] = connectionID
+		}
+		inputSchema, ok := externalActionProjectedInputSchema(projection.InputSchema)
+		if !ok {
+			continue
+		}
+		out = append(out, skills.NativeToolProjection{
+			Name:        toolName,
+			NameScope:   integrationID + "/" + actionID,
+			Description: strings.TrimSpace(projection.Description),
+			InputSchema: inputSchema,
+			Binding: skills.NativeToolBinding{
+				SkillID:              skills.SkillExternalApps,
+				ToolName:             integrationmetatools.ToolExecuteAction,
+				Effect:               strings.ToLower(strings.TrimSpace(projection.Effect)),
+				IntentMatched:        projection.IntentMatched,
+				IntentGroup:          projection.IntentGroup,
+				IntentTokens:         append([]string(nil), projection.IntentTokens...),
+				BindingFingerprint:   projection.BindingFingerprint,
+				ConnectionBinding:    skills.NativeExternalActionConnectionBindingHash(projection.ConnectionID),
+				Pinned:               projection.Pinned,
+				ProjectionPriority:   projection.ProjectionPriority,
+				ArgumentEnvelope:     "arguments",
+				FixedArguments:       fixed,
+				TargetArgumentPaths:  append([]string(nil), projection.TargetArgumentPaths...),
+				PreparationActionIDs: append([]string(nil), projection.PreparationActionIDs...),
+				PreparationHints:     externalActionNativePreparationHints(projection.PreparationHints),
+				PlanPhaseArgument:    "plan_phase_id",
+			},
+		})
+	}
+	return out
+}
+
+func externalActionNativePreparationHints(input []integrationmetatools.ActionProjectionPreparationHint) []skills.NativeExternalActionPreparationHint {
+	out := make([]skills.NativeExternalActionPreparationHint, 0, len(input))
+	for _, hint := range input {
+		out = append(out, skills.NativeExternalActionPreparationHint{
+			ActionID:        strings.ToLower(strings.TrimSpace(hint.ActionID)),
+			Relation:        strings.ToLower(strings.TrimSpace(hint.Relation)),
+			TargetArguments: append([]string(nil), hint.TargetArguments...),
+			ResultPaths:     append([]string(nil), hint.ResultPaths...),
+			ResultTransform: strings.ToLower(strings.TrimSpace(hint.ResultTransform)),
+		})
+	}
+	return out
+}
+
+func externalActionProjectedInputSchema(input map[string]interface{}) (map[string]interface{}, bool) {
+	schema := copyStringAnyMap(input)
+	properties := copyStringAnyMap(mapFromOperationContext(schema["properties"]))
+	if len(schema) == 0 || properties == nil {
+		return nil, false
+	}
+	if _, collision := properties["plan_phase_id"]; collision {
+		return nil, false
+	}
+	properties["plan_phase_id"] = map[string]interface{}{
+		"type":        "string",
+		"description": "Required only when multiple plan phases call this same projected Action for the same target. Use the exact matching operation_plan phase id. The runtime removes this control value before provider execution.",
+	}
+	schema["properties"] = properties
+	return schema, true
+}
+
+func projectExternalActionNativeTools(
+	toolSet *skills.NativeToolSet,
+	projections []skills.NativeToolProjection,
+	reservedToolNames []string,
+	estimateTokens func([]adapter.Message, []adapter.Tool) int,
+) int {
+	if toolSet == nil || !nativeToolSetHasActiveSkill(*toolSet, skills.SkillExternalApps) {
+		return 0
+	}
+	return skills.AppendNativeToolProjections(toolSet, projections, skills.NativeToolProjectionOptions{
+		MaxTools:          skills.DefaultMaxNativeToolProjections,
+		ReservedToolNames: reservedToolNames,
+		EstimateTokens:    estimateTokens,
+	})
+}
+
+func projectExternalActionNativeToolsToSession(
+	session *skills.NativeSkillSession,
+	projections []skills.NativeToolProjection,
+	reservedToolNames []string,
+	estimateTokens func([]adapter.Message, []adapter.Tool) int,
+) int {
+	if session == nil || !containsNativeSkillID(session.ActiveSkillIDs(), skills.SkillExternalApps) {
+		return 0
+	}
+	return session.AddToolProjections(projections, skills.NativeToolProjectionOptions{
+		MaxTools:          skills.DefaultMaxNativeToolProjections,
+		ReservedToolNames: reservedToolNames,
+		EstimateTokens:    estimateTokens,
+	})
+}
+
+func nativeToolSetHasActiveSkill(toolSet skills.NativeToolSet, skillID string) bool {
+	return containsNativeSkillID(toolSet.ActiveSkillIDs, skillID)
+}
+
+func containsNativeSkillID(values []string, skillID string) bool {
+	skillID = strings.ToLower(strings.TrimSpace(skillID))
+	for _, value := range values {
+		if strings.ToLower(strings.TrimSpace(value)) == skillID {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueNativeSkillID(values []string, skillID string) []string {
+	if containsNativeSkillID(values, skillID) {
+		return values
+	}
+	if skillID = strings.ToLower(strings.TrimSpace(skillID)); skillID != "" {
+		return append(values, skillID)
+	}
+	return values
 }
 
 func nativeSkillSessionCandidateIDs(session *skills.NativeSkillSession) []string {
@@ -611,9 +839,22 @@ func nativeSkillDiagnostics(toolSet skills.NativeToolSet) map[string]interface{}
 			"required_tokens": item.RequiredTokens,
 		})
 	}
+	skippedTools := make([]interface{}, 0, len(toolSet.SkippedTools))
+	for _, item := range toolSet.SkippedTools {
+		skippedTools = append(skippedTools, map[string]interface{}{
+			"tool_name":       item.ToolName,
+			"reason":          item.Reason,
+			"detail":          item.Detail,
+			"budget":          item.Budget,
+			"required":        item.Required,
+			"budget_tokens":   item.BudgetTokens,
+			"required_tokens": item.RequiredTokens,
+		})
+	}
 	return map[string]interface{}{
 		"active_skill_ids":   append([]string(nil), toolSet.ActiveSkillIDs...),
 		"skipped_skills":     skipped,
+		"skipped_tools":      skippedTools,
 		"tool_count":         len(toolSet.ProviderTools),
 		"tool_bindings":      bindings,
 		"instruction_chars":  toolSet.InstructionChars,
@@ -662,12 +903,49 @@ func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(c
 		if bindingVerifier == nil {
 			return false, nil
 		}
-		return bindingVerifier(ctx, skills.AgentBindingCheck{
-			BindingType: "skill",
-			ResourceID:  strings.TrimSpace(skillID),
-			AccessMode:  "execute",
-		})
+		var enabledSkillIDs []string
+		if prepared.parts != nil {
+			enabledSkillIDs = prepared.parts.SkillIDs
+		}
+		for _, bindingSkillID := range agentSkillAuthorizationBindingIDs(skillID, enabledSkillIDs) {
+			matched, verifyErr := bindingVerifier(ctx, skills.AgentBindingCheck{
+				BindingType: "skill",
+				ResourceID:  bindingSkillID,
+				AccessMode:  "execute",
+			})
+			if verifyErr != nil {
+				return false, verifyErr
+			}
+			if matched {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
+}
+
+func agentSkillAuthorizationBindingIDs(skillID string, enabledSkillIDs []string) []string {
+	id := strings.ToLower(strings.TrimSpace(skillID))
+	if id == "" {
+		return nil
+	}
+	out := []string{id}
+	if id != skills.SkillPromptProfessionalizer {
+		return out
+	}
+	seen := map[string]struct{}{id: {}}
+	for _, raw := range enabledSkillIDs {
+		candidate := strings.ToLower(strings.TrimSpace(raw))
+		if !skills.RequiresPromptProfessionalizerDependency(candidate) {
+			continue
+		}
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 func planningOutputTokenLimit(prepared *PreparedChat) int {
@@ -1326,11 +1604,50 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 	if len(phases) == 0 || limit <= 0 {
 		return nil
 	}
-	out := make([]interface{}, 0, minInt(len(phases), limit))
+	selected := make([]map[string]interface{}, 0, minInt(len(phases), limit))
+	selectedIDs := map[string]struct{}{}
+	// Every server-bound projected phase remains visible even beyond the normal
+	// compact limit so the model can address it by phase_updates without
+	// round-tripping hidden binding attestations.
 	for _, phase := range phases {
-		if len(out) >= limit {
+		expected := mapFromOperationContext(phase["expected_action"])
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(expected["skill_id"])), skills.SkillExternalApps) ||
+			strings.TrimSpace(stringFromAny(expected["_server_projected_binding_fingerprint"])) == "" {
+			continue
+		}
+		selected = append(selected, phase)
+		selectedIDs[strings.TrimSpace(stringFromAny(phase["id"]))] = struct{}{}
+	}
+	for _, phase := range phases {
+		if len(selected) >= limit && len(selectedIDs) == 0 {
 			break
 		}
+		id := strings.TrimSpace(stringFromAny(phase["id"]))
+		if _, exists := selectedIDs[id]; exists {
+			continue
+		}
+		if len(selected)-len(selectedIDs) >= limit {
+			continue
+		}
+		selected = append(selected, phase)
+	}
+	sort.SliceStable(selected, func(i, j int) bool {
+		leftID := strings.TrimSpace(stringFromAny(selected[i]["id"]))
+		rightID := strings.TrimSpace(stringFromAny(selected[j]["id"]))
+		left, right := len(phases), len(phases)
+		for index, phase := range phases {
+			id := strings.TrimSpace(stringFromAny(phase["id"]))
+			if id == leftID {
+				left = index
+			}
+			if id == rightID {
+				right = index
+			}
+		}
+		return left < right
+	})
+	out := make([]interface{}, 0, len(selected))
+	for _, phase := range selected {
 		item := map[string]interface{}{}
 		for _, key := range []string{"id", "outcome_id", "step", "title", "status", "note", "verification_mode", "completion_source"} {
 			if text := strings.TrimSpace(stringFromAny(phase[key])); text != "" {
@@ -1354,13 +1671,16 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 		}
 		if expectedAction := mapFromOperationContext(phase["expected_action"]); len(expectedAction) > 0 {
 			action := map[string]interface{}{}
-			for _, key := range []string{"skill_id", "tool_name"} {
+			for _, key := range []string{"skill_id", "tool_name", "projected_tool_name"} {
 				if value := strings.TrimSpace(stringFromAny(expectedAction[key])); value != "" {
 					action[key] = compactForPrompt(value, 160)
 				}
 			}
 			if target := mapFromOperationContext(expectedAction["target"]); len(target) > 0 {
 				action["target"] = target
+			}
+			if targetArguments := mapFromOperationContext(expectedAction["target_arguments"]); len(targetArguments) > 0 {
+				action["target_arguments"] = targetArguments
 			}
 			if len(action) > 0 {
 				item["expected_action"] = action
@@ -1852,6 +2172,18 @@ func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.Age
 				return false, nil
 			}
 			ref.PublishedVersionUUID = &versionIDs[0]
+		}
+		if agentbindings.BindingType(check.BindingType) == agentbindings.BindingTypeIntegrationConnection {
+			binding, err := repo.FindBinding(ctx, ref, agentbindings.Match{
+				BindingType:      agentbindings.BindingTypeIntegrationConnection,
+				ResourceID:       check.ResourceID,
+				ParentResourceID: check.ParentResourceID,
+				AccessMode:       check.AccessMode,
+			})
+			if err != nil || binding == nil {
+				return false, err
+			}
+			return binding.AllowsIntegrationAction(check.ActionID), nil
 		}
 		return repo.HasBinding(ctx, ref, agentbindings.Match{
 			BindingType:      agentbindings.BindingType(check.BindingType),
@@ -2649,7 +2981,30 @@ func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
 
 func chatPartsToolLoopEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.ExecutionMode != executionModeDirectChat &&
-		(parts.ProtocolToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+		(parts.ProtocolToolsEnabled || parts.AgentMemoryToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+}
+
+func runtimeToolNames(runtimeTools []skillloop.RuntimeTool) []string {
+	if len(runtimeTools) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(runtimeTools))
+	for _, runtimeTool := range runtimeTools {
+		if name := strings.TrimSpace(runtimeTool.Definition.Function.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func nativeProjectionReservedToolNames(runtimeTools []skillloop.RuntimeTool) []string {
+	names := append([]string(nil), runtimeToolNames(runtimeTools)...)
+	for _, existing := range names {
+		if strings.EqualFold(strings.TrimSpace(existing), skillloop.ContextArtifactToolName) {
+			return names
+		}
+	}
+	return append(names, skillloop.ContextArtifactToolName)
 }
 
 func continuationMessageForExecutionMode(message adapter.Message, mode string) adapter.Message {

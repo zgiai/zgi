@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	graph "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/graph"
 	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/retrieval"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -278,6 +279,44 @@ func TestHybridRecallCandidateLimit(t *testing.T) {
 	}
 }
 
+func TestDefaultDatasetSearchMethodDependsOnGraphAvailability(t *testing.T) {
+	if got := defaultDatasetSearchMethod(false); got != string(HybridSearch) {
+		t.Fatalf("non-graph default = %q, want %q", got, HybridSearch)
+	}
+	if got := defaultDatasetSearchMethod(true); got != string(GraphSearch) {
+		t.Fatalf("graph default = %q, want %q", got, GraphSearch)
+	}
+}
+
+func TestGraphRetrievalConfigUsesExplicitGraphModeAndThreeHops(t *testing.T) {
+	config, err := NormalizeGraphRetrievalConfig("graph_search", "graph", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.RequestedMethod != "graph_search" || config.ActualMode != "graph" {
+		t.Fatalf("config=%#v", config)
+	}
+	if config.FallbackPolicy != "none" {
+		t.Fatalf("fallback policy=%q", config.FallbackPolicy)
+	}
+	if config.MaxHops != 3 {
+		t.Fatalf("max hops=%d", config.MaxHops)
+	}
+	if !ShouldPropagateRetrievalError(config, true) {
+		t.Fatal("graph-only failure was silently downgraded")
+	}
+}
+
+func TestGraphRetrievalConfigDefaultsCombinedSearchToHybridMode(t *testing.T) {
+	config, err := NormalizeGraphRetrievalConfig("graph_search", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ActualMode != RetrievalModeHybrid {
+		t.Fatalf("actual mode=%q, want %q", config.ActualMode, RetrievalModeHybrid)
+	}
+}
+
 func TestFilterAndLimitFinalRecordsSortsAndAppliesThresholdBeforeTopK(t *testing.T) {
 	records := []dto.HitTestingRecordResponse{
 		{Segment: dto.SegmentResponse{ID: "mid"}, Score: 0.72},
@@ -416,6 +455,28 @@ func TestSplitRerankableSearchResultsPassesThroughGraphResults(t *testing.T) {
 	}
 }
 
+func TestGraphKnowledgeDocumentResponseUsesSourceDocument(t *testing.T) {
+	docType := "pdf"
+	document := &dataset_model.Document{
+		ID:             "document-1",
+		Name:           "南阳市第一人民医院资料.pdf",
+		DataSourceType: "upload_file",
+		DocType:        &docType,
+	}
+
+	got := graphKnowledgeDocumentResponse(
+		document.ID,
+		map[string]*dataset_model.Document{document.ID: document},
+	)
+
+	if got.ID != document.ID || got.Name != document.Name {
+		t.Fatalf("graph document = %#v, want source document", got)
+	}
+	if got.DataSourceType != "upload_file" || got.DocType != docType {
+		t.Fatalf("graph document metadata = %#v", got)
+	}
+}
+
 type mockGraphLLMClient struct {
 	lastOrganizationID string
 }
@@ -539,5 +600,35 @@ func TestGraphSearchUsesDatasetOrganizationIDForEntityExtraction(t *testing.T) {
 
 	if mockClient.lastOrganizationID != dataset.OrganizationID {
 		t.Fatalf("graphSearch used organizationID %q, want %q", mockClient.lastOrganizationID, dataset.OrganizationID)
+	}
+}
+
+func TestGraphExecutionUsesStoredRelationshipDirection(t *testing.T) {
+	current := map[string]interface{}{"name": "Snuggly Cat"}
+	neighbor := graph.Neighbor{
+		RelationshipType:   "OWNS",
+		Node:               map[string]interface{}{"name": "Fred Ruckel"},
+		RelationshipSource: map[string]interface{}{"name": "Fred Ruckel"},
+		RelationshipTarget: map[string]interface{}{"name": "Snuggly Cat"},
+	}
+
+	triple, ok := directedGraphTriple(current, neighbor)
+	if !ok {
+		t.Fatal("directedGraphTriple rejected a complete relationship")
+	}
+	if triple.Subject != "Fred Ruckel" || triple.Predicate != "OWNS" || triple.Object != "Snuggly Cat" {
+		t.Fatalf("triple = %#v, want Fred Ruckel OWNS Snuggly Cat", triple)
+	}
+
+	context := extractGraphContext([]graph.EntitySearchResult{{
+		Entity:    current,
+		Neighbors: []graph.Neighbor{neighbor},
+	}})
+	if len(context.Relationships) != 1 {
+		t.Fatalf("relationships = %d, want 1", len(context.Relationships))
+	}
+	relationship := context.Relationships[0]
+	if relationship.HeadEntity != "Fred Ruckel" || relationship.RelationType != "OWNS" || relationship.TailEntity != "Snuggly Cat" {
+		t.Fatalf("relationship = %#v, want Fred Ruckel OWNS Snuggly Cat", relationship)
 	}
 }

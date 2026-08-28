@@ -47,6 +47,7 @@ import {
   useAIChatSkills,
   useUpdateAIChatSkillPreference,
 } from '@/hooks/aichat/use-aichat-skills';
+import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 import { useLocale } from '@/hooks/use-locale';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useT } from '@/i18n/translations';
@@ -95,7 +96,12 @@ import {
   buildAIChatSkillDisplayMap,
   isSkillSelectableForCaller,
 } from '@/components/chat/variants/aichat/skill-display';
+import { normalizeAIChatSkillIds } from '@/components/chat/variants/aichat/skill-identity';
 import { AIChatSkillPreferenceDialog } from '@/components/chat/variants/aichat/skill-preference-dialog';
+import {
+  AIChatConnectedAppsDialog,
+  type AIChatConnectedAppsSummary,
+} from '@/components/chat/variants/aichat/connected-apps-dialog';
 import {
   isToolGovernancePendingApprovalDismissed,
   ToolGovernancePendingApprovalScopeProvider,
@@ -131,6 +137,9 @@ import {
   isImageExtension,
   isVisionModel,
 } from '@/components/chat/variants/aichat/input-area-utils';
+import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
+import type { AIChatSpeechSynthesizer } from '@/components/chat/variants/aichat/voice/speech-playback';
+import { useAgentSpeechPlayback } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -179,6 +188,9 @@ interface AIChatShellProps {
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
+  voiceTranscriber?: AIChatVoiceTranscriber;
+  speechSynthesizer?: AIChatSpeechSynthesizer;
+  headerRightAction?: React.ReactNode;
 }
 
 const CHAT_THEME_PRIMARY: Record<string, string> = {
@@ -222,8 +234,8 @@ function toolGovernanceDecisionKey(
   return [conversationId, messageId, correlationId].map(value => value?.trim() ?? '').join(':');
 }
 
-function normalizeSkillIds(skillIds: string[]) {
-  return Array.from(new Set(skillIds.filter(Boolean))).sort();
+function normalizeSkillIds(skillIds: unknown) {
+  return normalizeAIChatSkillIds(skillIds).sort();
 }
 
 function areSkillIdsEqual(left: string[], right: string[]) {
@@ -309,6 +321,9 @@ export function AIChatShell({
   runtimeSurface = 'work_chat',
   themeColor,
   enableToolGovernance = false,
+  voiceTranscriber,
+  speechSynthesizer,
+  headerRightAction,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
@@ -336,6 +351,11 @@ export function AIChatShell({
   const [embeddedAssetAuditOpen, setEmbeddedAssetAuditOpen] = useState(false);
   const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
   const [skillPreferenceOpen, setSkillPreferenceOpen] = useState(false);
+  const [connectedAppsOpen, setConnectedAppsOpen] = useState(false);
+  const [connectedAppsSummary, setConnectedAppsSummary] = useState<AIChatConnectedAppsSummary>({
+    selectedConnectionCount: 0,
+    hasAttentionRequired: false,
+  });
   const [draftSkillPreferenceIds, setDraftSkillPreferenceIds] = useState<string[]>([]);
   const [submittedToolGovernanceDecisionKeys, setSubmittedToolGovernanceDecisionKeys] = useState<
     Set<string>
@@ -368,10 +388,30 @@ export function AIChatShell({
   const isSending = useStore(controller.store, state => state.isSending);
   const streamingByMessageId = useStore(controller.store, state => state.streamingByMessageId);
   const error = useStore(controller.store, state => state.error);
+  const speechPlaybackErrorMessages = useMemo(
+    () => ({
+      timeout: t('consoleChat.voice.errors.playbackTimeout'),
+      balance: t('consoleChat.voice.errors.playbackBalance'),
+      quota: t('consoleChat.voice.errors.playbackQuota'),
+      unavailable: t('consoleChat.voice.errors.playbackUnavailable'),
+      failed: t('consoleChat.voice.errors.playbackFailed'),
+    }),
+    [t]
+  );
+  const speechPlayback = useAgentSpeechPlayback({
+    synthesizer: speechSynthesizer,
+    messages: activeMessages,
+    conversationId: activeConversationId,
+    isLoadingMessages,
+    playbackErrorMessages: speechPlaybackErrorMessages,
+  });
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
+  const systemFeatures = useSystemFeatures();
   const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
   const enableAIChatSkillPreference =
     surface === 'aichat' && (!isEmbedded || runtimeSurface === 'contextual_sidebar');
+  const enableAIChatConnectedApps =
+    enableAIChatSkillPreference && Boolean(systemFeatures.data?.enable_external_integrations);
   const effectiveRuntimeSurface: AIChatRuntimeSurface =
     surface === 'agent-draft' || surface === 'agent-webapp' ? 'external_page_chat' : runtimeSurface;
   const matchingModelProps = useMemo(() => {
@@ -831,6 +871,7 @@ export function AIChatShell({
         toast.error(t('consoleChat.modelRequired'));
         return false;
       }
+      speechPlayback?.stop();
       if (beforeSend) {
         const canSend = await beforeSend();
         if (!canSend) return false;
@@ -874,6 +915,7 @@ export function AIChatShell({
       messages.length,
       modelSelectorValue,
       requireModel,
+      speechPlayback,
       effectiveRuntimeSurface,
       t,
       toolGovernanceOperationContext,
@@ -937,6 +979,7 @@ export function AIChatShell({
 
   const executeRegenerate = useCallback(
     async (message: AIChatMessage) => {
+      speechPlayback?.stop();
       if (beforeSend && !(await beforeSend())) return;
 
       void controller.regenerate(
@@ -956,6 +999,7 @@ export function AIChatShell({
       beforeSend,
       controller,
       modelSelectorValue,
+      speechPlayback,
       effectiveRuntimeSurface,
       toolGovernanceOperationContext,
     ]
@@ -1038,6 +1082,7 @@ export function AIChatShell({
   const executeEdit = useCallback(
     (message: AIChatMessage, query: string) => {
       const canReplaceRoot = canReplaceRootMessage(message);
+      speechPlayback?.stop();
       setEditingMessageId(null);
       setEditingQuery('');
       if (canReplaceRoot) {
@@ -1073,6 +1118,7 @@ export function AIChatShell({
       canReplaceRootMessage,
       controller,
       modelSelectorValue,
+      speechPlayback,
       effectiveRuntimeSurface,
       toolGovernanceOperationContext,
     ]
@@ -1130,11 +1176,12 @@ export function AIChatShell({
 
   const handleSwitchBranch = useCallback(
     (messageId: string) => {
+      speechPlayback?.stop();
       setEditingMessageId(null);
       setEditingQuery('');
       controller.switchBranch(messageId);
     },
-    [controller]
+    [controller, speechPlayback]
   );
 
   const handleWorkflowApprovalSubmit = useCallback(
@@ -1244,6 +1291,7 @@ export function AIChatShell({
   ]);
 
   const handleNewChat = useCallback(() => {
+    speechPlayback?.stop();
     if (isHome) {
       toast.info(t('chat.alreadyInDraft'));
       setMobileSidebarOpen(false);
@@ -1257,7 +1305,7 @@ export function AIChatShell({
     }
     setMobileSidebarOpen(false);
     setEmbeddedAssetAuditOpen(false);
-  }, [controller, isHome, onStartNewConversation, t]);
+  }, [controller, isHome, onStartNewConversation, speechPlayback, t]);
 
   const handleLoadMoreConversations = useCallback(
     (page: number) => controller.refreshList({ page, append: true }),
@@ -1266,6 +1314,7 @@ export function AIChatShell({
 
   const handleSelectConversation = useCallback(
     (id: string) => {
+      speechPlayback?.stop();
       if (onSelectConversation) {
         onSelectConversation(id);
       } else {
@@ -1274,7 +1323,7 @@ export function AIChatShell({
       setMobileSidebarOpen(false);
       setEmbeddedAssetAuditOpen(false);
     },
-    [controller, onSelectConversation]
+    [controller, onSelectConversation, speechPlayback]
   );
 
   const handleDeleteConversation = useCallback(
@@ -1325,10 +1374,8 @@ export function AIChatShell({
             toast.warning(t('consoleChat.skillPreferences.savedWithChanges'));
           }
         },
-        onError: error => {
-          toast.error(
-            error instanceof Error ? error.message : t('consoleChat.skillPreferences.saveFailed')
-          );
+        onError: () => {
+          toast.error(t('consoleChat.skillPreferences.saveFailed'));
         },
       }
     );
@@ -1423,8 +1470,11 @@ export function AIChatShell({
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
-                assetAuditButton ? (
-                  <div className="flex items-center justify-end gap-1">{assetAuditButton}</div>
+                assetAuditButton || headerRightAction ? (
+                  <div className="flex items-center justify-end gap-1">
+                    {assetAuditButton}
+                    {headerRightAction}
+                  </div>
                 ) : undefined
               }
             />
@@ -1482,9 +1532,11 @@ export function AIChatShell({
             layout={isEmbedded ? 'embedded' : 'full'}
             showMemoryKey={surface !== 'agent-webapp'}
             showSkillEventDetails={surface !== 'agent-webapp'}
+            showWorkflowFailureDetails={surface !== 'agent-webapp'}
             showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
             showPlanningPlaceholder={showPlanningPlaceholder}
             pendingUserMessage={visiblePendingUserMessage}
+            speechPlayback={speechPlayback}
           />
 
           <AIChatHomeView
@@ -1570,6 +1622,13 @@ export function AIChatShell({
             uploadScope={uploadScope}
             showFileLibraryPicker={showFileLibraryPicker}
             allowWorkspaceSwitch={allowWorkspaceSwitch}
+            showConnectedApps={enableAIChatConnectedApps}
+            connectedAppsLabel={t('consoleChat.connectedApps.action', {
+              count: connectedAppsSummary.selectedConnectionCount,
+            })}
+            connectedAppsSelectedCount={connectedAppsSummary.selectedConnectionCount}
+            connectedAppsAttentionRequired={connectedAppsSummary.hasAttentionRequired}
+            onOpenConnectedApps={() => setConnectedAppsOpen(true)}
             showSkillManagement={enableAIChatSkillPreference}
             skillManagementLabel={t('consoleChat.skillPreferences.action')}
             onOpenSkillManagement={() => handleSkillPreferenceOpenChange(true)}
@@ -1587,6 +1646,15 @@ export function AIChatShell({
             }
             activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
             topAccessory={composerTopAccessory}
+            voiceTranscriber={voiceTranscriber}
+            speechAutoPlay={
+              speechPlayback
+                ? {
+                    enabled: speechPlayback.autoPlay,
+                    onEnabledChange: speechPlayback.setAutoPlay,
+                  }
+                : undefined
+            }
           />
         </main>
       </ToolGovernancePendingApprovalScopeProvider>
@@ -1673,6 +1741,15 @@ export function AIChatShell({
           onOpenChange={handleSkillPreferenceOpenChange}
           onToggleSkill={handleToggleSkillPreference}
           onSave={handleSaveSkillPreference}
+        />
+      ) : null}
+      {enableAIChatConnectedApps ? (
+        <AIChatConnectedAppsDialog
+          open={connectedAppsOpen}
+          enabled={enableAIChatConnectedApps}
+          scopeKey={currentWorkspace?.id ?? 'organization'}
+          onOpenChange={setConnectedAppsOpen}
+          onSummaryChange={setConnectedAppsSummary}
         />
       ) : null}
 

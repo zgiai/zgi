@@ -38,7 +38,7 @@ func (s *service) RunToolGovernanceDecisionStream(
 	if onEvent == nil {
 		return nil, fmt.Errorf("%w: event callback is required", ErrInvalidInput)
 	}
-	decision, err := s.SubmitToolGovernanceDecision(ctx, scope, conversationID, messageID, correlationID, req)
+	publicDecision, err := s.SubmitToolGovernanceDecision(ctx, scope, conversationID, messageID, correlationID, req)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,15 @@ func (s *service) RunToolGovernanceDecisionStream(
 	}
 	continuation.Conversation = conversation
 	continuation.Message = message
-	continuation.Event = decision.Event
+	// SubmitToolGovernanceDecision returns a browser-safe projection whose
+	// Event intentionally omits internal Connection identifiers. Never use that
+	// projection for verification or execution; reload the authoritative event.
+	authoritativeEvent, err := authoritativeToolGovernanceContinuationEvent(message, correlationID, publicDecision.Action)
+	if err != nil {
+		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	continuation.Event = authoritativeEvent
 
 	prepared, err := s.prepareToolGovernanceContinuationChat(ctx, scope, continuation)
 	if err != nil {
@@ -79,18 +87,46 @@ func (s *service) RunToolGovernanceDecisionStream(
 		return nil, finalizedRuntimePersistenceError(err)
 	}
 	timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, onEvent)
-	if err := timeline.RecordEvent(streamEventToolGovernanceDecision, decision.Event); err != nil {
+	if err := timeline.RecordEvent(streamEventToolGovernanceDecision, authoritativeEvent); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
 	}
 
-	switch strings.TrimSpace(decision.Action) {
+	switch strings.TrimSpace(publicDecision.Action) {
 	case toolGovernanceActionReject:
-		return s.runToolGovernanceRejectionContinuation(runCtx, prepared, req, decision.Event, onEvent)
+		return s.runToolGovernanceRejectionContinuation(runCtx, prepared, req, authoritativeEvent, onEvent)
 	case toolGovernanceActionApprove:
-		return s.runToolGovernanceApprovedContinuation(runCtx, prepared, decision.Event, onEvent)
+		return s.runToolGovernanceApprovedContinuation(runCtx, prepared, authoritativeEvent, onEvent)
 	default:
 		return nil, fmt.Errorf("%w: action must be approve or reject", ErrInvalidInput)
 	}
+}
+
+func authoritativeToolGovernanceContinuationEvent(
+	message *runtimemodel.Message,
+	correlationID string,
+	action string,
+) (map[string]interface{}, error) {
+	if message == nil {
+		return nil, fmt.Errorf("%w: continuation message is required", ErrInvalidInput)
+	}
+	event, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, correlationID)
+	if !ok {
+		return nil, fmt.Errorf("%w: authoritative tool governance event not found", ErrNotFound)
+	}
+	event = copyStringAnyMap(event)
+	if strings.TrimSpace(action) != toolGovernanceActionApprove {
+		return event, nil
+	}
+	frozen, found, err := toolGovernanceFrozenInvocationFromEvent(event)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read authoritative frozen invocation: %v", ErrInvalidInput, err)
+	}
+	if found {
+		if err := validateToolGovernanceFrozenInvocation(frozen, correlationID); err != nil {
+			return nil, err
+		}
+	}
+	return event, nil
 }
 
 func (s *service) failToolGovernanceContinuation(ctx context.Context, continuation *ToolGovernanceContinuation, cause error, onEvent func(StreamEvent) error) {
@@ -112,6 +148,9 @@ func (s *service) beginToolGovernanceContinuation(ctx context.Context, scope Sco
 	}
 	conversation, err := s.getConversation(ctx, scope, conversationID)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
 		return nil, err
 	}
 	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
@@ -191,7 +230,17 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil {
 		return nil, fmt.Errorf("%w: tool governance continuation is required", ErrInvalidInput)
 	}
+	if err := ensureConversationWorkspaceScope(scope, continuation.Conversation); err != nil {
+		return nil, err
+	}
 	message := continuation.Message
+	caller := Caller{Type: runtimemodel.ConversationCallerAIChat}
+	config, err := s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, RunConfig{
+		BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat,
+	})
+	if err != nil {
+		return nil, err
+	}
 	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{}, message)
 	if err != nil {
 		return nil, err
@@ -206,11 +255,11 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
 	}
-	if err := s.applyModelCapabilities(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, parts); err != nil {
+	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
 		return nil, err
 	}
-	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
-	if err := s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts); err != nil {
+	applyManagedUserMemoryPolicy(caller, parts)
+	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
@@ -228,7 +277,8 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 		Message:                        message,
 		LLMRequest:                     llmRequest,
 		Scope:                          scope,
-		Caller:                         Caller{Type: runtimemodel.ConversationCallerAIChat},
+		Caller:                         caller,
+		RunConfig:                      config,
 		ParentID:                       message.ParentID,
 		Continuation:                   true,
 		SuppressInitialNaturalProgress: true,
@@ -261,8 +311,8 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
 			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
-			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
-				return nil, ownershipErr
+			if persistErr != nil {
+				return nil, s.finalizeToolGovernanceApprovalPersistenceError(persistCtx, prepared, persistErr, onEvent)
 			}
 			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
@@ -361,6 +411,15 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if callID == "" {
 		callID = strings.TrimSpace(frozen.ID)
 	}
+	executionContext := s.skillExecutionContext(prepared)
+	executionContext.RuntimeParameters = skills.WithToolGovernanceCorrelationID(
+		executionContext.RuntimeParameters,
+		frozen.CorrelationID,
+	)
+	executionContext.RuntimeParameters = skills.WithExternalActionOperationItemID(
+		executionContext.RuntimeParameters,
+		approvedFrozenProjectedExternalActionOperationItemID(prepared.Message.Metadata, frozen),
+	)
 	if err := timeline.RecordInvocationStart(callID, frozen.SkillID, frozen.ToolName, args); err != nil {
 		return nil, true, finalizedRuntimePersistenceError(err)
 	}
@@ -370,7 +429,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		frozen.SkillID,
 		frozen.ToolName,
 		args,
-		s.skillExecutionContext(prepared),
+		executionContext,
 		callID,
 	)
 	executionErr := err
@@ -378,7 +437,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		if executionErr == nil {
 			executionErr = fmt.Errorf("%w: frozen skill tool returned no invocation result", ErrInvalidInput)
 		}
-		invocation = recoverableFrozenInvocationFailure(nil, frozen, args, callID, executionErr)
+		invocation = recoverableFrozenInvocationFailure(nil, frozen, args, callID, executionErr, resolved)
 		if err := timeline.RecordInvocationError(invocation.Trace); err != nil {
 			return nil, true, finalizedRuntimePersistenceError(err)
 		}
@@ -389,7 +448,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 			}
 		}
 		if executionErr != nil {
-			invocation = recoverableFrozenInvocationFailure(invocation, frozen, args, callID, executionErr)
+			invocation = recoverableFrozenInvocationFailure(invocation, frozen, args, callID, executionErr, resolved)
 			if err := timeline.RecordInvocationError(invocation.Trace); err != nil {
 				return nil, true, finalizedRuntimePersistenceError(err)
 			}
@@ -423,8 +482,17 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if invocation != nil {
 		prepared.Message.Metadata = preparedOperationEvidenceMetadata(prepared.Message.Metadata)
 	}
+	if executionErr != nil && approvedFrozenExternalAction(frozen) {
+		result, err := s.completeApprovedFrozenExternalActionFailure(
+			persistCtx,
+			prepared,
+			frozen,
+			onEvent,
+		)
+		return result, true, err
+	}
 	if executionErr == nil {
-		metadata, terminalOnly := completeBoundGovernedInvocationOperationPlan(prepared.Message.Metadata, frozen)
+		metadata, terminalOnly := completeApprovedFrozenInvocationSuccess(prepared.Message.Metadata, frozen, invocation)
 		prepared.Message.Metadata = metadata
 		prepared.TerminalOnly = terminalOnly
 		if terminalOnly {
@@ -443,8 +511,8 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
 			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
-			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
-				return nil, true, ownershipErr
+			if persistErr != nil {
+				return nil, true, s.finalizeToolGovernanceApprovalPersistenceError(persistCtx, prepared, persistErr, onEvent)
 			}
 			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, true, nil
@@ -475,6 +543,309 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	}
 	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, true, nil
+}
+
+func approvedFrozenExternalAction(frozen toolgovernance.FrozenInvocation) bool {
+	return strings.EqualFold(strings.TrimSpace(frozen.SkillID), skills.SkillExternalApps) &&
+		strings.EqualFold(strings.TrimSpace(frozen.ToolName), "execute_action")
+}
+
+func approvedFrozenExternalActionProviderSuccess(frozen toolgovernance.FrozenInvocation, invocation *skills.ToolInvocationResult) bool {
+	if !approvedFrozenExternalAction(frozen) || invocation == nil ||
+		!strings.EqualFold(strings.TrimSpace(invocation.Trace.Status), "success") {
+		return false
+	}
+	result := mapFromOperationContext(invocation.Trace.Result)
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(result["operation_status"]))) {
+	case "completed", "already_completed", "succeeded":
+		if raw, exists := result["provider_success_confirmed"]; exists {
+			confirmed, valid := raw.(bool)
+			return valid && confirmed
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func completeApprovedFrozenExternalActionSuccess(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+	invocation *skills.ToolInvocationResult,
+) (map[string]interface{}, bool) {
+	terminal := !approvedExternalActionHasExplicitRemainingWork(metadata, frozen)
+	next := recordApprovedFrozenExternalActionProviderSuccess(metadata, frozen, invocation, terminal)
+	if !terminal {
+		return next, false
+	}
+	markApprovedExternalActionPlanCompleted(next, frozen)
+	return next, true
+}
+
+func completeApprovedFrozenInvocationSuccess(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+	invocation *skills.ToolInvocationResult,
+) (map[string]interface{}, bool) {
+	serverProjectedPlan := approvedFrozenInvocationHasServerProjectedPlan(metadata, frozen)
+	projectedPlanAlreadyTerminal := approvedFrozenInvocationHasCompletedServerProjectedBinding(metadata, frozen)
+	if approvedFrozenExternalAction(frozen) && !approvedFrozenExternalActionProviderSuccess(frozen, invocation) {
+		// external-apps may return a structured non-success operation state with
+		// no Go error. Provider confirmation is therefore a hard precondition for
+		// changing any phase, outcome, attempt, effect, or completion summary.
+		// A previously completed exact projected binding remains terminal, but a
+		// later ambiguous/non-success receipt may not add or downgrade evidence.
+		return copyStringAnyMap(metadata), projectedPlanAlreadyTerminal
+	}
+	next, terminal := completeBoundGovernedInvocationOperationPlan(metadata, frozen)
+	if projectedPlanAlreadyTerminal {
+		terminal = true
+	}
+	if !approvedFrozenExternalAction(frozen) {
+		return next, terminal
+	}
+	if serverProjectedPlan {
+		// The exact projected binding is the only authority allowed to close a
+		// projected phase. The legacy success helper may update provider evidence
+		// but must never broadly complete unrelated native/model phases.
+		return recordApprovedFrozenExternalActionProviderSuccess(next, frozen, invocation, terminal), terminal
+	}
+	legacy, legacyTerminal := completeApprovedFrozenExternalActionSuccess(next, frozen, invocation)
+	return legacy, terminal || legacyTerminal
+}
+
+func approvedFrozenInvocationHasServerProjectedPlan(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+) bool {
+	if !approvedFrozenExternalAction(frozen) {
+		return false
+	}
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		if operationPlanExpectedActionIsServerProjected(mapFromOperationContext(phase["expected_action"])) {
+			return true
+		}
+	}
+	return false
+}
+
+func approvedFrozenInvocationHasCompletedServerProjectedBinding(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+) bool {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	phases := mapSliceFromAny(plan["phases"])
+	if len(phases) == 0 || !operationPlanPhasesTerminal(phases) {
+		return false
+	}
+	for _, phase := range phases {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(phase["status"])), operationPlanStepStatusCompleted) ||
+			!operationPlanExpectedActionIsServerProjected(mapFromOperationContext(phase["expected_action"])) {
+			continue
+		}
+		binding := mapFromOperationContext(phase[operationPlanRuntimeBindingKey])
+		projected, _ := binding["projected_external_action"].(bool)
+		if projected && governedInvocationPlanBindingMatches(binding, frozen) &&
+			governedProjectedInvocationBindingMatchesPhase(binding, phase, frozen) {
+			return true
+		}
+	}
+	return false
+}
+
+func recordApprovedFrozenExternalActionProviderSuccess(
+	metadata map[string]interface{},
+	frozen toolgovernance.FrozenInvocation,
+	invocation *skills.ToolInvocationResult,
+	terminal bool,
+) map[string]interface{} {
+	next := copyStringAnyMap(metadata)
+	if next == nil {
+		next = map[string]interface{}{}
+	}
+	result := map[string]interface{}{}
+	if invocation != nil {
+		result = copyStringAnyMap(invocation.Trace.Result)
+	}
+	actionID := strings.TrimSpace(firstNonEmptyString(result["action_id"], frozen.Arguments["action_id"]))
+	operationStatus := strings.TrimSpace(firstNonEmptyString(result["operation_status"], "completed"))
+
+	summary := copyStringAnyMap(mapFromOperationContext(next["operation_result_summary"]))
+	if summary == nil {
+		summary = map[string]interface{}{}
+	}
+	summary["provider_success_confirmed"] = true
+	summary["operation_status"] = operationStatus
+	summary["success_count"] = max(1, intValueFromAny(result["result_count"]))
+	summary["failed_count"] = 0
+	if terminal {
+		summary["status"] = operationPlanStatusCompleted
+		summary["plan_status"] = operationPlanStatusCompleted
+		summary["pending_next_action"] = "none"
+	} else {
+		summary["status"] = operationPlanStatusRunning
+		summary["plan_status"] = operationPlanStatusRunning
+		summary["pending_next_action"] = "continue_plan"
+	}
+	summary["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	if actionID != "" {
+		summary["operation"] = actionID
+		summary["action_id"] = actionID
+	}
+	if len(result) > 0 {
+		summary["latest_tool_result"] = result
+	}
+	next["operation_result_summary"] = summary
+	if terminal {
+		next["completion_reason"] = "external_operation_provider_confirmed"
+	}
+	return next
+}
+
+func approvedExternalActionHasExplicitRemainingWork(metadata map[string]interface{}, frozen toolgovernance.FrozenInvocation) bool {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	openOutcomes := 0
+	for _, outcome := range mapSliceFromAny(plan[operationPlanOutcomesKey]) {
+		if operationPlanPhaseOpen(outcome) {
+			openOutcomes++
+		}
+	}
+	if openOutcomes > 1 {
+		return true
+	}
+	phases := mapSliceFromAny(plan["phases"])
+	openPhases := 0
+	for _, phase := range phases {
+		if operationPlanPhaseOpen(phase) {
+			openPhases++
+		}
+	}
+	for _, phase := range phases {
+		if !operationPlanPhaseOpen(phase) {
+			continue
+		}
+		if governedInvocationPlanBindingMatches(mapFromOperationContext(phase[operationPlanRuntimeBindingKey]), frozen) ||
+			governedInvocationExpectedActionMatches(mapFromOperationContext(phase["expected_action"]), frozen) ||
+			strings.EqualFold(strings.TrimSpace(stringFromAny(phase["verification_mode"])), "model_reconciliation") {
+			continue
+		}
+		if len(mapFromOperationContext(phase["expected_action"])) > 0 {
+			return true
+		}
+		// A single unbound phase commonly represents the just-approved action.
+		// Multiple unbound phases are genuine remaining work and must not be
+		// silently completed just because one provider call succeeded.
+		if openPhases > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func markApprovedExternalActionPlanCompleted(metadata map[string]interface{}, frozen toolgovernance.FrozenInvocation) {
+	plan := copyStringAnyMap(mapFromOperationContext(metadata["operation_plan"]))
+	if len(plan) == 0 {
+		return
+	}
+	completedAt := time.Now().UTC().Format(time.RFC3339)
+	evidenceRef := operationPlanToolEvidenceKey(frozen.SkillID, frozen.ToolName)
+	phases := mapSliceFromAny(plan["phases"])
+	for _, phase := range phases {
+		if !operationPlanPhaseOpen(phase) {
+			continue
+		}
+		phase["status"] = operationPlanStepStatusCompleted
+		phase["completed_at"] = completedAt
+		phase["completion_source"] = "external_operation_provider_receipt"
+		phase["evidence_refs"] = appendUniqueStrings(stringSliceFromAny(phase["evidence_refs"]), evidenceRef)
+	}
+	if len(phases) > 0 {
+		plan["phases"] = mapsToInterfaceSlice(phases)
+	}
+	outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey])
+	for _, outcome := range outcomes {
+		if !operationPlanPhaseOpen(outcome) {
+			continue
+		}
+		outcome["status"] = operationPlanStepStatusCompleted
+		outcome["completed_at"] = completedAt
+		outcome["completion_source"] = "external_operation_provider_receipt"
+		outcome["effect_refs"] = appendUniqueStrings(stringSliceFromAny(outcome["effect_refs"]), evidenceRef)
+	}
+	if len(outcomes) > 0 {
+		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
+	}
+	plan["status"] = operationPlanStatusCompleted
+	plan["pending_next_action"] = "none"
+	plan["completion_verification"] = map[string]interface{}{
+		"status": "pass", "source": "external_operation_provider_receipt",
+		"reason": "the approved external operation returned a confirmed provider success receipt",
+	}
+	operationPlanMarkEvidenceCurrent(plan)
+	operationPlanSyncStrategyState(plan)
+	metadata["operation_plan"] = plan
+	syncOperationPlanCompletionMetadata(metadata)
+}
+
+func (s *service) completeApprovedFrozenExternalActionFailure(
+	persistCtx context.Context,
+	prepared *PreparedChat,
+	frozen toolgovernance.FrozenInvocation,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
+	metadata := preparedOperationEvidenceMetadata(prepared.Message.Metadata)
+	metadata["completion_reason"] = "external_operation_failed"
+	applyOperationPlanTerminalCompletionResultWithSource(
+		metadata,
+		"failed",
+		"external_operation_runtime",
+		"the approved external operation did not produce a successful provider receipt",
+		[]string{"external_operation_not_confirmed"},
+		nil,
+		"",
+	)
+	metadata = refreshOperationResultSummaryMetadata(metadata)
+	summary := copyStringAnyMap(mapFromOperationContext(metadata["operation_result_summary"]))
+	if summary == nil {
+		summary = map[string]interface{}{}
+	}
+	summary["status"] = "failed"
+	summary["success_count"] = 0
+	summary["failed_count"] = 1
+	summary["provider_success_confirmed"] = false
+	if actionID := strings.TrimSpace(stringFromAny(frozen.Arguments["action_id"])); actionID != "" {
+		summary["operation"] = actionID
+	}
+	metadata["operation_result_summary"] = summary
+	prepared.Message.Metadata = metadata
+
+	answer := approvedFrozenExternalActionFailureAnswer(prepared, frozen)
+	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
+	}
+	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+	return &ChatResult{Answer: answer, Metadata: metadata, Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func approvedFrozenExternalActionFailureAnswer(prepared *PreparedChat, frozen toolgovernance.FrozenInvocation) string {
+	query := ""
+	if prepared != nil {
+		if prepared.parts != nil {
+			query = strings.TrimSpace(prepared.parts.Query)
+		}
+		if query == "" && prepared.Message != nil {
+			query = strings.TrimSpace(prepared.Message.Query)
+		}
+	}
+	scope := skillloop.ExternalActionFailureOperation
+	if frozen.Effect == toolgovernance.EffectExternalSend {
+		scope = skillloop.ExternalActionFailureSend
+	}
+	return skillloop.LocalizedExternalActionFailureAnswer(query, scope)
 }
 
 func preparedOperationEvidenceMetadata(source map[string]interface{}) map[string]interface{} {
@@ -519,6 +890,7 @@ func recoverableFrozenInvocationFailure(
 	args map[string]interface{},
 	callID string,
 	err error,
+	resolved *skills.ResolvedSkills,
 ) *skills.ToolInvocationResult {
 	if invocation == nil {
 		invocation = &skills.ToolInvocationResult{}
@@ -538,7 +910,14 @@ func recoverableFrozenInvocationFailure(
 		trace.Error = err.Error()
 	}
 	if trace.Arguments == nil {
-		trace.Arguments = summarizeSkillToolArguments(trace.SkillID, trace.ToolName, args)
+		if skills.SkillToolUsesResolvedInputSchema(resolved, trace.SkillID, trace.ToolName) {
+			trace.Arguments = map[string]interface{}{
+				"schema_bound_arguments_redacted": true,
+				"argument_count":                  len(args),
+			}
+		} else {
+			trace.Arguments = summarizeSkillToolArguments(trace.SkillID, trace.ToolName, args)
+		}
 	}
 	invocation.Trace = trace
 	invocation.ToolMessage = skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(
@@ -546,6 +925,7 @@ func recoverableFrozenInvocationFailure(
 		"explain the approved operation failure and decide whether to ask the user for input, suggest a configuration fix, or offer an alternative. Do not claim the operation succeeded",
 		trace.SkillID,
 		trace.ToolName,
+		resolved,
 	))
 	return invocation
 }

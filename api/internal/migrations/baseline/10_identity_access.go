@@ -110,7 +110,9 @@ var IdentityAccessSchema = File{
     name character varying(255) NOT NULL,
     description text,
     name_i18n jsonb DEFAULT '{}'::jsonb NOT NULL,
+    name_customized boolean DEFAULT false NOT NULL,
     description_i18n jsonb DEFAULT '{}'::jsonb NOT NULL,
+    description_customized boolean DEFAULT false NOT NULL,
     status character varying(16) DEFAULT 'active'::character varying NOT NULL,
     created_by uuid NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -125,7 +127,10 @@ var IdentityAccessSchema = File{
     status character varying(16) DEFAULT 'active'::character varying NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    short_name character varying(100)
+    short_name character varying(100),
+    llm_content_capture_enabled boolean DEFAULT false NOT NULL,
+    llm_content_retention_days integer,
+    CONSTRAINT ck_organizations_llm_content_retention_days CHECK (((llm_content_retention_days IS NULL) OR ((llm_content_retention_days >= 1) AND (llm_content_retention_days <= 30))))
 );`,
 		`CREATE TABLE public.organization_invite_links (
     id uuid DEFAULT public.uuid_generate_v4() NOT NULL,

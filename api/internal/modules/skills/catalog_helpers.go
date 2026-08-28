@@ -41,7 +41,7 @@ func (r *Runtime) skillLocations(custom []CustomSkillCatalogEntry) (map[string]s
 	}
 	for _, entry := range custom {
 		id := normalizeSkillID(entry.SkillID)
-		if id == "" {
+		if id == "" || isRetiredSkillID(id) {
 			continue
 		}
 		if !isValidSkillName(id) {
@@ -83,7 +83,7 @@ func (r *Runtime) systemSkillLocationsFromEntries(bestEffort bool) (map[string]s
 			continue
 		}
 		id := normalizeSkillID(entry.Name())
-		if id == "" {
+		if id == "" || isRetiredSkillID(id) {
 			continue
 		}
 		if !isValidSkillName(id) {
@@ -574,6 +574,16 @@ func summarizeStructuredArtifactArgument(key string, value interface{}) map[stri
 		summary[countKey] = len(items)
 	}
 	return summary
+}
+
+func summarizeToolArguments(tool SkillToolDefinition, args map[string]interface{}) map[string]interface{} {
+	if tool.Governance == nil || !tool.Governance.DataEgress || tool.Governance.SensitiveDataAllowed {
+		return summarizeArguments(args)
+	}
+	return map[string]interface{}{
+		"data_egress_redacted": true,
+		"argument_count":       len(args),
+	}
 }
 
 func summarizeValue(value interface{}) interface{} {

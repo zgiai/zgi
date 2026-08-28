@@ -80,7 +80,8 @@ export type AIChatSkillInvocationKind =
   | 'intermediate_answer'
   | 'final_answer'
   | 'user_input_request'
-  | 'memory_planner';
+  | 'memory_planner'
+  | 'memory_mutation';
 
 export type AIChatMemoryMutationAction = 'create' | 'update' | 'delete' | 'clear';
 
@@ -107,6 +108,25 @@ export interface AIChatSkillExposureProfile {
   governance_risk?: 'none' | 'low' | 'medium' | 'high' | 'mixed' | string;
 }
 
+export interface AIChatSkillIntegrationRequirement {
+  integration_id: string;
+  action_ids?: string[];
+  required: boolean;
+}
+
+export type AIChatSkillAvailabilityState =
+  | 'ready'
+  | 'setup_required'
+  | 'no_access'
+  | 'degraded'
+  | 'unavailable';
+
+export interface AIChatSkillAvailability {
+  state: AIChatSkillAvailabilityState;
+  reason?: string;
+  integration_ids?: string[];
+}
+
 export interface AIChatSkillMetadata {
   skill_id: string;
   source?: AIChatSkillSource;
@@ -126,6 +146,12 @@ export interface AIChatSkillMetadata {
   validation_error?: string;
   supported_callers?: Array<'aichat' | 'agent'>;
   required_config?: string[];
+  dependency_type?: 'standalone' | 'integration' | string;
+  provider_type?: string;
+  provider_id?: string;
+  integration_requirements?: Array<AIChatSkillIntegrationRequirement | string>;
+  external_dependencies?: Array<AIChatSkillIntegrationRequirement | string>;
+  availability?: AIChatSkillAvailability;
   exposure?: AIChatSkillExposureProfile;
 }
 
@@ -232,10 +258,20 @@ export interface AIChatSkillInvocation {
   path?: string;
   message?: string;
   error?: string;
+  error_code?: string;
   approval_status?: AIChatToolGovernanceDecisionEventData['approval_status'];
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
+  memory_scope?: 'account' | 'agent';
+  action?: AIChatMemoryMutationAction;
+  key?: string;
+  display_name?: string;
+  mutation_status?: 'updated' | 'cleared' | 'unchanged' | string;
+  source_kind?: 'legacy' | 'explicit' | 'automatic' | 'manager';
+  operation_id?: string;
+  revision?: number;
+  undoable_until?: number;
 }
 
 export interface AIChatWorkflowRunNodeMetadata {
@@ -402,6 +438,7 @@ export interface AIChatPresentationTextItem extends AIChatPresentationPosition {
   segment_id: string;
   content: string;
   content_phase: AIChatPresentationContentPhase;
+  presentation_role?: 'final_output';
   created_at_ms?: number;
 }
 
@@ -600,6 +637,7 @@ export interface AIChatMessageChunkEventData extends AIChatPresentationPosition 
   segment_id?: string;
   segment_content?: string;
   content_phase?: AIChatPresentationContentPhase;
+  presentation_role?: 'final_output';
   __sensitiveOutputBlocked?: boolean;
 }
 
@@ -689,6 +727,7 @@ export interface AIChatSkillCallEndEventData {
   duration_ms?: number;
   status?: AIChatSkillActivityStatus;
   message?: string;
+  error_code?: string;
   result?: Record<string, unknown> | null;
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
@@ -713,6 +752,7 @@ export interface AIChatSkillCallErrorEventData {
   duration_ms?: number;
   status?: AIChatSkillActivityStatus;
   message?: string;
+  error_code?: string;
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
@@ -980,6 +1020,7 @@ export interface AIChatToolGovernanceDecisionEventData extends Record<string, un
   session_grant?: Record<string, unknown>;
   execution_status?: string;
   execution_error?: string;
+  execution_error_code?: string;
   execution_message?: string;
   execution_duration_ms?: number;
   execution_result?: Record<string, unknown> | null;
@@ -1069,9 +1110,16 @@ export interface AIChatMemoryMutationEventData {
   action: AIChatMemoryMutationAction;
   entry_id?: string;
   key?: string;
+  display_name?: string;
   category?: string;
   memory_type?: string;
   status?: AIChatSkillActivityStatus;
+  source_kind?: 'legacy' | 'explicit' | 'automatic' | 'manager';
+  operation_id?: string;
+  revision?: number;
+  undoable_until?: number;
+  keys?: string[];
+  operation_count?: number;
   content?: string;
   content_preview?: string;
   created_at?: number;

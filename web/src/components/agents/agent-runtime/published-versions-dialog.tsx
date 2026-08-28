@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { CheckCircle2, History, Loader2, RotateCcw, X } from 'lucide-react';
+import { safeIntegrationDisplayText } from '@/components/integrations/display-utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -106,7 +107,8 @@ export function AgentRuntimeVersionPopover({
                 const selected = selectedVersionId === version.id;
                 const publishedAt = formatVersionTime(version.created_at);
                 const displayName =
-                  version.name?.trim() || t('publishedVersions.fallbackName', { time: publishedAt });
+                  version.name?.trim() ||
+                  t('publishedVersions.fallbackName', { time: publishedAt });
                 return (
                   <button
                     key={version.id}
@@ -153,8 +155,7 @@ export function AgentRuntimeVersionPopover({
                     {t('publishedVersions.descriptionTitle')}
                   </div>
                   <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
-                    {selectedVersion.description?.trim() ||
-                      t('publishedVersions.noDescription')}
+                    {selectedVersion.description?.trim() || t('publishedVersions.noDescription')}
                   </p>
                 </div>
               ) : null}
@@ -173,14 +174,23 @@ export function AgentRuntimeVersionPopover({
                     {removedBindings.length > 0 ? (
                       <>
                         <div className="max-h-28 space-y-1 overflow-y-auto rounded-md border p-2">
-                          {removedBindings.map((item, index) => (
-                            <div
-                              key={`${item.binding_type}:${item.parent_resource_id ?? ''}:${item.resource_id}:${index}`}
-                              className="truncate text-xs text-muted-foreground"
-                            >
-                              {item.display_name || item.resource_id}
-                            </div>
-                          ))}
+                          {removedBindings.map((item, index) => {
+                            const displayName =
+                              item.binding_type === 'integration_connection'
+                                ? safeIntegrationDisplayText(
+                                    item.display_name,
+                                    t('integration.unavailableConnection')
+                                  )
+                                : item.display_name || item.resource_id;
+                            return (
+                              <div
+                                key={`${item.binding_type}:${item.parent_resource_id ?? ''}:${item.resource_id}:${index}`}
+                                className="truncate text-xs text-muted-foreground"
+                              >
+                                {displayName}
+                              </div>
+                            );
+                          })}
                         </div>
                         <label className="flex cursor-pointer items-start gap-2 text-xs leading-5">
                           <Checkbox

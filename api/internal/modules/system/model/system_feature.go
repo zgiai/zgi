@@ -12,6 +12,7 @@ type SystemFeature struct {
 	IsPublicDeployment          bool `json:"is_public_deployment"`
 	EnableWebSSOSwitchComponent bool `json:"enable_web_sso_switch_component"`
 	EnableMarketplace           bool `json:"enable_marketplace"`
+	EnableExternalIntegrations  bool `json:"enable_external_integrations"`
 	MaxPluginPackageSize        int  `json:"max_plugin_package_size"`
 	NotificationSMS             any  `json:"notification_sms,omitempty"`
 	WorkflowNodes               any  `json:"workflow_nodes,omitempty"`
@@ -31,6 +32,7 @@ func NewDefaultSystemFeature() *SystemFeature {
 		IsPublicDeployment:          false,
 		EnableWebSSOSwitchComponent: false,
 		EnableMarketplace:           true,
+		EnableExternalIntegrations:  false,
 		MaxPluginPackageSize:        0,
 	}
 }

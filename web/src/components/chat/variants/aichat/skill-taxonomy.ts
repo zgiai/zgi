@@ -98,17 +98,15 @@ const DEFAULT_SCENARIO_BY_CATEGORY: Record<SkillCapabilityCategory, SkillScenari
 const CAPABILITY_SET = new Set<string>(SKILL_CAPABILITY_CATEGORIES);
 const SCENARIO_SET = new Set<string>(SKILL_SCENARIOS);
 
-function normalizeTaxonomyId(value: string | undefined): string {
-  return value?.trim().toLowerCase() ?? '';
+function normalizeTaxonomyId(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
 function displayLocale(locale: string): keyof LocalizedTaxonomyLabel {
   return locale.toLowerCase().startsWith('zh') ? 'zh-Hans' : 'en-US';
 }
 
-export function normalizeSkillCapabilityCategory(
-  value: string | undefined
-): SkillCapabilityCategory {
+export function normalizeSkillCapabilityCategory(value: unknown): SkillCapabilityCategory {
   const normalized = normalizeTaxonomyId(value);
   if (CAPABILITY_SET.has(normalized)) return normalized as SkillCapabilityCategory;
   return LEGACY_CATEGORY_ALIASES[normalized] ?? 'other';
@@ -118,7 +116,8 @@ export function resolveSkillScenarios(display: SkillTaxonomyMetadata | undefined
   const resolved: SkillScenario[] = [];
   const seen = new Set<SkillScenario>();
 
-  for (const value of display?.scenarios ?? []) {
+  const scenarios = Array.isArray(display?.scenarios) ? display.scenarios : [];
+  for (const value of scenarios) {
     const normalized = normalizeTaxonomyId(value);
     if (!normalized) continue;
     const scenario = SCENARIO_SET.has(normalized) ? (normalized as SkillScenario) : 'other';

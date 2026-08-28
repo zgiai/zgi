@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
@@ -66,6 +67,65 @@ func TestKnowledgeBaseAssetRefRepositoryFindActiveByAssetIgnoresDisabledRef(t *t
 	}
 }
 
+func TestKnowledgeBaseAssetRefRepositoryRestoresDocumentSnapshotWithCAS(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	createKnowledgeBaseAssetRefRelationTables(t, db)
+
+	refID := uuid.New()
+	syncRunID := uuid.New()
+	previousDocumentID := uuid.New()
+	currentDocumentID := uuid.New()
+	previousGeneration := int64(4)
+	currentGeneration := int64(5)
+	previousSyncedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	execKnowledgeBaseAssetRefSQL(t, db, `INSERT INTO data_library_knowledge_base_asset_refs
+		(id, organization_id, dataset_id, asset_id, dataset_document_id, status, sync_status, synced_generation_no, sync_run_id, last_synced_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		refID, "org-1", "dataset-1", uuid.New(), currentDocumentID,
+		model.KnowledgeBaseAssetRefStatusActive, model.KnowledgeBaseAssetRefSyncStatusSynced,
+		currentGeneration, syncRunID)
+
+	repo := &knowledgeBaseAssetRefRepository{db: db}
+	if err := repo.RestoreSyncedDocumentSnapshot(
+		context.Background(), "org-1", refID, syncRunID, currentDocumentID,
+		&previousDocumentID, &previousGeneration, &previousSyncedAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := repo.GetByID(context.Background(), refID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.DatasetDocumentID == nil || *ref.DatasetDocumentID != previousDocumentID ||
+		ref.SyncedGenerationNo == nil || *ref.SyncedGenerationNo != previousGeneration {
+		t.Fatalf("restored ref=%+v", ref)
+	}
+
+	// A late rollback using the replaced document ID must not overwrite a newer
+	// sync that has already moved the ref again.
+	newestDocumentID := uuid.New()
+	if err := db.Model(&model.KnowledgeBaseAssetRef{}).Where("id = ?", refID).
+		Update("dataset_document_id", newestDocumentID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RestoreSyncedDocumentSnapshot(
+		context.Background(), "org-1", refID, syncRunID, currentDocumentID,
+		&previousDocumentID, &previousGeneration, &previousSyncedAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	ref, err = repo.GetByID(context.Background(), refID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.DatasetDocumentID == nil || *ref.DatasetDocumentID != newestDocumentID {
+		t.Fatalf("late rollback overwrote newer document: %+v", ref)
+	}
+}
+
 func createKnowledgeBaseAssetRefRelationTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	statements := []string{
@@ -84,6 +144,10 @@ func createKnowledgeBaseAssetRefRelationTables(t *testing.T, db *gorm.DB) {
 			sync_status text,
 			synced_generation_no integer,
 			sync_run_id text,
+			sync_batch_id text,
+			retrieval_enabled boolean,
+			graph_run_id text,
+			graph_sync_status text,
 			last_synced_at datetime,
 			sync_error_code text,
 			sync_error_message text,

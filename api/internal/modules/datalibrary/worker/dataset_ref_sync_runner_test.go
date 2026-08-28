@@ -97,12 +97,8 @@ func TestDatasetRefSyncRunnerCopiesReadyAssetToDataset(t *testing.T) {
 	if len(vectorStore.storedIDs) != 1 || len(vectorStore.storedVectors[0]) != 3 {
 		t.Fatalf("stored vectors ids=%v vectors=%v", vectorStore.storedIDs, vectorStore.storedVectors)
 	}
-	if len(vectorStore.createdProperties) != 1 {
-		t.Fatalf("created vector class properties = %#v", vectorStore.createdProperties)
-	}
-	textProperty := vectorStore.createdProperties[0][0]
-	if textProperty["name"] != "text" || textProperty["tokenization"] != "gse_ch" || textProperty["indexSearchable"] != true {
-		t.Fatalf("text vector class property = %#v", textProperty)
+	if len(vectorStore.createdClasses) != 0 {
+		t.Fatalf("document sync must not create shared vector classes: %v", vectorStore.createdClasses)
 	}
 	properties := vectorStore.storedProperties[0]
 	if properties["asset_id"] != assetID.String() ||
@@ -320,6 +316,98 @@ func TestDatasetRefSyncRunnerSkipsNonRunnableRefStatus(t *testing.T) {
 	}
 }
 
+func TestDatasetRefSyncRunnerReplacesDocumentAndInheritsRetrievalEligibility(t *testing.T) {
+	refID := uuid.New()
+	assetID := uuid.New()
+	chunkID := uuid.New()
+	syncRunID := uuid.New()
+	oldDocumentID := uuid.New()
+	provider := "provider-a"
+	modelName := "embedding-v1"
+	refStore := &fakeDatasetRefSyncRefStore{ref: &datalibModel.KnowledgeBaseAssetRef{
+		ID:                refID,
+		OrganizationID:    "org-1",
+		DatasetID:         "dataset-1",
+		AssetID:           assetID,
+		DatasetDocumentID: &oldDocumentID,
+		SyncRunID:         &syncRunID,
+		SyncStatus:        datalibModel.KnowledgeBaseAssetRefSyncStatusPending,
+		RetrievalEnabled:  false,
+		Status:            datalibModel.KnowledgeBaseAssetRefStatusDisabled,
+		CreatedBy:         "user-1",
+	}}
+	documentStore := &fakeDatasetRefSyncDocumentStore{createdDocuments: []*datasetModel.Document{{
+		ID:             oldDocumentID.String(),
+		DatasetID:      "dataset-1",
+		OrganizationID: "org-1",
+		Enabled:        false,
+	}}}
+	runner := NewDatasetRefSyncRunner(DatasetRefSyncRunnerDeps{
+		Refs: refStore,
+		Assets: &fakeDatasetRefSyncAssetStore{asset: &datalibModel.DocumentAsset{
+			ID:                assetID,
+			OrganizationID:    "org-1",
+			Title:             "Updated asset",
+			SourceFileID:      "file-1",
+			ProductStatus:     datalibModel.DocumentAssetProductStatusReady,
+			VectorStatus:      datalibModel.DocumentAssetVectorStatusReady,
+			GenerationNo:      2,
+			CreatedBy:         "user-1",
+			EmbeddingProvider: &provider,
+			EmbeddingModel:    &modelName,
+		}},
+		Datasets: &fakeDatasetRefSyncDatasetStore{dataset: &datasetModel.Dataset{
+			ID:                     "dataset-1",
+			OrganizationID:         "org-1",
+			EmbeddingModelProvider: &provider,
+			EmbeddingModel:         &modelName,
+		}},
+		Documents: documentStore,
+		Chunks: &fakeDatasetRefSyncChunkStore{chunks: []*datalibModel.DocumentChunk{{
+			ID:             chunkID,
+			OrganizationID: "org-1",
+			AssetID:        assetID,
+			GenerationNo:   2,
+			Position:       1,
+			ChunkType:      datalibModel.DocumentChunkTypeAuto,
+			Content:        "updated content",
+			Enabled:        true,
+			Status:         datalibModel.DocumentChunkStatusReady,
+		}}},
+		Embeddings: &fakeDatasetRefSyncEmbeddingStore{embeddings: []*datalibModel.DocumentChunkEmbedding{{
+			ID:                uuid.New(),
+			OrganizationID:    "org-1",
+			AssetID:           assetID,
+			ChunkID:           chunkID,
+			GenerationNo:      2,
+			EmbeddingProvider: provider,
+			EmbeddingModel:    modelName,
+			EmbeddingVector:   datalibModel.Float32Array{0.1, 0.2},
+			Status:            datalibModel.DocumentChunkEmbeddingStatusReady,
+		}}},
+		VectorDB: &fakeDatasetRefSyncVectorStore{},
+	})
+
+	if err := runner.Run(context.Background(), DatasetRefSyncPayload{
+		RefID: refID.String(), AssetID: assetID.String(), DatasetID: "dataset-1", GenerationNo: 2, SyncRunID: syncRunID.String(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if refStore.syncedDocumentID == uuid.Nil || refStore.syncedDocumentID == oldDocumentID {
+		t.Fatalf("replacement document=%s", refStore.syncedDocumentID)
+	}
+	if refStore.ref.ID != refID || refStore.ref.DatasetDocumentID == nil || *refStore.ref.DatasetDocumentID != refStore.syncedDocumentID {
+		t.Fatalf("stable ref was not switched: %#v", refStore.ref)
+	}
+	newDocument := documentStore.createdDocuments[len(documentStore.createdDocuments)-1]
+	if newDocument.Enabled {
+		t.Fatal("disabled ref replacement became retrieval eligible")
+	}
+	if len(documentStore.deletedIDs) != 1 || documentStore.deletedIDs[0] != oldDocumentID.String() {
+		t.Fatalf("deleted documents=%v", documentStore.deletedIDs)
+	}
+}
+
 type fakeDatasetRefSyncRefStore struct {
 	ref              *datalibModel.KnowledgeBaseAssetRef
 	markSyncingID    uuid.UUID
@@ -351,6 +439,7 @@ func (f *fakeDatasetRefSyncRefStore) MarkSynced(ctx context.Context, organizatio
 	f.syncedGeneration = generationNo
 	if f.ref != nil {
 		f.ref.SyncStatus = datalibModel.KnowledgeBaseAssetRefSyncStatusSynced
+		f.ref.DatasetDocumentID = &datasetDocumentID
 	}
 	return f.ref, nil
 }

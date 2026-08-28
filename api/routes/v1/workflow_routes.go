@@ -103,6 +103,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	agentHistoryHandler := workflowHandlerPkg.NewAgentWorkflowHistoryHandler(
 		conversation.NewAgentConversationService(conversationRepo, messageRepo),
 		conversation.NewAgentMessageService(messageRepo, conversationRepo),
+		workflowService,
 	)
 	runtimeLogHandler := workflowHandlerPkg.NewRuntimeLogHandler(
 		workflowRunLogRepo,
@@ -126,7 +127,12 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 		runtimeLogHandler,
 		chatRuntimeService,
 	)
-	agentRuntimeLogsHandler := workflowHandlerPkg.NewAgentRuntimeLogsHandler(agentsRepo, chatRuntimeService, deps.OrganizationService)
+	agentRuntimeLogsHandler := workflowHandlerPkg.NewAgentRuntimeLogsHandler(
+		agentsRepo,
+		chatRuntimeService,
+		deps.OrganizationService,
+		workflowHandlerPkg.WithAgentRuntimeWorkflowDiagnostics(workflowRunLogRepo, workflowNodeRuntimeLogRepo),
+	)
 
 	apps := router.Group("/agents")
 	// Add middleware for workflow routes
@@ -199,7 +205,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	// Web app workflow configuration is public, but still requires the system to be initialized.
 	publicWorkflows := router.Group("/workflows")
 	publicWorkflows.Use(middleware.SetupRequired())
-	conversationQueryHandler := workflowHandlerPkg.NewConversationQueryHandler(workflowRepo, agentsRepo)
+	conversationQueryHandler := workflowHandlerPkg.NewConversationQueryHandler(workflowRepo, agentsRepo, workflowService)
 
 	// Get workflow configuration
 	publicWorkflows.GET("/:web_app_id/config", conversationQueryHandler.GetWebAppConfig)

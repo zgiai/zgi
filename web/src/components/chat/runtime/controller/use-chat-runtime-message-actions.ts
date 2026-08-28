@@ -43,6 +43,7 @@ export function useChatRuntimeMessageActions({
   isLatestSelection,
   refreshConversationSilently,
   refreshMessagesSilently,
+  scheduleConversationTitleRefresh,
   refreshAccountMemoryAfterMemoryMutation,
   recoverStreamingConversation,
   eventAppliers,
@@ -94,6 +95,8 @@ export function useChatRuntimeMessageActions({
       const trimmedQuery = query.trim();
       const currentState = stateRef.current;
       const activeConversationId = currentState.activeConversationId;
+      const createsConversation =
+        !activeConversationId || isDraftAIChatConversationId(activeConversationId);
       const activeConversation = activeConversationId
         ? (currentState.conversations.find(item => item.id === activeConversationId) ?? null)
         : null;
@@ -564,6 +567,9 @@ export function useChatRuntimeMessageActions({
               );
               const conversationId = payload.conversation_id || streamConversationId;
               if (conversationId) {
+                if (createsConversation) {
+                  scheduleConversationTitleRefresh(conversationId);
+                }
                 setControllerState(current => ({
                   ...current,
                   connectionByConversation: {
@@ -694,6 +700,7 @@ export function useChatRuntimeMessageActions({
       requireModel,
       refreshAccountMemoryAfterMemoryMutation,
       recoverStreamingConversation,
+      scheduleConversationTitleRefresh,
       setControllerState,
       stateRef,
       streamAbortByConversationRef,
@@ -1117,6 +1124,7 @@ export function useChatRuntimeMessageActions({
     isLatestSelection,
     refreshConversationSilently,
     refreshMessagesSilently,
+    scheduleConversationTitleRefresh,
     refreshAccountMemoryAfterMemoryMutation,
     recoverStreamingConversation,
     eventAppliers,

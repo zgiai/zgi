@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
@@ -105,6 +106,9 @@ func (r *Runner) handleProgressiveSkillCall(
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
 			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
+		if issue := projectedExternalActionPlanIssue(runtimeState, strings.TrimSpace(stringArg(args, "plan_phase_id")), skillID, toolName, toolArgs); issue != "" {
+			return projectedExternalActionPlanIncompleteStep(call.ID, issue)
+		}
 		planPhaseID, enforcePlanPhase, phaseErr := resolveOperationPlanPhaseForSkillCall(
 			runtimeState,
 			strings.TrimSpace(stringArg(args, "plan_phase_id")),
@@ -120,7 +124,29 @@ func (r *Runner) handleProgressiveSkillCall(
 		} else {
 			delete(args, "plan_phase_id")
 		}
-		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
+		delete(args, operationPlanServerTargetKey)
+		if target := projectedExternalActionCallTarget(runtimeState, skillID, toolName, toolArgs); len(target) > 0 {
+			args[operationPlanServerTargetKey] = target
+		}
+		delete(args, operationPlanServerProjectedLedgerEpochKey)
+		delete(args, planExpectedActionServerBindingFingerprintKey)
+		delete(args, operationPlanServerProjectedConnectionBindingKey)
+		if actionKey := projectedExternalActionKeyFromCall(skillID, toolName, toolArgs); actionKey != "" {
+			if _, projected := projectedExternalActionKeys(runtimeState)[actionKey]; projected {
+				if epoch := operationPlanProjectedLedgerEpoch(runtimeState, planPhaseID); epoch != "" {
+					args[operationPlanServerProjectedLedgerEpochKey] = epoch
+				}
+				if fingerprint := operationPlanProjectedBindingFingerprint(runtimeState, planPhaseID); fingerprint != "" {
+					args[planExpectedActionServerBindingFingerprintKey] = fingerprint
+					if candidate := projectedExternalActionCandidateByFingerprint(runtimeState, fingerprint); len(candidate) > 0 {
+						if connectionBinding := strings.TrimSpace(evidenceStringFromAny(candidate[operationPlanServerProjectedConnectionBindingKey])); connectionBinding != "" {
+							args[operationPlanServerProjectedConnectionBindingKey] = connectionBinding
+						}
+					}
+				}
+			}
+		}
+		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, runtimeState, onEvent)
 	case skills.MetaToolRequestUserInput:
 		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolTurnState:
@@ -595,15 +621,32 @@ func (r *Runner) handleCallSkillTool(
 	callID string,
 	args map[string]interface{},
 	execCtx skills.ExecutionContext,
+	runtimeState map[string]interface{},
 	onEvent func(Event) error,
 ) skillStepResult {
+	delegateOutput := &agentWorkflowDelegateOutput{}
 	skillID := stringArg(args, "skill_id")
 	toolName := stringArg(args, "tool_name")
 	toolArgs := mapArg(args, "arguments")
 	planPhaseID := strings.TrimSpace(stringArg(args, "plan_phase_id"))
 	completionIntent := normalizeSkillToolCompletionIntent(stringArg(args, "completion_intent"))
-	planTarget := operationPlanSkillCallTarget(toolArgs)
-	argumentSummary := summarizeSkillToolArguments(skillID, toolName, toolArgs)
+	planTarget := copyStringAnyMap(evidenceMapFromAny(args[operationPlanServerTargetKey]))
+	if len(planTarget) == 0 {
+		planTarget = operationPlanSkillCallTarget(toolArgs)
+	}
+	argumentSummary := summarizeSkillToolArgumentsForResolved(resolved, skillID, toolName, toolArgs)
+	if len(planTarget) > 0 {
+		argumentSummary["operation_plan_target"] = copyStringAnyMap(planTarget)
+	}
+	if ledgerEpoch := strings.TrimSpace(stringArg(args, operationPlanServerProjectedLedgerEpochKey)); ledgerEpoch != "" {
+		argumentSummary[operationPlanServerProjectedLedgerEpochKey] = ledgerEpoch
+	}
+	if fingerprint := strings.TrimSpace(stringArg(args, planExpectedActionServerBindingFingerprintKey)); fingerprint != "" {
+		argumentSummary[planExpectedActionServerBindingFingerprintKey] = fingerprint
+	}
+	if connectionBinding := strings.TrimSpace(stringArg(args, operationPlanServerProjectedConnectionBindingKey)); connectionBinding != "" {
+		argumentSummary[operationPlanServerProjectedConnectionBindingKey] = connectionBinding
+	}
 	if planPhaseID != "" {
 		argumentSummary["plan_phase_id"] = planPhaseID
 	}
@@ -655,11 +698,22 @@ func (r *Runner) handleCallSkillTool(
 			if event.PauseGeneration > 0 {
 				payload["pause_generation"] = event.PauseGeneration
 			}
+			if event.Type == EventMessage && agentWorkflowInvocationIsDelegate(payload) {
+				if chunk, _ := payload["answer"].(string); chunk != "" {
+					payload["presentation_role"] = agentWorkflowDelegatePresentationRole
+					delegateOutput.append(chunk)
+				}
+			}
 			r.emitEvent(prepared, event.Type, payload)
 		})
 	}
+	execCtx.RuntimeParameters = skills.WithExternalActionOperationItemID(execCtx.RuntimeParameters, "")
+	if operationItemID := projectedExternalActionPhaseOperationItemID(runtimeState, planPhaseID, skillID, toolName, toolArgs); operationItemID != "" {
+		execCtx.RuntimeParameters = skills.WithExternalActionOperationItemID(execCtx.RuntimeParameters, operationItemID)
+	}
 	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
+		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 		if err == nil {
 			err = fmt.Errorf("%w: skill tool returned no invocation result", ErrInvalidInput)
 		}
@@ -667,7 +721,34 @@ func (r *Runner) handleCallSkillTool(
 		trace.InvocationID = strings.TrimSpace(callID)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName, resolved)), true, false)
+	}
+	if err != nil {
+		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
+		// CallSkillTool owns the safe trace summary for validation and provider
+		// failures. In particular, data-egress tools redact their arguments at
+		// that boundary; do not replace the redacted summary with call inputs.
+		if len(invocation.Trace.Arguments) == 0 {
+			invocation.Trace.Arguments = argumentSummary
+		}
+		if planPhaseID != "" {
+			invocation.Trace.Arguments["plan_phase_id"] = planPhaseID
+		}
+		if completionIntent != "" {
+			invocation.Trace.Arguments["completion_intent"] = completionIntent
+		}
+		applyPublicToolErrorRecoveryTrace(&invocation.Trace, err)
+		if invocation.Trace.Governance != nil {
+			r.emitEvent(prepared, EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
+		}
+		errorPayload := recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName, resolved)
+		if code := strings.TrimSpace(invocation.Trace.ErrorCode); code != "" {
+			// The model can reason about a stable failure category without
+			// receiving provider-specific messages or wrapped upstream causes.
+			errorPayload["error"] = code
+			errorPayload["error_code"] = code
+		}
+		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, errorPayload), true, false)
 	}
 	if !traceHasGovernanceArgumentRewrite(invocation.Trace) {
 		invocation.Trace.Arguments = argumentSummary
@@ -697,15 +778,30 @@ func (r *Runner) handleCallSkillTool(
 	if invocation.Trace.Governance != nil {
 		r.emitEvent(prepared, EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
 	}
-	if err != nil {
-		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName)), true, false)
-	}
 	if summary := summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages); len(summary) > 0 {
 		invocation.Trace.Result = summary
 	}
 	applyStateHandoffAdvisoryToToolMessage(invocation)
 	applyPageContextInvalidationAdvisory(invocation)
 	guardToolResult := skillToolResultForGuard(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages, invocation.Trace.Result)
+	if guardToolResult != nil {
+		// Provider output is untrusted. This private evidence key is written only
+		// from the server-owned preparation contract below.
+		delete(guardToolResult, projectedExternalObservedPreparationTargetsKey)
+	}
+	if observedTargets := projectedExternalActionObservedPreparationTargets(
+		runtimeState,
+		toolArgs,
+		planPhaseID,
+		strings.TrimSpace(stringArg(args, operationPlanServerProjectedLedgerEpochKey)),
+		strings.TrimSpace(stringArg(args, planExpectedActionServerBindingFingerprintKey)),
+		firstJSONToolInvokePayload(invocation.Messages),
+	); len(observedTargets) > 0 {
+		if guardToolResult == nil {
+			guardToolResult = map[string]interface{}{}
+		}
+		guardToolResult[projectedExternalObservedPreparationTargetsKey] = observedTargets
+	}
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),
 		"message_id", prepared.Message.ID.String(),
@@ -736,12 +832,14 @@ func (r *Runner) handleCallSkillTool(
 	if isAgentWorkflowRunTool(invocation.Trace.SkillID, invocation.Trace.ToolName) {
 		if payload := agentWorkflowResultPayload(invocation.Messages); len(payload) > 0 {
 			if strings.EqualFold(stringFromInterface(payload["status"]), "pending_approval") {
+				r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 				result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 				result.toolResult = guardToolResult
 				result.pendingApproval = payload
 				return result
 			}
 			if strings.EqualFold(stringFromInterface(payload["status"]), "pending_question") {
+				r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 				result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 				result.toolResult = guardToolResult
 				result.pendingQuestion = payload
@@ -749,19 +847,17 @@ func (r *Runner) handleCallSkillTool(
 			}
 			if agentWorkflowInvocationIsDelegate(payload) &&
 				strings.EqualFold(stringFromInterface(payload["status"]), "succeeded") {
-				answer := strings.TrimSpace(stringFromInterface(payload["primary_output"]))
-				if answer == "" {
-					answer = "工作流已运行，但未返回可展示输出。workflow_run_id: " + stringFromInterface(payload["workflow_run_id"])
+				answer, _ := payload["primary_output"].(string)
+				if strings.TrimSpace(answer) != "" {
+					result := terminalSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
+					result.toolResult = guardToolResult
+					result.answer = answer
+					result.answerStreamed = r.reconcileAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput, answer)
+					return result
 				}
-				result := terminalSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
-				result.toolResult = guardToolResult
-				result.answer = answer
-				// The workflow event bridge already streamed the delegate answer. Keep
-				// the text for persistence without emitting it again from the Skill Loop.
-				result.answerStreamed = true
-				return result
 			}
 		}
+		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 	}
 	if toolGovernanceApprovalPending(invocation.Trace) {
 		result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
@@ -786,6 +882,84 @@ func agentWorkflowInvocationIsDelegate(payload map[string]interface{}) bool {
 		return strings.EqualFold(mode, "agent_conversation_delegate")
 	}
 	return strings.EqualFold(stringFromInterface(payload["agent_type"]), "CONVERSATIONAL_WORKFLOW")
+}
+
+const agentWorkflowDelegatePresentationRole = "final_output"
+
+type agentWorkflowDelegateOutput struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (o *agentWorkflowDelegateOutput) append(chunk string) {
+	if o == nil || chunk == "" {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.text.WriteString(chunk)
+}
+
+func (o *agentWorkflowDelegateOutput) snapshot() string {
+	if o == nil {
+		return ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.text.String()
+}
+
+func (o *agentWorkflowDelegateOutput) take() string {
+	if o == nil {
+		return ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	text := o.text.String()
+	o.text.Reset()
+	return text
+}
+
+func (r *Runner) reconcileAgentWorkflowDelegateOutput(ctx context.Context, prepared *PreparedChat, output *agentWorkflowDelegateOutput, answer string) bool {
+	streamed := output.snapshot()
+	if streamed == "" {
+		return false
+	}
+	if streamed == answer {
+		return true
+	}
+	if strings.HasPrefix(answer, streamed) {
+		suffix := strings.TrimPrefix(answer, streamed)
+		if suffix != "" {
+			output.append(suffix)
+			r.emitEvent(prepared, EventMessage, map[string]interface{}{
+				"conversation_id":   prepared.Conversation.ID.String(),
+				"message_id":        prepared.Message.ID.String(),
+				"answer":            suffix,
+				"presentation_role": agentWorkflowDelegatePresentationRole,
+			})
+		}
+		return true
+	}
+
+	r.discardAgentWorkflowDelegateOutput(ctx, prepared, output)
+	return false
+}
+
+func (r *Runner) discardAgentWorkflowDelegateOutput(_ context.Context, prepared *PreparedChat, output *agentWorkflowDelegateOutput) {
+	content := output.take()
+	if content == "" || prepared == nil || prepared.Conversation == nil || prepared.Message == nil {
+		return
+	}
+	r.emitEvent(prepared, EventMessageRetract, map[string]interface{}{
+		"conversation_id":          prepared.Conversation.ID.String(),
+		"message_id":               prepared.Message.ID.String(),
+		"content":                  content,
+		"length":                   utf16CodeUnitLength(content),
+		"created_at":               time.Now().Unix(),
+		"presentation_disposition": "discard",
+		"presentation_role":        agentWorkflowDelegatePresentationRole,
+	})
 }
 
 func normalizeSkillToolCompletionIntent(value string) string {

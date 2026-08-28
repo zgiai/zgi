@@ -36,9 +36,9 @@ import { useDepartments } from '@/hooks/organization/use-departments';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useLocale } from '@/hooks/use-locale';
-import { pickLocale } from '@/utils/tool-helpers';
 import { getOrganizationDisplayName } from '@/utils/organization-display';
 import {
+  getWorkspaceRoleDisplayName,
   isAssignableWorkspaceAdminRole,
   isSelectableWorkspacePermissionTemplate,
 } from '@/utils/workspace-role-templates';
@@ -113,10 +113,7 @@ export function AddWorkspaceMemberModal({
     return Array.from(deduped.values());
   }, [members]);
 
-  const workspaceAdminRole = useMemo(
-    () => roles.find(isAssignableWorkspaceAdminRole),
-    [roles]
-  );
+  const workspaceAdminRole = useMemo(() => roles.find(isAssignableWorkspaceAdminRole), [roles]);
   const permissionTemplateRoles = useMemo(
     () => roles.filter(isSelectableWorkspacePermissionTemplate),
     [roles]
@@ -124,13 +121,13 @@ export function AddWorkspaceMemberModal({
   const defaultRoleId = useMemo(
     () =>
       permissionTemplateRoles.find(role => role.system_key === 'default_basic')?.id ||
+      permissionTemplateRoles.find(role => role.system_key === 'default_readonly')?.id ||
       permissionTemplateRoles[0]?.id ||
       '',
     [permissionTemplateRoles]
   );
   const getRoleDisplayName = useCallback(
-    (role: (typeof permissionTemplateRoles)[number]) =>
-      role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name,
+    (role: (typeof permissionTemplateRoles)[number]) => getWorkspaceRoleDisplayName(role, locale),
     [locale]
   );
 
@@ -460,10 +457,7 @@ export function AddWorkspaceMemberModal({
           <Button variant="outline" onClick={handleClose} disabled={isBusy}>
             {t('organization.workspaceManagement.detail.addMemberModal.cancel')}
           </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={disableSubmit}
-          >
+          <Button onClick={handleSubmit} disabled={disableSubmit}>
             {isBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {t('organization.workspaceManagement.detail.addMemberModal.add', {
               count: selectedMemberIds.length,

@@ -149,6 +149,55 @@ func TestProcessTimelineRecorderKeepsPresentationOrderAcrossActionsAndContinuati
 	}
 }
 
+func TestProcessTimelineKeepsDelegatedFinalOutputAcrossLifecycleEvents(t *testing.T) {
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(t.Context(), t.Context(), &service{}, prepared, nil)
+
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{
+		"answer": "streamed ", "presentation_role": presentationRoleFinalOutput,
+	}); err != nil {
+		t.Fatalf("record delegated output: %v", err)
+	}
+	if err := recorder.RecordEvent("workflow_finished", map[string]interface{}{"workflow_run_id": "run-1", "status": "succeeded"}); err != nil {
+		t.Fatalf("record workflow finish: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventSkillCallEnd, map[string]interface{}{"invocation_id": "call-1", "status": "success"}); err != nil {
+		t.Fatalf("record skill finish: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{
+		"answer": "answer", "presentation_role": presentationRoleFinalOutput,
+	}); err != nil {
+		t.Fatalf("record reconciled output: %v", err)
+	}
+	if err := recorder.FinalizePresentation(nil); err != nil {
+		t.Fatalf("finalize presentation: %v", err)
+	}
+
+	projection := presentationProjectionFromMetadata(message.Metadata)
+	var finalItems []map[string]interface{}
+	for _, item := range projection.Items {
+		if stringFromAny(item["kind"]) == presentationKindText {
+			finalItems = append(finalItems, item)
+		}
+	}
+	if len(finalItems) != 1 {
+		t.Fatalf("presentation = %#v, want one delegated final output segment", projection)
+	}
+	if got := stringFromAny(finalItems[0]["content"]); got != "streamed answer" {
+		t.Fatalf("final output = %q, want streamed answer", got)
+	}
+	if got := stringFromAny(finalItems[0]["content_phase"]); got != presentationPhaseFinal {
+		t.Fatalf("final output phase = %q, want final", got)
+	}
+	if got := stringFromAny(finalItems[0]["presentation_role"]); got != presentationRoleFinalOutput {
+		t.Fatalf("final output role = %q, want %q", got, presentationRoleFinalOutput)
+	}
+}
+
 func TestProcessTimelineRecorderDiscardsRetractedControlNarration(t *testing.T) {
 	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
 	prepared := &PreparedChat{
@@ -456,7 +505,11 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
 		Message:      message,
 	}
-	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+	emitted := []StreamEvent{}
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, func(event StreamEvent) error {
+		emitted = append(emitted, event)
+		return nil
+	})
 
 	recorder.RecordInvocationStart("call-delete-agent-1", skills.SkillAgentManagement, "delete_agent", map[string]interface{}{"agent_id": "agent-1"})
 	recorder.RecordInvocationError(skills.SkillTrace{
@@ -466,6 +519,7 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 		ToolName:     "delete_agent",
 		Status:       "error",
 		Error:        "agent not found",
+		ErrorCode:    "integration_connection_not_found",
 	})
 
 	invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"])
@@ -481,6 +535,15 @@ func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testin
 	}
 	if got := stringFromAny(invocation["error"]); got != "agent not found" {
 		t.Fatalf("error = %q, want agent not found; invocation=%#v", got, invocation)
+	}
+	if got := stringFromAny(invocation["error_code"]); got != "integration_connection_not_found" {
+		t.Fatalf("error_code = %q, want integration_connection_not_found; invocation=%#v", got, invocation)
+	}
+	if len(emitted) != 2 {
+		t.Fatalf("emitted events = %#v, want start and error", emitted)
+	}
+	if got := stringFromAny(emitted[1].Payload["error_code"]); got != "integration_connection_not_found" {
+		t.Fatalf("SSE error_code = %q, want integration_connection_not_found; payload=%#v", got, emitted[1].Payload)
 	}
 	if got := stringFromAny(invocation["invocation_id"]); got != "call-delete-agent-1" {
 		t.Fatalf("invocation_id = %q, want call-delete-agent-1; invocation=%#v", got, invocation)

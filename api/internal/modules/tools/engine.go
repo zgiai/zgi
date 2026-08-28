@@ -129,6 +129,16 @@ func (e *ToolEngine) EnrichGovernanceArguments(ctx context.Context, req InvokeRe
 	if err != nil {
 		return req.Parameters, err
 	}
+	if enricher, ok := tool.(ToolGovernanceArgumentEnricherWithError); ok {
+		enriched, enrichErr := enricher.EnrichGovernanceArgumentsWithError(ctx, req.UserID, req.Parameters)
+		if enrichErr != nil {
+			return req.Parameters, enrichErr
+		}
+		if enriched == nil {
+			return req.Parameters, nil
+		}
+		return enriched, nil
+	}
 	enricher, ok := tool.(ToolGovernanceArgumentEnricher)
 	if !ok {
 		return req.Parameters, nil

@@ -51,11 +51,23 @@ type AvailableModel struct {
 	ContextWindow   int `json:"context_window,omitempty"`
 	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
 
+	// Modalities
+	InputModalities  []string `json:"input_modalities,omitempty"`
+	OutputModalities []string `json:"output_modalities,omitempty"`
+
 	// ModelHub-aligned capabilities (nested structures)
 	Endpoints  model.ModelEndpoints  `json:"endpoints"`
 	Features   model.ModelFeatures   `json:"features"`
 	Tools      model.ModelTools      `json:"tools"`
 	Parameters model.ModelParameters `json:"parameters"`
+
+	// Advanced metadata used by model-aware workbenches.
+	SupportedParameters []string                   `json:"supported_parameters,omitempty"`
+	ParametersMetadata  model.ParameterDefinitions `json:"parameters_metadata,omitempty"`
+	ConfigParameters    model.ConfigParameters     `json:"config_parameters,omitempty"`
+	DefaultParameters   model.JSONObject           `json:"default_parameters,omitempty"`
+	Capabilities        model.JSONObject           `json:"capabilities,omitempty"`
+	Video               model.JSONObject           `json:"video,omitempty"`
 
 	// Use cases array
 	UseCases []string `json:"use_cases,omitempty"`
@@ -390,6 +402,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 		}
 
 		// Transform to AvailableModel with new nested structure
+		capabilities := capabilitiesFromDefaultParameters(m.DefaultParameters)
 		am := &AvailableModel{
 			ID:              m.ID,
 			Name:            m.Model,
@@ -397,6 +410,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Provider:        m.Provider,
 			ContextWindow:   m.ContextWindow,
 			MaxOutputTokens: m.MaxOutputTokens,
+			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),
 
 			// ModelHub-aligned nested structures
 			Endpoints: model.ModelEndpoints{
@@ -406,11 +420,16 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 				Assistants:       m.Assistants,
 				Batch:            m.Batch,
 				Embeddings:       m.Embeddings,
+				FineTuning:       m.FineTuning,
 				Vision:           m.SupportsVision,
 				ImageGeneration:  m.ImageGeneration,
 				SpeechGeneration: m.SpeechGeneration,
 				Transcription:    m.Transcription,
+				Translation:      m.Translation,
+				MusicGeneration:  m.MusicGeneration,
 				Moderation:       m.Moderation,
+				Videos:           m.Videos,
+				ImageEdit:        m.ImageEdit,
 			},
 			Features: model.ModelFeatures{
 				Streaming:        m.SupportsStreaming,
@@ -428,6 +447,12 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 				ReasoningEffort:  m.ReasoningEffort,
 			},
 			Tools: model.ModelTools{
+				WebSearch:         m.WebSearch,
+				FileSearch:        m.FileSearch,
+				ImageGeneration:   m.ImageGeneration,
+				CodeInterpreter:   m.CodeInterpreter,
+				ComputerUse:       m.ComputerUse,
+				Mcp:               m.Mcp,
 				ParallelToolCalls: m.ParallelToolCalls,
 			},
 			Parameters: model.ModelParameters{
@@ -442,7 +467,13 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			},
 
 			// Use cases
-			UseCases: []string(effectiveUseCases),
+			UseCases:            []string(effectiveUseCases),
+			SupportedParameters: parameterDefinitionNames(m.SupportedParameters),
+			ParametersMetadata:  cloneParameterDefinitions(m.SupportedParameters),
+			ConfigParameters:    cloneConfigParameters(m.ConfigParameters),
+			DefaultParameters:   cloneJSONObject(m.DefaultParameters),
+			Capabilities:        capabilities,
+			Video:               videoFromCapabilities(capabilities),
 		}
 
 		// Apply tenant custom display name if set
@@ -484,6 +515,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			continue
 		}
 
+		capabilities := capabilitiesFromDefaultParameters(m.DefaultParameters)
 		am := &AvailableModel{
 			ID:              m.ID,
 			Name:            m.Name,
@@ -491,6 +523,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Provider:        m.Provider,
 			ContextWindow:   m.ContextWindow,
 			MaxOutputTokens: m.MaxOutputTokens,
+			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),
 
 			// ModelHub-aligned nested structures (aligned with global models)
 			Endpoints: model.ModelEndpoints{
@@ -507,6 +540,8 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 				Transcription:    m.Transcription,
 				Translation:      m.Translation,
 				Moderation:       m.Moderation,
+				Videos:           modelUseCasesContain(effectiveUseCases, string(model.UseCaseVideoGen)),
+				ImageEdit:        false,
 			},
 			Features: model.ModelFeatures{
 				Streaming:        m.SupportsStreaming,
@@ -545,7 +580,13 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			},
 
 			// Use cases
-			UseCases: append([]string(nil), effectiveUseCases...),
+			UseCases:            append([]string(nil), effectiveUseCases...),
+			SupportedParameters: parameterDefinitionNames(m.SupportedParameters),
+			ParametersMetadata:  cloneParameterDefinitions(m.SupportedParameters),
+			ConfigParameters:    cloneConfigParameters(m.ConfigParameters),
+			DefaultParameters:   cloneJSONObject(m.DefaultParameters),
+			Capabilities:        capabilities,
+			Video:               videoFromCapabilities(capabilities),
 		}
 		result = append(result, am)
 	}
@@ -619,9 +660,143 @@ func cloneAvailableModels(models []*AvailableModel) []*AvailableModel {
 		}
 		modelCopy := *item
 		modelCopy.UseCases = append([]string(nil), item.UseCases...)
+		modelCopy.InputModalities = append([]string(nil), item.InputModalities...)
+		modelCopy.OutputModalities = append([]string(nil), item.OutputModalities...)
+		modelCopy.SupportedParameters = append([]string(nil), item.SupportedParameters...)
+		modelCopy.ParametersMetadata = cloneParameterDefinitions(item.ParametersMetadata)
+		modelCopy.ConfigParameters = cloneConfigParameters(item.ConfigParameters)
+		modelCopy.DefaultParameters = cloneJSONObject(item.DefaultParameters)
+		modelCopy.Capabilities = cloneJSONObject(item.Capabilities)
+		modelCopy.Video = cloneJSONObject(item.Video)
 		cloned = append(cloned, &modelCopy)
 	}
 	return cloned
+}
+
+func modelUseCasesContain(useCases []string, target string) bool {
+	for _, useCase := range useCases {
+		if useCase == target {
+			return true
+		}
+	}
+	return false
+}
+
+func parameterDefinitionNames(params model.ParameterDefinitions) []string {
+	if len(params) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(params))
+	for _, param := range params {
+		if strings.TrimSpace(param.Name) == "" {
+			continue
+		}
+		names = append(names, param.Name)
+	}
+	return names
+}
+
+func cloneJSONArray(values types.JSONArray) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]string(nil), []string(values)...)
+}
+
+func cloneParameterDefinitions(params model.ParameterDefinitions) model.ParameterDefinitions {
+	if len(params) == 0 {
+		return nil
+	}
+	return append(model.ParameterDefinitions(nil), params...)
+}
+
+func cloneConfigParameters(params model.ConfigParameters) model.ConfigParameters {
+	if len(params) == 0 {
+		return nil
+	}
+	return append(model.ConfigParameters(nil), params...)
+}
+
+func cloneJSONObject(src model.JSONObject) model.JSONObject {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(model.JSONObject, len(src))
+	for key, value := range src {
+		dst[key] = cloneJSONValue(value)
+	}
+	return dst
+}
+
+func cloneJSONValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case model.JSONObject:
+		return cloneJSONObject(typed)
+	case map[string]interface{}:
+		cloned := make(map[string]interface{}, len(typed))
+		for key, nested := range typed {
+			cloned[key] = cloneJSONValue(nested)
+		}
+		return cloned
+	case []interface{}:
+		cloned := make([]interface{}, len(typed))
+		for i, nested := range typed {
+			cloned[i] = cloneJSONValue(nested)
+		}
+		return cloned
+	default:
+		return typed
+	}
+}
+
+func capabilitiesFromDefaultParameters(defaults model.JSONObject) model.JSONObject {
+	if len(defaults) == 0 {
+		return nil
+	}
+	raw, ok := defaults["capabilities"]
+	if !ok {
+		return nil
+	}
+	switch capabilities := raw.(type) {
+	case model.JSONObject:
+		return cloneJSONObject(capabilities)
+	case map[string]interface{}:
+		if len(capabilities) == 0 {
+			return nil
+		}
+		cloned, ok := cloneJSONValue(capabilities).(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		return model.JSONObject(cloned)
+	default:
+		return nil
+	}
+}
+
+func videoFromCapabilities(capabilities model.JSONObject) model.JSONObject {
+	if len(capabilities) == 0 {
+		return nil
+	}
+	raw, ok := capabilities["video"]
+	if !ok {
+		return nil
+	}
+	switch video := raw.(type) {
+	case model.JSONObject:
+		return cloneJSONObject(video)
+	case map[string]interface{}:
+		if len(video) == 0 {
+			return nil
+		}
+		cloned, ok := cloneJSONValue(video).(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		return model.JSONObject(cloned)
+	default:
+		return nil
+	}
 }
 
 func (s *availableModelsService) SetOfficialRouteBootstrapper(_ interfaces.OfficialRouteBootstrapper) {

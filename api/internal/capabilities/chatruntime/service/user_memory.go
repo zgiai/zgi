@@ -133,6 +133,8 @@ func cloneChatRequestPartsForUserMemoryPreflight(parts *chatRequestParts) *chatR
 	clone.KnowledgeDatasetIDs = append([]string{}, parts.KnowledgeDatasetIDs...)
 	clone.KnowledgeRetrievalConfig = copyStringAnyMap(parts.KnowledgeRetrievalConfig)
 	clone.AgentMemorySlots = append([]AgentMemorySlotConfig{}, parts.AgentMemorySlots...)
+	clone.AgentMemoryConfigScope = parts.AgentMemoryConfigScope
+	clone.AgentMemoryConfigRevision = parts.AgentMemoryConfigRevision
 	if parts.ModelTurnIntent != nil {
 		intent := *parts.ModelTurnIntent
 		clone.ModelTurnIntent = &intent

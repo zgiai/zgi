@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"net/http"
 	"strconv"
 	"strings"
 )
@@ -173,34 +174,12 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 		response.Fail(c, response.ErrSystemError)
 		return agentRuntimeContext{}, false
 	}
-	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
-	if err != nil {
-		response.Fail(c, response.ErrUnauthorized)
+	scope, agentID, config, ok := h.agentDraftRuntimeAccess(c)
+	if !ok {
 		return agentRuntimeContext{}, false
 	}
-	organizationID, err := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
-	if err != nil {
-		response.Fail(c, response.ErrUnauthorized)
-		return agentRuntimeContext{}, false
-	}
-	agentID, err := uuid.Parse(strings.TrimSpace(c.Param("agent_id")))
-	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return agentRuntimeContext{}, false
-	}
-	ctx := agentRuntimeRequestContext(c, accountID.String())
-	draft, err := h.appService.GetAgentDraftRuntimeConfig(ctx, agentID.String(), accountID.String())
-	if err != nil {
-		h.failRuntime(c, err)
-		return agentRuntimeContext{}, false
-	}
-	agentWorkspaceID, err := uuid.Parse(strings.TrimSpace(draft.WorkspaceID))
-	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return agentRuntimeContext{}, false
-	}
-	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &agentWorkspaceID}
-	runConfig, err := h.agentRunConfig(ctx, scope, agentID.String(), "agent.draft", draft.Config, "account")
+	ctx := agentRuntimeRequestContext(c, scope.AccountID.String())
+	runConfig, err := h.agentRunConfig(ctx, scope, agentID.String(), "agent.draft", config, "account")
 	if err != nil {
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
@@ -216,52 +195,48 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 	}, true
 }
 
+func (h *AgentsHandler) agentDraftRuntimeAccess(c *gin.Context) (runtimeservice.Scope, uuid.UUID, dto.AgentConfigResponse, bool) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return runtimeservice.Scope{}, uuid.Nil, dto.AgentConfigResponse{}, false
+	}
+	organizationID, err := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return runtimeservice.Scope{}, uuid.Nil, dto.AgentConfigResponse{}, false
+	}
+	agentID, err := uuid.Parse(strings.TrimSpace(c.Param("agent_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return runtimeservice.Scope{}, uuid.Nil, dto.AgentConfigResponse{}, false
+	}
+	ctx := agentRuntimeRequestContext(c, accountID.String())
+	draft, err := h.appService.GetAgentDraftRuntimeConfig(ctx, agentID.String(), accountID.String())
+	if err != nil {
+		h.failRuntime(c, err)
+		return runtimeservice.Scope{}, uuid.Nil, dto.AgentConfigResponse{}, false
+	}
+	agentWorkspaceID, err := uuid.Parse(strings.TrimSpace(draft.WorkspaceID))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return runtimeservice.Scope{}, uuid.Nil, dto.AgentConfigResponse{}, false
+	}
+	return runtimeservice.Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &agentWorkspaceID,
+	}, agentID, draft.Config, true
+}
+
 func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeContext, bool) {
 	if h.chatRuntimeService == nil {
 		response.Fail(c, response.ErrSystemError)
 		return agentRuntimeContext{}, false
 	}
-	if !h.requireWebAppRuntimeAccess(c) {
+	scope, agentID, webAppID, published, ok := h.webAppAgentRuntimeAccess(c)
+	if !ok {
 		return agentRuntimeContext{}, false
-	}
-	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
-	if err != nil {
-		h.failWebAppRuntime(c, err)
-		return agentRuntimeContext{}, false
-	}
-	if !requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published) {
-		return agentRuntimeContext{}, false
-	}
-	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
-	if err != nil {
-		response.Fail(c, response.ErrUnauthorized)
-		return agentRuntimeContext{}, false
-	}
-	agentID, err := uuid.Parse(published.AgentID)
-	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return agentRuntimeContext{}, false
-	}
-	workspaceID, err := uuid.Parse(published.WorkspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return agentRuntimeContext{}, false
-	}
-	organizationID, err := uuid.Parse(published.OrganizationID)
-	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return agentRuntimeContext{}, false
-	}
-	webAppID, err := uuid.Parse(published.WebAppID)
-	if err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return agentRuntimeContext{}, false
-	}
-	scope := runtimeservice.Scope{
-		OrganizationID:  organizationID,
-		AccountID:       accountID,
-		WorkspaceID:     &workspaceID,
-		SkipAccessCheck: true,
 	}
 	runConfig, err := h.agentRunConfig(c.Request.Context(), scope, published.AgentID, "agent.published."+published.Version, published.Config, webAppAgentMemoryUserScope(c))
 	if err != nil {
@@ -280,31 +255,85 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 	}, true
 }
 
+func (h *AgentsHandler) webAppAgentRuntimeAccess(c *gin.Context) (runtimeservice.Scope, uuid.UUID, uuid.UUID, *dto.AgentWebAppRuntimeConfigResponse, bool) {
+	if !h.requireWebAppRuntimeAccess(c) {
+		return runtimeservice.Scope{}, uuid.Nil, uuid.Nil, nil, false
+	}
+	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
+	if err != nil {
+		h.failWebAppRuntime(c, err)
+		return runtimeservice.Scope{}, uuid.Nil, uuid.Nil, nil, false
+	}
+	if !requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published) {
+		return runtimeservice.Scope{}, uuid.Nil, uuid.Nil, nil, false
+	}
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return runtimeservice.Scope{}, uuid.Nil, uuid.Nil, nil, false
+	}
+	agentID, err := uuid.Parse(published.AgentID)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return runtimeservice.Scope{}, uuid.Nil, uuid.Nil, nil, false
+	}
+	workspaceID, err := uuid.Parse(published.WorkspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return runtimeservice.Scope{}, uuid.Nil, uuid.Nil, nil, false
+	}
+	organizationID, err := uuid.Parse(published.OrganizationID)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return runtimeservice.Scope{}, uuid.Nil, uuid.Nil, nil, false
+	}
+	webAppID, err := uuid.Parse(published.WebAppID)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return runtimeservice.Scope{}, uuid.Nil, uuid.Nil, nil, false
+	}
+	return runtimeservice.Scope{
+		OrganizationID:  organizationID,
+		AccountID:       accountID,
+		WorkspaceID:     &workspaceID,
+		SkipAccessCheck: true,
+	}, agentID, webAppID, published, true
+}
+
 func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResponse, agentMemoryUserScope string) runtimeservice.RunConfig {
+	memoryConfigScope := agentmemory.ConfigScopeDraft
+	if strings.HasPrefix(strings.TrimSpace(systemPromptVersion), "agent.published.") {
+		memoryConfigScope = agentmemory.ConfigScopePublished
+	}
 	return runtimeservice.RunConfig{
-		SystemPrompt:              cfg.SystemPrompt,
-		SystemPromptVersion:       systemPromptVersion,
-		ModelProvider:             cfg.ModelProvider,
-		Model:                     cfg.Model,
-		ModelParameters:           cfg.ModelParameters,
-		EnabledSkillIDs:           cfg.EnabledSkillIDs,
-		KnowledgeDatasetIDs:       cfg.KnowledgeDatasetIDs,
-		KnowledgeBoundByAccountID: cfg.KnowledgeBoundByAccountID,
-		KnowledgeBoundAtUnix:      cfg.KnowledgeBoundAtUnix,
-		KnowledgeRetrievalConfig:  cfg.KnowledgeRetrievalConfig,
-		DatabaseBindings:          agentDatabaseRuntimeBindings(cfg.DatabaseBindings),
-		DatabaseBoundByAccountID:  cfg.DatabaseBoundByAccountID,
-		DatabaseBoundAtUnix:       cfg.DatabaseBoundAtUnix,
-		WorkflowBindings:          agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
-		WorkflowBoundByAccountID:  cfg.WorkflowBoundByAccountID,
-		WorkflowBoundAtUnix:       cfg.WorkflowBoundAtUnix,
-		BindingAuthorizations:     agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
-		UseMemory:                 false,
-		AgentMemoryEnabled:        cfg.AgentMemoryEnabled,
-		AgentMemorySlots:          agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
-		AgentMemoryUserScope:      agentMemoryUserScope,
-		BillingAppID:              agentID,
-		BillingAppType:            runtimemodel.ConversationCallerAgent,
+		SystemPrompt:                     cfg.SystemPrompt,
+		SystemPromptVersion:              systemPromptVersion,
+		ModelProvider:                    cfg.ModelProvider,
+		Model:                            cfg.Model,
+		ModelParameters:                  cfg.ModelParameters,
+		EnabledSkillIDs:                  cfg.EnabledSkillIDs,
+		KnowledgeDatasetIDs:              cfg.KnowledgeDatasetIDs,
+		KnowledgeBoundByAccountID:        cfg.KnowledgeBoundByAccountID,
+		KnowledgeBoundAtUnix:             cfg.KnowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:         cfg.KnowledgeRetrievalConfig,
+		DatabaseBindings:                 agentDatabaseRuntimeBindings(cfg.DatabaseBindings),
+		DatabaseBoundByAccountID:         cfg.DatabaseBoundByAccountID,
+		DatabaseBoundAtUnix:              cfg.DatabaseBoundAtUnix,
+		WorkflowBindings:                 agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
+		WorkflowBoundByAccountID:         cfg.WorkflowBoundByAccountID,
+		WorkflowBoundAtUnix:              cfg.WorkflowBoundAtUnix,
+		IntegrationConnectionIDs:         agentIntegrationRuntimeConnectionIDs(cfg.IntegrationBindings),
+		IntegrationSelectedConnectionIDs: agentIntegrationRuntimeSelectedConnectionIDs(cfg.IntegrationBindings),
+		BindingAuthorizations:            agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
+		UseMemory:                        false,
+		AgentMemoryEnabled:               cfg.AgentMemoryEnabled,
+		AgentMemoryAutoExtractionEnabled: cfg.AgentMemoryAutoExtractionEnabled,
+		AgentMemorySlots:                 agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
+		AgentMemoryUserScope:             agentMemoryUserScope,
+		AgentMemoryConfigScope:           memoryConfigScope,
+		AgentMemoryConfigRevision:        cfg.AgentMemoryConfigRevision,
+		BillingAppID:                     agentID,
+		BillingAppType:                   runtimemodel.ConversationCallerAgent,
 	}
 }
 
@@ -319,9 +348,36 @@ func agentRuntimeBindingAuthorizations(authorizations []dto.AgentBindingAuthoriz
 			ResourceID:       authorization.ResourceID,
 			ParentResourceID: authorization.ParentResourceID,
 			AccessMode:       authorization.AccessMode,
+			AllowedActionIDs: append([]string(nil), authorization.AllowedActionIDs...),
 			BoundByAccountID: authorization.BoundByAccountID,
 			BoundAtUnix:      authorization.BoundAtUnix,
 		})
+	}
+	return result
+}
+
+func agentIntegrationRuntimeConnectionIDs(bindings []dto.AgentIntegrationBinding) map[string]string {
+	result := make(map[string]string, len(bindings))
+	for _, binding := range normalizeAgentIntegrationBindings(bindings) {
+		if binding.IntegrationID == "" || binding.ConnectionID == "" {
+			continue
+		}
+		result[binding.IntegrationID] = binding.ConnectionID
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func agentIntegrationRuntimeSelectedConnectionIDs(bindings []dto.AgentIntegrationBinding) map[string][]string {
+	preferred := agentIntegrationRuntimeConnectionIDs(bindings)
+	if len(preferred) == 0 {
+		return nil
+	}
+	result := make(map[string][]string, len(preferred))
+	for integrationID, connectionID := range preferred {
+		result[integrationID] = []string{connectionID}
 	}
 	return result
 }
@@ -399,6 +455,7 @@ func agentMemoryRuntimeSlots(slots []dto.AgentMemorySlotConfig) []runtimeservice
 		}
 		out = append(out, runtimeservice.AgentMemorySlotConfig{
 			Key:         slot.Key,
+			Name:        slot.Name,
 			Description: slot.Description,
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,
@@ -604,7 +661,13 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		errors.Is(err, runtimeservice.ErrConversationWaitingAction):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, agentmemory.ErrInvalidInput):
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, agentmemory.ErrConflict):
+		c.JSON(http.StatusConflict, response.Response{Code: agentMemoryValueRevisionConflictCode, Message: agentMemoryRevisionConflictMessage})
+	case errors.Is(err, agentmemory.ErrUnauthorized):
+		response.Fail(c, response.ErrUnauthorized)
+	case errors.Is(err, agentmemory.ErrNotFound):
+		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeservice.ErrUnauthorized):
 		response.Fail(c, response.ErrUnauthorized)
 	case errors.Is(err, runtimeservice.ErrPermissionDenied):

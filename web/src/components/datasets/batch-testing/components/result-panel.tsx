@@ -9,6 +9,7 @@ import { useT } from '@/i18n';
 import { Skeleton } from '@/components/ui/skeleton';
 
 import type { ResultElement } from '../type';
+import { GraphExecutionDetails } from '@/components/datasets/hit-testing/components/graph-execution-details';
 interface ResultPanelProps {
   query: string | null;
   resultData: ResultElement | undefined;
@@ -57,6 +58,17 @@ export function BatchResultPanel(props: ResultPanelProps) {
       </div>
     );
   }
+  if (resultData?.status === 'failed' || resultData?.status === 'error') {
+    return (
+      <div className="w-full px-12 py-8">
+        <Card className="border-destructive/40">
+          <CardContent className="p-4 text-sm text-destructive">
+            {resultData.error || t('hitTesting.batchRowFailed')}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
   if (!resultData?.result?.records) {
     return (
       <div className="text-center py-8 pt-[20%] w-full">
@@ -72,16 +84,20 @@ export function BatchResultPanel(props: ResultPanelProps) {
       <div className="text-[16px] font-medium mb-2 flex justify-between">
         {query}
         <div className="text-sm">
-          <span>耗时：{resultData?.finished_at - resultData.started_at}s</span>
-          {/* <span>测试时间：</span> */}
+          <span>
+            {t('hitTesting.elapsedTime')}: {resultData.finished_at - resultData.started_at}s
+          </span>
         </div>
       </div>
+      {resultData.result.graph_execution && (
+        <GraphExecutionDetails execution={resultData.result.graph_execution} />
+      )}
       <div className="space-y-4 ">
         {resultData.result?.records.map((result, index) => (
           <Card key={getBatchResultKey(result, index)} className="mb-3">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
-                <Badge variant="default">一级切片</Badge>
+                <Badge variant="default">Primary chunk</Badge>
                 <span className="text-[var(--tag-primary-text)]">#{result.segment.position}</span>
               </div>
             </CardHeader>
@@ -103,7 +119,7 @@ export function BatchResultPanel(props: ResultPanelProps) {
                         >
                           <div className="flex items-center  mb-1">
                             <Badge variant="subtle" className="cursor-pointer">
-                              二级切片
+                              Child chunk
                             </Badge>
                             <span className="text-[var(--tag-normal-text)] text-xs ml-3">{`#S-${chunk.position}`}</span>
                           </div>
