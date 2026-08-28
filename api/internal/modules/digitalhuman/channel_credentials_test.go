@@ -181,8 +181,12 @@ func TestEmbeddedChannelCredentialUsesRegisteredProviderWithoutCoreBranch(t *tes
 	if resolved.Credentials["client_token"] != "token" || resolved.Credentials["callback_secret"] != "callback" {
 		t.Fatalf("resolved credentials = %#v", resolved.Credentials)
 	}
-	if installation.ExternalTenantID != "acme-workspace" || installation.ExternalBotID != "acme-assistant" {
-		t.Fatalf("resolved identity = %q/%q", installation.ExternalTenantID, installation.ExternalBotID)
+	if installation.ExternalTenantID != "" || installation.ExternalBotID != "" {
+		t.Fatalf("identity was resolved before explicit test = %q/%q", installation.ExternalTenantID, installation.ExternalBotID)
+	}
+	externalTenantID, externalBotID, err := resolver.ResolveIdentity(t.Context(), installation)
+	if err != nil || externalTenantID != "acme-workspace" || externalBotID != "acme-assistant" {
+		t.Fatalf("resolved identity = %q/%q, %v", externalTenantID, externalBotID, err)
 	}
 }
 

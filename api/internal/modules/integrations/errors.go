@@ -131,6 +131,19 @@ func NewProviderError(code, message string, err error, diagnostics ProviderDiagn
 	}
 }
 
+// NewProviderErrorWithReason adds a stable recovery reason while preserving
+// bounded provider diagnostics. Presentation layers may use the reason code
+// to select an actionable, localized message without exposing provider text.
+func NewProviderErrorWithReason(code, reasonCode, message string, err error, diagnostics ProviderDiagnostics) error {
+	return &Error{
+		Code:                code,
+		ReasonCode:          reasonCode,
+		Message:             message,
+		Err:                 err,
+		ProviderDiagnostics: normalizeProviderDiagnostics(diagnostics),
+	}
+}
+
 func ErrorCode(err error) string {
 	if err == nil {
 		return ""
@@ -140,6 +153,19 @@ func ErrorCode(err error) string {
 		return integrationError.Code
 	}
 	return ErrorCodeUpstream
+}
+
+// ErrorReasonCode returns the stable, non-sensitive recovery reason attached
+// by a provider adapter. Unknown errors deliberately return an empty value.
+func ErrorReasonCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	var integrationError *Error
+	if errors.As(err, &integrationError) {
+		return integrationError.ReasonCode
+	}
+	return ""
 }
 
 func invalidInput(message string, err error) error {

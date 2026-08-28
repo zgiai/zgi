@@ -19,9 +19,11 @@ import (
 
 type channelHandlerServiceStub struct {
 	ChannelHandlerService
-	handleWebhook      func(context.Context, string, uuid.UUID, channelruntime.WebhookRequest) (*ChannelWebhookResult, error)
-	probeWebhook       func(context.Context, string, uuid.UUID) error
-	deleteInstallation func(context.Context, Scope, uuid.UUID, uuid.UUID) error
+	handleWebhook       func(context.Context, string, uuid.UUID, channelruntime.WebhookRequest) (*ChannelWebhookResult, error)
+	probeWebhook        func(context.Context, string, uuid.UUID) error
+	verifyInstallation  func(context.Context, Scope, uuid.UUID, uuid.UUID) (*ChannelInstallationVerification, error)
+	startConnectionTest func(context.Context, Scope, uuid.UUID, uuid.UUID, StartChannelConnectionTestRequest) (*ChannelConnectionTest, error)
+	deleteInstallation  func(context.Context, Scope, uuid.UUID, uuid.UUID) error
 }
 
 func (stub channelHandlerServiceStub) HandleWebhook(ctx context.Context, provider string, installationID uuid.UUID, request channelruntime.WebhookRequest) (*ChannelWebhookResult, error) {
@@ -37,6 +39,75 @@ func (stub channelHandlerServiceStub) ProbeWebhook(ctx context.Context, provider
 
 func (stub channelHandlerServiceStub) DeleteInstallation(ctx context.Context, scope Scope, digitalHumanID, installationID uuid.UUID) error {
 	return stub.deleteInstallation(ctx, scope, digitalHumanID, installationID)
+}
+
+func (stub channelHandlerServiceStub) VerifyInstallation(ctx context.Context, scope Scope, digitalHumanID, installationID uuid.UUID) (*ChannelInstallationVerification, error) {
+	return stub.verifyInstallation(ctx, scope, digitalHumanID, installationID)
+}
+
+func (stub channelHandlerServiceStub) StartConnectionTest(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID, installationID uuid.UUID,
+	request StartChannelConnectionTestRequest,
+) (*ChannelConnectionTest, error) {
+	return stub.startConnectionTest(ctx, scope, digitalHumanID, installationID, request)
+}
+
+func TestChannelInstallationVerifyHandlerUsesScopedInstallation(t *testing.T) {
+	scope := Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New()}
+	digitalHumanID, installationID := uuid.New(), uuid.New()
+	called := false
+	service := channelHandlerServiceStub{verifyInstallation: func(_ context.Context, gotScope Scope, gotDigitalHumanID, gotInstallationID uuid.UUID) (*ChannelInstallationVerification, error) {
+		called = true
+		if gotScope != scope || gotDigitalHumanID != digitalHumanID || gotInstallationID != installationID {
+			t.Fatalf("VerifyInstallation() = scope %#v, digital human %s, installation %s", gotScope, gotDigitalHumanID, gotInstallationID)
+		}
+		return &ChannelInstallationVerification{Status: "verified", CredentialVerified: true, BotIdentityVerified: true}, nil
+	}}
+	router := channelAuthenticatedTestRouter(t, service, scope)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/digital-humans/"+digitalHumanID.String()+"/channels/installations/"+installationID.String()+"/verify", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || !called || !strings.Contains(recorder.Body.String(), `"status":"verified"`) {
+		t.Fatalf("response = %d %s, called = %t", recorder.Code, recorder.Body.String(), called)
+	}
+}
+
+func TestChannelConnectionTestHandlerAcceptsGroupConversationType(t *testing.T) {
+	scope := Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New()}
+	digitalHumanID, installationID := uuid.New(), uuid.New()
+	service := channelHandlerServiceStub{startConnectionTest: func(
+		_ context.Context,
+		gotScope Scope,
+		gotDigitalHumanID, gotInstallationID uuid.UUID,
+		request StartChannelConnectionTestRequest,
+	) (*ChannelConnectionTest, error) {
+		if gotScope != scope || gotDigitalHumanID != digitalHumanID || gotInstallationID != installationID ||
+			request.ConversationType != channelruntime.ConversationTypeGroup {
+			t.Fatalf("StartConnectionTest() = scope %#v, digital human %s, installation %s, request %#v", gotScope, gotDigitalHumanID, gotInstallationID, request)
+		}
+		return &ChannelConnectionTest{
+			ID: uuid.New(), Status: ChannelConnectionTestAwaitingMessage,
+			ConversationType: channelruntime.ConversationTypeGroup,
+		}, nil
+	}}
+	router := channelAuthenticatedTestRouter(t, service, scope)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/digital-humans/"+digitalHumanID.String()+"/channels/installations/"+installationID.String()+"/connection-tests",
+		bytes.NewBufferString(`{"conversation_type":"group"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"conversation_type":"group"`) {
+		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestChannelInstallationDeleteHandlerUsesSimpleRequest(t *testing.T) {

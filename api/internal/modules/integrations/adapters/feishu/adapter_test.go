@@ -21,6 +21,46 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
+func TestMapFeishuBusinessCodeExplainsMessagingRecovery(t *testing.T) {
+	tests := []struct {
+		code       int
+		want       string
+		wantReason string
+	}{
+		{code: 230002, want: "not a member", wantReason: "bot_not_in_chat"},
+		{code: 230006, want: "not enabled", wantReason: "bot_capability_disabled"},
+		{code: 230013, want: "not available", wantReason: "app_unavailable"},
+		{code: 230027, want: "required application permission", wantReason: "permission_missing"},
+		{code: 230035, want: "not allowed to send", wantReason: "send_not_allowed"},
+	}
+	for _, test := range tests {
+		t.Run(strconv.Itoa(test.code), func(t *testing.T) {
+			err := mapFeishuBusinessCode(test.code)
+			if integrations.ErrorCode(err) != integrations.ErrorCodeAccessDenied ||
+				integrations.ErrorReasonCode(err) != test.wantReason ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("mapFeishuBusinessCode(%d) = %v", test.code, err)
+			}
+		})
+	}
+}
+
+func TestFeishuDiagnosticsPreserveStableRecoveryReason(t *testing.T) {
+	err := withFeishuDiagnostics(
+		mapFeishuBusinessCode(230027),
+		responseMeta{Diagnostics: integrations.ProviderDiagnostics{
+			ErrorCode: "230027", RequestID: "request-safe", HTTPStatus: http.StatusForbidden,
+		}},
+	)
+	if integrations.ErrorReasonCode(err) != "permission_missing" {
+		t.Fatalf("reason code = %q, want permission_missing", integrations.ErrorReasonCode(err))
+	}
+	diagnostics := integrations.ProviderDiagnosticsFromError(err)
+	if diagnostics.ErrorCode != "230027" || diagnostics.RequestID != "request-safe" || diagnostics.HTTPStatus != http.StatusForbidden {
+		t.Fatalf("diagnostics = %#v", diagnostics)
+	}
+}
+
 func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 	definition := ProviderDefinition()
 	if definition.ID != IntegrationID || definition.DriverID != DriverID || len(definition.AuthMethods) != 3 {
@@ -63,15 +103,18 @@ func TestProviderDefinitionSeparatesUserOAuthAndTenantApp(t *testing.T) {
 				method.LifecycleStrategy != integrations.AuthLifecycleStrategyExchangeOnDemand ||
 				method.RequestAuthStrategy != integrations.RequestAuthStrategyBearerHeader ||
 				len(method.Fields) != 4 ||
-				method.SetupGuide == nil || len(method.SetupGuide.Steps) != 4 ||
+				method.SetupGuide == nil || len(method.SetupGuide.Steps) != 6 ||
 				!strings.HasPrefix(method.SetupGuide.ConsoleURL, "https://") ||
 				!strings.HasPrefix(method.SetupGuide.DocumentationURL, "https://") {
 				t.Fatalf("tenant method = %#v", method)
 			}
 			if integrations.AuthMethodScopeEvidence(definition, method.ID) != integrations.AuthScopeEvidenceConnectorDeclared ||
+				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeTenantRead) ||
+				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeP2PMessageRead) ||
 				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeMessageRead) ||
 				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeGroupMessageRead) ||
-				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeChatMembersRead) {
+				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeChatMembersRead) ||
+				!strings.Contains(method.SetupGuide.Steps[2].Description, ScopeSendAsBot) {
 				t.Fatalf("tenant app scope guidance = %#v", method)
 			}
 			if len(method.SetupGuide.Notices) != 3 ||

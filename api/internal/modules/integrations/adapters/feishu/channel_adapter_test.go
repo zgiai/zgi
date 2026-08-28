@@ -349,6 +349,55 @@ func TestDirectChannelAdapterReadsContextWithoutActionPolicy(t *testing.T) {
 	}
 }
 
+func TestDirectChannelAdapterTestsGroupCapabilitiesIndependently(t *testing.T) {
+	now := time.Date(2026, 8, 29, 8, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","tenant_access_token":"tenant-token","expire":7200}`))
+		case "/open-apis/im/v1/messages":
+			_, _ = writer.Write([]byte(`{"code":230027,"msg":"forbidden"}`))
+		case "/open-apis/im/v1/chats/oc_capability/members":
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","data":{"items":[],"page_token":"","has_more":false}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	connectionID := uuid.New()
+	resolver := &channelConnectionResolverStub{connection: directChannelConnection(connectionID)}
+	adapter, err := NewDirectChannelAdapter(newTestAdapter(t, server), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	organizationID, workspaceID := uuid.New(), uuid.New()
+	checks := adapter.TestConversationCapabilities(t.Context(), channelruntime.ConversationCapabilityTestRequest{
+		OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: uuid.New(), InstallationID: uuid.New(),
+		ConnectionID: connectionID,
+		Subject: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New(),
+			OrganizationID: organizationID, WorkspaceID: workspaceID,
+		},
+		ExternalConversationID: "oc_capability", CurrentMessageID: "om_current", CurrentSenderID: "ou_sender", OccurredAt: now,
+	})
+	if len(checks) != 2 {
+		t.Fatalf("capability checks = %#v", checks)
+	}
+	if checks[0].Capability != channelruntime.ConversationCapabilityMessageHistory ||
+		checks[0].Status != channelruntime.CapabilityCheckFailed || checks[0].FailureCode != "permission_missing" ||
+		len(checks[0].RequiredPermissions) != 1 || checks[0].RequiredPermissions[0] != "im:message:readonly" {
+		t.Fatalf("history capability = %#v", checks[0])
+	}
+	if checks[1].Capability != channelruntime.ConversationCapabilityMemberNames || checks[1].Status != channelruntime.CapabilityCheckPassed {
+		t.Fatalf("member capability = %#v", checks[1])
+	}
+	if got := resolver.resolveCount(); got != 1 {
+		t.Fatalf("credential resolve count = %d, want 1", got)
+	}
+}
+
 func TestContextMessagesPreserveConnectionSelfRelationship(t *testing.T) {
 	messages := contextMessagesFromOutput(map[string]interface{}{
 		"messages": []interface{}{map[string]interface{}{

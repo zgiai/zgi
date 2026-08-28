@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
 )
 
 func TestChannelWebhookReplayedTenTimesCreatesOneInvocation(t *testing.T) {
@@ -249,6 +250,14 @@ func TestChannelWebhookStaleGroupMentionDoesNotCreateAutomaticRoute(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	verification, err := service.VerifyInstallation(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil || verification.Status != "verified" {
+		t.Fatalf("VerifyInstallation() = %#v, %v", verification, err)
+	}
+	installation, err = store.ScopedChannelInstallationByID(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	adapter.message = &channelruntime.InboundMessage{
 		Provider: "feishu", ProviderEventID: "event-stale-unbound", ProviderMessageID: "message-stale-unbound",
 		ExternalTenantID: "tenant-1", ExternalConversationID: "oc_" + uuid.NewString(),
@@ -416,6 +425,14 @@ func TestChannelGroupConversationAutoBindsOnFirstBotMention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	verification, err := service.VerifyInstallation(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil || verification.Status != "verified" {
+		t.Fatalf("VerifyInstallation() = %#v, %v", verification, err)
+	}
+	installation, err = store.ScopedChannelInstallationByID(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	conversationID := "oc_" + uuid.NewString()
 	adapter.message = &channelruntime.InboundMessage{
 		Provider: "feishu", ProviderEventID: "event-group-ordinary", ProviderMessageID: "message-group-ordinary",
@@ -484,6 +501,328 @@ func TestChannelInstallationViewUsesConfiguredAPIBaseURL(t *testing.T) {
 	}
 }
 
+func TestChannelInstallationsAreIsolatedByDigitalHuman(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	ownInstallation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Owned Feishu installation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	otherDigitalHumanID := uuid.New()
+	defaultSubjectType := runtimeidentity.SubjectTypeDigitalHuman
+	now := time.Now().UTC()
+	foreignInstallation := &channelruntime.Installation{
+		ID:                 uuid.New(),
+		OrganizationID:     scope.OrganizationID,
+		WorkspaceID:        scope.WorkspaceID,
+		Provider:           "feishu",
+		ConnectionID:       uuid.New(),
+		Name:               "Another digital human's installation",
+		ExternalTenantID:   "tenant-2",
+		ExternalBotID:      "ou_other_bot",
+		DefaultSubjectType: &defaultSubjectType,
+		DefaultSubjectID:   &otherDigitalHumanID,
+		Status:             channelruntime.InstallationStatusActive,
+		Revision:           1,
+		CreatedBy:          scope.ActorID,
+		UpdatedBy:          scope.ActorID,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	store.installations[foreignInstallation.ID] = cloneInstallation(foreignInstallation)
+
+	views, err := service.ListInstallations(t.Context(), scope, digitalHumanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 1 || views[0].ID != ownInstallation.ID {
+		t.Fatalf("ListInstallations() = %#v, want only %s", views, ownInstallation.ID)
+	}
+
+	updatedName := "Cross-subject update"
+	_, err = service.UpdateInstallation(t.Context(), scope, digitalHumanID, foreignInstallation.ID, UpdateChannelInstallationRequest{
+		ExpectedRevision: foreignInstallation.Revision,
+		Name:             &updatedName,
+	})
+	if !errors.Is(err, ErrChannelInstallationNotFound) {
+		t.Fatalf("UpdateInstallation(foreign) error = %v, want ErrChannelInstallationNotFound", err)
+	}
+	_, err = service.UpdateInstallationCredential(t.Context(), scope, digitalHumanID, foreignInstallation.ID, UpdateChannelInstallationCredentialRequest{
+		ExpectedRevision: foreignInstallation.Revision,
+		Credentials:      map[string]string{"app_secret": "replacement"},
+	})
+	if !errors.Is(err, ErrChannelInstallationNotFound) {
+		t.Fatalf("UpdateInstallationCredential(foreign) error = %v, want ErrChannelInstallationNotFound", err)
+	}
+	if _, err := service.VerifyInstallation(t.Context(), scope, digitalHumanID, foreignInstallation.ID); !errors.Is(err, ErrChannelInstallationNotFound) {
+		t.Fatalf("VerifyInstallation(foreign) error = %v, want ErrChannelInstallationNotFound", err)
+	}
+	if err := service.DeleteInstallation(t.Context(), scope, digitalHumanID, foreignInstallation.ID); !errors.Is(err, ErrChannelInstallationNotFound) {
+		t.Fatalf("DeleteInstallation(foreign) error = %v, want ErrChannelInstallationNotFound", err)
+	}
+	if store.installations[foreignInstallation.ID] == nil {
+		t.Fatal("foreign installation was deleted")
+	}
+}
+
+func TestChannelInstallationVerificationRechecksCredentialAndBotIdentity(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu verification",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := service.VerifyInstallation(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil {
+		t.Fatalf("VerifyInstallation() error = %v", err)
+	}
+	if result.Status != "verified" || !result.CredentialVerified || !result.BotIdentityVerified {
+		t.Fatalf("VerifyInstallation() = %#v", result)
+	}
+	if result.ChannelContext.Status != ChannelContextReadinessReady || result.CheckedAt.IsZero() {
+		t.Fatalf("VerifyInstallation() readiness = %#v, checked_at = %v", result.ChannelContext, result.CheckedAt)
+	}
+	stored := store.installations[installation.ID]
+	if stored.ExternalTenantID != "tenant-1" || stored.ExternalBotID != "ou_bot" || stored.Revision != 2 {
+		t.Fatalf("stored verified identity = %#v", stored)
+	}
+}
+
+func TestChannelInstallationVerificationReturnsActionableProviderFailure(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	service.credentials = failingChannelCredentialStub{
+		channelCredentialStub: channelCredentialStub{},
+		err: integrations.NewProviderErrorWithReason(
+			integrations.ErrorCodeAccessDenied,
+			"permission_missing",
+			"provider denied identity lookup",
+			nil,
+			integrations.ProviderDiagnostics{ErrorCode: "230027", RequestID: "req-safe", HTTPStatus: 403},
+		),
+	}
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu saved before test",
+	})
+	if err != nil {
+		t.Fatalf("CreateInstallation() error = %v", err)
+	}
+	result, err := service.VerifyInstallation(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil {
+		t.Fatalf("VerifyInstallation() error = %v", err)
+	}
+	if result.Status != "failed" || result.Failure == nil || result.Failure.Code != "access_denied" ||
+		result.Failure.ReasonCode != "permission_missing" || result.Failure.ProviderErrorCode != "230027" ||
+		result.Failure.ProviderRequestID != "req-safe" || result.Failure.ProviderHTTPStatus != 403 {
+		t.Fatalf("VerifyInstallation() = %#v", result)
+	}
+	if stored := store.installations[installation.ID]; stored.ExternalTenantID != "" || stored.ExternalBotID != "" || stored.Revision != 1 {
+		t.Fatalf("failed verification mutated installation = %#v", stored)
+	}
+}
+
+func TestChannelConnectionTestRequiresRealInboundAndSuccessfulFinalDelivery(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu round trip",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	test, err := service.StartConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, StartChannelConnectionTestRequest{})
+	if err != nil {
+		t.Fatalf("StartConnectionTest() error = %v", err)
+	}
+	if test.Status != ChannelConnectionTestAwaitingMessage || test.ID == uuid.Nil || test.TestCode == "" || test.TestMessage == "" {
+		t.Fatalf("StartConnectionTest() = %#v", test)
+	}
+
+	current, err := service.GetConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, test.ID, test.ConversationType, test.StartedAt)
+	if err != nil || current.Status != ChannelConnectionTestAwaitingMessage {
+		t.Fatalf("GetConnectionTest(before inbound) = %#v, %v", current, err)
+	}
+	eventID := uuid.New()
+	store.events[installation.ID.String()+":test-event"] = &channelruntime.InboundEvent{
+		ID: eventID, InstallationID: installation.ID, ConversationType: channelruntime.ConversationTypeDirect,
+		ContentPreview: test.TestMessage, Status: channelruntime.InboundEventAccepted, ReceivedAt: test.StartedAt.Add(time.Second),
+	}
+	current, err = service.GetConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, test.ID, test.ConversationType, test.StartedAt)
+	if err != nil || current.Status != ChannelConnectionTestMessageReceived || !current.MessageReceived || current.ReplyDelivered {
+		t.Fatalf("GetConnectionTest(after inbound) = %#v, %v", current, err)
+	}
+	deliveryID := uuid.New()
+	store.deliveries[deliveryID] = &channelruntime.Delivery{
+		ID: deliveryID, InboundEventID: uuidPointer(eventID), Kind: channelruntime.DeliveryKindFinal,
+		Status: channelruntime.DeliverySucceeded, CreatedAt: test.StartedAt.Add(2 * time.Second),
+	}
+	current, err = service.GetConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, test.ID, test.ConversationType, test.StartedAt)
+	if err != nil || current.Status != ChannelConnectionTestSucceeded || !current.MessageReceived || !current.ReplyDelivered {
+		t.Fatalf("GetConnectionTest(after delivery) = %#v, %v", current, err)
+	}
+}
+
+func TestChannelConnectionTestExposesConfirmedDeliveryFailure(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu denied reply",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	test, err := service.StartConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, StartChannelConnectionTestRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventID := uuid.New()
+	store.events[installation.ID.String()+":test-event-denied"] = &channelruntime.InboundEvent{
+		ID: eventID, InstallationID: installation.ID, ConversationType: channelruntime.ConversationTypeDirect,
+		ContentPreview: test.TestMessage, Status: channelruntime.InboundEventAccepted, ReceivedAt: test.StartedAt.Add(time.Second),
+	}
+	deliveryID := uuid.New()
+	store.deliveries[deliveryID] = &channelruntime.Delivery{
+		ID: deliveryID, InboundEventID: uuidPointer(eventID), Kind: channelruntime.DeliveryKindFinal,
+		Status: channelruntime.DeliveryFailed, ErrorCode: "channel.provider.permission_or_resource_denied",
+		CreatedAt: test.StartedAt.Add(2 * time.Second),
+	}
+
+	current, err := service.GetConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, test.ID, test.ConversationType, test.StartedAt)
+	if err != nil {
+		t.Fatalf("GetConnectionTest() error = %v", err)
+	}
+	if current.Status != ChannelConnectionTestFailed || current.FailureCode != "permission_or_resource_denied" || !current.MessageReceived {
+		t.Fatalf("GetConnectionTest() = %#v", current)
+	}
+}
+
+func TestChannelConnectionTestExpiresWithoutRealMessage(t *testing.T) {
+	service, _, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu timeout",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	test, err := service.StartConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, StartChannelConnectionTestRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.now = func() time.Time { return test.ExpiresAt.Add(time.Second) }
+	current, err := service.GetConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, test.ID, test.ConversationType, test.StartedAt)
+	if err != nil || current.Status != ChannelConnectionTestExpired || current.FailureCode != "message_not_received" {
+		t.Fatalf("GetConnectionTest(expired) = %#v, %v", current, err)
+	}
+}
+
+func TestChannelConnectionTestIgnoresEvidenceFromOtherInstallations(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Current Feishu connection",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	test, err := service.StartConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, StartChannelConnectionTestRequest{
+		ConversationType: channelruntime.ConversationTypeGroup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.events["other-installation-event"] = &channelruntime.InboundEvent{
+		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		InstallationID: uuid.New(), ConversationType: channelruntime.ConversationTypeGroup,
+		EventType: "channel.mention", ContentPreview: test.TestMessage,
+		Status: channelruntime.InboundEventAccepted, ReceivedAt: test.StartedAt.Add(time.Second),
+	}
+
+	current, err := service.GetConnectionTest(
+		t.Context(), scope, digitalHumanID, installation.ID, test.ID, test.ConversationType, test.StartedAt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != ChannelConnectionTestAwaitingMessage || current.MessageReceived || current.FailureCode != "" {
+		t.Fatalf("GetConnectionTest(other installation) = %#v", current)
+	}
+
+	service.now = func() time.Time { return test.ExpiresAt.Add(time.Second) }
+	current, err = service.GetConnectionTest(
+		t.Context(), scope, digitalHumanID, installation.ID, test.ID, test.ConversationType, test.StartedAt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != ChannelConnectionTestExpired || current.FailureCode != "message_not_received" {
+		t.Fatalf("GetConnectionTest(expired other installation) = %#v", current)
+	}
+}
+
+func TestGroupChannelConnectionTestChecksMentionHistoryMembersAndReply(t *testing.T) {
+	service, store, _, adapter, scope, digitalHumanID := newChannelTestService(t)
+	installation, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, CreateChannelInstallationRequest{
+		Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu group test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter.capabilityChecks = []channelruntime.ConversationCapabilityCheck{
+		{
+			Capability:          channelruntime.ConversationCapabilityMessageHistory,
+			Status:              channelruntime.CapabilityCheckFailed,
+			FailureCode:         "permission_missing",
+			RequiredPermissions: []string{"im:message:readonly"},
+		},
+		{
+			Capability:          channelruntime.ConversationCapabilityMemberNames,
+			Status:              channelruntime.CapabilityCheckPassed,
+			RequiredPermissions: []string{"im:chat.members:read"},
+		},
+	}
+	test, err := service.StartConnectionTest(t.Context(), scope, digitalHumanID, installation.ID, StartChannelConnectionTestRequest{
+		ConversationType: channelruntime.ConversationTypeGroup,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if test.ConversationType != channelruntime.ConversationTypeGroup || !strings.HasPrefix(test.TestMessage, "群聊连接测试 ") {
+		t.Fatalf("StartConnectionTest(group) = %#v", test)
+	}
+	eventID := uuid.New()
+	store.events[installation.ID.String()+":group-test-event"] = &channelruntime.InboundEvent{
+		ID: eventID, InstallationID: installation.ID, ConversationType: channelruntime.ConversationTypeGroup,
+		ExternalConversationID: "oc_group", ProviderMessageID: "om_group", SenderExternalID: "ou_sender",
+		EventType: "channel.mention", ContentPreview: test.TestMessage, Status: channelruntime.InboundEventAccepted,
+		ReceivedAt: test.StartedAt.Add(time.Second),
+	}
+	deliveryID := uuid.New()
+	store.deliveries[deliveryID] = &channelruntime.Delivery{
+		ID: deliveryID, InboundEventID: uuidPointer(eventID), Kind: channelruntime.DeliveryKindFinal,
+		Status: channelruntime.DeliverySucceeded, CreatedAt: test.StartedAt.Add(2 * time.Second),
+	}
+
+	current, err := service.GetConnectionTest(
+		t.Context(), scope, digitalHumanID, installation.ID, test.ID, test.ConversationType, test.StartedAt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != ChannelConnectionTestSucceeded || current.Readiness != ChannelConnectionTestReadinessPartial || adapter.capabilityCalls != 1 {
+		t.Fatalf("GetConnectionTest(group) = %#v, capability calls = %d", current, adapter.capabilityCalls)
+	}
+	capabilities := make(map[string]ChannelConnectionCapability, len(current.Capabilities))
+	for _, capability := range current.Capabilities {
+		capabilities[capability.ID] = capability
+	}
+	if capabilities[ChannelConnectionCapabilityGroupMention].Status != ChannelConnectionCapabilityPassed ||
+		capabilities[ChannelConnectionCapabilityReplyDelivery].Status != ChannelConnectionCapabilityPassed ||
+		capabilities[ChannelConnectionCapabilityMessageHistory].FailureCode != "permission_missing" ||
+		capabilities[ChannelConnectionCapabilityMemberNames].Status != ChannelConnectionCapabilityPassed {
+		t.Fatalf("group capabilities = %#v", capabilities)
+	}
+}
+
 func TestChannelWebhookReplayRepairsFailedInvocationSubmission(t *testing.T) {
 	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
 	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
@@ -537,7 +876,7 @@ func TestChannelWebhookRejectsReusedEventIDWithDifferentPayload(t *testing.T) {
 	}
 }
 
-func TestDeliveryRetryDoesNotSubmitInvocationAgain(t *testing.T) {
+func TestDeliveryConfirmedProviderFailureIsNotRetried(t *testing.T) {
 	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
 	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
 	payload, digest, err := channelDeliveryPayload("reply")
@@ -554,23 +893,64 @@ func TestDeliveryRetryDoesNotSubmitInvocationAgain(t *testing.T) {
 		Status: channelruntime.DeliveryPending, AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	store.deliveries[delivery.ID] = delivery
-	adapter.deliveryErr = errors.New("temporary provider failure with sensitive upstream detail")
+	adapter.deliveryErr = integrations.NewErrorWithReason(
+		integrations.ErrorCodeAccessDenied,
+		"send_not_allowed",
+		"temporary provider failure with sensitive upstream detail",
+		nil,
+	)
 	service.now = func() time.Time { return now }
 	if err := service.DispatchDeliveries(t.Context(), 10); !errors.Is(err, errChannelDeliveryAttemptFailed) || strings.Contains(err.Error(), "sensitive upstream detail") {
 		t.Fatalf("DispatchDeliveries() error = %v, want safe delivery failure", err)
+	}
+	if stored := store.deliveries[delivery.ID]; stored.ErrorCode != "channel.provider.send_not_allowed" {
+		t.Fatalf("delivery error code = %q, want channel.provider.send_not_allowed", stored.ErrorCode)
+	}
+	if stored := store.deliveries[delivery.ID]; stored.Status != channelruntime.DeliveryFailed || stored.AttemptCount != 1 {
+		t.Fatalf("delivery = %#v, want failed after one attempt", stored)
 	}
 	adapter.deliveryErr = nil
 	adapter.receipt = &channelruntime.DeliveryReceipt{ProviderMessageID: "om_1"}
 	now = now.Add(time.Minute)
 	if err := service.DispatchDeliveries(t.Context(), 10); err != nil {
-		t.Fatalf("DispatchDeliveries(retry) error = %v", err)
+		t.Fatalf("DispatchDeliveries(after terminal failure) error = %v", err)
 	}
-	if runtime.calls != 0 || adapter.deliveryCalls != 2 {
+	if runtime.calls != 0 || adapter.deliveryCalls != 1 {
 		t.Fatalf("SubmitInvocation() calls = %d, Deliver() calls = %d", runtime.calls, adapter.deliveryCalls)
 	}
+	if stored := store.deliveries[delivery.ID]; stored.Status != channelruntime.DeliveryFailed {
+		t.Fatalf("delivery = %#v, want terminal failure", stored)
+	}
+}
+
+func TestDeliveryTransientFailureRetriesWithoutSubmittingInvocationAgain(t *testing.T) {
+	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
+	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
+	now := time.Now().UTC()
+	delivery := newChannelTestDelivery(t, scope, digitalHumanID, installation, binding, now)
+	store.deliveries[delivery.ID] = delivery
+	adapter.deliveryErr = integrations.NewError(
+		integrations.ErrorCodeUpstream,
+		"temporary provider failure with sensitive upstream detail",
+		nil,
+	)
+	service.now = func() time.Time { return now }
+	if err := service.DispatchDeliveries(t.Context(), 10); !errors.Is(err, errChannelDeliveryAttemptFailed) || strings.Contains(err.Error(), "sensitive upstream detail") {
+		t.Fatalf("DispatchDeliveries() error = %v, want safe retryable failure", err)
+	}
+	if stored := store.deliveries[delivery.ID]; stored.Status != channelruntime.DeliveryPending || stored.AttemptCount != 1 {
+		t.Fatalf("delivery = %#v, want pending retry", stored)
+	}
+
+	adapter.deliveryErr = nil
+	adapter.receipt = &channelruntime.DeliveryReceipt{ProviderMessageID: "om_retry"}
+	now = now.Add(time.Minute)
+	if err := service.DispatchDeliveries(t.Context(), 10); err != nil {
+		t.Fatalf("DispatchDeliveries(retry) error = %v", err)
+	}
 	stored := store.deliveries[delivery.ID]
-	if stored.Status != channelruntime.DeliverySucceeded || stored.AttemptCount != 2 || stored.ProviderMessageID != "om_1" {
-		t.Fatalf("delivery = %#v", stored)
+	if runtime.calls != 0 || adapter.deliveryCalls != 2 || stored.Status != channelruntime.DeliverySucceeded || stored.AttemptCount != 2 {
+		t.Fatalf("runtime calls = %d, delivery calls = %d, delivery = %#v", runtime.calls, adapter.deliveryCalls, stored)
 	}
 }
 
@@ -705,6 +1085,17 @@ func createChannelTestRoute(t *testing.T, service *ChannelService, scope Scope, 
 	if err != nil {
 		t.Fatal(err)
 	}
+	verification, err := service.VerifyInstallation(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verification.Status != "verified" {
+		t.Fatalf("verification = %#v", verification)
+	}
+	installation, err = service.store.ScopedChannelInstallationByID(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if installation.ExternalTenantID != "tenant-1" || installation.ExternalBotID != "ou_bot" {
 		t.Fatalf("resolved channel identity = (%q, %q)", installation.ExternalTenantID, installation.ExternalBotID)
 	}
@@ -805,13 +1196,24 @@ func (channelCredentialStub) ContextReadiness(context.Context, *channelruntime.I
 	return ChannelContextReadiness{Status: ChannelContextReadinessReady, MessageHistoryAvailable: true, MemberNamesAvailable: true}
 }
 
+type failingChannelCredentialStub struct {
+	channelCredentialStub
+	err error
+}
+
+func (stub failingChannelCredentialStub) ResolveIdentity(context.Context, *channelruntime.Installation) (string, string, error) {
+	return "", "", stub.err
+}
+
 type channelAdapterStub struct {
-	provider      string
-	message       *channelruntime.InboundMessage
-	receipt       *channelruntime.DeliveryReceipt
-	deliveryErr   error
-	deliveryCalls int
-	lastDelivery  channelruntime.DeliveryRequest
+	provider         string
+	message          *channelruntime.InboundMessage
+	receipt          *channelruntime.DeliveryReceipt
+	deliveryErr      error
+	deliveryCalls    int
+	lastDelivery     channelruntime.DeliveryRequest
+	capabilityChecks []channelruntime.ConversationCapabilityCheck
+	capabilityCalls  int
 }
 
 func (adapter *channelAdapterStub) Provider() string {
@@ -821,7 +1223,17 @@ func (adapter *channelAdapterStub) Provider() string {
 	return "feishu"
 }
 func (*channelAdapterStub) Capabilities() channelruntime.ProviderCapabilities {
-	return channelruntime.ProviderCapabilities{}
+	return channelruntime.ProviderCapabilities{
+		ContextRead: true, MessageRoundTripTest: true, ConversationCapabilityTest: true,
+	}
+}
+
+func (adapter *channelAdapterStub) TestConversationCapabilities(
+	_ context.Context,
+	_ channelruntime.ConversationCapabilityTestRequest,
+) []channelruntime.ConversationCapabilityCheck {
+	adapter.capabilityCalls++
+	return append([]channelruntime.ConversationCapabilityCheck(nil), adapter.capabilityChecks...)
 }
 func (*channelAdapterStub) Verify(_ context.Context, request channelruntime.WebhookRequest, _ channelruntime.ResolvedChannelCredential) (*channelruntime.VerifiedWebhook, error) {
 	return &channelruntime.VerifiedWebhook{Body: append([]byte(nil), request.Body...)}, nil
@@ -901,16 +1313,21 @@ func (store *channelStoreStub) ChannelInstallationByID(_ context.Context, id uui
 	}
 	return cloneInstallation(installation), nil
 }
-func (store *channelStoreStub) ScopedChannelInstallationByID(ctx context.Context, scope Scope, id uuid.UUID) (*channelruntime.Installation, error) {
+func (store *channelStoreStub) ScopedChannelInstallationByID(ctx context.Context, scope Scope, digitalHumanID, id uuid.UUID) (*channelruntime.Installation, error) {
 	installation, err := store.ChannelInstallationByID(ctx, id)
-	if err != nil || installation.OrganizationID != scope.OrganizationID || installation.WorkspaceID != scope.WorkspaceID {
+	if err != nil || installation.OrganizationID != scope.OrganizationID || installation.WorkspaceID != scope.WorkspaceID ||
+		!isDigitalHumanChannelInstallation(installation) || *installation.DefaultSubjectID != digitalHumanID {
 		return nil, ErrChannelInstallationNotFound
 	}
 	return installation, nil
 }
-func (store *channelStoreStub) ListChannelInstallations(context.Context, Scope) ([]*channelruntime.Installation, error) {
+func (store *channelStoreStub) ListChannelInstallations(_ context.Context, scope Scope, digitalHumanID uuid.UUID) ([]*channelruntime.Installation, error) {
 	items := make([]*channelruntime.Installation, 0, len(store.installations))
 	for _, installation := range store.installations {
+		if installation.OrganizationID != scope.OrganizationID || installation.WorkspaceID != scope.WorkspaceID ||
+			!isDigitalHumanChannelInstallation(installation) || *installation.DefaultSubjectID != digitalHumanID {
+			continue
+		}
 		items = append(items, cloneInstallation(installation))
 	}
 	return items, nil
@@ -920,10 +1337,16 @@ func (store *channelStoreStub) UpdateChannelInstallation(_ context.Context, _ Sc
 	if current == nil || current.Revision != expected {
 		return ErrChannelConflict
 	}
+	installation.Revision = expected + 1
 	store.installations[installation.ID] = cloneInstallation(installation)
 	return nil
 }
-func (store *channelStoreStub) DeleteChannelInstallation(_ context.Context, _ Scope, id uuid.UUID) error {
+func (store *channelStoreStub) DeleteChannelInstallation(_ context.Context, scope Scope, digitalHumanID, id uuid.UUID) error {
+	installation := store.installations[id]
+	if installation == nil || installation.OrganizationID != scope.OrganizationID || installation.WorkspaceID != scope.WorkspaceID ||
+		!isDigitalHumanChannelInstallation(installation) || *installation.DefaultSubjectID != digitalHumanID {
+		return ErrChannelInstallationNotFound
+	}
 	for bindingID, binding := range store.bindings {
 		if binding.InstallationID == id {
 			delete(store.bindings, bindingID)
@@ -1033,6 +1456,27 @@ func (*channelStoreStub) ListInboundEvents(context.Context, Scope, uuid.UUID, Li
 }
 func (*channelStoreStub) ListChannelDeliveries(context.Context, Scope, uuid.UUID, ListQuery) ([]*channelruntime.Delivery, int64, error) {
 	return nil, 0, nil
+}
+func (store *channelStoreStub) ChannelConnectionTestEvidence(_ context.Context, installationID uuid.UUID, conversationType channelruntime.ConversationType, message string, startedAt time.Time) (*channelruntime.InboundEvent, *channelruntime.Delivery, error) {
+	var matched *channelruntime.InboundEvent
+	for _, event := range store.events {
+		if event.InstallationID == installationID && event.ConversationType == conversationType &&
+			event.ContentPreview == message && !event.ReceivedAt.Before(startedAt) {
+			if conversationType == channelruntime.ConversationTypeGroup && event.EventType != "channel.mention" {
+				continue
+			}
+			matched = event
+		}
+	}
+	if matched == nil {
+		return nil, nil, nil
+	}
+	for _, delivery := range store.deliveries {
+		if delivery.InboundEventID != nil && *delivery.InboundEventID == matched.ID && delivery.Kind == channelruntime.DeliveryKindFinal {
+			return matched, delivery, nil
+		}
+	}
+	return matched, nil, nil
 }
 func (store *channelStoreStub) ClaimDeliveryBatch(_ context.Context, limit int, now time.Time) ([]*channelruntime.Delivery, error) {
 	items := make([]*channelruntime.Delivery, 0, limit)

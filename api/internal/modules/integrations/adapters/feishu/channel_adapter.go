@@ -75,7 +75,11 @@ func NewDirectChannelAdapter(provider *Adapter, connections integrations.Connect
 func (*ChannelAdapter) Provider() string { return IntegrationID }
 
 func (*ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
-	return channelruntime.ProviderCapabilities{ContextRead: true}
+	return channelruntime.ProviderCapabilities{
+		ContextRead:                true,
+		MessageRoundTripTest:       true,
+		ConversationCapabilityTest: true,
+	}
 }
 
 func (*ChannelAdapter) ConnectionSpec() channelruntime.ConnectionSpec {

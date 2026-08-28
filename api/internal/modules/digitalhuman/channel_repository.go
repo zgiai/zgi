@@ -38,10 +38,10 @@ type ChannelRoute struct {
 type ChannelStore interface {
 	CreateChannelInstallation(context.Context, *channelruntime.Installation) error
 	ChannelInstallationByID(context.Context, uuid.UUID) (*channelruntime.Installation, error)
-	ScopedChannelInstallationByID(context.Context, Scope, uuid.UUID) (*channelruntime.Installation, error)
-	ListChannelInstallations(context.Context, Scope) ([]*channelruntime.Installation, error)
+	ScopedChannelInstallationByID(context.Context, Scope, uuid.UUID, uuid.UUID) (*channelruntime.Installation, error)
+	ListChannelInstallations(context.Context, Scope, uuid.UUID) ([]*channelruntime.Installation, error)
 	UpdateChannelInstallation(context.Context, Scope, *channelruntime.Installation, int64) error
-	DeleteChannelInstallation(context.Context, Scope, uuid.UUID) error
+	DeleteChannelInstallation(context.Context, Scope, uuid.UUID, uuid.UUID) error
 	CreateChannelBinding(context.Context, *channelruntime.ConversationMapping, *channelruntime.Binding) error
 	ResolveChannelRoute(context.Context, uuid.UUID, string) (*ChannelRoute, error)
 	EnsureChannelConversationID(context.Context, uuid.UUID, uuid.UUID, time.Time) (uuid.UUID, error)
@@ -57,6 +57,13 @@ type ChannelStore interface {
 	FailDelivery(context.Context, uuid.UUID, channelruntime.DeliveryStatus, string, string, time.Time) error
 	RequeueDelivery(context.Context, Scope, uuid.UUID, uuid.UUID, time.Time) error
 	MarkStaleDeliveriesUnknown(context.Context, time.Time, time.Time) error
+}
+
+// ChannelConnectionTestStore projects only the evidence needed to prove one
+// real message round trip. It does not expose arbitrary message search through
+// the authenticated connection-test API.
+type ChannelConnectionTestStore interface {
+	ChannelConnectionTestEvidence(context.Context, uuid.UUID, channelruntime.ConversationType, string, time.Time) (*channelruntime.InboundEvent, *channelruntime.Delivery, error)
 }
 
 // ChannelReceiverStore is the process-lifecycle persistence surface used by
@@ -174,14 +181,16 @@ func (r *GormRepository) ReplaceChannelInstallationCredential(
 ) error {
 	if !validScope(scope) || installation == nil || credential == nil || expectedRevision < 1 ||
 		installation.ID == uuid.Nil || installation.ConnectionID != installation.ID ||
+		!isDigitalHumanChannelInstallation(installation) ||
 		credential.InstallationID != installation.ID || credential.OrganizationID != scope.OrganizationID ||
 		credential.WorkspaceID != scope.WorkspaceID || !strings.EqualFold(credential.Provider, installation.Provider) {
 		return ErrInvalidRequest
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&channelruntime.Installation{}).Where(
-			"id = ? AND organization_id = ? AND workspace_id = ? AND revision = ? AND deleted_at IS NULL",
-			installation.ID, scope.OrganizationID, scope.WorkspaceID, expectedRevision,
+			"id = ? AND organization_id = ? AND workspace_id = ? AND default_subject_type = ? AND default_subject_id = ? AND revision = ? AND deleted_at IS NULL",
+			installation.ID, scope.OrganizationID, scope.WorkspaceID,
+			runtimeidentity.SubjectTypeDigitalHuman, *installation.DefaultSubjectID, expectedRevision,
 		).Updates(map[string]any{
 			"connection_id": installation.ID, "external_tenant_id": installation.ExternalTenantID,
 			"external_bot_id": installation.ExternalBotID, "updated_by": scope.ActorID,
@@ -221,13 +230,20 @@ func (r *GormRepository) ChannelInstallationByID(ctx context.Context, installati
 	return &installation, nil
 }
 
-func (r *GormRepository) ScopedChannelInstallationByID(ctx context.Context, scope Scope, installationID uuid.UUID) (*channelruntime.Installation, error) {
-	if !validScopeBoundary(scope) || installationID == uuid.Nil {
+func (r *GormRepository) ScopedChannelInstallationByID(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID uuid.UUID,
+	installationID uuid.UUID,
+) (*channelruntime.Installation, error) {
+	if !validScopeBoundary(scope) || digitalHumanID == uuid.Nil || installationID == uuid.Nil {
 		return nil, ErrInvalidRequest
 	}
 	var installation channelruntime.Installation
 	err := r.db.WithContext(ctx).Where(
-		"id = ? AND organization_id = ? AND workspace_id = ?", installationID, scope.OrganizationID, scope.WorkspaceID,
+		"id = ? AND organization_id = ? AND workspace_id = ? AND default_subject_type = ? AND default_subject_id = ?",
+		installationID, scope.OrganizationID, scope.WorkspaceID,
+		runtimeidentity.SubjectTypeDigitalHuman, digitalHumanID,
 	).Take(&installation).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrChannelInstallationNotFound
@@ -238,13 +254,14 @@ func (r *GormRepository) ScopedChannelInstallationByID(ctx context.Context, scop
 	return &installation, nil
 }
 
-func (r *GormRepository) ListChannelInstallations(ctx context.Context, scope Scope) ([]*channelruntime.Installation, error) {
-	if !validScopeBoundary(scope) {
+func (r *GormRepository) ListChannelInstallations(ctx context.Context, scope Scope, digitalHumanID uuid.UUID) ([]*channelruntime.Installation, error) {
+	if !validScopeBoundary(scope) || digitalHumanID == uuid.Nil {
 		return nil, ErrInvalidRequest
 	}
 	installations := make([]*channelruntime.Installation, 0)
 	if err := r.db.WithContext(ctx).Where(
-		"organization_id = ? AND workspace_id = ?", scope.OrganizationID, scope.WorkspaceID,
+		"organization_id = ? AND workspace_id = ? AND default_subject_type = ? AND default_subject_id = ?",
+		scope.OrganizationID, scope.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, digitalHumanID,
 	).Order("created_at ASC, id ASC").Find(&installations).Error; err != nil {
 		return nil, fmt.Errorf("list channel installations: %w", err)
 	}
@@ -382,12 +399,14 @@ func (r *GormRepository) SuccessfulChannelDeliveryKinds(
 }
 
 func (r *GormRepository) UpdateChannelInstallation(ctx context.Context, scope Scope, installation *channelruntime.Installation, expectedRevision int64) error {
-	if !validScope(scope) || installation == nil || installation.ID == uuid.Nil || expectedRevision < 1 {
+	if !validScope(scope) || installation == nil || installation.ID == uuid.Nil || expectedRevision < 1 ||
+		!isDigitalHumanChannelInstallation(installation) {
 		return ErrInvalidRequest
 	}
 	result := r.db.WithContext(ctx).Model(&channelruntime.Installation{}).Where(
-		"id = ? AND organization_id = ? AND workspace_id = ? AND revision = ? AND deleted_at IS NULL",
-		installation.ID, scope.OrganizationID, scope.WorkspaceID, expectedRevision,
+		"id = ? AND organization_id = ? AND workspace_id = ? AND default_subject_type = ? AND default_subject_id = ? AND revision = ? AND deleted_at IS NULL",
+		installation.ID, scope.OrganizationID, scope.WorkspaceID,
+		runtimeidentity.SubjectTypeDigitalHuman, *installation.DefaultSubjectID, expectedRevision,
 	).Updates(map[string]any{
 		"name": installation.Name, "external_tenant_id": installation.ExternalTenantID,
 		"external_bot_id": installation.ExternalBotID, "status": installation.Status,
@@ -403,14 +422,16 @@ func (r *GormRepository) UpdateChannelInstallation(ctx context.Context, scope Sc
 	return nil
 }
 
-func (r *GormRepository) DeleteChannelInstallation(ctx context.Context, scope Scope, installationID uuid.UUID) error {
-	if !validScope(scope) || installationID == uuid.Nil {
+func (r *GormRepository) DeleteChannelInstallation(ctx context.Context, scope Scope, digitalHumanID, installationID uuid.UUID) error {
+	if !validScope(scope) || digitalHumanID == uuid.Nil || installationID == uuid.Nil {
 		return ErrInvalidRequest
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var installation channelruntime.Installation
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-			"id = ? AND organization_id = ? AND workspace_id = ?", installationID, scope.OrganizationID, scope.WorkspaceID,
+			"id = ? AND organization_id = ? AND workspace_id = ? AND default_subject_type = ? AND default_subject_id = ?",
+			installationID, scope.OrganizationID, scope.WorkspaceID,
+			runtimeidentity.SubjectTypeDigitalHuman, digitalHumanID,
 		).Take(&installation).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrChannelInstallationNotFound
@@ -429,6 +450,14 @@ func (r *GormRepository) DeleteChannelInstallation(ctx context.Context, scope Sc
 		}
 		return nil
 	})
+}
+
+func isDigitalHumanChannelInstallation(installation *channelruntime.Installation) bool {
+	return installation != nil &&
+		installation.DefaultSubjectType != nil &&
+		*installation.DefaultSubjectType == runtimeidentity.SubjectTypeDigitalHuman &&
+		installation.DefaultSubjectID != nil &&
+		*installation.DefaultSubjectID != uuid.Nil
 }
 
 func (r *GormRepository) CreateChannelBinding(ctx context.Context, mapping *channelruntime.ConversationMapping, binding *channelruntime.Binding) error {
@@ -678,6 +707,47 @@ func (r *GormRepository) ListChannelDeliveries(ctx context.Context, scope Scope,
 		return nil, 0, fmt.Errorf("list channel deliveries: %w", err)
 	}
 	return items, total, nil
+}
+
+func (r *GormRepository) ChannelConnectionTestEvidence(
+	ctx context.Context,
+	installationID uuid.UUID,
+	conversationType channelruntime.ConversationType,
+	testMessage string,
+	startedAt time.Time,
+) (*channelruntime.InboundEvent, *channelruntime.Delivery, error) {
+	if installationID == uuid.Nil ||
+		(conversationType != channelruntime.ConversationTypeDirect && conversationType != channelruntime.ConversationTypeGroup) ||
+		strings.TrimSpace(testMessage) == "" || startedAt.IsZero() {
+		return nil, nil, ErrInvalidRequest
+	}
+	var event channelruntime.InboundEvent
+	query := r.db.WithContext(ctx).Where(
+		"installation_id = ? AND conversation_type = ? AND content_preview = ? AND received_at >= ?",
+		installationID, conversationType, strings.TrimSpace(testMessage), startedAt.UTC(),
+	)
+	if conversationType == channelruntime.ConversationTypeGroup {
+		query = query.Where("event_type = ?", "channel.mention")
+	}
+	err := query.Order("received_at DESC, id DESC").Take(&event).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("load channel connection test inbound event: %w", err)
+	}
+
+	var delivery channelruntime.Delivery
+	err = r.db.WithContext(ctx).Where(
+		"inbound_event_id = ? AND delivery_kind = ?", event.ID, channelruntime.DeliveryKindFinal,
+	).Order("created_at DESC, id DESC").Take(&delivery).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &event, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("load channel connection test delivery: %w", err)
+	}
+	return &event, &delivery, nil
 }
 
 func (r *GormRepository) ClaimDeliveryBatch(ctx context.Context, limit int, now time.Time) ([]*channelruntime.Delivery, error) {

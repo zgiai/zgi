@@ -209,6 +209,14 @@ func TestRegisteredProviderRunsEndToEndWithoutDigitalHumanProviderBranch(t *test
 	if err != nil {
 		t.Fatalf("CreateInstallation() error = %v", err)
 	}
+	verification, err := service.VerifyInstallation(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil || verification.Status != "verified" {
+		t.Fatalf("VerifyInstallation() = %#v, %v", verification, err)
+	}
+	installation, err = store.ScopedChannelInstallationByID(t.Context(), scope, digitalHumanID, installation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if installation.ExternalTenantID != "acme-workspace" || installation.ExternalBotID != "acme-helper" {
 		t.Fatalf("installation identity = %q/%q", installation.ExternalTenantID, installation.ExternalBotID)
 	}

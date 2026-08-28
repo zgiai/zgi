@@ -29,6 +29,9 @@ type ChannelHandlerService interface {
 	ListInstallations(context.Context, Scope, uuid.UUID) ([]*ChannelInstallationView, error)
 	UpdateInstallation(context.Context, Scope, uuid.UUID, uuid.UUID, UpdateChannelInstallationRequest) (*channelruntime.Installation, error)
 	UpdateInstallationCredential(context.Context, Scope, uuid.UUID, uuid.UUID, UpdateChannelInstallationCredentialRequest) (*channelruntime.Installation, error)
+	VerifyInstallation(context.Context, Scope, uuid.UUID, uuid.UUID) (*ChannelInstallationVerification, error)
+	StartConnectionTest(context.Context, Scope, uuid.UUID, uuid.UUID, StartChannelConnectionTestRequest) (*ChannelConnectionTest, error)
+	GetConnectionTest(context.Context, Scope, uuid.UUID, uuid.UUID, uuid.UUID, channelruntime.ConversationType, time.Time) (*ChannelConnectionTest, error)
 	DeleteInstallation(context.Context, Scope, uuid.UUID, uuid.UUID) error
 	ListEvents(context.Context, Scope, uuid.UUID, ListQuery) (*ChannelEventListResult, error)
 	ListDeliveries(context.Context, Scope, uuid.UUID, ListQuery) (*ChannelDeliveryListResult, error)
@@ -66,6 +69,9 @@ func (handler *ChannelHandler) RegisterAuthenticatedRoutes(router *gin.RouterGro
 	group.GET("/installations", handler.ListInstallations)
 	group.PATCH("/installations/:installation_id", handler.UpdateInstallation)
 	group.PUT("/installations/:installation_id/credential", handler.UpdateInstallationCredential)
+	group.POST("/installations/:installation_id/verify", handler.VerifyInstallation)
+	group.POST("/installations/:installation_id/connection-tests", handler.StartConnectionTest)
+	group.GET("/installations/:installation_id/connection-tests/:connection_test_id", handler.GetConnectionTest)
 	group.DELETE("/installations/:installation_id", handler.DeleteInstallation)
 	group.GET("/events", handler.ListEvents)
 	group.GET("/deliveries", handler.ListDeliveries)
@@ -129,6 +135,63 @@ func (handler *ChannelHandler) UpdateInstallationCredential(c *gin.Context) {
 		return
 	}
 	result, err := handler.service.UpdateInstallationCredential(c.Request.Context(), scope, digitalHumanID, installationID, request)
+	if err != nil {
+		handler.base.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (handler *ChannelHandler) VerifyInstallation(c *gin.Context) {
+	scope, digitalHumanID, installationID, ok := handler.scopeAndResourceID(c, "installation_id")
+	if !ok {
+		return
+	}
+	result, err := handler.service.VerifyInstallation(c.Request.Context(), scope, digitalHumanID, installationID)
+	if err != nil {
+		handler.base.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (handler *ChannelHandler) StartConnectionTest(c *gin.Context) {
+	scope, digitalHumanID, installationID, ok := handler.scopeAndResourceID(c, "installation_id")
+	if !ok {
+		return
+	}
+	var request StartChannelConnectionTestRequest
+	if err := c.ShouldBindJSON(&request); err != nil && !errors.Is(err, io.EOF) {
+		handler.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.channel.connection_test.start"))
+		return
+	}
+	result, err := handler.service.StartConnectionTest(c.Request.Context(), scope, digitalHumanID, installationID, request)
+	if err != nil {
+		handler.base.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+func (handler *ChannelHandler) GetConnectionTest(c *gin.Context) {
+	scope, digitalHumanID, installationID, ok := handler.scopeAndResourceID(c, "installation_id")
+	if !ok {
+		return
+	}
+	testID, err := uuid.Parse(strings.TrimSpace(c.Param("connection_test_id")))
+	if err != nil || testID == uuid.Nil {
+		handler.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.channel.connection_test.get"))
+		return
+	}
+	startedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(c.Query("started_at")))
+	if err != nil {
+		handler.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.channel.connection_test.get"))
+		return
+	}
+	conversationType := channelruntime.ConversationType(strings.TrimSpace(c.Query("conversation_type")))
+	result, err := handler.service.GetConnectionTest(
+		c.Request.Context(), scope, digitalHumanID, installationID, testID, conversationType, startedAt,
+	)
 	if err != nil {
 		handler.base.writeError(c, err)
 		return

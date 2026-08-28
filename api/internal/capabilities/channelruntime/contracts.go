@@ -216,6 +216,58 @@ type ContextReader interface {
 	ReadContext(context.Context, ChannelContextRequest) (*ChannelContextPack, error)
 }
 
+// ConversationCapability identifies one provider-neutral ability that can be
+// checked against a real, provider-verified conversation.
+type ConversationCapability string
+
+const (
+	ConversationCapabilityMessageHistory ConversationCapability = "message_history"
+	ConversationCapabilityMemberNames    ConversationCapability = "member_names"
+)
+
+// CapabilityCheckStatus is deliberately smaller than runtime context status:
+// a connection test either proved an ability or returned an actionable,
+// provider-normalized failure.
+type CapabilityCheckStatus string
+
+const (
+	CapabilityCheckPassed CapabilityCheckStatus = "passed"
+	CapabilityCheckFailed CapabilityCheckStatus = "failed"
+)
+
+// ConversationCapabilityCheck contains only safe product diagnostics. Exact
+// permission identifiers are provider-owned public configuration values, not
+// credentials.
+type ConversationCapabilityCheck struct {
+	Capability          ConversationCapability
+	Status              CapabilityCheckStatus
+	FailureCode         string
+	RequiredPermissions []string
+}
+
+// ConversationCapabilityTestRequest is constructed from a persisted, verified
+// inbound event. External conversation identifiers must never come from a
+// browser or model tool call.
+type ConversationCapabilityTestRequest struct {
+	OrganizationID         uuid.UUID
+	WorkspaceID            uuid.UUID
+	ActorID                uuid.UUID
+	InstallationID         uuid.UUID
+	ConnectionID           uuid.UUID
+	Subject                runtimeidentity.SubjectRef
+	ExternalConversationID string
+	CurrentMessageID       string
+	CurrentSenderID        string
+	OccurredAt             time.Time
+}
+
+// ConversationCapabilityTester is an optional provider boundary for checking
+// read-only abilities against one real conversation. Delivery remains proven
+// separately by the durable channel outbox.
+type ConversationCapabilityTester interface {
+	TestConversationCapabilities(context.Context, ConversationCapabilityTestRequest) []ConversationCapabilityCheck
+}
+
 // ConnectionSpec describes an optional Connection Center credential accepted
 // by a provider. DigitalHuman does not interpret provider-specific identifiers.
 type ConnectionSpec struct {
@@ -235,9 +287,11 @@ type Provisioner interface {
 // ProviderCapabilities declares optional channel behavior without requiring
 // provider-name branches in DigitalHuman orchestration.
 type ProviderCapabilities struct {
-	ContextRead bool
-	Edit        bool
-	Retract     bool
+	ContextRead                bool
+	Edit                       bool
+	Retract                    bool
+	MessageRoundTripTest       bool
+	ConversationCapabilityTest bool
 }
 
 // ReceiverRequest contains one installation-scoped, request-owned credential

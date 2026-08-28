@@ -18,6 +18,7 @@ const (
 	TenantAppAuthMethodID         = "feishu_tenant_app"
 
 	ScopeOfflineAccess    = "offline_access"
+	ScopeTenantRead       = "tenant:tenant:readonly"
 	ScopeDriveRetrieve    = "space:document:retrieve"
 	ScopeDriveRead        = "drive:drive:readonly"
 	ScopeDriveWrite       = "drive:drive"
@@ -26,6 +27,7 @@ const (
 	ScopeMessage          = "im:message"
 	ScopeMessageRead      = "im:message:readonly"
 	ScopeMessageLegacy    = "im:message.history:readonly"
+	ScopeP2PMessageRead   = "im:message.p2p_msg:readonly"
 	ScopeGroupMessageRead = "im:message.group_msg"
 	ScopeSendAsUser       = "im:message.send_as_user"
 	ScopeSendAsBot        = "im:message:send_as_bot"
@@ -378,10 +380,10 @@ func feishuOAuthSetupGuide() *integrations.AuthSetupGuideDefinition {
 				TitleI18n: integrations.LocalizedText{
 					integrations.LocaleEnglishUS: "Publish the app changes", integrations.LocaleSimplifiedChinese: "发布应用配置",
 				},
-				Description: "Create and publish an app version so redirect URLs and newly requested permissions take effect.",
+				Description: "Create and publish an app version after changing redirect URLs or other versioned application configuration.",
 				DescriptionI18n: integrations.LocalizedText{
-					integrations.LocaleEnglishUS:         "Create and publish an app version so redirect URLs and newly requested permissions take effect.",
-					integrations.LocaleSimplifiedChinese: "创建并发布应用版本，使回调地址和新增权限正式生效。",
+					integrations.LocaleEnglishUS:         "Create and publish an app version after changing redirect URLs or other versioned application configuration.",
+					integrations.LocaleSimplifiedChinese: "修改回调地址或其他需要随版本发布的应用配置后，请创建并发布新的应用版本。",
 				},
 			},
 			{
@@ -407,10 +409,10 @@ func feishuOAuthSetupGuide() *integrations.AuthSetupGuideDefinition {
 			},
 			{
 				ID: "publish_required", Level: integrations.AuthSetupNoticeLevelInfo,
-				Text: "Permission and redirect changes may not work until the Feishu app version is published.",
+				Text: "Permission updates take effect independently. Publish an app version only after changing redirect URLs or other versioned application configuration.",
 				TextI18n: integrations.LocalizedText{
-					integrations.LocaleEnglishUS:         "Permission and redirect changes may not work until the Feishu app version is published.",
-					integrations.LocaleSimplifiedChinese: "权限或回调配置修改后，通常需要发布飞书应用版本才能生效。",
+					integrations.LocaleEnglishUS:         "Permission updates take effect independently. Publish an app version only after changing redirect URLs or other versioned application configuration.",
+					integrations.LocaleSimplifiedChinese: "飞书权限开通或审批完成后会直接生效；只有修改回调地址或其他版本化应用配置时才需要发布新版本。",
 				},
 			},
 			{
@@ -517,10 +519,34 @@ func feishuTenantAppSetupGuide() *integrations.AuthSetupGuideDefinition {
 					integrations.LocaleEnglishUS:         "Enable only the required app permissions",
 					integrations.LocaleSimplifiedChinese: "仅开通所需应用身份权限",
 				},
-				Description: "For group context, enable im:message:readonly, im:message.group_msg, and im:chat.members:read for the application identity. Also enable the permissions required by the other bot actions you plan to use, then publish the app changes.",
+				Description: "For the application identity, enable tenant:tenant:readonly, im:message.p2p_msg:readonly, im:message:readonly, im:message.group_msg, im:chat.members:read, and im:message:send_as_bot. After Feishu shows them as enabled, return to ZGI and test again; permission-only changes do not require a new app version.",
 				DescriptionI18n: integrations.LocalizedText{
-					integrations.LocaleEnglishUS:         "For group context, enable im:message:readonly, im:message.group_msg, and im:chat.members:read for the application identity. Also enable the permissions required by the other bot actions you plan to use, then publish the app changes.",
-					integrations.LocaleSimplifiedChinese: "群聊上下文需要为应用身份开通 im:message:readonly、im:message.group_msg 与 im:chat.members:read；其他能力按需开通，并在修改后发布应用版本。",
+					integrations.LocaleEnglishUS:         "For the application identity, enable tenant:tenant:readonly, im:message.p2p_msg:readonly, im:message:readonly, im:message.group_msg, im:chat.members:read, and im:message:send_as_bot. After Feishu shows them as enabled, return to ZGI and test again; permission-only changes do not require a new app version.",
+					integrations.LocaleSimplifiedChinese: "请为应用身份一次性开通 tenant:tenant:readonly、im:message.p2p_msg:readonly、im:message:readonly、im:message.group_msg、im:chat.members:read 与 im:message:send_as_bot。飞书显示权限已开通后，返回 ZGI 重新测试即可；仅修改权限无需发布新版本。",
+				},
+			},
+			{
+				ID: "enable_bot_and_event", Title: "Enable the bot and subscribe to message events",
+				TitleI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS:         "Enable the bot and subscribe to message events",
+					integrations.LocaleSimplifiedChinese: "启用机器人并订阅消息事件",
+				},
+				Description: "Add the bot capability and subscribe to im.message.receive_v1 under Events & Callbacks.",
+				DescriptionI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS:         "Add the bot capability and subscribe to im.message.receive_v1 under Events & Callbacks.",
+					integrations.LocaleSimplifiedChinese: "添加机器人能力，并在“事件与回调”中订阅 im.message.receive_v1。",
+				},
+			},
+			{
+				ID: "publish_app", Title: "Set availability and publish the app",
+				TitleI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS:         "Set availability and publish the app",
+					integrations.LocaleSimplifiedChinese: "配置可用范围并发布应用",
+				},
+				Description: "Make the app available to the test users, publish a new version, and add the bot to any group that should use it.",
+				DescriptionI18n: integrations.LocalizedText{
+					integrations.LocaleEnglishUS:         "Make the app available to the test users, publish a new version, and add the bot to any group that should use it.",
+					integrations.LocaleSimplifiedChinese: "将应用加入测试成员的可用范围，发布新版本，并把机器人加入需要使用的群聊。",
 				},
 			},
 			{

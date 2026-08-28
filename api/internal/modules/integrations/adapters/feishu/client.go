@@ -377,9 +377,9 @@ func (c *client) baseURL(region string) (*url.URL, error) {
 func mapFeishuStatus(status int) error {
 	switch status {
 	case http.StatusUnauthorized:
-		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "Feishu credentials are invalid or expired", nil)
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAuthInvalid, "credentials_invalid", "Feishu credentials are invalid or expired", nil)
 	case http.StatusForbidden, http.StatusNotFound:
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Feishu denied access to the requested resource", nil)
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAccessDenied, "permission_or_resource_denied", "Feishu denied access to the requested resource", nil)
 	case http.StatusTooManyRequests:
 		return integrations.NewError(integrations.ErrorCodeRateLimited, "Feishu rate limit was reached", nil)
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
@@ -398,18 +398,27 @@ func mapFeishuStatus(status int) error {
 func mapFeishuBusinessCode(code int) error {
 	switch code {
 	case 20002, 20026, 20037, 20049, 20064, 20073:
-		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "Feishu authorization is invalid or expired", nil)
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAuthInvalid, "credentials_invalid", "Feishu authorization is invalid or expired", nil)
 	case 20050, 20072:
 		return integrations.NewError(integrations.ErrorCodeUpstream, "Feishu authorization service is temporarily unavailable", nil)
 	case 230020, 232019:
 		return integrations.NewError(integrations.ErrorCodeRateLimited, "Feishu rate limit was reached", nil)
 	case 230001, 232006, 1061002, 1770001, 1770002, 1770003, 99992402:
 		return integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu rejected the request parameters", nil)
-	case 230002, 230006, 230013, 230027, 230035, 230050,
-		232010, 232011, 232033, 232034, 1770032:
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Feishu denied the requested scope or resource", nil)
+	case 230002:
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAccessDenied, "bot_not_in_chat", "Feishu bot is not a member of the target chat", nil)
+	case 230006:
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAccessDenied, "bot_capability_disabled", "Feishu bot capability is not enabled", nil)
+	case 230013:
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAccessDenied, "app_unavailable", "Feishu app is not available to the target chat or user", nil)
+	case 230027:
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAccessDenied, "permission_missing", "Feishu app is missing the required application permission", nil)
+	case 230035:
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAccessDenied, "send_not_allowed", "Feishu bot is not allowed to send messages in the target chat", nil)
+	case 230050, 232010, 232011, 232033, 232034, 1770032:
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAccessDenied, "permission_or_resource_denied", "Feishu denied the requested scope or resource", nil)
 	case 232025, 190007:
-		return integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu application bot capability is not enabled", nil)
+		return integrations.NewErrorWithReason(integrations.ErrorCodeInvalidInput, "bot_capability_disabled", "Feishu application bot capability is not enabled", nil)
 	case 1770033:
 		return integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu response exceeded the platform limit", nil)
 	case 1061001:
@@ -421,17 +430,17 @@ func mapFeishuBusinessCode(code int) error {
 	case 190004, 190005, 190010:
 		return integrations.NewError(integrations.ErrorCodeRateLimited, "Feishu rate limit was reached", nil)
 	case 190006:
-		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "Feishu tenant application credentials are invalid", nil)
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAuthInvalid, "credentials_invalid", "Feishu tenant application credentials are invalid", nil)
 	case 191000, 191003, 191004:
 		return integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu calendar is missing, deleted, or incompatible with this action", nil)
 	case 191002:
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Feishu denied the requested scope or resource", nil)
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAccessDenied, "permission_or_resource_denied", "Feishu denied the requested scope or resource", nil)
 	case 195100:
 		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Feishu user is not available in the connected tenant", nil)
 	case 99991663, 99991664, 99991668:
-		return integrations.NewError(integrations.ErrorCodeAuthInvalid, "Feishu credentials are invalid or expired", nil)
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAuthInvalid, "credentials_invalid", "Feishu credentials are invalid or expired", nil)
 	case 99991661, 99991672:
-		return integrations.NewError(integrations.ErrorCodeAccessDenied, "Feishu denied the requested scope or resource", nil)
+		return integrations.NewErrorWithReason(integrations.ErrorCodeAccessDenied, "permission_or_resource_denied", "Feishu denied the requested scope or resource", nil)
 	case 99991400, 99991401:
 		return integrations.NewError(integrations.ErrorCodeRateLimited, "Feishu rate limit was reached", nil)
 	default:
@@ -512,8 +521,9 @@ func withFeishuDiagnostics(err error, meta responseMeta) error {
 	if err == nil {
 		return nil
 	}
-	return integrations.NewProviderError(
+	return integrations.NewProviderErrorWithReason(
 		integrations.ErrorCode(err),
+		integrations.ErrorReasonCode(err),
 		err.Error(),
 		err,
 		meta.Diagnostics,

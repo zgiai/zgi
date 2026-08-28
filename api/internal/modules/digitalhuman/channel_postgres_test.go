@@ -102,6 +102,9 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 		ExternalTenantID: "tenant-test", ExternalBotID: "ou_bot_test", Status: channelruntime.InstallationStatusActive,
 		Revision: 1, CreatedBy: actorID, UpdatedBy: actorID, CreatedAt: now, UpdatedAt: now,
 	}
+	defaultSubjectType := runtimeidentity.SubjectTypeDigitalHuman
+	installation.DefaultSubjectType = &defaultSubjectType
+	installation.DefaultSubjectID = &detail.Definition.ID
 	if err := repository.CreateChannelInstallation(t.Context(), installation); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +410,7 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 		t.Fatalf("DeleteAs(bound channel connection) error = %v", err)
 	}
 
-	if err := repository.DeleteChannelInstallation(t.Context(), scope, installation.ID); err != nil {
+	if err := repository.DeleteChannelInstallation(t.Context(), scope, detail.Definition.ID, installation.ID); err != nil {
 		t.Fatalf("DeleteChannelInstallation() error = %v", err)
 	}
 	var deletedInstallation channelruntime.Installation

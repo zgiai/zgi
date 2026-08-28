@@ -186,6 +186,7 @@ func (resolver *IntegrationChannelCredentialResolver) CreateEmbeddedInstallation
 	installation *channelruntime.Installation,
 	updates map[string]string,
 ) error {
+	_ = ctx
 	if resolver == nil || installation == nil || installation.ID == uuid.Nil || installation.ConnectionID != installation.ID {
 		return ErrInvalidRequest
 	}
@@ -198,12 +199,11 @@ func (resolver *IntegrationChannelCredentialResolver) CreateEmbeddedInstallation
 		return err
 	}
 	defer destroyChannelCredentials(credentials)
-	identity, err := registered.Provisioner.ResolveIdentity(ctx, channelruntime.ResolvedChannelCredential{Values: credentials, Version: 1})
-	if err != nil || strings.TrimSpace(identity.ExternalTenantID) == "" || strings.TrimSpace(identity.ExternalSelfID) == "" {
-		return ErrChannelNotReady
-	}
-	installation.ExternalTenantID = strings.TrimSpace(identity.ExternalTenantID)
-	installation.ExternalBotID = strings.TrimSpace(identity.ExternalSelfID)
+	// Persist structurally valid credentials before contacting the provider.
+	// The explicit installation test resolves and stores external identity so
+	// users can obtain the callback address before completing provider setup.
+	installation.ExternalTenantID = ""
+	installation.ExternalBotID = ""
 	envelope, err := resolver.cipher.EncryptCredentials(credentials, integrations.CredentialAAD{
 		OrganizationID:    installation.OrganizationID,
 		ConnectionID:      installation.ID,
@@ -258,13 +258,9 @@ func (resolver *IntegrationChannelCredentialResolver) ReplaceEmbeddedCredential(
 		return err
 	}
 	defer destroyChannelCredentials(credentials)
-	identity, err := registered.Provisioner.ResolveIdentity(ctx, channelruntime.ResolvedChannelCredential{Values: credentials, Version: version})
-	if err != nil || strings.TrimSpace(identity.ExternalTenantID) == "" || strings.TrimSpace(identity.ExternalSelfID) == "" {
-		return ErrChannelNotReady
-	}
 	installation.ConnectionID = installation.ID
-	installation.ExternalTenantID = strings.TrimSpace(identity.ExternalTenantID)
-	installation.ExternalBotID = strings.TrimSpace(identity.ExternalSelfID)
+	installation.ExternalTenantID = ""
+	installation.ExternalBotID = ""
 	installation.UpdatedAt = now
 	envelope, err := resolver.cipher.EncryptCredentials(credentials, integrations.CredentialAAD{
 		OrganizationID:    scope.OrganizationID,

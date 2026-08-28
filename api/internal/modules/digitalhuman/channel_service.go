@@ -16,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/modules/integrations"
 )
 
 const (
@@ -29,9 +30,12 @@ const (
 	channelAcknowledgementText = "⏳ 已收到，正在处理…"
 	channelWakeFallback        = "@DigitalHuman"
 	channelRuntimeInputReason  = "channel.runtime_input.accepted"
+	channelConnectionTestTTL   = 5 * time.Minute
 )
 
 var errChannelDeliveryAttemptFailed = errors.New("channel delivery attempt failed")
+
+var channelConnectionTestNamespace = uuid.MustParse("4be6d9f2-347e-4a19-bba4-08cc76a0704f")
 
 type ChannelInvocationRuntime interface {
 	SubmitInvocation(context.Context, Scope, invocation.Event, string, *uuid.UUID) (*Run, bool, error)
@@ -152,13 +156,11 @@ func (service *ChannelService) CreateInstallation(ctx context.Context, scope Sco
 		}
 		return installation, nil
 	}
-	externalTenantID, externalBotID, err := service.credentials.ResolveIdentity(ctx, installation)
-	if err != nil || !validRuneLength(externalTenantID, maxExternalChannelIDRunes) ||
-		!validRuneLength(externalBotID, maxExternalChannelIDRunes) {
-		return nil, applicationError(ErrChannelNotReady, "digital_human.channel.installation.create")
+	credential, err := service.credentials.ResolveCredential(ctx, installation)
+	if err != nil {
+		return nil, applicationError(err, "digital_human.channel.installation.create")
 	}
-	installation.ExternalTenantID = externalTenantID
-	installation.ExternalBotID = externalBotID
+	credential.Destroy()
 	if err := service.store.CreateChannelInstallation(ctx, installation); err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.create")
 	}
@@ -172,7 +174,7 @@ func (service *ChannelService) ListInstallations(ctx context.Context, scope Scop
 	if _, err := service.subjects.Definition(ctx, scope, digitalHumanID); err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.list")
 	}
-	items, err := service.store.ListChannelInstallations(ctx, scope)
+	items, err := service.store.ListChannelInstallations(ctx, scope, digitalHumanID)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.list")
 	}
@@ -187,11 +189,12 @@ func (service *ChannelService) ListInstallations(ctx context.Context, scope Scop
 			receiver = service.receivers.Status(installation.ID)
 		}
 		views = append(views, &ChannelInstallationView{
-			Installation:   installation,
-			ChannelContext: service.credentials.ContextReadiness(ctx, installation),
-			WebhookURL:     service.webhookURL(installation),
-			CredentialMode: credentialMode,
-			Receiver:       receiver,
+			Installation:     installation,
+			ChannelContext:   service.credentials.ContextReadiness(ctx, installation),
+			WebhookURL:       service.webhookURL(installation),
+			CredentialMode:   credentialMode,
+			IdentityVerified: strings.TrimSpace(installation.ExternalTenantID) != "" && strings.TrimSpace(installation.ExternalBotID) != "",
+			Receiver:         receiver,
 		})
 	}
 	return views, nil
@@ -215,7 +218,7 @@ func (service *ChannelService) UpdateInstallation(ctx context.Context, scope Sco
 	if _, err := service.subjects.Definition(ctx, scope, digitalHumanID); err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.update")
 	}
-	installation, err := service.store.ScopedChannelInstallationByID(ctx, scope, installationID)
+	installation, err := service.store.ScopedChannelInstallationByID(ctx, scope, digitalHumanID, installationID)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.update")
 	}
@@ -255,7 +258,7 @@ func (service *ChannelService) UpdateInstallationCredential(
 	if _, err := service.subjects.Definition(ctx, scope, digitalHumanID); err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.credential.update")
 	}
-	installation, err := service.store.ScopedChannelInstallationByID(ctx, scope, installationID)
+	installation, err := service.store.ScopedChannelInstallationByID(ctx, scope, digitalHumanID, installationID)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.credential.update")
 	}
@@ -269,6 +272,424 @@ func (service *ChannelService) UpdateInstallationCredential(
 	return installation, nil
 }
 
+// VerifyInstallation rechecks only the capabilities that are safe to verify
+// without sending a message or reading an arbitrary external conversation:
+// the application credential and the provider bot identity. Callback receipt,
+// delivery, history, and member-name permissions remain runtime-verified after
+// the first real message.
+func (service *ChannelService) VerifyInstallation(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID, installationID uuid.UUID,
+) (*ChannelInstallationVerification, error) {
+	const operation = "digital_human.channel.installation.verify"
+	if !validScope(scope) || digitalHumanID == uuid.Nil || installationID == uuid.Nil {
+		return nil, applicationError(ErrInvalidRequest, operation)
+	}
+	if _, err := service.subjects.Definition(ctx, scope, digitalHumanID); err != nil {
+		return nil, applicationError(err, operation)
+	}
+	installation, err := service.store.ScopedChannelInstallationByID(ctx, scope, digitalHumanID, installationID)
+	if err != nil {
+		return nil, applicationError(err, operation)
+	}
+	checkedAt := service.now()
+	externalTenantID, externalSelfID, err := service.credentials.ResolveIdentity(ctx, installation)
+	externalTenantID = strings.TrimSpace(externalTenantID)
+	externalSelfID = strings.TrimSpace(externalSelfID)
+	if err != nil || externalTenantID == "" || externalSelfID == "" ||
+		!validRuneLength(externalTenantID, maxExternalChannelIDRunes) ||
+		!validRuneLength(externalSelfID, maxExternalChannelIDRunes) {
+		if err == nil {
+			err = ErrChannelNotReady
+		}
+		return failedChannelInstallationVerification(err, service.credentials.ContextReadiness(ctx, installation), checkedAt), nil
+	}
+	if installation.ExternalTenantID != externalTenantID || installation.ExternalBotID != externalSelfID {
+		expectedRevision := installation.Revision
+		installation.ExternalTenantID = externalTenantID
+		installation.ExternalBotID = externalSelfID
+		installation.UpdatedAt = checkedAt
+		if err := service.store.UpdateChannelInstallation(ctx, scope, installation, expectedRevision); err != nil {
+			return nil, applicationError(err, operation)
+		}
+	}
+	return &ChannelInstallationVerification{
+		Status:              "verified",
+		CredentialVerified:  true,
+		BotIdentityVerified: true,
+		ChannelContext:      service.credentials.ContextReadiness(ctx, installation),
+		CheckedAt:           checkedAt,
+	}, nil
+}
+
+func failedChannelInstallationVerification(err error, readiness ChannelContextReadiness, checkedAt time.Time) *ChannelInstallationVerification {
+	code := integrations.ErrorCode(err)
+	reasonCode := integrations.ErrorReasonCode(err)
+	diagnostics := integrations.ProviderDiagnosticsFromError(err)
+	failureCode := "temporarily_unavailable"
+	retryable := false
+	switch code {
+	case integrations.ErrorCodeAuthInvalid, integrations.ErrorCodeConnectionExpired, integrations.ErrorCodeReconnectRequired:
+		failureCode = "credentials_invalid"
+	case integrations.ErrorCodeAccessDenied, integrations.ErrorCodeInsufficientScope:
+		failureCode = "access_denied"
+	case integrations.ErrorCodeInvalidInput:
+		failureCode = "configuration_invalid"
+	case integrations.ErrorCodeRateLimited:
+		failureCode, retryable = "rate_limited", true
+	case integrations.ErrorCodeTimeout, integrations.ErrorCodeUpstream:
+		failureCode, retryable = "temporarily_unavailable", true
+	case integrations.ErrorCodeResponseInvalid:
+		failureCode = "response_invalid"
+	case integrations.ErrorCodeProviderRejected:
+		failureCode = "provider_rejected"
+	}
+	return &ChannelInstallationVerification{
+		Status:         "failed",
+		ChannelContext: readiness,
+		CheckedAt:      checkedAt,
+		Failure: &ChannelInstallationVerificationFailure{
+			Code:                 failureCode,
+			ReasonCode:           reasonCode,
+			ProviderErrorCode:    diagnostics.ErrorCode,
+			ProviderRequestID:    diagnostics.RequestID,
+			ProviderHTTPStatus:   diagnostics.HTTPStatus,
+			ProviderInvalidField: diagnostics.InvalidField,
+			Retryable:            retryable,
+		},
+	}
+}
+
+// StartConnectionTest first performs the safe credential and identity check,
+// then issues a stateless, bounded real-message test. The displayed code is
+// not a credential; success is derived later from persisted inbound and final
+// delivery evidence.
+func (service *ChannelService) StartConnectionTest(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID, installationID uuid.UUID,
+	request StartChannelConnectionTestRequest,
+) (*ChannelConnectionTest, error) {
+	const operation = "digital_human.channel.connection_test.start"
+	conversationType, err := connectionTestConversationType(request.ConversationType)
+	if err != nil {
+		return nil, applicationError(err, operation)
+	}
+	verification, err := service.VerifyInstallation(ctx, scope, digitalHumanID, installationID)
+	if err != nil {
+		return nil, err
+	}
+	if verification.Status != "verified" {
+		return &ChannelConnectionTest{
+			Status: ChannelConnectionTestConfigurationFailed, Readiness: ChannelConnectionTestReadinessUnavailable,
+			ConversationType: conversationType, Verification: verification,
+			Capabilities: connectionTestCapabilities(conversationType, verification.CredentialVerified, verification.BotIdentityVerified),
+		}, nil
+	}
+	installation, err := service.store.ScopedChannelInstallationByID(ctx, scope, digitalHumanID, installationID)
+	if err != nil {
+		return nil, applicationError(err, operation)
+	}
+	adapter, err := service.adapters.Resolve(installation.Provider)
+	if err != nil || !adapter.Capabilities().MessageRoundTripTest {
+		return nil, applicationError(ErrChannelNotReady, operation)
+	}
+	if conversationType == channelruntime.ConversationTypeGroup &&
+		(!adapter.Capabilities().ConversationCapabilityTest || !adapter.Capabilities().ContextRead) {
+		return nil, applicationError(ErrChannelNotReady, operation)
+	}
+	if conversationType == channelruntime.ConversationTypeGroup {
+		if _, ok := adapter.(channelruntime.ConversationCapabilityTester); !ok {
+			return nil, applicationError(ErrChannelNotReady, operation)
+		}
+	}
+	startedAt := service.now().UTC().Truncate(time.Millisecond)
+	testID := channelConnectionTestID(installation.ID, conversationType, startedAt)
+	testCode, testMessage := channelConnectionTestMessage(testID, conversationType)
+	return &ChannelConnectionTest{
+		ID: testID, Status: ChannelConnectionTestAwaitingMessage, Readiness: ChannelConnectionTestReadinessPending,
+		ConversationType: conversationType, Verification: verification,
+		TestCode: testCode, TestMessage: testMessage,
+		StartedAt: startedAt, ExpiresAt: startedAt.Add(channelConnectionTestTTL),
+		Capabilities: connectionTestCapabilities(conversationType, true, true),
+	}, nil
+}
+
+func (service *ChannelService) GetConnectionTest(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID, installationID, testID uuid.UUID,
+	conversationType channelruntime.ConversationType,
+	startedAt time.Time,
+) (*ChannelConnectionTest, error) {
+	const operation = "digital_human.channel.connection_test.get"
+	if !validScope(scope) || digitalHumanID == uuid.Nil || installationID == uuid.Nil || testID == uuid.Nil || startedAt.IsZero() {
+		return nil, applicationError(ErrInvalidRequest, operation)
+	}
+	conversationType, err := connectionTestConversationType(conversationType)
+	if err != nil {
+		return nil, applicationError(err, operation)
+	}
+	startedAt = startedAt.UTC().Truncate(time.Millisecond)
+	if channelConnectionTestID(installationID, conversationType, startedAt) != testID {
+		return nil, applicationError(ErrInvalidRequest, operation)
+	}
+	if _, err := service.subjects.Definition(ctx, scope, digitalHumanID); err != nil {
+		return nil, applicationError(err, operation)
+	}
+	installation, err := service.store.ScopedChannelInstallationByID(ctx, scope, digitalHumanID, installationID)
+	if err != nil {
+		return nil, applicationError(err, operation)
+	}
+	adapter, err := service.adapters.Resolve(installation.Provider)
+	if err != nil || !adapter.Capabilities().MessageRoundTripTest {
+		return nil, applicationError(ErrChannelNotReady, operation)
+	}
+	if conversationType == channelruntime.ConversationTypeGroup && !adapter.Capabilities().ConversationCapabilityTest {
+		return nil, applicationError(ErrChannelNotReady, operation)
+	}
+	if conversationType == channelruntime.ConversationTypeGroup {
+		if _, ok := adapter.(channelruntime.ConversationCapabilityTester); !ok {
+			return nil, applicationError(ErrChannelNotReady, operation)
+		}
+	}
+	evidenceStore, ok := service.store.(ChannelConnectionTestStore)
+	if !ok {
+		return nil, applicationError(ErrChannelNotReady, operation)
+	}
+	testCode, testMessage := channelConnectionTestMessage(testID, conversationType)
+	result := &ChannelConnectionTest{
+		ID: testID, Status: ChannelConnectionTestAwaitingMessage, Readiness: ChannelConnectionTestReadinessPending,
+		ConversationType: conversationType,
+		TestCode:         testCode, TestMessage: testMessage,
+		StartedAt: startedAt, ExpiresAt: startedAt.Add(channelConnectionTestTTL),
+		Capabilities: connectionTestCapabilities(conversationType, true, true),
+	}
+	event, delivery, err := evidenceStore.ChannelConnectionTestEvidence(ctx, installationID, conversationType, testMessage, startedAt)
+	if err != nil {
+		return nil, applicationError(err, operation)
+	}
+	if event == nil {
+		if !service.now().Before(result.ExpiresAt) {
+			result.Status, result.FailureCode = ChannelConnectionTestExpired, "message_not_received"
+			result.Readiness = ChannelConnectionTestReadinessUnavailable
+			setConnectionTestCapability(result, inboundConnectionTestCapability(conversationType), ChannelConnectionCapabilityFailed, result.FailureCode, nil)
+		}
+		return result, nil
+	}
+	result.MessageReceived = true
+	result.InboundEventID = &event.ID
+	setConnectionTestCapability(result, inboundConnectionTestCapability(conversationType), ChannelConnectionCapabilityPassed, "", nil)
+	if event.Status == channelruntime.InboundEventFailed || event.Status == channelruntime.InboundEventIgnored {
+		result.Status = ChannelConnectionTestFailed
+		result.FailureCode = connectionTestInboundFailureCode(event.ReasonCode)
+		result.Readiness = ChannelConnectionTestReadinessUnavailable
+		setConnectionTestCapability(result, inboundConnectionTestCapability(conversationType), ChannelConnectionCapabilityFailed, result.FailureCode, nil)
+		return result, nil
+	}
+	if delivery == nil {
+		result.Status = ChannelConnectionTestMessageReceived
+		if !service.now().Before(result.ExpiresAt) {
+			result.Status, result.FailureCode = ChannelConnectionTestFailed, "reply_not_created"
+			result.Readiness = ChannelConnectionTestReadinessUnavailable
+			setConnectionTestCapability(result, ChannelConnectionCapabilityReplyDelivery, ChannelConnectionCapabilityFailed, result.FailureCode, nil)
+		}
+		return result, nil
+	}
+	result.DeliveryID = &delivery.ID
+	switch delivery.Status {
+	case channelruntime.DeliverySucceeded:
+		result.Status, result.ReplyDelivered = ChannelConnectionTestSucceeded, true
+		setConnectionTestCapability(result, ChannelConnectionCapabilityReplyDelivery, ChannelConnectionCapabilityPassed, "", nil)
+	case channelruntime.DeliveryFailed, channelruntime.DeliveryUnknown:
+		result.Status = ChannelConnectionTestFailed
+		result.FailureCode = connectionTestDeliveryFailureCode(delivery.ErrorCode)
+		setConnectionTestCapability(result, ChannelConnectionCapabilityReplyDelivery, ChannelConnectionCapabilityFailed, result.FailureCode, nil)
+	default:
+		result.Status = ChannelConnectionTestReplying
+	}
+	if result.Status == ChannelConnectionTestSucceeded || result.Status == ChannelConnectionTestFailed {
+		service.testConversationCapabilities(ctx, scope, digitalHumanID, installation, adapter, event, result)
+	}
+	result.Readiness = connectionTestReadiness(result)
+	return result, nil
+}
+
+func channelConnectionTestID(installationID uuid.UUID, conversationType channelruntime.ConversationType, startedAt time.Time) uuid.UUID {
+	name := installationID.String() + "|" + startedAt.UTC().Truncate(time.Millisecond).Format(time.RFC3339Nano)
+	if conversationType == channelruntime.ConversationTypeGroup {
+		name += "|group"
+	}
+	return uuid.NewSHA1(channelConnectionTestNamespace, []byte(name))
+}
+
+func channelConnectionTestMessage(testID uuid.UUID, conversationType channelruntime.ConversationType) (string, string) {
+	compact := strings.ToUpper(strings.ReplaceAll(testID.String(), "-", ""))
+	code := "ZGI-" + compact[:8]
+	if conversationType == channelruntime.ConversationTypeGroup {
+		return code, "群聊连接测试 " + code + "，请回复“群聊连接成功”。"
+	}
+	return code, "连接测试 " + code + "，请回复“连接成功”。"
+}
+
+func connectionTestConversationType(value channelruntime.ConversationType) (channelruntime.ConversationType, error) {
+	switch value {
+	case "", channelruntime.ConversationTypeDirect:
+		return channelruntime.ConversationTypeDirect, nil
+	case channelruntime.ConversationTypeGroup:
+		return channelruntime.ConversationTypeGroup, nil
+	default:
+		return "", ErrInvalidRequest
+	}
+}
+
+func connectionTestCapabilities(
+	conversationType channelruntime.ConversationType,
+	credentialsVerified, botIdentityVerified bool,
+) []ChannelConnectionCapability {
+	credentialStatus, botIdentityStatus := ChannelConnectionCapabilityPending, ChannelConnectionCapabilityPending
+	if credentialsVerified {
+		credentialStatus = ChannelConnectionCapabilityPassed
+	}
+	if botIdentityVerified {
+		botIdentityStatus = ChannelConnectionCapabilityPassed
+	}
+	capabilities := []ChannelConnectionCapability{
+		{ID: ChannelConnectionCapabilityCredentials, Status: credentialStatus},
+		{ID: ChannelConnectionCapabilityBotIdentity, Status: botIdentityStatus},
+		{ID: inboundConnectionTestCapability(conversationType), Status: ChannelConnectionCapabilityPending},
+	}
+	if conversationType == channelruntime.ConversationTypeGroup {
+		capabilities = append(capabilities,
+			ChannelConnectionCapability{ID: ChannelConnectionCapabilityMessageHistory, Status: ChannelConnectionCapabilityPending},
+			ChannelConnectionCapability{ID: ChannelConnectionCapabilityMemberNames, Status: ChannelConnectionCapabilityPending},
+		)
+	}
+	return append(capabilities, ChannelConnectionCapability{ID: ChannelConnectionCapabilityReplyDelivery, Status: ChannelConnectionCapabilityPending})
+}
+
+func inboundConnectionTestCapability(conversationType channelruntime.ConversationType) string {
+	if conversationType == channelruntime.ConversationTypeGroup {
+		return ChannelConnectionCapabilityGroupMention
+	}
+	return ChannelConnectionCapabilityDirectInbound
+}
+
+func setConnectionTestCapability(
+	result *ChannelConnectionTest,
+	id string,
+	status ChannelConnectionCapabilityStatus,
+	failureCode string,
+	requiredPermissions []string,
+) {
+	if result == nil {
+		return
+	}
+	for index := range result.Capabilities {
+		if result.Capabilities[index].ID != id {
+			continue
+		}
+		result.Capabilities[index].Status = status
+		result.Capabilities[index].FailureCode = strings.TrimSpace(failureCode)
+		result.Capabilities[index].RequiredPermissions = append([]string(nil), requiredPermissions...)
+		return
+	}
+}
+
+func (service *ChannelService) testConversationCapabilities(
+	ctx context.Context,
+	scope Scope,
+	digitalHumanID uuid.UUID,
+	installation *channelruntime.Installation,
+	adapter channelruntime.Adapter,
+	event *channelruntime.InboundEvent,
+	result *ChannelConnectionTest,
+) {
+	if result == nil || result.ConversationType != channelruntime.ConversationTypeGroup || installation == nil || event == nil {
+		return
+	}
+	tester, ok := adapter.(channelruntime.ConversationCapabilityTester)
+	if !ok {
+		return
+	}
+	checks := tester.TestConversationCapabilities(ctx, channelruntime.ConversationCapabilityTestRequest{
+		OrganizationID: installation.OrganizationID,
+		WorkspaceID:    installation.WorkspaceID,
+		ActorID:        scope.ActorID,
+		InstallationID: installation.ID,
+		ConnectionID:   installation.ConnectionID,
+		Subject: runtimeidentity.SubjectRef{
+			Type:           runtimeidentity.SubjectTypeDigitalHuman,
+			ID:             digitalHumanID,
+			OrganizationID: installation.OrganizationID,
+			WorkspaceID:    installation.WorkspaceID,
+		},
+		ExternalConversationID: event.ExternalConversationID,
+		CurrentMessageID:       event.ProviderMessageID,
+		CurrentSenderID:        event.SenderExternalID,
+		OccurredAt:             event.ReceivedAt,
+	})
+	for _, check := range checks {
+		status := ChannelConnectionCapabilityFailed
+		if check.Status == channelruntime.CapabilityCheckPassed {
+			status = ChannelConnectionCapabilityPassed
+		}
+		setConnectionTestCapability(result, string(check.Capability), status, check.FailureCode, check.RequiredPermissions)
+	}
+}
+
+func connectionTestReadiness(result *ChannelConnectionTest) ChannelConnectionTestReadiness {
+	if result == nil {
+		return ChannelConnectionTestReadinessUnavailable
+	}
+	switch result.Status {
+	case ChannelConnectionTestConfigurationFailed, ChannelConnectionTestFailed, ChannelConnectionTestExpired:
+		return ChannelConnectionTestReadinessUnavailable
+	case ChannelConnectionTestSucceeded:
+		for _, capability := range result.Capabilities {
+			if capability.Status == ChannelConnectionCapabilityFailed {
+				return ChannelConnectionTestReadinessPartial
+			}
+		}
+		return ChannelConnectionTestReadinessAvailable
+	default:
+		return ChannelConnectionTestReadinessPending
+	}
+}
+
+func connectionTestInboundFailureCode(reason string) string {
+	switch strings.TrimSpace(reason) {
+	case "channel.binding.not_found":
+		return "digital_human_unavailable"
+	case "channel.conversation.reserve_failed", "channel.invocation.submit_failed", "channel.runtime_input.submit_failed":
+		return "runtime_unavailable"
+	case "channel.callback.stale":
+		return "callback_stale"
+	default:
+		return "message_rejected"
+	}
+}
+
+func connectionTestDeliveryFailureCode(code string) string {
+	switch strings.TrimSpace(code) {
+	case "channel.provider.permission_missing", "channel.provider.send_not_allowed":
+		return "send_permission_missing"
+	case "channel.provider.permission_or_resource_denied":
+		return "permission_or_resource_denied"
+	case "channel.provider.bot_capability_disabled":
+		return "bot_capability_disabled"
+	case "channel.provider.app_unavailable":
+		return "app_unavailable"
+	case "channel.provider.bot_not_in_chat":
+		return "bot_not_in_chat"
+	case "channel.delivery.outcome_unknown":
+		return "reply_outcome_unknown"
+	default:
+		return "reply_failed"
+	}
+}
+
 func (service *ChannelService) DeleteInstallation(ctx context.Context, scope Scope, digitalHumanID, installationID uuid.UUID) error {
 	if !validScope(scope) || digitalHumanID == uuid.Nil || installationID == uuid.Nil {
 		return applicationError(ErrInvalidRequest, "digital_human.channel.installation.delete")
@@ -276,7 +697,7 @@ func (service *ChannelService) DeleteInstallation(ctx context.Context, scope Sco
 	if _, err := service.subjects.Definition(ctx, scope, digitalHumanID); err != nil {
 		return applicationError(err, "digital_human.channel.installation.delete")
 	}
-	return applicationError(service.store.DeleteChannelInstallation(ctx, scope, installationID), "digital_human.channel.installation.delete")
+	return applicationError(service.store.DeleteChannelInstallation(ctx, scope, digitalHumanID, installationID), "digital_human.channel.installation.delete")
 }
 
 // ProbeWebhook verifies that a public callback address resolves to one active
@@ -731,7 +1152,7 @@ func (service *ChannelService) finishDeliveryFailure(ctx context.Context, delive
 			ctx, delivery.ID, channelruntime.DeliveryUnknown, channelErrorCode(deliveryErr), safeChannelErrorMessage(deliveryErr), now,
 		))
 	}
-	if delivery.AttemptCount >= maxDeliveryAttempts {
+	if !channelDeliveryRetryable(deliveryErr) || delivery.AttemptCount >= maxDeliveryAttempts {
 		return safeDeliveryAttemptError(service.store.FailDelivery(
 			ctx, delivery.ID, channelruntime.DeliveryFailed, channelErrorCode(deliveryErr), safeChannelErrorMessage(deliveryErr), now,
 		))
@@ -739,6 +1160,28 @@ func (service *ChannelService) finishDeliveryFailure(ctx context.Context, delive
 	return safeDeliveryAttemptError(service.store.RetryDelivery(
 		ctx, delivery.ID, now.Add(deliveryBackoff(delivery.AttemptCount)), channelErrorCode(deliveryErr), safeChannelErrorMessage(deliveryErr),
 	))
+}
+
+// channelDeliveryRetryable limits automatic retries to failures that can
+// plausibly recover without configuration or authorization changes. Confirmed
+// provider rejections become visible terminal failures after the first attempt.
+func channelDeliveryRetryable(err error) bool {
+	if err == nil || errors.Is(err, channelruntime.ErrDeliveryOutcomeUnknown) {
+		return false
+	}
+	var integrationError *integrations.Error
+	if !errors.As(err, &integrationError) {
+		return true
+	}
+	switch integrationError.Code {
+	case integrations.ErrorCodeRateLimited,
+		integrations.ErrorCodeTimeout,
+		integrations.ErrorCodeUpstream,
+		integrations.ErrorCodeOperationInProgress:
+		return true
+	default:
+		return false
+	}
 }
 
 func safeDeliveryAttemptError(persistErr error) error {
@@ -874,6 +1317,11 @@ func channelErrorCode(err error) string {
 	}
 	if errors.Is(err, channelruntime.ErrDeliveryOutcomeUnknown) {
 		return "channel.delivery.outcome_unknown"
+	}
+	switch reason := integrations.ErrorReasonCode(err); reason {
+	case "credentials_invalid", "bot_not_in_chat", "bot_capability_disabled", "app_unavailable",
+		"permission_missing", "send_not_allowed", "permission_or_resource_denied":
+		return "channel.provider." + reason
 	}
 	return "channel.delivery.failed"
 }
