@@ -8,6 +8,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -59,6 +60,55 @@ func TestDigitalHumanCallerForcesUserAndAgentMemoryOff(t *testing.T) {
 	}
 	if runConfigAllowsUserMemory(RunConfig{UseMemory: true, BillingAppType: runtimemodel.ConversationCallerDigitalHuman}) {
 		t.Fatal("DigitalHuman RunConfig enabled account memory")
+	}
+}
+
+func TestDigitalHumanUsesSharedAgentContextManager(t *testing.T) {
+	messageID := uuid.New()
+	prepared := &PreparedChat{
+		Caller: Caller{Type: runtimemodel.ConversationCallerDigitalHuman},
+		Message: &runtimemodel.Message{
+			ID:       messageID,
+			Metadata: map[string]interface{}{},
+		},
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		LLMRequest: &adapter.ChatRequest{
+			Provider: "test-provider",
+			Model:    "test-model",
+			Messages: []adapter.Message{
+				{Role: "system", Content: "You are a DigitalHuman."},
+				{Role: "user", Content: "Continue the current task."},
+			},
+		},
+		contextBudget: &contextBudgetResult{
+			Spec: ModelSpec{ContextWindow: 128_000, MaxOutputTokens: 8_000},
+			Budget: &budgetComputation{
+				ConfiguredAgentWindowK: 256,
+				ReservedOutputTokens:   8_000,
+			},
+		},
+	}
+
+	runtime := &service{}
+	manager, err := runtime.newAgentContextManager(t.Context(), prepared)
+	if err != nil {
+		t.Fatalf("newAgentContextManager() error = %v", err)
+	}
+	if manager == nil {
+		t.Fatal("DigitalHuman context manager = nil")
+	}
+	request, decision, err := manager.PrepareBeforeModelCall(t.Context(), prepared.LLMRequest)
+	if err != nil {
+		t.Fatalf("PrepareBeforeModelCall() error = %v", err)
+	}
+	if request == nil || decision.AgentRunID != messageID.String() {
+		t.Fatalf("context decision = %#v", decision)
+	}
+	if decision.Budget.AgentContextWindow != 128_000 || !decision.Budget.AgentContextWindowClamped {
+		t.Fatalf("DigitalHuman context budget = %#v", decision.Budget)
+	}
+	if prepared.Message.Metadata["agent_run_id"] != messageID.String() {
+		t.Fatalf("agent_run_id = %#v", prepared.Message.Metadata["agent_run_id"])
 	}
 }
 
