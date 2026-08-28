@@ -197,20 +197,6 @@ type TaskActivityListResult struct {
 	HasMore  bool            `json:"has_more"`
 }
 
-// ChannelTaskPolicy is an explicit installation-level grant for task tools.
-type ChannelTaskPolicy struct {
-	InstallationID uuid.UUID `json:"installation_id"`
-	Enabled        bool      `json:"enabled"`
-	Revision       int64     `json:"revision"`
-	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-// UpdateChannelTaskPolicyRequest uses CAS to avoid overwriting another editor.
-type UpdateChannelTaskPolicyRequest struct {
-	Enabled          bool  `json:"enabled"`
-	ExpectedRevision int64 `json:"expected_revision"`
-}
-
 // TaskMutationContext describes the trusted server-side source of a task
 // mutation. HTTP and runtime adapters construct it; model arguments cannot.
 type TaskMutationContext struct {
@@ -236,7 +222,4 @@ type TaskHandlerService interface {
 	SetTaskWorkStatus(context.Context, Scope, uuid.UUID, uuid.UUID, TaskWorkStatus, int64, TaskMutationContext) (*Task, error)
 	ListTaskRuns(context.Context, Scope, uuid.UUID, uuid.UUID, int, int, string) (*TaskRunListResult, error)
 	ListTaskActivities(context.Context, Scope, uuid.UUID, uuid.UUID, int, int, string) (*TaskActivityListResult, error)
-	GetChannelTaskPolicy(context.Context, Scope, uuid.UUID, uuid.UUID) (*ChannelTaskPolicy, error)
-	UpdateChannelTaskPolicy(context.Context, Scope, uuid.UUID, uuid.UUID, UpdateChannelTaskPolicyRequest) (*ChannelTaskPolicy, error)
-	ChannelTaskManagementEnabled(context.Context, Scope, uuid.UUID, uuid.UUID) (bool, error)
 }

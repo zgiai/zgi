@@ -140,6 +140,18 @@ func TestServicePublishRejectsInvalidDraftWithoutPartialMutation(t *testing.T) {
 	}
 }
 
+func TestServicePublishAllowsDraftWithoutRules(t *testing.T) {
+	draft := &Version{
+		IdentityName: "Rule optional",
+		Persona:      "A concise operations partner",
+		DefaultModel: "gpt-5",
+		Rules:        []byte(`[]`),
+	}
+	if err := validatePublishable(draft); err != nil {
+		t.Fatalf("validatePublishable() error = %v", err)
+	}
+}
+
 func TestServiceDeleteImpactBlocksPublishedAndDeletesUnpublished(t *testing.T) {
 	service, _ := newTestService(t)
 	scope := testScope()

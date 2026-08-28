@@ -130,7 +130,7 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	if path == "" {
 		return ""
 	}
-	if strings.Contains(path, "/tasks") || strings.HasSuffix(path, "/task-policy") {
+	if strings.Contains(path, "/tasks") {
 		switch method {
 		case http.MethodGet:
 			return workspacemodel.WorkspacePermissionDigitalHumanView

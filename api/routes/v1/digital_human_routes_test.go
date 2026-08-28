@@ -54,8 +54,6 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodGet, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanView},
 		{http.MethodPost, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodPatch, "/console/api/digital-humans/:id/tasks/:task_id", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
-		{http.MethodGet, "/console/api/digital-humans/:id/channels/installations/:installation_id/task-policy", workspacemodel.WorkspacePermissionDigitalHumanView},
-		{http.MethodPut, "/console/api/digital-humans/:id/channels/installations/:installation_id/task-policy", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 	}
 	for _, test := range tests {
 		if got := digitalHumanPermissionForRequest(test.method, test.path); got != test.want {
@@ -96,7 +94,7 @@ func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 59; got != want {
+	if got, want := len(routes), 60; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -140,8 +138,6 @@ func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
 		"POST /console/api/digital-humans/:id/tasks/:task_id/actions/:action":                                             false,
 		"GET /console/api/digital-humans/:id/tasks/:task_id/runs":                                                         false,
 		"GET /console/api/digital-humans/:id/tasks/:task_id/activities":                                                   false,
-		"GET /console/api/digital-humans/:id/channels/installations/:installation_id/task-policy":                         false,
-		"PUT /console/api/digital-humans/:id/channels/installations/:installation_id/task-policy":                         false,
 	}
 	for _, route := range routes {
 		key := route.Method + " " + route.Path

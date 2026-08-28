@@ -26,20 +26,6 @@ const (
 	proposalTTL             = 7 * 24 * time.Hour
 )
 
-type channelTaskPolicy struct {
-	InstallationID uuid.UUID `gorm:"type:uuid;primaryKey"`
-	OrganizationID uuid.UUID `gorm:"type:uuid;not null"`
-	WorkspaceID    uuid.UUID `gorm:"type:uuid;not null"`
-	DigitalHumanID uuid.UUID `gorm:"type:uuid;not null"`
-	Enabled        bool      `gorm:"not null"`
-	Revision       int64     `gorm:"not null"`
-	UpdatedBy      uuid.UUID `gorm:"type:uuid;not null"`
-	CreatedAt      time.Time `gorm:"not null"`
-	UpdatedAt      time.Time `gorm:"not null"`
-}
-
-func (channelTaskPolicy) TableName() string { return "digital_human_channel_task_policies" }
-
 // Service owns the DigitalHuman product projection over the Automation scheduler.
 type Service struct {
 	db         *gorm.DB
@@ -524,59 +510,6 @@ func (s *Service) ListTaskActivities(ctx context.Context, scope digitalhuman.Sco
 	return &digitalhuman.TaskActivityListResult{Items: items, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
 }
 
-func (s *Service) GetChannelTaskPolicy(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, installationID uuid.UUID) (*digitalhuman.ChannelTaskPolicy, error) {
-	if err := s.validateInstallation(ctx, scope, digitalHumanID, installationID); err != nil {
-		return nil, err
-	}
-	var row channelTaskPolicy
-	err := s.db.WithContext(ctx).Where("installation_id = ? AND organization_id = ? AND workspace_id = ? AND digital_human_id = ?", installationID, scope.OrganizationID, scope.WorkspaceID, digitalHumanID).First(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return &digitalhuman.ChannelTaskPolicy{InstallationID: installationID, Enabled: false, Revision: 0}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("load channel task policy: %w", err)
-	}
-	return publicPolicy(&row), nil
-}
-
-func (s *Service) UpdateChannelTaskPolicy(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, installationID uuid.UUID, req digitalhuman.UpdateChannelTaskPolicyRequest) (*digitalhuman.ChannelTaskPolicy, error) {
-	if err := s.validateInstallation(ctx, scope, digitalHumanID, installationID); err != nil {
-		return nil, err
-	}
-	now := s.now()
-	if req.ExpectedRevision == 0 {
-		row := channelTaskPolicy{InstallationID: installationID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID, Enabled: req.Enabled, Revision: 1, UpdatedBy: scope.ActorID, CreatedAt: now, UpdatedAt: now}
-		if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
-			return nil, err
-		}
-		var stored channelTaskPolicy
-		if err := s.db.WithContext(ctx).Where("installation_id = ?", installationID).First(&stored).Error; err != nil {
-			return nil, err
-		}
-		if stored.Revision != 1 || stored.Enabled != req.Enabled {
-			return nil, digitalhuman.ErrTaskConflict
-		}
-		return publicPolicy(&stored), nil
-	}
-	updates := map[string]any{"enabled": req.Enabled, "revision": gorm.Expr("revision + 1"), "updated_by": scope.ActorID, "updated_at": now}
-	result := s.db.WithContext(ctx).Model(&channelTaskPolicy{}).Where("installation_id = ? AND organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND revision = ?", installationID, scope.OrganizationID, scope.WorkspaceID, digitalHumanID, req.ExpectedRevision).Updates(updates)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	if result.RowsAffected != 1 {
-		return nil, digitalhuman.ErrTaskConflict
-	}
-	return s.GetChannelTaskPolicy(ctx, scope, digitalHumanID, installationID)
-}
-
-func (s *Service) ChannelTaskManagementEnabled(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, installationID uuid.UUID) (bool, error) {
-	policy, err := s.GetChannelTaskPolicy(ctx, scope, digitalHumanID, installationID)
-	if err != nil {
-		return false, err
-	}
-	return policy.Enabled, nil
-}
-
 func (s *Service) taskQuery(ctx context.Context, scope digitalhuman.Scope, digitalHumanID uuid.UUID, sourceConversationID string) *gorm.DB {
 	query := s.db.WithContext(ctx).Model(&automationmodel.AutomationTask{}).
 		Where("organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_type = ? AND subject_id = ? AND status <> ?", scope.OrganizationID, scope.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, subjectTypeDigitalHuman, digitalHumanID, automationmodel.AutomationTaskStatusArchived)
@@ -610,21 +543,6 @@ func (s *Service) taskByOperation(ctx context.Context, scope digitalhuman.Scope,
 	var task automationmodel.AutomationTask
 	err := s.db.WithContext(ctx).Where("organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_id = ? AND source_operation_id = ?", scope.OrganizationID, scope.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, digitalHumanID, operationID).First(&task).Error
 	return &task, err
-}
-
-func (s *Service) validateInstallation(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, installationID uuid.UUID) error {
-	if err := validateBoundary(scope, digitalHumanID); err != nil || installationID == uuid.Nil {
-		return digitalhuman.ErrInvalidRequest
-	}
-	var count int64
-	err := s.db.WithContext(ctx).Table("channel_installations").Where("id = ? AND organization_id = ? AND workspace_id = ? AND default_subject_type = ? AND default_subject_id = ?", installationID, scope.OrganizationID, scope.WorkspaceID, subjectTypeDigitalHuman, digitalHumanID).Count(&count).Error
-	if err != nil {
-		return fmt.Errorf("validate channel installation: %w", err)
-	}
-	if count != 1 {
-		return digitalhuman.ErrTaskPolicyRejected
-	}
-	return nil
 }
 
 func compileSchedule(schedule digitalhuman.TaskSchedule) (automationmodel.AutomationScheduleType, string, map[string]any, *time.Time, error) {
@@ -961,7 +879,4 @@ func normalizeError(err error) error {
 		return err
 	}
 	return fmt.Errorf("digital human task operation: %w", err)
-}
-func publicPolicy(row *channelTaskPolicy) *digitalhuman.ChannelTaskPolicy {
-	return &digitalhuman.ChannelTaskPolicy{InstallationID: row.InstallationID, Enabled: row.Enabled, Revision: row.Revision, UpdatedAt: row.UpdatedAt}
 }

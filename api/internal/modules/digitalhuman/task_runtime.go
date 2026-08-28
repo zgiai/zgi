@@ -62,21 +62,9 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 		return nil, ErrInvalidRequest
 	}
 	boundary := taskBoundary(event)
-	scope := runScope(run)
-	if scope.ActorID == uuid.Nil {
-		scope.ActorID = run.DigitalHumanID
-	}
 	switch event.Origin.Kind {
 	case invocation.OriginChannel:
-		installationID, err := uuid.Parse(strings.TrimSpace(event.Origin.InstallationID))
-		if err != nil {
-			return nil, nil
-		}
-		enabled, err := p.service.ChannelTaskManagementEnabled(ctx, scope, run.DigitalHumanID, installationID)
-		if err != nil {
-			return nil, err
-		}
-		boundary.writable = enabled
+		boundary.writable = true
 	case invocation.OriginManual:
 		boundary.writable = true
 	case invocation.OriginSchedule:

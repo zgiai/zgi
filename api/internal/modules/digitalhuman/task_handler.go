@@ -32,9 +32,6 @@ func (h *TaskHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/:task_id/actions/:action", h.applyAction)
 	group.GET("/:task_id/runs", h.runs)
 	group.GET("/:task_id/activities", h.activities)
-	policy := router.Group("/digital-humans/:id/channels/installations/:installation_id/task-policy")
-	policy.GET("", h.getPolicy)
-	policy.PUT("", h.updatePolicy)
 }
 
 func (h *TaskHandler) list(c *gin.Context) {
@@ -169,35 +166,6 @@ func (h *TaskHandler) activities(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
-func (h *TaskHandler) getPolicy(c *gin.Context) {
-	scope, id, installationID, ok := h.policyIDs(c)
-	if !ok {
-		return
-	}
-	result, err := h.service.GetChannelTaskPolicy(c.Request.Context(), scope, id, installationID)
-	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.task_policy.get"))
-		return
-	}
-	writeDigitalHumanData(c, http.StatusOK, result)
-}
-func (h *TaskHandler) updatePolicy(c *gin.Context) {
-	scope, id, installationID, ok := h.policyIDs(c)
-	if !ok {
-		return
-	}
-	var req UpdateChannelTaskPolicyRequest
-	if !h.base.decode(c, &req) {
-		return
-	}
-	result, err := h.service.UpdateChannelTaskPolicy(c.Request.Context(), scope, id, installationID, req)
-	if err != nil {
-		h.base.writeError(c, applicationError(err, "digital_human.task_policy.update"))
-		return
-	}
-	writeDigitalHumanData(c, http.StatusOK, result)
-}
-
 func (h *TaskHandler) ids(c *gin.Context) (Scope, uuid.UUID, uuid.UUID, bool) {
 	scope, id, ok := h.base.scopeAndID(c)
 	if !ok {
@@ -209,18 +177,6 @@ func (h *TaskHandler) ids(c *gin.Context) (Scope, uuid.UUID, uuid.UUID, bool) {
 		return Scope{}, uuid.Nil, uuid.Nil, false
 	}
 	return scope, id, taskID, true
-}
-func (h *TaskHandler) policyIDs(c *gin.Context) (Scope, uuid.UUID, uuid.UUID, bool) {
-	scope, id, ok := h.base.scopeAndID(c)
-	if !ok {
-		return Scope{}, uuid.Nil, uuid.Nil, false
-	}
-	installationID, err := uuid.Parse(strings.TrimSpace(c.Param("installation_id")))
-	if err != nil || installationID == uuid.Nil {
-		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.task_policy.request"))
-		return Scope{}, uuid.Nil, uuid.Nil, false
-	}
-	return scope, id, installationID, true
 }
 func accountMutation(scope Scope) TaskMutationContext {
 	return TaskMutationContext{ActorType: "account", ActorRef: scope.ActorID.String(), OperationID: uuid.New(), Source: "console"}

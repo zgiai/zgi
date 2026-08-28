@@ -16,16 +16,11 @@ import (
 
 type taskRuntimeService struct {
 	TaskHandlerService
-	enabled         bool
 	statusCalls     *[]TaskWorkStatus
 	createCalls     *[]CreateTaskRequest
 	createMutations *[]TaskMutationContext
 	listQueries     *[]TaskListQuery
 	listResult      *TaskListResult
-}
-
-func (s taskRuntimeService) ChannelTaskManagementEnabled(context.Context, Scope, uuid.UUID, uuid.UUID) (bool, error) {
-	return s.enabled, nil
 }
 
 func (s taskRuntimeService) SetTaskWorkStatus(_ context.Context, _ Scope, _ uuid.UUID, taskID uuid.UUID, status TaskWorkStatus, revision int64, _ TaskMutationContext) (*Task, error) {
@@ -59,24 +54,15 @@ func (s taskRuntimeService) ListTasks(_ context.Context, _ Scope, _ uuid.UUID, q
 	return &TaskListResult{}, nil
 }
 
-func TestTaskRuntimeRequiresExplicitChannelPolicy(t *testing.T) {
+func TestTaskRuntimeChannelIsWritableByDefault(t *testing.T) {
 	run, event := taskRuntimeFixture(invocation.OriginChannel)
-	provider := NewTaskRuntimeProvider(taskRuntimeService{enabled: false})
+	provider := NewTaskRuntimeProvider(taskRuntimeService{})
 	preparation, err := provider.Prepare(t.Context(), run, event)
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
 	}
-	if len(preparation.Tools) != 0 || !strings.Contains(preparation.SystemPromptAddendum, "not enabled") {
-		t.Fatalf("disabled preparation = %#v", preparation)
-	}
-
-	provider = NewTaskRuntimeProvider(taskRuntimeService{enabled: true})
-	preparation, err = provider.Prepare(t.Context(), run, event)
-	if err != nil {
-		t.Fatalf("Prepare(enabled) error = %v", err)
-	}
 	if len(preparation.Tools) != 3 || !strings.Contains(preparation.SystemPromptAddendum, "proposed task") || !strings.Contains(preparation.SystemPromptAddendum, "current group conversation") {
-		t.Fatalf("enabled preparation = %#v", preparation)
+		t.Fatalf("channel preparation = %#v", preparation)
 	}
 	for _, tool := range preparation.Tools {
 		encoded, err := json.Marshal(tool.Definition)
@@ -143,7 +129,7 @@ func TestScheduledTaskRuntimeMayOnlyMarkCurrentTaskWaitingOrBlocked(t *testing.T
 func TestTaskRuntimeCreatesExplicitRequestWithoutProposalRoundTrip(t *testing.T) {
 	created := []CreateTaskRequest{}
 	mutations := []TaskMutationContext{}
-	provider := NewTaskRuntimeProvider(taskRuntimeService{enabled: true, createCalls: &created, createMutations: &mutations})
+	provider := NewTaskRuntimeProvider(taskRuntimeService{createCalls: &created, createMutations: &mutations})
 	run, event := taskRuntimeFixture(invocation.OriginChannel)
 	prepared, err := provider.Prepare(t.Context(), run, event)
 	if err != nil {
@@ -214,7 +200,7 @@ func TestTaskRuntimeListDefaultsToOpenTasks(t *testing.T) {
 
 func TestTaskRuntimeChannelListDisclosesConversationScope(t *testing.T) {
 	queries := []TaskListQuery{}
-	provider := NewTaskRuntimeProvider(taskRuntimeService{enabled: true, listQueries: &queries})
+	provider := NewTaskRuntimeProvider(taskRuntimeService{listQueries: &queries})
 	run, event := taskRuntimeFixture(invocation.OriginChannel)
 	prepared, err := provider.Prepare(t.Context(), run, event)
 	if err != nil {

@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
-	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"gorm.io/driver/sqlite"
@@ -87,32 +85,6 @@ func TestServiceProposalLifecycleAndOptimisticRevision(t *testing.T) {
 	runs, err := service.ListTaskRuns(t.Context(), scope, digitalHumanID, created.ID, 1, 20, "chat-1")
 	if err != nil || runs.Total != 1 || runs.Items[0].Status != string(automationmodel.AutomationTaskRunStatusQueued) {
 		t.Fatalf("ListTaskRuns() = %#v, error = %v", runs, err)
-	}
-}
-
-func TestChannelTaskPolicyDefaultsOffAndUsesRevision(t *testing.T) {
-	service, _, scope, digitalHumanID := newTaskService(t)
-	installationID := uuid.New()
-	subjectType := runtimeidentity.SubjectTypeDigitalHuman
-	installation := &channelruntime.Installation{
-		ID: installationID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
-		Provider: "feishu", ConnectionID: installationID, Name: "Feishu", DefaultSubjectType: &subjectType,
-		DefaultSubjectID: &digitalHumanID, Status: channelruntime.InstallationStatusActive, Revision: 1,
-		CreatedBy: scope.ActorID, UpdatedBy: scope.ActorID,
-	}
-	if err := service.db.Create(installation).Error; err != nil {
-		t.Fatalf("create installation: %v", err)
-	}
-	policy, err := service.GetChannelTaskPolicy(t.Context(), scope, digitalHumanID, installationID)
-	if err != nil || policy.Enabled || policy.Revision != 0 {
-		t.Fatalf("default policy = %#v, error = %v", policy, err)
-	}
-	policy, err = service.UpdateChannelTaskPolicy(t.Context(), scope, digitalHumanID, installationID, digitalhuman.UpdateChannelTaskPolicyRequest{Enabled: true, ExpectedRevision: 0})
-	if err != nil || !policy.Enabled || policy.Revision != 1 {
-		t.Fatalf("enabled policy = %#v, error = %v", policy, err)
-	}
-	if _, err := service.UpdateChannelTaskPolicy(t.Context(), scope, digitalHumanID, installationID, digitalhuman.UpdateChannelTaskPolicyRequest{Enabled: false, ExpectedRevision: 0}); !errors.Is(err, digitalhuman.ErrTaskConflict) {
-		t.Fatalf("stale policy update error = %v, want conflict", err)
 	}
 }
 
@@ -258,7 +230,7 @@ func newTaskService(t *testing.T) (*Service, *recordingDispatcher, digitalhuman.
 	if err := db.AutoMigrate(
 		&automationmodel.AutomationTask{}, &automationmodel.AutomationTaskAction{},
 		&automationmodel.AutomationTaskRun{}, &automationmodel.AutomationActionRun{},
-		&automationmodel.AutomationTaskActivity{}, &channelruntime.Installation{}, &channelTaskPolicy{},
+		&automationmodel.AutomationTaskActivity{},
 	); err != nil {
 		t.Fatalf("migrate task service: %v", err)
 	}

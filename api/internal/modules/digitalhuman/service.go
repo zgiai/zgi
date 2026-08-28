@@ -578,7 +578,7 @@ func validatePublishable(draft *Version) error {
 		return ErrPublishInvalid
 	}
 	var rules []string
-	if err := json.Unmarshal(draft.Rules, &rules); err != nil || len(normalizeRules(rules)) == 0 {
+	if err := json.Unmarshal(draft.Rules, &rules); err != nil {
 		return ErrPublishInvalid
 	}
 	return nil
