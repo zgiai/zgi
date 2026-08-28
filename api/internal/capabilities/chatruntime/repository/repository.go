@@ -82,6 +82,7 @@ type RuntimeInputRepository interface {
 	ListByBatch(ctx context.Context, batchID uuid.UUID) ([]*runtimemodel.RuntimeInput, error)
 	ClaimPending(ctx context.Context, targetMessageID uuid.UUID, mode string, batchID *uuid.UUID, now, expiresAt time.Time) ([]*runtimemodel.RuntimeInput, error)
 	MarkBatchConsumed(ctx context.Context, batchID, consumedMessageID uuid.UUID, now time.Time) error
+	ReleaseCurrentRunBatch(ctx context.Context, batchID uuid.UUID, now time.Time) error
 	MarkBatchFailed(ctx context.Context, batchID uuid.UUID, failure string, now time.Time) ([]*runtimemodel.RuntimeInput, error)
 	CancelForStoppedMessage(ctx context.Context, conversationID, messageID uuid.UUID, now time.Time) ([]*runtimemodel.RuntimeInput, error)
 	CancelPendingFollowUps(ctx context.Context, conversationID uuid.UUID, now time.Time) ([]*runtimemodel.RuntimeInput, error)

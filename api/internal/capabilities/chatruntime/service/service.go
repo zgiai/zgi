@@ -598,6 +598,7 @@ type PreparedChat struct {
 	ParentID                       *uuid.UUID
 	parts                          *chatRequestParts
 	RuntimeInputFollowUpBatchID    *uuid.UUID
+	runtimeInputClaimedBatches     []claimedRuntimeInputBatch
 	contextBudget                  *contextBudgetResult
 	contextManager                 *contextmgr.Manager
 

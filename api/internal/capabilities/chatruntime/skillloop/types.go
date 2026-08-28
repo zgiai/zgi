@@ -183,6 +183,7 @@ type RunRequest struct {
 	OnTerminalCompletion           func(TerminalCompletionResult)
 	OnChunk                        func(string) error
 	BeforeModelRound               func(context.Context, int) ([]adapter.Message, error)
+	AfterModelRound                func(context.Context, int, bool) error
 	PlanningOutputTokenLimit       int
 	AuthorizeSkillStep             func(context.Context, string) (bool, error)
 	PreferredRestoredSkillID       string

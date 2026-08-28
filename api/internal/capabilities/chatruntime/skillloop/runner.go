@@ -336,6 +336,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		} else {
 			planningResult, err = r.runSkillPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
 		}
+		if req.AfterModelRound != nil {
+			if hookErr := req.AfterModelRound(ctx, round, err == nil); hookErr != nil {
+				if err != nil {
+					return answerBuilder.String(), usage, errors.Join(err, hookErr)
+				}
+				return answerBuilder.String(), usage, hookErr
+			}
+		}
 		usage = mergeUsage(usage, planningResult.usage)
 		if len(planningResult.contextMessages) > 0 {
 			messages = cloneMessagesForProvider(planningResult.contextMessages)

@@ -258,6 +258,9 @@ func (s *service) runPreparedToolLoop(
 				},
 			)
 		},
+		AfterModelRound: func(checkpointCtx context.Context, _ int, accepted bool) error {
+			return s.settleClaimedRuntimeInputBatches(checkpointCtx, prepared, accepted)
+		},
 		PlanningOutputTokenLimit: planningOutputTokenLimit(prepared),
 		AuthorizeSkillStep:       authorizeSkillStep,
 		PreferredRestoredSkillID: prepared.PreferredRestoredSkillID,

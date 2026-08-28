@@ -32,6 +32,13 @@ type runtimeInputCheckpoint struct {
 	ModelRound int
 }
 
+type claimedRuntimeInputBatch struct {
+	id         uuid.UUID
+	items      []*runtimemodel.RuntimeInput
+	checkpoint runtimeInputCheckpoint
+	onApplied  func(map[string]interface{}) error
+}
+
 const runtimeInputSystemInstruction = `The user submitted the following additional messages while this task was already running. Treat them as ordinary new user input, preserve their order, and decide from the full conversation how they affect the current task. Do not infer intent from keywords alone.`
 
 func (s *service) SubmitRuntimeInput(ctx context.Context, scope Scope, caller Caller, config RunConfig, req SubmitRuntimeInputRequest) (*SubmitRuntimeInputResult, error) {
@@ -157,24 +164,53 @@ func (s *service) claimRuntimeInputsForCurrentRun(
 	if err != nil || len(items) == 0 {
 		return nil, err
 	}
-	if err := s.repos.RuntimeInput.MarkBatchConsumed(ctx, batchID, prepared.Message.ID, now); err != nil {
-		return nil, err
+	prepared.runtimeInputClaimedBatches = append(prepared.runtimeInputClaimedBatches, claimedRuntimeInputBatch{
+		id: batchID, items: items, checkpoint: checkpoint, onApplied: onApplied,
+	})
+	return runtimeInputModelMessages(items), nil
+}
+
+func (s *service) settleClaimedRuntimeInputBatches(ctx context.Context, prepared *PreparedChat, accepted bool) error {
+	if prepared == nil || prepared.Message == nil || len(prepared.runtimeInputClaimedBatches) == 0 {
+		return nil
 	}
-	messages := runtimeInputModelMessages(items)
-	for _, input := range items {
+	now := time.Now().UTC()
+	for len(prepared.runtimeInputClaimedBatches) > 0 {
+		batch := prepared.runtimeInputClaimedBatches[0]
+		var err error
+		if accepted {
+			err = s.repos.RuntimeInput.MarkBatchConsumed(ctx, batch.id, prepared.Message.ID, now)
+		} else {
+			err = s.repos.RuntimeInput.ReleaseCurrentRunBatch(ctx, batch.id, now)
+		}
+		if err != nil {
+			return err
+		}
+		if accepted {
+			s.emitAppliedRuntimeInputBatch(ctx, prepared, batch, now)
+		}
+		prepared.runtimeInputClaimedBatches = prepared.runtimeInputClaimedBatches[1:]
+	}
+	return nil
+}
+
+func (s *service) emitAppliedRuntimeInputBatch(ctx context.Context, prepared *PreparedChat, batch claimedRuntimeInputBatch, appliedAt time.Time) {
+	for _, input := range batch.items {
+		if input == nil {
+			continue
+		}
 		input.Status = runtimemodel.RuntimeInputStatusConsumed
 		input.ConsumedMessageID = cloneUUIDPointer(&prepared.Message.ID)
-		input.ConsumedAt = timePointer(now)
-		payload := runtimeInputAppliedEventPayload(input, checkpoint, now)
-		if onApplied == nil {
+		input.ConsumedAt = timePointer(appliedAt)
+		payload := runtimeInputAppliedEventPayload(input, batch.checkpoint, appliedAt)
+		if batch.onApplied == nil {
 			s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventRuntimeInputApplied, payload)
 			continue
 		}
-		if err := onApplied(payload); err != nil {
+		if err := batch.onApplied(payload); err != nil {
 			logger.WarnContext(ctx, "failed to publish applied chat runtime input", "input_id", input.ID.String(), err)
 		}
 	}
-	return messages, nil
 }
 
 func runtimeInputModelMessages(items []*runtimemodel.RuntimeInput) []adapter.Message {

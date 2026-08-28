@@ -70,6 +70,20 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
+	userMemoryUsage := prepared.UserMemoryPreflightUsage
+	if !prepared.UserMemoryPreflightDone {
+		var err error
+		userMemoryUsage, err = s.runUserMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
+		if err != nil {
+			if s.isStoppedContext(runCtx, prepared.Message.ID) {
+				_ = s.persistStoppedAnswer(persistCtx, prepared, "", userMemoryUsage)
+				return nil, ErrMessageStopped
+			}
+			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
+			return nil, newFinalizedStreamError(err)
+		}
+	}
+	preflightUsage := userMemoryUsage
 	if !prepared.toolLoopEnabled() {
 		timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, eventCallback)
 		additional, err := s.claimRuntimeInputsForCurrentRun(
@@ -88,20 +102,6 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, additional...)
 		}
 	}
-	userMemoryUsage := prepared.UserMemoryPreflightUsage
-	if !prepared.UserMemoryPreflightDone {
-		var err error
-		userMemoryUsage, err = s.runUserMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
-		if err != nil {
-			if s.isStoppedContext(runCtx, prepared.Message.ID) {
-				_ = s.persistStoppedAnswer(persistCtx, prepared, "", userMemoryUsage)
-				return nil, ErrMessageStopped
-			}
-			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-			return nil, newFinalizedStreamError(err)
-		}
-	}
-	preflightUsage := userMemoryUsage
 
 	if prepared.toolLoopEnabled() {
 		answer, usage, err := s.runPreparedToolStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
@@ -184,6 +184,9 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 	defer modelProgress.Stop()
 	stream, err := s.openChatStream(runCtx, prepared)
 	if err != nil {
+		if releaseErr := s.settleClaimedRuntimeInputBatches(persistCtx, prepared, false); releaseErr != nil {
+			err = errors.Join(err, releaseErr)
+		}
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
 			Phase:      "final_answer",
 			Round:      -1,
@@ -203,6 +206,9 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 	modelChunkCallback := modelStreamChunkCallback(eventCallback, onChunk)
 	answer, callUsage, err := s.collectStreamAnswerWithEventsAndProgress(runCtx, prepared, stream, eventCallback, modelChunkCallback, modelProgress)
 	usage := mergeUsage(preflightUsage, callUsage)
+	if settleErr := s.settleClaimedRuntimeInputBatches(persistCtx, prepared, err == nil); settleErr != nil {
+		err = errors.Join(err, settleErr)
+	}
 	if err != nil {
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
 			Phase:      "final_answer",

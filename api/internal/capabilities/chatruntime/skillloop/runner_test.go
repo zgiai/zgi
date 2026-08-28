@@ -222,6 +222,8 @@ func TestRunnerInjectsRuntimeInputBeforeModelRoundInOrder(t *testing.T) {
 		Metadata: skills.SkillMetadata{ID: skills.SkillFileManager},
 	}}}
 	hookCalls := 0
+	afterHookCalls := 0
+	modelAccepted := false
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
 		Prepared:       prepared,
@@ -238,12 +240,20 @@ func TestRunnerInjectsRuntimeInputBeforeModelRoundInOrder(t *testing.T) {
 				{Role: "user", Content: "second supplement"},
 			}, nil
 		},
+		AfterModelRound: func(_ context.Context, round int, accepted bool) error {
+			afterHookCalls++
+			if round != 0 {
+				t.Fatalf("AfterModelRound() round = %d, want 0", round)
+			}
+			modelAccepted = accepted
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "updated answer" || hookCalls != 1 {
-		t.Fatalf("answer = %q, hook calls = %d", answer, hookCalls)
+	if answer != "updated answer" || hookCalls != 1 || afterHookCalls != 1 || !modelAccepted {
+		t.Fatalf("answer = %q, before calls = %d, after calls = %d, accepted = %v", answer, hookCalls, afterHookCalls, modelAccepted)
 	}
 	if len(fakeLLM.appChatRequests) != 1 {
 		t.Fatalf("model requests = %d, want 1", len(fakeLLM.appChatRequests))
@@ -265,6 +275,43 @@ func TestRunnerInjectsRuntimeInputBeforeModelRoundInOrder(t *testing.T) {
 		positions["original request"] < positions["first supplement"] &&
 		positions["first supplement"] < positions["second supplement"]) {
 		t.Fatalf("runtime input order = %#v", positions)
+	}
+}
+
+func TestRunnerReportsRejectedRuntimeInputModelRound(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatErrors: []error{errors.New("provider unavailable")}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-runtime-input-error", "msg-runtime-input-error", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "original request"}},
+	})
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillFileManager},
+	}}}
+	afterHookCalls := 0
+	modelAccepted := true
+
+	_, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:       prepared,
+		Resolved:       resolved,
+		LegacyToolChat: true,
+		BeforeModelRound: func(context.Context, int) ([]adapter.Message, error) {
+			return []adapter.Message{{Role: "user", Content: "supplement"}}, nil
+		},
+		AfterModelRound: func(_ context.Context, _ int, accepted bool) error {
+			afterHookCalls++
+			modelAccepted = accepted
+			return nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected model error")
+	}
+	if afterHookCalls != 1 || modelAccepted {
+		t.Fatalf("after calls = %d, accepted = %v; want one rejected round", afterHookCalls, modelAccepted)
 	}
 }
 

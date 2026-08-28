@@ -202,7 +202,7 @@ func TestCheckMigrationSourceSafetyAllowsDestructiveRollback(t *testing.T) {
 	path := writeMigrationSourceFixture(t, `package migrations
 
 func init() {
-	registerSchemaMigration("202608190000000001_fixture", upFixture, downFixture)
+	registerSchemaMigration("209901010000000000_fixture", upFixture, downFixture)
 }
 
 func upFixture(schema *Builder) error {
@@ -233,7 +233,7 @@ func TestCheckMigrationSourceSafetyRejectsDestructiveUpMigration(t *testing.T) {
 			path := writeMigrationSourceFixture(t, `package migrations
 
 func init() {
-	registerSchemaMigration("202608190000000001_fixture", upFixture, nil)
+	registerSchemaMigration("209901010000000000_fixture", upFixture, nil)
 }
 
 func upFixture(schema *Builder) error {
@@ -256,7 +256,7 @@ func TestCheckMigrationSourceSafetyAllowsExplicitDataFix(t *testing.T) {
 	path := writeMigrationSourceFixture(t, `package migrations
 
 func init() {
-	registerSchemaMigration("202608190000000001_fixture", upFixture, nil)
+	registerSchemaMigration("209901010000000000_fixture", upFixture, nil)
 }
 
 const backfillFixture = "UPDATE public.fixture SET active = true; DELETE FROM public.fixture WHERE expired = true"
@@ -273,9 +273,38 @@ func upFixture(schema *Builder) error {
 	}
 }
 
+func TestCheckMigrationSourceSafetyRejectsDataModificationOutsideDataFix(t *testing.T) {
+	tests := map[string]string{
+		"update": `return schema.Raw("UPDATE public.fixture SET active = true")`,
+		"delete": `return schema.Raw("DELETE FROM public.fixture WHERE expired = true")`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := writeMigrationSourceFixture(t, `package migrations
+
+func init() {
+	registerSchemaMigration("209901010000000000_fixture", upFixture, nil)
+}
+
+func upFixture(schema *Builder) error {
+	`+body+`
+}
+`)
+
+			err := checkMigrationSourceSafety([]string{path})
+			if err == nil {
+				t.Fatal("expected data modification outside DataFix to be rejected")
+			}
+			if !strings.Contains(err.Error(), "up migration contains forbidden operation") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func writeMigrationSourceFixture(t *testing.T, source string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "202608190000000001_fixture.go")
+	path := filepath.Join(t.TempDir(), "209901010000000000_fixture.go")
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 		t.Fatalf("write migration source fixture: %v", err)
 	}

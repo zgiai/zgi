@@ -166,6 +166,23 @@ func (r *runtimeInputRepository) MarkBatchConsumed(ctx context.Context, batchID,
 	return nil
 }
 
+func (r *runtimeInputRepository) ReleaseCurrentRunBatch(ctx context.Context, batchID uuid.UUID, now time.Time) error {
+	result := r.db.WithContext(ctx).Model(&runtimemodel.RuntimeInput{}).
+		Where("claim_batch_id = ? AND status = ? AND consumption_mode = ?",
+			batchID,
+			runtimemodel.RuntimeInputStatusClaimed,
+			runtimemodel.RuntimeInputConsumptionCurrentRun,
+		).
+		Updates(map[string]interface{}{
+			"status": runtimemodel.RuntimeInputStatusPending, "consumption_mode": nil,
+			"claim_batch_id": nil, "claimed_at": nil, "claim_expires_at": nil, "updated_at": now,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("release current-run chat runtime input batch: %w", result.Error)
+	}
+	return nil
+}
+
 func (r *runtimeInputRepository) MarkBatchFailed(ctx context.Context, batchID uuid.UUID, failure string, now time.Time) ([]*runtimemodel.RuntimeInput, error) {
 	var items []*runtimemodel.RuntimeInput
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

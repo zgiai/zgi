@@ -147,7 +147,8 @@ func checkMigrationSourceSafety(files []string) error {
 		if err != nil {
 			return fmt.Errorf("parse migration file %s: %w", file, err)
 		}
-		inspector := newMigrationUpInspector(fset, parsed)
+		migrationID := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+		inspector := newMigrationUpInspector(fset, parsed, migrationID >= migrationDataFixPolicyStartID)
 		roots, err := migrationUpRoots(parsed)
 		if err != nil {
 			return fmt.Errorf("inspect migration file %s: %w", filepath.Base(file), err)
@@ -169,17 +170,31 @@ func checkMigrationSourceSafety(files []string) error {
 // protected separately by the exact-ID rollback confirmation and the schema
 // builder's AllowDestructive gate.
 type migrationUpInspector struct {
-	fset       *token.FileSet
-	objects    map[*ast.Object]ast.Node
-	visited    map[ast.Node]struct{}
-	inspectErr error
+	fset                 *token.FileSet
+	objects              map[*ast.Object]ast.Node
+	visited              map[ast.Node]migrationInspectionMode
+	enforceDataFixForDML bool
+	inspectErr           error
 }
 
-func newMigrationUpInspector(fset *token.FileSet, file *ast.File) *migrationUpInspector {
+// Historical public migrations through this repository snapshot predate the
+// explicit DataFix gate and must remain stable once deployed. New migrations
+// from this boundary onward must place UPDATE/DELETE work in DataFix.
+const migrationDataFixPolicyStartID = "202608290000000000"
+
+type migrationInspectionMode uint8
+
+const (
+	migrationInspectionDefault migrationInspectionMode = 1 << iota
+	migrationInspectionDataFix
+)
+
+func newMigrationUpInspector(fset *token.FileSet, file *ast.File, enforceDataFixForDML bool) *migrationUpInspector {
 	inspector := &migrationUpInspector{
-		fset:    fset,
-		objects: make(map[*ast.Object]ast.Node),
-		visited: make(map[ast.Node]struct{}),
+		fset:                 fset,
+		objects:              make(map[*ast.Object]ast.Node),
+		visited:              make(map[ast.Node]migrationInspectionMode),
+		enforceDataFixForDML: enforceDataFixForDML,
 	}
 	for _, declaration := range file.Decls {
 		switch declaration := declaration.(type) {
@@ -270,18 +285,22 @@ func registeredMigrateExpression(expression ast.Expr) (ast.Expr, error) {
 }
 
 func (i *migrationUpInspector) check(root ast.Node) error {
-	i.inspect(root)
+	i.inspect(root, false)
 	return i.inspectErr
 }
 
-func (i *migrationUpInspector) inspect(root ast.Node) {
+func (i *migrationUpInspector) inspect(root ast.Node, dataFix bool) {
 	if root == nil || i.inspectErr != nil {
 		return
 	}
-	if _, seen := i.visited[root]; seen {
+	mode := migrationInspectionDefault
+	if dataFix {
+		mode = migrationInspectionDataFix
+	}
+	if i.visited[root]&mode != 0 {
 		return
 	}
-	i.visited[root] = struct{}{}
+	i.visited[root] |= mode
 
 	ast.Inspect(root, func(node ast.Node) bool {
 		if node == nil || i.inspectErr != nil {
@@ -290,7 +309,7 @@ func (i *migrationUpInspector) inspect(root ast.Node) {
 		switch node := node.(type) {
 		case *ast.Ident:
 			if declaration, ok := i.objects[node.Obj]; ok {
-				i.inspect(declaration)
+				i.inspect(declaration, dataFix)
 			}
 		case *ast.CallExpr:
 			if methodName(node.Fun) == "AllowDestructive" {
@@ -299,6 +318,12 @@ func (i *migrationUpInspector) inspect(root ast.Node) {
 			}
 			if name := methodName(node.Fun); name == "DropIfExists" || name == "DropColumn" {
 				i.inspectErr = i.forbidden(node, name)
+				return false
+			}
+			if methodName(node.Fun) == "DataFix" {
+				for _, argument := range node.Args {
+					i.inspect(argument, true)
+				}
 				return false
 			}
 		case *ast.BasicLit:
@@ -315,6 +340,14 @@ func (i *migrationUpInspector) inspect(root ast.Node) {
 				if strings.Contains(normalized, forbidden) {
 					i.inspectErr = i.forbidden(node, forbidden)
 					return false
+				}
+			}
+			if i.enforceDataFixForDML && !dataFix {
+				for _, forbidden := range []string{"DELETE FROM ", "UPDATE "} {
+					if strings.Contains(normalized, forbidden) {
+						i.inspectErr = i.forbidden(node, forbidden)
+						return false
+					}
 				}
 			}
 		}

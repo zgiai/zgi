@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 )
 
 type runtimeInputDispatcherStub struct {
@@ -106,6 +107,88 @@ func TestRuntimeInputModelMessagesPreserveSubmittedOrder(t *testing.T) {
 	if messages[2].Role != "user" || messages[2].Content != "second supplement" {
 		t.Fatalf("second supplement = %#v", messages[2])
 	}
+}
+
+func TestCurrentRunInputIsConsumedOnlyAfterModelAcceptsRound(t *testing.T) {
+	input := &runtimemodel.RuntimeInput{
+		ID: uuid.New(), ClientInputID: uuid.New(), Content: "apply this supplement",
+		Status: runtimemodel.RuntimeInputStatusPending,
+	}
+	runtimeInputRepo := &runtimeInputSettlementRepositoryStub{input: input}
+	repos := &repository.Repositories{RuntimeInput: runtimeInputRepo}
+	runtime := &service{repos: repos}
+	messageID := uuid.New()
+	conversation := &runtimemodel.Conversation{
+		ID:               uuid.New(),
+		OrganizationID:   uuid.New(),
+		AccountID:        uuid.New(),
+		CallerType:       runtimemodel.ConversationCallerAgent,
+		ConversationType: runtimemodel.ConversationTypeChat,
+		Title:            "runtime input settlement",
+		Status:           runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:    runtimemodel.ConversationRuntimeStatusStreaming,
+		ActiveMessageID:  &messageID,
+		Source:           runtimemodel.ConversationSourceConsole,
+		Metadata:         map[string]interface{}{},
+	}
+	message := &runtimemodel.Message{
+		ID: messageID, ConversationID: conversation.ID, Query: "initial request",
+		Status: runtimemodel.MessageStatusStreaming, ModelName: "test-model",
+		ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{},
+	}
+	input.OrganizationID = conversation.OrganizationID
+	input.AccountID = conversation.AccountID
+	input.ConversationID = conversation.ID
+	input.TargetMessageID = messageID
+	prepared := &PreparedChat{
+		Conversation: conversation,
+		Message:      message,
+		RunConfig:    RunConfig{RuntimeInputPolicy: RuntimeInputPolicyCheckpointAndFollowUp},
+	}
+	appliedEvents := 0
+	messages, err := runtime.claimRuntimeInputsForCurrentRun(
+		t.Context(),
+		prepared,
+		runtimeInputCheckpoint{Name: runtimeInputCheckpointBeforeModelRound, ModelRound: 1},
+		func(map[string]interface{}) error {
+			appliedEvents++
+			return nil
+		},
+	)
+	if err != nil || len(messages) == 0 {
+		t.Fatalf("claim runtime input: messages=%d error=%v", len(messages), err)
+	}
+	if input.Status != runtimemodel.RuntimeInputStatusClaimed || appliedEvents != 0 {
+		t.Fatalf("before model acceptance status=%q applied_events=%d", input.Status, appliedEvents)
+	}
+
+	if err := runtime.settleClaimedRuntimeInputBatches(t.Context(), prepared, true); err != nil {
+		t.Fatalf("settle accepted runtime input: %v", err)
+	}
+	if input.Status != runtimemodel.RuntimeInputStatusConsumed || appliedEvents != 1 {
+		t.Fatalf("after model acceptance status=%q applied_events=%d", input.Status, appliedEvents)
+	}
+}
+
+type runtimeInputSettlementRepositoryStub struct {
+	repository.RuntimeInputRepository
+	input *runtimemodel.RuntimeInput
+}
+
+func (stub *runtimeInputSettlementRepositoryStub) ClaimPending(_ context.Context, _ uuid.UUID, mode string, batchID *uuid.UUID, now, expiresAt time.Time) ([]*runtimemodel.RuntimeInput, error) {
+	stub.input.Status = runtimemodel.RuntimeInputStatusClaimed
+	stub.input.ConsumptionMode = &mode
+	stub.input.ClaimBatchID = batchID
+	stub.input.ClaimedAt = &now
+	stub.input.ClaimExpiresAt = &expiresAt
+	return []*runtimemodel.RuntimeInput{stub.input}, nil
+}
+
+func (stub *runtimeInputSettlementRepositoryStub) MarkBatchConsumed(_ context.Context, _ uuid.UUID, consumedMessageID uuid.UUID, now time.Time) error {
+	stub.input.Status = runtimemodel.RuntimeInputStatusConsumed
+	stub.input.ConsumedMessageID = &consumedMessageID
+	stub.input.ConsumedAt = &now
+	return nil
 }
 
 func TestRuntimeInputContentsSkipEmptyValuesWithoutReordering(t *testing.T) {

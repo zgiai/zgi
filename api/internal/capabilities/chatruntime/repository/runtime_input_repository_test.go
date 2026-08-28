@@ -139,6 +139,35 @@ func TestRuntimeInputRepositoryCurrentRunClaimLeavesFollowUpOnlyPending(t *testi
 	}
 }
 
+func TestRuntimeInputRepositoryReleasesRejectedCurrentRunBatch(t *testing.T) {
+	db, conversation, targetMessageID := openRuntimeInputRepositoryTestDB(t)
+	repo := NewRuntimeInputRepository(db)
+	ctx := context.Background()
+	input := newRuntimeInput(conversation, targetMessageID, uuid.New(), "retry this supplement")
+	if _, _, err := repo.Submit(ctx, input); err != nil {
+		t.Fatalf("submit runtime input: %v", err)
+	}
+
+	batchID := uuid.New()
+	now := time.Now().UTC()
+	claimed, err := repo.ClaimPending(ctx, targetMessageID, runtimemodel.RuntimeInputConsumptionCurrentRun, &batchID, now, now.Add(time.Minute))
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim current-run input: items=%d error=%v", len(claimed), err)
+	}
+	if err := repo.ReleaseCurrentRunBatch(ctx, batchID, now.Add(time.Second)); err != nil {
+		t.Fatalf("release current-run batch: %v", err)
+	}
+
+	reclaimedBatchID := uuid.New()
+	reclaimed, err := repo.ClaimPending(ctx, targetMessageID, runtimemodel.RuntimeInputConsumptionCurrentRun, &reclaimedBatchID, now.Add(2*time.Second), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("reclaim current-run input: %v", err)
+	}
+	if len(reclaimed) != 1 || reclaimed[0].ID != input.ID {
+		t.Fatalf("reclaimed inputs = %#v, want %s", reclaimed, input.ID)
+	}
+}
+
 func TestRuntimeInputRepositoryCancelPendingFollowUpAndRecoverCurrentRunClaim(t *testing.T) {
 	db, conversation, targetMessageID := openRuntimeInputRepositoryTestDB(t)
 	repo := NewRuntimeInputRepository(db)
