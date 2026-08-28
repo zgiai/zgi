@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	_ "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider"
@@ -142,5 +143,59 @@ func TestCreateAdapterConfig_PrivateImageRouteDoesNotInferAdapterFromModelName(t
 	}
 	if cfg.AllowPrivateBaseURL {
 		t.Fatal("AllowPrivateBaseURL = true, want private transport public-only by default")
+	}
+}
+
+func TestCreateAdapterConfig_QwenImageOpenAIProtocolUsesCompatibleAdapter(t *testing.T) {
+	svc := &llmGatewayServiceImpl{}
+	cfg := svc.createAdapterConfig(&ProviderSelection{
+		Provider: providermodel.LLMProvider{
+			ID:       uuid.New(),
+			Provider: "qwen",
+		},
+		UseSystemProvider:       false,
+		ChannelProvider:         "qwen",
+		AdapterProviderOverride: "openai-compatible",
+		APIBaseURL:              "https://api.agicto.cn/v1",
+		NativeProtocols: channelmodel.NativeProtocolConfig{
+			OpenAIResponses: channelmodel.NativeProtocolEndpoint{Enabled: true},
+		},
+		Model: llmmodel.LLMModel{
+			ID:              uuid.New(),
+			Model:           "qwen-image-2.0",
+			ModelName:       "qwen-image-2.0",
+			Provider:        "qwen",
+			UseCases:        llmmodel.StringArray{"image-gen"},
+			ImageGeneration: true,
+		},
+	}, uuid.New())
+
+	if cfg.ProviderName != "openai-compatible" {
+		t.Fatalf("ProviderName = %q, want openai-compatible", cfg.ProviderName)
+	}
+	if cfg.BaseURL != "https://api.agicto.cn/v1" {
+		t.Fatalf("BaseURL = %q, want AGICTO base URL", cfg.BaseURL)
+	}
+	if cfg.ProviderID == "" {
+		t.Fatal("ProviderID is empty, want qwen model provider retained for billing/config context")
+	}
+}
+
+func TestAdapterProviderOverrideForRoute_QwenImageOpenAIProtocolOnly(t *testing.T) {
+	route := &channelmodel.LLMRoute{
+		ChannelProvider: "qwen",
+		NativeProtocols: channelmodel.NativeProtocolConfig{
+			OpenAIResponses: channelmodel.NativeProtocolEndpoint{Enabled: true},
+		},
+	}
+	if got := adapterProviderOverrideForRoute(route, modelCategoryImage); got != "openai-compatible" {
+		t.Fatalf("adapterProviderOverrideForRoute() = %q, want openai-compatible", got)
+	}
+	if got := adapterProviderOverrideForRoute(route, modelCategoryResponses); got != "" {
+		t.Fatalf("responses override = %q, want empty", got)
+	}
+	route.NativeProtocols.OpenAIResponses.Enabled = false
+	if got := adapterProviderOverrideForRoute(route, modelCategoryImage); got != "" {
+		t.Fatalf("native qwen override = %q, want empty", got)
 	}
 }

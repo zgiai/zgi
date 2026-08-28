@@ -4,18 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
-	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 )
 
 func shouldSummarizeAgentWorkflowContinuation(continuation *runtimeservice.WorkflowApprovalContinuation, status string, outputs map[string]interface{}) bool {
-	if agentWorkflowContinuationMode(continuation) != "agent_task_tool" {
-		return false
-	}
 	if agentWorkflowRunLogFailed(status) {
+		return !strings.EqualFold(strings.TrimSpace(status), "stopped")
+	}
+	if agentWorkflowContinuationMode(continuation) != "agent_task_tool" {
 		return false
 	}
 	return len(outputs) > 0
@@ -53,8 +55,11 @@ func agentWorkflowContinuationRunIDFromMetadata(metadata map[string]interface{})
 }
 
 func agentWorkflowRunLogTerminal(status string) bool {
+	if failureprojection.IsFailureStatus(status) {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "succeeded", "failed", "stopped", "expired", "partial-succeeded":
+	case "succeeded", "stopped", "expired", "partial-succeeded":
 		return true
 	default:
 		return false
@@ -62,8 +67,11 @@ func agentWorkflowRunLogTerminal(status string) bool {
 }
 
 func agentWorkflowRunLogFailed(status string) bool {
+	if failureprojection.IsFailureStatus(status) {
+		return true
+	}
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "failed", "stopped", "expired":
+	case "stopped", "expired":
 		return true
 	default:
 		return false
@@ -191,8 +199,11 @@ func copyMapForAgentWorkflowContinuation(input map[string]interface{}) map[strin
 	return out
 }
 
-func agentWorkflowContinuationAnswer(agentType, workflowRunID, status string, outputs map[string]interface{}, errorMessage *string) string {
-	if strings.EqualFold(strings.TrimSpace(status), "failed") {
+func agentWorkflowContinuationAnswer(continuation *runtimeservice.WorkflowApprovalContinuation, workflowRunID, status string, outputs map[string]interface{}, errorMessage *string) string {
+	if agentWorkflowRunLogFailed(status) {
+		if runtimeservice.WorkflowContinuationFailureDetailsHidden(continuation) {
+			return "Workflow run failed."
+		}
 		message := ""
 		if errorMessage != nil {
 			message = strings.TrimSpace(*errorMessage)
@@ -203,6 +214,10 @@ func agentWorkflowContinuationAnswer(agentType, workflowRunID, status string, ou
 		return fmt.Sprintf("Workflow run failed. workflow_run_id: %s\n\nError: %s", workflowRunID, message)
 	}
 	primary := primaryAgentWorkflowOutput(outputs)
+	agentType := ""
+	if continuation != nil {
+		agentType = continuation.AgentType
+	}
 	if strings.EqualFold(strings.TrimSpace(agentType), "CONVERSATIONAL_WORKFLOW") {
 		if primary != "" {
 			return primary

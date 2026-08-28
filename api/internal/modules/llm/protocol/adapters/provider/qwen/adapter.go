@@ -1292,6 +1292,16 @@ func (a *Adapter) createQwenImage(ctx context.Context, baseURL string, request *
 		parameters["n"] = *request.N
 	}
 
+	content := []map[string]string{}
+	if referenceImageURL := strings.TrimSpace(request.ReferenceImageURL); referenceImageURL != "" {
+		image, err := normalizeAliyunImageReference(referenceImageURL)
+		if err != nil {
+			return nil, err
+		}
+		content = append(content, map[string]string{"image": image})
+	}
+	content = append(content, map[string]string{"text": request.Prompt})
+
 	// Build payload for Qwen/Wan2 (Chat-like format)
 	// Ref: https://help.aliyun.com/zh/model-studio/developer-reference/qwen-image-edit-api
 	payload := map[string]interface{}{
@@ -1299,10 +1309,8 @@ func (a *Adapter) createQwenImage(ctx context.Context, baseURL string, request *
 		"input": map[string]interface{}{
 			"messages": []map[string]interface{}{
 				{
-					"role": "user",
-					"content": []map[string]string{
-						{"text": request.Prompt},
-					},
+					"role":    "user",
+					"content": content,
 				},
 			},
 		},

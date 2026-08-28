@@ -137,6 +137,9 @@ func TestAdapterConnectionContactSendAndDeliveryFlow(t *testing.T) {
 	}
 	assertDingTalkOutputContract(t, ActionContactSearch, search.Output)
 	members := search.Output["members"].([]map[string]interface{})
+	if hasMore, _ := search.Output["has_more"].(bool); hasMore {
+		t.Fatalf("under-filled raw contact page reported has_more: %#v", search.Output)
+	}
 	recipientRef := members[0]["recipient_ref"].(string)
 	if strings.Contains(recipientRef, "user-1") {
 		t.Fatal("recipient reference exposes raw user ID")
@@ -200,6 +203,150 @@ func TestContactSearchSupportsOfficialIDListResponse(t *testing.T) {
 	members := result.Output["members"].([]map[string]interface{})
 	if len(members) != 1 || members[0]["name"] != "张三" || members[0]["recipient_ref"] == "" {
 		t.Fatalf("members = %#v", members)
+	}
+}
+
+func TestContactSearchPreservesRawPageCompletenessAfterFiltering(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1.0/oauth2/accessToken":
+			_, _ = w.Write([]byte(`{"accessToken":"token-1","expireIn":7200}`))
+		case "/v1.0/contact/users/search":
+			_, _ = w.Write([]byte(`{"result":[{"userId":"user-1","name":"张三"},{"userId":"bad|user","name":"invalid"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID,
+		ActionID:      ActionContactSearch,
+		Connection:    testConnection("connection-1"),
+		Input:         map[string]interface{}{"query": "张三", "max_results": 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(result.Output["members"].([]map[string]interface{})); got != 1 {
+		t.Fatalf("filtered member count = %d, output=%#v", got, result.Output)
+	}
+	if hasMore, _ := result.Output["has_more"].(bool); !hasMore {
+		t.Fatalf("full raw contact page lost pagination evidence: %#v", result.Output)
+	}
+	assertDingTalkOutputContract(t, ActionContactSearch, result.Output)
+}
+
+func TestSearchResponseHasMorePrefersNativePaginationMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		response map[string]json.RawMessage
+		rawCount int
+		limit    int
+		want     bool
+	}{
+		{
+			name: "top-level total proves another page",
+			response: map[string]json.RawMessage{
+				"list":       json.RawMessage(`[1]`),
+				"totalCount": json.RawMessage(`2`),
+			},
+			rawCount: 1, limit: 10, want: true,
+		},
+		{
+			name: "nested has-more proves completion despite full page",
+			response: map[string]json.RawMessage{
+				"result": json.RawMessage(`{"list":[1,2],"hasMore":false}`),
+			},
+			rawCount: 2, limit: 2, want: false,
+		},
+		{
+			name: "malformed top-level has-more fails closed",
+			response: map[string]json.RawMessage{
+				"list":     json.RawMessage(`[1]`),
+				"has_more": json.RawMessage(`"true"`),
+			},
+			rawCount: 1, limit: 10, want: true,
+		},
+		{
+			name: "null top-level has-more fails closed",
+			response: map[string]json.RawMessage{
+				"list":    json.RawMessage(`[1]`),
+				"hasMore": json.RawMessage(`null`),
+			},
+			rawCount: 1, limit: 10, want: true,
+		},
+		{
+			name: "negative nested total fails closed",
+			response: map[string]json.RawMessage{
+				"result": json.RawMessage(`{"list":[1],"totalCount":-1}`),
+			},
+			rawCount: 1, limit: 10, want: true,
+		},
+		{
+			name: "malformed nested total fails closed",
+			response: map[string]json.RawMessage{
+				"result": json.RawMessage(`{"list":[1],"total_count":"one"}`),
+			},
+			rawCount: 1, limit: 10, want: true,
+		},
+		{
+			name: "null nested total fails closed",
+			response: map[string]json.RawMessage{
+				"result": json.RawMessage(`{"list":[1],"totalCount":null}`),
+			},
+			rawCount: 1, limit: 10, want: true,
+		},
+		{
+			name: "false has-more conflicts with larger total",
+			response: map[string]json.RawMessage{
+				"hasMore": json.RawMessage(`false`),
+				"result":  json.RawMessage(`{"list":[1],"totalCount":2}`),
+			},
+			rawCount: 1, limit: 10, want: true,
+		},
+		{
+			name: "top-level and nested has-more conflict",
+			response: map[string]json.RawMessage{
+				"has_more": json.RawMessage(`false`),
+				"result":   json.RawMessage(`{"list":[1],"hasMore":true}`),
+			},
+			rawCount: 1, limit: 10, want: true,
+		},
+		{
+			name: "total smaller than observed page fails closed",
+			response: map[string]json.RawMessage{
+				"list":  json.RawMessage(`[1,2]`),
+				"total": json.RawMessage(`1`),
+			},
+			rawCount: 2, limit: 10, want: true,
+		},
+		{
+			name: "full page without metadata is conservative",
+			response: map[string]json.RawMessage{
+				"list": json.RawMessage(`[1,2]`),
+			},
+			rawCount: 2, limit: 2, want: true,
+		},
+		{
+			name: "under-filled page without metadata is complete",
+			response: map[string]json.RawMessage{
+				"list": json.RawMessage(`[1]`),
+			},
+			rawCount: 1, limit: 2, want: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := searchResponseHasMore(test.response, test.rawCount, test.limit); got != test.want {
+				t.Fatalf("searchResponseHasMore() = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 

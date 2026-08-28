@@ -175,6 +175,7 @@ interface AIChatAgenticTimelineProps {
   defaultOpen?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  showWorkflowFailureDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
   suppressPendingToolGovernanceApprovals?: boolean;
   messageStatus?: AIChatMessage['status'];
@@ -3098,7 +3099,13 @@ function ToolGovernanceDecisionRow({
   );
 }
 
-function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
+function WorkflowTimelineRow({
+  item,
+  showFailureDetails,
+}: {
+  item: WorkflowTimelineItem;
+  showFailureDetails: boolean;
+}) {
   const nodes: WorkflowRunNodeListItem[] = item.nodes.map((node, index) => ({
     title: node.title ?? node.nodeId ?? node.nodeType ?? '',
     nodeId: node.nodeId ?? `workflow-node-${index}`,
@@ -3128,6 +3135,7 @@ function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
         elapsedTime={item.elapsedTime}
         error={item.error}
         items={nodes}
+        showFailureDetails={showFailureDetails}
         defaultOpen={item.status === 'running' || item.status === 'pending_approval'}
         className="max-w-3xl rounded-md bg-background"
       />
@@ -3527,7 +3535,11 @@ function isSupersededResolvedApprovalGovernanceItem(
 function isTransientProgressItem(
   item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>
 ) {
-  return !item.content.trim() && (item.transient === true || Boolean(item.phase));
+  return (
+    item.status !== 'completed' &&
+    !item.content.trim() &&
+    (item.transient === true || Boolean(item.phase))
+  );
 }
 
 function stableIndex(value: string, length: number): number {
@@ -3545,6 +3557,13 @@ function buildProgressText(
   locale: string,
   t: WebappTranslator
 ) {
+  if (item.phase === 'context_compaction') {
+    return t(
+      item.status === 'completed'
+        ? 'consoleChat.contextCompaction.completed'
+        : 'consoleChat.contextCompaction.running'
+    );
+  }
   if (item.phase !== 'tool_planning') {
     if (item.phase === 'planning') {
       return t('consoleChat.skills.agentic.preparingAction');
@@ -3575,6 +3594,9 @@ function buildTransientProgressText(
   locale: string,
   t: WebappTranslator
 ) {
+  if (item.phase === 'context_compaction') {
+    return t('consoleChat.contextCompaction.running');
+  }
   if (item.phase === 'client_action') {
     return t('consoleChat.skills.agentic.clientAction');
   }
@@ -3808,6 +3830,7 @@ function TimelineRenderRow({
   skillDisplayById,
   showMemoryKey,
   showSkillEventDetails,
+  showWorkflowFailureDetails,
   enableToolGovernanceApprovals,
   onToolGovernanceDecision,
 }: {
@@ -3815,6 +3838,7 @@ function TimelineRenderRow({
   skillDisplayById: AIChatSkillDisplayMap;
   showMemoryKey: boolean;
   showSkillEventDetails: boolean;
+  showWorkflowFailureDetails: boolean;
   enableToolGovernanceApprovals: boolean;
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
@@ -3823,7 +3847,11 @@ function TimelineRenderRow({
   switch (item.renderType) {
     case 'transient_progress':
       return (
-        <div className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse">
+		<div
+		  className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse"
+		  role="status"
+		  aria-live="polite"
+		>
           <span>{item.content}</span>
         </div>
       );
@@ -3862,7 +3890,9 @@ function TimelineRenderRow({
         />
       );
     case 'workflow':
-      return <WorkflowTimelineRow item={item.item} />;
+      return (
+        <WorkflowTimelineRow item={item.item} showFailureDetails={showWorkflowFailureDetails} />
+      );
     case 'skill':
       return <SkillTimelineRow event={item.view} showDetails={showSkillEventDetails} />;
   }
@@ -3990,6 +4020,7 @@ export function AIChatAgenticTimeline({
   defaultOpen = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  showWorkflowFailureDetails = true,
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
   messageStatus,
@@ -4139,6 +4170,7 @@ export function AIChatAgenticTimeline({
               skillDisplayById={skillDisplayById}
               showMemoryKey={showMemoryKey}
               showSkillEventDetails={showSkillEventDetails}
+              showWorkflowFailureDetails={showWorkflowFailureDetails}
               enableToolGovernanceApprovals={enableToolGovernanceApprovals}
               onToolGovernanceDecision={onToolGovernanceDecision}
             />

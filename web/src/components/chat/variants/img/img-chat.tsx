@@ -2,10 +2,10 @@
 
 import * as React from 'react';
 import { useChatStore } from '@/components/chat/store';
-import { InputArea } from './input-area';
+import { InputArea, type ImageReferenceAttachment } from './input-area';
 import { ImageHomeView } from './home-view';
 import { Sidebar } from '../common/sidebar';
-import { Loader2, PanelLeft, Plus } from 'lucide-react';
+import { PanelLeft, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { ChatController } from '@/components/chat/controllers/types';
 import { cn } from '@/lib/utils';
@@ -22,9 +22,7 @@ import { useChatAutoFollow } from '../common/use-chat-auto-follow';
 import { ChatMessageViewport } from '../common/chat-message-viewport';
 import type { ImageSettings, ImageSettingsPatch } from './settings-toolbar';
 import type { ImageRuntimeModel } from '@/services/types/image-runtime';
-
-const LONG_IMAGE_GENERATION_NOTICE_DELAY_MS = 30000;
-const LONG_IMAGE_GENERATION_NOTICE_TEXT = '图像仍在生成中，高清或竖版图片可能需要几分钟，请稍候。';
+import { getImagePromptCharacterCount, IMAGE_PROMPT_MAX_CHARACTERS } from './constants';
 
 export interface ImgChatProps {
   controller: ChatController;
@@ -62,9 +60,9 @@ export function ImgChat({
   }, [currentConversation]);
 
   const [input, setInput] = React.useState('');
+  const [referenceImage, setReferenceImage] = React.useState<ImageReferenceAttachment | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = React.useState(false);
-  const [showLongGenerationNotice, setShowLongGenerationNotice] = React.useState(false);
   const isMobile = useIsMobile();
 
   // Local settings state for the toolbar
@@ -106,17 +104,6 @@ export function ImgChat({
       setHasStartedChat(true);
     }
   }, [activeId, messages.length]);
-
-  React.useEffect(() => {
-    if (!isSending) {
-      setShowLongGenerationNotice(false);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      setShowLongGenerationNotice(true);
-    }, LONG_IMAGE_GENERATION_NOTICE_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [isSending]);
 
   // A conversation is considered "Home" if there's no activeId, or it's an empty draft
   const isHome =
@@ -160,16 +147,27 @@ export function ImgChat({
   }, [pendingPrompt, clearPendingPrompt, setInput, settings, currentRuntimeModel]);
 
   const handleSendAction = React.useCallback(
-    (prompt: string) => {
-      if (!prompt.trim() || isSending || !modelSelectorValue?.provider || !modelSelectorValue.model) {
+    (prompt: string, reference: ImageReferenceAttachment | null) => {
+      const trimmedPrompt = prompt.trim();
+      if (
+        (!trimmedPrompt && !reference) ||
+        isSending ||
+        !modelSelectorValue?.provider ||
+        !modelSelectorValue.model
+      ) {
         return;
       }
+      if (getImagePromptCharacterCount(trimmedPrompt) > IMAGE_PROMPT_MAX_CHARACTERS) {
+        toast.error(t('chat.imageInput.promptTooLong', { max: IMAGE_PROMPT_MAX_CHARACTERS }));
+        return;
+      }
+      const outgoingPrompt = trimmedPrompt || t('chat.imageInput.defaultReferencePrompt');
 
       // Optimistically mark as started to prevent home view flicker
       setHasStartedChat(true);
 
       controller.send({
-        query: prompt,
+        query: outgoingPrompt,
         inputs: {
           model_config: {
             provider: modelSelectorValue.provider,
@@ -182,15 +180,26 @@ export function ImgChat({
             generation_mode: settings.generationMode,
             max_images: settings.maxImages,
           },
+          ...(reference
+            ? {
+                image_reference: {
+                  file_id: reference.fileId,
+                  url: reference.url,
+                  filename: reference.filename,
+                  mime_type: reference.mimeType,
+                },
+              }
+            : {}),
         },
       });
       setInput('');
+      setReferenceImage(null);
     },
-    [controller, isSending, settings, modelSelectorValue]
+    [controller, isSending, settings, modelSelectorValue, t]
   );
 
   const handleSend = () => {
-    handleSendAction(input);
+    handleSendAction(input, referenceImage);
   };
 
   const handleNewChat = () => {
@@ -219,15 +228,6 @@ export function ImgChat({
     }
     setIsSidebarOpen(prev => !prev);
   };
-
-  const generationNotice = showLongGenerationNotice ? (
-    <div className="flex w-full justify-start">
-      <div className="flex max-w-[min(720px,100%)] items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-        <span>{LONG_IMAGE_GENERATION_NOTICE_TEXT}</span>
-      </div>
-    </div>
-  ) : null;
 
   return (
     <div className="flex h-full w-full bg-background overflow-hidden font-sans">
@@ -299,7 +299,6 @@ export function ImgChat({
           loadingFallback={<SysChatSkeleton />}
           loadingClassName="bg-background"
           showCopyButton={false}
-          trailingContent={generationNotice}
         />
 
         {/* Home View Layer */}
@@ -341,6 +340,8 @@ export function ImgChat({
               imageRuntimeModels={imageRuntimeModels}
               currentRuntimeModel={currentRuntimeModel}
               topNotice={inputTopNotice}
+              referenceImage={referenceImage}
+              onReferenceImageChange={setReferenceImage}
             />
           </div>
         </div>

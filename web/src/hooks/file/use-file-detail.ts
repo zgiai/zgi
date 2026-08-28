@@ -26,6 +26,8 @@ export function useFileDetail(
     enabled?: boolean;
     pollProcessingStatus?: boolean;
     refetchOnWindowFocus?: boolean;
+    refetchOnReconnect?: boolean;
+    retryOnMount?: boolean;
     skipErrorHandling?: boolean;
   } = {}
 ) {
@@ -33,6 +35,8 @@ export function useFileDetail(
     enabled = true,
     pollProcessingStatus = false,
     refetchOnWindowFocus = false,
+    refetchOnReconnect = true,
+    retryOnMount = true,
     skipErrorHandling = false,
   } = options;
 
@@ -47,6 +51,8 @@ export function useFileDetail(
       return POLLING_STATUSES.has(status) ? 2000 : false;
     },
     refetchOnWindowFocus,
+    refetchOnReconnect,
     retry: false,
+    retryOnMount,
   });
 }

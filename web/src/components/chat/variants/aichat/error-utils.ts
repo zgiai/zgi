@@ -115,13 +115,19 @@ function resolveFriendlyRuntimeError(
   return null;
 }
 
-type AIChatRuntimeErrorCode = WorkflowRuntimeErrorKind | 'agent_final_answer_unavailable';
+type AIChatRuntimeErrorCode =
+  | WorkflowRuntimeErrorKind
+  | 'agent_final_answer_unavailable'
+  | 'aichat.context.compaction_unavailable';
 
 function resolveAIChatRuntimeErrorCode(
   code: string | number | undefined,
   message: string | undefined
 ): AIChatRuntimeErrorCode | undefined {
   const normalizedCode = typeof code === 'string' ? code.trim().toLowerCase() : '';
+  if (normalizedCode === 'aichat.context.compaction_unavailable') {
+    return 'aichat.context.compaction_unavailable';
+  }
   if (normalizedCode === 'agent_final_answer_unavailable') {
     return 'agent_final_answer_unavailable';
   }
@@ -164,6 +170,12 @@ function resolveStructuredRuntimeError(
   isAdmin: boolean
 ): Pick<AIChatErrorDisplayMessage, 'title' | 'description' | 'kind'> {
   switch (code) {
+    case 'aichat.context.compaction_unavailable':
+      return {
+        kind: 'server',
+        title: t('webapp.consoleChat.contextCompactionBlocked.title'),
+        description: t('webapp.consoleChat.contextCompactionBlocked.description'),
+      };
     case 'model_service_timeout':
       return {
         kind: 'timeout',
@@ -269,9 +281,7 @@ export function resolveAIChatErrorMessage(
 
   return {
     code,
-    title: isBilling
-      ? billingMessage?.title
-      : friendlyRuntimeError?.title || billingMessage?.title,
+    title: isBilling ? billingMessage?.title : friendlyRuntimeError?.title || billingMessage?.title,
     description:
       (isBilling
         ? billingMessage?.description

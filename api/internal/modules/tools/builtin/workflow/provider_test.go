@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -396,6 +397,47 @@ func TestRunAgentTaskWorkflowDoesNotRelayAnswerTransportEvents(t *testing.T) {
 	}
 }
 
+func TestRunAgentConversationalWorkflowRelaysOnlyOrderedMessageChunks(t *testing.T) {
+	runner := &fakeWorkflowRunner{
+		emitEvents: []automationaction.WorkflowRunEvent{
+			{Type: "workflow_started", Payload: map[string]interface{}{"workflow_run_id": "run-1"}, Sequence: 1},
+			{Type: "message", Payload: map[string]interface{}{"answer": "workflow answer"}, Sequence: 2},
+			{Type: "text_chunk", Payload: map[string]interface{}{"text": "workflow answer"}, Sequence: 3},
+			{Type: "message_end", Payload: map[string]interface{}{"answer": "workflow answer"}, Sequence: 4},
+			{Type: "workflow_finished", Payload: map[string]interface{}{"workflow_run_id": "run-1"}, Sequence: 5},
+		},
+		result: &automationaction.WorkflowRunResult{
+			WorkflowRunID: "run-1",
+			WorkflowID:    "workflow-1",
+			AgentID:       "agent-1",
+			Status:        "succeeded",
+			Outputs:       map[string]interface{}{"answer": "workflow answer"},
+		},
+	}
+	runtimeTool := workflowRuntimeToolWithBinding(t, ToolRunAgentWorkflow, runner, map[string]interface{}{
+		"binding_id": "chat-flow", "agent_id": "agent-1", "workflow_id": "workflow-1",
+		"agent_type": "CONVERSATIONAL_WORKFLOW", "version_strategy": "latest_published",
+	})
+	var events []workflowevents.Event
+	ctx := workflowevents.WithEmitter(t.Context(), func(event workflowevents.Event) {
+		events = append(events, event)
+	})
+	conversationID := "conversation-1"
+	messageID := "message-1"
+	_, err := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
+		"binding_id": "chat-flow", "inputs": map[string]interface{}{"query": "write a poem"},
+	}, &conversationID, nil, &messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 || events[0].Type != "workflow_started" || events[1].Type != "message" || events[2].Type != "workflow_finished" {
+		t.Fatalf("events = %#v, want lifecycle events with only the conversation message chunk", events)
+	}
+	if events[1].Payload["answer"] != "workflow answer" || events[1].Payload["invocation_mode"] != automationaction.WorkflowInvocationModeAgentDelegate {
+		t.Fatalf("message event = %#v, want delegated workflow answer", events[1])
+	}
+}
+
 func TestListAgentWorkflowsReturnsStartInputSchema(t *testing.T) {
 	runtimeTool := workflowRuntimeToolWithBinding(t, ToolListAgentWorkflows, &fakeWorkflowRunner{}, map[string]interface{}{
 		"binding_id":        "task-flow",
@@ -550,18 +592,27 @@ func TestApplyWorkflowApprovalExposureRedactsCredentialsWhenUIApprovalIsUnavaila
 }
 
 func TestRunAgentWorkflowReturnsFailedSummary(t *testing.T) {
+	detail := "node failed: no enabled route for deepseek-chat"
 	runner := &fakeWorkflowRunner{
 		result: &automationaction.WorkflowRunResult{
 			WorkflowRunID: "run-failed",
 			WorkflowID:    "workflow-1",
 			AgentID:       "agent-1",
 			Status:        "failed",
+			Outputs:       map[string]interface{}{"failure_reason": detail},
 		},
-		err: errors.New("node failed"),
+		err: errors.New(detail),
+		emitEvents: []automationaction.WorkflowRunEvent{{
+			Type: "workflow_failed", Payload: map[string]interface{}{"status": "failed", "error": detail, "message": detail},
+		}},
 	}
 	runtimeTool := workflowRuntimeTool(t, ToolRunAgentWorkflow, runner)
+	var events []workflowevents.Event
+	ctx := workflowevents.WithEmitter(context.Background(), func(event workflowevents.Event) {
+		events = append(events, event)
+	})
 
-	messages, err := runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+	messages, err := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
 		"binding_id": "approval-flow",
 		"inputs":     map[string]interface{}{},
 	}, nil, nil, nil)
@@ -569,8 +620,62 @@ func TestRunAgentWorkflowReturnsFailedSummary(t *testing.T) {
 		t.Fatalf("Invoke() error = %v", err)
 	}
 	payload := messages[0].Data
-	if payload["status"] != "failed" || !strings.Contains(stringValue(payload, "error"), "node failed") {
+	if payload["status"] != "failed" || stringValue(payload, "error") != detail {
 		t.Fatalf("payload = %#v, want failed summary", payload)
+	}
+	if len(events) != 1 || stringValue(events[0].Payload, "error") != detail || stringValue(events[0].Payload, "message") != detail {
+		t.Fatalf("events = %#v, want detailed console debug failure", events)
+	}
+}
+
+func TestRunAgentWorkflowHidesFailureDetailsOnPublishedSurfaces(t *testing.T) {
+	detail := "node failed: no enabled route for deepseek-chat"
+	for _, source := range []string{"webapp", "external-api"} {
+		t.Run(source, func(t *testing.T) {
+			runner := &fakeWorkflowRunner{
+				result: &automationaction.WorkflowRunResult{
+					WorkflowRunID: "run-failed", WorkflowID: "workflow-1", AgentID: "agent-1", Status: "exception",
+					Outputs: map[string]interface{}{"failure_reason": detail},
+				},
+				emitEvents: []automationaction.WorkflowRunEvent{
+					{Type: "node_finished", Payload: map[string]interface{}{"status": "exception", "error": detail, "outputs": map[string]interface{}{"provider_error": detail}}},
+					{Type: "workflow_failed", Payload: map[string]interface{}{"status": "failed", "error": detail, "message": detail, "outputs": map[string]interface{}{"failure_reason": detail}}},
+				},
+			}
+			runtimeTool := workflowRuntimeToolWithSource(t, ToolRunAgentWorkflow, runner, source)
+			var events []workflowevents.Event
+			ctx := workflowevents.WithEmitter(context.Background(), func(event workflowevents.Event) {
+				events = append(events, event)
+			})
+
+			messages, err := runtimeTool.Invoke(ctx, "caller-1", map[string]interface{}{
+				"binding_id": "approval-flow", "inputs": map[string]interface{}{},
+			}, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("Invoke() error = %v", err)
+			}
+			payload := messages[0].Data
+			if payload["error"] != publishedWorkflowError || payload[workflowErrorVisibilityKey] != workflowErrorGeneric {
+				t.Fatalf("payload = %#v, want generic published failure", payload)
+			}
+			if outputs, ok := payload["outputs"].(map[string]interface{}); !ok || len(outputs) != 0 {
+				t.Fatalf("published failure outputs = %#v, want empty", payload["outputs"])
+			}
+			if len(events) != 2 {
+				t.Fatalf("events = %#v, want two workflow failure events", events)
+			}
+			for _, event := range events {
+				if event.Payload["error"] != publishedWorkflowError || event.Payload[workflowErrorVisibilityKey] != workflowErrorGeneric {
+					t.Fatalf("event = %#v, want generic published failure", event)
+				}
+				if strings.Contains(fmt.Sprint(event.Payload), detail) {
+					t.Fatalf("event exposed detailed error: %#v", event)
+				}
+			}
+			if strings.Contains(fmt.Sprint(payload), detail) {
+				t.Fatalf("tool payload exposed detailed error: %#v", payload)
+			}
+		})
 	}
 }
 
@@ -690,7 +795,11 @@ func TestGetWorkflowRunStatusRejectsSameAgentDifferentWorkflow(t *testing.T) {
 }
 
 func workflowRuntimeTool(t *testing.T, name string, runner *fakeWorkflowRunner) tools.Tool {
-	return workflowRuntimeToolWithBinding(t, name, runner, map[string]interface{}{
+	return workflowRuntimeToolWithSource(t, name, runner, "console")
+}
+
+func workflowRuntimeToolWithSource(t *testing.T, name string, runner *fakeWorkflowRunner, source string) tools.Tool {
+	return workflowRuntimeToolWithSourceAndBinding(t, name, runner, source, map[string]interface{}{
 		"binding_id":       "approval-flow",
 		"label":            "Approval flow",
 		"description":      "Approves work",
@@ -702,6 +811,10 @@ func workflowRuntimeTool(t *testing.T, name string, runner *fakeWorkflowRunner) 
 }
 
 func workflowRuntimeToolWithBinding(t *testing.T, name string, runner *fakeWorkflowRunner, binding map[string]interface{}) tools.Tool {
+	return workflowRuntimeToolWithSourceAndBinding(t, name, runner, "console", binding)
+}
+
+func workflowRuntimeToolWithSourceAndBinding(t *testing.T, name string, runner *fakeWorkflowRunner, source string, binding map[string]interface{}) tools.Tool {
 	t.Helper()
 	provider := NewProvider(func() automationaction.AutomationWorkflowRunner { return runner })
 	tool, err := provider.GetTool(name)
@@ -714,7 +827,7 @@ func workflowRuntimeToolWithBinding(t *testing.T, name string, runner *fakeWorkf
 		RuntimeParameters: map[string]interface{}{
 			"organization_id":              "org-1",
 			"workspace_id":                 "workspace-1",
-			agentRuntimeSourceParameter:    "console",
+			agentRuntimeSourceParameter:    source,
 			"workflow_bound_by_account_id": "binder-1",
 			"workflow_bindings": []map[string]interface{}{
 				binding,

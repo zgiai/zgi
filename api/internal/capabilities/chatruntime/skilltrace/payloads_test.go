@@ -1352,6 +1352,7 @@ func TestSummarizeToolResultPreservesConfirmedExternalActionFacts(t *testing.T) 
 		Type: tools.ToolInvokeMessageTypeJSON,
 		Data: map[string]interface{}{
 			"integration_id": "feishu", "action_id": "feishu.calendar.event.create",
+			"plan_phase_id":   "create-event",
 			"connection_name": "我的飞书", "operation_status": "completed",
 			"result_count": 1, "attempt_count": 1, "provider_request_id": "request-1",
 			"result": map[string]interface{}{
@@ -1364,7 +1365,7 @@ func TestSummarizeToolResultPreservesConfirmedExternalActionFacts(t *testing.T) 
 			},
 		},
 	}})
-	if result["action_id"] != "feishu.calendar.event.create" || result["provider_success_confirmed"] != true {
+	if result["action_id"] != "feishu.calendar.event.create" || result["plan_phase_id"] != "create-event" || result["provider_success_confirmed"] != true {
 		t.Fatalf("external action summary = %#v", result)
 	}
 	providerResult := recordFromAny(result["provider_result"])
@@ -1374,5 +1375,37 @@ func TestSummarizeToolResultPreservesConfirmedExternalActionFacts(t *testing.T) 
 	}
 	if _, leaked := result["result"]; leaked {
 		t.Fatalf("raw provider result leaked into trace summary: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultPreservesExternalActionGuideGuardFacts(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillExternalApps, "get_action_guide", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"integration_id":    "wecom",
+			"action_id":         "wecom.message.send",
+			"plan_phase_id":     "send-message",
+			"connection_name":   "企业微信连接",
+			"effect":            "external_send",
+			"availability":      "runtime_verification_required",
+			"can_execute":       true,
+			"requires_approval": true,
+			"required_arguments": []interface{}{
+				map[string]interface{}{"name": "user_id", "type": "string"},
+				map[string]interface{}{"name": "content", "type": "string"},
+			},
+		},
+	}})
+	if result["integration_id"] != "wecom" || result["action_id"] != "wecom.message.send" ||
+		result["plan_phase_id"] != "send-message" ||
+		result["connection_name"] != "企业微信连接" || result["effect"] != "external_send" {
+		t.Fatalf("guide identity summary = %#v", result)
+	}
+	if result["availability"] != "runtime_verification_required" || result["can_execute"] != true ||
+		result["requires_approval"] != true || result["required_argument_count"] != 2 {
+		t.Fatalf("guide guard summary = %#v", result)
+	}
+	if _, leaked := result["required_arguments"]; leaked {
+		t.Fatalf("full guide argument schema leaked into trace summary: %#v", result)
 	}
 }

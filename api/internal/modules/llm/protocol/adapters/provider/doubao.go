@@ -105,7 +105,7 @@ func (a *DoubaoAdapter) GetProviderInfo() *adapter.ProviderInfo {
 		DisplayName:  "Doubao",
 		Description:  "ByteDance Ark Doubao models",
 		BaseURL:      a.baseURL,
-		Capabilities: []string{"chat", "stream", "responses", "embedding", "image", "video"},
+		Capabilities: []string{"chat", "stream", "responses", "embedding", "image", "video", "speech_generation", "transcription"},
 		Version:      "api/v3",
 	}
 }
@@ -323,6 +323,13 @@ func createDoubaoArkImage(
 	payload := map[string]any{
 		doubaoImagePayloadKeyModel:  request.Model,
 		doubaoImagePayloadKeyPrompt: request.Prompt,
+	}
+	referenceImageURL := strings.TrimSpace(request.ReferenceImageURL)
+	if referenceImageURL != "" {
+		if !isSeedream {
+			return nil, fmt.Errorf("%w: reference image is only supported for doubao seedream image models", adapter.ErrCapabilityUnsupported)
+		}
+		payload["image"] = referenceImageURL
 	}
 	if size != "" {
 		payload[doubaoImagePayloadKeySize] = size

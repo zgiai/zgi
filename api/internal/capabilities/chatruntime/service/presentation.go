@@ -18,6 +18,7 @@ const (
 
 	presentationDispositionProcess = "process"
 	presentationDispositionDiscard = "discard"
+	presentationRoleFinalOutput    = "final_output"
 )
 
 type presentationProjection struct {

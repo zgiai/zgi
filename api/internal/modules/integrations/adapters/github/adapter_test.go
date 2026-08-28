@@ -131,6 +131,17 @@ func assertGitHubWriteAction(t *testing.T, action integrations.ActionDefinition,
 		len(action.RequiredScopes) != 1 || action.RequiredScopes[0] != "issues:write" {
 		t.Errorf("write action %s governance = %#v", action.ID, action)
 	}
+	foundRepositoryTransform := false
+	for _, hint := range action.PreparationHints {
+		if hint.ActionID == ActionSearchRepositories && hint.ResultTransform == integrations.ActionPreparationSplitSlashPair &&
+			len(hint.TargetArguments) == 2 && hint.TargetArguments[0] == "owner" && hint.TargetArguments[1] == "repo" &&
+			len(hint.ResultPaths) == 1 && hint.ResultPaths[0] == "repositories[].full_name" {
+			foundRepositoryTransform = true
+		}
+	}
+	if !foundRepositoryTransform {
+		t.Errorf("write action %s lacks the server-owned repository split contract: %#v", action.ID, action.PreparationHints)
+	}
 }
 
 func assertDeclaredLabelsLocalized(t *testing.T, kind string, values []string, labels integrations.LocalizedLabelMap) {
@@ -276,6 +287,9 @@ func TestListIssuesFiltersPullRequestsAndForwardsFilters(t *testing.T) {
 	if len(issues) != 1 || issues[0].(map[string]interface{})["kind"] != "issue" {
 		t.Fatalf("filtered issues = %#v", issues)
 	}
+	if hasMore, _ := result.Output["has_more"].(bool); hasMore {
+		t.Fatalf("under-filled raw page reported has_more: %#v", result.Output)
+	}
 	assertGitHubOutputSchema(t, ActionListIssues, result.Output)
 
 	request.Input["include_pull_requests"] = true
@@ -289,6 +303,37 @@ func TestListIssuesFiltersPullRequestsAndForwardsFilters(t *testing.T) {
 	if calls.Load() != 2 {
 		t.Fatalf("request count = %d", calls.Load())
 	}
+}
+
+func TestListIssuesPreservesRawPageCompletenessAfterFilteringPullRequests(t *testing.T) {
+	adapter := newTestAdapter(t, func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/repos/zgiai/zgi/issues" || request.URL.Query().Get("per_page") != "3" {
+			t.Errorf("request = %s?%s", request.URL.Path, request.URL.RawQuery)
+		}
+		writeJSON(t, w, http.StatusOK, []map[string]interface{}{
+			{"number": 9, "title": "Issue", "state": "open", "html_url": "https://github.com/zgiai/zgi/issues/9", "user": map[string]interface{}{"login": "alice"}},
+			{"number": 10, "title": "Pull request one", "state": "open", "html_url": "https://github.com/zgiai/zgi/pull/10", "user": map[string]interface{}{"login": "bob"}, "pull_request": map[string]interface{}{}},
+			{"number": 11, "title": "Pull request two", "state": "open", "html_url": "https://github.com/zgiai/zgi/pull/11", "user": map[string]interface{}{"login": "carol"}, "pull_request": map[string]interface{}{}},
+		})
+	})
+
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID,
+		ActionID:      ActionListIssues,
+		Connection:    githubConnection("github_pat_issues"),
+		Input:         map[string]interface{}{"owner": "zgiai", "repo": "zgi", "per_page": 3},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	issues := result.Output["issues"].([]interface{})
+	if len(issues) != 1 || result.ResultCount != 1 {
+		t.Fatalf("filtered result = %#v", result)
+	}
+	if hasMore, _ := result.Output["has_more"].(bool); !hasMore {
+		t.Fatalf("full raw page lost pagination evidence: %#v", result.Output)
+	}
+	assertGitHubOutputSchema(t, ActionListIssues, result.Output)
 }
 
 func TestSearchRepositoriesBuildsBoundedRequestAndOutput(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"gorm.io/datatypes"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -31,7 +32,8 @@ func openPricingEngineTestDB(t *testing.T) *gorm.DB {
 		output_price decimal,
 		input_price_configured boolean,
 		output_price_configured boolean,
-		image_prices json
+		image_prices json,
+		pricing json DEFAULT '{}'
 	)`).Error; err != nil {
 		t.Fatalf("create llm_models: %v", err)
 	}
@@ -55,7 +57,88 @@ func openPricingEngineTestDB(t *testing.T) *gorm.DB {
 	)`).Error; err != nil {
 		t.Fatalf("create llm_pricing_fallback_overrides: %v", err)
 	}
+	if err := db.Exec(`CREATE TABLE organizations (
+		id text PRIMARY KEY,
+		usd_to_cny_rate decimal
+	)`).Error; err != nil {
+		t.Fatalf("create organizations: %v", err)
+	}
 	return db
+}
+
+func TestPricingEngineQuoteMeteredUsesDimensionSpecificCNYPrice(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	organizationID := uuid.New()
+	insertPricingModel(t, db, modelID, "doubao", "0", "0", false, false, "[]")
+	if err := db.Exec(`INSERT INTO organizations (id, usd_to_cny_rate) VALUES (?, ?)`, organizationID.String(), "8").Error; err != nil {
+		t.Fatalf("insert organization: %v", err)
+	}
+	pricing := `{"deployment_scope":"cloud","metered":[{"operation":"transcription","meter":"input_audio_duration","base_unit":"millisecond","price":{"amount":"2","currency":"CNY","per_quantity":3600000}},{"operation":"transcription","meter":"input_audio_duration","base_unit":"millisecond","price":{"amount":"1","currency":"CNY","per_quantity":3600000},"dimensions":{"mode":"streaming_input"}}]}`
+	if err := db.Exec(`UPDATE llm_models SET pricing = ? WHERE id = ?`, pricing, modelID.String()).Error; err != nil {
+		t.Fatalf("update pricing: %v", err)
+	}
+
+	quote, err := NewPricingEngine(db).QuoteMetered(context.Background(), PricingModelRef{
+		ModelID:        modelID,
+		OrganizationID: organizationID,
+		Source:         PricingModelSourceGlobal,
+	}, MeteredUsage{
+		Operation:  PricingOperationTranscription,
+		Meter:      "input_audio_duration",
+		BaseUnit:   "millisecond",
+		Quantity:   60000,
+		Dimensions: map[string]string{"mode": "streaming_input"},
+	})
+	if err != nil {
+		t.Fatalf("QuoteMetered returned error: %v", err)
+	}
+	if got, want := quote.TotalCredits, int64(2084); got != want {
+		t.Fatalf("total credits = %d, want %d", got, want)
+	}
+	if quote.PricingSource != PricingSourceUpstreamModelPrice || quote.UsageSource != UsageSourceRequestParameters {
+		t.Fatalf("pricing/usage sources = %q/%q", quote.PricingSource, quote.UsageSource)
+	}
+}
+
+func TestResolveMeteredPriceRejectsAmbiguousRules(t *testing.T) {
+	raw := datatypes.JSON(`{"metered":[{"operation":"speech_generation","meter":"input_text","base_unit":"billed_character","price":{"amount":"1","currency":"USD","per_quantity":1000}},{"operation":"speech_generation","meter":"input_text","base_unit":"billed_character","price":{"amount":"2","currency":"USD","per_quantity":1000}}]}`)
+	_, err := resolveMeteredPrice(raw, MeteredUsage{
+		Operation: PricingOperationSpeech,
+		Meter:     "input_text",
+		BaseUnit:  "billed_character",
+		Quantity:  10,
+	})
+	if !errors.Is(err, ErrPricingNotConfigured) {
+		t.Fatalf("resolveMeteredPrice() error = %v, want ErrPricingNotConfigured", err)
+	}
+}
+
+func TestRepriceLockedMeteredQuoteUsesReservedPriceBasis(t *testing.T) {
+	usage := MeteredUsage{
+		Operation: PricingOperationTranscription,
+		Meter:     "input_audio_duration",
+		BaseUnit:  "millisecond",
+		Quantity:  60000,
+	}
+	locked := withMeteredPricingBasis(
+		newOutputOnlyUSDQuote(decimal.RequireFromString("0.0006"), PricingSourceUpstreamModelPrice, "rule", UsageSourceRequestParameters, nil),
+		usage,
+		decimal.RequireFromString("0.00000001"),
+	)
+
+	repriced, err := repriceLockedMeteredQuote(locked, MeteredUsage{
+		Operation: PricingOperationTranscription,
+		Meter:     "input_audio_duration",
+		BaseUnit:  "millisecond",
+		Quantity:  100,
+	})
+	if err != nil {
+		t.Fatalf("repriceLockedMeteredQuote() error = %v", err)
+	}
+	if got, want := repriced.TotalCredits, int64(1); got != want {
+		t.Fatalf("total credits = %d, want %d", got, want)
+	}
 }
 
 func insertPricingModel(t *testing.T, db *gorm.DB, modelID uuid.UUID, provider string, inputPrice string, outputPrice string, inputConfigured bool, outputConfigured bool, imagePrices string) {

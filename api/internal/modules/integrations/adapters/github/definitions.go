@@ -353,8 +353,9 @@ func Actions() []integrations.ActionDefinition {
 			OutputSchema: strictObjectSchema(map[string]interface{}{
 				"provider": map[string]interface{}{"const": IntegrationID}, "request_id": boundedStringSchema(128),
 				"repository": boundedStringSchema(300), "page": boundedIntegerSchema(1, 1000, 1),
-				"issues": map[string]interface{}{"type": "array", "maxItems": 50, "items": issueOutputSchema()},
-			}, []string{"provider", "request_id", "repository", "page", "issues"}),
+				"issues":   map[string]interface{}{"type": "array", "maxItems": 50, "items": issueOutputSchema()},
+				"has_more": map[string]interface{}{"type": "boolean"},
+			}, []string{"provider", "request_id", "repository", "page", "issues", "has_more"}),
 			Effect: toolgovernance.EffectRead, RiskLevel: toolgovernance.RiskLevelLow,
 			DataEgress: true, ExternalDestination: "api.github.com", SensitiveDataAllowed: false,
 			Idempotent: true, RequiredScopes: []string{"issues:read"},
@@ -509,7 +510,8 @@ func githubRepositoryPreparationHints() []integrations.ActionPreparationHint {
 	return []integrations.ActionPreparationHint{{
 		ActionID: ActionSearchRepositories, Relation: integrations.ActionPreparationResolveTarget,
 		TargetArguments: []string{"owner", "repo"}, ResultPaths: []string{"repositories[].full_name"},
-		Description: "Search repositories when the owner or repository name is ambiguous, then split one confirmed full_name into the owner and repo arguments.",
+		ResultTransform: integrations.ActionPreparationSplitSlashPair,
+		Description:     "Search repositories when the owner or repository name is ambiguous, then split one confirmed full_name into the owner and repo arguments.",
 		DescriptionI18n: integrations.LocalizedText{
 			integrations.LocaleEnglishUS:         "Search repositories when the owner or repository name is ambiguous, then split one confirmed full_name into the owner and repo arguments.",
 			integrations.LocaleSimplifiedChinese: "当仓库所有者或仓库名称不明确时，先搜索仓库，再将确认后的 full_name 拆分为 owner 和 repo 参数。",

@@ -468,6 +468,26 @@ func newScopedDataSourceService(dataSources map[string]*model.DataSource, tables
 	}
 }
 
+func TestListDataSourcesReturnsEmptyArrayInsteadOfNull(t *testing.T) {
+	svc := newScopedDataSourceService(nil, nil, nil)
+
+	dataSources, err := svc.ListDataSources(
+		context.Background(),
+		"organization-1",
+		"account-1",
+		[]string{"workspace-1"},
+	)
+	if err != nil {
+		t.Fatalf("ListDataSources error = %v", err)
+	}
+	if dataSources == nil {
+		t.Fatal("ListDataSources returned nil, want a non-nil empty slice")
+	}
+	if len(dataSources) != 0 {
+		t.Fatalf("ListDataSources returned %d items, want 0", len(dataSources))
+	}
+}
+
 func TestGetDataSourceByIDRejectsCrossOrganizationAsset(t *testing.T) {
 	workspaceID := "workspace-1"
 	svc := newScopedDataSourceService(map[string]*model.DataSource{

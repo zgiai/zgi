@@ -28,6 +28,7 @@ const {
 const {
   prioritizeModelsByUseCase,
 } = require('../src/components/common/model-selector/model-selector/utils.ts');
+const { isDoubaoSpeechModel } = require('../src/components/channel/channel-model-scope.ts');
 
 const deepseekChat = {
   provider: 'deepseek',
@@ -139,15 +140,42 @@ assert.equal(
   true
 );
 
+assert.equal(isDoubaoSpeechModel({ use_cases: ['text-to-speech'], endpoints: {} }), true);
+assert.equal(isDoubaoSpeechModel({ use_cases: null, endpoints: { transcription: true } }), true);
+assert.equal(
+  isDoubaoSpeechModel({ use_cases: ['text-chat'], endpoints: { chat_completions: true } }),
+  false
+);
+
 const channelDialogSource = fs.readFileSync(
   new URL('../src/components/channel/channel-dialog.tsx', import.meta.url),
   'utf8'
 );
 assert.match(channelDialogSource, /selectionPolicy="catalog"/);
+assert.match(channelDialogSource, /id: 'doubao-speech'/);
+assert.match(channelDialogSource, /modelScope: 'speech'/);
+assert.match(channelDialogSource, /modelScope: 'non-speech'/);
+assert.match(channelDialogSource, /itemFilter=\{effectiveModelFilter\}/);
 assert.doesNotMatch(
   channelDialogSource,
   /selectionPolicy=\{mode === 'create' \? 'catalog' : 'available'\}/
 );
+
+const multiSelectorSource = fs.readFileSync(
+  new URL(
+    '../src/components/common/model-multi-selector/model-multi-selector.tsx',
+    import.meta.url
+  ),
+  'utf8'
+);
+const selectedChipsStart = multiSelectorSource.indexOf('{selected.map');
+const selectedChipsEnd = multiSelectorSource.indexOf('{/* Collapsible content */}');
+assert.notEqual(selectedChipsStart, -1);
+assert.notEqual(selectedChipsEnd, -1);
+const selectedChipsSource = multiSelectorSource.slice(selectedChipsStart, selectedChipsEnd);
+assert.match(selectedChipsSource, /getModelDisplayName/);
+assert.match(selectedChipsSource, /\{modelLabel\}/);
+assert.doesNotMatch(selectedChipsSource, />\s*\{m\}\s*</);
 
 const consoleChatSource = fs.readFileSync(
   new URL('../src/app/console/work/chat/page.tsx', import.meta.url),
@@ -205,11 +233,17 @@ const aiChatSource = fs.readFileSync(
   new URL('../src/components/chat/variants/aichat/aichat-chat.tsx', import.meta.url),
   'utf8'
 );
+const executeRegenerateStart = aiChatSource.indexOf('const executeRegenerate');
 const regenerateStart = aiChatSource.indexOf('const handleRegenerate');
 const regenerateEnd = aiChatSource.indexOf('\n  const ', regenerateStart + 1);
+assert.notEqual(executeRegenerateStart, -1);
 assert.notEqual(regenerateStart, -1);
 assert.notEqual(regenerateEnd, -1);
-assert.match(aiChatSource.slice(regenerateStart, regenerateEnd), /await beforeSend\(\)/);
+assert.match(
+  aiChatSource.slice(executeRegenerateStart, regenerateStart),
+  /await beforeSend\(\)/
+);
+assert.match(aiChatSource.slice(regenerateStart, regenerateEnd), /await executeRegenerate\(message\)/);
 
 const agentRuntimeModelSectionSource = fs.readFileSync(
   new URL('../src/components/agents/agent-runtime/sections/model-section.tsx', import.meta.url),

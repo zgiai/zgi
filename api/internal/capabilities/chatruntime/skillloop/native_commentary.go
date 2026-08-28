@@ -124,7 +124,8 @@ func nativeCommentaryControlTool(name string) bool {
 		skills.MetaToolUpdatePlan,
 		skills.MetaToolTurnState,
 		skills.MetaToolRequestUserInput,
-		skills.MetaToolReadSkillReference:
+		skills.MetaToolReadSkillReference,
+		contextArtifactToolName:
 		return true
 	default:
 		return false
@@ -147,6 +148,7 @@ func nativeCommentaryContainsInternalIdentifier(content string, calls []adapter.
 		skills.MetaToolCallSkillTool,
 		skills.MetaToolIntermediateAnswer,
 		skills.MetaToolFinalAnswer,
+		contextArtifactToolName,
 	} {
 		identifiers = append(identifiers, name)
 	}

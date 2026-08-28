@@ -27,6 +27,7 @@ import {
 import { toast } from 'sonner';
 
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
+import { WorkspaceVoiceInputControl } from '@/components/chat/variants/aichat/voice/workspace-voice-input-control';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -56,6 +57,7 @@ import {
   useVideoRuntimeTask,
   useVideoRuntimeTasks,
 } from '@/hooks/video-runtime/use-video-runtime';
+import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type { ModelItem } from '@/services/types/model';
@@ -73,9 +75,12 @@ const VIDEO_FRAME_REFERENCE_MODE = 'first_last_frame';
 const VIDEO_AUDIO_MODES = ['off', 'on'] as const;
 const preloadedMediaUrls = new Set<string>();
 const preloadedVideoUrls = new Map<string, 'metadata' | 'auto'>();
+const retainedPreloadedVideoElements = new Map<string, HTMLVideoElement>();
+const mountedRetainedVideoUrls = new Set<string>();
 const videoPosterCache = new Map<string, string>();
 const videoPosterPromises = new Map<string, Promise<string | null>>();
 const HISTORY_AUTO_PREFETCH_COUNT = 6;
+const MAX_RETAINED_VIDEO_PRELOADS = 12;
 const REFERENCE_KIND_ORDER: ReferenceKind[] = ['image', 'video', 'audio'];
 const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
   image: 'image/*',
@@ -228,7 +233,10 @@ export function VideoWorkbench() {
     () => getVideoGenerationOptions(selectedModelItem),
     [selectedModelItem]
   );
-  const effectiveReferenceMode = getEffectiveReferenceMode(settings.referenceMode, generationOptions);
+  const effectiveReferenceMode = getEffectiveReferenceMode(
+    settings.referenceMode,
+    generationOptions
+  );
   const allowedReferenceKinds = React.useMemo(
     () => getAllowedReferenceKinds(selectedModelItem, effectiveReferenceMode),
     [effectiveReferenceMode, selectedModelItem]
@@ -355,7 +363,6 @@ export function VideoWorkbench() {
       if (taskID) {
         completedPollingTaskIdsRef.current.delete(taskID);
         setPollingTaskId(taskID);
-        void reloadTasks();
       }
       setPrompt('');
       setReferenceFiles(files => {
@@ -377,7 +384,6 @@ export function VideoWorkbench() {
     generationOptions.audioModes.length,
     prompt,
     referenceFiles,
-    reloadTasks,
     selectedModel.model,
     selectedModel.provider,
     settings,
@@ -404,7 +410,7 @@ export function VideoWorkbench() {
   const handlePrefetchTask = React.useCallback(
     (task: VideoRuntimeTask) => {
       prefetchTaskDetail(task);
-      preloadTaskMedia(task, { eagerVideo: true });
+      preloadTaskMedia(task);
     },
     [prefetchTaskDetail]
   );
@@ -417,8 +423,7 @@ export function VideoWorkbench() {
         query={historyQuery}
         onQueryChange={setHistoryQuery}
         isSearchPending={
-          historyQuery.trim() !== debouncedHistoryQuery ||
-          (isFetchingTasks && !isFetchingNextPage)
+          historyQuery.trim() !== debouncedHistoryQuery || (isFetchingTasks && !isFetchingNextPage)
         }
         isLoading={isLoadingTasks}
         isError={isTasksError}
@@ -516,6 +521,7 @@ function GenerationRecordsSidebar({
 }) {
   const t = useT('webapp');
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const [deleteTargetTask, setDeleteTargetTask] = React.useState<VideoRuntimeTask | null>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const autoPrefetchTasks = React.useMemo(
@@ -655,7 +661,7 @@ function GenerationRecordsSidebar({
                 isDeleting={task.task_id === deletingTaskId}
                 onSelect={() => onSelectTask(task.task_id)}
                 onPrefetch={() => onPrefetchTask(task)}
-                onDelete={() => onDeleteTask(task.task_id)}
+                onDelete={() => setDeleteTargetTask(task)}
               />
             ))}
             <div ref={loadMoreRef} className="flex min-h-9 items-center justify-center py-2">
@@ -682,6 +688,20 @@ function GenerationRecordsSidebar({
           </div>
         )}
       </div>
+      <ConfirmDialog
+        variant="danger"
+        open={deleteTargetTask !== null}
+        onOpenChange={open => {
+          if (!open) setDeleteTargetTask(null);
+        }}
+        title={t('chat.videoWorkbench.deleteRecordConfirmTitle')}
+        description={t('chat.videoWorkbench.deleteRecordConfirmDescription')}
+        confirmText={t('chat.videoWorkbench.deleteRecord')}
+        cancelText={t('chat.videoWorkbench.deleteRecordCancel')}
+        onConfirm={() => {
+          if (deleteTargetTask) onDeleteTask(deleteTargetTask.task_id);
+        }}
+      />
     </aside>
   );
 }
@@ -705,9 +725,7 @@ function VideoTaskCard({
   const status = getTaskDisplayStatus(task);
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
-  const videoUrl = toDirectToolFileDeliveryUrl(
-    status === 'succeeded' ? task.video_url : undefined
-  );
+  const videoUrl = toDirectToolFileDeliveryUrl(status === 'succeeded' ? task.video_url : undefined);
   const posterUrl = useVideoPoster(videoUrl);
   const Icon = isLoadingStatus
     ? Loader2
@@ -742,14 +760,17 @@ function VideoTaskCard({
     >
       <div className="relative h-[72px] w-[92px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-slate-800 via-slate-900 to-black shadow-sm">
         {videoUrl ? (
-          <video
-            src={videoUrl}
-            poster={posterUrl || undefined}
-            muted
-            playsInline
-            preload={posterUrl ? 'metadata' : 'auto'}
-            className="h-full w-full object-cover opacity-90"
-          />
+          posterUrl ? (
+            <img src={posterUrl} alt="" className="h-full w-full object-cover opacity-90" />
+          ) : (
+            <video
+              src={videoUrl}
+              muted
+              playsInline
+              preload="metadata"
+              className="h-full w-full object-cover opacity-90"
+            />
+          )
         ) : (
           <Image
             src="/assets/video/default-video-cover.webp"
@@ -889,7 +910,10 @@ function ComposerPanel({
   const [isConfirmSubmitting, setIsConfirmSubmitting] = React.useState(false);
   const confirmSubmitRef = React.useRef(false);
   const effectiveGenerating = isGenerating || isConfirmSubmitting;
-  const effectiveReferenceMode = getEffectiveReferenceMode(settings.referenceMode, generationOptions);
+  const effectiveReferenceMode = getEffectiveReferenceMode(
+    settings.referenceMode,
+    generationOptions
+  );
   const submitDisabled =
     !prompt.trim() || !selectedModel.provider || !selectedModel.model || effectiveGenerating;
 
@@ -1014,6 +1038,11 @@ function ComposerPanel({
         </div>
 
         <div className="flex items-center justify-end gap-3">
+          <WorkspaceVoiceInputControl
+            value={prompt}
+            onChange={onPromptChange}
+            disabled={effectiveGenerating}
+          />
           {modelError ? (
             <Badge className="rounded-md border-red-500/30 bg-red-500/10 text-red-300">
               {t('chat.videoWorkbench.modelsLoadFailed')}
@@ -1106,6 +1135,48 @@ function ComposerPanel({
   );
 }
 
+function RetainedVideoPlayer({ src, posterUrl }: { src: string; posterUrl: string }) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const normalizedUrl = src.trim();
+    const container = containerRef.current;
+    if (!normalizedUrl || !container) return;
+
+    preloadVideo(normalizedUrl, 'auto');
+    const video = retainedPreloadedVideoElements.get(normalizedUrl);
+    if (!video) return;
+
+    mountedRetainedVideoUrls.add(normalizedUrl);
+    video.controls = true;
+    video.muted = false;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.className = 'h-full w-full bg-black object-contain';
+    if (posterUrl) {
+      video.poster = posterUrl;
+    } else {
+      video.removeAttribute('poster');
+    }
+
+    container.replaceChildren(video);
+
+    return () => {
+      mountedRetainedVideoUrls.delete(normalizedUrl);
+      video.pause();
+      if (video.parentElement === container) {
+        container.removeChild(video);
+      }
+    };
+  }, [posterUrl, src]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="aspect-video w-full overflow-hidden rounded-lg border border-border bg-black"
+    />
+  );
+}
 function TaskDetailSheet({
   task,
   onOpenChange,
@@ -1114,11 +1185,16 @@ function TaskDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT('webapp');
+  const { locale } = useLocale();
   const [downloadingTaskId, setDownloadingTaskId] = React.useState<string | null>(null);
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
   const isDownloadingVideo = Boolean(task?.task_id && downloadingTaskId === task.task_id);
   const videoUrl = toDirectToolFileDeliveryUrl(task?.video_url);
   const posterUrl = useVideoPoster(videoUrl);
+  const displayErrorMessage = React.useMemo(
+    () => formatVideoTaskErrorMessage(task?.error_message, locale),
+    [locale, task?.error_message]
+  );
   const referenceMaterials = React.useMemo(
     () =>
       getTaskReferenceMaterials(
@@ -1165,13 +1241,7 @@ function TaskDetailSheet({
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               <div className="space-y-4">
                 {videoUrl ? (
-                  <video
-                    className="aspect-video w-full rounded-lg border border-border bg-black object-contain"
-                    controls
-                    preload="auto"
-                    poster={posterUrl || undefined}
-                    src={videoUrl}
-                  />
+                  <RetainedVideoPlayer src={videoUrl} posterUrl={posterUrl} />
                 ) : (
                   <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border bg-[#030711]">
                     <Image
@@ -1236,9 +1306,9 @@ function TaskDetailSheet({
                   />
                 </div>
 
-                {task.error_message && status === 'failed' ? (
+                {displayErrorMessage && status === 'failed' ? (
                   <DetailSection title={t('chat.videoWorkbench.errorMessage')}>
-                    <p className="text-sm leading-6 text-red-600">{task.error_message}</p>
+                    <p className="text-sm leading-6 text-red-600">{displayErrorMessage}</p>
                   </DetailSection>
                 ) : null}
               </div>
@@ -1264,9 +1334,7 @@ function TaskDetailSheet({
                   disabled={isDownloadingVideo}
                   onClick={() => void handleDownloadVideo()}
                 >
-                  {isDownloadingVideo ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
+                  {isDownloadingVideo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   {isDownloadingVideo
                     ? t('chat.videoWorkbench.downloadingVideo')
                     : t('chat.videoWorkbench.downloadVideo')}
@@ -1474,18 +1542,43 @@ function preloadImage(url: string | undefined) {
 
 function preloadVideo(url: string | undefined, preload: 'metadata' | 'auto' = 'metadata') {
   const normalizedUrl = url?.trim();
-  if (!normalizedUrl) return;
+  if (!normalizedUrl || typeof document === 'undefined') return;
+
   const previousPreload = preloadedVideoUrls.get(normalizedUrl);
+  const retainedVideo = retainedPreloadedVideoElements.get(normalizedUrl);
+  if (retainedVideo) {
+    if (previousPreload !== 'auto' && preload === 'auto') {
+      retainedVideo.preload = 'auto';
+      retainedVideo.load();
+      preloadedVideoUrls.set(normalizedUrl, 'auto');
+    }
+    return;
+  }
   if (previousPreload === 'auto' || (previousPreload === 'metadata' && preload === 'metadata')) {
     return;
   }
-  preloadedVideoUrls.set(normalizedUrl, preload);
+
   const video = document.createElement('video');
   video.preload = preload;
   video.muted = true;
   video.playsInline = true;
   video.src = normalizedUrl;
   video.load();
+  retainedPreloadedVideoElements.set(normalizedUrl, video);
+  preloadedVideoUrls.set(normalizedUrl, preload);
+  trimRetainedVideoPreloads();
+}
+
+function trimRetainedVideoPreloads() {
+  for (const [url, video] of retainedPreloadedVideoElements) {
+    if (retainedPreloadedVideoElements.size <= MAX_RETAINED_VIDEO_PRELOADS) return;
+    if (mountedRetainedVideoUrls.has(url)) continue;
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    retainedPreloadedVideoElements.delete(url);
+    preloadedVideoUrls.delete(url);
+  }
 }
 
 function ensureVideoPoster(url: string | undefined): Promise<string | null> {
@@ -1631,6 +1724,105 @@ function getTaskDisplayStatus(task: VideoRuntimeTask): NormalizedVideoStatus {
   const status = normalizeStatus(task.status);
   if (status === 'succeeded' && task.error_message && !task.video_url) return 'failed';
   return status;
+}
+
+function formatVideoTaskErrorMessage(message: string | undefined, locale: string) {
+  const normalizedMessage = message?.trim();
+  if (!normalizedMessage) return '';
+  if (!locale.toLowerCase().startsWith('zh')) return normalizedMessage;
+
+  const localizedMessage = localizeVideoContentReferences(normalizedMessage);
+  const lowerMessage = normalizedMessage.toLowerCase();
+  if (
+    lowerMessage.includes('first/last frame content cannot be mixed with reference media content')
+  ) {
+    return '首尾帧模式参考素材只能为图片';
+  }
+  if (lowerMessage.includes('may contain real person')) {
+    const contentLabels = videoContentReferenceLabels(normalizedMessage);
+    if (contentLabels.length > 0) {
+      return `${contentLabels.join('、')}可能包含真人`;
+    }
+    return '输入图片可能包含真人';
+  }
+  if (lowerMessage.includes('output video') && lowerMessage.includes('sensitive information')) {
+    return '模型输出视频涉及敏感内容';
+  }
+  if (lowerMessage.includes('may contain sensitive information')) {
+    const contentLabels = videoContentReferenceLabels(normalizedMessage);
+    if (contentLabels.length > 0) {
+      return `${contentLabels.join('、')}含有敏感内容`;
+    }
+    return '输入内容含有敏感内容';
+  }
+  if (lowerMessage.includes('output video') && lowerMessage.includes('copyright restrictions')) {
+    return '模型输出视频涉及版权问题';
+  }
+  if (lowerMessage.includes('copyright restrictions')) {
+    const contentLabels = videoContentReferenceLabels(normalizedMessage);
+    if (contentLabels.length > 0) {
+      return `${contentLabels.join('、')}涉及版权问题`;
+    }
+  }
+  if (lowerMessage.includes('reference images')) {
+    const referenceImageLimit = normalizedMessage.match(
+      /expected\s+at\s+most\s+([0-9]+)\s+reference\s+images/i
+    );
+    if (referenceImageLimit?.[1]) {
+      return `图片素材最多${referenceImageLimit[1]}张`;
+    }
+  }
+  if (lowerMessage.includes('audio duration (seconds)')) {
+    const audioDurationLimit = normalizedMessage.match(
+      /less\s+than\s+or\s+equal\s+to\s+([0-9]+(?:\.[0-9]+)?)/i
+    );
+    if (audioDurationLimit?.[1]) {
+      return `${videoInvalidContentPrefix(normalizedMessage)}音频素材总时长不能超过${audioDurationLimit[1]}秒`;
+    }
+  }
+
+  return localizedMessage;
+}
+
+function localizeVideoContentReferences(message: string) {
+  return message
+    .replace(
+      /the\s+parameter\s+`?content\[(\d+)\]`?\s+specified\s+in\s+the\s+request\s+is\s+not\s+valid(\s*:)?/gi,
+      (_match, indexText: string, colon: string | undefined) => {
+        const label = videoContentReferenceLabel(indexText);
+        return label ? `${label}无效${colon ? '：' : ''}` : _match;
+      }
+    )
+    .replace(/`?content\[(\d+)\]`?/gi, (_match, indexText: string) => {
+      const label = videoContentReferenceLabel(indexText);
+      return label || _match;
+    });
+}
+
+function videoInvalidContentPrefix(message: string) {
+  const match = message.match(
+    /the\s+parameter\s+`?content\[(\d+)\]`?\s+specified\s+in\s+the\s+request\s+is\s+not\s+valid\s*:?/i
+  );
+  if (!match?.[1]) return '';
+  const label = videoContentReferenceLabel(match[1]);
+  return label ? `${label}无效：` : '';
+}
+
+function videoContentReferenceLabels(message: string) {
+  const labels: string[] = [];
+  for (const match of message.matchAll(/`?content\[(\d+)\]`?/gi)) {
+    const label = videoContentReferenceLabel(match[1]);
+    if (label && !labels.includes(label)) {
+      labels.push(label);
+    }
+  }
+  return labels;
+}
+
+function videoContentReferenceLabel(indexText: string) {
+  const index = Number.parseInt(indexText, 10);
+  if (!Number.isFinite(index)) return '';
+  return index === 0 ? '提示词' : `素材${index}`;
 }
 
 function ConfirmationSpec({ label, value }: { label: string; value: string }) {
@@ -2046,9 +2238,7 @@ function getReferenceModeOptions(videoConfig: Record<string, unknown> | null): s
     ['reference_modes', 'referenceModes', 'modes'],
     []
   );
-  const normalizedModes = rawModes
-    .map(mode => normalizeReferenceModeOption(mode))
-    .filter(Boolean);
+  const normalizedModes = rawModes.map(mode => normalizeReferenceModeOption(mode)).filter(Boolean);
   const uniqueModes = Array.from(new Set(normalizedModes));
   return uniqueModes.length > 0 ? uniqueModes : [...VIDEO_REFERENCE_MODES];
 }
@@ -2090,7 +2280,9 @@ function getVideoReferenceKinds(model?: ModelItem): ReferenceKind[] {
   return configuredKinds;
 }
 
-function getReferenceKindsFromVideoConfig(videoConfig: Record<string, unknown> | null): ReferenceKind[] {
+function getReferenceKindsFromVideoConfig(
+  videoConfig: Record<string, unknown> | null
+): ReferenceKind[] {
   if (!videoConfig) return [];
 
   const audioInput = [
@@ -2215,9 +2407,7 @@ function getNestedRecord(value: unknown, path: string[]): Record<string, unknown
     if (!current || typeof current !== 'object') return null;
     current = (current as Record<string, unknown>)[key];
   }
-  return isPlainRecord(current)
-    ? (current as Record<string, unknown>)
-    : null;
+  return isPlainRecord(current) ? (current as Record<string, unknown>) : null;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

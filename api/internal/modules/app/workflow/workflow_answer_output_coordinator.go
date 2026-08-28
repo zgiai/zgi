@@ -41,7 +41,7 @@ type answerOutputCoordinator struct {
 
 	workflowRunID  string
 	conversationID string
-	resultChan     chan<- *WorkflowStreamEvent
+	emitEvent      func(*WorkflowStreamEvent)
 
 	chunkSize int
 
@@ -128,7 +128,22 @@ func newAnswerOutputCoordinator(
 	streamGraph *workflowStreamGraph,
 	resultChan chan<- *WorkflowStreamEvent,
 ) *answerOutputCoordinator {
-	if runType != "CONVERSATION_WORKFLOW" || streamGraph == nil || resultChan == nil {
+	if resultChan == nil {
+		return nil
+	}
+	return newAnswerOutputCoordinatorWithEmitter(runType, workflowRunID, systemInputs, streamGraph, func(event *WorkflowStreamEvent) {
+		resultChan <- event
+	})
+}
+
+func newAnswerOutputCoordinatorWithEmitter(
+	runType string,
+	workflowRunID string,
+	systemInputs map[string]interface{},
+	streamGraph *workflowStreamGraph,
+	emitEvent func(*WorkflowStreamEvent),
+) *answerOutputCoordinator {
+	if runType != "CONVERSATION_WORKFLOW" || streamGraph == nil || emitEvent == nil {
 		return nil
 	}
 
@@ -146,7 +161,7 @@ func newAnswerOutputCoordinator(
 	coordinator := &answerOutputCoordinator{
 		workflowRunID:  workflowRunID,
 		conversationID: workflowConversationIDFromSystemInputs(systemInputs),
-		resultChan:     resultChan,
+		emitEvent:      emitEvent,
 		chunkSize:      answerOutputChunkSize(),
 		emitters:       make(map[string]*answerEmitter),
 		templates:      make(map[string]string),
@@ -1183,7 +1198,7 @@ func (c *answerOutputCoordinator) emitMessages(messages []answerMessageChunk) {
 			continue
 		}
 		emitted = true
-		c.resultChan <- &WorkflowStreamEvent{
+		c.emitEvent(&WorkflowStreamEvent{
 			EventType: "message",
 			Data: map[string]interface{}{
 				"id":              c.workflowRunID,
@@ -1193,15 +1208,15 @@ func (c *answerOutputCoordinator) emitMessages(messages []answerMessageChunk) {
 				"answer":          message.text,
 				"created_at":      time.Now().Unix(),
 			},
-		}
+		})
 	}
 	if emitted {
-		c.resultChan <- &WorkflowStreamEvent{
+		c.emitEvent(&WorkflowStreamEvent{
 			EventType: workflowEventAnswerSnapshotReady,
 			Data: map[string]interface{}{
 				"answer": c.FullAnswer(),
 			},
-		}
+		})
 	}
 }
 

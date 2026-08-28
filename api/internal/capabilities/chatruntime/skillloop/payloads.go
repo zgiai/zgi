@@ -523,7 +523,7 @@ func plannerFeedbackTrace(skillID string, toolName string, err error) skills.Ski
 
 func internalPlannerFeedbackTrace(trace skills.SkillTrace) bool {
 	switch strings.TrimSpace(trace.Kind) {
-	case "planner_feedback", "skill_load_attempt":
+	case "planner_feedback", "skill_load_attempt", "context_artifact_read":
 		return true
 	default:
 		return false

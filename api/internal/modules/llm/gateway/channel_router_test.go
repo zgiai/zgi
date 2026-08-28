@@ -1926,3 +1926,24 @@ func setGatewayConsoleAPIURL(t *testing.T, apiURL string) {
 		config.GlobalConfig = oldConfig
 	})
 }
+
+func TestLLMModelFromPrivateModelPreservesAudioCapabilities(t *testing.T) {
+	converted := llmModelFromPrivateModel(&llmmodel.CustomModel{
+		ID:               uuid.New(),
+		Provider:         "doubao",
+		Name:             "audio-model",
+		SpeechGeneration: true,
+		Transcription:    true,
+	})
+
+	if converted == nil {
+		t.Fatal("llmModelFromPrivateModel() = nil")
+	}
+	if !converted.SpeechGeneration || !converted.Transcription {
+		t.Fatalf(
+			"audio capabilities = speech:%t transcription:%t, want both true",
+			converted.SpeechGeneration,
+			converted.Transcription,
+		)
+	}
+}

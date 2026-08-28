@@ -810,6 +810,9 @@ func videoErrorMessage(err error) string {
 		if message := embeddedJSONErrorMessage(adapterErr.Message); message != "" {
 			return message
 		}
+		if message := upstreamErrorMessage(adapterErr.Message); message != "" {
+			return message
+		}
 		if message := strings.TrimSpace(adapterErr.Message); message != "" {
 			return message
 		}

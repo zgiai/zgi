@@ -21,6 +21,8 @@ interface ConversationBoxProps {
   showWorkflowRunHeader?: boolean;
   /** Show workflow run monitor in message item (hide entire workflow section if false) */
   showWorkflowDetail?: boolean;
+  /** Show node and workflow failure messages in the workflow run monitor */
+  showWorkflowFailureDetails?: boolean;
   /** Hide completed workflow detail cards. Webapp uses this to keep completed chats clean. */
   hideCompletedWorkflowDetail?: boolean;
   /** Allow expanding workflow run summary into node details */
@@ -47,6 +49,7 @@ const ConversationBox: React.FC<ConversationBoxProps> = ({
   showWorkflowNodeDetail = false,
   showWorkflowRunHeader = false,
   showWorkflowDetail = true,
+  showWorkflowFailureDetails = true,
   hideCompletedWorkflowDetail = false,
   allowWorkflowDetailExpand = true,
   defaultWorkflowDetailOpen = true,
@@ -331,6 +334,7 @@ const ConversationBox: React.FC<ConversationBoxProps> = ({
                     messageAddon={renderMessageAddon?.(m)}
                     showWorkflowNodeDetail={showWorkflowNodeDetail}
                     showWorkflowDetail={shouldShowWorkflowDetail}
+                    showWorkflowFailureDetails={showWorkflowFailureDetails}
                     allowWorkflowDetailExpand={allowWorkflowDetailExpand}
                     defaultWorkflowDetailOpen={defaultWorkflowDetailOpen}
                   />

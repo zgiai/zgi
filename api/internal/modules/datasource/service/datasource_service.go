@@ -376,7 +376,7 @@ func (s *dataSourceService) ListDataSources(ctx context.Context, organizationID,
 	}
 
 	// Convert datasources to response with permission info
-	var responses []*dto.DataSourceResponse
+	responses := make([]*dto.DataSourceResponse, 0, len(dataSources))
 	for _, ds := range dataSources {
 		response := dto.ConvertDataSourceModelToResponse(ds)
 

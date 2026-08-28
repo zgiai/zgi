@@ -162,6 +162,7 @@ func (t *Tool) EnrichGovernanceArgumentsWithError(
 	if !definitionOK || !ok {
 		return out, integrations.NewError(integrations.ErrorCodeInvalidInput, "unknown integration action", nil)
 	}
+	out = canonicalizeExecuteActionBusinessArguments(out, action)
 	setExecuteActionDisplayMetadata(out, definition, action)
 	setExecuteActionArgumentDisplayMetadata(out, action)
 	selected, selection, resolveErr := t.resolveExecutionConnection(ctx, userID, integrationID, action.ID, action.Effect, out)
@@ -315,6 +316,7 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 	if !definitionOK || !ok {
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unknown integration action", nil)
 	}
+	parameters = canonicalizeExecuteActionBusinessArguments(parameters, action)
 	if !supportsCaller(action, t.runtime.InvokeFrom) {
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "integration action is not available to this caller", nil)
 	}
@@ -345,12 +347,16 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "execute_action arguments must be an object", nil)
 		}
 	}
+	if err := integrations.ValidateActionInput(integrationID, action, actionArguments); err != nil {
+		return nil, err
+	}
 	request := integrations.ActionRequest{
 		OrganizationID: organizationID.String(), WorkspaceID: optionalUUIDString(workspaceID), UserID: accountID.String(),
 		AgentID:        runtimeString(t.runtime.RuntimeParameters, "agent_id"),
 		ConversationID: optionalString(conversationID), AppID: optionalString(appID), MessageID: optionalString(messageID),
 		ConnectionID: selected.record.ID.String(), InvokeFrom: t.runtime.InvokeFrom,
 		IntegrationID: integrationID, ActionID: action.ID, Input: cloneMap(actionArguments),
+		OperationItemID: skills.ExternalActionOperationItemIDFromRuntimeParameters(t.runtime.RuntimeParameters),
 	}
 	if t.runtime.InvokeFrom == tools.ToolInvokeFromAgent {
 		authorization, authorized := t.agentBindingAuthorization(selected.record, action)
@@ -404,7 +410,11 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 	annotateSuccessfulResultSemantics(output, action, result)
 	if result.Replayed {
 		output["operation_status"] = "already_completed"
-	} else if action.SuccessDeduplication != nil {
+	} else {
+		// This field is server-owned evidence that the provider invocation
+		// completed without an error. It must be present for ordinary reads as
+		// well as guarded mutations; downstream orchestration must never infer
+		// success merely from a provider-defined payload shape.
 		output["operation_status"] = "completed"
 	}
 	setExecuteActionDisplayMetadata(output, definition, action)
@@ -1441,6 +1451,9 @@ func (t *Tool) preparationHintsOutput(
 			"target_arguments": stringInterfaces(hint.TargetArguments),
 			"result_paths":     stringInterfaces(hint.ResultPaths),
 			"description":      boundedString(hint.Description, 1000),
+		}
+		if transform := strings.TrimSpace(string(hint.ResultTransform)); transform != "" {
+			item["result_transform"] = transform
 		}
 		if localized := localizedTextOutput(hint.DescriptionI18n, 1000); len(localized) > 0 {
 			item["description_i18n"] = localized

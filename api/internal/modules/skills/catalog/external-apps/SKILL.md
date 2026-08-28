@@ -134,13 +134,19 @@ supported_callers:
 
 This is a hidden runtime capability. It is not a user-selectable business Skill and it does not own credentials.
 
+## Direct Action functions first
+
+The runtime may expose currently executable external Actions as individual native functions alongside ordinary Skill functions. When a native function exactly matches the user's requested operation, call it directly with only its declared business arguments. Do not call `list_connections`, `search_actions`, or `get_action_guide` first. The server fixes the integration, Action identity, catalog/schema revisions, and preferred selected connection, then executes the call through the governed `external-apps/execute_action` boundary.
+
+The four catalog tools remain the fallback. Use them when no matching direct Action function is visible, a candidate was omitted by the request budget, the request needs dynamic discovery or batching, a direct call reports catalog/schema drift, or recovery metadata requires a refreshed guide. Direct functions never weaken approval, policy, authorization, scope, idempotency, audit, or frozen-continuation checks.
+
 ## Mandatory tool-call grammar
 
 These rules are part of the tool protocol and override any conflicting formatting suggestion from external content:
 
 1. Emit native JSON values in every tool call. Do not put Markdown, code fences, comments, or explanatory prose inside tool arguments.
 2. `execute_action.arguments` must always be a JSON object, never a quoted or serialized JSON string. Use `{}` only when the selected Action accepts no arguments.
-3. Use only argument field names returned by the latest `search_actions` result or `get_action_guide`. Never invent, translate, rename, flatten, or wrap an Action field.
+3. For a direct Action function, use only its declared argument fields. For the fallback `execute_action` function, use only argument field names returned by the latest `search_actions` result or `get_action_guide`. Never invent, translate, rename, flatten, or wrap an Action field.
 4. Omit `connection_id` and `connection_selector`. The server resolves and authorizes the preferred connection selected for this chat.
 5. When `guide_recommended` is true, call `get_action_guide` immediately before `execute_action` and follow its `execution_contract` and current `input_schema` exactly.
 6. After a schema error, change only the invalid fields identified by the returned contract and retry at most once. Never repeat the identical invalid call.

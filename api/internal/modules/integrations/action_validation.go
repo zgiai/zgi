@@ -1,6 +1,7 @@
 package integrations
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -89,6 +90,92 @@ func ValidateActionInput(integrationID string, action ActionDefinition, input ma
 		}
 	}
 	return nil
+}
+
+// CanonicalizeActionInput applies only explicit, provider-owned schema
+// normalization rules. Rules are limited to success-deduplication targets so
+// they cannot rewrite ordinary business content. Executor invokes this before
+// safety, validation and operation identity derivation.
+func CanonicalizeActionInput(action ActionDefinition, input map[string]interface{}) map[string]interface{} {
+	out := cloneJSONMap(input)
+	if action.SuccessDeduplication == nil || len(out) == 0 {
+		return out
+	}
+	guardedTargets := make(map[string]struct{}, len(action.SuccessDeduplication.TargetArgumentPaths))
+	for _, path := range action.SuccessDeduplication.TargetArgumentPaths {
+		if path = strings.TrimSpace(path); path != "" {
+			guardedTargets[path] = struct{}{}
+		}
+	}
+	properties, _ := action.InputSchema["properties"].(map[string]interface{})
+	for path, rawProperty := range properties {
+		if _, guarded := guardedTargets[path]; !guarded {
+			continue
+		}
+		property, _ := rawProperty.(map[string]interface{})
+		rule, _ := property["x-zgi-discard-when"].(map[string]interface{})
+		whenArgument, _ := rule["argument"].(string)
+		whenArgument = strings.TrimSpace(whenArgument)
+		whenEquals, hasEquals := rule["equals"]
+		actual, hasActual := out[whenArgument]
+		if whenArgument != "" && hasEquals && hasActual &&
+			actionInputDiscardRuleMatchesConditional(action.InputSchema, path, whenArgument, whenEquals) &&
+			canonicalActionScalarEqual(actual, whenEquals) {
+			delete(out, path)
+		}
+	}
+	return out
+}
+
+func actionInputDiscardRuleMatchesConditional(
+	schema map[string]interface{},
+	path string,
+	whenArgument string,
+	whenEquals interface{},
+) bool {
+	if schemaStringListContains(schema["required"], path) {
+		return false
+	}
+	clauses, _ := schema["allOf"].([]interface{})
+	for _, rawClause := range clauses {
+		clause, _ := rawClause.(map[string]interface{})
+		condition, _ := clause["if"].(map[string]interface{})
+		otherwise, _ := clause["else"].(map[string]interface{})
+		conditionProperties, _ := condition["properties"].(map[string]interface{})
+		whenProperty, _ := conditionProperties[whenArgument].(map[string]interface{})
+		conditionalValue, hasConditionalValue := whenProperty["const"]
+		if hasConditionalValue &&
+			schemaStringListContains(condition["required"], whenArgument) &&
+			schemaStringListContains(otherwise["required"], path) &&
+			canonicalActionScalarEqual(conditionalValue, whenEquals) {
+			return true
+		}
+	}
+	return false
+}
+
+func schemaStringListContains(value interface{}, expected string) bool {
+	switch values := value.(type) {
+	case []interface{}:
+		for _, value := range values {
+			if text, ok := value.(string); ok && strings.TrimSpace(text) == expected {
+				return true
+			}
+		}
+	case []string:
+		for _, value := range values {
+			if strings.TrimSpace(value) == expected {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func canonicalActionScalarEqual(left, right interface{}) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
 }
 
 // ActionInputValidationFeedback extracts a fresh public recovery payload from

@@ -349,7 +349,7 @@ func summarizeExternalAppsResult(toolName string, payload map[string]interface{}
 	switch strings.TrimSpace(toolName) {
 	case "execute_action":
 		result := compactFields(payload,
-			"integration_id", "action_id", "integration_name", "action_name",
+			"integration_id", "action_id", "plan_phase_id", "integration_name", "action_name",
 			"connection_name", "connection_display_name", "connection_selection",
 			"operation_status", "result_count", "attempt_count", "provider_request_id",
 			"retry_safe", "result_truncated",
@@ -374,7 +374,12 @@ func summarizeExternalAppsResult(toolName string, payload map[string]interface{}
 	case "search_actions":
 		return compactFields(payload, "count", "query", "integration_id")
 	case "get_action_guide":
-		return compactFields(payload, "integration_id", "action_id", "name", "effect", "risk_level", "supports_batch")
+		result := compactFields(payload,
+			"integration_id", "action_id", "plan_phase_id", "name", "effect", "risk_level", "supports_batch",
+			"connection_name", "availability", "can_execute", "requires_approval",
+		)
+		result["required_argument_count"] = collectionLen(payload["required_arguments"])
+		return result
 	default:
 		return nil
 	}

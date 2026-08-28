@@ -22,9 +22,17 @@ const (
 
 type ActionPreparationRelation string
 
+type ActionPreparationResultTransform string
+
 const (
 	ActionPreparationResolveTarget ActionPreparationRelation = "resolve_target"
 	ActionPreparationInspect       ActionPreparationRelation = "inspect"
+
+	// ActionPreparationSplitSlashPair maps one provider-owned scalar in the
+	// form "left/right" to exactly two target arguments in their declared
+	// order. The runtime accepts only one structurally valid scalar and never
+	// lets the model supply or alter this transform.
+	ActionPreparationSplitSlashPair ActionPreparationResultTransform = "split_slash_pair"
 )
 
 // ActionPreparationHint describes a safe read Action that can provide
@@ -32,12 +40,13 @@ const (
 // callers must still invoke the preparation Action normally and may never
 // synthesize identifiers or bypass authorization and approval.
 type ActionPreparationHint struct {
-	ActionID        string                    `json:"action_id"`
-	Relation        ActionPreparationRelation `json:"relation"`
-	TargetArguments []string                  `json:"target_arguments,omitempty"`
-	ResultPaths     []string                  `json:"result_paths,omitempty"`
-	Description     string                    `json:"description"`
-	DescriptionI18n LocalizedText             `json:"description_i18n,omitempty"`
+	ActionID        string                           `json:"action_id"`
+	Relation        ActionPreparationRelation        `json:"relation"`
+	TargetArguments []string                         `json:"target_arguments,omitempty"`
+	ResultPaths     []string                         `json:"result_paths,omitempty"`
+	ResultTransform ActionPreparationResultTransform `json:"result_transform,omitempty"`
+	Description     string                           `json:"description"`
+	DescriptionI18n LocalizedText                    `json:"description_i18n,omitempty"`
 }
 
 // SuccessDeduplicationDefinition opts a non-idempotent action into durable,

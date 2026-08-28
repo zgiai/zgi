@@ -703,8 +703,18 @@ export function AIChatShell({
       (activeUserInputMessage?.status === 'waiting_question' &&
         activeUserInputRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE)
   );
+  const contextBlockedMessage = useMemo(() => {
+    const leafMessageId = activeConversation?.current_leaf_message_id;
+    if (!leafMessageId) return null;
+    const leaf = activeMessages.find(message => message.id === leafMessageId) ?? null;
+    return leaf?.status === 'error' &&
+      leaf.metadata?.error_code === 'aichat.context.compaction_unavailable'
+      ? leaf
+      : null;
+  }, [activeConversation?.current_leaf_message_id, activeMessages]);
+  const contextBlocked = Boolean(contextBlockedMessage);
   const messageActionsLocked = Boolean(
-    activeWorkflowApprovalRequest || isConversationTransitioning
+    activeWorkflowApprovalRequest || isConversationTransitioning || contextBlocked
   );
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
   const visiblePendingUserMessage =
@@ -738,23 +748,31 @@ export function AIChatShell({
   );
   const matchingRuntimeErrorMessage = useMemo(
     () =>
-      error
+      contextBlockedMessage ??
+      (error
         ? ([...activeMessages]
             .reverse()
             .find(message => message.status === 'error' && message.error === error) ?? null)
-        : null,
-    [activeMessages, error]
+        : null),
+    [activeMessages, contextBlockedMessage, error]
   );
   const resolvedRuntimeError = useMemo(() => {
-    if (!error) return null;
+    if (!error && !contextBlockedMessage) return null;
     const errorInput = matchingRuntimeErrorMessage
       ? getAIChatMessageErrorInput(matchingRuntimeErrorMessage)
-      : { message: error };
+      : { message: error ?? undefined };
     return resolveAIChatErrorMessage((key, values) => tGlobal(key as never, values), errorInput, {
       isAdmin: isBillingAdmin,
       workspaceId: currentWorkspace?.id,
     });
-  }, [currentWorkspace?.id, error, isBillingAdmin, matchingRuntimeErrorMessage, tGlobal]);
+  }, [
+    currentWorkspace?.id,
+    error,
+    contextBlockedMessage,
+    isBillingAdmin,
+    matchingRuntimeErrorMessage,
+    tGlobal,
+  ]);
   const showInlineRuntimeError =
     resolvedRuntimeError?.kind === 'billing' ||
     resolvedRuntimeError?.kind === 'server' ||
@@ -901,6 +919,12 @@ export function AIChatShell({
 
   const sendOrdinaryTurn = useCallback(
     async (query: string, files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
+      if (activeWorkflowApprovalRequest || contextBlocked) {
+        return false;
+      }
+      if (!query.trim() || isSending) {
+        return false;
+      }
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return false;
@@ -937,10 +961,13 @@ export function AIChatShell({
       return true;
     },
     [
+      activeWorkflowApprovalRequest,
+      contextBlocked,
       activeConversationId,
       beforeSend,
       controller,
       forcedUseMemory,
+      isSending,
       messages.length,
       modelSelectorValue,
       requireModel,
@@ -953,7 +980,7 @@ export function AIChatShell({
 
   const handleSend = useCallback(
     async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
-      if (activeWorkflowApprovalRequest) return false;
+      if (activeWorkflowApprovalRequest || contextBlocked) return false;
       const query = input.trim();
       if (!query) return false;
 
@@ -992,6 +1019,7 @@ export function AIChatShell({
     [
       activeConversationId,
       activeWorkflowApprovalRequest,
+      contextBlocked,
       controller.supportsRuntimeInput,
       forcedUseMemory,
       input,
@@ -1134,11 +1162,16 @@ export function AIChatShell({
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
       return (
-        !messageActionsLocked &&
+        (!messageActionsLocked || message.id === contextBlockedMessage?.id) &&
         (canReplaceRoot || (Boolean(message.parent_id) && branchCount < MAX_AICHAT_BRANCHES))
       );
     },
-    [branchNavigationByMessageId, canReplaceRootMessage, messageActionsLocked]
+    [
+      branchNavigationByMessageId,
+      canReplaceRootMessage,
+      contextBlockedMessage?.id,
+      messageActionsLocked,
+    ]
   );
 
   const executeRegenerate = useCallback(
@@ -1208,7 +1241,9 @@ export function AIChatShell({
       <AIChatRuntimeErrorNotice
         title={resolvedRuntimeError.title || resolvedRuntimeError.description}
         description={resolvedRuntimeError.description}
-        retryLabel={t('chat.retry')}
+        retryLabel={
+          contextBlocked ? t('consoleChat.contextCompactionBlocked.retry') : t('chat.retry')
+        }
         configureLabel={
           runtimeErrorActionHref
             ? resolvedRuntimeError.actionLabel || t('consoleChat.configureModel')
@@ -1707,6 +1742,7 @@ export function AIChatShell({
             layout={isEmbedded ? 'embedded' : 'full'}
             showMemoryKey={surface !== 'agent-webapp' && surface !== 'digital-human'}
             showSkillEventDetails={surface !== 'agent-webapp'}
+            showWorkflowFailureDetails={surface !== 'agent-webapp'}
             showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
             showPlanningPlaceholder={showPlanningPlaceholder}
             pendingUserMessage={visiblePendingUserMessage}
@@ -1777,6 +1813,7 @@ export function AIChatShell({
             isSending={isSending}
             allowRuntimeInput={controller.supportsRuntimeInput}
             runtimeInputQueueFull={runtimeInputQueueFull}
+            disabled={contextBlocked}
             canStop={canStopPendingWorkflowInteraction || activeConversationRunning}
             isStopping={isStopping}
             onInputChange={setInput}

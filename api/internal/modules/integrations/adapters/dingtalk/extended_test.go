@@ -92,6 +92,9 @@ func TestAdapterExtendedDirectoryAttendanceAndDepartmentNotificationFlow(t *test
 		t.Fatal(err)
 	}
 	departments := searched.Output["departments"].([]map[string]interface{})
+	if hasMore, _ := searched.Output["has_more"].(bool); hasMore {
+		t.Fatalf("under-filled raw department page reported has_more: %#v", searched.Output)
+	}
 	departmentRef := departments[0]["department_ref"].(string)
 	if departmentRef == "" {
 		t.Fatal("department reference is empty")
@@ -141,6 +144,45 @@ func TestAdapterExtendedDirectoryAttendanceAndDepartmentNotificationFlow(t *test
 	if notification["delivery_status"] != "partially_delivered" || notification["delivered_count"] != 2 || notification["failed_count"] != 1 {
 		t.Fatalf("department status = %#v", notification)
 	}
+}
+
+func TestDepartmentSearchPreservesRawPageCompletenessAfterFiltering(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1.0/oauth2/accessToken":
+			_, _ = w.Write([]byte(`{"accessToken":"token-1","expireIn":7200}`))
+		case "/v1.0/contact/departments/search":
+			_, _ = w.Write([]byte(`{"list":[2,0]}`))
+		case "/topapi/v2/department/get":
+			assertLegacyToken(t, r)
+			_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok","result":{"dept_id":2,"name":"研发部","parent_id":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.Execute(context.Background(), integrations.ActionRequest{
+		IntegrationID: IntegrationID,
+		ActionID:      ActionDepartmentSearch,
+		Connection:    testConnection("connection-1"),
+		Input:         map[string]interface{}{"query": "研发", "max_results": 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(result.Output["departments"].([]map[string]interface{})); got != 1 {
+		t.Fatalf("filtered department count = %d, output=%#v", got, result.Output)
+	}
+	if hasMore, _ := result.Output["has_more"].(bool); !hasMore {
+		t.Fatalf("full raw department page lost pagination evidence: %#v", result.Output)
+	}
+	assertDingTalkOutputContract(t, ActionDepartmentSearch, result.Output)
 }
 
 func TestExtendedReferencesAreConnectionBound(t *testing.T) {

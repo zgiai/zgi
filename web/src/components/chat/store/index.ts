@@ -261,7 +261,10 @@ const useChatStoreBase = create<ChatState>()((set, get) => ({
         clientState: { phase: 'requesting', startedAt: Date.now() },
         inputs: payload.inputs,
         model: null,
-        messageData: { tempKey },
+        messageData: {
+          tempKey,
+          ...(payload.inputs?.image_reference ? { image_reference: payload.inputs.image_reference } : {}),
+        },
       };
       const next: Conversation = { ...conv, messages: [...conv.messages, message] };
       return {

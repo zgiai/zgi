@@ -275,6 +275,12 @@ func (adapter *Adapter) listIssues(ctx context.Context, token string, input map[
 	return map[string]interface{}{
 		"provider": IntegrationID, "request_id": bounded(userSafe(meta.RequestID), 128),
 		"repository": bounded(owner+"/"+repository, 300), "page": page, "issues": items,
+		// GitHub's issues endpoint also returns pull requests. Completeness must
+		// be based on the unfiltered provider page: otherwise a full page of pull
+		// requests with one issue would look like a globally unique issue result.
+		// A full page is conservatively treated as having more results because the
+		// response Link header is not part of this adapter's bounded output.
+		"has_more": len(raw) >= perPage,
 	}, meta, nil
 }
 

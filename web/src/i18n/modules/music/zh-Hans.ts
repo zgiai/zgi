@@ -19,6 +19,7 @@ const messages: MusicMessages = {
   selectModel: '选择模型',
   loadingModels: '正在加载模型…',
   noModels: '没有可用的音乐模型，请先启用具备音乐生成能力的渠道。',
+  voiceInputInUse: '使用中',
   retry: '重试',
   mode: '创作方式',
   modes: {

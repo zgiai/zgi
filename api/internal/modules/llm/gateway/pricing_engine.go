@@ -58,11 +58,27 @@ type PricingQuote struct {
 	OutputTokenPriceResolved bool
 	InputRuleID              string
 	OutputRuleID             string
+
+	MeteredOperation       PricingOperation
+	MeteredMeter           string
+	MeteredBaseUnit        string
+	MeteredPriceUSDPerUnit decimal.Decimal
+	MeteredPriceResolved   bool
+}
+
+// MeteredUsage identifies one non-token usage quantity against structured model pricing.
+type MeteredUsage struct {
+	Operation  PricingOperation
+	Meter      string
+	BaseUnit   string
+	Quantity   int64
+	Dimensions map[string]string
 }
 
 type PricingEngine interface {
 	QuoteTokens(ctx context.Context, model PricingModelRef, promptTokens, completionTokens int) (PricingQuote, error)
 	QuoteImage(ctx context.Context, model PricingModelRef, req *adapter.ImageRequest) (PricingQuote, error)
+	QuoteMetered(ctx context.Context, model PricingModelRef, usage MeteredUsage) (PricingQuote, error)
 }
 
 type pricingEngine struct {
@@ -79,6 +95,7 @@ type pricingModelRecord struct {
 	InputPriceConfigured            bool            `gorm:"column:input_price_configured"`
 	OutputPriceConfigured           bool            `gorm:"column:output_price_configured"`
 	ImagePrices                     datatypes.JSON  `gorm:"column:image_prices"`
+	Pricing                         datatypes.JSON  `gorm:"column:pricing"`
 	InputPriceOrganizationOverride  bool            `gorm:"-"`
 	OutputPriceOrganizationOverride bool            `gorm:"-"`
 }
@@ -569,6 +586,11 @@ func (e *pricingEngine) loadModelFromTable(ctx context.Context, table string, mo
 		selects = append(selects, "image_prices")
 	} else {
 		selects = append(selects, "'[]' AS image_prices")
+	}
+	if e.hasColumn(table, "pricing") {
+		selects = append(selects, "pricing")
+	} else {
+		selects = append(selects, "'{}' AS pricing")
 	}
 
 	var model pricingModelRecord
