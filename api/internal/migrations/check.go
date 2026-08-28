@@ -312,15 +312,21 @@ func (i *migrationUpInspector) inspect(root ast.Node, dataFix bool) {
 				i.inspect(declaration, dataFix)
 			}
 		case *ast.CallExpr:
-			if methodName(node.Fun) == "AllowDestructive" {
+			name := methodName(node.Fun)
+			if name == "AllowDestructive" {
 				i.inspectErr = i.forbidden(node, "AllowDestructive")
 				return false
 			}
-			if name := methodName(node.Fun); name == "DropIfExists" || name == "DropColumn" {
+			if name == "DropIfExists" || name == "DropColumn" {
 				i.inspectErr = i.forbidden(node, name)
 				return false
 			}
-			if methodName(node.Fun) == "DataFix" {
+			if i.enforceDataFixForDML && !dataFix &&
+				(name == "UpdateRowsWhereEqual" || name == "UpdateRowsWhereNotEqual") {
+				i.inspectErr = i.forbidden(node, name)
+				return false
+			}
+			if name == "DataFix" {
 				for _, argument := range node.Args {
 					i.inspect(argument, true)
 				}

@@ -253,7 +253,14 @@ func upFixture(schema *Builder) error {
 }
 
 func TestCheckMigrationSourceSafetyAllowsExplicitDataFix(t *testing.T) {
-	path := writeMigrationSourceFixture(t, `package migrations
+	tests := map[string]string{
+		"raw SQL":                         `return db.Exec(backfillFixture).Error`,
+		"builder update equal helper":     `return schema.UpdateRowsWhereEqual("fixture", "active", true, "expired", false)`,
+		"builder update not equal helper": `return schema.UpdateRowsWhereNotEqual("fixture", "active", true, "expired", false)`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := writeMigrationSourceFixture(t, `package migrations
 
 func init() {
 	registerSchemaMigration("209901010000000000_fixture", upFixture, nil)
@@ -263,20 +270,24 @@ const backfillFixture = "UPDATE public.fixture SET active = true; DELETE FROM pu
 
 func upFixture(schema *Builder) error {
 	return schema.DataFix("backfill fixture", func(db *DB) error {
-		return db.Exec(backfillFixture).Error
+		`+body+`
 	})
 }
 `)
 
-	if err := checkMigrationSourceSafety([]string{path}); err != nil {
-		t.Fatalf("explicit data fixes are valid up migrations: %v", err)
+			if err := checkMigrationSourceSafety([]string{path}); err != nil {
+				t.Fatalf("explicit data fixes are valid up migrations: %v", err)
+			}
+		})
 	}
 }
 
 func TestCheckMigrationSourceSafetyRejectsDataModificationOutsideDataFix(t *testing.T) {
 	tests := map[string]string{
-		"update": `return schema.Raw("UPDATE public.fixture SET active = true")`,
-		"delete": `return schema.Raw("DELETE FROM public.fixture WHERE expired = true")`,
+		"raw update":               `return schema.Raw("UPDATE public.fixture SET active = true")`,
+		"raw delete":               `return schema.Raw("DELETE FROM public.fixture WHERE expired = true")`,
+		"builder update equal":     `return schema.UpdateRowsWhereEqual("fixture", "active", true, "expired", false)`,
+		"builder update not equal": `return schema.UpdateRowsWhereNotEqual("fixture", "active", true, "expired", false)`,
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
