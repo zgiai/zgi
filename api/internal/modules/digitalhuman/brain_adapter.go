@@ -34,8 +34,9 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 	config := chatruntime.RunConfig{
 		SystemPrompt: buildDigitalHumanSystemPrompt(resolved.Snapshot), SystemPromptVersion: resolved.Snapshot.Revision,
 		Model: resolved.Snapshot.Model, BillingAppID: resolved.Snapshot.Subject.ID.String(),
-		BillingAppType: runtimemodel.ConversationCallerDigitalHuman,
-		UseMemory:      false, AgentMemoryEnabled: false, AgentMemoryAutoExtractionEnabled: false,
+		BillingAppType:     runtimemodel.ConversationCallerDigitalHuman,
+		RuntimeInputPolicy: chatruntime.RuntimeInputPolicyCheckpointAndFollowUp,
+		UseMemory:          false, AgentMemoryEnabled: false, AgentMemoryAutoExtractionEnabled: false,
 		BindingReader: a.bindingReader, BindingSnapshot: snapshotRef,
 		IntegrationConnectionIDs: make(map[string]string), IntegrationSelectedConnectionIDs: make(map[string][]string),
 	}

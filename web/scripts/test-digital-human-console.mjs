@@ -619,6 +619,11 @@ assert.match(
   /submitInvocation[\s\S]*recoverConversationStream/,
   'DigitalHuman chat turns must enter through durable runs and recover from ChatRuntime'
 );
+assert.match(
+  runtimeTransport,
+  /supportsRuntimeInput:\s*true/,
+  'DigitalHuman console chat must reuse the shared running-input queue'
+);
 assert.doesNotMatch(
   `${chat}\n${runtimeTransport}`,
   /MEMORY_KEYS\.me|\/console\/api\/agents\//,

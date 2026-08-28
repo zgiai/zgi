@@ -28,12 +28,24 @@ const (
 	maxDeliveryAttempts        = 6
 	channelAcknowledgementText = "⏳ 已收到，正在处理…"
 	channelWakeFallback        = "@DigitalHuman"
+	channelRuntimeInputReason  = "channel.runtime_input.accepted"
 )
 
 var errChannelDeliveryAttemptFailed = errors.New("channel delivery attempt failed")
 
 type ChannelInvocationRuntime interface {
 	SubmitInvocation(context.Context, Scope, invocation.Event, string, *uuid.UUID) (*Run, bool, error)
+	SubmitChannelRuntimeInput(context.Context, Scope, uuid.UUID, uuid.UUID, ChannelRuntimeInputRequest) (bool, error)
+}
+
+// ChannelRuntimeInputRequest preserves the provider-neutral attributes needed
+// to decide whether a callback may join the current turn or must be serialized
+// as the next turn in the same external conversation.
+type ChannelRuntimeInputRequest struct {
+	ClientInputID    uuid.UUID
+	Content          string
+	ConversationType channelruntime.ConversationType
+	SenderExternalID string
 }
 
 type ChannelSubjectStore interface {
@@ -401,6 +413,10 @@ func (service *ChannelService) handleInboundMessage(
 			result.Accepted, result.RunID = true, stored.InvocationRunID
 			return result, nil
 		}
+		if stored.Status == channelruntime.InboundEventAccepted && stored.ReasonCode == channelRuntimeInputReason {
+			result.Accepted = true
+			return result, nil
+		}
 		if stored.Status == channelruntime.InboundEventIgnored {
 			return result, nil
 		}
@@ -423,11 +439,43 @@ func (service *ChannelService) handleInboundMessage(
 		return nil, err
 	}
 	route.Mapping.LocalConversationID = &conversationID
+	acceptedAsRuntimeInput, err := service.runtime.SubmitChannelRuntimeInput(
+		ctx,
+		Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},
+		route.Binding.SubjectID,
+		conversationID,
+		ChannelRuntimeInputRequest{
+			ClientInputID: stored.ID, Content: channelRuntimeInputContent(installation.ID, message),
+			ConversationType: message.ConversationType, SenderExternalID: message.SenderExternalID,
+		},
+	)
+	if err != nil {
+		_ = service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventFailed, "channel.runtime_input.submit_failed", nil, now)
+		return nil, err
+	}
+	if acceptedAsRuntimeInput {
+		if err := service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventAccepted, channelRuntimeInputReason, nil, now); err != nil {
+			return nil, err
+		}
+		return &ChannelWebhookResult{Response: acknowledgement, Accepted: true, Duplicate: !created, EventID: stored.ID}, nil
+	}
 	result, err := service.submitChannelInvocation(ctx, installation, route, message, stored, now, !created)
 	if result != nil {
 		result.Response = acknowledgement
 	}
 	return result, err
+}
+
+func channelRuntimeInputContent(installationID uuid.UUID, message *channelruntime.InboundMessage) string {
+	content := channelInvocationQuery(message)
+	if message == nil || message.ConversationType != channelruntime.ConversationTypeGroup {
+		return content
+	}
+	author := strings.TrimSpace(message.SenderDisplayName)
+	if author == "" {
+		author = stableChannelAuthorAlias(installationID, message.ExternalConversationID, message.SenderExternalID)
+	}
+	return "Channel message from " + author + ":\n" + content
 }
 
 func (service *ChannelService) resolveOrCreateChannelRoute(

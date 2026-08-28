@@ -109,12 +109,55 @@ func (h *RuntimeHandler) ListConversationMessages(c *gin.Context) {
 		h.base.writeError(c, applicationError(err, "digital_human.conversation.messages"))
 		return
 	}
+	runtimeInputs, err := h.service.ListConversationRuntimeInputs(c.Request.Context(), scope, digitalHumanID, conversationID)
+	if err != nil {
+		h.base.writeError(c, applicationError(err, "digital_human.conversation.runtime_inputs"))
+		return
+	}
+	inputsByMessage := digitalHumanRuntimeInputsByVisibleMessage(runtimeInputs)
 	responses := make([]runtimedto.MessageResponse, 0, len(items))
 	for _, item := range items {
-		responses = append(responses, digitalHumanMessageResponse(item))
+		response := digitalHumanMessageResponse(item)
+		response.RuntimeInputs = inputsByMessage[item.ID]
+		if response.RuntimeInputs == nil {
+			response.RuntimeInputs = []runtimedto.RuntimeInputResponse{}
+		}
+		responses = append(responses, response)
 	}
 	writeDigitalHumanData(c, http.StatusOK, runtimedto.ListResponse[runtimedto.MessageResponse]{
 		Data: responses, Page: page, Limit: limit, Total: total, HasMore: int64(page*limit) < total,
+	})
+}
+
+func (h *RuntimeHandler) SubmitRuntimeInput(c *gin.Context) {
+	scope, digitalHumanID, conversationID, ok := h.conversationScope(c)
+	if !ok {
+		return
+	}
+	messageID, err := uuid.Parse(strings.TrimSpace(c.Param("message_id")))
+	if err != nil || messageID == uuid.Nil {
+		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.conversation.runtime_input"))
+		return
+	}
+	var request runtimedto.SubmitRuntimeInputRequest
+	if !h.base.decode(c, &request) {
+		return
+	}
+	clientInputID, err := uuid.Parse(strings.TrimSpace(request.ClientInputID))
+	if err != nil || clientInputID == uuid.Nil {
+		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.conversation.runtime_input"))
+		return
+	}
+	result, err := h.service.SubmitRuntimeInput(c.Request.Context(), scope, digitalHumanID, runtimeservice.SubmitRuntimeInputRequest{
+		ConversationID: conversationID, TargetMessageID: messageID,
+		ClientInputID: clientInputID, Content: request.Content,
+	})
+	if err != nil {
+		h.base.writeError(c, applicationError(err, "digital_human.conversation.runtime_input"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, runtimedto.SubmitRuntimeInputResponse{
+		Input: digitalHumanRuntimeInputResponse(result.Input), Disposition: string(result.Disposition), Created: result.Created,
 	})
 }
 
@@ -239,6 +282,58 @@ func digitalHumanMessageResponse(message *runtimemodel.Message) runtimedto.Messa
 		response.SourceMessageID = &value
 	}
 	return response
+}
+
+func digitalHumanRuntimeInputsByVisibleMessage(inputs []*runtimemodel.RuntimeInput) map[uuid.UUID][]runtimedto.RuntimeInputResponse {
+	result := make(map[uuid.UUID][]runtimedto.RuntimeInputResponse)
+	for _, input := range inputs {
+		if input == nil {
+			continue
+		}
+		if input.ConsumedMessageID != nil && input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+			continue
+		}
+		result[input.TargetMessageID] = append(result[input.TargetMessageID], digitalHumanRuntimeInputResponse(input))
+	}
+	return result
+}
+
+func digitalHumanRuntimeInputResponse(input *runtimemodel.RuntimeInput) runtimedto.RuntimeInputResponse {
+	if input == nil {
+		return runtimedto.RuntimeInputResponse{}
+	}
+	response := runtimedto.RuntimeInputResponse{
+		ID: input.ID.String(), ClientInputID: input.ClientInputID.String(), Content: input.Content,
+		Status: digitalHumanRuntimeInputUserStatus(input), TargetMessageID: input.TargetMessageID.String(),
+		Sequence: input.Sequence, CreatedAt: input.CreatedAt.Unix(),
+	}
+	if input.ConsumedMessageID != nil {
+		value := input.ConsumedMessageID.String()
+		response.ConsumedMessageID = &value
+	}
+	return response
+}
+
+func digitalHumanRuntimeInputUserStatus(input *runtimemodel.RuntimeInput) string {
+	if input == nil {
+		return "failed"
+	}
+	switch input.Status {
+	case runtimemodel.RuntimeInputStatusCanceled:
+		return "canceled"
+	case runtimemodel.RuntimeInputStatusFailed:
+		return "failed"
+	case runtimemodel.RuntimeInputStatusClaimed:
+		if input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+			return "queued_follow_up"
+		}
+	case runtimemodel.RuntimeInputStatusConsumed:
+		if input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+			return "applied_follow_up"
+		}
+		return "applied_current_run"
+	}
+	return "pending"
 }
 
 func digitalHumanSearchResponse(result *runtimeservice.SearchResult) runtimedto.SearchResultResponse {

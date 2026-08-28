@@ -281,6 +281,14 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "Stored execution snapshot failed integrity validation.", s.now())
 		return err
 	}
+	absorbed, err := s.absorbChannelRunIntoActiveTurn(ctx, run, event)
+	if err != nil {
+		_ = s.store.FailRun(ctx, run.ID, "digital_human.run.runtime_input_absorb_failed", "The channel message could not join the active conversation.", s.now())
+		return err
+	}
+	if absorbed {
+		return nil
+	}
 	config, err := s.brain.RunConfig(resolved)
 	if err != nil {
 		_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "Stored execution configuration is not executable.", s.now())
@@ -380,10 +388,29 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			return err
 		}
 	}
-	prepared, err := s.chat.PrepareConfiguredChat(ctx, runtimeScope(run), caller, config, chatRequest)
+	var prepared *chatruntime.PreparedChat
+	if batchID, followUp := runtimeInputFollowUpBatchID(event); followUp {
+		followUpRuntime, ok := s.chat.(runtimeInputChatRuntime)
+		if !ok {
+			err = fmt.Errorf("digital human runtime input follow-up is unavailable")
+		} else {
+			prepared, err = followUpRuntime.PrepareRuntimeInputFollowUp(ctx, config, batchID)
+		}
+	} else {
+		prepared, err = s.chat.PrepareConfiguredChat(ctx, runtimeScope(run), caller, config, chatRequest)
+	}
 	if err != nil {
+		if batchID, followUp := runtimeInputFollowUpBatchID(event); followUp {
+			if followUpRuntime, ok := s.chat.(runtimeInputChatRuntime); ok {
+				_ = followUpRuntime.FailRuntimeInputFollowUp(context.WithoutCancel(ctx), batchID, err)
+			}
+		}
 		_ = s.store.FailRun(ctx, run.ID, "digital_human.run.prepare_failed", "The DigitalHuman could not prepare this execution.", s.now())
 		return err
+	}
+	if prepared == nil {
+		_ = s.store.CompleteRun(ctx, run.ID, "", datatypes.JSON(`{}`), s.now())
+		return nil
 	}
 	if err := s.store.LinkRunMessage(ctx, run.ID, prepared.Conversation.ID, prepared.Message.ID, s.now()); err != nil {
 		_, _ = s.chat.StopMessage(ctx, runtimeScope(run), prepared.Message.ID)
@@ -409,6 +436,11 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	}
 	result, err := s.chat.RunPreparedStream(ctx, prepared, nil, eventCallbacks...)
 	if err != nil {
+		if batchID, followUp := runtimeInputFollowUpBatchID(event); followUp {
+			if followUpRuntime, ok := s.chat.(runtimeInputChatRuntime); ok {
+				_ = followUpRuntime.FailRuntimeInputFollowUp(context.WithoutCancel(ctx), batchID, err)
+			}
+		}
 		_ = s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", "The DigitalHuman execution did not complete.", s.now())
 		return err
 	}

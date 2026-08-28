@@ -58,6 +58,38 @@ func TestChannelWebhookReplayedTenTimesCreatesOneInvocation(t *testing.T) {
 	}
 }
 
+func TestChannelWebhookWhileConversationRunsBecomesRuntimeInput(t *testing.T) {
+	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
+	runtime.runtimeInputAccepted = true
+	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeGroup)
+	adapter.message = &channelruntime.InboundMessage{
+		Provider: "feishu", ProviderEventID: "event-supplement", ProviderMessageID: "message-supplement",
+		ExternalTenantID: "tenant-1", ExternalConversationID: binding.Mapping.ExternalConversationID,
+		ConversationType: channelruntime.ConversationTypeGroup, SenderExternalID: "ou_sender", SenderDisplayName: "康源",
+		Text: "再补充一个要求", Mentions: []channelruntime.Mention{{ExternalID: installation.ExternalBotID}}, OccurredAt: time.Now().UTC(),
+	}
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)})
+	if err != nil || result == nil || !result.Accepted || result.RunID != nil {
+		t.Fatalf("HandleWebhook() = %#v, %v", result, err)
+	}
+	if runtime.calls != 0 || runtime.lastRuntimeInput != "Channel message from 康源:\n再补充一个要求" {
+		t.Fatalf("invocation calls = %d, runtime input = %q", runtime.calls, runtime.lastRuntimeInput)
+	}
+	if runtime.lastRuntimeRequest.ConversationType != channelruntime.ConversationTypeGroup || runtime.lastRuntimeRequest.SenderExternalID != "ou_sender" {
+		t.Fatalf("runtime input routing attributes = %#v", runtime.lastRuntimeRequest)
+	}
+	if replay, replayErr := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)}); replayErr != nil || !replay.Duplicate || !replay.Accepted {
+		t.Fatalf("replayed runtime input = %#v, %v", replay, replayErr)
+	}
+	if runtime.runtimeInputCalls != 1 {
+		t.Fatalf("runtime input calls = %d, want 1", runtime.runtimeInputCalls)
+	}
+	event := store.events[installation.ID.String()+":"+adapter.message.ProviderEventID]
+	if event == nil || event.Status != channelruntime.InboundEventAccepted || event.InvocationRunID != nil {
+		t.Fatalf("supplemental inbound event = %#v", event)
+	}
+}
+
 func TestChannelDeliveryMentionsOnlyFinalReplyRecipient(t *testing.T) {
 	event := invocation.Event{
 		ReplyTo: &invocation.ReplyAddress{RecipientID: " user-1 "},
@@ -706,14 +738,18 @@ func (stub channelSubjectStub) Definition(_ context.Context, scope Scope, id uui
 }
 
 type channelRuntimeStub struct {
-	calls              int
-	runID              uuid.UUID
-	lastEventID        string
-	lastEvent          invocation.Event
-	lastQuery          string
-	lastConversationID *uuid.UUID
-	remainingFailures  int
-	channelPolicy      *ChannelResponsePolicy
+	calls                int
+	runID                uuid.UUID
+	lastEventID          string
+	lastEvent            invocation.Event
+	lastQuery            string
+	lastConversationID   *uuid.UUID
+	remainingFailures    int
+	channelPolicy        *ChannelResponsePolicy
+	runtimeInputAccepted bool
+	lastRuntimeInput     string
+	lastRuntimeRequest   ChannelRuntimeInputRequest
+	runtimeInputCalls    int
 }
 
 type channelTransientDispatcherStub struct {
@@ -747,6 +783,13 @@ func (runtime *channelRuntimeStub) SubmitInvocation(_ context.Context, _ Scope, 
 		run.ExecutionSnapshot = encoded
 	}
 	return run, true, nil
+}
+
+func (runtime *channelRuntimeStub) SubmitChannelRuntimeInput(_ context.Context, _ Scope, _ uuid.UUID, _ uuid.UUID, request ChannelRuntimeInputRequest) (bool, error) {
+	runtime.runtimeInputCalls++
+	runtime.lastRuntimeInput = request.Content
+	runtime.lastRuntimeRequest = request
+	return runtime.runtimeInputAccepted, nil
 }
 
 type channelCredentialStub struct{}

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/util"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -21,14 +22,15 @@ import (
 
 type runtimeHandlerServiceStub struct {
 	RuntimeHandlerService
-	submit            func(context.Context, Scope, uuid.UUID, ManualInvocationRequest) (*Run, bool, error)
-	get               func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
-	runtimeLog        func(context.Context, Scope, uuid.UUID, uuid.UUID) (*RunRuntimeLog, error)
-	cancel            func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
-	candidates        func(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
-	directSkillGet    func(context.Context, Scope, uuid.UUID, string) (*DirectSkillConfiguration, error)
-	directSkillUpdate func(context.Context, Scope, uuid.UUID, string, UpdateDirectSkillConfigurationRequest) (*DirectSkillConfiguration, error)
-	listConversations func(context.Context, Scope, uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error)
+	submit             func(context.Context, Scope, uuid.UUID, ManualInvocationRequest) (*Run, bool, error)
+	get                func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
+	runtimeLog         func(context.Context, Scope, uuid.UUID, uuid.UUID) (*RunRuntimeLog, error)
+	cancel             func(context.Context, Scope, uuid.UUID, uuid.UUID) (*Run, error)
+	candidates         func(context.Context, Scope, uuid.UUID, ResourceCandidateQuery) (*ResourceCandidateList, error)
+	directSkillGet     func(context.Context, Scope, uuid.UUID, string) (*DirectSkillConfiguration, error)
+	directSkillUpdate  func(context.Context, Scope, uuid.UUID, string, UpdateDirectSkillConfigurationRequest) (*DirectSkillConfiguration, error)
+	listConversations  func(context.Context, Scope, uuid.UUID, int, int) ([]*runtimemodel.Conversation, int64, error)
+	submitRuntimeInput func(context.Context, Scope, uuid.UUID, runtimeservice.SubmitRuntimeInputRequest) (*runtimeservice.SubmitRuntimeInputResult, error)
 }
 
 func (s runtimeHandlerServiceStub) SubmitManual(ctx context.Context, scope Scope, id uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
@@ -61,6 +63,10 @@ func (s runtimeHandlerServiceStub) UpdateDirectSkillConfiguration(ctx context.Co
 
 func (s runtimeHandlerServiceStub) ListConversations(ctx context.Context, scope Scope, id uuid.UUID, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
 	return s.listConversations(ctx, scope, id, page, limit)
+}
+
+func (s runtimeHandlerServiceStub) SubmitRuntimeInput(ctx context.Context, scope Scope, id uuid.UUID, request runtimeservice.SubmitRuntimeInputRequest) (*runtimeservice.SubmitRuntimeInputResult, error) {
+	return s.submitRuntimeInput(ctx, scope, id, request)
 }
 
 func TestRuntimeHandlerAcceptsDurableManualInvocation(t *testing.T) {
@@ -224,6 +230,40 @@ func TestRuntimeHandlerListsDigitalHumanConversationsAndRedactsMetadata(t *testi
 		!bytes.Contains(recorder.Body.Bytes(), []byte("visible")) || bytes.Contains(recorder.Body.Bytes(), []byte("must-not-leak")) ||
 		!bytes.Contains(recorder.Body.Bytes(), []byte(`"has_more":true`)) {
 		t.Fatalf("unsafe conversation response: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestRuntimeHandlerAcceptsDigitalHumanRuntimeInput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope, digitalHumanID, conversationID, messageID, clientInputID := testScope(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	inputID := uuid.New()
+	service := runtimeHandlerServiceStub{submitRuntimeInput: func(_ context.Context, gotScope Scope, gotID uuid.UUID, request runtimeservice.SubmitRuntimeInputRequest) (*runtimeservice.SubmitRuntimeInputResult, error) {
+		if gotScope != scope || gotID != digitalHumanID || request.ConversationID != conversationID ||
+			request.TargetMessageID != messageID || request.ClientInputID != clientInputID || request.Content != "补充最新约束" {
+			t.Fatalf("runtime input = scope %#v, id %s, request %#v", gotScope, gotID, request)
+		}
+		return &runtimeservice.SubmitRuntimeInputResult{
+			Input: &runtimemodel.RuntimeInput{
+				ID: inputID, ClientInputID: clientInputID, ConversationID: conversationID,
+				TargetMessageID: messageID, Content: request.Content, Sequence: 1, CreatedAt: time.Unix(30, 0),
+			},
+			Disposition: runtimeservice.RuntimeInputDispositionCurrentRun,
+			Created:     true,
+		}, nil
+	}}
+	router := digitalHumanRuntimeHandlerRouter(t, service, scope)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/digital-humans/"+digitalHumanID.String()+"/runtime/conversations/"+conversationID.String()+"/messages/"+messageID.String()+"/runtime-inputs",
+		bytes.NewBufferString(`{"client_input_id":"`+clientInputID.String()+`","content":"补充最新约束"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte(inputID.String())) ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"disposition":"current_run"`)) {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

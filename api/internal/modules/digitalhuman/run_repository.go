@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -32,6 +33,32 @@ type RunStore interface {
 	RetryRunOutbox(context.Context, uuid.UUID, time.Time, string) error
 	RequeueStaleRunOutbox(context.Context, time.Time, time.Time) error
 	MarkStaleRunsUnknown(context.Context, time.Time, time.Time) error
+}
+
+// runtimeInputFollowUpStore is an optional persistence extension used by the
+// durable runtime-input continuation path. Keeping it separate avoids widening
+// the core run-store contract implemented by focused tests and alternative stores.
+type runtimeInputFollowUpStore interface {
+	RunByMessageID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*Run, error)
+	ChannelInboundEventByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) (*channelruntime.InboundEvent, error)
+}
+
+func (r *GormRepository) RunByMessageID(ctx context.Context, organizationID, workspaceID, digitalHumanID, messageID uuid.UUID) (*Run, error) {
+	if organizationID == uuid.Nil || workspaceID == uuid.Nil || digitalHumanID == uuid.Nil || messageID == uuid.Nil {
+		return nil, ErrInvalidRequest
+	}
+	var run Run
+	err := r.db.WithContext(ctx).Where(
+		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND message_id = ?",
+		organizationID, workspaceID, digitalHumanID, messageID,
+	).Order("created_at DESC").Take(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrRunNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get DigitalHuman run by message: %w", err)
+	}
+	return &run, nil
 }
 
 func (r *GormRepository) CreateRunWithOutbox(ctx context.Context, run *Run, outbox *RunOutbox) error {

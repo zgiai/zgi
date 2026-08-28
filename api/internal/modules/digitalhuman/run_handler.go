@@ -30,6 +30,8 @@ type RuntimeHandlerService interface {
 	UpdateConversation(context.Context, Scope, uuid.UUID, uuid.UUID, runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error)
 	DeleteConversation(context.Context, Scope, uuid.UUID, uuid.UUID) error
 	ListConversationMessages(context.Context, Scope, uuid.UUID, uuid.UUID, int, int) ([]*runtimemodel.Message, int64, error)
+	ListConversationRuntimeInputs(context.Context, Scope, uuid.UUID, uuid.UUID) ([]*runtimemodel.RuntimeInput, error)
+	SubmitRuntimeInput(context.Context, Scope, uuid.UUID, runtimeservice.SubmitRuntimeInputRequest) (*runtimeservice.SubmitRuntimeInputResult, error)
 	StopConversation(context.Context, Scope, uuid.UUID, uuid.UUID) (*runtimeservice.StopConversationResult, error)
 	StreamConversationEvents(context.Context, Scope, uuid.UUID, uuid.UUID, uuid.UUID, string, func(runtimeservice.StreamEvent) error) error
 }
@@ -65,6 +67,7 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.PATCH("/runtime/conversations/:conversation_id", h.UpdateConversation)
 	group.DELETE("/runtime/conversations/:conversation_id", h.DeleteConversation)
 	group.GET("/runtime/conversations/:conversation_id/messages", h.ListConversationMessages)
+	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", h.SubmitRuntimeInput)
 	group.POST("/runtime/conversations/:conversation_id/stop", h.StopConversation)
 	group.GET("/runtime/conversations/:conversation_id/events", h.StreamConversationEvents)
 }

@@ -26,8 +26,21 @@ type ConversationRuntime interface {
 	UpdateConversationByCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID, runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error)
 	DeleteConversationByCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID) error
 	ListConversationMessagesByCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID, int, int) ([]*runtimemodel.Message, int64, error)
+	ListRuntimeInputs(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID) ([]*runtimemodel.RuntimeInput, error)
+	SubmitRuntimeInput(context.Context, chatruntime.Scope, chatruntime.Caller, chatruntime.RunConfig, chatruntime.SubmitRuntimeInputRequest) (*chatruntime.SubmitRuntimeInputResult, error)
 	StopConversationByCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID) (*chatruntime.StopConversationResult, error)
 	StreamConversationEventsForCaller(context.Context, chatruntime.Scope, chatruntime.Caller, uuid.UUID, uuid.UUID, string, func(chatruntime.StreamEvent) error) error
+}
+
+func (s *RuntimeService) SubmitRuntimeInput(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request chatruntime.SubmitRuntimeInputRequest) (*chatruntime.SubmitRuntimeInputResult, error) {
+	runtime, runtimeScope, caller, err := s.conversationContext(scope, digitalHumanID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := runtime.SubmitRuntimeInput(ctx, runtimeScope, caller, chatruntime.RunConfig{
+		RuntimeInputPolicy: chatruntime.RuntimeInputPolicyCheckpointAndFollowUp,
+	}, request)
+	return result, mapConversationRuntimeError(err)
 }
 
 func (s *RuntimeService) ListConversations(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
@@ -95,6 +108,18 @@ func (s *RuntimeService) ListConversationMessages(ctx context.Context, scope Sco
 	return items, total, mapConversationRuntimeError(err)
 }
 
+func (s *RuntimeService) ListConversationRuntimeInputs(ctx context.Context, scope Scope, digitalHumanID, conversationID uuid.UUID) ([]*runtimemodel.RuntimeInput, error) {
+	runtime, runtimeScope, caller, err := s.conversationContext(scope, digitalHumanID)
+	if err != nil {
+		return nil, err
+	}
+	if conversationID == uuid.Nil {
+		return nil, ErrInvalidRequest
+	}
+	items, err := runtime.ListRuntimeInputs(ctx, runtimeScope, caller, conversationID)
+	return items, mapConversationRuntimeError(err)
+}
+
 func (s *RuntimeService) StopConversation(ctx context.Context, scope Scope, digitalHumanID, conversationID uuid.UUID) (*chatruntime.StopConversationResult, error) {
 	runtime, runtimeScope, caller, err := s.conversationContext(scope, digitalHumanID)
 	if err != nil {
@@ -155,6 +180,8 @@ func mapConversationRuntimeError(err error) error {
 		return fmt.Errorf("%w: %v", ErrConversationNotFound, err)
 	case errors.Is(err, chatruntime.ErrInvalidInput):
 		return fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	case errors.Is(err, chatruntime.ErrConversationIdle), errors.Is(err, chatruntime.ErrRuntimeInputDisabled):
+		return fmt.Errorf("%w: %v", ErrRunConflict, err)
 	default:
 		return err
 	}

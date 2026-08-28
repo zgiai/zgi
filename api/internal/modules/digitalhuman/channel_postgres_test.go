@@ -2,6 +2,7 @@ package digitalhuman
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runspec"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
@@ -245,7 +247,38 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 	if err := repository.MarkInboundEvent(t.Context(), inboundID, channelruntime.InboundEventAccepted, "", &runID, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&Run{}).Where("id = ?", runID).Updates(map[string]any{"status": RunStatusRunning, "started_at": now, "updated_at": now}).Error; err != nil {
+	messageID := uuid.New()
+	conversationID := uuid.New()
+	if err := db.Model(&Run{}).Where("id = ?", runID).Updates(map[string]any{
+		"status": RunStatusRunning, "started_at": now, "updated_at": now,
+		"message_id": messageID, "conversation_id": conversationID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	supplementInboundID := uuid.New()
+	supplementSenderID := "ou_latest_sender"
+	if err := db.Create(&channelruntime.InboundEvent{
+		ID: supplementInboundID, OrganizationID: organizationID, WorkspaceID: workspaceID,
+		InstallationID: installation.ID, BindingID: &binding.ID,
+		ProviderEventID: "feishu-event-runtime-input", ProviderMessageID: "om_runtime_input",
+		ExternalConversationID: mapping.ExternalConversationID, SenderExternalID: supplementSenderID,
+		ConversationType: channelruntime.ConversationTypeGroup, ContentPreview: "补充要求",
+		EventType: "channel.mention", PayloadDigest: "sha256:" + strings.Repeat("b", 64),
+		Status: channelruntime.InboundEventAccepted, ReasonCode: channelRuntimeInputReason,
+		ReceivedAt: now.Add(500 * time.Millisecond), CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	workspaceRef := workspaceID
+	mode := runtimemodel.RuntimeInputConsumptionCurrentRun
+	consumedAt := now.Add(750 * time.Millisecond)
+	if err := db.Create(&runtimemodel.RuntimeInput{
+		ID: uuid.New(), OrganizationID: organizationID, WorkspaceID: &workspaceRef, AccountID: actorID,
+		ConversationID: conversationID, TargetMessageID: messageID, ConsumedMessageID: &messageID,
+		ClientInputID: supplementInboundID, Sequence: 1, Content: "补充要求",
+		Status: runtimemodel.RuntimeInputStatusConsumed, ConsumptionMode: &mode,
+		ConsumedAt: &consumedAt, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.CompleteRunWithDelivery(t.Context(), runID, "最终回复", datatypes.JSON(`{}`), now.Add(time.Second)); err != nil {
@@ -267,6 +300,23 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 	}
 	if deliveryCount != 1 || delivery.Status != channelruntime.DeliveryPending {
 		t.Fatalf("delivery intents = %d, delivery = %#v", deliveryCount, delivery)
+	}
+	if delivery.InboundEventID == nil || *delivery.InboundEventID != supplementInboundID {
+		t.Fatalf("delivery inbound event = %v, want latest runtime input %s", delivery.InboundEventID, supplementInboundID)
+	}
+	var deliveryPayload channelDeliveryPayloadData
+	if err := json.Unmarshal(delivery.Payload, &deliveryPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveryPayload.Mentions) != 1 || deliveryPayload.Mentions[0].ExternalID != supplementSenderID {
+		t.Fatalf("delivery mentions = %#v, want latest supplement sender %q", deliveryPayload.Mentions, supplementSenderID)
+	}
+	var linkedSupplement channelruntime.InboundEvent
+	if err := db.Where("id = ?", supplementInboundID).Take(&linkedSupplement).Error; err != nil {
+		t.Fatal(err)
+	}
+	if linkedSupplement.InvocationRunID == nil || *linkedSupplement.InvocationRunID != runID {
+		t.Fatalf("runtime input inbound event run = %v, want %s", linkedSupplement.InvocationRunID, runID)
 	}
 	deliveryAdapter := &channelAdapterStub{deliveryErr: errors.New("temporary provider failure")}
 	channelRegistry, err := channelruntime.NewRegistry(channelruntime.Provider{

@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 	"gorm.io/datatypes"
@@ -620,6 +621,24 @@ func (r *GormRepository) MarkInboundEvent(ctx context.Context, eventID uuid.UUID
 	return nil
 }
 
+func (r *GormRepository) ChannelInboundEventByID(ctx context.Context, organizationID, workspaceID, installationID, eventID uuid.UUID) (*channelruntime.InboundEvent, error) {
+	if organizationID == uuid.Nil || workspaceID == uuid.Nil || installationID == uuid.Nil || eventID == uuid.Nil {
+		return nil, ErrInvalidRequest
+	}
+	var event channelruntime.InboundEvent
+	err := r.db.WithContext(ctx).Where(
+		"id = ? AND organization_id = ? AND workspace_id = ? AND installation_id = ?",
+		eventID, organizationID, workspaceID, installationID,
+	).Take(&event).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrChannelBindingNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load channel inbound event: %w", err)
+	}
+	return &event, nil
+}
+
 func (r *GormRepository) ListInboundEvents(ctx context.Context, scope Scope, subjectID uuid.UUID, query ListQuery) ([]*channelruntime.InboundEvent, int64, error) {
 	if !validScopeBoundary(scope) || subjectID == uuid.Nil {
 		return nil, 0, ErrInvalidRequest
@@ -962,6 +981,15 @@ func createRunChannelDelivery(
 			return fmt.Errorf("load channel binding for delivery: %w", err)
 		}
 		inboundEventID = &inbound.ID
+		if kind == channelruntime.DeliveryKindFinal {
+			latestInboundEventID, err := applyConsumedChannelRuntimeInputs(ctx, tx, run, installationID, binding.ID, &event, now)
+			if err != nil {
+				return err
+			}
+			if latestInboundEventID != nil {
+				inboundEventID = latestInboundEventID
+			}
+		}
 	} else {
 		if err := tx.WithContext(ctx).Where("installation_id = ? AND organization_id = ? AND workspace_id = ? AND subject_type = ? AND subject_id = ? AND enabled = ?", installationID, run.OrganizationID, run.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, run.DigitalHumanID, true).Order("updated_at DESC").Take(&binding).Error; err != nil {
 			return fmt.Errorf("load scheduled channel binding for delivery: %w", err)
@@ -1002,6 +1030,110 @@ func createRunChannelDelivery(
 		return fmt.Errorf("create channel delivery intent: %w", err)
 	}
 	return nil
+}
+
+// applyConsumedChannelRuntimeInputs advances the final reply target to the
+// latest channel message that was actually consumed by the current model run.
+// The stored invocation remains immutable; only this delivery intent uses the
+// newer sender identity. A callback may have briefly created its own durable
+// run before the earlier ChatRuntime message became visible; consumption is the
+// authoritative ownership signal, so the inbound audit row is reassigned here.
+func applyConsumedChannelRuntimeInputs(
+	ctx context.Context,
+	tx *gorm.DB,
+	run *Run,
+	installationID, bindingID uuid.UUID,
+	event *invocation.Event,
+	now time.Time,
+) (*uuid.UUID, error) {
+	if run == nil || run.MessageID == nil || *run.MessageID == uuid.Nil || event == nil || event.ReplyTo == nil {
+		return nil, nil
+	}
+	var inputs []runtimemodel.RuntimeInput
+	if err := tx.WithContext(ctx).Where(
+		"target_message_id = ? AND consumed_message_id = ? AND status = ? AND consumption_mode = ?",
+		*run.MessageID,
+		*run.MessageID,
+		runtimemodel.RuntimeInputStatusConsumed,
+		runtimemodel.RuntimeInputConsumptionCurrentRun,
+	).Order("sequence ASC").Find(&inputs).Error; err != nil {
+		return nil, fmt.Errorf("load consumed channel runtime inputs: %w", err)
+	}
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+
+	clientInputIDs := make([]uuid.UUID, 0, len(inputs))
+	for _, input := range inputs {
+		if input.ClientInputID != uuid.Nil {
+			clientInputIDs = append(clientInputIDs, input.ClientInputID)
+		}
+	}
+	if len(clientInputIDs) == 0 {
+		return nil, nil
+	}
+	var inboundEvents []channelruntime.InboundEvent
+	if err := tx.WithContext(ctx).Where(
+		"id IN ? AND installation_id = ? AND organization_id = ? AND workspace_id = ? AND binding_id = ?",
+		clientInputIDs,
+		installationID,
+		run.OrganizationID,
+		run.WorkspaceID,
+		bindingID,
+	).Find(&inboundEvents).Error; err != nil {
+		return nil, fmt.Errorf("load channel runtime input events: %w", err)
+	}
+	if len(inboundEvents) == 0 {
+		return nil, nil
+	}
+	inboundByID := make(map[uuid.UUID]*channelruntime.InboundEvent, len(inboundEvents))
+	for index := range inboundEvents {
+		inbound := &inboundEvents[index]
+		inboundByID[inbound.ID] = inbound
+	}
+	var latest *channelruntime.InboundEvent
+	for _, inputID := range clientInputIDs {
+		inbound := inboundByID[inputID]
+		if inbound == nil {
+			continue
+		}
+		if strings.TrimSpace(inbound.ExternalConversationID) != strings.TrimSpace(event.ReplyTo.ConversationID) {
+			return nil, fmt.Errorf("channel runtime input conversation does not match delivery target")
+		}
+		latest = inbound
+	}
+	if latest == nil {
+		return nil, nil
+	}
+	if err := tx.WithContext(ctx).Model(&channelruntime.InboundEvent{}).Where(
+		"id IN ? AND installation_id = ? AND organization_id = ? AND workspace_id = ? AND binding_id = ?",
+		clientInputIDs,
+		installationID,
+		run.OrganizationID,
+		run.WorkspaceID,
+		bindingID,
+	).Updates(map[string]any{
+		"invocation_run_id": run.ID,
+		"processed_at":      now,
+		"updated_at":        now,
+	}).Error; err != nil {
+		return nil, fmt.Errorf("link channel runtime input events to run: %w", err)
+	}
+
+	event.Sender = invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: latest.SenderExternalID}
+	if event.Context == nil {
+		event.Context = map[string]any{}
+	}
+	event.Context["provider_message_id"] = latest.ProviderMessageID
+	event.Context["sender_display_name"] = stableChannelAuthorAlias(installationID, latest.ExternalConversationID, latest.SenderExternalID)
+	event.ReplyTo.ConversationID = latest.ExternalConversationID
+	if latest.ConversationType == channelruntime.ConversationTypeGroup {
+		event.ReplyTo.RecipientID = strings.TrimSpace(latest.SenderExternalID)
+	} else {
+		event.ReplyTo.RecipientID = ""
+	}
+	latestID := latest.ID
+	return &latestID, nil
 }
 
 func channelDeliveryID(runID uuid.UUID) uuid.UUID {

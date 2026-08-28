@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -24,6 +25,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	"gorm.io/gorm"
@@ -234,6 +236,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		panic("register DigitalHuman channel providers: " + err.Error())
 	}
 	transientDispatcher := digitalhuman.NewAsynqChannelTransientDispatcher(deps.TaskManager)
+	runtimeInputDispatcher := digitalhuman.NewRuntimeInputFollowUpDispatcher(deps.TaskManager)
 	modelSpecResolver := runtimeservice.NewDatabaseModelSpecResolver(deps.DB)
 	chatRuntime := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(deps.DB),
@@ -245,6 +248,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		deps.OrganizationService,
 		newSkillRuntimeWithSandbox(deps.ToolEngine, deps.ToolManager, deps.FileService, deps.OrganizationService, deps.ManifestResolver),
 		nil,
+		runtimeInputDispatcher,
 	)
 	dispatcher := digitalhuman.NewAsynqRunDispatcher(deps.TaskManager)
 	memoryService := digitalhuman.NewService(repository)
@@ -271,9 +275,23 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		digitalhuman.WithDirectSkillRuntime(digitalhuman.NewExaDirectSkillProvider(repository, deps.CredentialCipher, nil)),
 	)
 	digitalhuman.RegisterRunTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)
+	digitalhuman.RegisterRuntimeInputFollowUpTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)
 	if err := deps.Scheduler.RegisterTask(&digitalhuman.ReconcileTask{}, digitalhuman.NewReconcileHandler(runtime)); err != nil {
 		panic("register DigitalHuman run reconciler: " + err.Error())
 	}
+	if err := deps.Scheduler.RegisterTask(
+		&digitalhuman.RuntimeInputRecoveryTask{}, digitalhuman.NewRuntimeInputRecoveryHandler(chatRuntime),
+	); err != nil {
+		panic("register DigitalHuman runtime input recovery: " + err.Error())
+	}
+	recoveryContext, cancelRecovery := context.WithTimeout(context.Background(), 30*time.Second)
+	if _, err := chatRuntime.RecoverStaleRuntimeInputs(recoveryContext); err != nil {
+		logger.Error("Failed to recover stale DigitalHuman runtime inputs during startup", err)
+	}
+	if _, err := chatRuntime.EnqueuePendingRuntimeInputFollowUps(recoveryContext); err != nil {
+		logger.Error("Failed to enqueue pending DigitalHuman runtime input follow-ups during startup", err)
+	}
+	cancelRecovery()
 	memoryRunner := digitalhuman.NewMemoryExtractionRunner(
 		repository, memoryService, digitalhuman.NewLLMMemoryExtractor(deps.LLMClient),
 	)

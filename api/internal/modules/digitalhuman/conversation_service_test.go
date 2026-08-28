@@ -41,6 +41,16 @@ type scopedConversationChat struct {
 	list func(context.Context, chatruntime.Scope, chatruntime.Caller, int, int) ([]*runtimemodel.Conversation, int64, error)
 }
 
+// Resolve the two methods implemented by both embedded test doubles so this
+// composite continues to satisfy ConversationRuntime as that surface grows.
+func (c *scopedConversationChat) GetConversationByCaller(ctx context.Context, scope chatruntime.Scope, caller chatruntime.Caller, conversationID uuid.UUID) (*runtimemodel.Conversation, error) {
+	return c.fakeDigitalHumanChat.GetConversationByCaller(ctx, scope, caller, conversationID)
+}
+
+func (c *scopedConversationChat) SubmitRuntimeInput(ctx context.Context, scope chatruntime.Scope, caller chatruntime.Caller, config chatruntime.RunConfig, request chatruntime.SubmitRuntimeInputRequest) (*chatruntime.SubmitRuntimeInputResult, error) {
+	return c.fakeDigitalHumanChat.SubmitRuntimeInput(ctx, scope, caller, config, request)
+}
+
 func (c *scopedConversationChat) ListConversationsByCaller(ctx context.Context, scope chatruntime.Scope, caller chatruntime.Caller, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
 	return c.list(ctx, scope, caller, page, limit)
 }

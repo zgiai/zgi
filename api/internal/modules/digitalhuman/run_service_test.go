@@ -50,6 +50,46 @@ func TestRuntimeServiceSubmitIsDurableAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestRuntimeServiceSubmitsRuntimeInputFollowUpAsDurableDigitalHumanRun(t *testing.T) {
+	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID := testRunScope(), uuid.New()
+	original, created, err := service.SubmitManual(t.Context(), scope, digitalHumanID, ManualInvocationRequest{
+		RequestID: uuid.New(), Query: "prepare the first answer",
+	})
+	if err != nil || !created {
+		t.Fatalf("SubmitManual() = %#v, %v, want created run", original, err)
+	}
+	conversationID, messageID, batchID := uuid.New(), uuid.New(), uuid.New()
+	original.ConversationID = &conversationID
+	original.MessageID = &messageID
+	chat.followUpContext = &chatruntime.RuntimeInputFollowUpContext{
+		BatchID: batchID, OrganizationID: scope.OrganizationID, WorkspaceID: &scope.WorkspaceID,
+		AccountID: scope.ActorID, CallerType: runtimemodel.ConversationCallerDigitalHuman, CallerID: digitalHumanID,
+		ConversationID: conversationID, TargetMessageID: messageID,
+		ClientInputIDs: []uuid.UUID{uuid.New(), uuid.New()}, Contents: []string{"first supplement", "second supplement"},
+	}
+
+	followUp, followUpCreated, err := service.SubmitRuntimeInputFollowUp(t.Context(), batchID)
+	if err != nil || !followUpCreated {
+		t.Fatalf("SubmitRuntimeInputFollowUp() = %#v, %v, want created run", followUp, err)
+	}
+	if followUp == nil || followUp.ID == original.ID || followUp.DigitalHumanID != digitalHumanID ||
+		followUp.ConversationID == nil || *followUp.ConversationID != conversationID {
+		t.Fatalf("follow-up run = %#v", followUp)
+	}
+	if followUp.Query != "first supplement\n\nsecond supplement" {
+		t.Fatalf("follow-up query = %q", followUp.Query)
+	}
+	_, event, err := decodeAndVerifyRun(followUp)
+	if err != nil {
+		t.Fatalf("decode follow-up run: %v", err)
+	}
+	if got, ok := runtimeInputFollowUpBatchID(event); !ok || got != batchID {
+		t.Fatalf("follow-up batch = %s, %v, want %s", got, ok, batchID)
+	}
+}
+
 func TestRuntimeServiceReconcilesFailedQueueDelivery(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{fail: true}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)
@@ -299,6 +339,134 @@ func TestRuntimeServiceEnsuresReservedConversationForChannelInvocation(t *testin
 	}
 }
 
+func TestRuntimeServiceAbsorbsPrelinkedChannelRunIntoVisibleActiveTurn(t *testing.T) {
+	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+	conversationID, activeMessageID := uuid.New(), uuid.New()
+	chat := &fakeDigitalHumanChat{activeConversation: &runtimemodel.Conversation{
+		ID: conversationID, RuntimeStatus: runtimemodel.ConversationRuntimeStatusStreaming,
+		ActiveMessageID: &activeMessageID,
+	}}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	scope, digitalHumanID, inboundID := testRunScope(), uuid.New(), uuid.New()
+	installationID := uuid.NewString()
+	event := invocation.Event{
+		ID: "feishu-prelinked-supplement", Type: invocation.EventTypeChannelMention,
+		Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: "feishu", InstallationID: installationID},
+		Target: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
+			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		},
+		Sender: invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: "ou_supplement"},
+		Context: map[string]any{
+			"channel_inbound_event_id": inboundID.String(), "conversation_type": string(channelruntime.ConversationTypeGroup),
+			"sender_display_name": "小王", "external_conversation_id": "oc_active",
+		},
+		OccurredAt: service.now(),
+		ReplyTo: &invocation.ReplyAddress{
+			Provider: "feishu", InstallationID: installationID, ConversationID: "oc_active", RecipientID: "ou_supplement",
+		},
+	}
+	run, created, err := service.SubmitInvocation(t.Context(), scope, event, "补充这项要求", &conversationID)
+	if err != nil || !created {
+		t.Fatalf("SubmitInvocation() = created %v, err %v", created, err)
+	}
+	if err := service.Execute(t.Context(), run.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if chat.prepareCalls != 0 || chat.runCalls != 0 || chat.submittedRuntimeInput == nil {
+		t.Fatalf("prelinked run was not absorbed: prepares=%d runs=%d input=%#v", chat.prepareCalls, chat.runCalls, chat.submittedRuntimeInput)
+	}
+	if chat.submittedRuntimeInput.ClientInputID != inboundID || chat.submittedRuntimeInput.TargetMessageID != activeMessageID ||
+		chat.submittedRuntimeInput.Content != "Channel message from 小王:\n补充这项要求" {
+		t.Fatalf("submitted runtime input = %#v", chat.submittedRuntimeInput)
+	}
+	if run.Status != RunStatusSucceeded || !bytes.Contains(run.ExecutionTrace, []byte("absorbed_into_active_turn")) {
+		t.Fatalf("absorbed run = status %s, trace %s", run.Status, run.ExecutionTrace)
+	}
+}
+
+func TestRuntimeServiceChannelRuntimeInputAdmissionUsesConversationAndSender(t *testing.T) {
+	tests := []struct {
+		name                 string
+		activeConversation   channelruntime.ConversationType
+		activeSender         string
+		incomingConversation channelruntime.ConversationType
+		incomingSender       string
+		wantAdmission        chatruntime.RuntimeInputAdmissionMode
+	}{
+		{
+			name:                 "same group sender may join current turn",
+			activeConversation:   channelruntime.ConversationTypeGroup,
+			activeSender:         "user-a",
+			incomingConversation: channelruntime.ConversationTypeGroup,
+			incomingSender:       "user-a",
+			wantAdmission:        chatruntime.RuntimeInputAdmissionCurrentOrFollowUp,
+		},
+		{
+			name:                 "different group sender waits for next turn",
+			activeConversation:   channelruntime.ConversationTypeGroup,
+			activeSender:         "user-a",
+			incomingConversation: channelruntime.ConversationTypeGroup,
+			incomingSender:       "user-b",
+			wantAdmission:        chatruntime.RuntimeInputAdmissionFollowUpOnly,
+		},
+		{
+			name:                 "private message waits for next turn",
+			activeConversation:   channelruntime.ConversationTypeDirect,
+			activeSender:         "user-a",
+			incomingConversation: channelruntime.ConversationTypeDirect,
+			incomingSender:       "user-a",
+			wantAdmission:        chatruntime.RuntimeInputAdmissionFollowUpOnly,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
+			conversationID, activeMessageID := uuid.New(), uuid.New()
+			chat := &fakeDigitalHumanChat{activeConversation: &runtimemodel.Conversation{
+				ID: conversationID, RuntimeStatus: runtimemodel.ConversationRuntimeStatusStreaming,
+				ActiveMessageID: &activeMessageID,
+			}}
+			service := newTestRuntimeService(t, store, dispatcher, chat)
+			scope, digitalHumanID := testRunScope(), uuid.New()
+			installationID := uuid.NewString()
+			activeEvent := invocation.Event{
+				ID: "active-channel-run-" + uuid.NewString(), Type: invocation.EventTypeChannelMessage,
+				Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: "test", InstallationID: installationID},
+				Target: runtimeidentity.SubjectRef{
+					Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
+					OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+				},
+				Sender: invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: tt.activeSender},
+				Context: map[string]any{
+					"conversation_type": string(tt.activeConversation), "external_conversation_id": "external-conversation",
+				},
+				OccurredAt: service.now(),
+				ReplyTo: &invocation.ReplyAddress{
+					Provider: "test", InstallationID: installationID, ConversationID: "external-conversation",
+				},
+			}
+			activeRun, created, err := service.SubmitInvocation(t.Context(), scope, activeEvent, "initial request", &conversationID)
+			if err != nil || !created {
+				t.Fatalf("submit active invocation = created %v, err %v", created, err)
+			}
+			activeRun.MessageID = &activeMessageID
+
+			accepted, err := service.SubmitChannelRuntimeInput(t.Context(), scope, digitalHumanID, conversationID, ChannelRuntimeInputRequest{
+				ClientInputID: uuid.New(), Content: "next message", ConversationType: tt.incomingConversation,
+				SenderExternalID: tt.incomingSender,
+			})
+			if err != nil || !accepted {
+				t.Fatalf("SubmitChannelRuntimeInput() = %v, %v", accepted, err)
+			}
+			if chat.submittedRuntimeInput == nil || chat.submittedRuntimeInput.AdmissionMode != tt.wantAdmission {
+				t.Fatalf("admission mode = %#v, want %q", chat.submittedRuntimeInput, tt.wantAdmission)
+			}
+		})
+	}
+}
+
 func TestRuntimeServicePublishesSafeChannelProgressBeforeFinalAnswer(t *testing.T) {
 	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
 	chat := &fakeDigitalHumanChat{events: []chatruntime.StreamEvent{
@@ -503,6 +671,7 @@ type fakeRunStore struct {
 	outbox     []*RunOutbox
 	candidates []ResourceCandidate
 	progress   []fakeChannelProgress
+	inbound    map[uuid.UUID]*channelruntime.InboundEvent
 }
 
 type fakeChannelProgress struct {
@@ -513,7 +682,31 @@ type fakeChannelProgress struct {
 	Text        string
 }
 
-func newFakeRunStore() *fakeRunStore { return &fakeRunStore{runs: make(map[uuid.UUID]*Run)} }
+func newFakeRunStore() *fakeRunStore {
+	return &fakeRunStore{runs: make(map[uuid.UUID]*Run), inbound: make(map[uuid.UUID]*channelruntime.InboundEvent)}
+}
+
+func (s *fakeRunStore) RunByMessageID(_ context.Context, organizationID, workspaceID, digitalHumanID, messageID uuid.UUID) (*Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, run := range s.runs {
+		if run.OrganizationID == organizationID && run.WorkspaceID == workspaceID && run.DigitalHumanID == digitalHumanID &&
+			run.MessageID != nil && *run.MessageID == messageID {
+			return run, nil
+		}
+	}
+	return nil, ErrRunNotFound
+}
+
+func (s *fakeRunStore) ChannelInboundEventByID(_ context.Context, organizationID, workspaceID, installationID, eventID uuid.UUID) (*channelruntime.InboundEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inbound := s.inbound[eventID]
+	if inbound == nil || inbound.OrganizationID != organizationID || inbound.WorkspaceID != workspaceID || inbound.InstallationID != installationID {
+		return nil, ErrNotFound
+	}
+	return inbound, nil
+}
 
 func (s *fakeRunStore) CreateRunWithOutbox(_ context.Context, run *Run, outbox *RunOutbox) error {
 	s.mu.Lock()
@@ -741,6 +934,43 @@ type fakeDigitalHumanChat struct {
 	recoveryMessage       *runtimemodel.Message
 	getMessageCalls       int
 	runCalls              int
+	followUpContext       *chatruntime.RuntimeInputFollowUpContext
+	followUpPrepared      *chatruntime.PreparedChat
+	followUpFailure       error
+	activeConversation    *runtimemodel.Conversation
+	submittedRuntimeInput *chatruntime.SubmitRuntimeInputRequest
+}
+
+func (c *fakeDigitalHumanChat) GetConversationByCaller(_ context.Context, _ chatruntime.Scope, _ chatruntime.Caller, conversationID uuid.UUID) (*runtimemodel.Conversation, error) {
+	if c.activeConversation == nil || c.activeConversation.ID != conversationID {
+		return nil, chatruntime.ErrNotFound
+	}
+	return c.activeConversation, nil
+}
+
+func (c *fakeDigitalHumanChat) SubmitRuntimeInput(_ context.Context, _ chatruntime.Scope, _ chatruntime.Caller, config chatruntime.RunConfig, request chatruntime.SubmitRuntimeInputRequest) (*chatruntime.SubmitRuntimeInputResult, error) {
+	if c.activeConversation == nil || c.activeConversation.ActiveMessageID == nil || *c.activeConversation.ActiveMessageID != request.TargetMessageID {
+		return nil, chatruntime.ErrConversationIdle
+	}
+	c.config = config
+	c.submittedRuntimeInput = &request
+	return &chatruntime.SubmitRuntimeInputResult{Created: true, Disposition: chatruntime.RuntimeInputDispositionCurrentRun}, nil
+}
+
+func (c *fakeDigitalHumanChat) GetRuntimeInputFollowUpContext(_ context.Context, _ uuid.UUID) (*chatruntime.RuntimeInputFollowUpContext, error) {
+	if c.followUpContext == nil {
+		return nil, chatruntime.ErrNotFound
+	}
+	return c.followUpContext, nil
+}
+
+func (c *fakeDigitalHumanChat) PrepareRuntimeInputFollowUp(_ context.Context, _ chatruntime.RunConfig, _ uuid.UUID) (*chatruntime.PreparedChat, error) {
+	return c.followUpPrepared, nil
+}
+
+func (c *fakeDigitalHumanChat) FailRuntimeInputFollowUp(_ context.Context, _ uuid.UUID, cause error) error {
+	c.followUpFailure = cause
+	return nil
 }
 
 func (c *fakeDigitalHumanChat) EnsureConversationForCaller(_ context.Context, _ chatruntime.Scope, caller chatruntime.Caller, id uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
