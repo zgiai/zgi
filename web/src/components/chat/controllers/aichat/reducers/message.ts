@@ -30,6 +30,7 @@ import {
   replaceAIChatConversation,
   upsertAIChatMessage,
 } from '@/components/chat/utils/aichat-message';
+import { applyAuthoritativeRuntimeInputSnapshot } from '@/components/chat/utils/runtime-input-reconcile';
 import { getNextActiveSendingState } from '../selectors';
 import {
   createAIChatFileMetadata,
@@ -64,9 +65,10 @@ export function mergeAIChatMessages(
     byId.set(message.id, existing ? mergeAIChatMessage(existing, message) : message);
   });
 
-  return Array.from(byId.values()).sort(
+  const merged = Array.from(byId.values()).sort(
     (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id)
   );
+  return applyAuthoritativeRuntimeInputSnapshot(merged, incomingMessages);
 }
 
 function mergeAIChatMessage(existing: AIChatMessage, incoming: AIChatMessage): AIChatMessage {

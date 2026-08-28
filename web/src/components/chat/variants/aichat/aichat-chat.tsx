@@ -58,6 +58,7 @@ import type {
   AIChatConversation,
   AIChatMessage,
   AIChatMessageFile,
+  AIChatRuntimeInput,
   AIChatRuntimeSurface,
   AIChatUserInputRequest,
   AIChatWorkflowQuestionAnswerInputs,
@@ -140,6 +141,15 @@ import {
 import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
 import type { AIChatSpeechSynthesizer } from '@/components/chat/variants/aichat/voice/speech-playback';
 import { useAgentSpeechPlayback } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
+import { AIChatRuntimeInputQueue } from '@/components/chat/variants/aichat/runtime-input-queue';
+import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
+import { selectRuntimeInputQueue } from '@/components/chat/utils/runtime-input-reconcile';
+import {
+  enqueueQueuedChatTurn,
+  MAX_QUEUED_CHAT_TURNS,
+  removeQueuedChatTurn,
+  type AIChatQueuedTurn,
+} from '@/components/chat/utils/queued-turns';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -352,6 +362,10 @@ export function AIChatShell({
     return primary ? ({ '--primary': primary } as CSSProperties) : undefined;
   }, [themeColor]);
   const [input, setInput] = useState('');
+  const [queuedTurnsByConversation, setQueuedTurnsByConversation] = useState<
+    Record<string, AIChatQueuedTurn[]>
+  >({});
+  const [guidingQueuedTurnIDs, setGuidingQueuedTurnIDs] = useState<Set<string>>(() => new Set());
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingQuery, setEditingQuery] = useState('');
   const [selectedModelProps, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(
@@ -383,6 +397,8 @@ export function AIChatShell({
     useState(false);
   const topologyRef = useRef<{ key: string; topology: ChatMessageTopology } | null>(null);
   const lastErrorToastRef = useRef<string | null>(null);
+  const autoSendingQueuedTurnRef = useRef<string | null>(null);
+  const previousQueuedConversationIDRef = useRef<string | null>(null);
 
   const conversations = useStore(controller.store, state => state.conversations);
   const conversationPagination = useStore(controller.store, state => state.pagination);
@@ -561,6 +577,39 @@ export function AIChatShell({
     () => selectDisplayMessages(displayMessageIds, activeMessages),
     [activeMessages, displayMessageIds]
   );
+  const runtimeInputQueue = useMemo<AIChatRuntimeInput[]>(
+    () => selectRuntimeInputQueue(messages, activeConversation?.active_message_id),
+    [activeConversation?.active_message_id, messages]
+  );
+  const activeQueuedTurns = useMemo(
+    () => (activeConversationId ? (queuedTurnsByConversation[activeConversationId] ?? []) : []),
+    [activeConversationId, queuedTurnsByConversation]
+  );
+  const runtimeInputQueueFull =
+    runtimeInputQueue.length + activeQueuedTurns.length >= MAX_QUEUED_CHAT_TURNS;
+  useEffect(() => {
+    const previousConversationID = previousQueuedConversationIDRef.current;
+    previousQueuedConversationIDRef.current = activeConversationId;
+    if (
+      !previousConversationID ||
+      !activeConversationId ||
+      previousConversationID === activeConversationId ||
+      !isDraftAIChatConversationId(previousConversationID)
+    ) {
+      return;
+    }
+    setQueuedTurnsByConversation(current => {
+      const draftTurns = current[previousConversationID] ?? [];
+      if (draftTurns.length === 0) return current;
+      const next = { ...current };
+      delete next[previousConversationID];
+      next[activeConversationId] = draftTurns.reduce(
+        (turns, turn) => enqueueQueuedChatTurn(turns, turn),
+        next[activeConversationId] ?? []
+      );
+      return next;
+    });
+  }, [activeConversationId]);
   const assetAuditRefreshKey = useMemo(
     () =>
       activeMessages
@@ -850,15 +899,8 @@ export function AIChatShell({
     setSidebarOpen(value => !value);
   }, [isMobile]);
 
-  const handleSend = useCallback(
-    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
-      if (activeWorkflowApprovalRequest) {
-        return false;
-      }
-      const query = input.trim();
-      if (!query || isSending) {
-        return false;
-      }
+  const sendOrdinaryTurn = useCallback(
+    async (query: string, files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
       if (requireModel && !modelSelectorValue.model) {
         toast.error(t('consoleChat.modelRequired'));
         return false;
@@ -872,7 +914,6 @@ export function AIChatShell({
       const pendingMessageId = Date.now();
       const pendingMessageCreatedAt = Math.floor(pendingMessageId / 1000);
       const showAssistantPlanning = Boolean(activeConversationId || messages.length > 0);
-      setInput('');
       setPendingUserMessage({
         id: `pending-user-${pendingMessageId}`,
         query,
@@ -896,13 +937,10 @@ export function AIChatShell({
       return true;
     },
     [
-      activeWorkflowApprovalRequest,
       activeConversationId,
       beforeSend,
       controller,
       forcedUseMemory,
-      input,
-      isSending,
       messages.length,
       modelSelectorValue,
       requireModel,
@@ -912,6 +950,146 @@ export function AIChatShell({
       toolGovernanceOperationContext,
     ]
   );
+
+  const handleSend = useCallback(
+    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
+      if (activeWorkflowApprovalRequest) return false;
+      const query = input.trim();
+      if (!query) return false;
+
+      if (isSending) {
+        if (!controller.supportsRuntimeInput || !activeConversationId) return false;
+        if (files.length > 0) {
+          toast.error(t('consoleChat.runtimeInput.textOnly'));
+          return false;
+        }
+        if (runtimeInputQueueFull) {
+          toast.error(t('consoleChat.runtimeInput.queueFull'));
+          return false;
+        }
+        const queuedTurn: AIChatQueuedTurn = {
+          id: crypto.randomUUID(),
+          content: query,
+          useMemory: forcedUseMemory ?? useMemory,
+          createdAt: Date.now(),
+        };
+        setQueuedTurnsByConversation(current => ({
+          ...current,
+          [activeConversationId]: enqueueQueuedChatTurn(
+            current[activeConversationId] ?? [],
+            queuedTurn
+          ),
+        }));
+        setInput('');
+        return true;
+      }
+
+      setInput('');
+      const sent = await sendOrdinaryTurn(query, files, useMemory);
+      if (!sent) setInput(current => current || query);
+      return sent;
+    },
+    [
+      activeConversationId,
+      activeWorkflowApprovalRequest,
+      controller.supportsRuntimeInput,
+      forcedUseMemory,
+      input,
+      isSending,
+      runtimeInputQueueFull,
+      sendOrdinaryTurn,
+      t,
+    ]
+  );
+
+  const removeQueuedTurn = useCallback((conversationID: string, turnID: string) => {
+    setQueuedTurnsByConversation(current => ({
+      ...current,
+      [conversationID]: removeQueuedChatTurn(current[conversationID] ?? [], turnID),
+    }));
+  }, []);
+
+  const handleGuideQueuedTurn = useCallback(
+    async (turn: AIChatQueuedTurn) => {
+      if (!activeConversationId || guidingQueuedTurnIDs.has(turn.id)) return;
+      setGuidingQueuedTurnIDs(current => new Set(current).add(turn.id));
+      removeQueuedTurn(activeConversationId, turn.id);
+      try {
+        const result = await controller.submitRuntimeInput(turn.content);
+        if (result.status === 'accepted') return;
+        if (result.status === 'conversation_idle') {
+          const sent = await sendOrdinaryTurn(turn.content, [], turn.useMemory);
+          if (sent) return;
+        } else {
+          toast.error(t('consoleChat.runtimeInput.failed'));
+        }
+        setQueuedTurnsByConversation(current => ({
+          ...current,
+          [activeConversationId]: enqueueQueuedChatTurn(current[activeConversationId] ?? [], turn),
+        }));
+      } finally {
+        setGuidingQueuedTurnIDs(current => {
+          const next = new Set(current);
+          next.delete(turn.id);
+          return next;
+        });
+      }
+    },
+    [activeConversationId, controller, guidingQueuedTurnIDs, removeQueuedTurn, sendOrdinaryTurn, t]
+  );
+
+  const handleEditQueuedTurn = useCallback(
+    (turn: AIChatQueuedTurn) => {
+      if (!activeConversationId) return;
+      removeQueuedTurn(activeConversationId, turn.id);
+      setInput(current => (current.trim() ? `${turn.content}\n\n${current}` : turn.content));
+    },
+    [activeConversationId, removeQueuedTurn]
+  );
+
+  const handleStop = useCallback(() => {
+    if (activeConversationId) {
+      setQueuedTurnsByConversation(current => ({
+        ...current,
+        [activeConversationId]: [],
+      }));
+    }
+    controller.stop();
+  }, [activeConversationId, controller]);
+
+  useEffect(() => {
+    if (
+      !activeConversationId ||
+      activeConversationRunning ||
+      isSending ||
+      pendingUserMessage ||
+      activeWorkflowApprovalRequest ||
+      activeQueuedTurns.length === 0
+    ) {
+      return;
+    }
+    const nextTurn = activeQueuedTurns[0];
+    if (autoSendingQueuedTurnRef.current === nextTurn.id) return;
+    autoSendingQueuedTurnRef.current = nextTurn.id;
+    void sendOrdinaryTurn(nextTurn.content, [], nextTurn.useMemory)
+      .then(sent => {
+        if (sent) removeQueuedTurn(activeConversationId, nextTurn.id);
+      })
+      .finally(() => {
+        if (autoSendingQueuedTurnRef.current === nextTurn.id) {
+          autoSendingQueuedTurnRef.current = null;
+        }
+      });
+  }, [
+    activeConversationId,
+    activeConversationRunning,
+    activeQueuedTurns,
+    activeWorkflowApprovalRequest,
+    isSending,
+    pendingUserMessage,
+    removeQueuedTurn,
+    sendOrdinaryTurn,
+  ]);
 
   const handleUserInputRequestSubmit = useCallback(
     (query: string, _useMemory: boolean, answers?: Record<string, string>) => {
@@ -1042,7 +1220,20 @@ export function AIChatShell({
         onConfigure={runtimeErrorActionHref ? () => router.push(runtimeErrorActionHref) : undefined}
       />
     ) : null;
-  const composerTopAccessory = runtimeErrorNotice || inputTopNotice;
+  const composerPrimaryNotice = runtimeErrorNotice || inputTopNotice;
+  const composerTopAccessory =
+    composerPrimaryNotice || runtimeInputQueue.length > 0 || activeQueuedTurns.length > 0 ? (
+      <div className="space-y-2">
+        {composerPrimaryNotice}
+        <AIChatRuntimeInputQueue
+          items={runtimeInputQueue}
+          queuedTurns={activeQueuedTurns}
+          guidingTurnIDs={guidingQueuedTurnIDs}
+          onGuideTurn={controller.canSubmitRuntimeInput ? handleGuideQueuedTurn : undefined}
+          onEditTurn={handleEditQueuedTurn}
+        />
+      </div>
+    ) : null;
 
   const handleEditStart = useCallback(
     (message: AIChatMessage) => {
@@ -1584,6 +1775,8 @@ export function AIChatShell({
             isModelInitializing={isModelInitializing}
             modelMissing={modelMissing}
             isSending={isSending}
+            allowRuntimeInput={controller.supportsRuntimeInput}
+            runtimeInputQueueFull={runtimeInputQueueFull}
             canStop={canStopPendingWorkflowInteraction || activeConversationRunning}
             isStopping={isStopping}
             onInputChange={setInput}
@@ -1592,7 +1785,7 @@ export function AIChatShell({
             onUserInputRequestSubmit={handleUserInputRequestSubmit}
             activeWorkflowApprovalRequest={activeWorkflowApprovalRequest}
             onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
-            onStop={controller.stop}
+            onStop={handleStop}
             onModelChange={onModelChange}
             onModelPropsChange={setSelectedModelProps}
             onHeightChange={setInputAreaHeight}

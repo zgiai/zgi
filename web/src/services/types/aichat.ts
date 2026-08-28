@@ -421,6 +421,7 @@ export interface AIChatMessageMetadata {
   generated_files?: AIChatGeneratedFile[];
   user_input_request?: AIChatUserInputRequest;
   user_input_responses?: AIChatUserInputResponse[];
+  runtime_input_applications?: AIChatRuntimeInputApplicationMetadata[];
   context_control?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -540,8 +541,59 @@ export interface AIChatMessage {
   model_parameters?: Record<string, unknown>;
   metadata?: AIChatMessageMetadata;
   source_message_id?: string;
+  runtime_inputs?: AIChatRuntimeInput[];
   created_at: number;
   updated_at: number;
+}
+
+export type AIChatRuntimeInputStatus =
+  | 'pending'
+  | 'applied_current_run'
+  | 'applied_follow_up'
+  | 'queued_follow_up'
+  | 'canceled'
+  | 'failed';
+
+export interface AIChatRuntimeInput {
+  id: string;
+  client_input_id: string;
+  content: string;
+  status: AIChatRuntimeInputStatus;
+  optimistic?: boolean;
+  target_message_id: string;
+  consumed_message_id?: string;
+  sequence: number;
+  created_at: number;
+}
+
+export interface AIChatRuntimeInputApplicationMetadata extends AIChatPresentationPosition {
+  input_id: string;
+  sequence?: number;
+  checkpoint?: string;
+  model_round?: number;
+  created_at?: number;
+  applied_at?: number;
+}
+
+export interface AIChatRuntimeInputAppliedEventData extends AIChatRuntimeInputApplicationMetadata {
+  conversation_id: string;
+  message_id: string;
+  client_input_id?: string;
+  content: string;
+  status?: AIChatRuntimeInputStatus;
+  target_message_id?: string;
+  consumed_message_id?: string;
+}
+
+export interface AIChatSubmitRuntimeInputRequest {
+  client_input_id: string;
+  content: string;
+}
+
+export interface AIChatSubmitRuntimeInputResponseData {
+  input: AIChatRuntimeInput;
+  disposition: 'current_run' | 'follow_up';
+  created: boolean;
 }
 
 export type AIChatSearchResultType = 'conversation' | 'message';

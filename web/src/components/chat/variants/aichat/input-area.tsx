@@ -205,6 +205,8 @@ interface AIChatInputAreaProps {
   isModelInitializing?: boolean;
   modelMissing: boolean;
   isSending: boolean;
+  allowRuntimeInput?: boolean;
+  runtimeInputQueueFull?: boolean;
   canStop?: boolean;
   isStopping: boolean;
   onInputChange: (value: string) => void;
@@ -305,6 +307,8 @@ export function AIChatInputArea({
   isModelInitializing = false,
   modelMissing,
   isSending,
+  allowRuntimeInput = false,
+  runtimeInputQueueFull = false,
   canStop,
   isStopping,
   onInputChange,
@@ -510,6 +514,7 @@ export function AIChatInputArea({
     !isModelInitializing &&
     !isPreparingSend &&
     !isUploading &&
+    !(isSending && runtimeInputQueueFull) &&
     !hasUploadError;
   const activeQuestions = useMemo(
     () => (activeUserInputRequest?.questions ?? []).filter(question => question.question?.trim()),
@@ -1060,6 +1065,46 @@ export function AIChatInputArea({
     [onInputChange]
   );
 
+  const handleComposerKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === 'Escape' && (canStop ?? isSending) && !input.trim()) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!isStopping) onStop();
+        return;
+      }
+      if (event.key !== 'Enter' || event.shiftKey) return;
+      if (shouldIgnoreCompositionEnter(event)) return;
+      if (
+        (isSending && !allowRuntimeInput) ||
+        isPreparingSend ||
+        isModelInitializing ||
+        isUploading ||
+        hasUploadError ||
+        voiceInputBusy
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void handleSend();
+    },
+    [
+      allowRuntimeInput,
+      canStop,
+      handleSend,
+      hasUploadError,
+      input,
+      isModelInitializing,
+      isPreparingSend,
+      isSending,
+      isStopping,
+      isUploading,
+      onStop,
+      shouldIgnoreCompositionEnter,
+      voiceInputBusy,
+    ]
+  );
+
   const adjustComposerTextareaHeight = useCallback(() => {
     const isOverflowing = resizeComposerTextarea(
       textareaRef.current,
@@ -1425,24 +1470,13 @@ export function AIChatInputArea({
                     onPaste={handlePaste}
                     onCompositionStart={handleCompositionStart}
                     onCompositionEnd={handleCompositionEnd}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        if (shouldIgnoreCompositionEnter(event)) return;
-                        if (
-                          isSending ||
-                          isPreparingSend ||
-                          isModelInitializing ||
-                          isUploading ||
-                          hasUploadError ||
-                          voiceInputBusy
-                        ) {
-                          return;
-                        }
-                        event.preventDefault();
-                        void handleSend();
-                      }
-                    }}
-                    placeholder={inputPlaceholder || t('chat.enterCommand')}
+                    onKeyDown={handleComposerKeyDown}
+                    aria-keyshortcuts="Enter Shift+Enter Escape"
+                    placeholder={
+                      isSending && allowRuntimeInput
+                        ? t('consoleChat.runtimeInput.placeholder')
+                        : inputPlaceholder || t('chat.enterCommand')
+                    }
                     className={cn(
                       'min-h-12 resize-none overflow-y-hidden border-0 bg-transparent py-2 pl-3 pr-4 text-sm shadow-none focus-visible:ring-0',
                       '[scrollbar-width:thin] [scrollbar-color:rgba(113,113,122,0.45)_transparent]',
@@ -1489,6 +1523,9 @@ export function AIChatInputArea({
                 modelCapabilityFilter={modelCapabilityFilter}
                 hasImageAttachment={hasImageAttachment}
                 isSending={isSending}
+                allowRuntimeInput={allowRuntimeInput}
+                hasInput={Boolean(input.trim())}
+                runtimeInputQueueFull={runtimeInputQueueFull}
                 canStop={canStop}
                 isUploading={isUploading || isPreparingSend}
                 isStopping={isStopping}

@@ -343,6 +343,10 @@ export function useChatRuntimeStreamRecovery({
                 eventAppliers.applyMemoryMutation(payload, eventId);
                 refreshAccountMemoryAfterMemoryMutation(payload);
               },
+              onRuntimeInputApplied: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyRuntimeInputApplied(payload, eventId);
+              },
               onWorkflowStarted: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyWorkflowStarted(payload, eventId);

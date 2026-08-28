@@ -16,6 +16,8 @@ import type {
   AIChatSearchResponse,
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
+  AIChatSubmitRuntimeInputRequest,
+  AIChatSubmitRuntimeInputResponseData,
   AIChatUserInputContinuationRequest,
   AIChatWorkflowQuestionAnswerInputs,
 } from '@/services/types/aichat';
@@ -49,6 +51,7 @@ interface AgentRuntimeTransportOptions {
   runtimeBasePath: string;
   chatPath: string;
   client?: RuntimeClient;
+  supportsRuntimeInput?: boolean;
 }
 
 const AGENT_RUNTIME_CONVERSATION_ID_HEADER = 'X-ZGI-Conversation-ID';
@@ -109,9 +112,7 @@ function runtimeTerminalMessage(message: { event: string | null; data: unknown }
       'waiting_approval',
       'waiting_client_action',
       'waiting_question',
-    ].includes(
-      String((data as Record<string, unknown>).status)
-    )
+    ].includes(String((data as Record<string, unknown>).status))
   );
 }
 
@@ -137,14 +138,21 @@ function paginationFromResponse<T>(
 }
 
 export class AgentRuntimeTransport implements AIChatRuntimeTransport {
+  readonly supportsRuntimeInput: boolean;
   private readonly runtimeBasePath: string;
   private readonly chatPath: string;
   private readonly client: RuntimeClient;
 
-  constructor({ runtimeBasePath, chatPath, client = http }: AgentRuntimeTransportOptions) {
+  constructor({
+    runtimeBasePath,
+    chatPath,
+    client = http,
+    supportsRuntimeInput = false,
+  }: AgentRuntimeTransportOptions) {
     this.runtimeBasePath = runtimeBasePath;
     this.chatPath = chatPath;
     this.client = client;
+    this.supportsRuntimeInput = supportsRuntimeInput;
   }
 
   async listConversations(params: {
@@ -226,6 +234,19 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
   async stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData> {
     const response = await this.client.post<ApiResponseData<AIChatStopConversationResponseData>>(
       `${this.runtimeBasePath}/conversations/${conversationId}/stop`
+    );
+    return response.data;
+  }
+
+  async submitRuntimeInput(
+    conversationId: string,
+    messageId: string,
+    payload: AIChatSubmitRuntimeInputRequest
+  ): Promise<AIChatSubmitRuntimeInputResponseData> {
+    const response = await this.client.post<ApiResponseData<AIChatSubmitRuntimeInputResponseData>>(
+      `${this.runtimeBasePath}/conversations/${conversationId}/messages/${messageId}/runtime-inputs`,
+      payload,
+      { skipErrorHandling: true }
     );
     return response.data;
   }
@@ -438,6 +459,7 @@ export function createAgentDraftTransport(agentId: string): AgentRuntimeTranspor
   return new AgentRuntimeTransport({
     runtimeBasePath: `/console/api/agents/${agentId}/runtime`,
     chatPath: `/console/api/agents/${agentId}/chat`,
+    supportsRuntimeInput: true,
   });
 }
 
@@ -446,5 +468,6 @@ export function createAgentWebAppTransport(webAppId: string): AgentRuntimeTransp
     runtimeBasePath: `/console/api/webapps/${webAppId}/runtime`,
     chatPath: `/console/api/webapps/${webAppId}/chat`,
     client: webappHttp,
+    supportsRuntimeInput: true,
   });
 }

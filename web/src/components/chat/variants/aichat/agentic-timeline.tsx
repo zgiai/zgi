@@ -1,7 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, CircleHelp, Loader2 } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  CircleHelp,
+  Loader2,
+  MessageSquarePlus,
+} from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -209,6 +216,7 @@ type UserInputResponseTimelineItem = Extract<
   { type: 'user_input_response' }
 >;
 type MemoryTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }>;
+type RuntimeInputTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'runtime_input' }>;
 type GovernanceTimelineItem = Extract<
   AIChatAgenticTimelineItem,
   { type: 'tool_governance_decision' }
@@ -247,6 +255,11 @@ type TimelineRenderItem =
       renderType: 'memory';
       key: string;
       item: MemoryTimelineItem;
+    }
+  | {
+      renderType: 'runtime_input';
+      key: string;
+      item: RuntimeInputTimelineItem;
     }
   | {
       renderType: 'tool_governance';
@@ -3749,6 +3762,8 @@ function timelineRenderItem(
       return { renderType: 'user_input_response', key: item.id, item };
     case 'memory_event':
       return { renderType: 'memory', key: item.id, item };
+    case 'runtime_input':
+      return { renderType: 'runtime_input', key: item.id, item };
     case 'tool_governance_decision':
       return { renderType: 'tool_governance', key: item.id, item };
     case 'workflow_run':
@@ -3835,6 +3850,8 @@ function TimelineRenderRow({
       return <UserInputResponseTimelineRow item={item.item} />;
     case 'memory':
       return <MemoryTimelineRow item={item.item} showMemoryKey={showMemoryKey} />;
+    case 'runtime_input':
+      return <RuntimeInputTimelineRow item={item.item} />;
     case 'tool_governance':
       return (
         <ToolGovernanceDecisionRow
@@ -3849,6 +3866,25 @@ function TimelineRenderRow({
     case 'skill':
       return <SkillTimelineRow event={item.view} showDetails={showSkillEventDetails} />;
   }
+}
+
+function RuntimeInputTimelineRow({ item }: { item: RuntimeInputTimelineItem }) {
+  const t = useT('webapp');
+  const title = item.model_round
+    ? t('consoleChat.runtimeInput.appliedBeforeRound', { round: item.model_round })
+    : t('consoleChat.runtimeInput.appliedInChain');
+
+  return (
+    <div className="flex min-w-0 gap-2 border-l-2 border-primary/30 py-1 pl-3">
+      <MessageSquarePlus className="mt-0.5 size-3.5 shrink-0 text-primary" />
+      <div className="min-w-0 space-y-0.5">
+        <div className="text-xs font-medium text-foreground">{title}</div>
+        <div className="line-clamp-3 whitespace-pre-wrap break-words text-xs text-muted-foreground">
+          {item.content}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function IntermediateAnswerTimelineRow({ item }: { item: IntermediateAnswerTimelineItem }) {

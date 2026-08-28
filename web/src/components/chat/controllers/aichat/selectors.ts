@@ -446,7 +446,7 @@ export function shouldTreatConversationAsRunning(
     conversation?.runtime_status === 'streaming' ||
       state.recoveringByConversation[conversationId] ||
       state.stoppingByConversation[conversationId] ||
-      hasRunningMessageState(state.streamingByMessageId, conversationId)
+      (!conversation && hasRunningMessageState(state.streamingByMessageId, conversationId))
   );
 }
 
@@ -494,6 +494,27 @@ export function mergeSelectedMessagesWithStreamingState(
   };
 
   return upsertAIChatMessage(incomingMessages, preservedMessage);
+}
+
+function runtimeInputTimelineFromMessage(message: AIChatMessage): AIChatAgenticTimelineItem[] {
+  const inputsByID = new Map((message.runtime_inputs ?? []).map(input => [input.id, input]));
+  return (message.metadata?.runtime_input_applications ?? []).flatMap(application => {
+    const input = inputsByID.get(application.input_id);
+    if (!input) return [];
+    return [
+      {
+        id: `runtime-input-${application.input_id}`,
+        type: 'runtime_input' as const,
+        input_id: application.input_id,
+        content: input.content,
+        checkpoint: application.checkpoint,
+        model_round: application.model_round,
+        created_at: application.created_at ?? input.created_at,
+        presentation_id: application.presentation_id,
+        presentation_sequence: application.presentation_sequence,
+      },
+    ];
+  });
 }
 
 export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgenticTimelineItem[] {
@@ -622,6 +643,7 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
 
   return sortTimelineItems(
     dedupeTimelineItems([
+      ...runtimeInputTimelineFromMessage(message),
       ...skillTimeline,
       ...memoryTimeline,
       ...pendingUserInputTimeline,
@@ -1076,6 +1098,8 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
       return ['user-input-request', item.request_id ?? item.id].join(':');
     case 'user_input_response':
       return ['user-input-response', item.request_id ?? item.id].join(':');
+    case 'runtime_input':
+      return ['runtime-input', item.input_id].join(':');
     case 'memory_event':
       if (item.event.memory_scope === 'agent' && item.event.source_kind === 'automatic') {
         return ['memory-auto', item.event.message_id].join(':');

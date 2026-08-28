@@ -59,6 +59,9 @@ interface AIChatInputToolbarProps {
   modelCapabilityFilter?: { features_vision: boolean };
   hasImageAttachment: boolean;
   isSending: boolean;
+  allowRuntimeInput?: boolean;
+  hasInput: boolean;
+  runtimeInputQueueFull?: boolean;
   canStop?: boolean;
   isUploading: boolean;
   isStopping: boolean;
@@ -168,6 +171,9 @@ export function AIChatInputToolbar({
   modelCapabilityFilter,
   hasImageAttachment,
   isSending,
+  allowRuntimeInput = false,
+  hasInput,
+  runtimeInputQueueFull = false,
   canStop,
   isUploading,
   isStopping,
@@ -212,7 +218,14 @@ export function AIChatInputToolbar({
   speechAutoPlay,
 }: AIChatInputToolbarProps) {
   const t = useT('webapp');
-  const showStopButton = canStop ?? isSending;
+  const showStopButton = (canStop ?? isSending) && !hasInput;
+  const sendTitle =
+    isSending && allowRuntimeInput
+      ? runtimeInputQueueFull
+        ? t('consoleChat.runtimeInput.queueFull')
+        : `${t('consoleChat.runtimeInput.queueAction')} · Enter`
+      : `${t('consoleChat.send')} · Enter`;
+  const stopTitle = `${t('consoleChat.stop')} · Esc`;
   const activeGovernanceTier = getToolGovernanceTierDisplay(toolGovernancePermissionTier, t);
   const ActiveGovernanceIcon = activeGovernanceTier.Icon;
 
@@ -485,7 +498,9 @@ export function AIChatInputToolbar({
             className="size-8 rounded-full"
             disabled={isStopping}
             onClick={onStop}
-            title={t('consoleChat.stop')}
+            title={stopTitle}
+            aria-label={stopTitle}
+            aria-keyshortcuts="Escape"
           >
             <Square className="size-3.5 fill-current" />
           </Button>
@@ -495,7 +510,9 @@ export function AIChatInputToolbar({
             className="size-8 rounded-full"
             disabled={!canSend}
             onClick={onSend}
-            title={t('consoleChat.send')}
+            title={sendTitle}
+            aria-label={sendTitle}
+            aria-keyshortcuts="Enter"
           >
             <Send className="size-4" />
           </Button>

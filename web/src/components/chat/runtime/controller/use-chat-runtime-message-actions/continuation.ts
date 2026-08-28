@@ -236,9 +236,7 @@ export function useWorkflowContinuationActions({
       streamAbortByConversationRef.current[conversationId] = abortController;
       markSelectionTarget(conversationId);
 
-      let continuationMetadata = sourceMessage.metadata
-        ? { ...sourceMessage.metadata }
-        : undefined;
+      let continuationMetadata = sourceMessage.metadata ? { ...sourceMessage.metadata } : undefined;
       let continuationTimeline = sourceTimeline;
       if (userInputContinuation && continuationMetadata) {
         const optimisticPresentation = withOptimisticUserInputResponsePresentation(
@@ -269,8 +267,7 @@ export function useWorkflowContinuationActions({
           sourceTimeline
         );
       }
-      const continuationPresentationState =
-        presentationStateFromMetadata(continuationMetadata);
+      const continuationPresentationState = presentationStateFromMetadata(continuationMetadata);
 
       setControllerState(current => {
         const now = Math.floor(Date.now() / 1000);
@@ -424,6 +421,11 @@ export function useWorkflowContinuationActions({
             streamStarted = true;
             applyMemoryMutation(payload, eventId);
             refreshAccountMemoryAfterMemoryMutation(payload);
+          },
+          onRuntimeInputApplied: (payload, eventId) => {
+            if (abortController.signal.aborted) return;
+            streamStarted = true;
+            eventAppliers.applyRuntimeInputApplied(payload, eventId);
           },
           onWorkflowStarted: (payload, eventId) => {
             if (abortController.signal.aborted) return;

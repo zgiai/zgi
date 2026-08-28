@@ -209,6 +209,7 @@ export function useChatRuntimeController(options?: {
     });
   const {
     send,
+    submitRuntimeInput,
     regenerate,
     replaceRootMessage,
     continueWorkflowApproval,
@@ -266,6 +267,12 @@ export function useChatRuntimeController(options?: {
     isRecoveringMessages: viewModel.isRecoveringMessages,
     isStopping: viewModel.isStopping,
     isSending: viewModel.isSending,
+    supportsRuntimeInput: Boolean(transportRef.current.supportsRuntimeInput),
+    canSubmitRuntimeInput: Boolean(
+      transportRef.current.supportsRuntimeInput &&
+        viewModel.activeConversation?.runtime_status === 'streaming' &&
+        viewModel.activeConversation.active_message_id
+    ),
     connectionState: viewModel.connectionState,
     error: viewModel.error,
     init,
@@ -277,6 +284,7 @@ export function useChatRuntimeController(options?: {
     loadOlderMessages,
     recoverStreamingConversation,
     send,
+    submitRuntimeInput,
     regenerate,
     replaceRootMessage,
     continueWorkflowApproval,

@@ -14,6 +14,7 @@ import type {
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatMemoryMutationEventData,
+  AIChatRuntimeInputAppliedEventData,
   AIChatSkillArtifactCreatedEventData,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -44,6 +45,7 @@ import {
   applyMessageChunkState,
   applyMessageEndState,
   applyMemoryMutationState,
+  applyRuntimeInputAppliedState,
   applyMessageRetractState,
   applyMessageStartState,
   applySkillArtifactCreatedState,
@@ -136,8 +138,7 @@ function clientActionProgressPayload(
     effect: payload.effect,
     asset_type: payload.asset_type,
     assets: payload.assets,
-    correlation_id:
-      typeof payload.correlation_id === 'string' ? payload.correlation_id : undefined,
+    correlation_id: typeof payload.correlation_id === 'string' ? payload.correlation_id : undefined,
     asset_operation_audit: payload.asset_operation_audit,
     result: clientActionProgressResult(payload),
     created_at: payload.created_at,
@@ -452,6 +453,14 @@ export function useChatRuntimeEventAppliers({
     [setControllerState]
   );
 
+  const applyRuntimeInputApplied = useCallback(
+    (payload: AIChatRuntimeInputAppliedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id || !payload.input_id) return;
+      setControllerState(current => applyRuntimeInputAppliedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyToolGovernanceDecision = useCallback(
     (payload: AIChatToolGovernanceDecisionEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
@@ -653,6 +662,7 @@ export function useChatRuntimeEventAppliers({
       applySkillCallError,
       applySkillArtifactCreated,
       applyMemoryMutation,
+      applyRuntimeInputApplied,
       applyToolGovernanceDecision,
       applyClientActionRequired,
       applyClientActionResult,
@@ -679,6 +689,7 @@ export function useChatRuntimeEventAppliers({
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyMemoryMutation,
+      applyRuntimeInputApplied,
       applyWorkflowApprovalRequested,
       applyWorkflowFailed,
       applyWorkflowFinished,

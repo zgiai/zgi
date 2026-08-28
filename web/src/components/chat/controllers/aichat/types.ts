@@ -18,6 +18,7 @@ import type {
   AIChatClientActionResultRequest,
   AIChatSkillInvocation,
   AIChatRuntimeSurface,
+  AIChatRuntimeInput,
   AIChatToolGovernanceDecisionEventData,
   AIChatToolGovernanceDecisionRequest,
   AIChatUserInputContinuationRequest,
@@ -170,6 +171,18 @@ export type AIChatAgenticTimelineItem =
     }
   | {
       id: string;
+      type: 'runtime_input';
+      input_id: string;
+      content: string;
+      checkpoint?: string;
+      model_round?: number;
+      created_at?: number;
+      event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
+    }
+  | {
+      id: string;
       type: 'tool_governance_decision';
       event: AIChatToolGovernanceDecisionEventData;
       created_at?: number;
@@ -278,6 +291,8 @@ export interface AIChatController {
   isRecoveringMessages: boolean;
   isStopping: boolean;
   isSending: boolean;
+  supportsRuntimeInput: boolean;
+  canSubmitRuntimeInput: boolean;
   connectionState: AIChatConnectionState;
   error: string | null;
   init: (conversationId?: string | null) => void;
@@ -301,6 +316,9 @@ export interface AIChatController {
     runtimeSurface?: AIChatRuntimeSurface;
     operationContext?: unknown;
   }) => Promise<void>;
+  submitRuntimeInput: (
+    content: string
+  ) => Promise<{ status: 'accepted' | 'conversation_idle' | 'failed'; input?: AIChatRuntimeInput }>;
   stop: () => Promise<void>;
   regenerate: (
     messageId: string,

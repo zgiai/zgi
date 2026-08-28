@@ -24,6 +24,7 @@ import type {
   AIChatUserInputRequestedEventData,
   AIChatRegenerateMessageRequest,
   AIChatRuntimeSurface,
+  AIChatRuntimeInputAppliedEventData,
   AIChatSearchResult,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -33,6 +34,8 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatStopConversationResponseData,
+  AIChatSubmitRuntimeInputRequest,
+  AIChatSubmitRuntimeInputResponseData,
   AIChatToolGovernanceDecisionRequest,
   AIChatUserInputContinuationRequest,
   AIChatToolGovernanceDecisionEventData,
@@ -182,6 +185,10 @@ export interface AIChatStreamCallbacks {
     eventId?: string | null
   ) => void;
   onMemoryMutation: (payload: AIChatMemoryMutationEventData, eventId?: string | null) => void;
+  onRuntimeInputApplied?: (
+    payload: AIChatRuntimeInputAppliedEventData,
+    eventId?: string | null
+  ) => void;
   onWorkflowStarted?: (payload: AIChatWorkflowEventData, eventId?: string | null) => void;
   onWorkflowNodeStarted?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
   onWorkflowNodeFinished?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
@@ -207,6 +214,7 @@ export interface AIChatWorkflowApprovalContinuationPayload {
 }
 
 export interface AIChatRuntimeTransport {
+  readonly supportsRuntimeInput?: boolean;
   listConversations(params: {
     page: number;
     limit: number;
@@ -233,6 +241,11 @@ export interface AIChatRuntimeTransport {
     options?: { surface?: AIChatRuntimeSurface }
   ): Promise<ConversationSearchResult[]>;
   stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData>;
+  submitRuntimeInput?(
+    conversationId: string,
+    messageId: string,
+    payload: AIChatSubmitRuntimeInputRequest
+  ): Promise<AIChatSubmitRuntimeInputResponseData>;
   streamChat(
     payload: AIChatChatRequest,
     callbacks: AIChatStreamCallbacks,
@@ -373,6 +386,12 @@ export function dispatchAIChatStreamEvent(
     case 'memory_delete':
     case 'memory_clear':
       callbacks.onMemoryMutation((data ?? {}) as AIChatMemoryMutationEventData, eventId);
+      break;
+    case 'runtime_input_applied':
+      callbacks.onRuntimeInputApplied?.(
+        (data ?? {}) as AIChatRuntimeInputAppliedEventData,
+        eventId
+      );
       break;
     case 'workflow_started':
       callbacks.onWorkflowStarted?.((data ?? {}) as AIChatWorkflowEventData, eventId);

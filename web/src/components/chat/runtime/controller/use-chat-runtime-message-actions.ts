@@ -1,7 +1,9 @@
 import { useCallback } from 'react';
+import { isAxiosError } from 'axios';
 import type {
   AIChatMessage,
   AIChatMessageFile,
+  AIChatRuntimeInput,
   AIChatRuntimeSurface,
 } from '@/services/types/aichat';
 import type { AIChatModelSelection } from '@/components/chat/controllers/aichat';
@@ -28,8 +30,15 @@ import {
   isRecoverableStreamTransportError,
   messageFilesForReplay,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
+import { reconcileAIChatRuntimeInput } from '@/components/chat/utils/runtime-input-reconcile';
 import { useWorkflowContinuationActions } from './use-chat-runtime-message-actions/continuation';
 import type { UseChatRuntimeMessageActionsArgs } from './use-chat-runtime-message-actions/types';
+
+function runtimeInputErrorCode(error: unknown): string {
+  if (!isAxiosError(error)) return '';
+  const data = error.response?.data as { code?: unknown } | undefined;
+  return typeof data?.code === 'string' ? data.code : '';
+}
 
 export function useChatRuntimeMessageActions({
   stateRef,
@@ -72,6 +81,143 @@ export function useChatRuntimeMessageActions({
     applyMessageEnd,
     applyStreamError,
   } = eventAppliers;
+  const submitRuntimeInput = useCallback(
+    async (content: string) => {
+      const trimmedContent = content.trim();
+      const currentState = stateRef.current;
+      const conversationId = currentState.activeConversationId;
+      const conversation = conversationId
+        ? (currentState.conversations.find(item => item.id === conversationId) ?? null)
+        : null;
+      const messageId = conversation?.active_message_id?.trim();
+      const transport = transportRef.current;
+      if (
+        !trimmedContent ||
+        !conversationId ||
+        !messageId ||
+        !transport.supportsRuntimeInput ||
+        !transport.submitRuntimeInput
+      ) {
+        return { status: 'failed' as const };
+      }
+
+      const clientInputId = crypto.randomUUID();
+      const messages = currentState.messagesByConversation[conversationId] ?? [];
+      const target = messages.find(message => message.id === messageId);
+      if (!target) return { status: 'failed' as const };
+      const optimisticInput: AIChatRuntimeInput = {
+        id: `runtime-input-${clientInputId}`,
+        client_input_id: clientInputId,
+        content: trimmedContent,
+        status: 'pending',
+        optimistic: true,
+        target_message_id: messageId,
+        sequence:
+          Math.max(0, ...(target.runtime_inputs ?? []).map(input => input.sequence || 0)) + 1,
+        created_at: Math.floor(Date.now() / 1000),
+      };
+      setControllerState(current => ({
+        ...current,
+        messagesByConversation: {
+          ...current.messagesByConversation,
+          [conversationId]: (current.messagesByConversation[conversationId] ?? []).map(message =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  runtime_inputs: [...(message.runtime_inputs ?? []), optimisticInput],
+                }
+              : message
+          ),
+        },
+      }));
+
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const result = await transport.submitRuntimeInput(conversationId, messageId, {
+            client_input_id: clientInputId,
+            content: trimmedContent,
+          });
+          setControllerState(current => ({
+            ...current,
+            messagesByConversation: {
+              ...current.messagesByConversation,
+              [conversationId]: reconcileAIChatRuntimeInput(
+                current.messagesByConversation[conversationId] ?? [],
+                clientInputId,
+                result.input
+              ),
+            },
+          }));
+          refreshMessagesSilently(conversationId);
+          for (const delay of [750, 2000, 5000, 10000, 20000, 40000]) {
+            window.setTimeout(() => {
+              refreshConversationSilently(conversationId);
+              refreshMessagesSilently(conversationId);
+              const latest = stateRef.current.conversations.find(
+                item => item.id === conversationId
+              );
+              if (
+                latest?.runtime_status === 'streaming' &&
+                latest.active_message_id !== messageId
+              ) {
+                void recoverStreamingConversation(conversationId, {
+                  conversation: latest,
+                  mode: 'active',
+                });
+              }
+            }, delay);
+          }
+          return { status: 'accepted' as const, input: result.input };
+        } catch (error) {
+          lastError = error;
+          if (runtimeInputErrorCode(error) === 'conversation_idle') {
+            setControllerState(current => ({
+              ...current,
+              conversations: current.conversations.map(item =>
+                item.id === conversationId
+                  ? { ...item, runtime_status: 'idle', active_message_id: undefined }
+                  : item
+              ),
+              isSending: getNextActiveSendingState(current, conversationId, false),
+              messagesByConversation: {
+                ...current.messagesByConversation,
+                [conversationId]: reconcileAIChatRuntimeInput(
+                  current.messagesByConversation[conversationId] ?? [],
+                  clientInputId,
+                  null
+                ),
+              },
+            }));
+            return { status: 'conversation_idle' as const };
+          }
+        }
+      }
+
+      const failedInput: AIChatRuntimeInput = { ...optimisticInput, status: 'failed' };
+      setControllerState(current => ({
+        ...current,
+        messagesByConversation: {
+          ...current.messagesByConversation,
+          [conversationId]: reconcileAIChatRuntimeInput(
+            current.messagesByConversation[conversationId] ?? [],
+            clientInputId,
+            failedInput
+          ),
+        },
+        error: getErrorMessage(lastError),
+      }));
+      return { status: 'failed' as const, input: failedInput };
+    },
+    [
+      recoverStreamingConversation,
+      refreshConversationSilently,
+      refreshMessagesSilently,
+      setControllerState,
+      stateRef,
+      transportRef,
+    ]
+  );
   const send = useCallback(
     async ({
       query,
@@ -518,6 +664,10 @@ export function useChatRuntimeMessageActions({
               applyMemoryMutation(payload, eventId);
               refreshAccountMemoryAfterMemoryMutation(payload);
             },
+            onRuntimeInputApplied: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyRuntimeInputApplied(payload, eventId);
+            },
             onWorkflowStarted: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               eventAppliers.applyWorkflowStarted(payload, eventId);
@@ -959,6 +1109,10 @@ export function useChatRuntimeMessageActions({
               applyMemoryMutation(payload, eventId);
               refreshAccountMemoryAfterMemoryMutation(payload);
             },
+            onRuntimeInputApplied: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              eventAppliers.applyRuntimeInputApplied(payload, eventId);
+            },
             onWorkflowStarted: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               eventAppliers.applyWorkflowStarted(payload, eventId);
@@ -1169,6 +1323,7 @@ export function useChatRuntimeMessageActions({
 
   return {
     send,
+    submitRuntimeInput,
     regenerate,
     replaceRootMessage,
     continueWorkflowApproval,

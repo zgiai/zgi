@@ -1203,6 +1203,7 @@ export function AIChatMessageBubble({
     ? 'opacity-100'
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
   const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
+  const hasUserQuery = Boolean(message.query.trim() || files.length > 0);
   const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
   const visibleGeneratedFiles = generatedFiles;
   const generatedImagePreviewFilesForDisplay = useMemo(
@@ -1230,8 +1231,7 @@ export function AIChatMessageBubble({
   );
   const runtimeTimeline = timeline;
   const displayTimeline = useMemo(
-    () =>
-      dedupeTimelineItems(runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline),
+    () => dedupeTimelineItems(runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline),
     [historicalTimeline, runtimeTimeline]
   );
   useEffect(() => {
@@ -1376,118 +1376,122 @@ export function AIChatMessageBubble({
 
   return (
     <div className="group space-y-3">
-      <div className="flex justify-end">
-        <div className={cn('max-w-[82%]', isEditing ? 'w-full max-w-2xl' : '')}>
-          {isEditing ? (
-            <div className="rounded-2xl border bg-background p-2 shadow-sm">
-              <Textarea
-                value={editValue}
-                onChange={event => onEditChange?.(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    onEditSubmit?.(message);
-                  }
-                }}
-                className="max-h-40 min-h-20 resize-none border-0 bg-transparent px-2 py-1 text-sm shadow-none focus-visible:ring-0"
-                autoFocus
-              />
-              <UserEditToolbar
-                canSubmit={Boolean(editValue.trim())}
-                isSending={isSending}
-                onCancel={onEditCancel}
-                onSubmit={() => onEditSubmit?.(message)}
-              />
-            </div>
-          ) : (
-            <>
-              <div className="rounded-2xl bg-muted px-3 py-2 text-sm text-foreground shadow-sm">
-                <div className="whitespace-pre-wrap break-words">{message.query}</div>
-                {files.length > 0 ? (
-                  <div className="mt-2 space-y-2">
-                    {imageFiles.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {imageFiles.map(file => (
-                          <AIChatHistoryImagePreview key={file.id} file={file} />
-                        ))}
-                      </div>
-                    ) : null}
-                    {documentFiles.length > 0 ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {documentFiles.map(file => {
-                          const isFileParsing =
-                            file.parse_status === 'parsing' ||
-                            (file.content_status === 'pending' && file.parse_status !== 'error');
-                          const isFileError = file.parse_status === 'error';
-                          const isFileEmpty = file.content_status === 'empty' && !isFileError;
-                          const isFileExtracted =
-                            file.content_status === 'extracted' && !isFileError;
-                          const isVisionReady =
-                            file.content_status === 'vision_ready' && !isFileError;
-                          const isFiltered = file.content_status === 'filtered' && !isFileError;
-                          const label = isFileError
-                            ? t('consoleChat.attachments.parseFailed')
-                            : isFileEmpty
-                              ? t('consoleChat.attachments.empty')
-                              : isFiltered
-                                ? t('consoleChat.attachments.filtered')
-                                : isVisionReady
-                                  ? t('consoleChat.attachments.visionReady')
-                                  : isFileExtracted
-                                    ? t('consoleChat.attachments.parsed')
-                                    : t('consoleChat.attachments.parsing');
-
-                          return (
-                            <div
-                              key={file.id}
-                              className={cn(
-                                'inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background/70 px-2 py-1 text-xs',
-                                isFileError || isFiltered
-                                  ? 'border-destructive/40 text-destructive'
-                                  : 'border-border text-muted-foreground'
-                              )}
-                              title={
-                                file.error ||
-                                (file.filtered_reason === 'model_without_vision'
-                                  ? t('consoleChat.attachments.filteredModelWithoutVision')
-                                  : file.name)
-                              }
-                            >
-                              {isFileParsing ? (
-                                <Loader2 className="size-3.5 shrink-0 animate-spin" />
-                              ) : isFileError ? (
-                                <AlertCircle className="size-3.5 shrink-0" />
-                              ) : isFileExtracted || isVisionReady ? (
-                                <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" />
-                              ) : isFiltered ? (
-                                <AlertCircle className="size-3.5 shrink-0" />
-                              ) : file.kind === 'image' ? (
-                                <FileImage className="size-3.5 shrink-0" />
-                              ) : (
-                                <FileText className="size-3.5 shrink-0" />
-                              )}
-                              <span className="max-w-40 truncate text-foreground">{file.name}</span>
-                              <span className="shrink-0">{formatFileSize(file.size)}</span>
-                              <span className="shrink-0">{label}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
+      {hasUserQuery ? (
+        <div className="flex justify-end">
+          <div className={cn('max-w-[82%]', isEditing ? 'w-full max-w-2xl' : '')}>
+            {isEditing ? (
+              <div className="rounded-2xl border bg-background p-2 shadow-sm">
+                <Textarea
+                  value={editValue}
+                  onChange={event => onEditChange?.(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      onEditSubmit?.(message);
+                    }
+                  }}
+                  className="max-h-40 min-h-20 resize-none border-0 bg-transparent px-2 py-1 text-sm shadow-none focus-visible:ring-0"
+                  autoFocus
+                />
+                <UserEditToolbar
+                  canSubmit={Boolean(editValue.trim())}
+                  isSending={isSending}
+                  onCancel={onEditCancel}
+                  onSubmit={() => onEditSubmit?.(message)}
+                />
               </div>
-              <UserMessageToolbar
-                query={message.query}
-                canEdit={canEdit}
-                isDisabled={isSending || isActiveMessage}
-                toolbarVisibility={toolbarVisibility}
-                onEdit={() => onEditStart?.(message)}
-              />
-            </>
-          )}
+            ) : (
+              <>
+                <div className="rounded-2xl bg-muted px-3 py-2 text-sm text-foreground shadow-sm">
+                  <div className="whitespace-pre-wrap break-words">{message.query}</div>
+                  {files.length > 0 ? (
+                    <div className="mt-2 space-y-2">
+                      {imageFiles.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {imageFiles.map(file => (
+                            <AIChatHistoryImagePreview key={file.id} file={file} />
+                          ))}
+                        </div>
+                      ) : null}
+                      {documentFiles.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {documentFiles.map(file => {
+                            const isFileParsing =
+                              file.parse_status === 'parsing' ||
+                              (file.content_status === 'pending' && file.parse_status !== 'error');
+                            const isFileError = file.parse_status === 'error';
+                            const isFileEmpty = file.content_status === 'empty' && !isFileError;
+                            const isFileExtracted =
+                              file.content_status === 'extracted' && !isFileError;
+                            const isVisionReady =
+                              file.content_status === 'vision_ready' && !isFileError;
+                            const isFiltered = file.content_status === 'filtered' && !isFileError;
+                            const label = isFileError
+                              ? t('consoleChat.attachments.parseFailed')
+                              : isFileEmpty
+                                ? t('consoleChat.attachments.empty')
+                                : isFiltered
+                                  ? t('consoleChat.attachments.filtered')
+                                  : isVisionReady
+                                    ? t('consoleChat.attachments.visionReady')
+                                    : isFileExtracted
+                                      ? t('consoleChat.attachments.parsed')
+                                      : t('consoleChat.attachments.parsing');
+
+                            return (
+                              <div
+                                key={file.id}
+                                className={cn(
+                                  'inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background/70 px-2 py-1 text-xs',
+                                  isFileError || isFiltered
+                                    ? 'border-destructive/40 text-destructive'
+                                    : 'border-border text-muted-foreground'
+                                )}
+                                title={
+                                  file.error ||
+                                  (file.filtered_reason === 'model_without_vision'
+                                    ? t('consoleChat.attachments.filteredModelWithoutVision')
+                                    : file.name)
+                                }
+                              >
+                                {isFileParsing ? (
+                                  <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                                ) : isFileError ? (
+                                  <AlertCircle className="size-3.5 shrink-0" />
+                                ) : isFileExtracted || isVisionReady ? (
+                                  <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" />
+                                ) : isFiltered ? (
+                                  <AlertCircle className="size-3.5 shrink-0" />
+                                ) : file.kind === 'image' ? (
+                                  <FileImage className="size-3.5 shrink-0" />
+                                ) : (
+                                  <FileText className="size-3.5 shrink-0" />
+                                )}
+                                <span className="max-w-40 truncate text-foreground">
+                                  {file.name}
+                                </span>
+                                <span className="shrink-0">{formatFileSize(file.size)}</span>
+                                <span className="shrink-0">{label}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                <UserMessageToolbar
+                  query={message.query}
+                  canEdit={canEdit}
+                  isDisabled={isSending || isActiveMessage}
+                  toolbarVisibility={toolbarVisibility}
+                  onEdit={() => onEditStart?.(message)}
+                />
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div className="min-w-0 max-w-full overflow-hidden">
         <div className="mb-2 flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-sm text-muted-foreground">
