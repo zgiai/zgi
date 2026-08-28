@@ -32,6 +32,13 @@ const (
 	// envChatRuntimeModelIdleTimeoutSeconds stops one model call after this many
 	// seconds without any upstream response. Default: 300.
 	envChatRuntimeModelIdleTimeoutSeconds = "CHAT_RUNTIME_MODEL_IDLE_TIMEOUT_SECONDS"
+	// envChatRuntimeAgentContextWindowK sets the Agent working context window in
+	// thousands of tokens (k). 1k means 1,000 tokens. Default: 256. The runtime
+	// caps the effective value at the selected model's physical context window.
+	envChatRuntimeAgentContextWindowK = "CHAT_RUNTIME_AGENT_CONTEXT_WINDOW_K"
+	// envChatRuntimeContextPromptDumpEnabled writes each final model request to
+	// local debug storage. Default: false.
+	envChatRuntimeContextPromptDumpEnabled = "ZGI_AICHAT_CONTEXT_PROMPT_DUMP"
 )
 
 // Database and cache keys.

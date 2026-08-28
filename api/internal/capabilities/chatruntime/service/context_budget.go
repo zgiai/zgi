@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zgiai/zgi/api/config"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -30,19 +31,26 @@ const (
 )
 
 type contextBudgetResult struct {
-	Messages []adapter.Message
-	Metadata map[string]interface{}
+	Messages     []adapter.Message
+	Metadata     map[string]interface{}
+	Budget       *budgetComputation
+	RawMessages  []*runtimemodel.Message
+	Spec         ModelSpec
+	SystemPrompt string
 }
 
 type budgetComputation struct {
-	SafeLimit            int
-	PromptBudget         int
-	ReservedOutputTokens int
-	BasePromptTokens     int
-	OriginalMaxTokens    *int
-	EffectiveMaxTokens   *int
-	MaxTokensClamped     bool
-	Tokenizer            string
+	ConfiguredAgentWindowK int
+	AgentContextWindow     int
+	AgentWindowClamped     bool
+	SafeLimit              int
+	PromptBudget           int
+	ReservedOutputTokens   int
+	BasePromptTokens       int
+	OriginalMaxTokens      *int
+	EffectiveMaxTokens     *int
+	MaxTokensClamped       bool
+	Tokenizer              string
 }
 
 func (s *service) buildTokenBudgetMessages(
@@ -52,6 +60,9 @@ func (s *service) buildTokenBudgetMessages(
 	systemPrompt string,
 	parentMessages []*runtimemodel.Message,
 ) (*contextBudgetResult, error) {
+	if s.tokenEstimator == nil {
+		s.tokenEstimator = newTokenEstimator()
+	}
 	applyRecentAssetCandidatesFromBranch(parts, parentMessages)
 	applyRecentGeneratedArtifactsFromBranch(parts, parentMessages)
 	applyRecentOperationPlansFromBranch(parts, parentMessages)
@@ -97,34 +108,36 @@ func (s *service) buildTokenBudgetMessages(
 		return nil, err
 	}
 	historyBefore := countAdapterMessages(groups)
-	selected := make([][]adapter.Message, 0, len(groups))
-	for i := len(groups) - 1; i >= 0; i-- {
-		groupTokens := s.tokenEstimator.EstimateMessages(groups[i], parts.ModelName).Tokens
-		if estimatedPromptTokens+groupTokens > budget.PromptBudget {
-			break
-		}
-		selected = append(selected, groups[i])
-		estimatedPromptTokens += groupTokens
+	selected := groups
+	for _, group := range selected {
+		estimatedPromptTokens += s.tokenEstimator.EstimateMessages(group, parts.ModelName).Tokens
 	}
 
+	systemMessage := adapter.Message{Role: "system", Content: systemPrompt}
+	currentUserMessage := adapter.Message{Role: "user", Content: currentContent}
+	historyMessages := make([]adapter.Message, 0, historyBefore)
+	for _, group := range selected {
+		historyMessages = append(historyMessages, group...)
+	}
 	messages := make([]adapter.Message, 0, 2+historyBefore)
-	messages = append(messages, adapter.Message{Role: "system", Content: systemPrompt})
-	for i := len(selected) - 1; i >= 0; i-- {
-		messages = append(messages, selected[i]...)
-	}
+	messages = append(messages, systemMessage)
+	messages = append(messages, historyMessages...)
 	messages = append(messages, extraContextMessages...)
-	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
+	messages = append(messages, currentUserMessage)
 
-	historyAfter := len(messages) - 2 - len(extraContextMessages)
-	metadata := contextControlMetadata(spec, budget, estimatedPromptTokens, historyBefore, historyAfter)
+	metadata := contextControlMetadata(spec, budget, estimatedPromptTokens, historyBefore, historyBefore)
+	metadata["truncated"] = false
 	mergeAttachmentContextMetadata(metadata, attachmentMetadata)
 	mergeRecentExecutionContextMetadata(metadata, recentExecutionMetadata)
 	if continuationContext != nil {
 		metadata["continuation_task_state_included"] = true
 	}
 	return &contextBudgetResult{
-		Messages: messages,
-		Metadata: metadata,
+		Messages:     messages,
+		Metadata:     metadata,
+		Budget:       budget,
+		Spec:         spec,
+		SystemPrompt: systemPrompt,
 	}, nil
 }
 
@@ -308,14 +321,20 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	if spec.ContextWindow <= 0 {
 		return nil, fmt.Errorf("%w: model context_window is required", ErrInvalidInput)
 	}
-	safeLimit := spec.ContextWindow * contextBudgetSafetyNumerator / contextBudgetSafetyDenominator
-	minOutput := minOutputReserve(spec.ContextWindow)
+	agentWindowK := 256
+	if config.GlobalConfig != nil && config.GlobalConfig.ChatRuntime.AgentContextWindowK > 0 {
+		agentWindowK = config.GlobalConfig.ChatRuntime.AgentContextWindowK
+	}
+	configuredAgentWindow := agentWindowK * 1000
+	agentContextWindow := min(configuredAgentWindow, spec.ContextWindow)
+	safeLimit := agentContextWindow
+	minOutput := minOutputReserve(agentContextWindow)
 	if safeLimit <= minOutput {
 		return nil, fmt.Errorf("%w: model context budget is too small", ErrInvalidInput)
 	}
 
 	baseEstimate := s.tokenEstimator.EstimateMessages(baseMessages, parts.ModelName)
-	minPrompt := minPromptBudget(spec.ContextWindow)
+	minPrompt := minPromptBudget(agentContextWindow)
 	maxMinPrompt := safeLimit - minOutput
 	if minPrompt > maxMinPrompt {
 		minPrompt = maxMinPrompt
@@ -330,7 +349,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	}
 
 	originalMaxTokens, hasRequestedMaxTokens := requestedMaxTokens(parts)
-	desiredOutput := defaultOutputReserve(spec.ContextWindow)
+	desiredOutput := defaultOutputReserve(agentContextWindow)
 	if hasRequestedMaxTokens {
 		desiredOutput = *originalMaxTokens
 	}
@@ -367,14 +386,17 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	}
 
 	return &budgetComputation{
-		SafeLimit:            safeLimit,
-		PromptBudget:         promptBudget,
-		ReservedOutputTokens: reservedOutput,
-		BasePromptTokens:     baseEstimate.Tokens,
-		OriginalMaxTokens:    originalMaxTokens,
-		EffectiveMaxTokens:   effectiveMaxTokens,
-		MaxTokensClamped:     maxTokensClamped,
-		Tokenizer:            baseEstimate.Tokenizer,
+		ConfiguredAgentWindowK: agentWindowK,
+		AgentContextWindow:     agentContextWindow,
+		AgentWindowClamped:     agentContextWindow < configuredAgentWindow,
+		SafeLimit:              safeLimit,
+		PromptBudget:           promptBudget,
+		ReservedOutputTokens:   reservedOutput,
+		BasePromptTokens:       baseEstimate.Tokens,
+		OriginalMaxTokens:      originalMaxTokens,
+		EffectiveMaxTokens:     effectiveMaxTokens,
+		MaxTokensClamped:       maxTokensClamped,
+		Tokenizer:              baseEstimate.Tokenizer,
 	}, nil
 }
 
@@ -384,13 +406,16 @@ func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemod
 		if item == nil {
 			continue
 		}
-		group := make([]adapter.Message, 0, 2)
+		group := make([]adapter.Message, 0, 4)
 		userMessage, err := s.historicalUserMessage(ctx, item, includeImages)
 		if err != nil {
 			return nil, err
 		}
 		if userMessage != nil {
 			group = append(group, *userMessage)
+		}
+		if isUsableAgentTranscriptHistoryStatus(item.Status) {
+			group = append(group, agentTranscriptFromMetadata(item.Metadata, item.Answer)...)
 		}
 		if isUsableAssistantHistoryStatus(item.Status) && item.Answer != "" {
 			group = append(group, adapter.Message{Role: "assistant", Content: item.Answer})
@@ -417,7 +442,7 @@ func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}
-	if partsRequestsContinuationWithFallback(parts, "") || queryReferencesRecentExecutionContext(parts.Query) {
+	if partsRequestsContinuationWithFallback(parts, "") {
 		return false
 	}
 	if intent := parts.ModelTurnIntent; intent != nil {
@@ -1697,20 +1722,23 @@ func countAdapterMessages(groups [][]adapter.Message) int {
 
 func contextControlMetadata(spec ModelSpec, budget *budgetComputation, estimatedPromptTokens int, historyBefore int, historyAfter int) map[string]interface{} {
 	return map[string]interface{}{
-		"strategy":                contextControlStrategyTokenBudget,
-		"context_window":          spec.ContextWindow,
-		"model_max_output_tokens": spec.MaxOutputTokens,
-		"safe_context_limit":      budget.SafeLimit,
-		"prompt_budget":           budget.PromptBudget,
-		"estimated_prompt_tokens": estimatedPromptTokens,
-		"history_messages_before": historyBefore,
-		"history_messages_after":  historyAfter,
-		"truncated":               historyAfter < historyBefore,
-		"max_tokens_clamped":      budget.MaxTokensClamped,
-		"original_max_tokens":     optionalIntValue(budget.OriginalMaxTokens),
-		"effective_max_tokens":    optionalIntValue(budget.EffectiveMaxTokens),
-		"reserved_output_tokens":  budget.ReservedOutputTokens,
-		"tokenizer":               budget.Tokenizer,
+		"strategy":                  contextControlStrategyTokenBudget,
+		"context_window":            spec.ContextWindow,
+		"configured_agent_window_k": budget.ConfiguredAgentWindowK,
+		"agent_context_window":      budget.AgentContextWindow,
+		"agent_window_clamped":      budget.AgentWindowClamped,
+		"model_max_output_tokens":   spec.MaxOutputTokens,
+		"safe_context_limit":        budget.SafeLimit,
+		"prompt_budget":             budget.PromptBudget,
+		"estimated_prompt_tokens":   estimatedPromptTokens,
+		"history_messages_before":   historyBefore,
+		"history_messages_after":    historyAfter,
+		"truncated":                 historyAfter < historyBefore,
+		"max_tokens_clamped":        budget.MaxTokensClamped,
+		"original_max_tokens":       optionalIntValue(budget.OriginalMaxTokens),
+		"effective_max_tokens":      optionalIntValue(budget.EffectiveMaxTokens),
+		"reserved_output_tokens":    budget.ReservedOutputTokens,
+		"tokenizer":                 budget.Tokenizer,
 	}
 }
 

@@ -3522,7 +3522,11 @@ function isSupersededResolvedApprovalGovernanceItem(
 function isTransientProgressItem(
   item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>
 ) {
-  return !item.content.trim() && (item.transient === true || Boolean(item.phase));
+  return (
+    item.status !== 'completed' &&
+    !item.content.trim() &&
+    (item.transient === true || Boolean(item.phase))
+  );
 }
 
 function stableIndex(value: string, length: number): number {
@@ -3540,6 +3544,13 @@ function buildProgressText(
   locale: string,
   t: WebappTranslator
 ) {
+  if (item.phase === 'context_compaction') {
+    return t(
+      item.status === 'completed'
+        ? 'consoleChat.contextCompaction.completed'
+        : 'consoleChat.contextCompaction.running'
+    );
+  }
   if (item.phase !== 'tool_planning') {
     if (item.phase === 'planning') {
       return t('consoleChat.skills.agentic.preparingAction');
@@ -3570,6 +3581,9 @@ function buildTransientProgressText(
   locale: string,
   t: WebappTranslator
 ) {
+  if (item.phase === 'context_compaction') {
+    return t('consoleChat.contextCompaction.running');
+  }
   if (item.phase === 'client_action') {
     return t('consoleChat.skills.agentic.clientAction');
   }
@@ -3818,7 +3832,11 @@ function TimelineRenderRow({
   switch (item.renderType) {
     case 'transient_progress':
       return (
-        <div className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse">
+		<div
+		  className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse"
+		  role="status"
+		  aria-live="polite"
+		>
           <span>{item.content}</span>
         </div>
       );

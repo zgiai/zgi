@@ -50,7 +50,7 @@ type MessageRepository interface {
 	ListByCallerLogFilterScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error)
 	ListByCallerRuntimeLogScoped(ctx context.Context, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, conversationID *uuid.UUID, queryText string, limit, offset int) ([]*runtimemodel.Message, int64, error)
 	GetRuntimeLogScoped(ctx context.Context, id, organizationID uuid.UUID, workspaceID *uuid.UUID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string) (*runtimemodel.Message, error)
-	ListBranch(ctx context.Context, leafID uuid.UUID, maxDepth int) ([]*runtimemodel.Message, error)
+	ListBranchPage(ctx context.Context, conversationID, leafID uuid.UUID, stopExclusiveMessageID *uuid.UUID, pageSize int) (*MessageBranchPage, error)
 	CountByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
 	ReplaceRootForStreaming(ctx context.Context, message *runtimemodel.Message) error
 	UpdateCompleted(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
@@ -114,6 +114,16 @@ type Repositories struct {
 type MessageDeleteResult struct {
 	ConversationID uuid.UUID
 	DeletedCount   int64
+}
+
+// MessageBranchPage is one leaf-to-root page of a conversation branch. PageSize
+// controls database work only; callers must continue until ReachedBoundary or
+// ReachedRoot is true.
+type MessageBranchPage struct {
+	Messages        []*runtimemodel.Message
+	NextLeafID      *uuid.UUID
+	ReachedBoundary bool
+	ReachedRoot     bool
 }
 
 type SearchResult struct {
@@ -1001,38 +1011,51 @@ func (r *messageRepository) ListByCallerRuntimeLogScoped(ctx context.Context, or
 	return messages, total, nil
 }
 
-func (r *messageRepository) ListBranch(ctx context.Context, leafID uuid.UUID, maxDepth int) ([]*runtimemodel.Message, error) {
-	if leafID == uuid.Nil || maxDepth <= 0 {
-		return []*runtimemodel.Message{}, nil
+func (r *messageRepository) ListBranchPage(
+	ctx context.Context,
+	conversationID uuid.UUID,
+	leafID uuid.UUID,
+	stopExclusiveMessageID *uuid.UUID,
+	pageSize int,
+) (*MessageBranchPage, error) {
+	if conversationID == uuid.Nil || leafID == uuid.Nil || pageSize <= 0 {
+		return &MessageBranchPage{ReachedRoot: leafID == uuid.Nil}, nil
 	}
 
-	out := make([]*runtimemodel.Message, 0, maxDepth)
-	seen := make(map[uuid.UUID]bool, maxDepth)
+	page := &MessageBranchPage{Messages: make([]*runtimemodel.Message, 0, pageSize)}
+	seen := make(map[uuid.UUID]struct{}, pageSize)
 	currentID := leafID
-	for len(out) < maxDepth && currentID != uuid.Nil {
-		if seen[currentID] {
-			return nil, fmt.Errorf("cycle detected in aichat message branch")
+	for len(page.Messages) < pageSize {
+		if stopExclusiveMessageID != nil && *stopExclusiveMessageID != uuid.Nil && currentID == *stopExclusiveMessageID {
+			page.ReachedBoundary = true
+			return page, nil
 		}
-		seen[currentID] = true
+		if _, ok := seen[currentID]; ok {
+			return nil, fmt.Errorf("cycle detected in chat runtime message branch page")
+		}
+		seen[currentID] = struct{}{}
 
 		var message runtimemodel.Message
 		err := r.db.WithContext(ctx).
-			Where("id = ? AND deleted_at IS NULL", currentID).
+			Where("id = ? AND conversation_id = ? AND deleted_at IS NULL", currentID, conversationID).
 			Take(&message).Error
 		if err != nil {
-			return nil, wrapNotFound(err, "aichat message branch")
+			return nil, wrapNotFound(err, "chat runtime message branch page")
 		}
-		out = append(out, &message)
-		if message.ParentID == nil {
-			break
+		page.Messages = append(page.Messages, &message)
+		if message.ParentID == nil || *message.ParentID == uuid.Nil {
+			page.ReachedRoot = true
+			return page, nil
 		}
 		currentID = *message.ParentID
 	}
 
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
+	if stopExclusiveMessageID != nil && *stopExclusiveMessageID != uuid.Nil && currentID == *stopExclusiveMessageID {
+		page.ReachedBoundary = true
+		return page, nil
 	}
-	return out, nil
+	page.NextLeafID = &currentID
+	return page, nil
 }
 
 func (r *messageRepository) CountByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error) {

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
@@ -26,7 +27,6 @@ import (
 const (
 	defaultConversationTitle = "New chat"
 	systemPromptVersion      = "aichat.v1"
-	maxContextMessages       = 20
 	maxConversationTitleLen  = 50
 	defaultSearchLimit       = 20
 	maxSearchLimit           = 50
@@ -500,6 +500,8 @@ type PreparedChat struct {
 	RunConfig                      RunConfig
 	ParentID                       *uuid.UUID
 	parts                          *chatRequestParts
+	contextBudget                  *contextBudgetResult
+	contextManager                 *contextmgr.Manager
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage

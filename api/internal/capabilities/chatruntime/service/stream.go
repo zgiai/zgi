@@ -393,6 +393,21 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 		return nil, err
 	}
 	prepared.LLMRequest.Messages = adapter.NormalizeSystemMessages(prepared.LLMRequest.Messages)
+	contextManager, err := s.newAgentContextManager(ctx, prepared)
+	if err != nil {
+		return nil, err
+	}
+	if contextManager != nil {
+		finalRequest, decision, prepareErr := contextManager.PrepareBeforeModelCall(ctx, prepared.LLMRequest)
+		if prepareErr != nil {
+			return nil, prepareErr
+		}
+		prepared.LLMRequest = finalRequest
+		prepared.contextManager = contextManager
+		s.writeAgentContextPromptDumpBestEffort(ctx, prepared, "main", decision.APIRound, prepared.LLMRequest, &decision)
+	} else {
+		s.writeAgentContextPromptDumpBestEffort(ctx, prepared, "main", 1, prepared.LLMRequest, nil)
+	}
 	beginPreparedUsageExecution(prepared)
 	type openResult struct {
 		stream <-chan adapter.StreamResponse
@@ -453,12 +468,13 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
 	}
-	contextResult, err := s.buildUpstreamMessages(ctx, prepared.Scope, prepared.ParentID, prepared.parts)
+	contextResult, err := s.buildUpstreamMessages(ctx, prepared.Scope, prepared.ParentID, prepared.parts, prepared.Conversation.ID)
 	if err != nil {
 		return err
 	}
 	prepared.parts.ContextControl = contextResult.Metadata
 	prepared.LLMRequest = newLLMChatRequest(prepared.parts, contextResult.Messages)
+	prepared.contextBudget = contextResult
 	preflight, err := s.runContextualPreparePreflights(ctx, prepared.Scope, prepared.Conversation, prepared.RunConfig, prepared.parts, prepared.LLMRequest)
 	if err != nil {
 		return err
@@ -586,6 +602,11 @@ func (s *service) collectStreamAnswerWithEventsAndProgress(ctx context.Context, 
 					_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 					return answer, usage, ErrMessageStopped
 				}
+				var observeErr error
+				usage, observeErr = observeDirectContextResponse(ctx, prepared, answer, usage)
+				if observeErr != nil {
+					return answer, usage, observeErr
+				}
 				return answer, usage, nil
 			}
 			if chunk.Error != nil {
@@ -603,7 +624,13 @@ func (s *service) collectStreamAnswerWithEventsAndProgress(ctx context.Context, 
 			}
 			if chunk.Done {
 				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
-				return builder.String(), usage, nil
+				answer := builder.String()
+				var observeErr error
+				usage, observeErr = observeDirectContextResponse(ctx, prepared, answer, usage)
+				if observeErr != nil {
+					return answer, usage, observeErr
+				}
+				return answer, usage, nil
 			}
 			reasoning := streamChunkReasoningContent(chunk)
 			if reasoning != "" {
@@ -640,6 +667,21 @@ func (s *service) collectStreamAnswerWithEventsAndProgress(ctx context.Context, 
 			}
 		}
 	}
+}
+
+func observeDirectContextResponse(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) (*adapter.Usage, error) {
+	if prepared == nil || prepared.contextManager == nil {
+		return usage, nil
+	}
+	mainModelUsage := usage
+	usage = mergeUsage(prepared.contextManager.ConsumeCompactionUsage(), mainModelUsage)
+	if err := prepared.contextManager.ObserveModelResponse(ctx, adapter.Message{
+		Role:    "assistant",
+		Content: answer,
+	}, mainModelUsage); err != nil {
+		return usage, err
+	}
+	return usage, nil
 }
 
 func (s *service) modelIdleTimeoutValue() time.Duration {
@@ -984,7 +1026,7 @@ func messageEndPayloadWithStatus(prepared *PreparedChat, metadata map[string]int
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"status":          strings.TrimSpace(status),
-		"metadata":        clientVisibleMessageMetadata(metadata),
+		"metadata":        ClientVisibleMessageMetadata(metadata),
 	}
 }
 

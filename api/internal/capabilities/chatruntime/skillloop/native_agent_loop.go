@@ -101,6 +101,7 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"When no more tool calls are needed, provide the complete user-facing final answer as ordinary assistant content. For complex work, briefly state the completed result, the key basis for the work, and any material limitation or unfinished item.",
 		"Use update_plan only for short outcome or step status changes, never for detailed reasoning. Use submit_turn_state when exact working state must survive approval, navigation, refresh, user input, or another continuation boundary.",
 		"Use read_skill_reference only when an active skill's instructions require a reference. Use request_user_input only when missing information blocks reliable progress.",
+		"When a projected or compacted tool-result receipt omits evidence needed for the current task, use read_context_artifact with its exact artifact_ref to retrieve the complete original result.",
 		"All user-visible progress, questions, and final answers must use the language of the user's latest request. Never expose internal protocol details, hidden reasoning, tool aliases, IDs, or bookkeeping.",
 		"Never claim an external action succeeded without a matching successful tool result. Do not repeat a failed tool call with unchanged arguments.",
 		"Read-only calls may be grouped when useful, but call at most one side-effecting or governed mutation in one assistant turn, then wait for its result.",
@@ -588,7 +589,7 @@ func nativeSessionControlCallsOnly(calls []adapter.ToolCall) bool {
 	}
 	for _, call := range calls {
 		switch strings.TrimSpace(call.Function.Name) {
-		case skills.MetaToolActivateSkills, skills.MetaToolSearchSkills:
+		case skills.MetaToolActivateSkills, skills.MetaToolSearchSkills, contextArtifactToolName:
 			continue
 		default:
 			return false

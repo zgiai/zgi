@@ -59,6 +59,8 @@
     "test:agent-external-app-i18n": "node scripts/test-agent-external-app-i18n.mjs",
     "test:user-input-response-history": "node scripts/test-user-input-response-history.mjs",
     "test:chat-runtime-stream-recovery": "node scripts/test-chat-runtime-stream-recovery.mjs",
+	"test:aichat-context-compaction-block": "node scripts/test-aichat-context-compaction-block.mjs",
+	"test:context-compaction-progress": "node scripts/test-context-compaction-progress.mjs",
     "test:model-output-filter-snapshot": "node scripts/test-model-output-filter-snapshot.mjs",
     "test:reparse-parser-config-confirmation": "node scripts/test-reparse-parser-config-confirmation.mjs",
     "test:file-detail-return-context": "node scripts/test-file-detail-return-context.mjs",

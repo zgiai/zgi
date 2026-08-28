@@ -817,6 +817,37 @@ export function applyAgentProgressState(
   if (hasSameEvent) {
     return current;
   }
+  if (payload.phase === 'context_compaction' && payload.progress_id) {
+    const existingIndex = timeline.findIndex(
+      item => item.type === 'progress_text' && item.progress_id === payload.progress_id
+    );
+    const status = payload.status === 'completed' ? 'completed' : 'running';
+    const item: AIChatAgenticTimelineItem = {
+      id: existingIndex >= 0 ? timeline[existingIndex].id : payload.progress_id,
+      type: 'progress_text',
+      content: '',
+      phase: payload.phase,
+      progress_id: payload.progress_id,
+      transient: status !== 'completed',
+      status,
+      created_at: payload.created_at,
+      event_id: eventId ?? null,
+    };
+    const nextTimeline = [...timeline];
+    if (existingIndex >= 0) nextTimeline[existingIndex] = item;
+    else nextTimeline.push(item);
+    return {
+      ...current,
+      streamingByMessageId: {
+        ...current.streamingByMessageId,
+        [payload.message_id]: {
+          ...previousStreaming,
+          timeline: nextTimeline,
+          last_event_id: eventId ?? previousStreaming.last_event_id,
+        },
+      },
+    };
+  }
   const lastItem = timeline[timeline.length - 1];
   const isRepeatedStructuredProgress =
     lastItem?.type === 'progress_text' &&
@@ -851,6 +882,7 @@ export function applyAgentProgressState(
       type: 'progress_text',
       content,
       phase: payload.phase,
+      progress_id: payload.progress_id,
       transient,
       meta_tool_name: payload.meta_tool_name,
       skill_id: payload.skill_id,

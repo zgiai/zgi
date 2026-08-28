@@ -452,6 +452,16 @@ const messages: WebappMessages = {
     waitingApprovalMessage: '助手正在等待你的审批，确认后会继续执行。',
     waitingQuestionMessage: '助手正在等待你补充信息，提交后会继续执行。',
     waitingClientActionMessage: '助手正在等待页面完成操作，完成后会自动继续。',
+    contextCompaction: {
+      running: '正在整理对话上下文，完成后将自动继续回答…',
+      completed: '对话上下文已整理',
+    },
+    contextCompactionBlocked: {
+      title: '为避免遗漏重要信息，本次对话已暂停',
+      description:
+        '系统暂时无法安全整理这段对话的历史内容。你的全部对话记录均已保留。请稍后重试，恢复后即可从这里继续。',
+      retry: '稍后重试',
+    },
     userInputHistory: {
       pendingTitle: '需要补充信息',
       questionCount: '{count} 个问题',

@@ -194,8 +194,8 @@ func TestRunnerNativeStreamConvertsProcessCommentaryBeforeBusinessTool(t *testin
 			continue
 		}
 		toolTurnFound = true
-		if strings.TrimSpace(messageContent(message.Content)) != "" || strings.TrimSpace(message.ReasoningContent) != "" {
-			t.Fatalf("tool turn carried presentation-only content into next request: %#v", message)
+		if !strings.Contains(messageContent(message.Content), "relevant values") || strings.TrimSpace(message.ReasoningContent) != "" {
+			t.Fatalf("tool turn did not retain ordinary assistant content while removing reasoning: %#v", message)
 		}
 	}
 	if !toolTurnFound {

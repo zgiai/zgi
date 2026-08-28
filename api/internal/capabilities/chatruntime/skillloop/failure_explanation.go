@@ -103,6 +103,11 @@ func (r *Runner) runToolFailureExplanation(
 
 	explanationRequest := cloneChatRequest(prepared.LLMRequest)
 	explanationRequest.Messages = cloneMessagesForProvider(prepared.LLMRequest.Messages)
+	if r.ContextManager != nil {
+		if state := r.ContextManager.State(); len(state.Messages) > 0 {
+			explanationRequest.Messages = cloneMessagesForProvider(state.Messages)
+		}
+	}
 	explanationRequest.Messages = append(explanationRequest.Messages, adapter.Message{
 		Role: "system",
 		Content: strings.Join([]string{
@@ -134,10 +139,9 @@ func (r *Runner) runToolFailureExplanation(
 				Content: "The previous response was empty or attempted a tool call. Reply once with concise natural-language failure guidance only.",
 			})
 		}
-		sourceMessages := cloneMessagesForProvider(request.Messages)
-		request.Messages = adapter.NormalizeSystemMessages(sourceMessages)
 		r.requestBudget = planningRequestBudgetForRun(req)
-		if budgetErr := r.applyFinalPlanningRequestBudget(request, sourceMessages); budgetErr != nil {
+		request, budgetErr := r.prepareContextRequest(ctx, request)
+		if budgetErr != nil {
 			r.recordModelInvocation(ModelInvocationTrace{
 				Phase:     "tool_failure_explanation",
 				Round:     round,
@@ -149,6 +153,7 @@ func (r *Runner) runToolFailureExplanation(
 		}
 
 		startedAt := time.Now()
+		r.recordModelRequest("tool_failure_explanation", round, request)
 		callCtx, cancel := context.WithTimeout(ctx, r.modelIdleTimeout())
 		response, callErr := r.LLMClient.AppChat(callCtx, r.AppContext, request)
 		contextErr := callCtx.Err()
@@ -170,8 +175,12 @@ func (r *Runner) runToolFailureExplanation(
 		}
 
 		message := firstPlanningMessage(response)
-		responseUsage := planningRespUsage(response)
-		usage = mergeUsage(usage, responseUsage)
+		mainResponseUsage := planningRespUsage(response)
+		contextResult, contextErr := r.finishContextRequest(ctx, request, planningResult{message: message, usage: mainResponseUsage})
+		if contextErr != nil {
+			return "", mergeUsage(usage, contextResult.usage), contextErr
+		}
+		usage = mergeUsage(usage, contextResult.usage)
 		finishReason := planningResponseFinishReason(response)
 		terminationErr := nonStreamingPlanningTerminationError(finishReason)
 		answer := strings.TrimSpace(assistantMessageText(message))
@@ -186,7 +195,7 @@ func (r *Runner) runToolFailureExplanation(
 			DurationMS:         time.Since(startedAt).Milliseconds(),
 			Request:            request,
 			Response:           &message,
-			Usage:              responseUsage,
+			Usage:              mainResponseUsage,
 			FinishReason:       finishReason,
 			StreamDoneReceived: true,
 			TerminatedBy:       "response",

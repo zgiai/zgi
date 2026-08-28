@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -152,12 +153,15 @@ type Runner struct {
 	OnEvent               func(Event) error
 	OnTrace               func([]skills.SkillTrace, skills.SkillTrace)
 	OnArtifact            func(map[string]interface{})
+	OnModelRequest        func(phase string, round int, request *adapter.ChatRequest, decision *contextmgr.Decision)
 	OnModelInvocation     func(ModelInvocationTrace)
 	FallbackDelay         time.Duration
 	ModelIdleTimeout      time.Duration
 	ModelProgressSchedule ModelProgressSchedule
+	ContextManager        *contextmgr.Manager
 	diagnostics           modelInvocationDiagnostics
 	requestBudget         planningRequestBudget
+	contextDecision       *contextmgr.Decision
 }
 
 type RunRequest struct {
@@ -260,6 +264,25 @@ type ModelInvocationTrace struct {
 	BudgetOriginalMaxTokens    int
 	BudgetEffectiveMaxTokens   int
 	BudgetEstimateScale        float64
+	AgentRunID                 string
+	ContextAPIRound            int
+	ContextRequestType         string
+	ContextDecision            string
+	ContextModelWindowTokens   int
+	ContextConfiguredWindowK   int
+	ContextEffectiveWindow     int
+	ContextWindowClamped       bool
+	ContextSoftLimit           int
+	ContextHardLimit           int
+	ContextTargetTokens        int
+	ContextFixedTokens         int
+	ContextCompressibleTokens  int
+	ContextToolTokensBefore    int
+	ContextToolTokensAfter     int
+	ContextToolProjectionCount int
+	ContextLossyRecoveryRounds int
+	ContextCompactedThrough    int
+	ContextCompactionFailures  int
 }
 
 type modelInvocationDiagnostics struct {
@@ -417,7 +440,41 @@ func (r *Runner) recordModelInvocation(trace ModelInvocationTrace) {
 	trace.BudgetOriginalMaxTokens = r.diagnostics.requestBudget.originalMaxTokens
 	trace.BudgetEffectiveMaxTokens = r.diagnostics.requestBudget.effectiveMaxTokens
 	trace.BudgetEstimateScale = r.diagnostics.requestBudget.estimateScale
+	if r.contextDecision != nil {
+		decision := r.contextDecision
+		trace.AgentRunID = decision.AgentRunID
+		trace.ContextAPIRound = decision.APIRound
+		trace.ContextRequestType = decision.RequestType
+		trace.ContextDecision = decision.Action
+		trace.ContextModelWindowTokens = decision.Budget.ModelContextWindow
+		trace.ContextConfiguredWindowK = decision.Budget.ConfiguredAgentWindowK
+		trace.ContextEffectiveWindow = decision.Budget.AgentContextWindow
+		trace.ContextWindowClamped = decision.Budget.AgentContextWindowClamped
+		trace.ContextSoftLimit = decision.Budget.SoftLimit
+		trace.ContextHardLimit = decision.Budget.HardLimit
+		trace.ContextTargetTokens = decision.Budget.TargetTokens
+		trace.ContextFixedTokens = decision.FixedRequestTokens
+		trace.ContextCompressibleTokens = decision.CompressibleTokens
+		trace.ContextToolTokensBefore = decision.ToolResultOriginalTokens
+		trace.ContextToolTokensAfter = decision.ToolResultProjectedTokens
+		trace.ContextToolProjectionCount = decision.ToolProjectionCount
+		trace.ContextLossyRecoveryRounds = decision.LossyRecoveryDroppedRounds
+		trace.ContextCompactedThrough = decision.CompactedThroughRound
+		trace.ContextCompactionFailures = decision.ConsecutiveCompactionFailures
+	}
 	r.OnModelInvocation(trace)
+}
+
+func (r *Runner) recordModelRequest(phase string, round int, request *adapter.ChatRequest) {
+	if r == nil || r.OnModelRequest == nil || request == nil {
+		return
+	}
+	var decision *contextmgr.Decision
+	if r.contextDecision != nil {
+		cloned := *r.contextDecision
+		decision = &cloned
+	}
+	r.OnModelRequest(phase, round, cloneChatRequest(request), decision)
 }
 
 func cloneStringIntMap(source map[string]int) map[string]int {
