@@ -224,11 +224,21 @@ func (s *service) runPreparedToolLoop(
 		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
 		OnTerminalCompletion:           onTerminalCompletion,
 		OnChunk:                        onChunk,
-		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
-		AuthorizeSkillStep:             authorizeSkillStep,
-		PreferredRestoredSkillID:       prepared.PreferredRestoredSkillID,
-		ContinuationType:               prepared.ContinuationType,
-		TerminalOnly:                   prepared.TerminalOnly,
+		BeforeModelRound: func(checkpointCtx context.Context, round int) ([]adapter.Message, error) {
+			return s.claimRuntimeInputsForCurrentRun(
+				checkpointCtx,
+				prepared,
+				runtimeInputCheckpoint{Name: runtimeInputCheckpointBeforeModelRound, ModelRound: round + 1},
+				func(payload map[string]interface{}) error {
+					return timeline.RecordEvent(streamEventRuntimeInputApplied, payload)
+				},
+			)
+		},
+		PlanningOutputTokenLimit: planningOutputTokenLimit(prepared),
+		AuthorizeSkillStep:       authorizeSkillStep,
+		PreferredRestoredSkillID: prepared.PreferredRestoredSkillID,
+		ContinuationType:         prepared.ContinuationType,
+		TerminalOnly:             prepared.TerminalOnly,
 	})
 	if nativeSkillSession != nil {
 		prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)

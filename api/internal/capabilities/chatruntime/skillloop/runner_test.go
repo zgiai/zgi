@@ -206,6 +206,68 @@ func TestRunnerLegacyToolChatUsesSimpleToolContract(t *testing.T) {
 	}
 }
 
+func TestRunnerInjectsRuntimeInputBeforeModelRoundInOrder(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "updated answer"}}},
+	}}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-runtime-input", "msg-runtime-input", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "original request"}},
+	})
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillFileManager},
+	}}}
+	hookCalls := 0
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:       prepared,
+		Resolved:       resolved,
+		LegacyToolChat: true,
+		BeforeModelRound: func(_ context.Context, round int) ([]adapter.Message, error) {
+			hookCalls++
+			if round != 0 {
+				return nil, nil
+			}
+			return []adapter.Message{
+				{Role: "system", Content: "runtime input instruction"},
+				{Role: "user", Content: "first supplement"},
+				{Role: "user", Content: "second supplement"},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "updated answer" || hookCalls != 1 {
+		t.Fatalf("answer = %q, hook calls = %d", answer, hookCalls)
+	}
+	if len(fakeLLM.appChatRequests) != 1 {
+		t.Fatalf("model requests = %d, want 1", len(fakeLLM.appChatRequests))
+	}
+	messages := fakeLLM.appChatRequests[0].Messages
+	positions := map[string]int{}
+	for _, content := range []string{"original request", "runtime input instruction", "first supplement", "second supplement"} {
+		for index, message := range messages {
+			if strings.Contains(messageContent(message.Content), content) {
+				positions[content] = index
+				break
+			}
+		}
+		if _, ok := positions[content]; !ok {
+			t.Fatalf("messages = %#v, missing %q", messages, content)
+		}
+	}
+	if !(positions["runtime input instruction"] < positions["original request"] &&
+		positions["original request"] < positions["first supplement"] &&
+		positions["first supplement"] < positions["second supplement"]) {
+		t.Fatalf("runtime input order = %#v", positions)
+	}
+}
+
 func TestRunnerTerminalOnlyUsesOneFinalAnswerModelCall(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
 		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The approved update was completed."}}},

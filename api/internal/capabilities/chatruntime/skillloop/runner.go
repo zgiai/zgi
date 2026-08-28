@@ -262,6 +262,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		if eventErr := prepared.presentationEventError(); eventErr != nil {
 			return answerBuilder.String(), usage, eventErr
 		}
+		if req.BeforeModelRound != nil {
+			additional, err := req.BeforeModelRound(ctx, round)
+			if err != nil {
+				return answerBuilder.String(), usage, err
+			}
+			if len(additional) > 0 {
+				messages = append(messages, additional...)
+			}
+		}
 		roundRuntimeState := map[string]interface{}{}
 		terminalSubmissionAllowed := true
 		if terminalStateGuardConfigured {

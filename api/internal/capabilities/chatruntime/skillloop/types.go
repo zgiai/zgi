@@ -178,6 +178,7 @@ type RunRequest struct {
 	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
 	OnTerminalCompletion           func(TerminalCompletionResult)
 	OnChunk                        func(string) error
+	BeforeModelRound               func(context.Context, int) ([]adapter.Message, error)
 	PlanningOutputTokenLimit       int
 	AuthorizeSkillStep             func(context.Context, string) (bool, error)
 	PreferredRestoredSkillID       string

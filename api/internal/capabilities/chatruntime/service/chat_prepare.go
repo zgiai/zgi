@@ -23,50 +23,7 @@ func (s *service) PrepareChat(ctx context.Context, scope Scope, req runtimedto.C
 }
 
 func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller Caller, config RunConfig, req runtimedto.ChatRequest) (*PreparedChat, error) {
-	if err := s.ensureMember(ctx, scope); err != nil {
-		return nil, err
-	}
-	var err error
-	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
-	if err != nil {
-		return nil, err
-	}
-	req = applyRunConfigToChatRequest(config, req)
-	parts, err := normalizeChatRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	applyRunConfigToParts(config, parts)
-	applyCallerRuntimeSurfacePolicy(caller, parts)
-	attachments, err := s.resolveChatAttachmentReferences(ctx, scope, req.FileIDs)
-	if err != nil {
-		return nil, err
-	}
-	parts.Attachments = attachments
-	if err := s.applyExistingConversationSurfaceForChat(ctx, scope, caller, req, parts); err != nil {
-		return nil, err
-	}
-	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
-		return nil, err
-	}
-	applyProtocolToolsPolicy(caller, parts)
-	applyCallerMemoryPolicy(caller, parts)
-	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
-		return nil, err
-	}
-	applyAgentMemoryToolsPolicy(parts)
-	if err := finalizeExecutionMode(caller, parts); err != nil {
-		return nil, err
-	}
-	logExecutionRoute(ctx, caller, parts)
-	conversation, err := s.resolveChatConversation(ctx, scope, caller, req, parts)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.ensureConversationAllowsNewTurn(ctx, scope, conversation); err != nil {
-		return nil, err
-	}
-	parentID, err := s.resolveParentMessage(ctx, scope, conversation, strings.TrimSpace(req.ParentID))
+	config, parts, conversation, parentID, err := s.prepareConfiguredChatDefinition(ctx, scope, caller, config, req)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +59,57 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	}
 	s.refreshInitialPageContext(ctx, prepared)
 	return prepared, nil
+}
+
+func (s *service) prepareConfiguredChatDefinition(ctx context.Context, scope Scope, caller Caller, config RunConfig, req runtimedto.ChatRequest) (RunConfig, *chatRequestParts, *runtimemodel.Conversation, *uuid.UUID, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	var err error
+	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
+	if err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	req = applyRunConfigToChatRequest(config, req)
+	parts, err := normalizeChatRequest(req)
+	if err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	applyRunConfigToParts(config, parts)
+	applyCallerRuntimeSurfacePolicy(caller, parts)
+	attachments, err := s.resolveChatAttachmentReferences(ctx, scope, req.FileIDs)
+	if err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	parts.Attachments = attachments
+	if err := s.applyExistingConversationSurfaceForChat(ctx, scope, caller, req, parts); err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	applyProtocolToolsPolicy(caller, parts)
+	applyCallerMemoryPolicy(caller, parts)
+	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	applyAgentMemoryToolsPolicy(parts)
+	if err := finalizeExecutionMode(caller, parts); err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	logExecutionRoute(ctx, caller, parts)
+	conversation, err := s.resolveChatConversation(ctx, scope, caller, req, parts)
+	if err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	if err := s.ensureConversationAllowsNewTurn(ctx, scope, conversation, config.runtimeInputFollowUp); err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	parentID, err := s.resolveParentMessage(ctx, scope, conversation, strings.TrimSpace(req.ParentID))
+	if err != nil {
+		return RunConfig{}, nil, nil, nil, err
+	}
+	return config, parts, conversation, parentID, nil
 }
 
 func (s *service) PrepareRootRegeneration(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.RegenerateMessageRequest) (*PreparedChat, error) {
@@ -140,7 +148,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
 		return nil, err
 	}
-	if err := s.ensureConversationAllowsNewTurn(ctx, scope, conversation); err != nil {
+	if err := s.ensureConversationAllowsNewTurn(ctx, scope, conversation, config.runtimeInputFollowUp); err != nil {
 		return nil, err
 	}
 	req = applyRunConfigToRegenerateRequest(config, req)
@@ -234,25 +242,36 @@ func (s *service) resolveWorkspaceID(ctx context.Context, scope Scope) (*uuid.UU
 	return s.repos.Access.GetCurrentWorkspaceID(ctx, scope.AccountID)
 }
 
-func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation) error {
-	if conversation == nil || conversation.CurrentLeafMessageID == nil {
+func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, allowRuntimeInputFollowUp bool) error {
+	if conversation == nil {
 		return nil
 	}
 	if conversation.RuntimeStatus != runtimemodel.ConversationRuntimeStatusIdle {
 		return nil
 	}
-	leafMessage, err := s.repos.Message.GetScoped(ctx, *conversation.CurrentLeafMessageID, scope.OrganizationID, scope.AccountID)
-	if err != nil {
-		return mapRepoError(err)
+	if conversation.CurrentLeafMessageID != nil {
+		leafMessage, err := s.repos.Message.GetScoped(ctx, *conversation.CurrentLeafMessageID, scope.OrganizationID, scope.AccountID)
+		if err != nil {
+			return mapRepoError(err)
+		}
+		if leafMessage.Status == runtimemodel.MessageStatusWaitingApproval {
+			return ErrConversationWaitingApproval
+		}
+		if leafMessage.Status == runtimemodel.MessageStatusWaitingQuestion {
+			return ErrConversationWaitingQuestion
+		}
+		if leafMessage.Status == runtimemodel.MessageStatusWaitingClientAction {
+			return ErrConversationWaitingAction
+		}
 	}
-	if leafMessage.Status == runtimemodel.MessageStatusWaitingApproval {
-		return ErrConversationWaitingApproval
-	}
-	if leafMessage.Status == runtimemodel.MessageStatusWaitingQuestion {
-		return ErrConversationWaitingQuestion
-	}
-	if leafMessage.Status == runtimemodel.MessageStatusWaitingClientAction {
-		return ErrConversationWaitingAction
+	if !allowRuntimeInputFollowUp {
+		pending, err := s.repos.RuntimeInput.HasPendingFollowUp(ctx, conversation.ID)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return ErrConversationRunning
+		}
 	}
 	return nil
 }

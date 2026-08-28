@@ -228,7 +228,7 @@ func TestFinalizePreparedErrorOwnershipLossDoesNotClearOrEmit(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .* WHERE .*id = .*status IN.*runtime_run_id = .*`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectCommit()
+	mock.ExpectRollback()
 
 	emitted := 0
 	err := svc.finalizePreparedError(

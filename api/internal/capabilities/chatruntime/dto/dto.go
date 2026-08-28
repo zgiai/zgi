@@ -241,8 +241,31 @@ type MessageResponse struct {
 	ModelParameters     map[string]interface{} `json:"model_parameters,omitempty"`
 	Metadata            map[string]interface{} `json:"metadata,omitempty"`
 	SourceMessageID     *string                `json:"source_message_id,omitempty"`
+	RuntimeInputs       []RuntimeInputResponse `json:"runtime_inputs"`
 	CreatedAt           int64                  `json:"created_at"`
 	UpdatedAt           int64                  `json:"updated_at"`
+}
+
+type RuntimeInputResponse struct {
+	ID                string  `json:"id"`
+	ClientInputID     string  `json:"client_input_id"`
+	Content           string  `json:"content"`
+	Status            string  `json:"status"`
+	TargetMessageID   string  `json:"target_message_id"`
+	ConsumedMessageID *string `json:"consumed_message_id,omitempty"`
+	Sequence          int64   `json:"sequence"`
+	CreatedAt         int64   `json:"created_at"`
+}
+
+type SubmitRuntimeInputRequest struct {
+	ClientInputID string `json:"client_input_id" binding:"required"`
+	Content       string `json:"content" binding:"required"`
+}
+
+type SubmitRuntimeInputResponse struct {
+	Input       RuntimeInputResponse `json:"input"`
+	Disposition string               `json:"disposition"`
+	Created     bool                 `json:"created"`
 }
 
 type SearchResultResponse struct {

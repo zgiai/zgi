@@ -71,6 +71,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 			)
 		}
 	}
+	runtimeInputDispatcher := app.NewRuntimeInputFollowUpDispatcher(taskManager)
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(db),
 		llmClient,
@@ -82,6 +83,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolvers...),
 		memoryService,
 		agentMemoryService,
+		runtimeInputDispatcher,
 	)
 	cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
 	affected, cleanupErr := chatRuntimeService.CleanupStaleActiveMessages(cleanupContext)
@@ -102,9 +104,29 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
 			logger.Error("Failed to register Agent memory extraction sweep", err)
 		}
+		if runtimeInputDispatcher != nil {
+			recoveryTask := &app.RuntimeInputRecoveryTask{}
+			recoveryHandler := app.NewRuntimeInputRecoveryHandler(chatRuntimeService)
+			if err := scheduler.RegisterTask(recoveryTask, recoveryHandler); err != nil {
+				logger.Error("Failed to register Agent runtime input recovery task", err)
+			}
+		}
 	}
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db, integrationActions)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
+	if taskRegistry != nil && taskManager != nil {
+		app.RegisterRuntimeInputFollowUpTaskHandler(taskRegistry, taskManager, appHandler)
+	}
+	if runtimeInputDispatcher != nil {
+		recoveryContext, cancelRecovery := context.WithTimeout(context.Background(), 30*time.Second)
+		if _, err := chatRuntimeService.RecoverStaleRuntimeInputs(recoveryContext); err != nil {
+			logger.Error("Failed to recover stale Agent runtime inputs during startup", err)
+		}
+		if _, err := chatRuntimeService.EnqueuePendingRuntimeInputFollowUps(recoveryContext); err != nil {
+			logger.Error("Failed to enqueue pending Agent runtime input follow-ups during startup", err)
+		}
+		cancelRecovery()
+	}
 	appHandler.SetFileService(fileService)
 	if defaultModelResolver == nil {
 		panic("agent voice routes require default model resolver")
@@ -186,6 +208,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.PATCH("/:agent_id/runtime/conversations/:conversation_id", appHandler.UpdateAgentRuntimeConversation)
 	appsGroup.DELETE("/:agent_id/runtime/conversations/:conversation_id", appHandler.DeleteAgentRuntimeConversation)
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id/messages", appHandler.ListAgentRuntimeMessages)
+	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", appHandler.SubmitAgentRuntimeInput)
 	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/stop", appHandler.StopAgentRuntimeConversation)
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id/events", appHandler.StreamAgentRuntimeEvents)
 	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueAgentRuntimeWorkflowApproval)
@@ -223,6 +246,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.PATCH("/:web_app_id/runtime/conversations/:conversation_id", appHandler.UpdateWebAppAgentRuntimeConversation)
 	protectedWebApps.DELETE("/:web_app_id/runtime/conversations/:conversation_id", appHandler.DeleteWebAppAgentRuntimeConversation)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/messages", appHandler.ListWebAppAgentRuntimeMessages)
+	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", appHandler.SubmitWebAppAgentRuntimeInput)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/stop", appHandler.StopWebAppAgentRuntimeConversation)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/events", appHandler.StreamWebAppAgentRuntimeEvents)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueWebAppAgentRuntimeWorkflowApproval)

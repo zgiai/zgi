@@ -65,6 +65,14 @@ func (h *AgentsHandler) ListAgentRuntimeMessages(c *gin.Context) {
 	h.listRuntimeMessages(c, runtimeCtx)
 }
 
+func (h *AgentsHandler) SubmitAgentRuntimeInput(c *gin.Context) {
+	runtimeCtx, ok := h.agentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	h.submitRuntimeInput(c, runtimeCtx)
+}
+
 func (h *AgentsHandler) StopAgentRuntimeConversation(c *gin.Context) {
 	runtimeCtx, ok := h.agentRuntimeContext(c)
 	if !ok {
@@ -137,6 +145,14 @@ func (h *AgentsHandler) ListWebAppAgentRuntimeMessages(c *gin.Context) {
 	h.listRuntimeMessages(c, runtimeCtx)
 }
 
+func (h *AgentsHandler) SubmitWebAppAgentRuntimeInput(c *gin.Context) {
+	runtimeCtx, ok := h.webAppAgentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	h.submitRuntimeInput(c, runtimeCtx)
+}
+
 func (h *AgentsHandler) StopWebAppAgentRuntimeConversation(c *gin.Context) {
 	runtimeCtx, ok := h.webAppAgentRuntimeContext(c)
 	if !ok {
@@ -184,6 +200,7 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
 	return agentRuntimeContext{
 		Scope: scope,
 		Caller: runtimeservice.Caller{
@@ -243,6 +260,7 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
 	return agentRuntimeContext{
 		Scope: scope,
 		Caller: runtimeservice.Caller{
@@ -563,9 +581,20 @@ func (h *AgentsHandler) listRuntimeMessages(c *gin.Context, runtimeCtx agentRunt
 		h.failRuntime(c, err)
 		return
 	}
+	runtimeInputs, err := h.chatRuntimeService.ListRuntimeInputs(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	inputsByMessage := runtimeInputsByVisibleMessage(runtimeInputs)
 	items := make([]runtimedto.MessageResponse, 0, len(messages))
 	for _, message := range messages {
-		items = append(items, runtimeMessageResponse(message, runtimeCtx.Caller))
+		item := runtimeMessageResponse(message, runtimeCtx.Caller)
+		item.RuntimeInputs = inputsByMessage[message.ID]
+		if item.RuntimeInputs == nil {
+			item.RuntimeInputs = []runtimedto.RuntimeInputResponse{}
+		}
+		items = append(items, item)
 	}
 	response.Success(c, runtimedto.ListResponse[runtimedto.MessageResponse]{
 		Data:    items,
@@ -573,6 +602,46 @@ func (h *AgentsHandler) listRuntimeMessages(c *gin.Context, runtimeCtx agentRunt
 		Limit:   limit,
 		Total:   total,
 		HasMore: int64(page*limit) < total,
+	})
+}
+
+func (h *AgentsHandler) submitRuntimeInput(c *gin.Context, runtimeCtx agentRuntimeContext) {
+	conversationID, ok := uuidParam(c, "conversation_id")
+	if !ok {
+		return
+	}
+	messageID, ok := uuidParam(c, "message_id")
+	if !ok {
+		return
+	}
+	var req runtimedto.SubmitRuntimeInputRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	clientInputID, err := uuid.Parse(strings.TrimSpace(req.ClientInputID))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.chatRuntimeService.SubmitRuntimeInput(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, runtimeCtx.RunConfig, runtimeservice.SubmitRuntimeInputRequest{
+		ConversationID:  conversationID,
+		TargetMessageID: messageID,
+		ClientInputID:   clientInputID,
+		Content:         req.Content,
+	})
+	if err != nil {
+		if errors.Is(err, runtimeservice.ErrConversationIdle) {
+			c.JSON(http.StatusConflict, response.Response{Code: "conversation_idle", Message: "conversation is no longer running"})
+			return
+		}
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, runtimedto.SubmitRuntimeInputResponse{
+		Input:       runtimeInputResponse(result.Input),
+		Disposition: string(result.Disposition),
+		Created:     result.Created,
 	})
 }
 
@@ -783,6 +852,62 @@ func runtimeMessageResponse(message *runtimemodel.Message, caller runtimeservice
 		resp.SourceMessageID = stringPtr(message.SourceMessageID.String())
 	}
 	return resp
+}
+
+func runtimeInputsByVisibleMessage(inputs []*runtimemodel.RuntimeInput) map[uuid.UUID][]runtimedto.RuntimeInputResponse {
+	result := make(map[uuid.UUID][]runtimedto.RuntimeInputResponse)
+	for _, input := range inputs {
+		if input == nil {
+			continue
+		}
+		// Once a follow-up message has been created, its query is the canonical
+		// user-visible representation. Keeping the runtime-input projection on
+		// the previous message would render the same user input twice.
+		if input.ConsumedMessageID != nil && input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+			continue
+		}
+		result[input.TargetMessageID] = append(result[input.TargetMessageID], runtimeInputResponse(input))
+	}
+	return result
+}
+
+func runtimeInputResponse(input *runtimemodel.RuntimeInput) runtimedto.RuntimeInputResponse {
+	if input == nil {
+		return runtimedto.RuntimeInputResponse{}
+	}
+	resp := runtimedto.RuntimeInputResponse{
+		ID: input.ID.String(), ClientInputID: input.ClientInputID.String(), Content: input.Content,
+		Status: runtimeInputUserStatus(input), TargetMessageID: input.TargetMessageID.String(),
+		Sequence: input.Sequence, CreatedAt: input.CreatedAt.Unix(),
+	}
+	if input.ConsumedMessageID != nil {
+		resp.ConsumedMessageID = stringPtr(input.ConsumedMessageID.String())
+	}
+	return resp
+}
+
+func runtimeInputUserStatus(input *runtimemodel.RuntimeInput) string {
+	if input == nil {
+		return "failed"
+	}
+	switch input.Status {
+	case runtimemodel.RuntimeInputStatusCanceled:
+		return "canceled"
+	case runtimemodel.RuntimeInputStatusFailed:
+		return "failed"
+	case runtimemodel.RuntimeInputStatusClaimed:
+		if input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+			return "queued_follow_up"
+		}
+		return "pending"
+	case runtimemodel.RuntimeInputStatusConsumed:
+		if input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+			return "applied_follow_up"
+		}
+		return "applied_current_run"
+	default:
+		return "pending"
+	}
 }
 
 func runtimeStopConversationResponse(result *runtimeservice.StopConversationResult) runtimedto.StopConversationResponse {

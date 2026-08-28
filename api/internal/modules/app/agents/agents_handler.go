@@ -923,6 +923,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		h.failRuntime(c, err)
 		return
 	}
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		ctx,
 		scope,
@@ -1343,6 +1344,7 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		h.failRuntime(c, err)
 		return
 	}
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		c.Request.Context(),
 		scope,

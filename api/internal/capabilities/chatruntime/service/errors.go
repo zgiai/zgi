@@ -11,6 +11,8 @@ var (
 	ErrConversationMissing         = errors.New("conversation is required")
 	ErrMessageStopped              = errors.New("message stopped")
 	ErrConversationRunning         = errors.New("conversation is already streaming")
+	ErrConversationIdle            = errors.New("conversation has no active runtime")
+	ErrRuntimeInputDisabled        = errors.New("runtime input is disabled for this run")
 	ErrConversationWaitingApproval = errors.New("conversation is waiting for workflow approval")
 	ErrConversationWaitingQuestion = errors.New("conversation is waiting for workflow question answer")
 	ErrConversationWaitingAction   = errors.New("conversation is waiting for client action")

@@ -145,6 +145,59 @@ func TestStopConversationIgnoresCompletedLeafMessage(t *testing.T) {
 	}
 }
 
+func TestStopConversationCancelsQueuedRuntimeInputFollowUp(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	batchID := uuid.New()
+
+	db := openStopConversationTestDB(t)
+	conversation := &runtimemodel.Conversation{
+		ID: conversationID, OrganizationID: organizationID, AccountID: accountID,
+		CallerType: runtimemodel.ConversationCallerAgent, ConversationType: runtimemodel.ConversationTypeChat,
+		Title: "queued follow-up", Status: runtimemodel.ConversationStatusNormal,
+		RuntimeStatus: runtimemodel.ConversationRuntimeStatusIdle, CurrentLeafMessageID: &messageID,
+	}
+	message := &runtimemodel.Message{
+		ID: messageID, ConversationID: conversationID, Query: "done", Status: runtimemodel.MessageStatusCompleted, ModelName: "test",
+	}
+	mode := runtimemodel.RuntimeInputConsumptionFollowUp
+	input := &runtimemodel.RuntimeInput{
+		ID: uuid.New(), OrganizationID: organizationID, AccountID: accountID,
+		ConversationID: conversationID, TargetMessageID: messageID, ClientInputID: uuid.New(),
+		Sequence: 1, Content: "queued", Status: runtimemodel.RuntimeInputStatusClaimed,
+		ConsumptionMode: &mode, ClaimBatchID: &batchID,
+	}
+	if err := db.Create(conversation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(message).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(input).Error; err != nil {
+		t.Fatal(err)
+	}
+	repos := repository.NewRepositories(db)
+	repos.Access = stopConversationAccessRepo{}
+	svc := &service{repos: repos, streams: newStreamRegistry()}
+
+	result, err := svc.StopConversation(t.Context(), Scope{OrganizationID: organizationID, AccountID: accountID}, conversationID)
+	if err != nil {
+		t.Fatalf("StopConversation() error = %v", err)
+	}
+	if result.Message != nil {
+		t.Fatalf("StopConversation() message = %#v, want nil", result.Message)
+	}
+	var persisted runtimemodel.RuntimeInput
+	if err := db.First(&persisted, "id = ?", input.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != runtimemodel.RuntimeInputStatusCanceled {
+		t.Fatalf("runtime input status = %q, want %q", persisted.Status, runtimemodel.RuntimeInputStatusCanceled)
+	}
+}
+
 func TestStopMessageDoesNotOverwriteNewerAnswerFromStaleSnapshot(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -203,7 +256,7 @@ func openStopConversationTestDB(t *testing.T) *gorm.DB {
 		}
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&runtimemodel.Conversation{}, &runtimemodel.Message{}); err != nil {
+	if err := db.AutoMigrate(&runtimemodel.Conversation{}, &runtimemodel.Message{}, &runtimemodel.RuntimeInput{}); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "requires cgo") {
 			t.Skipf("sqlite driver unavailable without cgo: %v", err)
 		}

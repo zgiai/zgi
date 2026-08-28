@@ -41,25 +41,30 @@ const (
 	runtimeLeaseLegacyTTL    = time.Hour
 	defaultModelIdleTimeout  = 5 * time.Minute
 
-	streamEventMessageStart         = "message_start"
-	streamEventMessage              = "message"
-	streamEventMessageRetract       = "message_retract"
-	streamEventMessageEnd           = "message_end"
-	streamEventError                = "error"
-	streamEventAgentProgress        = "agent_progress"
-	streamEventIntermediateAnswer   = "agent_intermediate_answer"
-	streamEventUserInputRequested   = "user_input_requested"
-	streamEventFileParseStart       = "file_parse_start"
-	streamEventFileParseEnd         = "file_parse_end"
-	streamEventFileParseError       = "file_parse_error"
-	streamEventSkillCallStart       = "skill_call_start"
-	streamEventSkillCallEnd         = "skill_call_end"
-	streamEventSkillCallError       = "skill_call_error"
-	streamEventClientActionRequired = "client_action_required"
-	streamEventSkillLoadStart       = "skill_load_start"
-	streamEventSkillLoadEnd         = "skill_load_end"
-	streamEventSkillReferenceRead   = "skill_reference_read"
-	streamEventSkillArtifactCreated = "skill_artifact_created"
+	streamEventMessageStart                = "message_start"
+	streamEventMessage                     = "message"
+	streamEventMessageRetract              = "message_retract"
+	streamEventMessageEnd                  = "message_end"
+	streamEventError                       = "error"
+	streamEventAgentProgress               = "agent_progress"
+	streamEventIntermediateAnswer          = "agent_intermediate_answer"
+	streamEventUserInputRequested          = "user_input_requested"
+	streamEventFileParseStart              = "file_parse_start"
+	streamEventFileParseEnd                = "file_parse_end"
+	streamEventFileParseError              = "file_parse_error"
+	streamEventSkillCallStart              = "skill_call_start"
+	streamEventSkillCallEnd                = "skill_call_end"
+	streamEventSkillCallError              = "skill_call_error"
+	streamEventClientActionRequired        = "client_action_required"
+	streamEventSkillLoadStart              = "skill_load_start"
+	streamEventSkillLoadEnd                = "skill_load_end"
+	streamEventSkillReferenceRead          = "skill_reference_read"
+	streamEventSkillArtifactCreated        = "skill_artifact_created"
+	streamEventRuntimeInputAccepted        = "runtime_input_accepted"
+	streamEventRuntimeInputApplied         = "runtime_input_applied"
+	streamEventRuntimeInputFollowUpStarted = "runtime_input_follow_up_started"
+	streamEventRuntimeInputCanceled        = "runtime_input_canceled"
+	streamEventRuntimeInputFailed          = "runtime_input_failed"
 
 	skillModeDisabled = "disabled"
 	skillModeAuto     = "auto"
@@ -167,6 +172,76 @@ type RunConfig struct {
 	// RuntimeTools are caller-scoped first-party capabilities supplied by a
 	// subject adapter. They remain separate from installable Skills.
 	RuntimeTools []skillloop.RuntimeTool
+	// RuntimeInputPolicy enables durable text submitted while this run is active.
+	// It is opt-in so external APIs, workflows, automations, and autonomous
+	// subjects preserve their existing busy-conversation behavior.
+	RuntimeInputPolicy RuntimeInputPolicy
+	// runtimeInputFollowUp is set only by the durable follow-up worker. It lets
+	// that worker consume the conversation slot reserved by its claimed batch,
+	// while ordinary turns remain blocked until the batch starts.
+	runtimeInputFollowUp bool
+}
+
+type RuntimeInputPolicy string
+
+const (
+	RuntimeInputPolicyDisabled              RuntimeInputPolicy = ""
+	RuntimeInputPolicyCheckpointAndFollowUp RuntimeInputPolicy = "checkpoint_and_follow_up"
+)
+
+type SubmitRuntimeInputRequest struct {
+	ClientInputID   uuid.UUID
+	Content         string
+	ConversationID  uuid.UUID
+	TargetMessageID uuid.UUID
+	AdmissionMode   RuntimeInputAdmissionMode
+}
+
+// RuntimeInputAdmissionMode controls whether a durable input may be claimed at
+// a safe checkpoint in the active turn or must wait for the deterministic
+// follow-up turn. The zero value preserves the existing Agent/WebApp behavior.
+type RuntimeInputAdmissionMode string
+
+const (
+	RuntimeInputAdmissionCurrentOrFollowUp RuntimeInputAdmissionMode = ""
+	RuntimeInputAdmissionFollowUpOnly      RuntimeInputAdmissionMode = "follow_up_only"
+)
+
+type RuntimeInputDisposition string
+
+const (
+	RuntimeInputDispositionCurrentRun RuntimeInputDisposition = "current_run"
+	RuntimeInputDispositionFollowUp   RuntimeInputDisposition = "follow_up"
+)
+
+type SubmitRuntimeInputResult struct {
+	Input       *runtimemodel.RuntimeInput
+	Disposition RuntimeInputDisposition
+	Created     bool
+}
+
+type RuntimeInputFollowUpContext struct {
+	BatchID         uuid.UUID
+	OrganizationID  uuid.UUID
+	WorkspaceID     *uuid.UUID
+	AccountID       uuid.UUID
+	CallerType      string
+	CallerID        uuid.UUID
+	ConversationID  uuid.UUID
+	TargetMessageID uuid.UUID
+	ClientInputIDs  []uuid.UUID
+	Contents        []string
+	Source          string
+	SourceWebAppID  *uuid.UUID
+}
+
+// RuntimeInputFollowUpDispatcher is implemented by the owning product surface.
+// ChatRuntime owns durable batches, while the caller module owns how a fresh
+// run configuration is resolved for the follow-up turn. OwnsCallerType keeps
+// recovery jobs from dispatching another product surface's durable batch.
+type RuntimeInputFollowUpDispatcher interface {
+	OwnsCallerType(string) bool
+	EnqueueRuntimeInputFollowUp(context.Context, uuid.UUID) error
 }
 
 // ResourceBindingAuthorization is the runtime authorization evidence for one
@@ -256,6 +331,13 @@ type Service interface {
 	StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*runtimemodel.Message, error)
 	StopConversation(ctx context.Context, scope Scope, id uuid.UUID) (*StopConversationResult, error)
 	StopConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*StopConversationResult, error)
+	SubmitRuntimeInput(ctx context.Context, scope Scope, caller Caller, config RunConfig, req SubmitRuntimeInputRequest) (*SubmitRuntimeInputResult, error)
+	ListRuntimeInputs(ctx context.Context, scope Scope, caller Caller, conversationID uuid.UUID) ([]*runtimemodel.RuntimeInput, error)
+	GetRuntimeInputFollowUpContext(ctx context.Context, batchID uuid.UUID) (*RuntimeInputFollowUpContext, error)
+	PrepareRuntimeInputFollowUp(ctx context.Context, config RunConfig, batchID uuid.UUID) (*PreparedChat, error)
+	FailRuntimeInputFollowUp(ctx context.Context, batchID uuid.UUID, cause error) error
+	RecoverStaleRuntimeInputs(ctx context.Context) (int64, error)
+	EnqueuePendingRuntimeInputFollowUps(ctx context.Context) (int, error)
 	PrepareChat(ctx context.Context, scope Scope, req runtimedto.ChatRequest) (*PreparedChat, error)
 	PrepareConfiguredChat(ctx context.Context, scope Scope, caller Caller, config RunConfig, req runtimedto.ChatRequest) (*PreparedChat, error)
 	PrepareRootRegeneration(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.RegenerateMessageRequest) (*PreparedChat, error)
@@ -349,6 +431,7 @@ type service struct {
 	agentMemoryService             AgentMemoryContextService
 	agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	integrationPrefs               AIChatIntegrationPreferenceResolver
+	runtimeInputDispatcher         RuntimeInputFollowUpDispatcher
 	customSkillStorage             customSkillStorage
 	modelIdleTimeout               time.Duration
 	modelProgressSchedule          modelprogress.Schedule
@@ -399,6 +482,7 @@ func NewServiceWithSkillRuntime(
 	var agentMemoryService AgentMemoryContextService
 	var agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	var integrationPrefs AIChatIntegrationPreferenceResolver
+	var runtimeInputDispatcher RuntimeInputFollowUpDispatcher
 	for _, item := range optionalServices {
 		switch typed := item.(type) {
 		case AgentMemoryContextService:
@@ -412,6 +496,10 @@ func NewServiceWithSkillRuntime(
 		case AIChatIntegrationPreferenceResolver:
 			if integrationPrefs == nil {
 				integrationPrefs = typed
+			}
+		case RuntimeInputFollowUpDispatcher:
+			if runtimeInputDispatcher == nil {
+				runtimeInputDispatcher = typed
 			}
 		}
 	}
@@ -431,6 +519,7 @@ func NewServiceWithSkillRuntime(
 		agentMemoryService:             agentMemoryService,
 		agentMemoryExtractionScheduler: agentMemoryExtractionScheduler,
 		integrationPrefs:               integrationPrefs,
+		runtimeInputDispatcher:         runtimeInputDispatcher,
 		customSkillStorage:             newFilesystemCustomSkillStorage(customSkillStorageRoot),
 		modelIdleTimeout:               configuredModelIdleTimeout(),
 	}
@@ -458,6 +547,7 @@ type PreparedChat struct {
 	RunConfig                      RunConfig
 	ParentID                       *uuid.UUID
 	parts                          *chatRequestParts
+	RuntimeInputFollowUpBatchID    *uuid.UUID
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage

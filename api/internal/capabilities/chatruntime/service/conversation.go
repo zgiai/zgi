@@ -966,6 +966,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 	}
 	s.streams.StopCurrent(id)
 	var stopped *runtimemodel.Message
+	var canceledInputs []*runtimemodel.RuntimeInput
 	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
 		message, err := repository.GetMessageScopedForUpdate(ctx, tx, id, scope.OrganizationID, scope.AccountID)
@@ -1000,6 +1001,10 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		if err := txRepos.Conversation.ClearActiveMessage(ctx, message.ConversationID, id); err != nil {
 			return err
 		}
+		canceledInputs, err = txRepos.RuntimeInput.CancelForStoppedMessage(ctx, message.ConversationID, id, time.Now().UTC())
+		if err != nil {
+			return err
+		}
 		stopped, err = txRepos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
 		return err
 	})
@@ -1007,6 +1012,15 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		return nil, mapRepoError(err)
 	}
 	hydrateMessageGeneratedFileState(ctx, stopped)
+	if stopped != nil {
+		for _, input := range canceledInputs {
+			disposition := RuntimeInputDispositionCurrentRun
+			if input != nil && input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+				disposition = RuntimeInputDispositionFollowUp
+			}
+			s.appendStreamEventBestEffort(ctx, stopped.ID, stopped.ConversationID, streamEventRuntimeInputCanceled, runtimeInputEventPayload(input, disposition))
+		}
+	}
 	return stopped, nil
 }
 
@@ -1035,6 +1049,16 @@ func (s *service) StopConversation(ctx context.Context, scope Scope, id uuid.UUI
 		}
 	}
 	if messageID == nil {
+		canceledInputs, cancelErr := s.repos.RuntimeInput.CancelPendingFollowUps(ctx, conversation.ID, time.Now().UTC())
+		if cancelErr != nil {
+			return nil, cancelErr
+		}
+		for _, input := range canceledInputs {
+			if input == nil {
+				continue
+			}
+			s.appendStreamEventBestEffort(ctx, input.TargetMessageID, input.ConversationID, streamEventRuntimeInputCanceled, runtimeInputEventPayload(input, RuntimeInputDispositionFollowUp))
+		}
 		return &StopConversationResult{Conversation: conversation}, nil
 	}
 

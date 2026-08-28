@@ -110,6 +110,9 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 	}
 	invocation := r.invocationFromEvent(eventType, payload)
 	r.recordPresentationEvent(eventType, payload, invocation)
+	if eventType == streamEventRuntimeInputApplied {
+		r.recordRuntimeInputApplication(payload)
+	}
 	if len(invocation) > 0 {
 		if strings.TrimSpace(stringFromAny(invocation["kind"])) == "tool_governance" {
 			r.persistGovernedToolCallSuspension(payload)
@@ -128,6 +131,36 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 		return err
 	}
 	return r.Emit(eventType, payload)
+}
+
+func (r *processTimelineRecorder) recordRuntimeInputApplication(payload map[string]interface{}) {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil {
+		return
+	}
+	inputID := payloadString(payload, "input_id")
+	if inputID == "" {
+		return
+	}
+	application := map[string]interface{}{}
+	for _, key := range []string{
+		"input_id", "sequence", "checkpoint", "model_round", "created_at", "applied_at",
+		"presentation_id", "presentation_sequence", "presentation_version",
+	} {
+		if value, ok := payload[key]; ok {
+			application[key] = value
+		}
+	}
+	applications := mapSliceFromAny(r.prepared.Message.Metadata[runtimeInputApplicationsMetadataKey])
+	for index := range applications {
+		if payloadString(applications[index], "input_id") != inputID {
+			continue
+		}
+		applications[index] = application
+		r.prepared.Message.Metadata[runtimeInputApplicationsMetadataKey] = mapsToInterfaceSlice(applications)
+		return
+	}
+	applications = append(applications, application)
+	r.prepared.Message.Metadata[runtimeInputApplicationsMetadataKey] = mapsToInterfaceSlice(applications)
 }
 
 func (r *processTimelineRecorder) recordPresentationTextChunk(payload map[string]interface{}) {

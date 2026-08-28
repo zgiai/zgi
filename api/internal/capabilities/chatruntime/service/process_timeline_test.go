@@ -553,6 +553,46 @@ func TestProcessTimelineRecorderSkipsDuplicateSuccessfulSkillLoadEvents(t *testi
 	}
 }
 
+func TestProcessTimelineRecorderPublishesRuntimeInputAtPresentationPosition(t *testing.T) {
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	emitted := []StreamEvent{}
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, func(event StreamEvent) error {
+		emitted = append(emitted, event)
+		return nil
+	})
+
+	recorder.RecordEvent(streamEventRuntimeInputApplied, map[string]interface{}{
+		"input_id":    "input-1",
+		"content":     "shorten the introduction",
+		"sequence":    2,
+		"checkpoint":  runtimeInputCheckpointBeforeModelRound,
+		"model_round": 3,
+		"created_at":  int64(100),
+		"applied_at":  int64(120),
+	})
+
+	if len(emitted) != 1 || emitted[0].EventType != streamEventRuntimeInputApplied {
+		t.Fatalf("emitted = %#v", emitted)
+	}
+	if stringFromAny(emitted[0].Payload["presentation_id"]) == "" {
+		t.Fatalf("event has no presentation position: %#v", emitted[0].Payload)
+	}
+	applications := mapSliceFromAny(message.Metadata[runtimeInputApplicationsMetadataKey])
+	if len(applications) != 1 {
+		t.Fatalf("runtime input applications = %#v", applications)
+	}
+	if got := payloadString(applications[0], "input_id"); got != "input-1" {
+		t.Fatalf("input_id = %q, applications=%#v", got, applications)
+	}
+	if got := intValueFromAny(applications[0]["model_round"]); got != 3 {
+		t.Fatalf("model_round = %d, applications=%#v", got, applications)
+	}
+}
+
 func TestProcessTimelineRecorderPersistsTurnStateTraceWithoutVisibleInvocation(t *testing.T) {
 	message := &runtimemodel.Message{
 		ID:       uuid.New(),

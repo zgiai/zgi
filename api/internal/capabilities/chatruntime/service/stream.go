@@ -70,6 +70,24 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
+	if !prepared.toolLoopEnabled() {
+		timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, eventCallback)
+		additional, err := s.claimRuntimeInputsForCurrentRun(
+			runCtx,
+			prepared,
+			runtimeInputCheckpoint{Name: runtimeInputCheckpointBeforeModelRound, ModelRound: 1},
+			func(payload map[string]interface{}) error {
+				return timeline.RecordEvent(streamEventRuntimeInputApplied, payload)
+			},
+		)
+		if err != nil {
+			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
+			return nil, newFinalizedStreamError(err)
+		}
+		if len(additional) > 0 {
+			prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, additional...)
+		}
+	}
 	userMemoryUsage := prepared.UserMemoryPreflightUsage
 	if !prepared.UserMemoryPreflightDone {
 		var err error
@@ -448,7 +466,10 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 	if err := s.extractPreparedAttachments(ctx, prepared, onEvent); err != nil {
 		return err
 	}
-	metadata := streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String())
+	metadata := preserveRuntimeInputFollowUpMetadata(
+		streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String()),
+		prepared.Message.Metadata,
+	)
 	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
@@ -467,7 +488,10 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 		prepared.UserMemoryPreflightDone = preflight.UserMemoryDone
 		prepared.UserMemoryPreflightUsage = preflight.UserMemoryUsage
 	}
-	metadata = streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String())
+	metadata = preserveRuntimeInputFollowUpMetadata(
+		streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String()),
+		prepared.Message.Metadata,
+	)
 	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
@@ -693,24 +717,42 @@ func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, e
 func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedChat, answer string, metadata map[string]interface{}) error {
 	metadata = completeToolGovernanceContinuationMetadata(metadata)
 	prepared.Message.Metadata = metadata
-	if err := s.repos.Message.UpdateCompleted(ctx, prepared.Message.ID, answer, metadata); err != nil {
-		return err
+	complete := func(txRepos *repository.Repositories) error {
+		if err := txRepos.Message.UpdateCompleted(ctx, prepared.Message.ID, answer, metadata); err != nil {
+			return err
+		}
+		if prepared.ReplaceRoot {
+			if err := txRepos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+				return err
+			}
+		} else if prepared.Continuation {
+			if err := txRepos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+				return err
+			}
+		} else if err := txRepos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+			return err
+		}
+		batchID, err := s.claimRuntimeInputsForFollowUp(ctx, txRepos, prepared)
+		if err != nil {
+			return err
+		}
+		prepared.RuntimeInputFollowUpBatchID = batchID
+		return nil
 	}
-	if prepared.ReplaceRoot {
-		if err := s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-			return err
-		}
-	} else if prepared.Continuation {
-		if err := s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-			return err
-		}
+	var err error
+	if s.repos.DB == nil {
+		err = complete(s.repos)
 	} else {
-		if err := s.repos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-			return err
-		}
+		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return complete(repository.NewRepositories(tx))
+		})
+	}
+	if err != nil {
+		return err
 	}
 	prepared.Message.Answer = answer
 	s.scheduleAgentMemoryExtractionBestEffort(ctx, prepared)
+	s.dispatchPreparedRuntimeInputFollowUp(ctx, prepared)
 	return nil
 }
 
@@ -727,6 +769,8 @@ func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedC
 		if clearErr := s.clearPreparedRuntime(ctx, prepared); clearErr != nil {
 			logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), clearErr)
 		}
+	} else {
+		s.dispatchPreparedRuntimeInputFollowUp(ctx, prepared)
 	}
 	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause), eventCallback)
 	return nil
@@ -748,8 +792,9 @@ func finalizedRuntimeOwnershipError(err error) error {
 
 func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, cause error) error {
 	message := publicAichatErrorMessage(cause)
+	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	metadataChanged := false
 	if code, params, ok := publicAichatStructuredError(cause); ok {
-		metadata := copyStringAnyMap(prepared.Message.Metadata)
 		if metadata == nil {
 			metadata = map[string]interface{}{}
 		}
@@ -759,22 +804,47 @@ func (s *service) completePreparedError(ctx context.Context, prepared *PreparedC
 		} else {
 			delete(metadata, "error_params")
 		}
-		if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
-			logger.WarnContext(ctx, "failed to persist aichat error metadata", "message_id", prepared.Message.ID.String(), err)
-		} else {
-			prepared.Message.Metadata = metadata
+		metadataChanged = true
+	}
+	finish := func(txRepos *repository.Repositories) error {
+		if metadataChanged {
+			if err := txRepos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
+				return err
+			}
 		}
+		if err := txRepos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
+			return err
+		}
+		if prepared.ReplaceRoot {
+			if err := txRepos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+				return err
+			}
+		} else if prepared.Continuation {
+			if err := txRepos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+				return err
+			}
+		} else if err := txRepos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+			return err
+		}
+		batchID, err := s.claimRuntimeInputsForFollowUp(ctx, txRepos, prepared)
+		if err != nil {
+			return err
+		}
+		prepared.RuntimeInputFollowUpBatchID = batchID
+		return nil
 	}
-	if err := s.repos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
-		return err
+	var err error
+	if s.repos.DB == nil {
+		err = finish(s.repos)
+	} else {
+		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return finish(repository.NewRepositories(tx))
+		})
 	}
-	if prepared.ReplaceRoot {
-		return s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	if err == nil && metadataChanged {
+		prepared.Message.Metadata = metadata
 	}
-	if prepared.Continuation {
-		return s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
-	}
-	return s.repos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	return err
 }
 
 func (s *service) clearPreparedRuntime(ctx context.Context, prepared *PreparedChat) error {

@@ -76,6 +76,21 @@ type RuntimeLeaseRepository interface {
 	MarkExpiredActiveAsError(ctx context.Context, heartbeatCutoff, legacyCutoff time.Time, message string) ([]uuid.UUID, error)
 }
 
+type RuntimeInputRepository interface {
+	Submit(ctx context.Context, input *runtimemodel.RuntimeInput) (*runtimemodel.RuntimeInput, bool, error)
+	ListByConversation(ctx context.Context, conversationID, organizationID, accountID uuid.UUID) ([]*runtimemodel.RuntimeInput, error)
+	ListByBatch(ctx context.Context, batchID uuid.UUID) ([]*runtimemodel.RuntimeInput, error)
+	ClaimPending(ctx context.Context, targetMessageID uuid.UUID, mode string, batchID *uuid.UUID, now, expiresAt time.Time) ([]*runtimemodel.RuntimeInput, error)
+	MarkBatchConsumed(ctx context.Context, batchID, consumedMessageID uuid.UUID, now time.Time) error
+	MarkBatchFailed(ctx context.Context, batchID uuid.UUID, failure string, now time.Time) ([]*runtimemodel.RuntimeInput, error)
+	CancelForStoppedMessage(ctx context.Context, conversationID, messageID uuid.UUID, now time.Time) ([]*runtimemodel.RuntimeInput, error)
+	CancelPendingFollowUps(ctx context.Context, conversationID uuid.UUID, now time.Time) ([]*runtimemodel.RuntimeInput, error)
+	RecoverStaleClaims(ctx context.Context, cutoff time.Time) (int64, error)
+	HasPendingFollowUp(ctx context.Context, conversationID uuid.UUID) (bool, error)
+	ListPendingInactiveTargets(ctx context.Context, limit int) ([]uuid.UUID, error)
+	ListPendingFollowUpBatches(ctx context.Context, limit int) ([]uuid.UUID, error)
+}
+
 type AccessRepository interface {
 	IsOrganizationMember(ctx context.Context, organizationID, accountID uuid.UUID) (bool, error)
 	GetCurrentWorkspaceID(ctx context.Context, accountID uuid.UUID) (*uuid.UUID, error)
@@ -104,6 +119,7 @@ type Repositories struct {
 	Conversation ConversationRepository
 	Message      MessageRepository
 	RuntimeLease RuntimeLeaseRepository
+	RuntimeInput RuntimeInputRepository
 	Access       AccessRepository
 	SkillConfig  OrganizationSkillConfigRepository
 	SkillPref    AccountSkillPreferenceRepository
@@ -130,6 +146,7 @@ func NewRepositories(db *gorm.DB) *Repositories {
 		Conversation: NewConversationRepository(db),
 		Message:      NewMessageRepository(db),
 		RuntimeLease: NewRuntimeLeaseRepository(db),
+		RuntimeInput: NewRuntimeInputRepository(db),
 		Access:       NewAccessRepository(db),
 		SkillConfig:  NewOrganizationSkillConfigRepository(db),
 		SkillPref:    NewAccountSkillPreferenceRepository(db),
