@@ -253,7 +253,7 @@ const messages = {
     addGoal: 'Add goal',
     removeGoal: 'Remove goal',
     rulesPlaceholder: 'For example: Never use a resource that is not explicitly bound.',
-    rulesDescription: 'Defines the behavior boundaries and execution constraints it must follow.',
+    rulesDescription: 'Optional. Add behavior boundaries and execution constraints when needed.',
     addRule: 'Add rule',
     removeRule: 'Remove rule',
     unsaved: 'You have unsaved changes',
@@ -717,15 +717,198 @@ const messages = {
         'Add a messaging platform so this digital human can receive external conversations and send replies.',
       defaultName: 'Channel bot',
       status: { active: 'Active', disabled: 'Disabled' },
-      taskPolicy: {
-        title: 'Allow task management in this connection',
-        description:
-          'When enabled, people in this connection can ask the digital human to propose and manage tasks for the same conversation. The digital human still asks for confirmation before activating a proposal.',
+      verification: {
+        action: 'Start connection test',
+        savedTitle: 'App credential saved',
+        savedDescription:
+          'Select Test connection to check the App ID, App Secret, bot capability, and application identity.',
+        baseReady: 'App credential and bot identity verified',
+        runtimeHint:
+          'Callbacks, replies, and group context are verified after the first real message arrives.',
+        failedTitle: 'Basic connection check failed',
+        failure: {
+          credentials_invalid:
+            'The App ID or App Secret is invalid. Copy them again from Credentials & Basic Info, then save.',
+          bot_capability_disabled:
+            'Bot capability is not enabled. Add Bot under Add App Capability, then republish the app.',
+          app_unavailable:
+            'The app is unpublished or the test member is outside its availability scope. Update the scope and republish.',
+          permission_missing:
+            'Application-identity permission tenant:tenant:readonly is missing. Enable it in Feishu, wait until it is active, then test again. Permission-only changes do not require a new app version.',
+          permission_or_resource_denied:
+            'Feishu denied identity lookup. Check tenant:tenant:readonly first, then app availability. Publish a new version only if availability or other versioned app configuration changed.',
+          access_denied:
+            'Feishu denied identity lookup. Check tenant:tenant:readonly first, then app availability. Publish a new version only if availability or other versioned app configuration changed.',
+          bot_not_in_chat:
+            'The bot is not in the target chat. Add it, then send another test message.',
+          send_not_allowed:
+            'The bot cannot send messages. Enable im:message:send_as_bot, wait until it is active, then test again. Permission-only changes do not require a new app version.',
+          configuration_invalid:
+            'The Feishu app configuration is incomplete or incompatible. Check the App ID, bot capability, and app type.',
+          rate_limited: 'Feishu is rate limiting checks. Wait briefly, then test again.',
+          temporarily_unavailable:
+            'Feishu is temporarily unreachable. Try again later and check network or Feishu service status if it persists.',
+          response_invalid:
+            'Feishu returned an unrecognized response. Please test the connection again later.',
+          provider_rejected:
+            'Feishu rejected the check. Review credentials, bot capability, and application-identity permissions first. If availability or other app configuration changed, confirm that the latest version is published.',
+        },
+      },
+      connectionTest: {
+        status: {
+          configuration_failed: 'Basic configuration failed',
+          awaiting_message: 'Waiting for a real message',
+          message_received: 'Test message received; the digital human is working',
+          replying: 'Sending the reply',
+          succeeded: 'Feishu message round trip verified',
+          partial: 'Messaging works, but some group capabilities are unavailable',
+          failed: 'Connection test did not complete',
+          expired: 'No Feishu test message was received',
+        },
+        waitingDescription:
+          'Send the complete test text below in a direct chat with this bot. This page checks the result automatically.',
+        groupWaitingDescription:
+          'Mention the bot in a group where it is already installed and send the complete text below. All group capabilities will be checked automatically.',
+        sentAwaitingCallbackTitle: 'Feishu callback not received yet',
+        groupSentAwaitingCallbackTitle: 'Group mention callback not received yet',
+        sentAwaitingCallbackDescription:
+          '“I sent it” has been recorded, but this real message has not arrived yet. Review the checklist below while this page continues checking.',
+        groupSentAwaitingCallbackDescription:
+          'This connection has not received the matching group-mention callback. Enable im:message.group_msg, wait until it is active, then send the test text again. Permission-only changes do not require a new app version. If it is already enabled, check group membership, the mentioned bot, event subscription, and app availability.',
+        successDescription:
+          'ZGI received the Feishu direct message and delivered the digital human’s final reply to the same conversation.',
+        groupSuccessDescription:
+          'Group mention wake-up, message history, member names, and bot reply all passed against the real conversation.',
+        partialDescription:
+          'Group mentions and replies work, but some context capabilities are missing. Enable the permissions shown below, then select Refresh to check again. No new app version is required for permission-only changes.',
+        failureDetectedTitle: 'Connection test failure confirmed',
+        failureDetectedDescription:
+          'ZGI stopped this test. Fix the configuration described below, then start a new test.',
+        sendTitle: 'Direct-message the bot in Feishu',
+        sendDescription:
+          'Copy and send the full text unchanged. Do not send it to a group or send only the code.',
+        groupSendTitle: 'Mention the bot in a Feishu group',
+        groupSendDescription:
+          'Make sure the bot is in the group, then mention it and send the complete test text unchanged.',
+        copyMessage: 'Copy test text',
+        confirmSent: 'I sent it',
+        sentConfirmed: 'Send confirmed',
+        restartTest: 'Test again',
+        restartingTest: 'Creating a new test…',
+        messageCopied: 'Test text copied.',
+        messageCopyError: 'Could not copy the test text. Select it manually.',
+        confirmSentHint:
+          'After sending the complete test text, select “I sent it”. Verification will continue from real callback evidence.',
+        groupConfirmSentHint:
+          'After sending the group mention, select “I sent it”. ZGI uses only that verified group and never accepts a manually entered chat ID.',
+        groupPrompt: {
+          title: 'Continue with group capability verification',
+          description:
+            'One real group mention checks group inbound events, history, member names, and reply permission.',
+          action: 'Test group capabilities',
+        },
+        permissionGuide: {
+          title: 'How each group permission affects the bot',
+          description:
+            'These are application-identity permissions. They take effect after Feishu shows them as enabled or approved; no new app version is required. If this page still shows an old result, select Test again to create a fresh verification.',
+          required: 'Required for messaging',
+          enhanced: 'Context enhancement',
+          items: {
+            groupMessage: {
+              title: 'Receive group messages and mention callbacks',
+              effect:
+                'Without it, this connection cannot see group messages, so the digital human does not start or reply.',
+            },
+            sendAsBot: {
+              title: 'Send replies as the bot',
+              effect:
+                'Without it, the callback and digital-human run may succeed, but the final reply cannot be sent to the group.',
+            },
+            messageHistory: {
+              title: 'Read group message history',
+              effect:
+                'Without it, the current mention may still trigger, but earlier group context is unavailable, so the digital human can only answer from the current message or ask for clarification.',
+            },
+            memberNames: {
+              title: 'Read group member names',
+              effect:
+                'Without it, messages can still be processed, but senders may appear as unknown members or technical identifiers.',
+            },
+          },
+        },
+        capabilities: {
+          credentials: 'App credentials valid',
+          bot_identity: 'Bot capability and identity',
+          direct_inbound: 'Real direct message received',
+          group_mention: 'Real group mention received',
+          message_history: 'Read group message history',
+          member_names: 'Read group member names',
+          reply_delivery: 'Final reply delivered',
+        },
+        capabilityFailure: {
+          permission_missing:
+            'The required application-identity permission is missing. Enable it, then select Refresh to check again. No new app version is required.',
+          bot_not_in_chat: 'The bot is not a member of this group.',
+          app_unavailable:
+            'The app is unavailable to this group or test member. Check availability scope and republish.',
+          credentials_invalid: 'The app credentials are no longer valid. Save them again.',
+          rate_limited: 'Feishu is rate limiting checks. Try again later.',
+          temporarily_unavailable: 'Feishu is temporarily unavailable. Try again later.',
+          configuration_invalid: 'The app or group configuration cannot be tested as configured.',
+          provider_rejected:
+            'Feishu rejected this capability check. Review permissions first; if they are enabled, check app availability and related app configuration.',
+        },
+        steps: {
+          credentials: 'App credential and bot identity',
+          inbound: 'Real direct message received',
+          reply: 'Final reply delivered',
+        },
+        failure: {
+          message_not_received:
+            'ZGI did not receive the message. The URL is often placed under Callback Configuration instead of Event Configuration, or the message event is not subscribed.',
+          group_message_not_received:
+            'This connection did not receive the matching group-mention callback. Enable im:message.group_msg, wait until it is active, then select Test again and resend the text. Permission-only changes do not require a new app version. If the permission is already enabled, confirm the bot is in the group, the current bot was mentioned, the test member is in app availability, and im.message.receive_v1 is subscribed.',
+          send_permission_missing:
+            'The message arrived, but the bot could not reply. Enable application-identity permission im:message:send_as_bot, wait until it is active, then select Test again. No new app version is required.',
+          permission_or_resource_denied:
+            'The message arrived, but Feishu denied the bot reply. Confirm that application-identity permission im:message:send_as_bot is enabled; permission changes do not require a new app version. If already enabled, check chat membership and app availability. Automatic retry has stopped.',
+          bot_capability_disabled:
+            'The message arrived, but bot capability is unavailable. Enable it and republish the app.',
+          app_unavailable:
+            'The message arrived, but the app is unavailable. Check availability scope and publish the latest version.',
+          bot_not_in_chat:
+            'The bot is not in the target conversation. Complete the direct-message test first.',
+          reply_outcome_unknown:
+            'The message arrived, but the Feishu reply outcome could not be confirmed. Check the chat before testing again.',
+          digital_human_unavailable:
+            'The message arrived, but the digital human is unpublished or a conversation could not be created.',
+          runtime_unavailable:
+            'The message arrived, but the digital-human runtime is temporarily unavailable. Try again later.',
+          callback_stale: 'An expired callback arrived. Send the test text again.',
+          reply_not_created:
+            'The message arrived, but no final reply was created in time. Check publication and runtime logs.',
+          reply_failed:
+            'The message arrived, but the final reply failed. Check send-message permission first, then chat membership and app availability.',
+          message_rejected:
+            'ZGI received the message but did not accept the run. Check that the digital human and channel are enabled.',
+          generic: 'The test did not complete. Review the Feishu checklist below, then test again.',
+        },
+        eventChecklistTitle: 'Check these items in Feishu',
+        eventChecklist: {
+          eventPage:
+            'Put the URL under Events & Callbacks → Event Configuration, not Callback Configuration. Save and republish the app after adding or changing the URL.',
+          subscription:
+            'Subscribe to im.message.receive_v1 and make sure Verification Token and Encrypt Key match.',
+          publish:
+            'Add the test member to the availability scope, save, and publish a new version containing the changes.',
+          groupAccess:
+            'Confirm the bot is in the test group and application permission im:message.group_msg is enabled. Test again after the permission becomes active; publish a new version only if availability or other app configuration changed.',
+        },
       },
       context: {
         status: {
           ready: 'Channel conversation context is readable',
-          runtime_verification: 'Group conversation context is supported',
+          runtime_verification: 'Waiting for the first group message to verify context',
           missing_message_history: 'Message history permission is missing',
           missing_member_names: 'Member name permission is missing',
           not_supported: 'Message history is not supported by this platform',
@@ -733,11 +916,12 @@ const messages = {
         },
         hint: {
           ready: '',
-          runtime_verification: '',
+          runtime_verification:
+            'Mention the bot in a group to verify message-history and member-name permissions.',
           missing_message_history:
-            'Enable read-only message history permission in Feishu Developer Console, then republish the app.',
+            'Enable im:message:readonly and im:message.group_msg for the application identity, then refresh the check. No new app version is required.',
           missing_member_names:
-            'Messages remain readable. Enable chat member access to show real sender names.',
+            'Messages remain readable. Enable application-identity permission im:chat.members:read to show real sender names.',
           not_supported:
             'Only the current message is available. When earlier context is required, copy the source text into the same message that mentions the digital human.',
           temporarily_unavailable:
@@ -787,13 +971,63 @@ const messages = {
           'They are used only for bot identity verification, message reading, and replies, and are never returned to the browser.',
         openFeishuConsole: 'Open Feishu Developer Console',
         guide: {
-          title: 'Where can I find these values?',
+          title: 'Before you save',
           description:
-            'Select the enterprise app you want to connect in Feishu Developer Console, then use the locations below.',
+            'Prepare bot capability, application-identity permissions, and credentials first.',
+          afterSaveHint:
+            'After saving, continue with the guided Feishu setup and real-message verification.',
+          steps: {
+            bot: {
+              title: 'Enable bot capability',
+              description: 'Add Bot under Add App Capability.',
+            },
+            permissions: {
+              title: 'Enable the complete permission bundle',
+              description: 'Add every application-identity permission listed below.',
+            },
+            credentials: {
+              title: 'Prepare app and security credentials',
+              description:
+                'Copy App ID, App Secret, and Verification Token. Copy Encrypt Key only when encryption is enabled.',
+            },
+          },
+          permissionBundleTitle: 'Recommended default permissions (application identity)',
+          permissionBundleDescription:
+            'Covers identity lookup, direct messages, group context, member names, and bot replies.',
+          copyPermissions: 'Copy permission codes',
+          permissionsCopied: 'Feishu permission codes copied.',
+          permissionsCopyError: 'Could not copy the permission codes. Select them manually.',
           appCredentials: 'App ID and App Secret',
           appCredentialsPath: 'Credentials & Basic Info → App Credentials',
           eventSecurity: 'Verification Token and Encrypt Key',
           eventSecurityPath: 'Events & Callbacks → Encryption',
+        },
+        postSave: {
+          title: 'Complete Feishu setup',
+          description:
+            'The credential is saved and this connection now has its own callback URL. Complete these steps in order.',
+          steps: {
+            test: {
+              title: 'Complete direct and group tests',
+              description:
+                'Verify direct messaging first, then mention the bot in a real group as prompted. ZGI automatically checks group inbound, history, member names, and reply delivery.',
+            },
+            callback: {
+              title: 'Add the URL under Event Configuration',
+              description:
+                'Paste the URL under Events & Callbacks → Event Configuration, not Callback Configuration. Save and republish after adding or changing it.',
+            },
+            event: {
+              title: 'Subscribe to the message event',
+              description:
+                'Subscribe to im.message.receive_v1 and ensure Verification Token and Encrypt Key match.',
+            },
+            publish: {
+              title: 'Set scope and publish',
+              description:
+                'Add the test member to app availability. Save and publish a new version after any callback URL, event subscription, or scope change.',
+            },
+          },
         },
         dingtalk: {
           guideTitle: 'Where can I find these values?',
@@ -812,7 +1046,7 @@ const messages = {
         edit: 'Edit app credential',
         editTitle: 'Edit Feishu app credential',
         editDescription: 'Rotate app secrets. Empty fields keep their current values.',
-        createError: 'The app credential could not be verified and saved.',
+        createError: 'The app credential could not be saved.',
         updateError: 'The app credential could not be updated.',
       },
     },
@@ -868,6 +1102,17 @@ const messages = {
         outcomeUnknown: 'The provider outcome could not be confirmed; automatic retry stopped.',
         interrupted: 'Delivery was interrupted after provider execution may have started.',
         payloadInvalid: 'The committed response could not be prepared for delivery.',
+        credentialsInvalid:
+          'The Feishu App ID or App Secret is invalid or expired. Save the credentials again.',
+        botNotInChat: 'The Feishu bot is not in the target chat. Add it to the chat first.',
+        botCapabilityDisabled:
+          'Bot capability is not enabled. Add it and republish the Feishu app.',
+        appUnavailable:
+          'The Feishu app is unpublished or the target member is outside its availability scope. Update the scope and republish.',
+        sendPermissionMissing:
+          'Application-identity permission im:message:send_as_bot is missing. After it becomes active, retry delivery directly; no new app version is required.',
+        permissionOrResourceDenied:
+          'Feishu denied message delivery. Check im:message:send_as_bot, chat membership, and app availability.',
       },
       status: {
         pending: 'Pending',
@@ -878,15 +1123,18 @@ const messages = {
       },
     },
     messages: {
-      installationCreated: 'External channel connected.',
+      installationCreated: 'Application credentials saved. Test the connection to continue.',
       installationUpdated: 'External channel updated.',
       installationDeleted: 'External channel deleted.',
       credentialUpdated: 'App credential updated.',
+      installationVerified: 'App credential and bot identity verified.',
       deliveryRetried: 'Delivery queued for retry.',
       webhookCopied: 'Webhook URL copied.',
     },
     errors: {
       installation: 'Could not save the external channel.',
+      verification:
+        'Basic connection verification failed. Check the App ID, App Secret, bot capability, and app publication status.',
       installationDelete: 'Could not delete the external channel.',
       deliveryRetry: 'Could not retry this delivery.',
     },
@@ -1127,7 +1375,6 @@ const messages = {
     edit: 'Edit',
     save: 'Save',
     refresh: 'Refresh',
-    technicalDetails: 'Technical details',
   },
   errors: {
     create: 'Could not create the digital human.',

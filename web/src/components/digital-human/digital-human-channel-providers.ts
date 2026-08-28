@@ -1,6 +1,8 @@
 import {
   FeishuCredentialDialog,
   FeishuCredentialFields,
+  FeishuInstallationSetupGuide,
+  FeishuInstallationVerificationStatus,
   createEmptyFeishuCredentialDraft,
   isFeishuCredentialComplete,
   serializeFeishuCredential,
@@ -28,12 +30,17 @@ export const DIGITAL_HUMAN_CHANNEL_PROVIDERS = [
     defaultBotNameKey: 'channels.providers.feishu.defaultBotName',
     enabled: true,
     accentClassName: 'bg-blue-500/10 text-blue-600',
+    connectionTestMode: 'message_round_trip',
     credentialUI: {
       createEmptyDraft: createEmptyFeishuCredentialDraft,
       serialize: serializeFeishuCredential,
       isComplete: isFeishuCredentialComplete,
       Fields: FeishuCredentialFields,
       Dialog: FeishuCredentialDialog,
+    },
+    installationUI: {
+      SetupGuide: FeishuInstallationSetupGuide,
+      VerificationStatus: FeishuInstallationVerificationStatus,
     },
     connectionFilter: connection =>
       connection.integration_id === 'feishu' &&
@@ -55,6 +62,7 @@ export const DIGITAL_HUMAN_CHANNEL_PROVIDERS = [
     defaultBotNameKey: 'channels.providers.dingtalk.defaultBotName',
     enabled: true,
     accentClassName: 'bg-sky-500/10 text-sky-600',
+    connectionTestMode: 'basic',
     credentialUI: {
       createEmptyDraft: createEmptyDingTalkCredentialDraft,
       serialize: serializeDingTalkCredential,
@@ -62,6 +70,7 @@ export const DIGITAL_HUMAN_CHANNEL_PROVIDERS = [
       Fields: DingTalkCredentialFields,
       Dialog: DingTalkCredentialDialog,
     },
+    installationUI: undefined,
     connectionFilter: connection =>
       connection.integration_id === 'dingtalk' &&
       connection.driver_id === 'dingtalk-open-api' &&

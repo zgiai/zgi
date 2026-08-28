@@ -246,8 +246,6 @@ function ConfigurationEditor({
   const initialSetupChecks = [
     { label: t('fields.identityName'), ready: Boolean(identityName.trim()) },
     { label: t('fields.persona'), ready: Boolean(persona.trim()) },
-    { label: t('fields.rules'), ready: normalizedRules.length > 0 },
-    { label: t('settings.modelTitle'), ready: Boolean(model.trim()) && !modelUnavailable },
   ];
   const initialSetupReadyCount = initialSetupChecks.filter(check => check.ready).length;
   return (
@@ -377,7 +375,6 @@ function ConfigurationEditor({
                     <Field
                       label={t('fields.rules')}
                       description={t('settings.rulesDescription')}
-                      required
                       action={
                         <Button
                           type="button"
@@ -396,7 +393,6 @@ function ConfigurationEditor({
                         rules={rules}
                         onChange={setRules}
                         disabled={!canUpdate}
-                        required
                         removeLabel={t('settings.removeRule')}
                         placeholder={t('settings.rulesPlaceholder')}
                       />
@@ -1047,7 +1043,6 @@ function PersonaTemplateEditor({
           <Field
             label={t('fields.rules')}
             description={t('settings.rulesDescription')}
-            required
             action={
               <Button
                 type="button"
@@ -1065,7 +1060,6 @@ function PersonaTemplateEditor({
               rules={rules}
               onChange={setRules}
               disabled={false}
-              required
               removeLabel={t('settings.removeRule')}
               placeholder={t('settings.rulesPlaceholder')}
             />

@@ -7,6 +7,8 @@ import type {
   DigitalHumanChannelDelivery,
   DigitalHumanChannelInboundEvent,
   DigitalHumanChannelInstallation,
+  DigitalHumanChannelInstallationVerification,
+  DigitalHumanChannelConnectionTest,
   DigitalHumanChannelPage,
   DigitalHumanList,
   DigitalHumanPersonaTemplate,
@@ -41,7 +43,6 @@ import type {
   DigitalHumanTaskRun,
   DigitalHumanTaskActivity,
   DigitalHumanTaskPage,
-  DigitalHumanChannelTaskPolicy,
   DigitalHumanDirectSkillConfiguration,
   UpdateDigitalHumanDirectSkillConfigurationRequest,
 } from './types/digital-human';
@@ -283,6 +284,43 @@ class DigitalHumanService extends BaseService {
     );
   }
 
+  verifyChannelInstallation(
+    id: string,
+    installationId: string
+  ): Promise<ApiResponseData<DigitalHumanChannelInstallationVerification>> {
+    return this.request(
+      'post',
+      `/digital-humans/${id}/channels/installations/${installationId}/verify`
+    );
+  }
+
+  startChannelConnectionTest(
+    id: string,
+    installationId: string,
+    conversationType: 'direct' | 'group'
+  ): Promise<ApiResponseData<DigitalHumanChannelConnectionTest>> {
+    return this.request(
+      'post',
+      `/digital-humans/${id}/channels/installations/${installationId}/connection-tests`,
+      { conversation_type: conversationType }
+    );
+  }
+
+  getChannelConnectionTest(
+    id: string,
+    installationId: string,
+    testId: string,
+    conversationType: 'direct' | 'group',
+    startedAt: string
+  ): Promise<ApiResponseData<DigitalHumanChannelConnectionTest>> {
+    return this.request(
+      'get',
+      `/digital-humans/${id}/channels/installations/${installationId}/connection-tests/${testId}`,
+      undefined,
+      { params: { started_at: startedAt, conversation_type: conversationType } }
+    );
+  }
+
   deleteChannelInstallation(id: string, installationId: string): Promise<ApiResponseData<unknown>> {
     return this.request('delete', `/digital-humans/${id}/channels/installations/${installationId}`);
   }
@@ -371,28 +409,6 @@ class DigitalHumanService extends BaseService {
     return this.request('get', `/digital-humans/${id}/tasks/${taskId}/activities`);
   }
 
-  getChannelTaskPolicy(
-    id: string,
-    installationId: string
-  ): Promise<ApiResponseData<DigitalHumanChannelTaskPolicy>> {
-    return this.request(
-      'get',
-      `/digital-humans/${id}/channels/installations/${installationId}/task-policy`
-    );
-  }
-
-  updateChannelTaskPolicy(
-    id: string,
-    installationId: string,
-    enabled: boolean,
-    expectedRevision: number
-  ): Promise<ApiResponseData<DigitalHumanChannelTaskPolicy>> {
-    return this.request(
-      'put',
-      `/digital-humans/${id}/channels/installations/${installationId}/task-policy`,
-      { enabled, expected_revision: expectedRevision }
-    );
-  }
 }
 
 export const digitalHumanService = new DigitalHumanService();

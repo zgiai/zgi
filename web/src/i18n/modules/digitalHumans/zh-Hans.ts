@@ -239,7 +239,7 @@ const messages: DigitalHumansMessages = {
     addGoal: '新增目标',
     removeGoal: '删除目标',
     rulesPlaceholder: '例如：不得使用未明确绑定的资源。',
-    rulesDescription: '规定数字人必须遵守的行为边界和执行约束。',
+    rulesDescription: '可选。补充数字人需要遵守的行为边界和执行约束。',
     addRule: '新增规则',
     removeRule: '删除规则',
     unsaved: '有尚未保存的修改',
@@ -676,15 +676,175 @@ const messages: DigitalHumansMessages = {
       emptyDescription: '添加一个消息平台，数字人就可以接收外部对话并发送回复。',
       defaultName: '渠道机器人',
       status: { active: '已启用', disabled: '已停用' },
-      taskPolicy: {
-        title: '允许通过此连接管理待办',
-        description:
-          '开启后，此连接中的成员可以让数字人提议并管理同一会话来源的待办；提议仍需用户确认后才会正式执行。',
+      verification: {
+        action: '开始连接测试',
+        savedTitle: '应用凭证已保存',
+        savedDescription: '点击“测试连接”检查 App ID、App Secret、机器人能力和应用身份。',
+        baseReady: '应用凭证和机器人身份已验证',
+        runtimeHint: '回调、回复和群聊上下文会在收到第一条真实消息后继续验证。',
+        failedTitle: '基础连接未通过',
+        failure: {
+          credentials_invalid: 'App ID 或 App Secret 无效。请在“凭证与基础信息”中重新复制并保存。',
+          bot_capability_disabled:
+            '当前应用未启用机器人能力。请在“添加应用能力”中添加机器人，并重新发布应用。',
+          app_unavailable: '应用尚未发布，或当前测试成员不在应用可用范围内。请调整范围并重新发布。',
+          permission_missing:
+            '缺少应用身份权限 tenant:tenant:readonly。请在飞书后台开通，确认权限已生效后重新测试连接；仅修改权限无需发布新版本。',
+          permission_or_resource_denied:
+            '飞书拒绝读取应用身份。请先检查 tenant:tenant:readonly 是否已开通；若权限正常，再检查应用可用范围。只有修改可用范围或应用配置时才需要发布新版本。',
+          access_denied:
+            '飞书拒绝读取应用身份。请先检查 tenant:tenant:readonly 是否已开通；若权限正常，再检查应用可用范围。只有修改可用范围或应用配置时才需要发布新版本。',
+          bot_not_in_chat: '机器人尚未加入目标群聊。请先把机器人添加到群聊，再发送测试消息。',
+          send_not_allowed:
+            '机器人没有发送消息权限。请开通 im:message:send_as_bot，确认权限已生效后重新测试；仅修改权限无需发布新版本。',
+          configuration_invalid:
+            '飞书应用配置不完整或不匹配。请核对 App ID、机器人能力和应用类型。',
+          rate_limited: '飞书暂时限制了请求频率，请稍后再次测试。',
+          temporarily_unavailable:
+            '暂时无法连接飞书，请稍后重试。若持续失败，请检查网络和飞书服务状态。',
+          response_invalid: '飞书返回了无法识别的结果，请稍后重新测试连接。',
+          provider_rejected:
+            '飞书未接受这次检查。请先核对凭证、机器人能力和应用身份权限；若修改了可用范围或其他应用配置，再确认最新版本已发布。',
+        },
+      },
+      connectionTest: {
+        status: {
+          configuration_failed: '基础配置未通过',
+          awaiting_message: '等待真实消息',
+          message_received: '已收到测试消息，数字人正在处理',
+          replying: '回复正在发送',
+          succeeded: '飞书消息闭环验证成功',
+          partial: '基础收发正常，群聊能力部分可用',
+          failed: '连接测试未完成',
+          expired: '未收到飞书测试消息',
+        },
+        waitingDescription: '请在飞书中私聊这个机器人发送下方完整测试文案，页面会自动检查结果。',
+        groupWaitingDescription:
+          '请在一个已加入机器人的群聊中 @ 机器人并发送下方完整文案，系统会自动检测全部群聊能力。',
+        sentAwaitingCallbackTitle: '尚未收到飞书回调',
+        groupSentAwaitingCallbackTitle: '尚未收到群聊 @ 回调',
+        sentAwaitingCallbackDescription:
+          '已记录“我已发送”。当前仍未发现这条真实消息，请按下方清单检查飞书后台；页面会继续自动检查。',
+        groupSentAwaitingCallbackDescription:
+          '当前连接尚未收到对应的群聊 @ 回调。请优先开通 im:message.group_msg，确认权限生效后重新发送测试文案；仅修改权限无需发布新版本。若已开通，再检查机器人是否入群、@ 对象、事件订阅和应用可用范围。',
+        successDescription: 'ZGI 已收到飞书私聊消息，并成功把数字人的最终回复送回同一会话。',
+        groupSuccessDescription:
+          '群聊 @ 唤醒、消息历史、成员名称和机器人回复均已通过真实会话验证。',
+        partialDescription:
+          '群聊可以正常 @ 和回复，但部分上下文能力缺失。请根据能力矩阵补齐权限，确认权限生效后点击“刷新”重新检测；无需发布新版本。',
+        failureDetectedTitle: '连接测试已确认失败',
+        failureDetectedDescription: 'ZGI 已停止本次测试，请根据下方原因修复配置后重新测试。',
+        sendTitle: '在飞书中私聊机器人',
+        sendDescription: '请复制并原样发送。不要发送到群聊，也不要只发送测试码。',
+        groupSendTitle: '在飞书群聊中 @ 机器人',
+        groupSendDescription:
+          '先确认机器人已加入群聊，再 @ 机器人并原样发送完整测试文案；不要只发送测试码。',
+        copyMessage: '复制测试文案',
+        confirmSent: '我已发送',
+        sentConfirmed: '已确认发送',
+        restartTest: '重新测试',
+        restartingTest: '正在创建新测试…',
+        messageCopied: '测试文案已复制。',
+        messageCopyError: '无法复制测试文案，请手动选择。',
+        confirmSentHint: '发送完整测试文案后，请点击“我已发送”；系统将根据真实回调结果继续验证。',
+        groupConfirmSentHint:
+          '完成群聊 @ 发送后点击“我已发送”；系统只使用该真实群聊检查权限，不接受手工填写群 ID。',
+        groupPrompt: {
+          title: '继续验证群聊能力',
+          description: '通过一次真实群聊 @，自动检查群消息接收、历史读取、成员名称和回复权限。',
+          action: '测试群聊能力',
+        },
+        permissionGuide: {
+          title: '群聊权限码会影响什么',
+          description:
+            '以下均为应用身份权限。飞书后台开通或审批完成后会直接生效，无需发布新版本；若页面仍显示旧结果，请点击“重新测试”创建新的验证。',
+          required: '群聊闭环必需',
+          enhanced: '上下文增强',
+          items: {
+            groupMessage: {
+              title: '接收群聊消息与 @ 回调',
+              effect: '缺少时，当前连接看不到群聊消息，数字人不会启动，也无法产生回复。',
+            },
+            sendAsBot: {
+              title: '以机器人身份发送回复',
+              effect: '缺少时，回调和数字人运行可能成功，但最终回复无法发送到群聊。',
+            },
+            messageHistory: {
+              title: '读取群聊消息历史',
+              effect:
+                '缺少时，当前 @ 仍可触发，但数字人看不到此前对话，只能根据本条消息回答或追问。',
+            },
+            memberNames: {
+              title: '读取群成员名称',
+              effect:
+                '缺少时仍可处理消息，但发送者可能显示为未知成员或技术标识，影响人物归属判断。',
+            },
+          },
+        },
+        capabilities: {
+          credentials: '应用凭证有效',
+          bot_identity: '机器人能力与身份',
+          direct_inbound: '收到真实私聊消息',
+          group_mention: '收到真实群聊 @',
+          message_history: '读取群聊消息历史',
+          member_names: '读取群成员名称',
+          reply_delivery: '最终回复成功送达',
+        },
+        capabilityFailure: {
+          permission_missing: '缺少此项所需的应用身份权限。开通后点击“刷新”重新检测，无需发布新版本。',
+          bot_not_in_chat: '机器人尚未加入这个群聊。',
+          app_unavailable: '应用对该群聊或测试成员不可用，请检查可用范围并发布。',
+          credentials_invalid: '应用凭证已失效，请重新保存凭证。',
+          rate_limited: '飞书暂时限制请求频率，请稍后重新测试。',
+          temporarily_unavailable: '飞书服务暂时不可用，请稍后重新测试。',
+          configuration_invalid: '当前应用或群聊配置不满足检测条件。',
+          provider_rejected:
+            '飞书拒绝了此项能力检查。请先检查权限；若权限已开通，再检查可用范围和相关应用配置。',
+        },
+        steps: {
+          credentials: '应用凭证与机器人身份',
+          inbound: '收到真实私聊消息',
+          reply: '最终回复成功送达',
+        },
+        failure: {
+          message_not_received:
+            'ZGI 没有收到这条消息。最常见原因是地址填在了“回调配置”而不是“事件配置”，或未订阅消息事件。',
+          group_message_not_received:
+            '当前连接没有收到对应的群聊 @ 回调。请先开通 im:message.group_msg，确认权限生效后点击“重新测试”并再次发送；仅修改权限无需发布新版本。若权限已开通，再确认机器人已入群、@ 的是当前机器人、应用可用范围包含测试成员，并已订阅 im.message.receive_v1。',
+          send_permission_missing:
+            '消息已到达，但机器人不能回复。请开通应用身份权限 im:message:send_as_bot，确认权限生效后点击“重新测试”；无需发布新版本。',
+          permission_or_resource_denied:
+            '消息已到达，但飞书拒绝机器人回复。请先确认应用身份权限 im:message:send_as_bot 已开通；权限变更无需发布新版本。若已开通，再检查机器人所在会话和应用可用范围。该错误已停止自动重试。',
+          bot_capability_disabled:
+            '消息已到达，但机器人能力不可用。请启用机器人能力并重新发布应用。',
+          app_unavailable: '消息已到达，但应用当前不可用。请检查可用范围并发布最新版本。',
+          bot_not_in_chat: '机器人不在目标会话中。请先完成私聊机器人测试。',
+          reply_outcome_unknown: '消息已到达，但飞书回复结果无法确认。请查看飞书会话后再重新测试。',
+          digital_human_unavailable: '消息已到达，但数字人尚未发布或当前连接未能建立会话。',
+          runtime_unavailable: '消息已到达，但数字人运行暂时不可用。请稍后重新测试。',
+          callback_stale: '收到的是过期回调。请重新发送测试文案。',
+          reply_not_created:
+            '消息已到达，但在有效时间内没有生成最终回复。请检查数字人发布状态和运行日志。',
+          reply_failed:
+            '消息已到达，但最终回复发送失败。请先检查发送消息权限；若权限正常，再检查机器人所在会话和应用可用范围。',
+          message_rejected: 'ZGI 收到了消息，但没有接受这次运行。请检查数字人和渠道是否已启用。',
+          generic: '连接测试没有完成。请按下方清单检查飞书配置后重新测试。',
+        },
+        eventChecklistTitle: '请依次检查飞书后台',
+        eventChecklist: {
+          eventPage:
+            '回调地址必须填写在“事件与回调 → 事件配置”，不要填写到“回调配置”；新增或修改地址后必须保存并重新发布应用。',
+          subscription:
+            '订阅事件 im.message.receive_v1，并确保 Verification Token 与 Encrypt Key 一致。',
+          publish: '把测试成员加入应用可用范围，保存并发布包含上述修改的新版本。',
+          groupAccess:
+            '确认机器人已加入测试群，并已开通应用身份权限 im:message.group_msg。权限生效后直接重新测试；只有修改可用范围或应用配置时才需要发布新版本。',
+        },
       },
       context: {
         status: {
           ready: '渠道会话上下文可正常读取',
-          runtime_verification: '支持群聊上下文读取',
+          runtime_verification: '等待首次群聊消息验证上下文',
           missing_message_history: '缺少消息历史权限',
           missing_member_names: '缺少成员名称权限',
           not_supported: '平台不支持历史读取',
@@ -692,9 +852,11 @@ const messages: DigitalHumansMessages = {
         },
         hint: {
           ready: '',
-          runtime_verification: '',
-          missing_message_history: '请在飞书开发者后台为应用开通消息历史只读权限后重新发布。',
-          missing_member_names: '消息内容仍可读取；开通群成员读取权限后可显示真实发送者名称。',
+          runtime_verification: '在群聊中 @ 机器人后，系统会验证消息历史和成员名称权限。',
+          missing_message_history:
+            '请为应用身份开通 im:message:readonly 和 im:message.group_msg，确认权限生效后刷新检测；无需发布新版本。',
+          missing_member_names:
+            '消息内容仍可读取；开通应用身份权限 im:chat.members:read 后可显示真实发送者名称。',
           not_supported: '当前平台只提供本次消息；需要更早内容时，请把原文复制到同一条 @ 消息中。',
           temporarily_unavailable: '本次读取没有成功；请稍后重试，或检查应用权限和可见范围。',
         },
@@ -738,12 +900,59 @@ const messages: DigitalHumansMessages = {
         noticeDescription: '仅用于机器人身份校验、消息读取和回复发送，不会返回到浏览器。',
         openFeishuConsole: '打开飞书开发者后台',
         guide: {
-          title: '这些参数在哪里获取？',
-          description: '在飞书开发者后台选择需要接入的企业自建应用，然后按以下位置查找。',
+          title: '保存前准备',
+          description: '先完成机器人能力、应用身份权限和凭证准备。',
+          afterSaveHint: '保存成功后，将继续引导你完成飞书后台设置和真实消息验证。',
+          steps: {
+            bot: {
+              title: '启用机器人能力',
+              description: '在“添加应用能力”中添加机器人。',
+            },
+            permissions: {
+              title: '一次开通完整权限包',
+              description: '在“权限管理”中按下方清单开通应用身份权限。',
+            },
+            credentials: {
+              title: '准备应用与安全凭证',
+              description:
+                '复制 App ID、App Secret、Verification Token；启用加密时再复制 Encrypt Key。',
+            },
+          },
+          permissionBundleTitle: '推荐默认权限包（应用身份）',
+          permissionBundleDescription: '覆盖身份确认、私聊接收、群聊上下文、成员名称与机器人回复。',
+          copyPermissions: '复制权限码',
+          permissionsCopied: '飞书权限码已复制。',
+          permissionsCopyError: '无法复制权限码，请手动选择。',
           appCredentials: 'App ID 和 App Secret',
           appCredentialsPath: '凭证与基础信息 → 应用凭证',
           eventSecurity: 'Verification Token 和 Encrypt Key',
           eventSecurityPath: '事件与回调 → 加密策略',
+        },
+        postSave: {
+          title: '完成飞书后台配置',
+          description: '凭证已保存并已生成当前连接的专属回调地址。按顺序完成以下操作。',
+          steps: {
+            test: {
+              title: '完成私聊与群聊实测',
+              description:
+                '先完成私聊收发验证，再按页面提示在真实群聊中 @ 机器人；系统会自动检查群消息、历史、成员名称和回复能力。',
+            },
+            callback: {
+              title: '在事件配置填写地址',
+              description:
+                '复制下方地址，粘贴到“事件与回调 → 事件配置”。不要填到“回调配置”；新增或修改地址后必须保存并重新发布应用。',
+            },
+            event: {
+              title: '订阅消息事件',
+              description:
+                '订阅 im.message.receive_v1，并确认 Verification Token 与 Encrypt Key 一致。',
+            },
+            publish: {
+              title: '设置范围并发布',
+              description:
+                '把测试成员加入应用可用范围；回调地址、事件订阅或范围有任何修改，都要保存并重新发布新版本。',
+            },
+          },
         },
         dingtalk: {
           guideTitle: '这些参数在哪里获取？',
@@ -761,7 +970,7 @@ const messages: DigitalHumansMessages = {
         edit: '编辑应用凭证',
         editTitle: '编辑飞书应用凭证',
         editDescription: '轮换应用密钥。未填写的字段会保留当前值。',
-        createError: '无法验证并保存应用凭证。',
+        createError: '无法保存应用凭证。',
         updateError: '无法更新应用凭证。',
       },
     },
@@ -809,9 +1018,17 @@ const messages: DigitalHumansMessages = {
       retry: '重试投递',
       failure: {
         generic: '外部平台拒绝了这次投递，或暂时无法完成发送。',
-        outcomeUnknown: '无法确认飞书是否已收到消息，系统已停止自动重试。',
-        interrupted: '投递在调用飞书后中断，结果可能已经生效。',
+        outcomeUnknown: '无法确认外部平台是否已收到消息，系统已停止自动重试。',
+        interrupted: '投递在调用外部平台后中断，结果可能已经生效。',
         payloadInvalid: '已提交的回复内容无法转换为可投递消息。',
+        credentialsInvalid: '飞书应用凭证无效或已失效，请重新保存 App ID 与 App Secret。',
+        botNotInChat: '飞书机器人尚未加入目标群聊，请先把机器人添加到群聊。',
+        botCapabilityDisabled: '飞书应用未启用机器人能力，请添加机器人能力并重新发布应用。',
+        appUnavailable: '飞书应用未发布，或目标成员不在应用可用范围内。请调整范围并重新发布。',
+        sendPermissionMissing:
+          '缺少应用身份权限 im:message:send_as_bot。确认权限已生效后直接重试投递；无需发布新版本。',
+        permissionOrResourceDenied:
+          '飞书拒绝发送消息。请检查 im:message:send_as_bot、机器人是否已加入会话，以及应用可用范围。',
       },
       status: {
         pending: '待投递',
@@ -822,15 +1039,17 @@ const messages: DigitalHumansMessages = {
       },
     },
     messages: {
-      installationCreated: '外部渠道已连接。',
+      installationCreated: '应用凭证已保存，请继续测试连接。',
       installationUpdated: '外部渠道已更新。',
       installationDeleted: '外部渠道已删除。',
       credentialUpdated: '应用凭证已更新。',
+      installationVerified: '应用凭证和机器人身份验证通过。',
       deliveryRetried: '投递已重新入队。',
       webhookCopied: 'Webhook 地址已复制。',
     },
     errors: {
       installation: '无法保存外部渠道。',
+      verification: '基础连接验证失败。请检查 App ID、App Secret、机器人能力和应用发布状态。',
       installationDelete: '无法删除外部渠道。',
       deliveryRetry: '无法重试这次投递。',
     },
@@ -1061,7 +1280,6 @@ const messages: DigitalHumansMessages = {
     edit: '编辑',
     save: '保存',
     refresh: '刷新',
-    technicalDetails: '技术详情',
   },
   errors: {
     create: '无法创建数字人。',

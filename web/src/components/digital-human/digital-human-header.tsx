@@ -97,17 +97,11 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
     : hasUnpublishedChanges
       ? t('header.draftSavedPending')
       : t('header.draftSaved');
-  const rules = detail?.draft.rules ?? [];
   const publishChecks = detail
     ? [
         {
           label: t('configuration.preflight.identity'),
           ready: Boolean(detail.draft.identity_name.trim() && detail.draft.persona.trim()),
-          blocking: true,
-        },
-        {
-          label: t('configuration.preflight.rules'),
-          ready: rules.some(rule => rule.trim()),
           blocking: true,
         },
         {

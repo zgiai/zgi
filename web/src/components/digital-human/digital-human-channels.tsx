@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
@@ -38,8 +38,14 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ENABLED_DIGITAL_HUMAN_CHANNEL_PROVIDERS,
@@ -52,7 +58,6 @@ import {
   useDigitalHumanChannelMutations,
   useDigitalHumanChannels,
 } from '@/hooks/digital-human/use-digital-human-channels';
-import { useChannelTaskPolicy } from '@/hooks/digital-human/use-digital-human-tasks';
 import { useLocale } from '@/hooks/use-locale';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
@@ -62,7 +67,10 @@ import type {
   DigitalHumanChannelDeliveryStatus,
   DigitalHumanChannelEventStatus,
   DigitalHumanChannelInboundEvent,
+  DigitalHumanChannelConnectionTest,
+  DigitalHumanChannelConnectionTestConversationType,
   DigitalHumanChannelInstallation,
+  DigitalHumanChannelInstallationVerification,
 } from '@/services/types/digital-human';
 import type { IntegrationConnection } from '@/services/types/integration';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -73,6 +81,10 @@ interface EditingChannelCredential {
 }
 
 const EMPTY_CHANNEL_CREDENTIALS: IntegrationConnection[] = [];
+
+type InstallationConnectionTests = Partial<
+  Record<DigitalHumanChannelConnectionTestConversationType, DigitalHumanChannelConnectionTest>
+>;
 
 export function DigitalHumanChannels({ id }: { id: string }) {
   const t = useT('digitalHumans');
@@ -88,6 +100,32 @@ export function DigitalHumanChannels({ id }: { id: string }) {
   );
   const [installationDialogOpen, setInstallationDialogOpen] = useState(false);
   const [editingCredential, setEditingCredential] = useState<EditingChannelCredential | null>(null);
+  const [verificationResults, setVerificationResults] = useState<
+    Record<string, DigitalHumanChannelInstallationVerification>
+  >({});
+  const [connectionTests, setConnectionTests] = useState<
+    Record<string, InstallationConnectionTests>
+  >({});
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(channelConnectionTestStorageKey(id));
+      if (stored) {
+        setConnectionTests(JSON.parse(stored) as Record<string, InstallationConnectionTests>);
+      }
+    } catch {
+      setConnectionTests({});
+    }
+  }, [id]);
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(
+        channelConnectionTestStorageKey(id),
+        JSON.stringify(connectionTests)
+      );
+    } catch {
+      // Connection testing remains usable even when session storage is blocked.
+    }
+  }, [connectionTests, id]);
   const installations = queries.installations.data?.data ?? [];
   const credentials = credentialsQuery.data ?? EMPTY_CHANNEL_CREDENTIALS;
   const events = queries.events.data?.data?.items ?? [];
@@ -99,6 +137,22 @@ export function DigitalHumanChannels({ id }: { id: string }) {
   const configurationError = queries.installations.isError;
   const activityError = queries.events.isError || queries.deliveries.isError;
   const CredentialDialog = editingCredential?.provider.credentialUI.Dialog;
+  const updateConnectionTest = useCallback(
+    (installationId: string, test: DigitalHumanChannelConnectionTest) => {
+      setConnectionTests(current => {
+        const existing = current[installationId]?.[test.conversation_type];
+        if (existing === test) return current;
+        return {
+          ...current,
+          [installationId]: {
+            ...current[installationId],
+            [test.conversation_type]: test,
+          },
+        };
+      });
+    },
+    []
+  );
 
   const refresh = () => {
     void Promise.all([
@@ -156,6 +210,58 @@ export function DigitalHumanChannels({ id }: { id: string }) {
             installations={installations}
             loading={queries.installations.isLoading}
             canManage={canManage}
+            verificationResults={verificationResults}
+            connectionTests={connectionTests}
+            onConnectionTestChange={updateConnectionTest}
+            onVerify={async installation => {
+              const provider = digitalHumanChannelProvider(installation.provider);
+              if (provider?.connectionTestMode === 'message_round_trip') {
+                const response = await mutations.startConnectionTest.mutateAsync({
+                  installationId: installation.id,
+                  conversationType: 'direct',
+                });
+                const verification = response.data.verification;
+                if (verification) {
+                  setVerificationResults(current => ({
+                    ...current,
+                    [installation.id]: verification,
+                  }));
+                }
+                if (response.data.id) {
+                  setConnectionTests(current => ({
+                    ...current,
+                    [installation.id]: {
+                      ...current[installation.id],
+                      [response.data.conversation_type]: response.data,
+                    },
+                  }));
+                }
+                return;
+              }
+              const response = await mutations.verifyInstallation.mutateAsync(installation.id);
+              setVerificationResults(current => ({ ...current, [installation.id]: response.data }));
+            }}
+            onStartConnectionTest={async (installationId, conversationType) => {
+              const response = await mutations.startConnectionTest.mutateAsync({
+                installationId,
+                conversationType,
+              });
+              const verification = response.data.verification;
+              if (verification) {
+                setVerificationResults(current => ({
+                  ...current,
+                  [installationId]: verification,
+                }));
+              }
+              return response.data;
+            }}
+            verifyingInstallationId={
+              mutations.startConnectionTest.isPending
+                ? mutations.startConnectionTest.variables?.installationId
+                : mutations.verifyInstallation.isPending
+                  ? mutations.verifyInstallation.variables
+                  : undefined
+            }
             onToggle={installation =>
               mutations.updateInstallation.mutate({
                 installationId: installation.id,
@@ -242,7 +348,13 @@ function InstallationPanel({
   onToggle,
   onDelete,
   onEditCredential,
+  onVerify,
+  onStartConnectionTest,
+  onConnectionTestChange,
+  verificationResults,
+  connectionTests,
   deletingInstallationId,
+  verifyingInstallationId,
 }: {
   id: string;
   installations: DigitalHumanChannelInstallation[];
@@ -254,7 +366,16 @@ function InstallationPanel({
     provider: DigitalHumanChannelProviderDefinition,
     installation: DigitalHumanChannelInstallation
   ) => void;
+  onVerify: (installation: DigitalHumanChannelInstallation) => Promise<void>;
+  onStartConnectionTest: (
+    installationId: string,
+    conversationType: DigitalHumanChannelConnectionTestConversationType
+  ) => Promise<DigitalHumanChannelConnectionTest>;
+  onConnectionTestChange: (installationId: string, test: DigitalHumanChannelConnectionTest) => void;
+  verificationResults: Record<string, DigitalHumanChannelInstallationVerification>;
+  connectionTests: Record<string, InstallationConnectionTests>;
   deletingInstallationId?: string;
+  verifyingInstallationId?: string;
 }) {
   const t = useT('digitalHumans');
   if (loading) return <PanelSkeleton />;
@@ -276,6 +397,21 @@ function InstallationPanel({
         ) : (
           installations.map(installation => {
             const provider = digitalHumanChannelProvider(installation.provider);
+            const SetupGuide = provider?.installationUI?.SetupGuide;
+            const VerificationStatus = provider?.installationUI?.VerificationStatus;
+            const storedVerificationResult = verificationResults[installation.id];
+            const verificationResult = isCurrentVerificationResult(
+              installation,
+              storedVerificationResult
+            )
+              ? storedVerificationResult
+              : undefined;
+            const storedConnectionTests = connectionTests[installation.id];
+            const currentConnectionTests = Object.fromEntries(
+              Object.entries(storedConnectionTests ?? {}).filter(([, test]) =>
+                isCurrentConnectionTest(installation, test)
+              )
+            ) as InstallationConnectionTests;
             const webhookURL = installation.webhook_url?.trim() ?? '';
             const webhookReady = /^https:\/\//i.test(webhookURL);
             const usesStream = installation.provider === 'dingtalk';
@@ -330,6 +466,20 @@ function InstallationPanel({
                           {t('channels.installations.credential.edit')}
                         </Button>
                       ) : null}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={verifyingInstallationId === installation.id}
+                        onClick={() => void onVerify(installation)}
+                      >
+                        <RefreshCw
+                          className={cn(
+                            'size-3.5',
+                            verifyingInstallationId === installation.id && 'animate-spin'
+                          )}
+                        />
+                        {t('channels.installations.verification.action')}
+                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => onToggle(installation)}>
                         {installation.status === 'active'
                           ? t('channels.installations.disable')
@@ -357,6 +507,26 @@ function InstallationPanel({
                     </div>
                   ) : null}
                 </div>
+                {VerificationStatus ? (
+                  <VerificationStatus
+                    digitalHumanID={id}
+                    installation={installation}
+                    result={verificationResult}
+                    connectionTests={currentConnectionTests}
+                    onConnectionTestChange={test => onConnectionTestChange(installation.id, test)}
+                    onStartConnectionTest={async conversationType => {
+                      const response = await onStartConnectionTest(installation.id, conversationType);
+                      onConnectionTestChange(installation.id, response);
+                    }}
+                    startingConnectionTest={verifyingInstallationId === installation.id}
+                  />
+                ) : (
+                  <GenericInstallationVerificationStatus
+                    installation={installation}
+                    result={verificationResult}
+                  />
+                )}
+                {SetupGuide ? <SetupGuide installation={installation} /> : null}
                 {usesStream ? (
                   <div className="mt-4 rounded-lg border bg-background p-3">
                     <div className="flex items-start gap-3">
@@ -412,11 +582,6 @@ function InstallationPanel({
                     </div>
                   </div>
                 )}
-                <ChannelTaskPolicy
-                  digitalHumanID={id}
-                  installation={installation}
-                  canManage={canManage}
-                />
                 <ChannelContextStatus readiness={installation.channel_context} />
               </div>
             );
@@ -427,39 +592,74 @@ function InstallationPanel({
   );
 }
 
-function ChannelTaskPolicy({
-  digitalHumanID,
+function isCurrentVerificationResult(
+  installation: DigitalHumanChannelInstallation,
+  result?: DigitalHumanChannelInstallationVerification
+) {
+  if (!result) return false;
+  const checkedAt = Date.parse(result.checked_at);
+  const installationUpdatedAt = Date.parse(installation.updated_at);
+  if (!Number.isFinite(checkedAt) || !Number.isFinite(installationUpdatedAt)) return true;
+  return checkedAt >= installationUpdatedAt;
+}
+
+function isCurrentConnectionTest(
+  installation: DigitalHumanChannelInstallation,
+  result?: DigitalHumanChannelConnectionTest
+) {
+  if (!result?.started_at) return false;
+  const startedAt = Date.parse(result.started_at);
+  const installationUpdatedAt = Date.parse(installation.updated_at);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(installationUpdatedAt)) return true;
+  return startedAt >= installationUpdatedAt;
+}
+
+function channelConnectionTestStorageKey(digitalHumanID: string) {
+  return `digital-human:${digitalHumanID}:channel-connection-tests`;
+}
+
+function GenericInstallationVerificationStatus({
   installation,
-  canManage,
+  result,
 }: {
-  digitalHumanID: string;
   installation: DigitalHumanChannelInstallation;
-  canManage: boolean;
+  result?: DigitalHumanChannelInstallationVerification;
 }) {
   const t = useT('digitalHumans');
-  const policy = useChannelTaskPolicy(digitalHumanID, installation.id);
-  const enabled = policy.query.data?.data.enabled ?? false;
+  const verified = result?.status === 'verified' || installation.identity_verified;
+  const failed = result?.status === 'failed';
   return (
-    <div className="mt-3 flex items-start justify-between gap-4 rounded-lg border bg-background px-3 py-3">
-      <div className="min-w-0">
-        <Label htmlFor={`channel-task-policy-${installation.id}`} className="text-xs font-medium">
-          {t('channels.installations.taskPolicy.title')}
-        </Label>
-        <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-          {t('channels.installations.taskPolicy.description')}
+    <div
+      className={cn(
+        'mt-4 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs',
+        verified && 'border-emerald-500/20 bg-emerald-500/5',
+        failed && 'border-destructive/25 bg-destructive/5',
+        !verified && !failed && 'border-blue-500/20 bg-blue-500/5'
+      )}
+    >
+      {verified ? (
+        <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
+      ) : failed ? (
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+      ) : (
+        <Info className="mt-0.5 size-3.5 shrink-0 text-blue-600" />
+      )}
+      <div>
+        <p className={cn('font-medium', failed && 'text-destructive')}>
+          {verified
+            ? t('channels.installations.verification.baseReady')
+            : failed
+              ? t('channels.installations.verification.failedTitle')
+              : t('channels.installations.verification.savedTitle')}
+        </p>
+        <p className="mt-0.5 leading-5 text-muted-foreground">
+          {verified
+            ? t('channels.installations.verification.runtimeHint')
+            : failed
+              ? t('channels.installations.verification.failure.provider_rejected')
+              : t('channels.installations.verification.savedDescription')}
         </p>
       </div>
-      {policy.query.isLoading ? (
-        <Skeleton className="h-5 w-9 shrink-0 rounded-full" />
-      ) : (
-        <Switch
-          id={`channel-task-policy-${installation.id}`}
-          checked={enabled}
-          disabled={!canManage || policy.update.isPending}
-          onCheckedChange={value => policy.update.mutate(value)}
-          aria-label={t('channels.installations.taskPolicy.title')}
-        />
-      )}
     </div>
   );
 }
@@ -606,7 +806,11 @@ function ActivityPanel({
                     <DeliveryRow
                       key={delivery.id}
                       delivery={delivery}
-                      event={delivery.inbound_event_id ? eventsByID.get(delivery.inbound_event_id) : undefined}
+                      event={
+                        delivery.inbound_event_id
+                          ? eventsByID.get(delivery.inbound_event_id)
+                          : undefined
+                      }
                       id={id}
                       canRetry={canRetry}
                       retrying={retryingId === delivery.id}
@@ -709,7 +913,20 @@ function DeliveryRow({
         ? t('channels.deliveries.failure.interrupted')
         : delivery.error_code === 'channel.delivery.payload_invalid'
           ? t('channels.deliveries.failure.payloadInvalid')
-          : t('channels.deliveries.failure.generic');
+          : delivery.error_code === 'channel.provider.credentials_invalid'
+            ? t('channels.deliveries.failure.credentialsInvalid')
+            : delivery.error_code === 'channel.provider.bot_not_in_chat'
+              ? t('channels.deliveries.failure.botNotInChat')
+              : delivery.error_code === 'channel.provider.bot_capability_disabled'
+                ? t('channels.deliveries.failure.botCapabilityDisabled')
+                : delivery.error_code === 'channel.provider.app_unavailable'
+                  ? t('channels.deliveries.failure.appUnavailable')
+                  : delivery.error_code === 'channel.provider.permission_missing' ||
+                      delivery.error_code === 'channel.provider.send_not_allowed'
+                    ? t('channels.deliveries.failure.sendPermissionMissing')
+                    : delivery.error_code === 'channel.provider.permission_or_resource_denied'
+                      ? t('channels.deliveries.failure.permissionOrResourceDenied')
+                      : t('channels.deliveries.failure.generic');
   return (
     <div className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_13rem] md:items-center">
       <div className="min-w-0">
@@ -736,12 +953,6 @@ function DeliveryRow({
         {delivery.error_code ? (
           <div className="mt-1 text-xs text-destructive">
             <p>{localizedError}</p>
-            <details className="mt-1 text-muted-foreground">
-              <summary className="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                {t('common.technicalDetails')}
-              </summary>
-              <code className="mt-1 block break-all">{delivery.error_code}</code>
-            </details>
           </div>
         ) : null}
         {delivery.status === 'unknown' ? (
@@ -853,41 +1064,59 @@ function CreateChannelDialog({
   );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="xl" className="p-0">
-        <DialogHeader>
+      <DialogContent
+        size="xl"
+        className="h-[min(820px,calc(100dvh-2rem))] max-w-5xl overflow-hidden p-0"
+      >
+        <DialogHeader className="shrink-0 border-b px-6 py-5 pr-12">
           <DialogTitle>{t('channels.addDialog.title')}</DialogTitle>
           <DialogDescription>{t('channels.addDialog.description')}</DialogDescription>
         </DialogHeader>
-        <DialogBody className="pb-5">
-          <div className="grid gap-5 md:grid-cols-[12rem_minmax(0,1fr)]">
-            <ChannelProviderSelector
-              providers={ENABLED_DIGITAL_HUMAN_CHANNEL_PROVIDERS}
-              selectedID={provider?.id ?? ''}
-              onSelect={selectProvider}
-            />
-            <div className="min-w-0 space-y-5 md:border-l md:pl-5">
+        <DialogBody className="min-h-0 overflow-hidden p-0">
+          <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] md:grid-cols-[13.5rem_minmax(0,1fr)] md:grid-rows-1">
+            <aside className="border-b bg-muted/20 px-4 py-4 md:overflow-y-auto md:border-b-0 md:border-r md:px-5 md:py-5">
+              <ChannelProviderSelector
+                providers={ENABLED_DIGITAL_HUMAN_CHANNEL_PROVIDERS}
+                selectedID={provider?.id ?? ''}
+                onSelect={selectProvider}
+              />
+            </aside>
+            <div className="min-h-0 min-w-0 overflow-y-auto px-5 py-5 sm:px-6">
               {provider ? (
                 <>
-                  <div>
-                    <h3 className="font-medium">{t(provider.nameKey)}</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t(provider.descriptionKey)}
-                    </p>
+                  <div className="flex items-start gap-3 border-b pb-4">
+                    <span
+                      className={cn(
+                        'flex size-9 shrink-0 items-center justify-center rounded-lg',
+                        provider.accentClassName
+                      )}
+                    >
+                      <Bot className="size-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="font-medium">{t(provider.nameKey)}</h3>
+                      <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                        {t(provider.descriptionKey)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="space-y-4">
+                  <div className="mt-5 space-y-5">
+                    <Field label={t('channels.installations.name')}>
+                      <Input value={name} onChange={event => setName(event.target.value)} />
+                    </Field>
                     <Tabs
                       value={credentialMode}
                       onValueChange={value => setCredentialMode(value as 'embedded' | 'connection')}
                     >
-                      <TabsList>
-                        <TabsTrigger value="embedded">
+                      <TabsList className="grid h-10 w-full grid-cols-2 sm:w-fit">
+                        <TabsTrigger value="embedded" className="min-w-28">
                           {t('channels.installations.credential.directConfig')}
                         </TabsTrigger>
-                        <TabsTrigger value="connection">
+                        <TabsTrigger value="connection" className="min-w-32">
                           {t('channels.installations.credential.connectionCenter')}
                         </TabsTrigger>
                       </TabsList>
-                      <TabsContent value="embedded" className="mt-4 space-y-4">
+                      <TabsContent value="embedded" className="mt-4">
                         {CredentialFields ? (
                           <CredentialFields value={credential} onChange={setCredential} />
                         ) : null}
@@ -895,20 +1124,25 @@ function CreateChannelDialog({
                       <TabsContent value="connection" className="mt-4 space-y-3">
                         {providerConnections.length > 0 ? (
                           <Field label={t('channels.installations.credential.selectConnection')}>
-                            <select
-                              value={selectedConnectionID}
-                              onChange={event => setSelectedConnectionID(event.target.value)}
-                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            <Select
+                              value={selectedConnectionID || undefined}
+                              onValueChange={setSelectedConnectionID}
                             >
-                              <option value="">
-                                {t('channels.installations.credential.selectConnectionPlaceholder')}
-                              </option>
-                              {providerConnections.map(item => (
-                                <option key={item.id} value={item.id}>
-                                  {item.name}
-                                </option>
-                              ))}
-                            </select>
+                              <SelectTrigger className="h-10 w-full">
+                                <SelectValue
+                                  placeholder={t(
+                                    'channels.installations.credential.selectConnectionPlaceholder'
+                                  )}
+                                />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {providerConnections.map(item => (
+                                  <SelectItem key={item.id} value={item.id}>
+                                    {item.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </Field>
                         ) : (
                           <div className="rounded-xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
@@ -923,19 +1157,16 @@ function CreateChannelDialog({
                         </Button>
                       </TabsContent>
                     </Tabs>
-                    <Field label={t('channels.installations.name')}>
-                      <Input value={name} onChange={event => setName(event.target.value)} />
-                    </Field>
                   </div>
                   {credentialError ? (
-                    <p className="text-sm text-destructive">{credentialError}</p>
+                    <p className="mt-4 text-sm text-destructive">{credentialError}</p>
                   ) : null}
                 </>
               ) : null}
             </div>
           </div>
         </DialogBody>
-        <DialogFooter className="border-t bg-muted/30">
+        <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('common.cancel')}
           </Button>
@@ -964,7 +1195,7 @@ function ChannelProviderSelector({
       <p className="mb-2 text-xs font-medium text-muted-foreground">
         {t('channels.addDialog.providerLabel')}
       </p>
-      <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-1">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-1">
         {providers.map(provider => {
           const selected = provider.id === selectedID;
           return (
@@ -974,8 +1205,8 @@ function ChannelProviderSelector({
               aria-pressed={selected}
               onClick={() => onSelect(provider)}
               className={cn(
-                'flex items-center gap-3 rounded-xl border px-3 py-3 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring',
-                selected && 'border-primary bg-primary/5'
+                'flex items-center gap-3 rounded-lg border bg-background px-3 py-2.5 text-left outline-none transition-colors hover:border-primary/40 hover:bg-background focus-visible:ring-2 focus-visible:ring-ring',
+                selected && 'border-primary bg-primary/5 shadow-sm'
               )}
             >
               <span

@@ -422,6 +422,7 @@ export interface DigitalHumanChannelInstallation {
   provider: 'feishu' | (string & {});
   connection_id: string;
   credential_mode: 'embedded' | 'connection';
+  identity_verified: boolean;
   name: string;
   external_tenant_id?: string;
   external_bot_id?: string;
@@ -469,6 +470,75 @@ export interface UpdateDigitalHumanChannelInstallationRequest {
   status?: DigitalHumanChannelInstallationStatus;
 }
 
+export interface DigitalHumanChannelInstallationVerification {
+  status: 'verified' | 'failed';
+  credential_verified: boolean;
+  bot_identity_verified: boolean;
+  channel_context: NonNullable<DigitalHumanChannelInstallation['channel_context']>;
+  checked_at: string;
+  failure?: {
+    code:
+      | 'credentials_invalid'
+      | 'access_denied'
+      | 'configuration_invalid'
+      | 'rate_limited'
+      | 'temporarily_unavailable'
+      | 'response_invalid'
+      | 'provider_rejected'
+      | (string & {});
+    reason_code?: string;
+    provider_error_code?: string;
+    provider_request_id?: string;
+    provider_http_status?: number;
+    provider_invalid_field?: string;
+    retryable: boolean;
+  };
+}
+
+export type DigitalHumanChannelConnectionTestStatus =
+  | 'configuration_failed'
+  | 'awaiting_message'
+  | 'message_received'
+  | 'replying'
+  | 'succeeded'
+  | 'failed'
+  | 'expired';
+
+export type DigitalHumanChannelConnectionTestConversationType = 'direct' | 'group';
+
+export interface DigitalHumanChannelConnectionCapability {
+  id:
+    | 'credentials'
+    | 'bot_identity'
+    | 'direct_inbound'
+    | 'group_mention'
+    | 'message_history'
+    | 'member_names'
+    | 'reply_delivery'
+    | (string & {});
+  status: 'pending' | 'passed' | 'failed';
+  failure_code?: string;
+  required_permissions?: string[];
+}
+
+export interface DigitalHumanChannelConnectionTest {
+  id?: string;
+  status: DigitalHumanChannelConnectionTestStatus;
+  readiness: 'pending' | 'available' | 'partial' | 'unavailable';
+  conversation_type: DigitalHumanChannelConnectionTestConversationType;
+  verification?: DigitalHumanChannelInstallationVerification;
+  test_code?: string;
+  test_message?: string;
+  started_at?: string;
+  expires_at?: string;
+  message_received: boolean;
+  reply_delivered: boolean;
+  inbound_event_id?: string;
+  delivery_id?: string;
+  failure_code?: string;
+  capabilities: DigitalHumanChannelConnectionCapability[];
+}
+
 export interface DigitalHumanChannelInboundEvent {
   id: string;
   installation_id: string;
@@ -498,6 +568,7 @@ export interface DigitalHumanChannelDelivery {
   binding_id: string;
   inbound_event_id?: string;
   run_id: string;
+  kind?: 'acknowledgement' | 'progress' | 'final';
   provider: string;
   connection_id: string;
   subject_type: 'digital_human';
@@ -624,11 +695,4 @@ export interface DigitalHumanTaskPage<T> {
   page: number;
   page_size: number;
   has_more: boolean;
-}
-
-export interface DigitalHumanChannelTaskPolicy {
-  installation_id: string;
-  enabled: boolean;
-  revision: number;
-  updated_at?: string;
 }

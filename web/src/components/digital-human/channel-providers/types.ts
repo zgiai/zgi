@@ -1,5 +1,10 @@
 import type { ComponentType } from 'react';
-import type { DigitalHumanChannelInstallation } from '@/services/types/digital-human';
+import type {
+  DigitalHumanChannelConnectionTest,
+  DigitalHumanChannelConnectionTestConversationType,
+  DigitalHumanChannelInstallation,
+  DigitalHumanChannelInstallationVerification,
+} from '@/services/types/digital-human';
 import type { IntegrationConnection } from '@/services/types/integration';
 
 export type ChannelCredentialDraft = Record<string, string>;
@@ -25,6 +30,29 @@ export interface ChannelCredentialUI {
   Dialog: ComponentType<ChannelCredentialDialogProps>;
 }
 
+export interface ChannelInstallationSetupProps {
+  installation: DigitalHumanChannelInstallation;
+}
+
+export interface ChannelInstallationVerificationProps {
+  digitalHumanID: string;
+  installation: DigitalHumanChannelInstallation;
+  result?: DigitalHumanChannelInstallationVerification;
+  connectionTests?: Partial<
+    Record<DigitalHumanChannelConnectionTestConversationType, DigitalHumanChannelConnectionTest>
+  >;
+  onConnectionTestChange?: (test: DigitalHumanChannelConnectionTest) => void;
+  onStartConnectionTest?: (
+    conversationType: DigitalHumanChannelConnectionTestConversationType
+  ) => Promise<void>;
+  startingConnectionTest?: boolean;
+}
+
+export interface ChannelInstallationUI {
+  SetupGuide?: ComponentType<ChannelInstallationSetupProps>;
+  VerificationStatus?: ComponentType<ChannelInstallationVerificationProps>;
+}
+
 export interface DigitalHumanChannelProviderBase {
   id: string;
   integrationId: string;
@@ -38,6 +66,8 @@ export interface DigitalHumanChannelProviderBase {
   defaultBotNameKey: string;
   enabled: boolean;
   accentClassName: string;
+  connectionTestMode: 'basic' | 'message_round_trip';
   credentialUI: ChannelCredentialUI;
+  installationUI?: ChannelInstallationUI;
   connectionFilter?: (connection: IntegrationConnection) => boolean;
 }

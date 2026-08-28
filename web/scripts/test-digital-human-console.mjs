@@ -34,6 +34,10 @@ const service = await readFile(
   new URL('../src/services/digital-human.service.ts', import.meta.url),
   'utf8'
 );
+const digitalHumanTypes = await readFile(
+  new URL('../src/services/types/digital-human.ts', import.meta.url),
+  'utf8'
+);
 const digitalHumanZhHans = await readFile(
   new URL('../src/i18n/modules/digitalHumans/zh-Hans.ts', import.meta.url),
   'utf8'
@@ -274,6 +278,16 @@ assert.match(
   configuration,
   /isInitialSetup[\s\S]*initialSetupChecks[\s\S]*initialSetup\.title[\s\S]*initialSetup\.progress/,
   'Initial configuration must expose required-field progress until the first publish'
+);
+assert.match(
+  configuration,
+  /initialSetupChecks = \[[\s\S]*fields\.identityName[\s\S]*fields\.persona[\s\S]*\];/,
+  'Initial configuration must require only the conversation name and persona'
+);
+assert.doesNotMatch(
+  header,
+  /configuration\.preflight\.rules/,
+  'Publishing must not block on optional operating rules'
 );
 assert.match(
   header,
@@ -696,9 +710,99 @@ assert.match(
   'DigitalHuman channel creation must delegate optional Connection Center filtering to the selected provider'
 );
 assert.match(
-  feishuChannelProvider,
+  channels,
+  /<Select[\s\S]*<SelectTrigger[\s\S]*<SelectValue[\s\S]*<SelectContent[\s\S]*<SelectItem/,
+  'DigitalHuman Connection Center selection must use the shared system Select component'
+);
+assert.doesNotMatch(
+  channels,
+  /<select\b/,
+  'DigitalHuman Connection Center selection must not fall back to a native select'
+);
+assert.match(
+  `${feishuChannelProvider}\n${digitalHumanZhHans}`,
   /CredentialLocationGuide[\s\S]*guide\.appCredentials[\s\S]*guide\.eventSecurity[\s\S]*open\.feishu\.cn\/app/,
   'DigitalHuman Feishu credential forms must explain where users can obtain each required value'
+);
+assert.doesNotMatch(
+  feishuChannelProvider,
+  /function CredentialLocationGuide\(\)[\s\S]*?return \(\s*<details/,
+  'The pre-save Feishu checklist must remain visible instead of hiding the highest-priority guidance'
+);
+assert.match(
+  feishuChannelProvider,
+  /guide\.afterSaveHint[\s\S]*FeishuInstallationSetupGuide[\s\S]*postSave\.steps/,
+  'Feishu setup must separate pre-save credential preparation from post-save callback and publication steps'
+);
+assert.match(
+  `${channels}\n${channelHooks}\n${feishuChannelProvider}`,
+  /verificationResults[\s\S]*mutateAsync[\s\S]*VerificationStatus[\s\S]*failure\.permission_missing/,
+  'Channel verification must render provider-specific actionable results instead of only a generic toast'
+);
+assert.match(
+  `${channels}\n${channelHooks}\n${feishuChannelProvider}\n${service}\n${digitalHumanTypes}`,
+  /startConnectionTest[\s\S]*connection-tests[\s\S]*getChannelConnectionTest[\s\S]*message_received[\s\S]*reply_delivered/,
+  'Feishu connection testing must require backend-confirmed inbound and final-delivery evidence'
+);
+assert.match(
+  `${channels}\n${feishuChannelProvider}\n${service}\n${digitalHumanTypes}\n${digitalHumanZhHans}`,
+  /conversation_type[\s\S]*groupPrompt[\s\S]*group_mention[\s\S]*message_history[\s\S]*member_names[\s\S]*reply_delivery[\s\S]*im:message:readonly[\s\S]*im:chat\.members:read/,
+  'Feishu group testing must expose an automatic capability matrix backed by one real group mention'
+);
+assert.match(
+  `${feishuChannelProvider}\n${digitalHumanZhHans}`,
+  /FeishuGroupPermissionGuide[\s\S]*im:message\.group_msg[\s\S]*im:message:send_as_bot[\s\S]*im:message:readonly[\s\S]*im:chat\.members:read[\s\S]*数字人不会启动[\s\S]*最终回复无法发送[\s\S]*此前对话/,
+  'Feishu group diagnostics must explain each permission code and its user-visible missing-permission behavior'
+);
+assert.doesNotMatch(
+  `${feishuChannelProvider}\n${digitalHumanZhHans}`,
+  /message_observed_by_another_connection|另一个飞书连接观察到了同一测试文案/,
+  'Feishu connection-test results must not use another digital human connection as evidence for the current connection'
+);
+assert.match(
+  `${feishuChannelProvider}\n${digitalHumanZhHans}`,
+  /FeishuMessageRoundTripTest[\s\S]*test_message[\s\S]*eventChecklist\.eventPage[\s\S]*im\.message\.receive_v1/,
+  'Feishu setup must guide a real direct-message test and distinguish Event Configuration from Callback Configuration'
+);
+assert.match(
+  `${feishuChannelProvider}\n${digitalHumanZhHans}`,
+  /userConfirmedSent[\s\S]*confirmSent[\s\S]*callbackNotReceived[\s\S]*eventChecklistTitle/,
+  'Feishu callback diagnostics must wait for the user to confirm that the real test message was sent'
+);
+assert.match(
+  digitalHumanZhHans,
+  /新增或修改地址后必须保存并重新发布应用/,
+  'Feishu setup must explain that callback URL changes require republishing the app'
+);
+assert.match(
+  digitalHumanZhHans,
+  /飞书后台开通或审批完成后会直接生效，无需发布新版本/,
+  'Feishu permission guidance must explain that permission-only changes do not require a new app version'
+);
+assert.match(
+  digitalHumanZhHans,
+  /权限生效后直接重新测试；只有修改可用范围或应用配置时才需要发布新版本/,
+  'Feishu setup must distinguish permissions from versioned app configuration'
+);
+assert.doesNotMatch(
+  digitalHumanZhHans,
+  /开通后请重新发布应用|补齐权限并重新发布|权限后，必须发布新版本|im:message:send_as_bot，并发布新版本|im:message:readonly 和 im:message.group_msg，然后重新发布应用/,
+  'Feishu permission guidance must not tell users to publish a new version for permission-only changes'
+);
+assert.match(
+  `${feishuChannelProvider}\n${digitalHumanZhHans}`,
+  /permission_or_resource_denied[\s\S]*im:message:send_as_bot[\s\S]*停止自动重试/,
+  'Feishu round-trip failures must expose confirmed send permission errors without implying continued retries'
+);
+assert.match(
+  `${channels}\n${feishuChannelProvider}\n${digitalHumanZhHans}`,
+  /onConnectionTestChange[\s\S]*polled(?:Connection)?Test[\s\S]*role="alert"[\s\S]*连接测试已确认失败/,
+  'Feishu connection-test terminal failures must become durable page state and render as a visible alert'
+);
+assert.match(
+  `${feishuChannelProvider}\n${digitalHumanZhHans}`,
+  /onStartConnectionTest\?\.\('group'\)[\s\S]*terminalFailure && onRestart[\s\S]*restartTest[\s\S]*重新测试/,
+  'A terminal Feishu connection test must start a new test instead of refreshing an immutable expired result'
 );
 assert.match(
   dingTalkChannelProvider,
@@ -787,11 +891,6 @@ assert.match(
   'DigitalHuman service must expose the complete task lifecycle and audit API'
 );
 assert.match(
-  service,
-  /channels\/installations\/\$\{installationId\}\/task-policy/,
-  'DigitalHuman service must expose per-installation task authorization'
-);
-assert.match(
   `${taskHooks}\n${service}`,
   /revision: number[\s\S]*applyTaskAction\(id, taskId, action, revision\)[\s\S]*expected_revision: expectedRevision/,
   'DigitalHuman task mutations must submit the current revision for optimistic concurrency'
@@ -816,10 +915,15 @@ assert.match(
   /digitalHumanTaskDisplayStatus[\s\S]*tasks\.columns\.nextRun/,
   'DigitalHuman workbench must present recurring lifecycle state and next occurrence separately'
 );
+assert.doesNotMatch(
+  `${channels}\n${taskHooks}\n${service}`,
+  /task-policy|useChannelTaskPolicy|channel-task-policy-/,
+  'External channel task creation must be available by default without a per-installation policy switch'
+);
 assert.match(
-  channels,
-  /useChannelTaskPolicy[\s\S]*channel-task-policy-[\s\S]*taskPolicy\.description/,
-  'External channel task management must be an explicit per-installation opt-in'
+  feishuChannelProvider,
+  /const onChangeRef = useRef\(onChange\)[\s\S]*onChangeRef\.current\?\.\(polledTest\)[\s\S]*\[polledTest, test\.id\]/,
+  'Feishu connection-test polling must not resynchronize solely because a parent callback identity changed'
 );
 
 const sourceTabs = runs.match(/const sourceTabs:[\s\S]*?= \[([\s\S]*?)\n {2}\];/)?.[1] ?? '';

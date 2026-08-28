@@ -41,14 +41,3 @@ export function useDigitalHumanTaskMutations(id: string) {
   const action = useMutation({ mutationFn: ({ taskId, action, revision }: { taskId: string; action: string; revision: number }) => digitalHumanService.applyTaskAction(id, taskId, action, revision), onSuccess: invalidate, onError: handleError });
   return { create, update, action };
 }
-
-export function useChannelTaskPolicy(id: string, installationId: string) {
-  const client = useQueryClient();
-  const query = useQuery({ queryKey: DIGITAL_HUMAN_KEYS.channelTaskPolicy(id, installationId), queryFn: () => digitalHumanService.getChannelTaskPolicy(id, installationId), enabled: Boolean(id && installationId) });
-  const update = useMutation({
-    mutationFn: (enabled: boolean) => digitalHumanService.updateChannelTaskPolicy(id, installationId, enabled, query.data?.data.revision ?? 0),
-    onSuccess: () => client.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.channelTaskPolicy(id, installationId) }),
-    onError: error => toast.error(getErrorMessage(error) || 'Request failed'),
-  });
-  return { query, update };
-}

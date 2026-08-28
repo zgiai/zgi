@@ -130,8 +130,6 @@ export const DIGITAL_HUMAN_KEYS = {
     [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'runs'] as const,
   taskActivities: (id: string, taskId: string) =>
     [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'activities'] as const,
-  channelTaskPolicy: (id: string, installationId: string) =>
-    [...DIGITAL_HUMAN_KEYS.channelInstallations(id), installationId, 'task-policy'] as const,
 } as const;
 
 export const INTEGRATION_KEYS = {

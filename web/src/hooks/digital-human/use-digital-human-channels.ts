@@ -95,6 +95,23 @@ export function useDigitalHumanChannelMutations(id: string) {
     onSuccess: () => invalidateConfiguration(),
     onError: error => channelMutationError(error, t('channels.errors.installation')),
   });
+  const verifyInstallation = useMutation({
+    mutationFn: (installationId: string) =>
+      digitalHumanService.verifyChannelInstallation(id, installationId),
+    onSuccess: () => invalidateConfiguration(),
+    onError: error => channelMutationError(error, t('channels.errors.verification')),
+  });
+  const startConnectionTest = useMutation({
+    mutationFn: ({
+      installationId,
+      conversationType,
+    }: {
+      installationId: string;
+      conversationType: 'direct' | 'group';
+    }) => digitalHumanService.startChannelConnectionTest(id, installationId, conversationType),
+    onSuccess: () => invalidateConfiguration(),
+    onError: error => channelMutationError(error, t('channels.errors.verification')),
+  });
   const deleteInstallation = useMutation({
     mutationFn: (installationId: string) =>
       digitalHumanService.deleteChannelInstallation(id, installationId),
@@ -117,6 +134,8 @@ export function useDigitalHumanChannelMutations(id: string) {
     createInstallation,
     updateInstallation,
     updateCredential,
+    verifyInstallation,
+    startConnectionTest,
     deleteInstallation,
     retryDelivery,
   };
