@@ -257,6 +257,7 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 		configParameters, defaultParameters := decodeCatalogModelConfigPayload(model.GetConfigParametersJson())
 		catalog.Models = append(catalog.Models, modelmeta.PublishedModel{
 			Provider:               model.GetProvider(),
+			Vendor:                 model.GetVendor(),
 			Model:                  model.GetModel(),
 			ModelName:              model.GetModelName(),
 			Type:                   model.GetType(),

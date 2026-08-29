@@ -124,6 +124,7 @@ type ModelMetaData struct {
 	ID                        string                 `json:"id"`
 	Object                    string                 `json:"object"`
 	Provider                  string                 `json:"provider"`
+	Vendor                    string                 `json:"vendor"`
 	IconSlug                  string                 `json:"icon_slug"`
 	Model                     string                 `json:"model"`
 	ModelName                 string                 `json:"model_name"`
@@ -755,6 +756,9 @@ func mergeModelMetaDetail(base, detail ModelMetaData) ModelMetaData {
 	if strings.TrimSpace(detail.Provider) != "" {
 		base.Provider = detail.Provider
 	}
+	if strings.TrimSpace(detail.Vendor) != "" {
+		base.Vendor = detail.Vendor
+	}
 	if strings.TrimSpace(detail.IconSlug) != "" {
 		base.IconSlug = detail.IconSlug
 	}
@@ -1076,6 +1080,9 @@ func normalizedStructuredPricing(raw []byte) interface{} {
 
 // hasChanges checks if a model has changes compared to remote data
 func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bool {
+	if remoteVendor := strings.TrimSpace(remote.Vendor); remoteVendor != "" && local.Vendor != remoteVendor {
+		return true
+	}
 	if local.ModelName != remote.ModelName {
 		return true
 	}
@@ -1168,6 +1175,9 @@ func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bo
 func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaData) []DiffField {
 	var diffs []DiffField
 	remoteUseCases := ensureRemoteUseCases(remote)
+	if remoteVendor := strings.TrimSpace(remote.Vendor); remoteVendor != "" && local.Vendor != remoteVendor {
+		diffs = append(diffs, DiffField{Field: "vendor", OldValue: local.Vendor, NewValue: remoteVendor})
+	}
 
 	if local.ModelName != remote.ModelName {
 		diffs = append(diffs, DiffField{Field: "model_name", OldValue: local.ModelName, NewValue: remote.ModelName})
@@ -1343,6 +1353,7 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 
 	return PublishedModel{
 		Provider:               meta.Provider,
+		Vendor:                 strings.TrimSpace(meta.Vendor),
 		Model:                  meta.Model,
 		ModelName:              meta.ModelName,
 		Family:                 meta.Family,

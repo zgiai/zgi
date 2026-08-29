@@ -139,6 +139,7 @@ func TestPublishedModelLifecycleFieldsMapping(t *testing.T) {
 		Models: []*pb.CatalogModel{
 			{
 				Provider:            "deepseek",
+				Vendor:              "deepseek",
 				Model:               "deepseek-chat",
 				ModelName:           "DeepSeek Chat",
 				Status:              "deprecated",
@@ -157,6 +158,7 @@ func TestPublishedModelLifecycleFieldsMapping(t *testing.T) {
 
 	catalog := catalogFromResponse(resp)
 	require.Len(t, catalog.Models, 2)
+	require.Equal(t, "deepseek", catalog.Models[0].Vendor)
 	require.Equal(t, "deepseek", catalog.Models[0].ReplacementProvider)
 	require.Equal(t, "deepseek-v4-flash", catalog.Models[0].ReplacementModel)
 	require.Equal(t, "Compatibility model is deprecated.", catalog.Models[0].DeprecationReason)

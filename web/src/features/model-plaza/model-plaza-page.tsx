@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useQueries } from '@tanstack/react-query';
-import { Activity, BadgeCheck, Brain, Copy, Loader2, Search, Sparkles } from 'lucide-react';
+import { Activity, Brain, Copy, Loader2, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAllModelsInfinite, useProviderModelsInfinite } from '@/hooks/model/use-model';
 import { useCustomProviders, useProviders } from '@/hooks/provider/use-provider';
@@ -21,28 +21,52 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { getModelPriceDisplay } from '@/utils/model-price';
 import { useOrganizationStore } from '@/store/organization-store';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
+import { useT } from '@/i18n';
 
-const USE_CASE_FILTERS: Array<{ label: string; value: 'all' | ModelUseCase }> = [
-  { label: '全部', value: 'all' },
-  { label: '文本对话', value: 'text-chat' },
-  { label: '视觉理解', value: 'vision' },
-  { label: '图像生成', value: 'image-gen' },
-  { label: '向量嵌入', value: 'embedding' },
-  { label: '重排序', value: 'rerank' },
-  { label: '语音识别', value: 'speech-to-text' },
-  { label: '语音合成', value: 'text-to-speech' },
-  { label: '推理增强', value: 'reasoning' },
-  { label: '函数调用', value: 'function-calling' },
+const USE_CASE_VALUES: ModelUseCase[] = [
+  'text-chat',
+  'vision',
+  'image-gen',
+  'embedding',
+  'rerank',
+  'speech-to-text',
+  'text-to-speech',
+  'reasoning',
+  'function-calling',
 ];
-
-const USE_CASE_LABELS: Record<string, string> = Object.fromEntries(
-  USE_CASE_FILTERS.filter(item => item.value !== 'all').map(item => [item.value, item.label])
-);
 
 const PROVIDER_SEARCH_ALIASES: Record<string, string[]> = {
   doubao: ['豆包', '火山', '火山引擎', 'volcengine', 'bytedance', '字节'],
   siliconflow: ['硅基流动'],
 };
+
+interface ManufacturerFilterItem {
+  label: string;
+  value: string;
+  iconKey?: string;
+}
+
+const MODEL_VENDOR_METADATA: ManufacturerFilterItem[] = [
+  { label: 'Anthropic', value: 'anthropic', iconKey: 'anthropic' },
+  { label: 'DeepSeek', value: 'deepseek', iconKey: 'deepseek' },
+  { label: 'Doubao', value: 'doubao', iconKey: 'doubao' },
+  { label: 'MiniMax', value: 'minimax', iconKey: 'minimax' },
+  { label: 'Moonshot AI', value: 'moonshot', iconKey: 'moonshot' },
+  { label: 'OpenAI', value: 'openai', iconKey: 'openai' },
+  { label: 'Qwen', value: 'qwen', iconKey: 'qwen' },
+  { label: 'Zhipu AI', value: 'zhipu', iconKey: 'zhipu' },
+];
+
+function modelManufacturer(model: ModelItem): ManufacturerFilterItem {
+  const vendor = normalizeSearchValue(model.vendor ?? '');
+
+  return (
+    MODEL_VENDOR_METADATA.find(item => item.value === vendor) ?? {
+      label: model.vendor?.trim() || vendor,
+      value: vendor,
+    }
+  );
+}
 
 interface VideoResolutionRate {
   resolution?: string | null;
@@ -53,7 +77,9 @@ interface VideoResolutionRate {
 }
 
 interface StructuredModelPricing {
+  currency?: string | null;
   video_generation?: {
+    currency?: string | null;
     resolution_rates?: VideoResolutionRate[] | null;
   } | null;
 }
@@ -77,12 +103,15 @@ function modelDisplayName(model: ModelItem): string {
 function modelMatchesSearch(
   model: ModelItem,
   search: string,
-  providerSearchValues: readonly string[] = []
+  providerSearchValues: readonly string[] = [],
+  useCaseLabels: Record<string, string> = {}
 ): boolean {
   const keyword = normalizeSearchValue(search);
   if (!keyword) return true;
 
-  const useCaseLabels = (model.use_cases ?? []).map(useCase => USE_CASE_LABELS[useCase] || useCase);
+  const searchableUseCaseLabels = (model.use_cases ?? []).map(
+    useCase => useCaseLabels[useCase] || useCase
+  );
   const featureLabels = [
     model.features?.function_calling ? '函数调用 function_calling' : '',
     model.features?.vision ? '视觉 vision' : '',
@@ -93,12 +122,13 @@ function modelMatchesSearch(
     model.model,
     model.model_name,
     model.provider,
+    model.vendor,
     model.family,
     model.family_name,
     model.tagline,
     model.tier,
     ...providerSearchValues,
-    ...useCaseLabels,
+    ...searchableUseCaseLabels,
     ...featureLabels,
   ].some(value => normalizeSearchValue(value ?? '').includes(keyword));
 }
@@ -137,11 +167,6 @@ async function fetchAllProviderModels(
   return models;
 }
 
-function copyModelName(modelName: string) {
-  void navigator.clipboard.writeText(modelName);
-  toast.success('模型名称已复制');
-}
-
 function getExperienceHref(model: ModelItem): string {
   const params = `provider=${encodeURIComponent(model.provider)}&model=${encodeURIComponent(model.model)}`;
   const basePath = model.use_cases?.includes('image-gen')
@@ -151,11 +176,47 @@ function getExperienceHref(model: ModelItem): string {
 }
 
 export function ModelPlazaPage() {
+  const t = useT('models');
   const [search, setSearch] = React.useState('');
   const debouncedSearch = useDebouncedValue(search, 500);
   const [useCaseFilter, setUseCaseFilter] = React.useState<'all' | ModelUseCase>('all');
   const [providerFilter, setProviderFilter] = React.useState('all');
+  const [manufacturerFilter, setManufacturerFilter] = React.useState('all');
   const getProviderName = useProviderI18n();
+  const useCaseLabels = React.useMemo<Record<string, string>>(
+    () => ({
+      'text-chat': t('plaza.useCases.textChat'),
+      vision: t('plaza.useCases.vision'),
+      'image-gen': t('plaza.useCases.imageGen'),
+      embedding: t('plaza.useCases.embedding'),
+      rerank: t('plaza.useCases.rerank'),
+      'speech-to-text': t('plaza.useCases.speechToText'),
+      'text-to-speech': t('plaza.useCases.textToSpeech'),
+      reasoning: t('plaza.useCases.reasoning'),
+      'function-calling': t('plaza.useCases.functionCalling'),
+    }),
+    [t]
+  );
+  const useCaseFilters = React.useMemo(
+    () => [
+      { label: t('plaza.all'), value: 'all' as const },
+      ...USE_CASE_VALUES.map(value => ({ label: useCaseLabels[value], value })),
+    ],
+    [t, useCaseLabels]
+  );
+  const manufacturerLabels = React.useMemo<Record<string, string>>(
+    () => ({
+      anthropic: 'Anthropic',
+      deepseek: t('plaza.manufacturers.deepseek'),
+      doubao: t('plaza.manufacturers.doubao'),
+      minimax: 'MiniMax',
+      moonshot: t('plaza.manufacturers.moonshot'),
+      openai: 'OpenAI',
+      qwen: t('plaza.manufacturers.qwen'),
+      zhipu: t('plaza.manufacturers.zhipu'),
+    }),
+    [t]
+  );
 
   const {
     items: officialProviders,
@@ -186,8 +247,8 @@ export function ModelPlazaPage() {
         ),
       }));
 
-    return [{ label: '全部', value: 'all', aliases: ['全部'] }, ...providers];
-  }, [customProviders, getProviderName, officialProviders]);
+    return [{ label: t('plaza.all'), value: 'all', aliases: [t('plaza.all')] }, ...providers];
+  }, [customProviders, getProviderName, officialProviders, t]);
 
   const providerSearchMap = React.useMemo(
     () =>
@@ -218,6 +279,29 @@ export function ModelPlazaPage() {
     limit: 100,
     use_case: useCaseFilter === 'all' ? undefined : useCaseFilter,
   });
+  const manufacturerFilters = React.useMemo<ManufacturerFilterItem[]>(() => {
+    const availableManufacturers = new Map<string, ManufacturerFilterItem>();
+    allModels.forEach(model => {
+      const manufacturer = modelManufacturer(model);
+      availableManufacturers.set(manufacturer.value, manufacturer);
+    });
+    const configuredManufacturers = MODEL_VENDOR_METADATA.filter(manufacturer =>
+      availableManufacturers.has(manufacturer.value)
+    ).map(manufacturer => ({
+      ...manufacturer,
+      label: manufacturerLabels[manufacturer.value] ?? manufacturer.label,
+    }));
+    const configuredValues = new Set(configuredManufacturers.map(item => item.value));
+    const additionalManufacturers = Array.from(availableManufacturers.values())
+      .filter(manufacturer => !configuredValues.has(manufacturer.value))
+      .sort((left, right) => left.label.localeCompare(right.label));
+
+    return [
+      { label: t('plaza.all'), value: 'all' },
+      ...configuredManufacturers,
+      ...additionalManufacturers,
+    ];
+  }, [allModels, manufacturerLabels, t]);
   const {
     models: providerModels,
     total: providerModelsTotal,
@@ -269,10 +353,14 @@ export function ModelPlazaPage() {
           : allModels
       ).filter(model => {
         if (providerFilter !== 'all' && model.provider !== providerFilter) return false;
+        if (manufacturerFilter !== 'all' && modelManufacturer(model).value !== manufacturerFilter) {
+          return false;
+        }
         return modelMatchesSearch(
           model,
           debouncedSearch,
-          providerSearchMap.get(model.provider) ?? []
+          providerSearchMap.get(model.provider) ?? [],
+          useCaseLabels
         );
       }),
     [
@@ -282,8 +370,10 @@ export function ModelPlazaPage() {
       providerSearchMap,
       providerSearchModels,
       debouncedSearch,
+      manufacturerFilter,
       selectedProvider,
       shouldUseProviderSearch,
+      useCaseLabels,
     ]
   );
 
@@ -303,7 +393,8 @@ export function ModelPlazaPage() {
       ? isProviderModelsFetching || isFetchingNextPage
       : isAllModelsFetching || isFetchingNextAllModelsPage;
   const totalModels = selectedProvider ? providerModelsTotal : allModelsTotal;
-  const displayModelCount = debouncedSearch.trim() ? filteredModels.length : totalModels;
+  const displayModelCount =
+    debouncedSearch.trim() || manufacturerFilter !== 'all' ? filteredModels.length : totalModels;
 
   React.useEffect(() => {
     if (
@@ -349,12 +440,12 @@ export function ModelPlazaPage() {
   const handleRefresh = React.useCallback(async () => {
     try {
       await refetch();
-      toast.success('模型列表已刷新');
+      toast.success(t('plaza.refreshSuccess'));
     } catch (err) {
-      const message = err instanceof Error ? err.message : '请稍后再试';
-      toast.error('刷新失败', { description: message });
+      const message = err instanceof Error ? err.message : t('plaza.retryLater');
+      toast.error(t('plaza.refreshFailed'), { description: message });
     }
-  }, [refetch]);
+  }, [refetch, t]);
 
   return (
     <div className="flex min-h-full flex-col bg-muted/30">
@@ -364,12 +455,11 @@ export function ModelPlazaPage() {
             <div>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Sparkles className="size-4 text-primary" />
-                <span>模型服务</span>
+                <span>{t('plaza.service')}</span>
               </div>
-              <h1 className="mt-1.5 text-2xl font-semibold tracking-tight">模型广场</h1>
+              <h1 className="mt-1.5 text-2xl font-semibold tracking-tight">{t('plaza.title')}</h1>
               <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-                查看当前平台可用模型，按价格、场景和提供方筛选，快速复制模型 ID 用于 API
-                调用或工作流配置。
+                {t('plaza.description')}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -379,7 +469,7 @@ export function ModelPlazaPage() {
                 ) : (
                   <Activity className="size-4" />
                 )}
-                刷新
+                {t('plaza.refresh')}
               </Button>
             </div>
           </div>
@@ -388,27 +478,27 @@ export function ModelPlazaPage() {
             <Input
               value={search}
               onChange={event => setSearch(event.target.value)}
-              placeholder="搜索模型名称、提供方或能力"
+              placeholder={t('plaza.searchPlaceholder')}
               leftIcon={<Search />}
               className="h-9 bg-background"
             />
             <div className="rounded-md border bg-background px-3 py-1.5 text-sm text-muted-foreground">
-              共 <span className="font-semibold text-foreground">{displayModelCount}</span> 个模型
+              {t('plaza.modelCount', { count: displayModelCount })}
             </div>
           </div>
 
           <FilterRow
-            title="使用场景"
-            items={USE_CASE_FILTERS}
+            title={t('plaza.useCase')}
+            items={useCaseFilters}
             value={useCaseFilter}
             onChange={value => setUseCaseFilter(value as 'all' | ModelUseCase)}
           />
           <FilterRow
-            title="提供方"
-            items={providerFilters}
-            value={providerFilter}
-            onChange={setProviderFilter}
-            loading={isProviderLoading || isProviderFetching}
+            title={t('plaza.manufacturer')}
+            items={manufacturerFilters}
+            value={manufacturerFilter}
+            onChange={setManufacturerFilter}
+            loading={isLoading || isProviderLoading || isProviderFetching}
           />
         </div>
       </div>
@@ -427,10 +517,8 @@ export function ModelPlazaPage() {
                 <ModelCard
                   key={`${model.provider}:${model.model}`}
                   model={model}
-                  providerName={
-                    providerFilters.find(item => item.value === model.provider)?.label ??
-                    model.provider
-                  }
+                  useCaseLabels={useCaseLabels}
+                  manufacturerLabel={manufacturerLabels[modelManufacturer(model).value]}
                 />
               ))}
             </div>
@@ -438,7 +526,7 @@ export function ModelPlazaPage() {
               <div className="flex justify-center">
                 <div className="inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
-                  正在加载更多模型
+                  {t('plaza.loadingMore')}
                 </div>
               </div>
             ) : null}
@@ -447,8 +535,8 @@ export function ModelPlazaPage() {
           <Card>
             <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
               <Brain className="size-10 text-muted-foreground" />
-              <div className="text-base font-medium">暂无匹配模型</div>
-              <p className="text-sm text-muted-foreground">调整筛选条件后再试。</p>
+              <div className="text-base font-medium">{t('plaza.emptyTitle')}</div>
+              <p className="text-sm text-muted-foreground">{t('plaza.emptyDescription')}</p>
             </CardContent>
           </Card>
         )}
@@ -465,7 +553,7 @@ function FilterRow({
   loading = false,
 }: {
   title: string;
-  items: ReadonlyArray<{ label: string; value: string }>;
+  items: ReadonlyArray<{ label: string; value: string; iconKey?: string }>;
   value: string;
   onChange: (value: string) => void;
   loading?: boolean;
@@ -480,12 +568,15 @@ function FilterRow({
             type="button"
             onClick={() => onChange(item.value)}
             className={cn(
-              'rounded-md border px-2.5 py-1 text-sm transition-colors',
+              'inline-flex items-center whitespace-nowrap rounded-md border px-2.5 py-1 text-sm transition-colors',
               value === item.value
                 ? 'border-primary bg-primary text-primary-foreground'
                 : 'border-transparent bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground'
             )}
           >
+            {item.iconKey ? (
+              <ProviderIcon provider={item.iconKey} size={16} className="mr-1.5 shrink-0" />
+            ) : null}
             {item.label}
           </button>
         ))}
@@ -495,14 +586,21 @@ function FilterRow({
   );
 }
 
-function ModelCard({ model, providerName }: { model: ModelItem; providerName?: string }) {
+function ModelCard({
+  model,
+  useCaseLabels,
+  manufacturerLabel,
+}: {
+  model: ModelItem;
+  useCaseLabels: Record<string, string>;
+  manufacturerLabel?: string;
+}) {
+  const t = useT('models');
   const currentOrganization = useOrganizationStore.use.currentOrganization();
   const billingDisplay = getBillingDisplaySettings(currentOrganization);
   const displayName = modelDisplayName(model);
-  const providerDisplayName = providerName || model.provider || '未知提供方';
-  const familyDisplayName = model.family_name || model.family || model.tier || '标准模型';
-  const shouldShowFamily =
-    familyDisplayName.trim().toLocaleLowerCase() !== providerDisplayName.trim().toLocaleLowerCase();
+  const manufacturer = modelManufacturer(model);
+  const displayManufacturer = manufacturerLabel ?? manufacturer.label;
   const experienceHref = getExperienceHref(model);
   const priceItems = getModelPriceDisplay({
     inputPrice: model.input_price,
@@ -513,6 +611,27 @@ function ModelCard({ model, providerName }: { model: ModelItem; providerName?: s
     currency: model.currency,
     pricing: model.pricing,
     billingDisplay,
+    videoDisplayMode: 'summary',
+    labels: {
+      withVideoInput: t('plaza.withVideoInput'),
+      withoutVideoInput: t('plaza.withoutVideoInput'),
+      image: t('plaza.image'),
+      input: t('plaza.input'),
+      output: t('plaza.output'),
+      speechGeneration: t('plaza.speechGeneration'),
+      transcription: t('plaza.transcription'),
+      musicGeneration: t('plaza.musicGeneration'),
+      lyricsGeneration: t('plaza.lyricsGeneration'),
+      meteredPrice: t('plaza.meteredPrice'),
+      perImage: t('plaza.perImage'),
+      perMillionTokens: t('plaza.perMillionTokens'),
+      perTenThousandCharacters: t('plaza.perTenThousandCharacters'),
+      perHour: t('plaza.perHour'),
+      perTrack: t('plaza.perTrack'),
+      perRequest: t('plaza.perRequest'),
+      perQuantity: (quantity, unit) => t('plaza.perQuantity', { quantity, unit }),
+      perUnit: unit => t('plaza.perUnit', { unit }),
+    },
   });
   const structuredPricing = model.pricing as StructuredModelPricing | null | undefined;
   const videoResolutions = Array.from(
@@ -533,14 +652,16 @@ function ModelCard({ model, providerName }: { model: ModelItem; providerName?: s
     return new Set(prices).size > 1;
   });
   const featureLabels = [
-    model.features?.function_calling ? '函数调用' : null,
-    model.features?.vision ? '视觉' : null,
-    model.features?.reasoning ? '推理' : null,
-    model.context_window ? `${Math.round(model.context_window / 1000)}K 上下文` : null,
+    model.features?.function_calling ? t('plaza.functionCalling') : null,
+    model.features?.vision ? t('plaza.vision') : null,
+    model.features?.reasoning ? t('plaza.reasoning') : null,
+    model.context_window
+      ? t('plaza.context', { count: Math.round(model.context_window / 1000) })
+      : null,
   ].filter(Boolean) as string[];
   const capabilityLabels = Array.from(
     new Set([
-      ...(model.use_cases ?? []).map(useCase => USE_CASE_LABELS[useCase] || useCase),
+      ...(model.use_cases ?? []).map(useCase => useCaseLabels[useCase] || useCase),
       ...featureLabels,
     ])
   );
@@ -559,18 +680,21 @@ function ModelCard({ model, providerName }: { model: ModelItem; providerName?: s
             variant="outline"
             size="sm"
             className="h-7 shrink-0 gap-1 px-2 text-xs text-muted-foreground"
-            onClick={() => copyModelName(model.model)}
-            title="复制模型 ID"
+            onClick={() => {
+              void navigator.clipboard.writeText(model.model);
+              toast.success(t('plaza.copySuccess'));
+            }}
+            title={t('plaza.copyTitle')}
           >
             <Copy className="size-3.5" />
-            复制
+            {t('plaza.copy')}
           </Button>
         </div>
 
         <div className="flex min-h-6 flex-wrap gap-1.5">
-          {model.is_recommended ? <Badge>推荐</Badge> : null}
+          {model.is_recommended ? <Badge>{t('plaza.recommended')}</Badge> : null}
           <Badge variant={model.is_available ? 'success' : 'subtle'}>
-            {model.is_available ? '可用' : '不可用'}
+            {model.is_available ? t('plaza.available') : t('plaza.unavailable')}
           </Badge>
           {capabilityLabels.length > 0 ? (
             capabilityLabels.map(label => (
@@ -579,15 +703,19 @@ function ModelCard({ model, providerName }: { model: ModelItem; providerName?: s
               </Badge>
             ))
           ) : (
-            <Badge variant="subtle">通用模型</Badge>
+            <Badge variant="subtle">{t('plaza.generalModel')}</Badge>
           )}
         </div>
 
         <div className="mt-auto border-y py-3.5">
           {videoResolutions.length > 0 ? (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span>支持分辨率：{videoResolutions.join(' / ')}</span>
-              {videoPriceVariesByResolution ? <span>价格随分辨率变化</span> : null}
+              <span>
+                {t('plaza.supportedResolutions', { resolutions: videoResolutions.join(' / ') })}
+              </span>
+              {videoPriceVariesByResolution ? (
+                <span>{t('plaza.priceVariesByResolution')}</span>
+              ) : null}
             </div>
           ) : null}
           <div
@@ -602,22 +730,25 @@ function ModelCard({ model, providerName }: { model: ModelItem; providerName?: s
                 label={
                   item.detail ||
                   (item.unit === 'perImage'
-                    ? '图像'
+                    ? t('plaza.image')
                     : item.label === 'input'
-                      ? '输入'
+                      ? t('plaza.input')
                       : item.label === 'output'
-                        ? '输出'
-                        : '视频')
+                        ? t('plaza.output')
+                        : t('plaza.video'))
                 }
                 value={item.formattedValue}
                 unit={
                   item.unit === 'perImage'
-                    ? '/ 张'
+                    ? t('plaza.perImage')
                     : item.unit === 'perSecond'
-                      ? '/ 秒'
+                      ? t('plaza.perSecond')
                       : item.unit === 'perTask'
-                        ? '/ 次'
-                        : '/ 百万 tokens'
+                        ? t('plaza.perTask')
+                        : item.displayUnit ||
+                          (item.unit === 'perMillionVideoTokens'
+                            ? t('plaza.perMillionVideoTokens')
+                            : t('plaza.perMillionTokens'))
                 }
               />
             ))}
@@ -626,31 +757,25 @@ function ModelCard({ model, providerName }: { model: ModelItem; providerName?: s
 
         <div className="flex items-center justify-between gap-3 pt-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-            <span className="flex min-w-0 items-center gap-2">
-              <ProviderIcon provider={model.provider} size={18} className="shrink-0" />
-              <span className="truncate">{providerDisplayName}</span>
+            <span
+              className="flex min-w-0 items-center gap-2"
+              title={t('plaza.manufacturerTitle', { name: displayManufacturer })}
+            >
+              <ProviderIcon provider={manufacturer.iconKey} size={18} className="shrink-0" />
+              <span className="truncate">{displayManufacturer}</span>
             </span>
-            {shouldShowFamily ? (
-              <span
-                className="flex min-w-0 items-center gap-1.5"
-                title={`模型系列：${familyDisplayName}`}
-              >
-                <BadgeCheck className="size-4 shrink-0" />
-                <span className="truncate">{familyDisplayName}</span>
-              </span>
-            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {model.is_available ? (
               <Button asChild size="sm" variant="ghost">
-                <Link href={experienceHref}>立即体验</Link>
+                <Link href={experienceHref}>{t('plaza.tryNow')}</Link>
               </Button>
             ) : (
               <Button asChild size="sm" variant="ghost">
                 <Link
                   href={`/dashboard/provider/${encodeURIComponent(model.provider)}?model=${encodeURIComponent(model.model)}`}
                 >
-                  去启用
+                  {t('plaza.enable')}
                 </Link>
               </Button>
             )}

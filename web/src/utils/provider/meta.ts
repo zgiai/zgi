@@ -32,11 +32,13 @@ const PROVIDER_CANONICAL_ALIASES: Record<string, string> = {
   '01ai': 'zeroone',
   '360ai': 'ai360',
   anthropic: 'anthropic',
+  alibaba: 'alibaba',
   baichuan: 'baichuan',
   baidu: 'wenxin',
   cohere: 'cohere',
   deepseek: 'deepseek',
   doubao: 'doubao',
+  bytedance: 'bytedance',
   'doubao-speech': 'doubaoSpeech',
   gemini: 'google',
   glm: 'zhipu',
@@ -70,11 +72,13 @@ const PROVIDER_CANONICAL_ALIASES: Record<string, string> = {
 
 const PROVIDER_ICON_KEYS: Record<string, string> = {
   ai360: 'ai360',
+  alibaba: 'alibaba',
   anthropic: 'anthropic',
   baichuan: 'baichuan',
   cohere: 'cohere',
   deepseek: 'deepseek',
   doubao: 'doubao',
+  bytedance: 'bytedance',
   doubaoSpeech: 'doubao',
   google: 'google',
   infinigence: 'infinigence',
@@ -229,6 +233,11 @@ export function resolveProviderDisplayInfo(
 
   return {
     name: localized?.provider_name || fallbackName,
-    description: localized?.description || localized?.tagline || provider.description || provider.tagline || '',
+    description:
+      localized?.description ||
+      localized?.tagline ||
+      provider.description ||
+      provider.tagline ||
+      '',
   };
 }

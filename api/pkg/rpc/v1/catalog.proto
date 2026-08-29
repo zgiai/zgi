@@ -82,6 +82,7 @@ message CatalogModel {
     string replacement_model = 33;
     string deprecation_reason = 34;
     string pricing_json = 35;
+    string vendor = 36;
 }
 
 message CatalogModelEndpoints {

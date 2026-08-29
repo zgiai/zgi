@@ -46,6 +46,7 @@ type PublishedProvider struct {
 
 type PublishedModel struct {
 	Provider               string
+	Vendor                 string
 	Model                  string
 	ModelName              string
 	Type                   string
@@ -635,6 +636,9 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	}
 	if hasColumn(db, "llm_models", "cache_write_price_configured") {
 		values["cache_write_price_configured"] = cacheWritePrice != nil
+	}
+	if vendor := strings.TrimSpace(model.Vendor); vendor != "" && hasColumn(db, "llm_models", "vendor") {
+		values["vendor"] = vendor
 	}
 	if hasColumn(db, "llm_models", "is_active") {
 		values["is_active"] = model.IsActive
