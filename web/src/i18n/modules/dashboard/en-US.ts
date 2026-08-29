@@ -1280,6 +1280,7 @@ const messages = {
           modules: {
             workspace: 'Workspace Management Permissions',
             agent: 'Agent Module',
+            digital_human: 'Digital Human Module',
             workflow: 'Workflow Module',
             knowledge: 'Knowledge Base Module',
             database: 'Database Module',
@@ -1321,6 +1322,56 @@ const messages = {
             lock: {
               name: 'Lock/Unlock Agent',
               description: 'Lock/unlock agents. Locked agents cannot be edited/deleted.',
+            },
+          },
+          digital_human: {
+            view: {
+              name: 'View digital humans',
+              description:
+                'Allows access to the digital human module, including lists, workbenches, and basic configuration.',
+            },
+            create: {
+              name: 'Create digital humans',
+              description:
+                'Allows creating digital humans and entering the required information for their first publication.',
+            },
+            update: {
+              name: 'Edit digital humans',
+              description:
+                'Allows editing configuration, resource bindings, external channels, and task settings.',
+            },
+            delete: {
+              name: 'Delete digital humans',
+              description: 'Allows deleting digital humans and their associated removable data.',
+            },
+            publish: {
+              name: 'Publish digital humans',
+              description:
+                'Allows publishing drafts, creating production versions, and republishing restored versions.',
+            },
+            run: {
+              name: 'Run digital humans',
+              description:
+                'Allows starting or stopping conversations and tasks, and retrying or closing failed channel deliveries.',
+            },
+            logs: {
+              view: {
+                name: 'View digital human runs',
+                description:
+                  'Allows viewing digital human run logs, channel events, and message delivery records.',
+              },
+            },
+            memory: {
+              view: {
+                name: 'View digital human memory',
+                description:
+                  'Allows viewing long-term memory, evidence, and historical versions for digital humans.',
+              },
+              manage: {
+                name: 'Manage digital human memory',
+                description:
+                  'Allows creating, replacing, invalidating, undoing, and restoring digital human memory.',
+              },
             },
           },
           knowledge_base: {

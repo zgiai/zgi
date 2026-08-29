@@ -1216,6 +1216,7 @@ const messages: DashboardMessages = {
           modules: {
             workspace: '工作空间管理权限',
             agent: '智能体模块',
+            digital_human: '数字人模块',
             workflow: '工作流模块',
             knowledge: '知识库模块',
             database: '数据库模块',
@@ -1255,6 +1256,48 @@ const messages: DashboardMessages = {
             lock: {
               name: '锁定/解锁智能体',
               description: '锁定/解锁智能体，锁定后无法编辑/删除智能体',
+            },
+          },
+          digital_human: {
+            view: {
+              name: '查看数字人',
+              description: '允许进入数字人模块，查看数字人列表、工作台和基础配置。',
+            },
+            create: {
+              name: '新建数字人',
+              description: '允许创建新的数字人并填写首次发布所需的基础信息。',
+            },
+            update: {
+              name: '编辑数字人',
+              description: '允许修改数字人的配置、资源绑定、外部连接和待办设置。',
+            },
+            delete: {
+              name: '删除数字人',
+              description: '允许删除数字人及其关联的可清理数据。',
+            },
+            publish: {
+              name: '发布数字人',
+              description: '允许发布草稿、创建正式运行版本和执行版本回滚后的重新发布。',
+            },
+            run: {
+              name: '运行数字人',
+              description: '允许发起或停止对话与待办运行，并重试或关闭失败的渠道投递。',
+            },
+            logs: {
+              view: {
+                name: '查看数字人运行记录',
+                description: '允许查看数字人运行日志、渠道事件和消息投递记录。',
+              },
+            },
+            memory: {
+              view: {
+                name: '查看数字人记忆',
+                description: '允许查看数字人的长期记忆、证据和历史版本。',
+              },
+              manage: {
+                name: '管理数字人记忆',
+                description: '允许新增、替换、失效、撤销和恢复数字人记忆。',
+              },
             },
           },
           knowledge_base: {

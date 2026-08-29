@@ -847,6 +847,11 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     permissions: permissionsWithPrefix('agent'),
   },
   {
+    key: 'digital_human',
+    title: 'permissions.modules.digital_human',
+    permissions: permissionsWithPrefix('digital_human'),
+  },
+  {
     key: 'workflow',
     title: 'permissions.modules.workflow',
     permissions: permissionsWithPrefix('workflow'),

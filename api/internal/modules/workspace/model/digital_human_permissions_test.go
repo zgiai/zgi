@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestDigitalHumanPermissionsAreIndependentAndAssignedByBuiltinRole(t *testing.T) {
 	codes := []WorkspacePermissionCode{
@@ -89,5 +92,22 @@ func TestDigitalHumanPermissionsAreIndependentAndAssignedByBuiltinRole(t *testin
 		!WorkspacePermissionStringsAllow(definitions[WorkspaceDefaultRoleTemplateReadonlyKey], WorkspacePermissionDigitalHumanMemoryView) ||
 		WorkspacePermissionStringsAllow(definitions[WorkspaceDefaultRoleTemplateReadonlyKey], WorkspacePermissionDigitalHumanRun) {
 		t.Fatalf("readonly default role DigitalHuman permissions = %v", definitions[WorkspaceDefaultRoleTemplateReadonlyKey])
+	}
+}
+
+func TestAdvancedDefaultRoleIncludesEveryAssignableBusinessPermission(t *testing.T) {
+	var advancedPermissions []string
+	for _, definition := range DefaultWorkspaceRoleTemplateDefinitions() {
+		if definition.SystemKey == WorkspaceDefaultRoleTemplateAdvancedKey {
+			advancedPermissions = definition.Permissions
+			break
+		}
+	}
+
+	expected := CanonicalAssignableWorkspacePermissionSnapshotStrings(
+		WorkspacePermissionStringsFromCodes(AllWorkspacePermissionCodes()),
+	)
+	if !slices.Equal(advancedPermissions, expected) {
+		t.Fatalf("advanced permissions = %v, want every assignable business permission %v", advancedPermissions, expected)
 	}
 }

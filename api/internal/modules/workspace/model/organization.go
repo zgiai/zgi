@@ -772,6 +772,8 @@ func DefaultWorkspaceRoleTemplateDefinition(systemKey string) (WorkspaceDefaultR
 }
 
 func advancedWorkspaceMemberPermissionStrings() []string {
+	// Default templates are snapshots: initialize future advanced templates with
+	// every assignable business permission without rewriting existing templates.
 	codes := AllWorkspacePermissionCodes()
 	permissions := make([]string, 0, len(codes))
 	for _, code := range codes {
