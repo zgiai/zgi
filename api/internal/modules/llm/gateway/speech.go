@@ -29,6 +29,21 @@ type SpeechRequest struct {
 	ResponseFormat string `json:"response_format"`
 }
 
+// clientWriteTracker remembers downstream delivery failures so they are not
+// attributed to the upstream model provider.
+type clientWriteTracker struct {
+	dst      io.Writer
+	writeErr error
+}
+
+func (w *clientWriteTracker) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	if err != nil && w.writeErr == nil {
+		w.writeErr = err
+	}
+	return n, err
+}
+
 // GenerateSpeech routes one MP3 stream through the selected official or private channel.
 func (s *llmGatewayServiceImpl) GenerateSpeech(
 	ctx context.Context,
@@ -143,19 +158,27 @@ func (s *llmGatewayServiceImpl) GenerateSpeech(
 		if err := s.activateUpstreamProbeForAttempt(ctx, selection, billingCtx); err != nil {
 			return err
 		}
+		destination := &clientWriteTracker{dst: dst}
 		err = speechAdapter.GenerateSpeech(ctx, &adapter.SpeechRequest{
 			RequestID:      requestID,
 			Model:          request.Model,
 			Input:          request.Input,
 			Voice:          request.Voice,
 			ResponseFormat: request.ResponseFormat,
-		}, dst)
+		}, destination)
 		responseTime := time.Since(startedAt).Milliseconds()
 		if err != nil {
 			setBillingFailure(billingCtx, err)
 			billingCtx.ResponseTime = responseTime
-			s.recordUpstreamProviderError(ctx, selection, billingCtx, err)
-			return errors.Join(err, s.rollbackPreDeduction(ctx, billingCtx))
+			clientWriteFailure := destination.writeErr != nil && errors.Is(err, destination.writeErr)
+			if !clientWriteFailure {
+				s.recordUpstreamProviderError(ctx, selection, billingCtx, err)
+			}
+			resultErr := errors.Join(err, s.rollbackPreDeduction(ctx, billingCtx))
+			if clientWriteFailure {
+				return NewClientIOError(resultErr)
+			}
+			return resultErr
 		}
 		s.recordUpstreamProviderSuccess(ctx, selection, billingCtx)
 		return s.settlePrivateMeteredSuccess(ctx, billingCtx, selection, quote, responseTime)

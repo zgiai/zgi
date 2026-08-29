@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	_ "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider"
@@ -287,6 +289,122 @@ func TestGenerateMusicDoesNotReportDestinationWriteFailure(t *testing.T) {
 	}
 }
 
+func TestGenerateMusicUsesPrivateMiniMaxRouteAndSettlesMeteredBilling(t *testing.T) {
+	organizationID := uuid.New()
+	requestID := uuid.NewString()
+	providerAdapter := &privateMusicGatewayAdapter{}
+	factory := adapter.NewDefaultAdapterFactory()
+	factory.Register("minimax", func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return providerAdapter, nil
+	})
+	local := &fakeBillingProvider{checkBalanceResult: true}
+	pricing := &fakePricingEngine{meteredQuote: PricingQuote{TotalCredits: 17, OutputCredits: 17}}
+	service := newPrivateMusicGatewayTestService(t, organizationID)
+	service.adapterFactory = factory
+	service.billing = &fakeBillingProvider{checkBalanceResult: true}
+	service.localBilling = local
+	service.pricingEngine = pricing
+
+	var audio bytes.Buffer
+	err := service.GenerateMusic(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, &MusicRequest{
+		RequestID:      requestID,
+		Model:          musicGatewayTestModel,
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         "warm piano",
+		ResponseFormat: "mp3",
+	}, &audio)
+	if err != nil {
+		t.Fatalf("GenerateMusic() error = %v", err)
+	}
+	if got, want := audio.String(), "PRIVATE-MP3"; got != want {
+		t.Fatalf("audio = %q, want %q", got, want)
+	}
+	if local.preDeductCalls != 1 || local.settleCalls != 1 || local.lastSettle == nil {
+		t.Fatalf("local billing calls/settlement = %d/%d/%#v", local.preDeductCalls, local.settleCalls, local.lastSettle)
+	}
+	if local.lastSettle.AttemptID != requestID || local.lastSettle.PricingOperation != PricingOperationMusic || local.lastSettle.ActualCredits != 17 {
+		t.Fatalf("settlement = %#v", local.lastSettle)
+	}
+	if pricing.lastMeteredUsage.Operation != PricingOperationMusic || pricing.lastMeteredUsage.Meter != meterOutputTrack ||
+		pricing.lastMeteredUsage.BaseUnit != baseUnitTrack || pricing.lastMeteredUsage.Quantity != 1 {
+		t.Fatalf("metered usage = %#v", pricing.lastMeteredUsage)
+	}
+}
+
+func TestGenerateLyricsUsesPrivateMiniMaxRouteAndSettlesMeteredBilling(t *testing.T) {
+	organizationID := uuid.New()
+	requestID := uuid.NewString()
+	providerAdapter := &privateMusicGatewayAdapter{}
+	factory := adapter.NewDefaultAdapterFactory()
+	factory.Register("minimax", func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return providerAdapter, nil
+	})
+	local := &fakeBillingProvider{checkBalanceResult: true}
+	pricing := &fakePricingEngine{meteredQuote: PricingQuote{TotalCredits: 3, OutputCredits: 3}}
+	service := newPrivateMusicGatewayTestService(t, organizationID)
+	service.adapterFactory = factory
+	service.billing = &fakeBillingProvider{checkBalanceResult: true}
+	service.localBilling = local
+	service.pricingEngine = pricing
+
+	result, err := service.GenerateLyrics(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, &LyricsRequest{RequestID: requestID, Model: musicGatewayTestModel, Prompt: "warm folk"})
+	if err != nil {
+		t.Fatalf("GenerateLyrics() error = %v", err)
+	}
+	if result == nil || result.Title != "Private Song" {
+		t.Fatalf("result = %#v", result)
+	}
+	if local.preDeductCalls != 1 || local.settleCalls != 1 || local.lastSettle == nil {
+		t.Fatalf("local billing calls/settlement = %d/%d/%#v", local.preDeductCalls, local.settleCalls, local.lastSettle)
+	}
+	if local.lastSettle.AttemptID != requestID+":lyrics" || local.lastSettle.PricingOperation != PricingOperationLyrics || local.lastSettle.ActualCredits != 3 {
+		t.Fatalf("settlement = %#v", local.lastSettle)
+	}
+	if pricing.lastMeteredUsage.Operation != PricingOperationLyrics || pricing.lastMeteredUsage.Meter != meterRequest ||
+		pricing.lastMeteredUsage.BaseUnit != baseUnitRequest || pricing.lastMeteredUsage.Quantity != 1 {
+		t.Fatalf("metered usage = %#v", pricing.lastMeteredUsage)
+	}
+}
+
+func TestGenerateMusicPrivateProviderFailureRollsBackReservation(t *testing.T) {
+	organizationID := uuid.New()
+	providerErr := errors.New("provider failed")
+	providerAdapter := &privateMusicGatewayAdapter{err: providerErr}
+	factory := adapter.NewDefaultAdapterFactory()
+	factory.Register("minimax", func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return providerAdapter, nil
+	})
+	local := &fakeBillingProvider{checkBalanceResult: true}
+	service := newPrivateMusicGatewayTestService(t, organizationID)
+	service.adapterFactory = factory
+	service.billing = &fakeBillingProvider{checkBalanceResult: true}
+	service.localBilling = local
+	service.pricingEngine = &fakePricingEngine{meteredQuote: PricingQuote{TotalCredits: 17}}
+
+	err := service.GenerateMusic(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, &MusicRequest{
+		RequestID:      uuid.NewString(),
+		Model:          musicGatewayTestModel,
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         "warm piano",
+		ResponseFormat: "mp3",
+	}, &bytes.Buffer{})
+	if !errors.Is(err, providerErr) {
+		t.Fatalf("GenerateMusic() error = %v, want provider error", err)
+	}
+	if local.preDeductCalls != 1 || local.settleCalls != 1 || local.lastSettle == nil || local.lastSettle.Status != "error" || local.lastSettle.ActualCredits != 0 {
+		t.Fatalf("rollback = %d/%d/%#v", local.preDeductCalls, local.settleCalls, local.lastSettle)
+	}
+}
+
 func TestCompensateMusicDeliveryDoesNotDependOnCurrentModelRoute(t *testing.T) {
 	organizationID := uuid.New()
 	requestID := uuid.NewString()
@@ -305,9 +423,11 @@ func TestCompensateMusicDeliveryDoesNotDependOnCurrentModelRoute(t *testing.T) {
 	defer server.Close()
 	setMusicGatewayTestConfig(t, server.URL)
 
+	local := &privateMusicCompensationBilling{err: adapter.ErrMusicCompensationNotFound}
 	service := &llmGatewayServiceImpl{
 		db:             openGatewayCatalogDB(t),
 		adapterFactory: adapter.GlobalFactory,
+		localBilling:   local,
 	}
 	err := service.CompensateMusicDelivery(t.Context(), &apikeymodel.TenantAPIKey{
 		ID:             uuid.NewString(),
@@ -315,6 +435,113 @@ func TestCompensateMusicDeliveryDoesNotDependOnCurrentModelRoute(t *testing.T) {
 	}, requestID)
 	if err != nil {
 		t.Fatalf("CompensateMusicDelivery() error = %v", err)
+	}
+	if local.calls != 1 {
+		t.Fatalf("local compensation calls = %d, want 1", local.calls)
+	}
+}
+
+func TestCompensateMusicDeliveryUsesLocalBillingWithoutOfficialRequest(t *testing.T) {
+	organizationID := uuid.New()
+	requestID := uuid.NewString()
+	var officialCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		officialCalls.Add(1)
+	}))
+	defer server.Close()
+	setMusicGatewayTestConfig(t, server.URL)
+
+	local := &privateMusicCompensationBilling{}
+	service := &llmGatewayServiceImpl{
+		db:             openGatewayCatalogDB(t),
+		adapterFactory: adapter.GlobalFactory,
+		localBilling:   local,
+	}
+	err := service.CompensateMusicDelivery(t.Context(), &apikeymodel.TenantAPIKey{
+		ID:             uuid.NewString(),
+		OrganizationID: organizationID.String(),
+	}, requestID)
+	if err != nil {
+		t.Fatalf("CompensateMusicDelivery() error = %v", err)
+	}
+	if local.calls != 1 || local.organizationID != organizationID || local.requestID != requestID {
+		t.Fatalf("local compensation = calls=%d org=%s request=%s", local.calls, local.organizationID, local.requestID)
+	}
+	if officialCalls.Load() != 0 {
+		t.Fatalf("official compensation calls = %d, want 0", officialCalls.Load())
+	}
+}
+
+type privateMusicCompensationBilling struct {
+	fakeBillingProvider
+	calls          int
+	organizationID uuid.UUID
+	requestID      string
+	err            error
+}
+
+func (b *privateMusicCompensationBilling) CompensatePrivateMusicDelivery(_ context.Context, organizationID uuid.UUID, requestID string) error {
+	b.calls++
+	b.organizationID = organizationID
+	b.requestID = requestID
+	return b.err
+}
+
+type privateMusicGatewayAdapter struct {
+	chatTraceSuccessAdapter
+	err error
+}
+
+func (a *privateMusicGatewayAdapter) GenerateMusic(_ context.Context, _ *adapter.MusicRequest, dst io.Writer) error {
+	if a.err != nil {
+		return a.err
+	}
+	_, err := dst.Write([]byte("PRIVATE-MP3"))
+	return err
+}
+
+func (a *privateMusicGatewayAdapter) GenerateLyrics(context.Context, *adapter.LyricsRequest) (*adapter.LyricsResult, error) {
+	if a.err != nil {
+		return nil, a.err
+	}
+	return &adapter.LyricsResult{Title: "Private Song", StyleTags: []string{"Folk"}, Lyrics: "[Verse]\nhello"}, nil
+}
+
+func newPrivateMusicGatewayTestService(t *testing.T, organizationID uuid.UUID) *llmGatewayServiceImpl {
+	t.Helper()
+	db := openGatewayCatalogDB(t)
+	insertGatewayCatalogModel(t, db, uuid.New(), "minimax", musicGatewayTestModel)
+	if err := db.Model(&llmmodel.LLMModel{}).
+		Where("name = ?", musicGatewayTestModel).
+		Updates(map[string]any{
+			"music_generation": true,
+			"use_cases":        llmmodel.StringArray{string(llmmodel.UseCaseMusicGen)},
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+	route := &channelmodel.LLMRoute{
+		ID:              uuid.New(),
+		OrganizationID:  organizationID,
+		Type:            shared.RouteTypePrivate,
+		ChannelProvider: "minimax",
+		IsEnabled:       true,
+		Models:          []string{musicGatewayTestModel},
+		TenantCredential: &credentialmodel.TenantCredential{
+			ChannelProvider:  "minimax",
+			APIKeyCiphertext: "ciphertext",
+			IsActive:         true,
+		},
+	}
+	return &llmGatewayServiceImpl{
+		db:             db,
+		adapterFactory: adapter.GlobalFactory,
+		channelRouter: &ChannelRouter{
+			db:                      db,
+			organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{route}},
+			cryptoService:           stubCryptoService{},
+			strategyFactory:         NewStrategyFactory(),
+			privateModels:           &fakePrivateModelLookup{},
+		},
 	}
 }
 

@@ -20,6 +20,10 @@ import (
 const (
 	maxMusicRouteCandidates = 3
 	musicResponseFormatMP3  = "mp3"
+	meterOutputTrack        = "output_track"
+	meterRequest            = "request"
+	baseUnitTrack           = "track"
+	baseUnitRequest         = "request"
 )
 
 // MusicRequest carries a stable request ID because the same identity is used
@@ -41,7 +45,7 @@ type LyricsRequest struct {
 	Prompt    string `json:"prompt"`
 }
 
-// GenerateLyrics authorizes and routes one lyrics request through Console HTTP.
+// GenerateLyrics authorizes and routes one lyrics request through an official or private channel.
 func (s *llmGatewayServiceImpl) GenerateLyrics(
 	ctx context.Context,
 	apiKey *apikeymodel.TenantAPIKey,
@@ -62,7 +66,7 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 	if err != nil {
 		return nil, fmt.Errorf("invalid organization ID: %w", err)
 	}
-	shadowOrganizationID, _, err := s.resolveShadowContext(ctx, organizationID)
+	shadowOrganizationID, ownerID, err := s.resolveShadowContext(ctx, organizationID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve billing organization: %w", err)
 	}
@@ -86,37 +90,84 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 		return nil, fmt.Errorf("%w: model %q does not support music generation", adapter.ErrCapabilityUnsupported, request.Model)
 	}
 
+	startedAt := time.Now()
 	for _, selection := range selections {
-		if selection == nil || !selection.UseSystemProvider {
+		if selection == nil {
 			continue
 		}
 		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(selection, organizationID))
 		if err != nil {
-			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), selection.UseSystemProvider, true)
 			return nil, fmt.Errorf("failed to create lyrics adapter: %w", err)
 		}
 		lyricsAdapter, ok := providerAdapter.(adapter.LyricsCapable)
 		if !ok {
 			continue
 		}
-		callContext := context.WithValue(ctx, platformProxyContextKey{}, platformProxyMetadata{
-			BillingOrganizationID: shadowOrganizationID.String(),
-			RequestID:             request.RequestID,
-			APIKeyID:              strings.TrimSpace(apiKey.ID),
-			ModelName:             request.Model,
-			ProviderName:          selection.Provider.Provider,
-		})
+		callContext := ctx
+		if selection.UseSystemProvider {
+			callContext = context.WithValue(ctx, platformProxyContextKey{}, platformProxyMetadata{
+				BillingOrganizationID: shadowOrganizationID.String(),
+				RequestID:             request.RequestID,
+				APIKeyID:              strings.TrimSpace(apiKey.ID),
+				ModelName:             request.Model,
+				ProviderName:          selection.Provider.Provider,
+			})
+			result, err := lyricsAdapter.GenerateLyrics(callContext, &adapter.LyricsRequest{
+				RequestID: request.RequestID,
+				Model:     request.Model,
+				Prompt:    request.Prompt,
+			})
+			if err != nil {
+				reportLLMProviderFailure(ctx, err, "llm.provider.request_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+			}
+			return result, err
+		}
+
+		usage := MeteredUsage{Operation: PricingOperationLyrics, Meter: meterRequest, BaseUnit: baseUnitRequest, Quantity: 1}
+		quote, err := s.quoteMeteredPricing(ctx, selection, usage)
+		if err != nil {
+			return nil, err
+		}
+		billingCtx, err := s.beginBillingAttempt(
+			ctx,
+			apiKey,
+			nil,
+			selection,
+			shadowOrganizationID,
+			ownerID,
+			quote.TotalCredits,
+			false,
+			startedAt,
+			request.RequestID,
+			request.RequestID+":lyrics",
+		)
+		if err != nil {
+			return nil, err
+		}
+		billingCtx.PricingOperation = PricingOperationLyrics
+		if err := s.activateUpstreamProbeForAttempt(ctx, selection, billingCtx); err != nil {
+			return nil, err
+		}
 		result, err := lyricsAdapter.GenerateLyrics(callContext, &adapter.LyricsRequest{
 			RequestID: request.RequestID,
 			Model:     request.Model,
 			Prompt:    request.Prompt,
 		})
+		responseTime := time.Since(startedAt).Milliseconds()
 		if err != nil {
-			reportLLMProviderFailure(ctx, err, "llm.provider.request_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+			setBillingFailure(billingCtx, err)
+			billingCtx.ResponseTime = responseTime
+			s.recordUpstreamProviderError(ctx, selection, billingCtx, err)
+			return nil, errors.Join(err, s.rollbackPreDeduction(ctx, billingCtx))
 		}
-		return result, err
+		s.recordUpstreamProviderSuccess(ctx, selection, billingCtx)
+		if err := s.settlePrivateMeteredSuccess(ctx, billingCtx, selection, quote, responseTime); err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
-	return nil, fmt.Errorf("%w: no official lyrics adapter is available", adapter.ErrCapabilityUnsupported)
+	return nil, audioCapabilityError("lyrics", request.Model)
 }
 
 // musicDestinationWriter remembers downstream write failures so they are not
@@ -137,7 +188,7 @@ func (w *musicDestinationWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// GenerateMusic authorizes and routes one complete MP3 stream through Console.
+// GenerateMusic authorizes and routes one complete MP3 stream through an official or private channel.
 func (s *llmGatewayServiceImpl) GenerateMusic(
 	ctx context.Context,
 	apiKey *apikeymodel.TenantAPIKey,
@@ -159,7 +210,7 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 	if err != nil {
 		return fmt.Errorf("invalid organization ID: %w", err)
 	}
-	shadowOrganizationID, _, err := s.resolveShadowContext(ctx, organizationID)
+	shadowOrganizationID, ownerID, err := s.resolveShadowContext(ctx, organizationID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve billing organization: %w", err)
 	}
@@ -183,42 +234,87 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 		return fmt.Errorf("%w: model %q does not support music generation", adapter.ErrCapabilityUnsupported, request.Model)
 	}
 
+	startedAt := time.Now()
 	for _, selection := range selections {
-		if selection == nil || !selection.UseSystemProvider {
+		if selection == nil {
 			continue
 		}
 		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(selection, organizationID))
 		if err != nil {
-			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), selection.UseSystemProvider, true)
 			return fmt.Errorf("failed to create music adapter: %w", err)
 		}
 		musicAdapter, ok := providerAdapter.(adapter.MusicCapable)
 		if !ok {
 			continue
 		}
-		callContext := context.WithValue(ctx, platformProxyContextKey{}, platformProxyMetadata{
-			BillingOrganizationID: shadowOrganizationID.String(),
-			RequestID:             request.RequestID,
-			APIKeyID:              strings.TrimSpace(apiKey.ID),
-			ModelName:             request.Model,
-			ProviderName:          selection.Provider.Provider,
-			IsStreaming:           true,
-		})
+		callContext := ctx
+		if selection.UseSystemProvider {
+			callContext = context.WithValue(ctx, platformProxyContextKey{}, platformProxyMetadata{
+				BillingOrganizationID: shadowOrganizationID.String(),
+				RequestID:             request.RequestID,
+				APIKeyID:              strings.TrimSpace(apiKey.ID),
+				ModelName:             request.Model,
+				ProviderName:          selection.Provider.Provider,
+				IsStreaming:           true,
+			})
+		}
 		destination := &musicDestinationWriter{dst: dst}
-		err = musicAdapter.GenerateMusic(callContext, &adapter.MusicRequest{
+		adapterRequest := &adapter.MusicRequest{
 			RequestID:      request.RequestID,
 			Model:          request.Model,
 			Mode:           request.Mode,
 			Prompt:         request.Prompt,
 			Lyrics:         request.Lyrics,
 			ResponseFormat: request.ResponseFormat,
-		}, destination)
-		if err != nil && (destination.writeErr == nil || !errors.Is(err, destination.writeErr)) {
-			reportLLMProviderFailure(ctx, err, "llm.provider.stream_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
 		}
-		return err
+		if selection.UseSystemProvider {
+			err = musicAdapter.GenerateMusic(callContext, adapterRequest, destination)
+			if err != nil && (destination.writeErr == nil || !errors.Is(err, destination.writeErr)) {
+				reportLLMProviderFailure(ctx, err, "llm.provider.stream_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
+			}
+			return err
+		}
+
+		usage := MeteredUsage{Operation: PricingOperationMusic, Meter: meterOutputTrack, BaseUnit: baseUnitTrack, Quantity: 1}
+		quote, err := s.quoteMeteredPricing(ctx, selection, usage)
+		if err != nil {
+			return err
+		}
+		billingCtx, err := s.beginBillingAttempt(
+			ctx,
+			apiKey,
+			nil,
+			selection,
+			shadowOrganizationID,
+			ownerID,
+			quote.TotalCredits,
+			true,
+			startedAt,
+			request.RequestID,
+			request.RequestID,
+		)
+		if err != nil {
+			return err
+		}
+		billingCtx.PricingOperation = PricingOperationMusic
+		if err := s.activateUpstreamProbeForAttempt(ctx, selection, billingCtx); err != nil {
+			return err
+		}
+		err = musicAdapter.GenerateMusic(callContext, adapterRequest, destination)
+		responseTime := time.Since(startedAt).Milliseconds()
+		if err != nil {
+			setBillingFailure(billingCtx, err)
+			billingCtx.ResponseTime = responseTime
+			if destination.writeErr == nil || !errors.Is(err, destination.writeErr) {
+				s.recordUpstreamProviderError(ctx, selection, billingCtx, err)
+			}
+			return errors.Join(err, s.rollbackPreDeduction(ctx, billingCtx))
+		}
+		s.recordUpstreamProviderSuccess(ctx, selection, billingCtx)
+		return s.settlePrivateMeteredSuccess(ctx, billingCtx, selection, quote, responseTime)
 	}
-	return fmt.Errorf("%w: no official music adapter is available", adapter.ErrCapabilityUnsupported)
+	return audioCapabilityError("music", request.Model)
 }
 
 // CompensateMusicDelivery deliberately bypasses model routing. A model or route
@@ -241,6 +337,19 @@ func (s *llmGatewayServiceImpl) CompensateMusicDelivery(
 	billingOrganizationID, _, err := s.resolveShadowContext(ctx, organizationID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve billing organization: %w", err)
+	}
+	privateBilling := s.localBilling
+	if privateBilling == nil {
+		privateBilling = s.billing
+	}
+	if compensator, ok := privateBilling.(privateMusicDeliveryCompensator); ok {
+		err := compensator.CompensatePrivateMusicDelivery(ctx, billingOrganizationID, requestID)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, adapter.ErrMusicCompensationNotFound) {
+			return err
+		}
 	}
 	baseURL, err := resolveOfficialRouteBaseURL()
 	if err != nil {

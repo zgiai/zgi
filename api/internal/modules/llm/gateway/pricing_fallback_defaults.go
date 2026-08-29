@@ -27,6 +27,8 @@ const (
 	PricingOperationVideo         PricingOperation = "video_generation"
 	PricingOperationSpeech        PricingOperation = "speech_generation"
 	PricingOperationTranscription PricingOperation = "transcription"
+	PricingOperationMusic         PricingOperation = "music_generation"
+	PricingOperationLyrics        PricingOperation = "lyrics_generation"
 )
 
 type PricingMeter string
