@@ -424,7 +424,8 @@ function summarizeVideoPriceRows(rows: VideoPriceDisplayRow[]): ModelPriceDispla
 
   return groups.flatMap(group => {
     if (group.rows.length === 0) return [];
-    const prices = group.rows.map(row => row.price);
+    const prices = group.rows.map(row => Number(row.price)).filter(Number.isFinite);
+    if (prices.length === 0) return [];
     const min = Math.min(...prices);
     const max = Math.max(...prices);
     const currency = group.rows[0]?.currency || 'CNY';
