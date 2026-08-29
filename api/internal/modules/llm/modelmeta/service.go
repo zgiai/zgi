@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"gorm.io/datatypes"
@@ -251,6 +252,15 @@ func (s *Service) SyncProviderModels(ctx context.Context, provider string, model
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch models: %w", err)
 	}
+	vendors := make([]catalogvendor.Entry, 0, len(allModels))
+	for _, remoteModel := range allModels {
+		vendors = append(vendors, catalogvendor.Entry{
+			Provider: remoteModel.Provider,
+			Model:    remoteModel.Model,
+			Vendor:   remoteModel.Vendor,
+		})
+	}
+	catalogvendor.ReplaceProvider(provider, vendors)
 
 	// Filter models if specific models are requested
 	var modelsToSync []ModelMetaData

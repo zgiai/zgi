@@ -38,6 +38,26 @@ func Replace(entries []Entry) {
 	registry.Unlock()
 }
 
+// ReplaceProvider refreshes one provider from a ModelMeta source without
+// discarding vendor data already loaded for other providers.
+func ReplaceProvider(provider string, entries []Entry) {
+	provider = strings.TrimSpace(provider)
+	registry.Lock()
+	for existingKey := range registry.values {
+		if strings.HasPrefix(existingKey, provider+"\x00") {
+			delete(registry.values, existingKey)
+		}
+	}
+	for _, entry := range entries {
+		vendor := strings.TrimSpace(entry.Vendor)
+		if vendor == "" || strings.TrimSpace(entry.Provider) != provider {
+			continue
+		}
+		registry.values[key(entry.Provider, entry.Model)] = vendor
+	}
+	registry.Unlock()
+}
+
 func Lookup(provider, model string) string {
 	registry.RLock()
 	vendor := registry.values[key(provider, model)]
