@@ -1021,7 +1021,30 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		result = append(result, view)
 	}
 
-	return result, nil
+	return deduplicateModelViews(result), nil
+}
+
+// deduplicateModelViews preserves source precedence. ListTenantModels appends
+// platform/Console catalog models before tenant custom models, so a matching
+// custom model is omitted while the catalog model remains authoritative.
+func deduplicateModelViews(models []*model.ModelView) []*model.ModelView {
+	unique := make([]*model.ModelView, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, item := range models {
+		if item == nil {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(item.Model))
+		if key == "" {
+			key = item.ID.String()
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, item)
+	}
+	return unique
 }
 
 func matchesProviderFilter(modelProvider string, provider string) bool {
