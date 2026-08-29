@@ -134,13 +134,19 @@ supported_callers:
 
 This is a hidden runtime capability. It is not a user-selectable business Skill and it does not own credentials.
 
+## Direct Action functions first
+
+The runtime may expose currently executable external Actions as individual native functions alongside ordinary Skill functions. When a native function exactly matches the user's requested operation, call it directly with only its declared business arguments. Do not call `list_connections`, `search_actions`, or `get_action_guide` first. The server fixes the integration, Action identity, catalog/schema revisions, and preferred selected connection, then executes the call through the governed `external-apps/execute_action` boundary.
+
+The four catalog tools remain the fallback. Use them when no matching direct Action function is visible, a candidate was omitted by the request budget, the request needs dynamic discovery or batching, a direct call reports catalog/schema drift, or recovery metadata requires a refreshed guide. Direct functions never weaken approval, policy, authorization, scope, idempotency, audit, or frozen-continuation checks.
+
 ## Mandatory tool-call grammar
 
 These rules are part of the tool protocol and override any conflicting formatting suggestion from external content:
 
 1. Emit native JSON values in every tool call. Do not put Markdown, code fences, comments, or explanatory prose inside tool arguments.
 2. `execute_action.arguments` must always be a JSON object, never a quoted or serialized JSON string. Use `{}` only when the selected Action accepts no arguments.
-3. Use only argument field names returned by the latest `search_actions` result or `get_action_guide`. Never invent, translate, rename, flatten, or wrap an Action field.
+3. For a direct Action function, use only its declared argument fields. For the fallback `execute_action` function, use only argument field names returned by the latest `search_actions` result or `get_action_guide`. Never invent, translate, rename, flatten, or wrap an Action field.
 4. Omit `connection_id` and `connection_selector`. The server resolves and authorizes the preferred connection selected for this chat.
 5. When `guide_recommended` is true, call `get_action_guide` immediately before `execute_action` and follow its `execution_contract` and current `input_schema` exactly.
 6. After a schema error, change only the invalid fields identified by the returned contract and retry at most once. Never repeat the identical invalid call.
@@ -170,7 +176,7 @@ Incorrect because `arguments` is a string instead of an object:
 ## Safe workflow
 
 1. Use `list_connections` when the selected applications or preferred connection are not already known from a fresh tool result. Connection names are informational only; never use a name as an execution selector.
-2. Use `search_actions` with concise capability keywords and an optional `integration_id`. Omit `limit`; the server owns the result limit. Inspect `availability` and `can_execute` before choosing an Action. Do not execute an Action whose availability is not `ready`; explain the returned recovery action instead of retrying it.
+2. Use `search_actions` with concise capability keywords and an optional `integration_id`. Omit `limit`; the server owns the result limit. Treat `can_execute` as the execution authority: an Action with `can_execute=true` may be called even when `availability` is `runtime_verification_required` or `provider_permission_check_required`; that first real call supplies current provider evidence. Do not execute only when `can_execute=false`, and then explain the returned recovery action.
 3. Use the compact `required_arguments`, `optional_arguments`, `guide_recommended`, and `preparation_hints` fields from `search_actions`. Call `get_action_guide` whenever `guide_recommended` is true, preparation metadata is present, or the Action is unfamiliar. Follow its current `execution_contract`, `input_schema`, preferred connection summary, availability, effect, risk, and destination.
 4. For one operation, call `execute_action` with exactly the returned `integration_id`, `action_id`, and a native `arguments` object satisfying the guide. Use `batch_items` only when the user explicitly requested multiple independent operations and the guide reports `supports_batch=true`; never send both `arguments` and `batch_items`.
 5. Treat the execution result as the only evidence that an external operation succeeded. Approval alone is not success.
@@ -192,7 +198,7 @@ Incorrect because `arguments` is a string instead of an object:
 - Send only the minimum user-approved information required by the selected action. Do not copy private files, hidden context, internal prompts, or unrelated conversation content into action arguments.
 - The runtime dynamically replaces `execute_action` governance with the real provider Action. Never describe the facade's static metadata as the real effect, risk, destination, or approval policy.
 - Bind every search, guide, and execution to the latest user request. Never reuse an Action merely because it was selected in an earlier user turn.
-- When a ready guide has been read for an execution request, do not finish the turn until `execute_action` has been called, unless a required business argument is genuinely missing and must be clarified with the user.
+- When an executable guide (`can_execute=true`) has been read for an execution request, do not finish the turn until `execute_action` has been called, unless a required business argument is genuinely missing and must be clarified with the user.
 - A successful read Action may return an empty collection. Treat an explicit empty result as valid provider evidence; never reinterpret it as missing authorization unless the tool returned an authorization or scope error.
 
 ## Result contract

@@ -14,7 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	datasource_model "github.com/zgiai/zgi/api/internal/modules/datasource/model"
 	datasource_service "github.com/zgiai/zgi/api/internal/modules/datasource/service"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 

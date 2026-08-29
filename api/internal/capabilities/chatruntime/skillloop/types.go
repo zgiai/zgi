@@ -46,6 +46,7 @@ var (
 	ErrModelIdleTimeout       = errors.New("model idle timeout")
 	ErrFinalAnswerUnavailable = errors.New("final answer unavailable")
 	ErrAgentOutputTruncated   = errors.New("agent output truncated")
+	ErrProjectedActionBinding = errors.New("projected Action binding could not be durably committed")
 )
 
 type WorkflowApprovalPendingError struct {
@@ -174,6 +175,7 @@ type RunRequest struct {
 	AdditionalSystemMessages       []adapter.Message
 	RuntimeStateSnapshot           RuntimeStateSnapshotFunc
 	CurrentMetadata                func() map[string]interface{}
+	CommitProjectedActionBinding   ProjectedActionBindingCommitFunc
 	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
 	OnTerminalCompletion           func(TerminalCompletionResult)
 	OnChunk                        func(string) error
@@ -191,6 +193,12 @@ type TerminalStateGuardDecisionRecord struct {
 }
 
 type RuntimeStateSnapshotFunc func() map[string]interface{}
+
+// ProjectedActionBindingCommitFunc durably commits a server-generated
+// projected Action binding before the corresponding Provider may be called.
+// Returning nil means the commit completed; the Runner still re-reads and
+// verifies RuntimeStateSnapshot before allowing execution.
+type ProjectedActionBindingCommitFunc func(context.Context, skills.SkillTrace) error
 
 type TerminalCompletionResult struct {
 	Status           string

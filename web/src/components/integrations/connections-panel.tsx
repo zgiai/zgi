@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -41,6 +41,7 @@ import {
   useCreateMyIntegrationConnection,
   useDeleteIntegrationConnection,
   useDeleteMyIntegrationConnection,
+  useDetachIntegrationConnectionReferences,
   useIntegrationCatalog,
   useIntegrationOAuthFlow,
   useTestIntegrationConnection,
@@ -63,6 +64,7 @@ import { actionIDsForAuthMethod, actionSupportsAuthMethod } from './action-auth-
 import { isConnectableProviderVisible } from './catalog-visibility';
 import { IntegrationConnectionDetailDialog } from './connection-detail-dialog';
 import { IntegrationConnectionDialog } from './connection-dialog';
+import { ConnectionReferenceImpact } from './connection-reference-impact';
 import { IntegrationConnectionSetupDialog } from './connection-setup-dialog';
 import { connectionNeedsSetup } from './connection-setup-lifecycle';
 import { safeIntegrationDisplayText, safeOptionalIntegrationDisplayText } from './display-utils';
@@ -192,6 +194,7 @@ export function IntegrationConnectionsPanel({
   const testMyMutation = useTestMyIntegrationConnection();
   const deleteMutation = useDeleteIntegrationConnection();
   const deleteMyMutation = useDeleteMyIntegrationConnection();
+  const detachReferencesMutation = useDetachIntegrationConnectionReferences();
   const [createProvider, setCreateProvider] = useState<IntegrationCatalogItem | null>(null);
   const [connectionDialogMode, setConnectionDialogMode] = useState<'personal' | 'shared' | null>(
     null
@@ -203,12 +206,14 @@ export function IntegrationConnectionsPanel({
   const [testConnection, setTestConnection] = useState<IntegrationConnection | null>(null);
   const [deleteConnection, setDeleteConnection] = useState<IntegrationConnection | null>(null);
   const [deleteImpact, setDeleteImpact] = useState<IntegrationConnectionDeleteImpact | null>(null);
+  const [detachReferencesOpen, setDetachReferencesOpen] = useState(false);
   const [lastOAuthRequest, setLastOAuthRequest] = useState<StartIntegrationOAuthFlowRequest | null>(
     null
   );
   const [oauthProviderName, setOAuthProviderName] = useState('');
   const [oauthConnectionName, setOAuthConnectionName] = useState('');
   const [isImpactLoading, setIsImpactLoading] = useState(false);
+  const deleteImpactRequestRef = useRef(0);
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const [providerDetailViews, setProviderDetailViews] = useState<
     Record<string, ProviderDetailView>
@@ -433,21 +438,40 @@ export function IntegrationConnectionsPanel({
     void oauthFlow.begin(request);
   };
 
-  const openDelete = async (connection: IntegrationConnection) => {
-    setDeleteConnection(connection);
-    setDeleteImpact(null);
-    setIsImpactLoading(false);
+  const refreshDeleteImpact = useCallback(async (connection: IntegrationConnection) => {
     if (connection.credential_source === 'account') return;
+    const requestID = deleteImpactRequestRef.current + 1;
+    deleteImpactRequestRef.current = requestID;
     setIsImpactLoading(true);
     try {
       const response = await integrationService.getDeleteImpact(connection.id);
+      if (deleteImpactRequestRef.current !== requestID) return;
       setDeleteImpact(response.data);
     } catch {
+      if (deleteImpactRequestRef.current !== requestID) return;
       setDeleteImpact(null);
     } finally {
-      setIsImpactLoading(false);
+      if (deleteImpactRequestRef.current === requestID) {
+        setIsImpactLoading(false);
+      }
     }
+  }, []);
+
+  const openDelete = (connection: IntegrationConnection) => {
+    setDeleteConnection(connection);
+    setDeleteImpact(null);
+    setIsImpactLoading(false);
+    void refreshDeleteImpact(connection);
   };
+
+  useEffect(() => {
+    if (!deleteConnection || deleteConnection.credential_source === 'account') return;
+    const refreshOnFocus = () => {
+      void refreshDeleteImpact(deleteConnection);
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    return () => window.removeEventListener('focus', refreshOnFocus);
+  }, [deleteConnection, refreshDeleteImpact]);
 
   const deleteIsOAuth = isOAuthConnection(deleteConnection);
   const deleteIsShared = deleteConnection?.credential_source === 'organization';
@@ -456,6 +480,7 @@ export function IntegrationConnectionsPanel({
   const deleteBlocked =
     Boolean(deleteIsShared) &&
     (isImpactLoading || deleteImpactUnavailable || deleteImpact?.can_delete === false);
+  const hasDetailedDeleteImpact = Boolean(deleteImpact?.references?.length);
   const deleteDescription = deleteConnection ? (
     <span className="space-y-3">
       <span className="block">
@@ -483,10 +508,20 @@ export function IntegrationConnectionsPanel({
       ) : deleteImpactUnavailable ? (
         <span className="block font-medium text-destructive">{t('delete.impactUnavailable')}</span>
       ) : null}
-      {deleteImpact?.bound_agent_count ? (
+      {(deleteImpact?.bound_agent_count ?? 0) > 0 && !hasDetailedDeleteImpact ? (
         <span className="block font-medium text-destructive">
-          {t('delete.impact', { count: deleteImpact.bound_agent_count })}
+          {t('delete.impact', { count: deleteImpact?.bound_agent_count ?? 0 })}
         </span>
+      ) : null}
+      {deleteImpact && hasDetailedDeleteImpact ? (
+        <ConnectionReferenceImpact
+          impact={deleteImpact}
+          provider={
+            deleteConnection ? catalogProviders.get(deleteConnection.integration_id) : undefined
+          }
+          detachPending={detachReferencesMutation.isPending}
+          onDetachAll={() => setDetachReferencesOpen(true)}
+        />
       ) : null}
       {deleteConnection.is_default ? (
         <span className="block">{t('delete.defaultImpact')}</span>
@@ -494,6 +529,22 @@ export function IntegrationConnectionsPanel({
       {deleteImpact?.can_delete === false ? (
         <span className="block text-xs font-normal leading-5 text-muted-foreground">
           {t('disconnect.resolveDependencies')}
+        </span>
+      ) : null}
+      {deleteIsShared ? (
+        <span className="block">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isImpactLoading}
+            onClick={() => {
+              if (deleteConnection) void refreshDeleteImpact(deleteConnection);
+            }}
+          >
+            <RefreshCw className={cn('size-3.5', isImpactLoading && 'animate-spin')} />
+            {t('delete.refreshImpact')}
+          </Button>
         </span>
       ) : null}
     </span>
@@ -1121,8 +1172,11 @@ export function IntegrationConnectionsPanel({
         open={Boolean(deleteConnection)}
         onOpenChange={open => {
           if (!open) {
+            deleteImpactRequestRef.current += 1;
             setDeleteConnection(null);
             setDeleteImpact(null);
+            setIsImpactLoading(false);
+            setDetachReferencesOpen(false);
           }
         }}
         title={t(deleteIsOAuth ? 'disconnect.title' : 'delete.title')}
@@ -1132,6 +1186,7 @@ export function IntegrationConnectionsPanel({
         loading={deleteMutationPending || isImpactLoading}
         confirmDisabled={deleteBlocked}
         closeOnConfirm={false}
+        contentClassName={hasDetailedDeleteImpact ? 'sm:max-w-2xl' : undefined}
         onConfirm={() => {
           if (!deleteConnection) return;
           const mutation =
@@ -1143,7 +1198,52 @@ export function IntegrationConnectionsPanel({
               setDeleteConnection(null);
               setDeleteImpact(null);
             })
-            .catch(() => undefined);
+            .catch(() => {
+              if (deleteConnection.credential_source === 'organization') {
+                void refreshDeleteImpact(deleteConnection);
+              }
+            });
+        }}
+      />
+
+      <ConfirmDialog
+        variant="danger"
+        open={detachReferencesOpen}
+        onOpenChange={setDetachReferencesOpen}
+        title={t('delete.references.detachTitle')}
+        description={t('delete.references.detachConfirmDescription', {
+          count: deleteImpact?.references?.length ?? 0,
+        })}
+        cancelText={t('delete.cancel')}
+        confirmText={t('delete.references.detachConfirm')}
+        loading={detachReferencesMutation.isPending}
+        confirmDisabled={!deleteConnection || !deleteImpact?.impact_token}
+        closeOnConfirm={false}
+        onConfirm={() => {
+          if (!deleteConnection || !deleteImpact?.impact_token) return;
+          // A focus/manual refresh may still be in flight. Invalidate it before
+          // detaching so an older GET response cannot restore stale references
+          // after the POST returns the authoritative empty impact.
+          deleteImpactRequestRef.current += 1;
+          setIsImpactLoading(false);
+          void detachReferencesMutation
+            .mutateAsync({
+              id: deleteConnection.id,
+              data: { impact_token: deleteImpact.impact_token },
+            })
+            .then(response => {
+              // A focus refresh can also begin while the detach request is in
+              // flight. Invalidate those requests before applying the POST's
+              // authoritative result.
+              deleteImpactRequestRef.current += 1;
+              setIsImpactLoading(false);
+              setDeleteImpact(response.data);
+              setDetachReferencesOpen(false);
+            })
+            .catch(() => {
+              setDetachReferencesOpen(false);
+              void refreshDeleteImpact(deleteConnection);
+            });
         }}
       />
     </div>

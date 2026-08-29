@@ -3,6 +3,7 @@ package metatools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -10,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -162,6 +163,7 @@ func (t *Tool) EnrichGovernanceArgumentsWithError(
 	if !definitionOK || !ok {
 		return out, integrations.NewError(integrations.ErrorCodeInvalidInput, "unknown integration action", nil)
 	}
+	out = canonicalizeExecuteActionBusinessArguments(out, action)
 	setExecuteActionDisplayMetadata(out, definition, action)
 	setExecuteActionArgumentDisplayMetadata(out, action)
 	selected, selection, resolveErr := t.resolveExecutionConnection(ctx, userID, integrationID, action.ID, action.Effect, out)
@@ -315,6 +317,7 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 	if !definitionOK || !ok {
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unknown integration action", nil)
 	}
+	parameters = canonicalizeExecuteActionBusinessArguments(parameters, action)
 	if !supportsCaller(action, t.runtime.InvokeFrom) {
 		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "integration action is not available to this caller", nil)
 	}
@@ -345,12 +348,16 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 			return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "execute_action arguments must be an object", nil)
 		}
 	}
+	if err := integrations.ValidateActionInput(integrationID, action, actionArguments); err != nil {
+		return nil, err
+	}
 	request := integrations.ActionRequest{
 		OrganizationID: organizationID.String(), WorkspaceID: optionalUUIDString(workspaceID), UserID: accountID.String(),
 		AgentID:        runtimeString(t.runtime.RuntimeParameters, "agent_id"),
 		ConversationID: optionalString(conversationID), AppID: optionalString(appID), MessageID: optionalString(messageID),
 		ConnectionID: selected.record.ID.String(), InvokeFrom: t.runtime.InvokeFrom,
 		IntegrationID: integrationID, ActionID: action.ID, Input: cloneMap(actionArguments),
+		OperationItemID: skills.ExternalActionOperationItemIDFromRuntimeParameters(t.runtime.RuntimeParameters),
 	}
 	if t.runtime.InvokeFrom == tools.ToolInvokeFromAgent {
 		authorization, authorized := t.agentBindingAuthorization(selected.record, action)
@@ -379,6 +386,19 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 					"result_count": 0, "attempt_count": 0, "result": map[string]interface{}{},
 					"operation_status": status, "error_code": integrations.ErrorCode(err), "retry_safe": retrySafe,
 				}
+				var integrationError *integrations.Error
+				if errors.As(err, &integrationError) {
+					if reasonCode := strings.TrimSpace(integrationError.ReasonCode); reasonCode != "" {
+						output["reason_code"] = boundedString(reasonCode, 128)
+					}
+				}
+				diagnostics := integrations.ProviderDiagnosticsFromError(err)
+				if providerErrorCode := strings.TrimSpace(diagnostics.ErrorCode); providerErrorCode != "" {
+					output["provider_error_code"] = boundedString(providerErrorCode, 128)
+				}
+				if providerRequestID := strings.TrimSpace(diagnostics.RequestID); providerRequestID != "" {
+					output["provider_request_id"] = boundedString(providerRequestID, 512)
+				}
 				setExecuteActionDisplayMetadata(output, definition, action)
 				if displayName := safeConnectionDisplayName(selected.record); displayName != "" {
 					output["connection_display_name"] = displayName
@@ -402,16 +422,12 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 		"result_count": max(result.ResultCount, 0), "attempt_count": max(result.AttemptCount, 0), "result": safeResult,
 	}
 	annotateSuccessfulResultSemantics(output, action, result)
-	if result.Replayed {
-		output["operation_status"] = "already_completed"
-	} else if action.SuccessDeduplication != nil {
-		output["operation_status"] = "completed"
-	}
+	output["operation_status"] = successfulOperationStatus(result)
 	setExecuteActionDisplayMetadata(output, definition, action)
 	if displayName := safeConnectionDisplayName(selected.record); displayName != "" {
 		output["connection_display_name"] = displayName
 	}
-	if requestID := strings.TrimSpace(result.ProviderRequestID); requestID != "" {
+	if requestID := integrations.ProviderDiagnosticsForResult(result, nil).RequestID; requestID != "" {
 		output["provider_request_id"] = boundedString(requestID, 512)
 	}
 	if result.CostUSD != nil && !math.IsNaN(*result.CostUSD) && !math.IsInf(*result.CostUSD, 0) && *result.CostUSD >= 0 {
@@ -432,6 +448,29 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 		output["result_truncated"] = true
 	}
 	return output, nil
+}
+
+func successfulOperationStatus(result *integrations.ActionResult) string {
+	if result != nil && result.Output != nil {
+		// A provider adapter can confirm that the invocation completed while
+		// reporting that only part of the frozen target set was accepted. Keep
+		// that narrower outcome at the common facade: replacing it with
+		// completed/already_completed would let orchestration and the UI claim a
+		// full success that did not occur. Other provider-defined status strings
+		// are deliberately ignored; failures and unknown outcomes must use the
+		// executor error contract instead of self-declaring success semantics.
+		if status := strings.ToLower(strings.TrimSpace(stringValue(result.Output["operation_status"]))); status == "partially_succeeded" {
+			return status
+		}
+	}
+	if result != nil && result.Replayed {
+		return "already_completed"
+	}
+	// This field is server-owned evidence that the provider invocation
+	// completed without an error. It must be present for ordinary reads as well
+	// as guarded mutations; downstream orchestration must never infer success
+	// merely from an arbitrary provider payload shape.
+	return "completed"
 }
 
 func annotateSuccessfulResultSemantics(output map[string]interface{}, action integrations.ActionDefinition, result *integrations.ActionResult) {
@@ -492,6 +531,7 @@ func (t *Tool) executeActionBatch(
 	totalAttempts := 0
 	totalResults := 0
 	succeeded := 0
+	providerPartial := 0
 	failedSafe := 0
 	unknown := 0
 	executing := 0
@@ -539,6 +579,10 @@ func (t *Tool) executeActionBatch(
 				totalAttempts += outcome.attempts
 				totalResults += outcome.resultCount
 				succeeded++
+				if successfulOperationStatus(result) == "partially_succeeded" {
+					outcome.status = "partially_succeeded"
+					providerPartial++
+				}
 			}
 		}
 		outcomes = append(outcomes, outcome)
@@ -552,7 +596,7 @@ func (t *Tool) executeActionBatch(
 		batchStatus = "executing"
 	case succeeded == 0 && failedSafe > 0:
 		batchStatus = "failed"
-	case succeeded < len(items):
+	case succeeded < len(items) || providerPartial > 0:
 		batchStatus = "partially_succeeded"
 	}
 	itemViews := make([]interface{}, 0, len(outcomes))
@@ -1441,6 +1485,9 @@ func (t *Tool) preparationHintsOutput(
 			"target_arguments": stringInterfaces(hint.TargetArguments),
 			"result_paths":     stringInterfaces(hint.ResultPaths),
 			"description":      boundedString(hint.Description, 1000),
+		}
+		if transform := strings.TrimSpace(string(hint.ResultTransform)); transform != "" {
+			item["result_transform"] = transform
 		}
 		if localized := localizedTextOutput(hint.DescriptionI18n, 1000); len(localized) > 0 {
 			item["description_i18n"] = localized

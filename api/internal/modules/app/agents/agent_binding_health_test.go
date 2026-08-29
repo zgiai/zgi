@@ -13,7 +13,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -157,6 +157,32 @@ func TestBindingRowsUsePerResourceAuthorizationEvidence(t *testing.T) {
 	}
 	if actors["dataset-old"] != oldBinder || actors["dataset-new"] != newBinder {
 		t.Fatalf("binding actors = %#v, want old=%s new=%s", actors, oldBinder, newBinder)
+	}
+}
+
+func TestAgentBindingMutationResourceRefsIncludeRemovedAndAddedResources(t *testing.T) {
+	organizationID := uuid.New()
+	before := []agentbindings.Binding{{
+		OrganizationID: organizationID,
+		BindingType:    agentbindings.BindingTypeIntegrationConnection,
+		ResourceID:     "connection-removed",
+	}}
+	after := []agentbindings.Binding{{
+		OrganizationID: organizationID,
+		BindingType:    agentbindings.BindingTypeIntegrationConnection,
+		ResourceID:     "connection-added",
+	}}
+
+	refs := agentBindingMutationResourceRefs(before, after)
+	if len(refs) != 2 {
+		t.Fatalf("mutation resource refs = %d, want 2", len(refs))
+	}
+	seen := map[string]bool{}
+	for _, ref := range refs {
+		seen[ref.ResourceID] = true
+	}
+	if !seen["connection-removed"] || !seen["connection-added"] {
+		t.Fatalf("mutation resource refs = %#v, want removed and added connections", refs)
 	}
 }
 
@@ -318,8 +344,8 @@ func TestDraftBindingStateDoesNotRepairIndexOnRead(t *testing.T) {
 	}
 	agentID := uuid.New()
 	workspaceID := uuid.New()
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_resource_bindings" WHERE (agent_id = $1 AND binding_scope = $2) AND published_version_uuid IS NULL ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`)).
-		WithArgs(agentID, agentbindings.ScopeDraft).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3) AND published_version_uuid IS NULL ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`)).
+		WithArgs(agentID, agentbindings.ConsumerTypeAgent, agentbindings.ScopeDraft).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "binding_scope", "organization_id", "workspace_id", "published_version_uuid", "binding_type", "resource_id", "parent_resource_id", "display_name", "access_mode", "authorized_by", "authorized_at", "created_at", "updated_at"}))
 	service := &agentsService{db: db, agentBindings: agentbindings.NewRepositoryWithTokenSecret(db, "test")}
 	mode := `{"knowledge_dataset_ids":["dataset-1"]}`
@@ -501,8 +527,8 @@ func TestCreateAgentPublishedVersionRechecksRevisionAfterConfigLock(t *testing.T
 		WithArgs(configID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agents_id", "agent_mode", "created_at", "updated_at"}).
 			AddRow(configID, agentID, `{}`, now, now))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_resource_bindings" WHERE (agent_id = $1 AND binding_scope = $2) AND published_version_uuid IS NULL ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`)).
-		WithArgs(agentID, agentbindings.ScopeDraft).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3) AND published_version_uuid IS NULL ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`)).
+		WithArgs(agentID, agentbindings.ConsumerTypeAgent, agentbindings.ScopeDraft).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "binding_scope", "organization_id", "workspace_id", "published_version_uuid", "binding_type", "resource_id", "parent_resource_id", "display_name", "access_mode", "authorized_by", "authorized_at", "created_at", "updated_at"}))
 	mock.ExpectRollback()
 
@@ -625,8 +651,8 @@ func TestUpdateLocksResourceBeforeRevalidatingNewBinding(t *testing.T) {
 		WithArgs(configID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agents_id", "agent_mode", "created_at", "updated_at"}).
 			AddRow(configID, agentID, `{}`, now, now))
-	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND binding_scope = \$2\).*ORDER BY`).
-		WithArgs(agentID, agentbindings.ScopeDraft).
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND binding_scope = \$3\).*ORDER BY`).
+		WithArgs(agentID, agentbindings.ConsumerTypeAgent, agentbindings.ScopeDraft).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectRollback()
 

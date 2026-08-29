@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -99,6 +99,7 @@ func TestDynamicSchemaFailureReturnsSafeExpectedArgumentsAndRetryFeedback(t *tes
 			},
 		},
 		skills.ExecutionContext{},
+		nil,
 		nil,
 	)
 	if !step.recoverable || step.fatalErr != nil {
@@ -209,6 +210,7 @@ func TestDynamicSchemaRecoveryHidesReadOnlyConnectionIdentity(t *testing.T) {
 			},
 		},
 		skills.ExecutionContext{},
+		nil,
 		nil,
 	)
 	if !step.recoverable || step.fatalErr != nil {

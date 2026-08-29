@@ -119,6 +119,37 @@ type mockWorkflowRepository struct {
 	draft *Workflow
 }
 
+func TestCreateWorkflowRunLogPinsExactPublishedWorkflowSnapshot(t *testing.T) {
+	agentID := uuid.NewString()
+	workflowID := uuid.NewString()
+	versionID := uuid.New()
+	graph := `{"nodes":[{"id":"published-node"}],"edges":[]}`
+	features := `{"published":true}`
+	repo := &mockWorkflowRepository{draft: &Workflow{
+		ID: workflowID, AgentID: agentID, Type: dto.WorkflowTypeWorkflow,
+		Version: "2026-08-27", VersionUUID: uuid.NullUUID{UUID: versionID, Valid: true},
+		Graph: graph, Features: features,
+	}}
+	runRepo := &mockWorkflowRunLogRepo{}
+	service := &WorkflowService{repo: repo, workflowRunLogRepo: runRepo}
+
+	raw, err := service.CreateWorkflowRunLog(
+		context.Background(), uuid.NewString(), agentID, workflowID,
+		"web-app", map[string]interface{}{}, uuid.NewString(),
+	)
+	if err != nil {
+		t.Fatalf("CreateWorkflowRunLog() error = %v", err)
+	}
+	run, ok := raw.(*WorkflowRunLog)
+	if !ok || run == nil {
+		t.Fatalf("CreateWorkflowRunLog() = %T, want *WorkflowRunLog", raw)
+	}
+	if run.WorkflowID != workflowID || run.Version != "2026-08-27" || run.Graph == nil || *run.Graph != graph ||
+		run.Features == nil || *run.Features != features || run.WebAppID == nil || *run.WebAppID != versionID.String() {
+		t.Fatalf("pinned run log = %#v", run)
+	}
+}
+
 func TestWorkflowRunStepCountOmitsUnexecutedGraphPlaceholders(t *testing.T) {
 	repo := &mockWorkflowNodeRuntimeLogRepo{logsByWorkflowRunID: []WorkflowNodeRuntimeLog{
 		{NodeID: "inactive-loop", NodeType: "loop", Status: "pending"},

@@ -78,8 +78,8 @@ func TestUpdateAgentConfigWithSystemPromptPatchCASAppendsLockedPrompt(t *testing
 	mock.ExpectQuery(`SELECT \* FROM "agents_configs" WHERE deleted_at IS NULL AND id = \$1.*LIMIT \$2 FOR UPDATE`).
 		WithArgs(configID, 1).
 		WillReturnRows(agentSystemPromptPatchConfigRows(configID, agentID, "locked baseline", now))
-	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND binding_scope = \$2\).*ORDER BY`).
-		WithArgs(agentID, agentbindings.ScopeDraft).
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND binding_scope = \$3\).*ORDER BY`).
+		WithArgs(agentID, agentbindings.ConsumerTypeAgent, agentbindings.ScopeDraft).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(`UPDATE "agents_configs" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`DELETE FROM "agent_resource_bindings" WHERE`).

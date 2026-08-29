@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 )
 
 const (
@@ -55,6 +55,39 @@ func normalizeExecuteActionParameters(parameters map[string]interface{}) (map[st
 	}
 	out["arguments"] = arguments
 	return out, nil
+}
+
+// canonicalizeExecuteActionBusinessArguments removes target values that the
+// selected, authoritative Action contract explicitly marks as semantically
+// irrelevant. Core limits rules to targets protected by success
+// deduplication; arbitrary optional arguments are never rewritten.
+func canonicalizeExecuteActionBusinessArguments(
+	parameters map[string]interface{},
+	action integrations.ActionDefinition,
+) map[string]interface{} {
+	out := cloneMap(parameters)
+	if arguments, ok := out["arguments"].(map[string]interface{}); ok && arguments != nil {
+		out["arguments"] = integrations.CanonicalizeActionInput(action, arguments)
+	}
+	switch items := out["batch_items"].(type) {
+	case []interface{}:
+		canonical := make([]interface{}, len(items))
+		for index, raw := range items {
+			if item, ok := raw.(map[string]interface{}); ok && item != nil {
+				canonical[index] = integrations.CanonicalizeActionInput(action, item)
+			} else {
+				canonical[index] = raw
+			}
+		}
+		out["batch_items"] = canonical
+	case []map[string]interface{}:
+		canonical := make([]map[string]interface{}, len(items))
+		for index, item := range items {
+			canonical[index] = integrations.CanonicalizeActionInput(action, item)
+		}
+		out["batch_items"] = canonical
+	}
+	return out
 }
 
 func decodeExecuteActionArgumentsObject(value string) (map[string]interface{}, error) {

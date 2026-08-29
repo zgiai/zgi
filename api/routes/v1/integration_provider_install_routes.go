@@ -4,14 +4,18 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	wecomintegration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/wecom"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
+	wecomintegration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/wecom"
 	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
+
+var wecomCallbackReceiverIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type startProviderInstallFlowRequest struct {
 	IntegrationID    string                                  `json:"integration_id" binding:"required"`
@@ -90,12 +94,15 @@ func (handler *integrationHandler) cancelProviderInstallFlow(c *gin.Context) {
 }
 
 func (handler *integrationHandler) wecomInstallCallback(c *gin.Context) {
-	if strings.TrimSpace(c.Query("echostr")) != "" {
-		handler.verifyWeComCallback(c)
-		return
-	}
 	browserBindingDigest, _ := readOAuthBrowserBindingCookie(c, handler.deps.WeComInstallCallbackURL)
 	result, err := handler.deps.ProviderInstallFlows.Callback(c.Request.Context(), c.Query("state"), browserBindingDigest, c.Query("auth_code"))
+	if err != nil {
+		logger.WarnContext(
+			c.Request.Context(),
+			"WeCom browser authorization could not be queued",
+			wecomInstallCallbackDiagnosticFields(err),
+		)
+	}
 	status := result.Status
 	if status == "" {
 		status = integrations.ProviderInstallFlowFailed
@@ -116,25 +123,67 @@ func (handler *integrationHandler) wecomInstallCallback(c *gin.Context) {
 	c.Redirect(http.StatusFound, target)
 }
 
-func (handler *integrationHandler) wecomCallbackVerification(c *gin.Context) {
-	handler.verifyWeComCallback(c)
+func wecomInstallCallbackDiagnosticFields(err error) map[string]interface{} {
+	return map[string]interface{}{
+		"integration_id": wecomintegration.IntegrationID,
+		"callback_kind":  "browser_return",
+		"error_code":     safeOAuthCallbackErrorCode(integrations.ErrorCode(err)),
+	}
 }
 
-func (handler *integrationHandler) verifyWeComCallback(c *gin.Context) {
+func (handler *integrationHandler) wecomCallbackVerification(c *gin.Context) {
 	plaintext, err := handler.deps.WeComCallbacks.VerifySuiteCallbackURL(
 		c.Query("msg_signature"), c.Query("timestamp"), c.Query("nonce"), c.Query("echostr"),
 	)
 	if err != nil {
+		logWeComCallbackVerificationFailure(c, "suite_command", err)
 		c.Header("Cache-Control", "no-store")
 		c.Status(http.StatusUnauthorized)
 		return
 	}
+	writeWeComCallbackVerificationResponse(c, plaintext)
+}
+
+func (handler *integrationHandler) wecomDataCallbackVerification(c *gin.Context) {
+	receiverID, ok := wecomCallbackReceiverID(c)
+	if !ok {
+		return
+	}
+	plaintext, err := handler.deps.WeComCallbacks.VerifyDataCallbackURL(
+		receiverID, c.Query("msg_signature"), c.Query("timestamp"), c.Query("nonce"), c.Query("echostr"),
+	)
+	if err != nil {
+		logWeComCallbackVerificationFailure(c, "data", err)
+		c.Header("Cache-Control", "no-store")
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	writeWeComCallbackVerificationResponse(c, plaintext)
+}
+
+func writeWeComCallbackVerificationResponse(c *gin.Context, plaintext string) {
 	c.Header("Content-Type", "text/plain; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
 	c.String(http.StatusOK, "%s", plaintext)
 }
 
-func (handler *integrationHandler) wecomEncryptedCallback(c *gin.Context) {
+func logWeComCallbackVerificationFailure(c *gin.Context, callbackKind string, err error) {
+	logger.WarnContext(
+		c.Request.Context(),
+		"WeCom callback URL verification failed",
+		wecomCallbackVerificationDiagnosticFields(callbackKind, err),
+	)
+}
+
+func wecomCallbackVerificationDiagnosticFields(callbackKind string, err error) map[string]interface{} {
+	return map[string]interface{}{
+		"callback_kind": callbackKind,
+		"failure_stage": wecomintegration.CallbackFailureStage(err),
+		"error_code":    integrations.ErrorCode(err),
+	}
+}
+
+func (handler *integrationHandler) wecomSuiteEncryptedCallback(c *gin.Context) {
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, (2<<20)+1))
 	if err != nil || len(body) == 0 || len(body) > 2<<20 {
 		c.Status(http.StatusBadRequest)
@@ -148,6 +197,21 @@ func (handler *integrationHandler) wecomEncryptedCallback(c *gin.Context) {
 		return
 	}
 	switch event.InfoType {
+	case "create_auth":
+		if err := handler.deps.ProviderInstallFlows.EnqueueAuthorizationNotification(c.Request.Context(), wecomintegration.IntegrationID, event.State, event.AuthCode); err != nil {
+			code := integrations.ErrorCode(err)
+			logger.WarnContext(c.Request.Context(), "WeCom authorization notification could not be queued", map[string]interface{}{
+				"info_type":  event.InfoType,
+				"error_code": code,
+			})
+			// An unknown or expired state cannot safely be associated with a ZGI
+			// organization. Acknowledge it to avoid a retry storm; infrastructure
+			// failures remain retryable at the provider boundary.
+			if code != integrations.ErrorCodeAuthInvalid {
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+		}
 	case "cancel_auth":
 		if event.AuthCorpID != "" {
 			if err := handler.deps.ProviderInstallFlows.DisableAuthorization(c.Request.Context(), wecomintegration.IntegrationID, handler.deps.WeComCallbacks.ProviderTenantHash(event.AuthCorpID), integrations.ErrorCodeReconnectRequired); err != nil {
@@ -165,6 +229,36 @@ func (handler *integrationHandler) wecomEncryptedCallback(c *gin.Context) {
 	}
 	c.Header("Content-Type", "text/plain; charset=utf-8")
 	c.String(http.StatusOK, "success")
+}
+
+func (handler *integrationHandler) wecomDataEncryptedCallback(c *gin.Context) {
+	receiverID, ok := wecomCallbackReceiverID(c)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, (2<<20)+1))
+	if err != nil || len(body) == 0 || len(body) > 2<<20 {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	if err := handler.deps.WeComCallbacks.ReceiveDataCallback(
+		receiverID, c.Query("msg_signature"), c.Query("timestamp"), c.Query("nonce"), body,
+	); err != nil {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	c.String(http.StatusOK, "success")
+}
+
+func wecomCallbackReceiverID(c *gin.Context) (string, bool) {
+	receiverID := strings.TrimSpace(c.Param("corp_id"))
+	if !wecomCallbackReceiverIDPattern.MatchString(receiverID) {
+		c.Header("Cache-Control", "no-store")
+		c.Status(http.StatusBadRequest)
+		return "", false
+	}
+	return receiverID, true
 }
 
 func (handler *integrationHandler) providerInstallMethod(integrationID, authMethodID string) (integrations.ProviderDefinition, integrations.AuthMethodDefinition, bool) {

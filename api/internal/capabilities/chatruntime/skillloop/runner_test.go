@@ -1712,6 +1712,60 @@ func TestRunnerAcceptsFinalAnswerWithoutPlanSnapshotWhenCurrentPlanHasOpenPhases
 	}
 }
 
+func TestRunnerExplicitFinalAnswerUsesSafeTerminalAfterExternalRetryExhaustion(t *testing.T) {
+	finalCall := func(callID string, answer string) adapter.ToolCall {
+		arguments, err := json.Marshal(map[string]interface{}{"answer": answer})
+		if err != nil {
+			t.Fatalf("marshal final answer: %v", err)
+		}
+		return adapter.ToolCall{
+			ID:   callID,
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      skills.MetaToolFinalAnswer,
+				Arguments: string(arguments),
+			},
+		}
+	}
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{finalCall("final-1", "消息已经发送。")}}}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{finalCall("final-2", "消息确实已经发送。")}}}}},
+	}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntimeWithCatalog(nil, nil, ""),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-explicit-exhausted", "msg-explicit-exhausted", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "发送企业微信消息"}},
+	})
+	evidence := map[string]interface{}{
+		"latest_user_request": "发送企业微信消息",
+		"skill_invocations": []interface{}{map[string]interface{}{
+			"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+			"result": map[string]interface{}{
+				"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
+			},
+		}},
+	}
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:                  prepared,
+		Resolved:                  runnerTestResolvedSkills(),
+		PreferExplicitFinalAnswer: true,
+		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
+	})
+	if err != nil {
+		t.Fatalf("Run() exposed terminal guard error after explicit retry exhaustion: %v", err)
+	}
+	if !strings.Contains(answer, "外部操作未完成") || !strings.Contains(answer, "不能视为已发送或已完成") {
+		t.Fatalf("answer = %q, want safe explicit final answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want exactly one retry", fakeLLM.appChatCalls)
+	}
+}
+
 func TestRunnerAcceptsOrdinaryTextFinalWhenPlanIsOpen(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{

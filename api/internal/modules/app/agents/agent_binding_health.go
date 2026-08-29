@@ -16,7 +16,7 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
@@ -835,6 +835,13 @@ func agentBindingResourceRefs(rows []agentbindings.Binding) []agentbindings.Reso
 		})
 	}
 	return refs
+}
+
+func agentBindingMutationResourceRefs(before, after []agentbindings.Binding) []agentbindings.ResourceRef {
+	rows := make([]agentbindings.Binding, 0, len(before)+len(after))
+	rows = append(rows, before...)
+	rows = append(rows, after...)
+	return agentBindingResourceRefs(rows)
 }
 
 func filterAgentConfigByBindingHealth(config dto.AgentConfigResponse) dto.AgentConfigResponse {

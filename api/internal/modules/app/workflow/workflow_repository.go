@@ -42,6 +42,25 @@ type workflowRepository struct {
 	db *gorm.DB
 }
 
+// DB exposes the repository database only to workflow-domain collaborators
+// that must keep the graph row and its derived binding index in one transaction.
+// It is intentionally not part of WorkflowRepository so existing test doubles
+// and read-only repository implementations remain source-compatible.
+func (r *workflowRepository) DB() *gorm.DB {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
+// WithTx returns a workflow repository scoped to the caller's transaction.
+func (r *workflowRepository) WithTx(tx *gorm.DB) WorkflowRepository {
+	if tx == nil {
+		return r
+	}
+	return &workflowRepository{db: tx}
+}
+
 // NewWorkflowRepository creates a new WorkflowRepository instance
 func NewWorkflowRepository(db *gorm.DB) WorkflowRepository {
 	return &workflowRepository{
@@ -69,7 +88,26 @@ func (r *workflowRepository) GetByID(ctx context.Context, id string) (*Workflow,
 
 // Update updates an existing workflow
 func (r *workflowRepository) Update(ctx context.Context, workflow *Workflow) error {
-	return r.db.WithContext(ctx).Save(workflow).Error
+	if workflow == nil || workflow.ID == "" {
+		return fmt.Errorf("workflow identity is required")
+	}
+	// Save falls back to INSERT when its UPDATE matches no row. That behavior is
+	// unsafe for a stale save racing with Workflow deletion because it can
+	// recreate the deleted graph. Keep updates strict so the caller's enclosing
+	// graph/binding transaction rolls back when the Workflow no longer exists.
+	result := r.db.WithContext(ctx).
+		Model(&Workflow{}).
+		Where("id = ?", workflow.ID).
+		Select("*").
+		Omit("id").
+		Updates(workflow)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("workflow not found")
+	}
+	return nil
 }
 
 // Delete deletes a workflow by ID

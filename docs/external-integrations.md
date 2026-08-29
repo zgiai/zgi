@@ -20,8 +20,10 @@ The current built-in providers are:
 - Feishu (China): delegated user identity, contact discovery, chat and calendar
   listing, message and calendar-event reads, Drive and document reads, plus
   approval-gated message and calendar-event creation.
-- WeCom: organization custom-application identity, department and member
-  discovery, member reads, and approval-gated application messages.
+- WeCom: third-party Suite application identity; official provider-side member
+  search; member, customer, and customer-group reads; approval-gated application
+  messages; and approval-gated customer mass-message task creation, history
+  discovery, and delivery-result inspection.
 - DingTalk: organization internal-application department, member, and role
   discovery; bounded attendance reads; approval-gated member or department
   work notifications; and delivery-result checks.
@@ -176,18 +178,23 @@ INTEGRATION_OAUTH_CALLBACK_URL=https://api.example.com/console/api/integrations/
 INTEGRATION_OAUTH_RESULT_URL=https://app.example.com/console/integrations/oauth/result
 
 # WeCom service-provider Suite application. Keep these values in a secret manager.
+INTEGRATION_WECOM_INSTALL_AUTH_MODE=formal
 INTEGRATION_WECOM_SUITE_ID=wwxxxxxxxxxxxxxxxx
+INTEGRATION_WECOM_PROVIDER_CORP_ID=wwxxxxxxxxxxxxxxxx
+INTEGRATION_WECOM_PROVIDER_SECRET=replace-with-provider-secret
 INTEGRATION_WECOM_SUITE_SECRET=replace-with-suite-secret
 INTEGRATION_WECOM_CALLBACK_TOKEN=replace-with-callback-token
 INTEGRATION_WECOM_ENCODING_AES_KEY=replace-with-43-character-encoding-aes-key
+INTEGRATION_WECOM_CUSTOMER_CONTACT_ENABLED=false
+INTEGRATION_WECOM_CUSTOMER_MASS_MESSAGE_ENABLED=false
 INTEGRATION_WECOM_INSTALL_CALLBACK_URL=https://app.example.com/console/api/integrations/wecom/install/callback
 INTEGRATION_WECOM_SUITE_EVENTS_URL=https://app.example.com/console/api/integrations/wecom/suite/events
 INTEGRATION_WECOM_RESULT_URL=https://app.example.com/console/integrations?provider=wecom
 ```
 
 This switch enables the shared integration runtime and built-in Providers,
-including Exa Web Search. WeCom is registered only when all four Suite secrets
-are present, so a partially configured callback cannot be offered to users.
+including Exa Web Search. WeCom is registered only when all six required Suite
+values are present, so a partially configured callback cannot be offered to users.
 Individual Provider availability is then determined by its configured
 Connections, connection health, usage rules, and caller selection or binding.
 
@@ -819,7 +826,7 @@ Adding Notion, Slack, or another provider normally requires an Adapter,
 not a new Skill:
 
 1. Add a provider package under
-   `api/internal/modules/integrations/adapters/<provider>`.
+   `api/internal/modules/integrations/providers/<capability>/<provider>`.
 2. Define a stable `ProviderDefinition`: identity, categories, documentation,
    explicit authentication methods and write-only credential fields, the four
    generic authentication strategy dimensions, health probe characteristics,
@@ -976,7 +983,24 @@ the provider-install migration.
   one-time authorization code for a permanent authorization and encrypts it at
   rest. Users never enter Corp ID, AgentID, or an application Secret. The
   installed application's visible range remains the provider-side security
-  boundary.
+  boundary. Member lookup uses WeCom's official service-provider contact-search
+  API and the independently issued provider access token, so it supports the
+  provider's name, name-pinyin, and English-name matching instead of scanning
+  departments locally. The provider CorpID and provider Secret are deployment
+  credentials and remain distinct from the Suite ID and Suite Secret.
+
+  Internal members, external customers, customer groups, and mass-message tasks
+  use separate encrypted, authenticated references bound to the exact
+  Connection, authorized tenant, and application. A customer reference can
+  never be used as an internal application-message recipient. Customer and
+  customer-group reads report provider-visible coverage explicitly; an empty
+  result does not prove that the subject does not exist outside that coverage.
+  ZGI does not expose a fictional arbitrary customer direct-message Action:
+  WeCom's supported customer write path creates a member-confirmed enterprise
+  mass-message task. Task creation is not delivery, and follow-up read Actions
+  discover authorized mass-message history, query member tasks, and inspect
+  per-target send results. Provider `msgid` values remain behind encrypted,
+  connection-bound task references throughout that workflow.
 - DingTalk uses an organization-owned internal application. Administrators
   enter its AppKey, AppSecret, and AgentId, configure the application's contact
   visibility, and grant only the contact, attendance, and work-notification
@@ -1000,9 +1024,14 @@ the provider-install migration.
    without a scheme or path. For the current deployment use
    `cloud.vibeclass.cn`.
 3. Set **Data callback URL** to
-   `https://cloud.vibeclass.cn/console/api/integrations/wecom/install/callback`
+   `https://cloud.vibeclass.cn/console/api/integrations/wecom/data/events/$CORPID$`
    and **Command callback URL** to
    `https://cloud.vibeclass.cn/console/api/integrations/wecom/suite/events`.
+   Keep `$CORPID$` literal in the configured data URL. WeCom replaces it with
+   the provider CorpID during validation and the authorized tenant CorpID for
+   later events; the data callback must not reuse the installation callback.
+   WeCom also encrypts the command callback's GET URL validation for the
+   service-provider CorpID, while later POST command events use the Suite ID.
    Generate Token and EncodingAESKey in WeCom, then deploy those exact values as
    `INTEGRATION_WECOM_CALLBACK_TOKEN` and
    `INTEGRATION_WECOM_ENCODING_AES_KEY` before validating the URLs.
@@ -1011,16 +1040,51 @@ the provider-install migration.
    homepage** to `https://cloud.vibeclass.cn/console/integrations`, leave the
    desktop-only homepage empty unless a separate desktop experience exists,
    and add `cloud.vibeclass.cn` as the trusted domain.
-5. Deploy the Suite ID and Suite Secret as `INTEGRATION_WECOM_SUITE_ID` and
-   `INTEGRATION_WECOM_SUITE_SECRET`. Add the ZGI API server's public egress IP
-   to the service-provider allowlist. WeCom error `60020` normally means that
-   IP is missing.
-6. Confirm the command callback is receiving fresh `suite_ticket` events. In
+5. Deploy the Suite ID, service-provider CorpID, provider Secret, and Suite
+   Secret as
+   `INTEGRATION_WECOM_SUITE_ID`, `INTEGRATION_WECOM_PROVIDER_CORP_ID`,
+   `INTEGRATION_WECOM_PROVIDER_SECRET`, and
+   `INTEGRATION_WECOM_SUITE_SECRET`. The provider CorpID and provider Secret are
+   shown in the service-provider profile and are distinct from the Suite ID. Add the ZGI API
+   server's public egress IP to the service-provider allowlist. WeCom error
+   `60020` normally means that IP is missing.
+6. If customer-contact Actions are required, grant the third-party application
+   **Enterprise customer permissions → Customer basic information** in the
+   service-provider platform, then set
+   `INTEGRATION_WECOM_CUSTOMER_CONTACT_ENABLED=true`. To create customer or
+   customer-group mass-message tasks, also grant **Customer contact → Send mass
+   messages to customers and customer groups** and set
+   `INTEGRATION_WECOM_CUSTOMER_MASS_MESSAGE_ENABLED=true`. These deployment
+   switches are intentionally false by default and are declarations that the
+   corresponding Suite permissions have been configured; provider calls still
+   enforce the tenant's visible range and current authorization at runtime.
+   Existing tenant installations must accept the authorization change in the
+   WeCom administration console, or be reauthorized when WeCom requires it,
+   before the new Actions can succeed.
+7. Set `INTEGRATION_WECOM_INSTALL_AUTH_MODE=test` only while installing an
+   unpublished application for a registered test enterprise. Leave it at the
+   default `formal` for a published application. Each new `pre_auth_code` is
+   configured independently through WeCom's `set_session_info` API, so change
+   the mode before starting a new authorization and never reuse an old install
+   link after switching modes.
+8. Confirm the command callback is receiving fresh `suite_ticket` events. In
    Connection Center, choose WeCom and start authorization. A WeCom system
    administrator reviews the requested visibility and installs the app. ZGI
-   then uses `suite_ticket → suite_access_token → pre_auth_code → auth_code →
-   permanent_code → corp_access_token` and reads the installed application
-   profile without sending a message.
+   then uses `suite_ticket → suite_access_token → pre_auth_code →
+   set_session_info → auth_code → permanent_code → corp_access_token` and reads
+   the installed application profile without sending a message.
+
+WeCom presents organization authorization as installing the third-party
+application; there is no second organization OAuth consent screen after that
+confirmation. Provider-site authorization returns the one-time `auth_code` to
+the configured installation callback. Authorization initiated by a WeCom
+marketplace or service-provider test entry instead sends a `create_auth`
+command event. ZGI durably encrypts and queues a `create_auth` code only when
+its `State` matches a live ZGI authorization flow, acknowledges the callback
+promptly, and performs the permanent-code exchange in the leased recovery
+worker. An event with no matching state is never guessed or attached to an
+organization; remove that test installation and start a fresh authorization
+from ZGI.
 
 Authorization cancellation from WeCom immediately disables the matching local
 Connection, clears its encrypted permanent authorization, and requires a new

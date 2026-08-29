@@ -1113,7 +1113,7 @@ func completeClientActionOperationPlanPhase(metadata map[string]interface{}, eve
 	operationPlanAdvanceNextPendingPhase(phases)
 	plan["phases"] = mapsToInterfaceSlice(phases)
 	operationPlanMarkEvidenceCurrent(plan)
-	if operationPlanPhasesTerminal(phases) {
+	if operationPlanPhasesTerminal(plan, phases) {
 		plan["status"] = operationPlanStatusCompleted
 		plan["pending_next_action"] = "none"
 	} else {

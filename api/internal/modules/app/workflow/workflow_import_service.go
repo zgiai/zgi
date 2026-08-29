@@ -83,24 +83,22 @@ func (s *WorkflowService) ImportWorkflow(
 
 	depWarnings := CheckDependencies(graph)
 	warnings = append(warnings, depWarnings...)
+	// Connection IDs are organization-local authorization handles. Never carry
+	// them across an import boundary; keep the connector node editable and make
+	// the user select an authorized connection in the destination workspace.
+	if _, err := clearAllWorkflowConnectorConnections(graph); err != nil {
+		return nil, fmt.Errorf("failed to sanitize imported connector dependencies: %w", err)
+	}
 
 	stats := CollectImportStats(graph)
 
-	graphJSON, err := json.Marshal(graph)
+	environmentVariables, err := workflowImportVariables(exportData.Workflow.EnvironmentVariables)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize graph: %w", err)
+		return nil, fmt.Errorf("invalid imported environment variables: %w", err)
 	}
-	featuresJSON, err := json.Marshal(exportData.Workflow.Features)
+	conversationVariables, err := workflowImportVariables(exportData.Workflow.ConversationVariables)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize features: %w", err)
-	}
-	convVarsJSON, err := json.Marshal(exportData.Workflow.ConversationVariables)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize conversation variables: %w", err)
-	}
-	envVarsJSON, err := json.Marshal(exportData.Workflow.EnvironmentVariables)
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize environment variables: %w", err)
+		return nil, fmt.Errorf("invalid imported conversation variables: %w", err)
 	}
 
 	// Create a new agent from the import
@@ -137,11 +135,14 @@ func (s *WorkflowService) ImportWorkflow(
 	}
 	agentID := newAgent.ID.String()
 
-	// Create a default draft workflow for this new agent so we can overwrite it
+	// Persist the imported graph through the canonical draft sync path so the
+	// graph row and its (empty until reconnected) connector index cannot drift.
 	syncReq := &dto.SyncDraftWorkflowRequest{
-		Graph:    nil,
-		Features: nil,
-		Type:     changeWorkflowType(newAgent.AgentsType),
+		Graph:                 graph,
+		Features:              exportData.Workflow.Features,
+		EnvironmentVariables:  environmentVariables,
+		ConversationVariables: conversationVariables,
+		Type:                  changeWorkflowType(newAgent.AgentsType),
 	}
 	_, err = s.SyncDraftWorkflow(ctx, tenantID, agentID, syncReq, accountID)
 	if err != nil {
@@ -168,15 +169,6 @@ func (s *WorkflowService) ImportWorkflow(
 		}
 	}
 
-	workflow.Graph = string(graphJSON)
-	workflow.Features = string(featuresJSON)
-	workflow.ConversationVariables = string(convVarsJSON)
-	workflow.EnvironmentVariables = string(envVarsJSON)
-
-	if err := s.repo.Update(ctx, workflow); err != nil {
-		return nil, fmt.Errorf("failed to save imported workflow: %w", err)
-	}
-
 	return &ImportResult{
 		Success:    true,
 		AgentID:    agentID,
@@ -184,6 +176,21 @@ func (s *WorkflowService) ImportWorkflow(
 		Stats:      stats,
 		Warnings:   warnings,
 	}, nil
+}
+
+func workflowImportVariables(raw []interface{}) ([]dto.Variable, error) {
+	if len(raw) == 0 {
+		return []dto.Variable{}, nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	var variables []dto.Variable
+	if err := json.Unmarshal(encoded, &variables); err != nil {
+		return nil, err
+	}
+	return variables, nil
 }
 
 // CheckNodeCompatibility verifies all node types in the graph are supported
@@ -228,6 +235,21 @@ func CheckDependencies(graph map[string]interface{}) []ImportWarning {
 		nodeID, _ := nodeMap["id"].(string)
 		nodeType := workflowNodeType(nodeMap)
 		data := workflowNodeData(nodeMap)
+		if strings.EqualFold(strings.TrimSpace(workflowString(data, "provider_type")), "connector") {
+			providerName := strings.TrimSpace(workflowString(data, "provider_name"))
+			if providerName == "" {
+				providerName = strings.TrimSpace(workflowString(data, "provider_id"))
+			}
+			if providerName == "" {
+				providerName = "connector"
+			}
+			warnings = append(warnings, ImportWarning{
+				Type:    "connector_requires_config",
+				NodeID:  nodeID,
+				Name:    providerName,
+				Message: fmt.Sprintf("Connector '%s' needs an authorized connection after import", providerName),
+			})
+		}
 
 		switch nodeType {
 		case "call-database":

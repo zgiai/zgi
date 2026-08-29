@@ -80,6 +80,15 @@ func TestDeleteAgentReauthorizesLockedWorkspaceAfterLifecycleLock(t *testing.T) 
 	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)).
 		WithArgs("agent-binding-resource:" + organizationID + ":workflow::" + agentID.String()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE agent_id = \$1`).
+		WithArgs(agentID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)).
+		WithArgs("agent-binding-agent:" + agentID.String()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM "agent_resource_bindings" WHERE agent_id = \$1`).
+		WithArgs(agentID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT \* FROM "agents" WHERE id = \$1 AND deleted_at IS NULL LIMIT \$2 FOR UPDATE`).
 		WithArgs(agentID.String(), 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "name", "agent_type", "deleted_at"}).

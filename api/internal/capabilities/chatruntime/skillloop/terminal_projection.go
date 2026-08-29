@@ -89,7 +89,12 @@ func terminalOnlyEvidenceSnapshot(metadata map[string]interface{}) map[string]in
 func terminalOnlyLatestSuccessfulInvocation(invocations []map[string]interface{}) map[string]interface{} {
 	for index := len(invocations) - 1; index >= 0; index-- {
 		invocation := invocations[index]
-		if !runtimeInvocationSucceeded(invocation) {
+		if !terminalStateGuardInvocationIsExecutionEvidence(invocation) || !runtimeInvocationSucceeded(invocation) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), "external-apps") &&
+			strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])), "execute_action") &&
+			!terminalStateGuardExternalActionProviderConfirmed(invocation) {
 			continue
 		}
 		out := map[string]interface{}{}

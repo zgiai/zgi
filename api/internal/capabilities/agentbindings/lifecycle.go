@@ -57,44 +57,67 @@ func (e *ConflictError) Error() string {
 }
 
 type impactTokenPayload struct {
-	ActorID     string      `json:"actor_id"`
-	Operation   string      `json:"operation"`
-	BindingType BindingType `json:"binding_type"`
-	ResourceID  string      `json:"resource_id"`
-	ParentID    string      `json:"parent_id,omitempty"`
-	Revision    string      `json:"revision"`
-	ExpiresAt   int64       `json:"expires_at"`
+	ActorID           string       `json:"actor_id"`
+	Operation         string       `json:"operation"`
+	BindingType       BindingType  `json:"binding_type"`
+	ResourceID        string       `json:"resource_id"`
+	ParentID          string       `json:"parent_id,omitempty"`
+	ConsumerType      ConsumerType `json:"consumer_type,omitempty"`
+	ConsumerID        string       `json:"consumer_id,omitempty"`
+	BindingInstanceID string       `json:"binding_instance_id,omitempty"`
+	Scope             Scope        `json:"scope,omitempty"`
+	Revision          string       `json:"revision"`
+	ExpiresAt         int64        `json:"expires_at"`
 }
 
 func (r *Repository) PreviewImpact(ctx context.Context, ref ResourceRef, operation string, actorID uuid.UUID, now time.Time) (*Impact, error) {
+	impact, _, err := r.PreviewImpactSnapshot(ctx, ref, operation, actorID, now)
+	return impact, err
+}
+
+// PreviewImpactSnapshot returns the exact binding snapshot used to create the
+// confirmation token. Callers that render a destructive-operation preview
+// must build the visible impact from these rows so the user never confirms a
+// revision containing references that were absent from the displayed list.
+func (r *Repository) PreviewImpactSnapshot(
+	ctx context.Context,
+	ref ResourceRef,
+	operation string,
+	actorID uuid.UUID,
+	now time.Time,
+) (*Impact, []Binding, error) {
 	bindings, err := r.ListImpact(ctx, ref)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(bindings) == 0 {
-		return nil, nil
+		return nil, bindings, nil
 	}
 	operation = strings.TrimSpace(operation)
 	if operation == "" || actorID == uuid.Nil {
-		return nil, fmt.Errorf("operation and actor id are required")
+		return nil, nil, fmt.Errorf("operation and actor id are required")
 	}
 	revision := bindingImpactRevision(bindings)
 	payload := impactTokenPayload{
-		ActorID:     actorID.String(),
-		Operation:   operation,
-		BindingType: ref.BindingType,
-		ResourceID:  strings.TrimSpace(ref.ResourceID),
-		ParentID:    strings.TrimSpace(ref.ParentResourceID),
-		Revision:    revision,
-		ExpiresAt:   now.Add(ImpactTokenTTL).Unix(),
+		ActorID:           actorID.String(),
+		Operation:         operation,
+		BindingType:       ref.BindingType,
+		ResourceID:        strings.TrimSpace(ref.ResourceID),
+		ParentID:          strings.TrimSpace(ref.ParentResourceID),
+		ConsumerType:      ref.ConsumerType,
+		ConsumerID:        resourceRefConsumerID(ref),
+		BindingInstanceID: strings.TrimSpace(ref.BindingInstanceID),
+		Scope:             resourceRefScope(ref),
+		Revision:          revision,
+		ExpiresAt:         now.Add(ImpactTokenTTL).Unix(),
 	}
 	token, err := encodeImpactToken(r.tokenSecret, payload)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	agents, err := r.impactAgents(ctx, bindings)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return &Impact{
 		Code:        ConflictCodeResourceBound,
@@ -104,7 +127,7 @@ func (r *Repository) PreviewImpact(ctx context.Context, ref ResourceRef, operati
 		Agents:      agents,
 		ImpactToken: token,
 		ExpiresAt:   payload.ExpiresAt,
-	}, nil
+	}, bindings, nil
 }
 
 func (r *Repository) VerifyImpactToken(ctx context.Context, ref ResourceRef, operation string, actorID uuid.UUID, token string, now time.Time) error {
@@ -113,7 +136,9 @@ func (r *Repository) VerifyImpactToken(ctx context.Context, ref ResourceRef, ope
 		return err
 	}
 	if payload.ExpiresAt < now.Unix() || payload.ActorID != actorID.String() || payload.Operation != strings.TrimSpace(operation) ||
-		payload.BindingType != ref.BindingType || payload.ResourceID != strings.TrimSpace(ref.ResourceID) || payload.ParentID != strings.TrimSpace(ref.ParentResourceID) {
+		payload.BindingType != ref.BindingType || payload.ResourceID != strings.TrimSpace(ref.ResourceID) || payload.ParentID != strings.TrimSpace(ref.ParentResourceID) ||
+		payload.ConsumerType != ref.ConsumerType || payload.ConsumerID != resourceRefConsumerID(ref) ||
+		payload.BindingInstanceID != strings.TrimSpace(ref.BindingInstanceID) || payload.Scope != resourceRefScope(ref) {
 		return ErrImpactTokenInvalid
 	}
 	bindings, err := r.ListImpact(ctx, ref)
@@ -124,6 +149,20 @@ func (r *Repository) VerifyImpactToken(ctx context.Context, ref ResourceRef, ope
 		return ErrImpactChanged
 	}
 	return nil
+}
+
+func resourceRefConsumerID(ref ResourceRef) string {
+	if ref.ConsumerID == nil {
+		return ""
+	}
+	return ref.ConsumerID.String()
+}
+
+func resourceRefScope(ref ResourceRef) Scope {
+	if ref.Scope == nil {
+		return ""
+	}
+	return *ref.Scope
 }
 
 // RevokeAndPruneDrafts removes a resource from every affected draft configuration and
@@ -398,7 +437,20 @@ func bindingImpactRevision(bindings []Binding) string {
 		if binding.BindingType == BindingTypeIntegrationConnection {
 			metadataRevision = strings.Join(IntegrationAllowedActionIDs(binding), ",")
 		}
-		rows = append(rows, strings.Join([]string{binding.AgentID.String(), string(binding.BindingScope), version, string(binding.BindingType), binding.ResourceID, binding.ParentResourceID, binding.AccessMode, metadataRevision}, "|"))
+		consumerType := binding.ConsumerType
+		if consumerType == "" {
+			consumerType = ConsumerTypeAgent
+		}
+		consumerID := binding.ConsumerID
+		if consumerID == uuid.Nil && consumerType == ConsumerTypeAgent {
+			consumerID = binding.AgentID
+		}
+		rows = append(rows, strings.Join([]string{
+			binding.AgentID.String(), string(consumerType), consumerID.String(), binding.BindingInstanceID,
+			binding.OrganizationID.String(), binding.WorkspaceID.String(),
+			string(binding.BindingScope), version, string(binding.BindingType), binding.ResourceID,
+			binding.ParentResourceID, binding.AccessMode, metadataRevision,
+		}, "|"))
 	}
 	sort.Strings(rows)
 	sum := sha256.Sum256([]byte(strings.Join(rows, "\n")))

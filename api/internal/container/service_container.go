@@ -33,16 +33,19 @@ import (
 	file_repo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 	file_service "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	dingtalk_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/dingtalk"
-	exa_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/exa"
-	feishu_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
-	github_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/github"
-	gmail_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/gmail"
-	mail_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/mail"
-	wecom_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/wecom"
-	x_integration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/x"
+	integrationaudit "github.com/zgiai/zgi/api/internal/modules/integrations/audit"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
+	integrationexecution "github.com/zgiai/zgi/api/internal/modules/integrations/execution"
 	integration_metatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
+	integrationpreferences "github.com/zgiai/zgi/api/internal/modules/integrations/preferences"
+	dingtalk_integration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/dingtalk"
+	feishu_integration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/feishu"
+	wecom_integration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/wecom"
+	github_integration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/developer/github"
+	gmail_integration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/email/gmail"
+	mail_integration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/email/mail"
+	x_integration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/social/x"
+	exa_integration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/websearch/exa"
 	integration_tools "github.com/zgiai/zgi/api/internal/modules/integrations/toolprovider"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 	pluginrunner_client "github.com/zgiai/zgi/api/internal/modules/pluginrunner/client"
@@ -103,6 +106,12 @@ import (
 type TaskHandlerRegistrar struct {
 	mu       sync.RWMutex
 	handlers map[string]func(context.Context, *asynq.Task) error
+}
+
+// WorkflowConnectorBindingBackfillRunner reconciles the finite migration
+// queue before Workflow connector execution is exposed by the HTTP server.
+type WorkflowConnectorBindingBackfillRunner interface {
+	ReconcileWorkflowConnectorBindingBackfills(ctx context.Context) error
 }
 
 // NewTaskHandlerRegistrar creates a new task handler registrar
@@ -228,8 +237,8 @@ type ServiceContainer struct {
 	// External integrations
 	integrationRegistry             *integrations.Registry
 	integrationExecutor             *integrations.Executor
-	integrationExecutionRepo        *integrations.GormExecutionRepository
-	integrationOperationReceiptRepo *integrations.GormOperationReceiptRepository
+	integrationExecutionRepo        *integrationexecution.GormExecutionRepository
+	integrationOperationReceiptRepo *integrationexecution.GormOperationReceiptRepository
 	integrationConnectionRepo       *integrations.GormConnectionRepository
 	integrationCredentialCipher     integrations.CredentialCipher
 	integrationConnectionResolver   *integrations.DefaultConnectionResolver
@@ -238,8 +247,9 @@ type ServiceContainer struct {
 	integrationConnectionTester     *integrations.AuditedConnectionTester
 	integrationConnectionGrantRepo  *integrations.GormConnectionGrantRepository
 	integrationConnectionAccess     *integrations.DefaultConnectionAccessService
-	integrationAIChatPreferenceRepo *integrations.GormAIChatIntegrationPreferenceRepository
-	integrationAIChatPreferences    *integrations.DefaultAIChatIntegrationPreferenceService
+	integrationAIChatPreferenceRepo *integrationpreferences.GormRepository
+	integrationAIChatPreferences    *integrationpreferences.DefaultAIChatIntegrationPreferenceService
+	integrationActionProjections    *integration_metatools.ActionProjectionService
 	integrationConnectionHealthRepo *integrations.GormConnectionHealthRepository
 	integrationConnectionHealth     *integrations.DefaultConnectionHealthService
 	integrationActionPolicyRepo     *integrations.GormActionPolicyRepository
@@ -281,6 +291,7 @@ type ServiceContainer struct {
 	// Automation definition service
 	automationDefinitionService automationdefinition.Service
 	automationWorkflowRunner    automationaction.AutomationWorkflowRunner
+	workflowBindingBackfill     WorkflowConnectorBindingBackfillRunner
 	notificationSMSService      notificationsms.Service
 	shortLinkService            shortlinkcap.Service
 
@@ -1123,16 +1134,7 @@ func (c *ServiceContainer) GetIntegrationRegistry() *integrations.Registry {
 				panic(fmt.Sprintf("register %s mail integration: %v", definition.ID, err))
 			}
 		}
-		wecomConfig := wecom_integration.SuiteConfig{}
-		if c.config != nil {
-			wecomConfig = wecom_integration.SuiteConfig{
-				SuiteID:            c.config.ExternalIntegrations.WeCom.SuiteID,
-				SuiteSecret:        c.config.ExternalIntegrations.WeCom.SuiteSecret,
-				CallbackToken:      c.config.ExternalIntegrations.WeCom.CallbackToken,
-				EncodingAESKey:     c.config.ExternalIntegrations.WeCom.EncodingAESKey,
-				InstallCallbackURL: c.config.ExternalIntegrations.WeCom.InstallCallbackURL,
-			}
-		}
+		wecomConfig := integrationWeComSuiteConfig(c.config)
 		var wecomAdapter *wecom_integration.Adapter
 		if wecomConfig.Configured() {
 			wecomAdapter, err = wecom_integration.NewSuite(nil, wecomConfig, c.GetIntegrationWeComSuiteStateRepository())
@@ -1145,7 +1147,7 @@ func (c *ServiceContainer) GetIntegrationRegistry() *integrations.Registry {
 		c.integrationWeComAdapter = wecomAdapter
 		if wecomConfig.Configured() {
 			if err := registry.Register(integrations.Registration{
-				Definition:          wecom_integration.ProviderDefinition(),
+				Definition:          wecom_integration.ProviderDefinitionForConfig(wecomConfig),
 				Adapter:             wecomAdapter,
 				ConnectionTester:    wecomAdapter,
 				CredentialValidator: wecomAdapter,
@@ -1171,6 +1173,25 @@ func (c *ServiceContainer) GetIntegrationRegistry() *integrations.Registry {
 	}
 	c.integrationRegistry = registry
 	return c.integrationRegistry
+}
+
+func integrationWeComSuiteConfig(applicationConfig *config.Config) wecom_integration.SuiteConfig {
+	if applicationConfig == nil {
+		return wecom_integration.SuiteConfig{}
+	}
+	wecomConfig := applicationConfig.ExternalIntegrations.WeCom
+	return wecom_integration.SuiteConfig{
+		SuiteID:                    wecomConfig.SuiteID,
+		ProviderCorpID:             wecomConfig.ProviderCorpID,
+		ProviderSecret:             wecomConfig.ProviderSecret,
+		CustomerContactEnabled:     wecomConfig.CustomerContactEnabled,
+		CustomerMassMessageEnabled: wecomConfig.CustomerMassMessageEnabled,
+		SuiteSecret:                wecomConfig.SuiteSecret,
+		CallbackToken:              wecomConfig.CallbackToken,
+		EncodingAESKey:             wecomConfig.EncodingAESKey,
+		InstallAuthMode:            wecomConfig.InstallAuthMode,
+		InstallCallbackURL:         wecomConfig.InstallCallbackURL,
+	}
 }
 
 func (c *ServiceContainer) externalIntegrationsEnabled() bool {
@@ -1283,16 +1304,16 @@ func (c *ServiceContainer) authorizeIntegrationOAuthCallback(
 	}
 }
 
-func (c *ServiceContainer) GetIntegrationExecutionRepository() *integrations.GormExecutionRepository {
+func (c *ServiceContainer) GetIntegrationExecutionRepository() *integrationexecution.GormExecutionRepository {
 	if c.integrationExecutionRepo == nil {
-		c.integrationExecutionRepo = integrations.NewGormExecutionRepository(c.db)
+		c.integrationExecutionRepo = integrationexecution.NewGormExecutionRepository(c.db)
 	}
 	return c.integrationExecutionRepo
 }
 
-func (c *ServiceContainer) GetIntegrationOperationReceiptRepository() *integrations.GormOperationReceiptRepository {
+func (c *ServiceContainer) GetIntegrationOperationReceiptRepository() *integrationexecution.GormOperationReceiptRepository {
 	if c.integrationOperationReceiptRepo == nil {
-		c.integrationOperationReceiptRepo = integrations.NewGormOperationReceiptRepository(c.db)
+		c.integrationOperationReceiptRepo = integrationexecution.NewGormOperationReceiptRepository(c.db)
 	}
 	return c.integrationOperationReceiptRepo
 }
@@ -1321,22 +1342,38 @@ func (c *ServiceContainer) GetIntegrationConnectionAccessService() *integrations
 	return c.integrationConnectionAccess
 }
 
-func (c *ServiceContainer) GetIntegrationAIChatPreferenceRepository() *integrations.GormAIChatIntegrationPreferenceRepository {
+func (c *ServiceContainer) GetIntegrationAIChatPreferenceRepository() *integrationpreferences.GormRepository {
 	if c.integrationAIChatPreferenceRepo == nil {
-		c.integrationAIChatPreferenceRepo = integrations.NewGormAIChatIntegrationPreferenceRepository(c.db)
+		c.integrationAIChatPreferenceRepo = integrationpreferences.NewGormRepository(c.db)
 	}
 	return c.integrationAIChatPreferenceRepo
 }
 
-func (c *ServiceContainer) GetIntegrationAIChatPreferenceService() *integrations.DefaultAIChatIntegrationPreferenceService {
+func (c *ServiceContainer) GetIntegrationAIChatPreferenceService() *integrationpreferences.DefaultAIChatIntegrationPreferenceService {
 	if c.integrationAIChatPreferences == nil {
-		c.integrationAIChatPreferences = integrations.NewAIChatIntegrationPreferenceService(
+		c.integrationAIChatPreferences = integrationpreferences.NewAIChatIntegrationPreferenceService(
 			c.GetIntegrationAIChatPreferenceRepository(),
 			c.GetIntegrationConnectionRepository(),
 			c.GetIntegrationConnectionAccessService(),
 		)
 	}
 	return c.integrationAIChatPreferences
+}
+
+func (c *ServiceContainer) GetIntegrationActionProjectionService() *integration_metatools.ActionProjectionService {
+	if c.integrationActionProjections == nil {
+		service, err := integration_metatools.NewActionProjectionService(
+			c.GetIntegrationRegistry(),
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationConnectionAccessService(),
+			c.GetIntegrationActionPolicyService(),
+		)
+		if err != nil {
+			panic(fmt.Sprintf("initialize integration Action projection service: %v", err))
+		}
+		c.integrationActionProjections = service
+	}
+	return c.integrationActionProjections
 }
 
 func (c *ServiceContainer) GetIntegrationConnectionHealthRepository() *integrations.GormConnectionHealthRepository {
@@ -1403,7 +1440,7 @@ func (c *ServiceContainer) GetIntegrationProviderInstallFlowService() *integrati
 		}
 		c.integrationProviderInstallFlows = integrations.NewProviderInstallFlowService(
 			c.db, c.GetIntegrationCredentialCipher(), c.GetIntegrationRegistry(), ttl,
-		)
+		).WithNotificationOutbox(c.GetIntegrationOAuthRecoveryOutbox())
 	}
 	return c.integrationProviderInstallFlows
 }
@@ -1525,7 +1562,8 @@ func (c *ServiceContainer) GetIntegrationOAuthRecoveryService() *integrations.OA
 			c.GetIntegrationConnectionRepository(),
 			c.GetIntegrationOAuthRevoker(),
 			c.GetIntegrationCredentialCipher(),
-		).WithFlowRepository(c.GetIntegrationOAuthFlowRepository())
+		).WithFlowRepository(c.GetIntegrationOAuthFlowRepository()).
+			WithProviderInstallNotifications(c.GetIntegrationProviderInstallFlowService())
 	}
 	return c.integrationOAuthRecovery
 }
@@ -1628,7 +1666,7 @@ func (c *ServiceContainer) GetIntegrationExecutor() *integrations.Executor {
 			c.GetIntegrationExecutionRepository(),
 			c.getIntegrationDailyQuota(),
 			integrations.DefaultSafetyChecker{},
-			integrations.DeriveAuditHMACKey(masterKey),
+			integrationaudit.DeriveHMACKey(masterKey),
 			timeout,
 		).
 			WithOperationReceiptRepository(c.GetIntegrationOperationReceiptRepository()).
@@ -1788,6 +1826,14 @@ func (c *ServiceContainer) SetAutomationWorkflowRunner(runner automationaction.A
 
 func (c *ServiceContainer) GetAutomationWorkflowRunner() automationaction.AutomationWorkflowRunner {
 	return c.automationWorkflowRunner
+}
+
+func (c *ServiceContainer) SetWorkflowConnectorBindingBackfillRunner(runner WorkflowConnectorBindingBackfillRunner) {
+	c.workflowBindingBackfill = runner
+}
+
+func (c *ServiceContainer) GetWorkflowConnectorBindingBackfillRunner() WorkflowConnectorBindingBackfillRunner {
+	return c.workflowBindingBackfill
 }
 
 func (c *ServiceContainer) SetWorkflowEngineFactory(factory *graph_engine.EngineFactory) {

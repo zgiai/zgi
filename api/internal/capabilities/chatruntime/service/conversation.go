@@ -258,7 +258,7 @@ func (s *service) UpdateSkillConfig(ctx context.Context, scope Scope, req runtim
 	if len(update.restoredSkillIDs) > 0 && s.repos != nil && s.repos.DB != nil {
 		if err := s.repos.DB.WithContext(ctx).Model(&agentbindings.Binding{}).
 			Select("agent_id, binding_scope, resource_id").
-			Where("organization_id = ? AND binding_type = ? AND resource_id IN ?", scope.OrganizationID, agentbindings.BindingTypeSkill, update.restoredSkillIDs).
+			Where("organization_id = ? AND consumer_type = ? AND binding_type = ? AND resource_id IN ?", scope.OrganizationID, agentbindings.ConsumerTypeAgent, agentbindings.BindingTypeSkill, update.restoredSkillIDs).
 			Order("agent_id ASC, binding_scope ASC, resource_id ASC").
 			Find(&affectedBindings).Error; err != nil {
 			logger.WarnContext(ctx, "failed to resolve affected agents for restored organization skills", "organization_id", scope.OrganizationID, "skill_ids", update.restoredSkillIDs, err)

@@ -75,6 +75,7 @@ vm.runInNewContext(compiled, {
 
 const {
   initialIntegrationOAuthUIState,
+  integrationOAuthRequestFailure,
   integrationOAuthUIReducer,
   isIntegrationOAuthFlowTerminal,
   normalizeOAuthPollInterval,
@@ -102,6 +103,7 @@ state = integrationOAuthUIReducer(state, { type: 'popup_reopened' });
 assert.equal(state.status, 'waiting');
 assert.equal(state.popupBlocked, false);
 assert.equal(state.popupClosed, false);
+assert.equal(state.requestFailure, null);
 state = integrationOAuthUIReducer(state, { type: 'popup_closed' });
 state = integrationOAuthUIReducer(state, {
   type: 'flow_updated',
@@ -124,12 +126,58 @@ assert.equal(
   300_000
 );
 
+const requestFailure = integrationOAuthRequestFailure({
+  response: {
+    data: {
+      code: 'integration_access_denied',
+      message: 'WeCom trusted IP does not allow this server',
+      data: {
+        provider_error_code: '60020',
+        provider_request_id: 'provider-request-1',
+        provider_http_status: 200,
+      },
+    },
+  },
+});
+assert.deepEqual(
+  { ...requestFailure },
+  {
+    errorCode: 'integration_access_denied',
+    message: 'WeCom trusted IP does not allow this server',
+    providerErrorCode: '60020',
+    providerRequestId: 'provider-request-1',
+    providerHTTPStatus: 200,
+    retryAfterAt: undefined,
+  },
+  'safe provider diagnostics should survive a failed authorization start'
+);
+state = integrationOAuthUIReducer(state, { type: 'request_failed', failure: requestFailure });
+assert.equal(state.status, 'failed');
+assert.equal(state.requestFailure?.providerErrorCode, '60020');
+assert.deepEqual(
+  {
+    ...integrationOAuthRequestFailure({
+      response: { data: { code: '<unsafe>', message: 'x'.repeat(513) } },
+    }),
+  },
+  {
+    errorCode: undefined,
+    message: undefined,
+    providerErrorCode: undefined,
+    providerRequestId: undefined,
+    providerHTTPStatus: undefined,
+    retryAfterAt: undefined,
+  },
+  'unbounded or malformed error details must not be rendered'
+);
+
 const hookSource = fs.readFileSync(hookPath, 'utf8');
 const resultSource = fs.readFileSync(resultPath, 'utf8');
 const integrationServiceSource = fs.readFileSync(integrationServicePath, 'utf8');
 const connectionsPanelSource = fs.readFileSync(connectionsPanelPath, 'utf8');
 assert.match(hookSource, /operationRef\.current !== operation/);
-assert.match(hookSource, /cancelOAuthFlowSilently\(createdFlowId\)/);
+assert.match(hookSource, /integrationOAuthRequestFailure\(error\)/);
+assert.match(hookSource, /cancelOAuthFlowSilently\(createdFlowId,\s*kind\)/);
 assert.match(hookSource, /monitorPopup\(\);\s*dispatch\(\{ type: 'popup_reopened' \}\)/);
 assert.match(
   hookSource,

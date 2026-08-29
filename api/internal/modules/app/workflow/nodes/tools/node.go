@@ -3,16 +3,22 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/pkg/database"
+	"gorm.io/gorm"
 )
 
 // Node represents a Tools node in the workflow for the new Plugin Runner system
@@ -255,7 +261,99 @@ func (n *Node) workflowToolRuntimeParameters(variablePool *entities.VariablePool
 			}
 		}
 	}
+	if n.getProviderType() == tools.ToolProviderTypeConnector {
+		parameters = skills.WithAgentBindingVerifier(parameters, n.workflowConnectorBindingVerifier())
+	}
 	return parameters
+}
+
+// workflowConnectorBindingVerifier rechecks the concrete persisted Workflow
+// graph row and exact node binding immediately before Provider execution. The
+// graph's connection_id is configuration, not authorization evidence.
+func (n *Node) workflowConnectorBindingVerifier() skills.AgentBindingVerifier {
+	return func(ctx context.Context, check skills.AgentBindingCheck) (bool, error) {
+		if agentbindings.BindingType(strings.TrimSpace(check.BindingType)) != agentbindings.BindingTypeIntegrationConnection {
+			return false, nil
+		}
+		if !strings.EqualFold(strings.TrimSpace(check.ResourceID), strings.TrimSpace(n.nodeData.ConnectionID)) ||
+			!strings.EqualFold(strings.TrimSpace(check.ParentResourceID), strings.TrimSpace(n.nodeData.ProviderID)) {
+			return false, nil
+		}
+		db := database.GetDB()
+		if db == nil {
+			return false, fmt.Errorf("workflow connector binding database is not configured")
+		}
+		workflowID, err := uuid.Parse(strings.TrimSpace(n.WorkflowID))
+		if err != nil || workflowID == uuid.Nil {
+			return false, fmt.Errorf("workflow connector runtime workflow id is invalid")
+		}
+		agentID, err := uuid.Parse(strings.TrimSpace(n.APPID))
+		if err != nil || agentID == uuid.Nil {
+			return false, fmt.Errorf("workflow connector runtime Agent id is invalid")
+		}
+		workspaceIDValue := strings.TrimSpace(n.WorkspaceID)
+		if workspaceIDValue == "" {
+			workspaceIDValue = strings.TrimSpace(n.TenantID)
+		}
+		workspaceID, err := uuid.Parse(workspaceIDValue)
+		if err != nil || workspaceID == uuid.Nil {
+			return false, fmt.Errorf("workflow connector runtime workspace id is invalid")
+		}
+		organizationID, err := uuid.Parse(strings.TrimSpace(n.OrganizationID))
+		if err != nil || organizationID == uuid.Nil {
+			return false, fmt.Errorf("workflow connector runtime organization id is invalid")
+		}
+
+		type workflowBindingRuntimeState struct {
+			ID          uuid.UUID
+			AgentID     uuid.UUID
+			WorkspaceID uuid.UUID
+			Version     string
+			VersionUUID *uuid.UUID
+		}
+		var state workflowBindingRuntimeState
+		query := db.WithContext(ctx).
+			Table("workflows AS workflow").
+			Select("workflow.id, workflow.agent_id, workflow.tenant_id AS workspace_id, workflow.version, workflow.version_uuid").
+			Joins("JOIN agents AS owner ON owner.id = workflow.agent_id AND owner.deleted_at IS NULL").
+			Joins("JOIN workspaces AS workspace ON workspace.id = workflow.tenant_id AND workspace.status = ?", "normal").
+			Where("workflow.id = ? AND workflow.agent_id = ? AND workflow.tenant_id = ? AND workspace.organization_id = ?", workflowID, agentID, workspaceID, organizationID).
+			Take(&state)
+		if query.Error != nil {
+			if errors.Is(query.Error, gorm.ErrRecordNotFound) {
+				return false, nil
+			}
+			return false, fmt.Errorf("load workflow connector runtime scope: %w", query.Error)
+		}
+
+		ref := agentbindings.WorkflowScopeRef{
+			AgentID:    state.AgentID,
+			WorkflowID: state.ID,
+		}
+		if strings.EqualFold(strings.TrimSpace(state.Version), "draft") {
+			ref.Scope = agentbindings.ScopeDraft
+		} else {
+			if state.VersionUUID == nil || *state.VersionUUID == uuid.Nil {
+				return false, fmt.Errorf("published workflow connector runtime version is missing")
+			}
+			ref.Scope = agentbindings.ScopePublished
+			ref.PublishedVersionUUID = state.VersionUUID
+		}
+
+		binding, err := agentbindings.NewRepository(db).FindWorkflowNodeBinding(ctx, ref, strings.TrimSpace(n.NodeID), agentbindings.Match{
+			BindingType:      agentbindings.BindingTypeIntegrationConnection,
+			ResourceID:       strings.TrimSpace(check.ResourceID),
+			ParentResourceID: strings.TrimSpace(check.ParentResourceID),
+			AccessMode:       strings.TrimSpace(check.AccessMode),
+		})
+		if err != nil || binding == nil {
+			return false, err
+		}
+		if binding.OrganizationID != organizationID || binding.WorkspaceID != workspaceID {
+			return false, nil
+		}
+		return binding.AllowsIntegrationAction(check.ActionID), nil
+	}
 }
 
 // getProviderType converts string provider type to tools.ToolProviderType

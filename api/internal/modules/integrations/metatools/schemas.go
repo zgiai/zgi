@@ -1,6 +1,6 @@
 package metatools
 
-import "github.com/zgiai/zgi/api/internal/modules/integrations"
+import "github.com/zgiai/zgi/api/internal/modules/integrations/core"
 
 func strictObject(properties map[string]interface{}, required ...string) map[string]interface{} {
 	schema := map[string]interface{}{
@@ -227,6 +227,7 @@ func actionSummarySchema() map[string]interface{} {
 		"relation":         map[string]interface{}{"type": "string", "enum": []string{"resolve_target", "inspect"}},
 		"target_arguments": map[string]interface{}{"type": "array", "maxItems": 8, "items": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 128}},
 		"result_paths":     map[string]interface{}{"type": "array", "maxItems": 16, "items": map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 256}},
+		"result_transform": map[string]interface{}{"type": "string", "enum": []string{string(integrations.ActionPreparationSplitSlashPair)}},
 		"description":      map[string]interface{}{"type": "string", "minLength": 1, "maxLength": 1000},
 		"description_i18n": localizedTextSchema(1000),
 	}, "action_id", "relation", "target_arguments", "result_paths", "description")
@@ -332,7 +333,7 @@ func executeActionOutputSchema() map[string]interface{} {
 	batchItemSchema := strictObject(map[string]interface{}{
 		"item_index": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": integrations.MaxOperationBatchItems},
 		"status": map[string]interface{}{
-			"type": "string", "enum": []string{"executing", "succeeded", "failed_safe", "outcome_unknown"},
+			"type": "string", "enum": []string{"executing", "partially_succeeded", "succeeded", "failed_safe", "outcome_unknown"},
 		},
 		"error_code": map[string]interface{}{"type": "string", "maxLength": 128},
 		"retry_safe": map[string]interface{}{"type": "boolean"},
@@ -364,9 +365,15 @@ func executeActionOutputSchema() map[string]interface{} {
 		"schema_revision":         map[string]interface{}{"type": "string", "maxLength": 128},
 		"catalog_revision":        map[string]interface{}{"type": "string", "maxLength": 128},
 		"provider_request_id":     map[string]interface{}{"type": "string", "maxLength": 512},
+		"provider_error_code":     map[string]interface{}{"type": "string", "maxLength": 128},
+		"reason_code":             map[string]interface{}{"type": "string", "maxLength": 128},
 		"cost_usd":                map[string]interface{}{"type": "number", "minimum": 0},
 		"result_count":            map[string]interface{}{"type": "integer", "minimum": 0},
-		"attempt_count":           map[string]interface{}{"type": "integer", "minimum": 0},
+		"empty_result":            map[string]interface{}{"type": "boolean"},
+		"result_semantics": map[string]interface{}{
+			"type": "string", "enum": []string{"provider_succeeded_no_matching_items"},
+		},
+		"attempt_count": map[string]interface{}{"type": "integer", "minimum": 0},
 		"operation_status": map[string]interface{}{
 			"type": "string", "enum": []string{"completed", "already_completed", "executing", "failed_safe", "partially_succeeded", "succeeded", "failed", "outcome_unknown"},
 		},

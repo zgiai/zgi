@@ -508,18 +508,30 @@ type ExternalIntegrationOAuthClientConfig struct {
 	Config       map[string]string `json:"-"`
 }
 
+const (
+	WeComInstallAuthModeFormal = "formal"
+	WeComInstallAuthModeTest   = "test"
+)
+
 type ExternalIntegrationWeComConfig struct {
-	SuiteID            string `json:"-"`
-	SuiteSecret        string `json:"-"`
-	CallbackToken      string `json:"-"`
-	EncodingAESKey     string `json:"-"`
-	InstallCallbackURL string `json:"install_callback_url"`
-	SuiteEventsURL     string `json:"suite_events_url"`
-	ResultURL          string `json:"result_url"`
+	SuiteID                    string `json:"-"`
+	ProviderCorpID             string `json:"-"`
+	ProviderSecret             string `json:"-"`
+	CustomerContactEnabled     bool   `json:"customer_contact_enabled"`
+	CustomerMassMessageEnabled bool   `json:"customer_mass_message_enabled"`
+	SuiteSecret                string `json:"-"`
+	CallbackToken              string `json:"-"`
+	EncodingAESKey             string `json:"-"`
+	InstallAuthMode            string `json:"install_auth_mode"`
+	InstallCallbackURL         string `json:"install_callback_url"`
+	SuiteEventsURL             string `json:"suite_events_url"`
+	ResultURL                  string `json:"result_url"`
 }
 
 func (config ExternalIntegrationWeComConfig) Configured() bool {
 	return strings.TrimSpace(config.SuiteID) != "" &&
+		strings.TrimSpace(config.ProviderCorpID) != "" &&
+		strings.TrimSpace(config.ProviderSecret) != "" &&
 		strings.TrimSpace(config.SuiteSecret) != "" &&
 		strings.TrimSpace(config.CallbackToken) != "" &&
 		strings.TrimSpace(config.EncodingAESKey) != ""

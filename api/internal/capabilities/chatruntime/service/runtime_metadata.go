@@ -39,6 +39,67 @@ func (s *service) persistSkillTracesBestEffort(ctx context.Context, prepared *Pr
 	_ = s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata)
 }
 
+// commitProjectedActionBinding is the durable execution boundary for a
+// server-generated projected Action ledger binding. The working metadata is
+// deeply cloned so a failed repository write cannot partially mutate the
+// runtime snapshot observed by the current turn. Only a successful write is
+// published back to PreparedChat.
+func (s *service) commitProjectedActionBinding(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace) error {
+	if prepared == nil || prepared.Message == nil {
+		return fmt.Errorf("commit projected Action binding: prepared message is unavailable")
+	}
+	if !skillloop.IsProjectedActionAutoBindingTrace(trace) {
+		return fmt.Errorf("commit projected Action binding: trace is not a server projected Action binding")
+	}
+	if s == nil || s.repos == nil || s.repos.Message == nil {
+		return fmt.Errorf("commit projected Action binding: message repository is unavailable")
+	}
+
+	commitTrace := trace
+	commitTrace.Arguments = cloneProjectedActionBindingMetadata(trace.Arguments)
+	commitTrace.Result = cloneProjectedActionBindingMetadata(trace.Result)
+	metadata := mergeSkillTraceMetadata(cloneProjectedActionBindingMetadata(prepared.Message.Metadata), []skills.SkillTrace{commitTrace})
+	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
+		return fmt.Errorf("commit projected Action binding metadata: %w", err)
+	}
+	prepared.Message.Metadata = metadata
+	return nil
+}
+
+func cloneProjectedActionBindingMetadata(input map[string]interface{}) map[string]interface{} {
+	if input == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		out[key] = cloneProjectedActionBindingMetadataValue(value)
+	}
+	return out
+}
+
+func cloneProjectedActionBindingMetadataValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return cloneProjectedActionBindingMetadata(typed)
+	case []interface{}:
+		out := make([]interface{}, len(typed))
+		for index, item := range typed {
+			out[index] = cloneProjectedActionBindingMetadataValue(item)
+		}
+		return out
+	case []map[string]interface{}:
+		out := make([]map[string]interface{}, len(typed))
+		for index, item := range typed {
+			out[index] = cloneProjectedActionBindingMetadata(item)
+		}
+		return out
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
+}
+
 func (s *service) persistGeneratedArtifactBestEffort(ctx context.Context, prepared *PreparedChat, artifact map[string]interface{}) {
 	if prepared == nil || prepared.Message == nil || len(artifact) == 0 {
 		return
@@ -405,7 +466,15 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	if len(outcomeSnapshot) > 0 {
 		outcomes := reconcileOperationPlanOutcomeSnapshot(plan, outcomeSnapshot)
 		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
-		plan["phases"] = mapsToInterfaceSlice(operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes))
+		outcomePhases := operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes)
+		if len(phases) > 0 {
+			// Internal server plan updates may atomically declare Outcomes and
+			// attach canonical Action bindings. Reconcile the supplied phases onto
+			// the generated Outcome phases so expected_action, ledger epoch, and
+			// other server execution facts are not discarded by Outcome creation.
+			outcomePhases = reconcileOperationPlanOutcomePhaseSnapshot(outcomePhases, phases)
+		}
+		plan["phases"] = mapsToInterfaceSlice(outcomePhases)
 		operationPlanReconcileOutcomes(plan)
 	} else {
 		phases = reconcileOperationPlanPhaseSnapshot(mapSliceFromAny(plan["phases"]), phases)
@@ -439,6 +508,49 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	metadata["operation_plan"] = plan
 }
 
+func reconcileOperationPlanOutcomePhaseSnapshot(generated []map[string]interface{}, supplied []map[string]interface{}) []map[string]interface{} {
+	if len(generated) == 0 {
+		return supplied
+	}
+	if len(supplied) == 0 {
+		return generated
+	}
+	used := make([]bool, len(supplied))
+	out := make([]map[string]interface{}, 0, len(generated)+len(supplied))
+	for _, baseline := range generated {
+		match := -1
+		baselineOutcomeID := strings.TrimSpace(stringFromAny(baseline["outcome_id"]))
+		baselineID := strings.TrimSpace(stringFromAny(baseline["id"]))
+		for index, phase := range supplied {
+			if used[index] {
+				continue
+			}
+			outcomeID := strings.TrimSpace(stringFromAny(phase["outcome_id"]))
+			phaseID := strings.TrimSpace(stringFromAny(phase["id"]))
+			if (baselineOutcomeID != "" && outcomeID == baselineOutcomeID) ||
+				(baselineID != "" && phaseID == baselineID) {
+				match = index
+				break
+			}
+		}
+		if match < 0 {
+			out = append(out, baseline)
+			continue
+		}
+		used[match] = true
+		out = append(out, reconcileOperationPlanPhaseSnapshot(
+			[]map[string]interface{}{baseline},
+			[]map[string]interface{}{supplied[match]},
+		)[0])
+	}
+	for index, phase := range supplied {
+		if !used[index] {
+			out = append(out, phase)
+		}
+	}
+	return out
+}
+
 func reconcileOperationPlanPhaseSnapshot(current []map[string]interface{}, next []map[string]interface{}) []map[string]interface{} {
 	if len(current) == 0 || len(next) == 0 {
 		return next
@@ -464,12 +576,26 @@ func reconcileOperationPlanPhaseSnapshot(current []map[string]interface{}, next 
 		if len(refs) > 0 {
 			phase["evidence_refs"] = refs
 		}
-		for _, key := range []string{"outcome_id", "verification_mode", "completion_source", "completed_at", "action_binding_source", operationPlanRuntimeBindingKey} {
+		for _, key := range []string{
+			"outcome_id", "required", "verification_mode", "completion_source", "completed_at", "action_binding_source",
+			operationPlanRuntimeBindingKey, operationPlanServerProjectedEpochKey, operationPlanServerProjectedConnectionBindingKey,
+		} {
 			if _, exists := phase[key]; exists {
 				continue
 			}
 			if value, exists := previous[key]; exists && value != nil {
 				phase[key] = value
+			}
+		}
+		previousSource := strings.ToLower(strings.TrimSpace(stringFromAny(previous[operationPlanPhaseSourceKey])))
+		switch previousSource {
+		case operationPlanPhaseSourceServerOutcome, operationPlanPhaseSourceServerPreparation:
+			// A model snapshot cannot demote or replace an existing server-owned
+			// phase source. The server source remains authoritative across updates.
+			phase[operationPlanPhaseSourceKey] = previousSource
+		default:
+			if _, exists := phase[operationPlanPhaseSourceKey]; !exists && previousSource != "" {
+				phase[operationPlanPhaseSourceKey] = previousSource
 			}
 		}
 		if refs := appendUniqueStrings(stringSliceFromAny(previous["effect_refs"]), stringSliceFromAny(phase["effect_refs"])...); len(refs) > 0 {

@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -320,24 +321,25 @@ func (f AIChatIntegrationPreferenceResolverFunc) ResolveAIChatIntegrationPrefere
 }
 
 type service struct {
-	repos                 *repository.Repositories
-	llmClient             llmclient.LLMClient
-	streams               *streamRegistry
-	events                *streamEventStore
-	titleGen              titlegen.Service
-	modelSpecResolver     ModelSpecResolver
-	tokenEstimator        *tokenestimate.Estimator
-	fileService           FileLookupService
-	contentExtractor      ContentExtractionService
-	workspacePerms        WorkspacePermissionService
-	skillRuntime          *skills.Runtime
-	memoryService         UserMemoryService
-	agentMemoryService    AgentMemoryContextService
-	integrationPrefs      AIChatIntegrationPreferenceResolver
-	customSkillStorage    customSkillStorage
-	modelIdleTimeout      time.Duration
-	modelProgressSchedule modelprogress.Schedule
-	titleGenerationJobs   sync.Map
+	repos                     *repository.Repositories
+	llmClient                 llmclient.LLMClient
+	streams                   *streamRegistry
+	events                    *streamEventStore
+	titleGen                  titlegen.Service
+	modelSpecResolver         ModelSpecResolver
+	tokenEstimator            *tokenestimate.Estimator
+	fileService               FileLookupService
+	contentExtractor          ContentExtractionService
+	workspacePerms            WorkspacePermissionService
+	skillRuntime              *skills.Runtime
+	memoryService             UserMemoryService
+	agentMemoryService        AgentMemoryContextService
+	integrationPrefs          AIChatIntegrationPreferenceResolver
+	externalActionProjections integrationmetatools.ActionProjectionResolver
+	customSkillStorage        customSkillStorage
+	modelIdleTimeout          time.Duration
+	modelProgressSchedule     modelprogress.Schedule
+	titleGenerationJobs       sync.Map
 }
 
 func NewService(repos *repository.Repositories, llmClient llmclient.LLMClient) Service {
@@ -383,6 +385,7 @@ func NewServiceWithSkillRuntime(
 ) Service {
 	var agentMemoryService AgentMemoryContextService
 	var integrationPrefs AIChatIntegrationPreferenceResolver
+	var externalActionProjections integrationmetatools.ActionProjectionResolver
 	for _, item := range optionalServices {
 		switch typed := item.(type) {
 		case AgentMemoryContextService:
@@ -393,25 +396,30 @@ func NewServiceWithSkillRuntime(
 			if integrationPrefs == nil {
 				integrationPrefs = typed
 			}
+		case integrationmetatools.ActionProjectionResolver:
+			if externalActionProjections == nil {
+				externalActionProjections = typed
+			}
 		}
 	}
 	return &service{
-		repos:              repos,
-		llmClient:          llmClient,
-		streams:            newStreamRegistry(),
-		events:             newStreamEventStore(redisutil.GetClient()),
-		titleGen:           titleGen,
-		modelSpecResolver:  modelSpecResolver,
-		tokenEstimator:     newTokenEstimator(),
-		fileService:        fileService,
-		contentExtractor:   contentExtractor,
-		workspacePerms:     workspacePerms,
-		skillRuntime:       skillRuntime,
-		memoryService:      memoryService,
-		agentMemoryService: agentMemoryService,
-		integrationPrefs:   integrationPrefs,
-		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),
-		modelIdleTimeout:   configuredModelIdleTimeout(),
+		repos:                     repos,
+		llmClient:                 llmClient,
+		streams:                   newStreamRegistry(),
+		events:                    newStreamEventStore(redisutil.GetClient()),
+		titleGen:                  titleGen,
+		modelSpecResolver:         modelSpecResolver,
+		tokenEstimator:            newTokenEstimator(),
+		fileService:               fileService,
+		contentExtractor:          contentExtractor,
+		workspacePerms:            workspacePerms,
+		skillRuntime:              skillRuntime,
+		memoryService:             memoryService,
+		agentMemoryService:        agentMemoryService,
+		integrationPrefs:          integrationPrefs,
+		externalActionProjections: externalActionProjections,
+		customSkillStorage:        newFilesystemCustomSkillStorage(customSkillStorageRoot),
+		modelIdleTimeout:          configuredModelIdleTimeout(),
 	}
 }
 

@@ -12,6 +12,7 @@ import type {
 } from '@/services/types/integration';
 import {
   initialIntegrationOAuthUIState,
+  integrationOAuthRequestFailure,
   integrationOAuthUIReducer,
   isIntegrationOAuthFlowTerminal,
   normalizeOAuthPollInterval,
@@ -307,12 +308,12 @@ export function useIntegrationOAuthFlow(kind: IntegrationRedirectFlowKind = 'oau
           popup.location.replace(authorizationURL);
           popup.focus();
         }
-      } catch {
+      } catch (error) {
         if (popup && !popup.closed) popup.close();
         await cancelOAuthFlowSilently(createdFlowId, kind);
         if (!mountedRef.current || operationRef.current !== operation) return;
         popupRef.current = null;
-        dispatch({ type: 'request_failed' });
+        dispatch({ type: 'request_failed', failure: integrationOAuthRequestFailure(error) });
       }
     },
     [attachFlowSignals, clearChannel, clearTimers, closePopup, kind]

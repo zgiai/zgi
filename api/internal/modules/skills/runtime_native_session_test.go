@@ -138,6 +138,44 @@ func TestNativeSkillSessionActivatesCompleteSkillsIncrementally(t *testing.T) {
 	}
 }
 
+func TestNativeSkillSessionPreservesActionProjectionAcrossLaterActivation(t *testing.T) {
+	resolved := &ResolvedSkills{Skills: []SkillDocument{
+		{Metadata: SkillMetadata{ID: SkillExternalApps, RuntimeType: SkillRuntimeTypePrompt}, Instructions: "Use connected applications safely."},
+		{Metadata: SkillMetadata{ID: "later", RuntimeType: SkillRuntimeTypePrompt}, Instructions: "Use the later capability."},
+	}}
+	catalog := BuildNativeSkillCatalog(resolved, nil, DefaultNativeSkillCatalogBudgetChars, 0, nil)
+	session := NewNativeSkillSession(NewRuntime(nil, nil), resolved, catalog, NativeToolSetOptions{BudgetChars: 10000})
+	if activated := session.Activate(context.Background(), []string{SkillExternalApps}, "preload"); len(activated.ActivatedSkillIDs) != 1 {
+		t.Fatalf("initial activation = %#v", activated)
+	}
+	projection := NativeToolProjection{
+		Name: "wecom_list_contacts",
+		InputSchema: map[string]interface{}{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties":           map[string]interface{}{},
+		},
+		Binding: NativeToolBinding{
+			SkillID: SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
+			FixedArguments: map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.contact.list"},
+		},
+	}
+	if added := session.AddToolProjections([]NativeToolProjection{projection}, NativeToolProjectionOptions{}); added != 1 {
+		t.Fatalf("AddToolProjections() = %d, want 1", added)
+	}
+	if activated := session.Activate(context.Background(), []string{"later"}, "model"); len(activated.ActivatedSkillIDs) != 1 {
+		t.Fatalf("later activation = %#v", activated)
+	}
+	toolSet := session.ToolSet()
+	if len(toolSet.ProviderTools) != 1 || toolSet.ProviderTools[0].Function.Name != projection.Name {
+		t.Fatalf("provider tools after later activation = %#v", toolSet.ProviderTools)
+	}
+	binding, ok := toolSet.ToolBindings[projection.Name]
+	if !ok || binding.FixedArguments["action_id"] != "wecom.contact.list" {
+		t.Fatalf("projection binding after later activation = %#v, %v", binding, ok)
+	}
+}
+
 func containsNativeTestID(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

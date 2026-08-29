@@ -204,11 +204,11 @@ func TestReplacePublishedHeadPurgesHistoricalPublishedScopes(t *testing.T) {
 
 	for _, versionID := range []uuid.UUID{uuid.New(), uuid.New()} {
 		mock.ExpectBegin()
-		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM "agent_resource_bindings" WHERE agent_id = $1 AND binding_scope = $2`)).
-			WithArgs(agentID, ScopePublished).
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM "agent_resource_bindings" WHERE agent_id = $1 AND consumer_type = $2 AND binding_scope = $3`)).
+			WithArgs(agentID, ConsumerTypeAgent, ScopePublished).
 			WillReturnResult(sqlmock.NewResult(0, 2))
-		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM "agent_resource_bindings" WHERE (agent_id = $1 AND binding_scope = $2) AND published_version_uuid = $3`)).
-			WithArgs(agentID, ScopePublished, versionID).
+		mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3) AND published_version_uuid = $4`)).
+			WithArgs(agentID, ConsumerTypeAgent, ScopePublished, versionID).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectQuery(`INSERT INTO "agent_resource_bindings" .*RETURNING "id"`).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.New()))

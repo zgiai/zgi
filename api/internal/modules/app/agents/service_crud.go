@@ -939,6 +939,11 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 				return lockErr
 			}
 		}
+		if s.agentBindings != nil {
+			if revokeErr := s.agentBindings.WithTx(tx).RevokeAgentConsumers(ctx, tx, agent.ID); revokeErr != nil {
+				return revokeErr
+			}
+		}
 
 		var currentAgent Agent
 		if lockErr := tx.WithContext(ctx).

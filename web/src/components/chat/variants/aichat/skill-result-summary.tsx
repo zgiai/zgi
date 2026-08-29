@@ -9,6 +9,12 @@ import {
   getAIChatExternalActionDisplayName,
   getAIChatExternalAppDisplayName,
 } from '@/components/chat/variants/aichat/external-app-display';
+import {
+  getAIChatExternalActionOperationState,
+  isWeComNoValidRecipientCode,
+  safeExternalActionDiagnosticCode,
+  type AIChatExternalActionOperationStatus,
+} from '@/components/chat/variants/aichat/external-action-operation-status';
 
 const KNOWLEDGE_RESULT_KEYS = [
   'status',
@@ -54,6 +60,12 @@ const RESULT_LABEL_KEYS = {
   action: 'consoleChat.skills.trace.result.action',
   connection: 'consoleChat.skills.trace.result.connection',
   attemptCount: 'consoleChat.skills.trace.result.attemptCount',
+  operationStatus: 'consoleChat.skills.trace.result.operationStatus',
+  errorCode: 'consoleChat.skills.trace.result.errorCode',
+  reasonCode: 'consoleChat.skills.trace.result.reasonCode',
+  providerErrorCode: 'consoleChat.skills.trace.result.providerErrorCode',
+  retrySafe: 'consoleChat.skills.trace.result.retrySafe',
+  diagnostic: 'consoleChat.skills.trace.result.diagnostic',
 } as const;
 
 const OMITTED_RESULT_KEYS = new Set([
@@ -178,6 +190,17 @@ function localizedResultStatus(value: unknown, t: WebappTranslator): string | nu
   }
 }
 
+function localizedExternalOperationStatus(
+  status: AIChatExternalActionOperationStatus,
+  t: WebappTranslator
+): string {
+  return `${t(`consoleChat.skills.trace.result.operationStatuses.${status}`)} (${status})`;
+}
+
+function safeDiagnosticCode(value: unknown): string | null {
+  return safeExternalActionDiagnosticCode(value);
+}
+
 function buildKnowledgeRows(
   result: Record<string, unknown>,
   t: WebappTranslator
@@ -270,6 +293,39 @@ function buildExternalActionRows(
         (connectionSelection === 'preferred'
           ? t('consoleChat.governance.approvalPanel.preferredConnection')
           : t('consoleChat.governance.approvalPanel.selectedConnection')),
+    });
+  }
+  const operationState = getAIChatExternalActionOperationState({
+    skill_id: 'external-apps',
+    tool_name: 'execute_action',
+    result,
+  });
+  if (operationState) {
+    rows.push({
+      key: 'operation_status',
+      labelKey: 'operationStatus',
+      value: localizedExternalOperationStatus(operationState.status, t),
+    });
+  }
+  const errorCode = safeDiagnosticCode(result.error_code);
+  if (errorCode) rows.push({ key: 'error_code', labelKey: 'errorCode', value: errorCode });
+  const reasonCode = safeDiagnosticCode(result.reason_code);
+  if (reasonCode) rows.push({ key: 'reason_code', labelKey: 'reasonCode', value: reasonCode });
+  const providerErrorCode = safeDiagnosticCode(result.provider_error_code);
+  if (providerErrorCode) {
+    rows.push({
+      key: 'provider_error_code',
+      labelKey: 'providerErrorCode',
+      value: providerErrorCode,
+    });
+  }
+  const retrySafe = localizedBoolean(result.retry_safe, t);
+  if (retrySafe) rows.push({ key: 'retry_safe', labelKey: 'retrySafe', value: retrySafe });
+  if (isWeComNoValidRecipientCode(result.integration_id, providerErrorCode)) {
+    rows.push({
+      key: 'diagnostic',
+      labelKey: 'diagnostic',
+      value: t('consoleChat.skills.trace.result.providerDiagnostics.wecom81013'),
     });
   }
   const resultCount = formatScalar(result.result_count);
@@ -417,21 +473,66 @@ export function AIChatSkillResultSummary({
 }: AIChatSkillResultSummaryProps) {
   const t = useT('webapp');
   const { locale } = useLocale();
-  const rows = useMemo(() => {
+  const summary = useMemo(() => {
     const safeResult = sanitizeTimelineDisplayPayload(
       result,
       t('consoleChat.skills.trace.values.hidden'),
       t('consoleChat.skills.trace.values.truncated')
     );
-    return isRecord(safeResult) ? buildResultRows(safeResult, t, locale, skillId, toolName) : [];
+    if (!isRecord(safeResult)) return { rows: [], tone: null };
+    return {
+      rows: buildResultRows(safeResult, t, locale, skillId, toolName),
+      tone:
+        getAIChatExternalActionOperationState({
+          skill_id: skillId,
+          tool_name: toolName,
+          result: safeResult,
+        })?.tone ?? null,
+    };
   }, [locale, result, skillId, t, toolName]);
+
+  const { rows, tone } = summary;
 
   if (!rows.length) return null;
 
+  const title =
+    tone === 'error'
+      ? t('consoleChat.skills.trace.result.summaryTitles.failed')
+      : tone === 'warning'
+        ? t('consoleChat.skills.trace.result.summaryTitles.warning')
+        : tone === 'running'
+          ? t('consoleChat.skills.trace.result.summaryTitles.running')
+          : tone === 'success'
+            ? t('consoleChat.skills.trace.result.summaryTitles.success')
+            : t('consoleChat.skills.trace.debug.result');
+
   return (
-    <div className={cn('rounded-md bg-emerald-500/5 p-2 text-[11px]', className)}>
-      <div className="mb-1 font-medium text-emerald-700 dark:text-emerald-300">
-        {t('consoleChat.skills.trace.debug.result')}
+    <div
+      className={cn(
+        'rounded-md p-2 text-[11px]',
+        tone === 'error'
+          ? 'bg-destructive/10'
+          : tone === 'warning'
+            ? 'bg-amber-500/10'
+            : tone === 'running'
+              ? 'bg-blue-500/10'
+              : 'bg-emerald-500/5',
+        className
+      )}
+    >
+      <div
+        className={cn(
+          'mb-1 font-medium',
+          tone === 'error'
+            ? 'text-destructive'
+            : tone === 'warning'
+              ? 'text-amber-700 dark:text-amber-300'
+              : tone === 'running'
+                ? 'text-blue-700 dark:text-blue-300'
+                : 'text-emerald-700 dark:text-emerald-300'
+        )}
+      >
+        {title}
       </div>
       <dl className="grid gap-1">
         {rows.map(row => (

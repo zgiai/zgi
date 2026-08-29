@@ -240,11 +240,15 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 	if err != nil {
 		return nil, nil, err
 	}
+	staleRows, err := s.bindingRowsForConfig(ctx, ag, agentConfigResponse(ag.ID.String(), stale), agentbindings.ScopeDraft, nil, accountID, time.Now())
+	if err != nil {
+		return nil, nil, err
+	}
 	var saved *AgentsConfig
 	var savedRows []agentbindings.Binding
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		bindingRepo := s.agentBindings.WithTx(tx)
-		if err := bindingRepo.LockResources(ctx, tx, agentBindingResourceRefs(candidateRows)); err != nil {
+		if err := bindingRepo.LockResources(ctx, tx, agentBindingMutationResourceRefs(staleRows, candidateRows)); err != nil {
 			return err
 		}
 		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {
@@ -342,11 +346,15 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 	if err != nil {
 		return nil, err
 	}
+	staleRows, err := s.bindingRowsForConfig(ctx, ag, staleConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+	if err != nil {
+		return nil, err
+	}
 	var saved *AgentsConfig
 	var savedRows []agentbindings.Binding
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		bindingRepo := s.agentBindings.WithTx(tx)
-		if err := bindingRepo.LockResources(ctx, tx, agentBindingResourceRefs(candidateRows)); err != nil {
+		if err := bindingRepo.LockResources(ctx, tx, agentBindingMutationResourceRefs(staleRows, candidateRows)); err != nil {
 			return err
 		}
 		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {

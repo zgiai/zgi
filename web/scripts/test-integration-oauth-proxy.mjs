@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import {
   proxyIntegrationOAuthRequest,
   proxyIntegrationProviderInstallRequest,
+  proxyIntegrationWeComCallbackRequest,
 } from '../src/server/integration-oauth-proxy.ts';
 
 const originalInternalURL = process.env.INTEGRATION_API_INTERNAL_URL;
@@ -18,8 +19,23 @@ const server = http.createServer(async (request, response) => {
     url: request.url,
     authorization: request.headers.authorization,
     cookie: request.headers.cookie,
+    contentType: request.headers['content-type'],
+    forwardedHost: request.headers['x-forwarded-host'],
+    forwardedProto: request.headers['x-forwarded-proto'],
     body: Buffer.concat(body).toString('utf8'),
   });
+  if (
+    request.url?.startsWith('/console/api/integrations/wecom/suite/events') ||
+    request.url?.startsWith('/console/api/integrations/wecom/data/events/')
+  ) {
+    const payload = request.method === 'POST' ? 'success' : 'decrypted-echo';
+    response.statusCode = 200;
+    response.setHeader('content-type', 'text/plain; charset=utf-8');
+    response.setHeader('transfer-encoding', 'chunked');
+    response.write(payload.slice(0, 2));
+    response.end(payload.slice(2));
+    return;
+  }
   response.statusCode = 302;
   response.setHeader('location', 'https://cloud.example.com/console/integrations/oauth/result');
   response.setHeader('set-cookie', [
@@ -147,6 +163,123 @@ try {
   assert.equal(providerInstallCallbackResponse.status, 404);
   assert.equal(requests.length, 6);
 
+  const installCallbackResponse = await proxyIntegrationWeComCallbackRequest(
+    new globalThis.Request(
+      'https://cloud.example.com/console/api/integrations/wecom/install/callback?auth_code=one-time-code&state=opaque-state',
+      {
+        headers: { cookie: '__Host-zgi_oauth_browser_binding=browser-secret' },
+      }
+    ),
+    ['install', 'callback']
+  );
+  assert.equal(installCallbackResponse.status, 302);
+  assert.equal(
+    requests[6].url,
+    '/console/api/integrations/wecom/install/callback?auth_code=one-time-code&state=opaque-state'
+  );
+  assert.equal(requests[6].cookie, '__Host-zgi_oauth_browser_binding=browser-secret');
+
+  const invalidInstallEventResponse = await proxyIntegrationWeComCallbackRequest(
+    new globalThis.Request(
+      'https://cloud.example.com/console/api/integrations/wecom/install/callback',
+      { method: 'POST', body: '<xml />' }
+    ),
+    ['install', 'callback']
+  );
+  assert.equal(invalidInstallEventResponse.status, 404);
+  assert.equal(requests.length, 7);
+
+  const suiteVerificationResponse = await proxyIntegrationWeComCallbackRequest(
+    new globalThis.Request(
+      'https://cloud.example.com/console/api/integrations/wecom/suite/events?msg_signature=signed&timestamp=1&nonce=2&echostr=encrypted'
+    ),
+    ['suite', 'events']
+  );
+  assert.equal(suiteVerificationResponse.status, 200);
+  assert.equal(await suiteVerificationResponse.text(), 'decrypted-echo');
+  assert.equal(suiteVerificationResponse.headers.get('content-length'), '14');
+  assert.equal(suiteVerificationResponse.headers.get('transfer-encoding'), null);
+  assert.equal(
+    requests[7].url,
+    '/console/api/integrations/wecom/suite/events?msg_signature=signed&timestamp=1&nonce=2&echostr=encrypted'
+  );
+
+  const encryptedSuiteEvent = '<xml><Encrypt>encrypted-event</Encrypt></xml>';
+  const suiteEventResponse = await proxyIntegrationWeComCallbackRequest(
+    new globalThis.Request(
+      'https://cloud.example.com/console/api/integrations/wecom/suite/events?msg_signature=signed&timestamp=1&nonce=2',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/xml' },
+        body: encryptedSuiteEvent,
+      }
+    ),
+    ['suite', 'events']
+  );
+  assert.equal(suiteEventResponse.status, 200);
+  assert.equal(await suiteEventResponse.text(), 'success');
+  assert.equal(suiteEventResponse.headers.get('content-length'), '7');
+  assert.equal(suiteEventResponse.headers.get('transfer-encoding'), null);
+  assert.equal(
+    requests[8].url,
+    '/console/api/integrations/wecom/suite/events?msg_signature=signed&timestamp=1&nonce=2'
+  );
+  assert.equal(requests[8].contentType, 'application/xml');
+  assert.equal(requests[8].forwardedHost, 'cloud.example.com');
+  assert.equal(requests[8].forwardedProto, 'https');
+  assert.equal(requests[8].body, encryptedSuiteEvent);
+
+  const dataVerificationResponse = await proxyIntegrationWeComCallbackRequest(
+    new globalThis.Request(
+      'https://cloud.example.com/console/api/integrations/wecom/data/events/ww_provider?msg_signature=signed&timestamp=1&nonce=2&echostr=encrypted'
+    ),
+    ['data', 'events', 'ww_provider']
+  );
+  assert.equal(dataVerificationResponse.status, 200);
+  assert.equal(await dataVerificationResponse.text(), 'decrypted-echo');
+  assert.equal(dataVerificationResponse.headers.get('content-length'), '14');
+  assert.equal(
+    requests[9].url,
+    '/console/api/integrations/wecom/data/events/ww_provider?msg_signature=signed&timestamp=1&nonce=2&echostr=encrypted'
+  );
+
+  const encryptedDataEvent = '<xml><Encrypt>encrypted-data-event</Encrypt></xml>';
+  const dataEventResponse = await proxyIntegrationWeComCallbackRequest(
+    new globalThis.Request(
+      'https://cloud.example.com/console/api/integrations/wecom/data/events/ww_tenant?msg_signature=signed&timestamp=1&nonce=2',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/xml' },
+        body: encryptedDataEvent,
+      }
+    ),
+    ['data', 'events', 'ww_tenant']
+  );
+  assert.equal(dataEventResponse.status, 200);
+  assert.equal(await dataEventResponse.text(), 'success');
+  assert.equal(dataEventResponse.headers.get('content-length'), '7');
+  assert.equal(
+    requests[10].url,
+    '/console/api/integrations/wecom/data/events/ww_tenant?msg_signature=signed&timestamp=1&nonce=2'
+  );
+  assert.equal(requests[10].body, encryptedDataEvent);
+
+  const invalidDataReceiverResponse = await proxyIntegrationWeComCallbackRequest(
+    new globalThis.Request(
+      'https://cloud.example.com/console/api/integrations/wecom/data/events/not%20safe'
+    ),
+    ['data', 'events', 'not safe']
+  );
+  assert.equal(invalidDataReceiverResponse.status, 404);
+  assert.equal(requests.length, 11);
+
+  const invalidWeComCallbackResponse = await proxyIntegrationWeComCallbackRequest(
+    new globalThis.Request('https://cloud.example.com/console/api/integrations/wecom/admin'),
+    ['admin']
+  );
+  assert.equal(invalidWeComCallbackResponse.status, 404);
+  assert.equal(requests.length, 11);
+
   const invalidResponse = await proxyIntegrationOAuthRequest(
     new globalThis.Request('https://cloud.example.com/console/api/integrations/oauth/admin', {
       method: 'POST',
@@ -154,7 +287,7 @@ try {
     ['admin']
   );
   assert.equal(invalidResponse.status, 404);
-  assert.equal(requests.length, 6);
+  assert.equal(requests.length, 11);
 
   process.env.INTEGRATION_API_INTERNAL_URL = 'https://cloud.example.com';
   const loopResponse = await proxyIntegrationOAuthRequest(
@@ -162,9 +295,9 @@ try {
     ['callback']
   );
   assert.equal(loopResponse.status, 503);
-  assert.equal(requests.length, 6);
+  assert.equal(requests.length, 11);
 
-  console.log('integration OAuth and provider-install same-origin proxy contracts passed');
+  console.log('integration OAuth, provider-install, and WeCom callback proxy contracts passed');
 } finally {
   server.close();
   await once(server, 'close');

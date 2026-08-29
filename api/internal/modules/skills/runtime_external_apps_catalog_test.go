@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -42,6 +43,11 @@ func TestExternalAppsCatalogIsHiddenConnectedAppsRuntimeCapability(t *testing.T)
 	}
 	if document == nil {
 		t.Fatal("external-apps Skill document not found")
+	}
+	if !strings.Contains(document.Instructions, "can_execute=true") ||
+		!strings.Contains(document.Instructions, "executable guide (`can_execute=true`)") ||
+		strings.Contains(document.Instructions, "Do not execute an Action whose availability is not `ready`") {
+		t.Fatalf("external-apps runtime-verification instructions are inconsistent: %q", document.Instructions)
 	}
 	wantTools := map[string]struct{}{
 		"list_connections": {}, "search_actions": {}, "get_action_guide": {}, "execute_action": {},

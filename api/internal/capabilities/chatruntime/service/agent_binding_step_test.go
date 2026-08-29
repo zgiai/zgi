@@ -18,8 +18,8 @@ import (
 func TestCurrentAgentBindingVerifierUsesDraftIndexForConsolePreview(t *testing.T) {
 	db, mock := newAgentBindingStepTestDB(t)
 	agentID := uuid.New()
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "agent_resource_bindings" WHERE (agent_id = $1 AND binding_scope = $2 AND binding_type = $3 AND resource_id = $4 AND parent_resource_id = $5) AND published_version_uuid IS NULL AND access_mode IN ($6,$7)`)).
-		WithArgs(agentID, "draft", "database_table", "table-1", "database-1", "read", "write").
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3 AND binding_type = $4 AND resource_id = $5 AND parent_resource_id = $6) AND published_version_uuid IS NULL AND access_mode IN ($7,$8)`)).
+		WithArgs(agentID, "agent", "draft", "database_table", "table-1", "database-1", "read", "write").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	svc := &service{repos: &repository.Repositories{DB: db}}
@@ -42,10 +42,10 @@ func TestCurrentAgentBindingVerifierUsesCurrentPublishedHead(t *testing.T) {
 	agentID := uuid.New()
 	versionID := uuid.New()
 	mock.ExpectQuery(`SELECT "published_version_uuid" FROM "agent_resource_bindings"`).
-		WithArgs(agentID, "published", 1).
+		WithArgs(agentID, "agent", "published", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"published_version_uuid"}).AddRow(versionID))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "agent_resource_bindings" WHERE (agent_id = $1 AND binding_scope = $2 AND binding_type = $3 AND resource_id = $4 AND parent_resource_id = $5) AND published_version_uuid = $6 AND access_mode = $7`)).
-		WithArgs(agentID, "published", "workflow", "binding-1", "workflow-agent-1", versionID, "execute").
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3 AND binding_type = $4 AND resource_id = $5 AND parent_resource_id = $6) AND published_version_uuid = $7 AND access_mode = $8`)).
+		WithArgs(agentID, "agent", "published", "workflow", "binding-1", "workflow-agent-1", versionID, "execute").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
 	svc := &service{repos: &repository.Repositories{DB: db}}

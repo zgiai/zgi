@@ -17,7 +17,7 @@ import (
 )
 
 // executeWorkflowStream executes workflow and sends events through channels.
-func (h *WorkflowHandler) executeWorkflowStream(ctx context.Context, workspaceID, appID string, req *dto.DraftWorkflowRunRequest, accountID, taskID, workflowRunID, workflowID string, systemInputs map[string]interface{}, sequenceNumber int, resultChan chan<- *WorkflowStreamEvent, errorChan chan<- error, doneChan chan<- map[string]interface{}, isDraft bool, runType string, triggeredFrom string) {
+func (h *WorkflowHandler) executeWorkflowStream(ctx context.Context, workspaceID, appID string, req *dto.DraftWorkflowRunRequest, accountID, taskID, workflowRunID, workflowID string, systemInputs map[string]interface{}, sequenceNumber int, resultChan chan<- *WorkflowStreamEvent, errorChan chan<- error, doneChan chan<- map[string]interface{}, isDraft bool, runType string, triggeredFrom string, selectedWorkflowData map[string]any) {
 	// Record workflow start time for elapsed time calculation
 	workflowStartTime := time.Now()
 
@@ -40,9 +40,22 @@ func (h *WorkflowHandler) executeWorkflowStream(ctx context.Context, workspaceID
 		}
 	}()
 
-	workflowData, err := h.loadWorkflowStreamData(ctx, workspaceID, appID, runType, isDraft)
+	workflowData := selectedWorkflowData
+	if workflowData == nil {
+		var err error
+		workflowData, err = h.loadWorkflowStreamData(ctx, workspaceID, appID, runType, isDraft)
+		if err != nil {
+			errorChan <- err
+			return
+		}
+	}
+	selectedWorkflowID, err := requiredWorkflowDataID(workflowData)
 	if err != nil {
 		errorChan <- err
+		return
+	}
+	if selectedWorkflowID != strings.TrimSpace(workflowID) {
+		errorChan <- fmt.Errorf("workflow configuration id does not match runtime workflow id")
 		return
 	}
 

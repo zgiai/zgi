@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useWorkflowStore } from '../store';
 import { usePublishWorkflow, useSaveWorkflowDraft } from '@/hooks';
 import { toast } from 'sonner';
@@ -14,75 +14,110 @@ export const useCombinedWorkflowSave = (agentId: string) => {
   const saveWorkflowMutation = useSaveWorkflowDraft();
   const t = useT('agents');
   const publishWorkflowMutation = usePublishWorkflow();
+  const inFlightSaveRef = useRef<Promise<boolean> | null>(null);
 
   const handleCombinedSave = useCallback(
-    async (options?: { silent?: boolean; saveToast?: string }) => {
+    async (options?: { silent?: boolean; saveToast?: string }): Promise<boolean> => {
       const silent = options?.silent ?? false;
       const saveToast = options?.saveToast;
-      // Avoid concurrent saves
-      if (saveWorkflowMutation.isPending) return;
+      let savedAtLeastOnce = false;
 
-      flushWorkflowPendingEdits();
-
-      const stateAfterFlush = useWorkflowStore.getState();
-
-      if (!stateAfterFlush.isDirty && !stateAfterFlush.hasLayoutChanges) {
-        useWorkflowStore.setState({ lastSavedAt: Date.now() });
-        return;
-      }
-
-      // Capture previous flags for rollback on failure
-      const {
-        isDirty: prevIsDirty,
-        hasLayoutChanges: prevHasLayoutChanges,
-        lastSavedAt: prevLastSavedAt,
-      } = stateAfterFlush;
-
-      try {
-        // Get current state from store directly to ensure we have the latest data
-        const { nodes, edges, viewport, workflowData } = useWorkflowStore.getState();
-
-        // Build the updated workflow data with current state
-        const updatedWorkflowData = {
-          ...workflowData,
-          graph: {
-            nodes,
-            edges,
-            viewport,
-          },
-          hash: Date.now().toString(),
-        } as typeof workflowData;
-
-        // Update local store optimistically with the new data and clear flags
-        useWorkflowStore.setState({
-          workflowData: updatedWorkflowData,
-          isDirty: false,
-          hasLayoutChanges: false,
-          suppressNextLayoutDirty: false,
-          suppressNextViewportDirty: false,
-          lastSavedAt: Date.now(),
-        });
-
-        // Then save to API with the updated data
-        await saveWorkflowMutation.mutateAsync({
-          agentId,
-          workflowData: updatedWorkflowData,
-          silent,
-        });
-
-        // Show success toast if not silent
-        if (!silent && saveToast) {
-          toast.success(saveToast);
+      for (;;) {
+        const activeSave = inFlightSaveRef.current;
+        if (activeSave) {
+          if (!(await activeSave)) return false;
+          // Re-enter through the shared barrier. The save owner may have
+          // started a follow-up snapshot while this caller was waiting.
+          continue;
         }
-      } catch (error) {
-        // Restore flags on failure to reflect unsaved changes
-        useWorkflowStore.setState({
+
+        flushWorkflowPendingEdits();
+        const stateAfterFlush = useWorkflowStore.getState();
+        if (!stateAfterFlush.isDirty && !stateAfterFlush.hasLayoutChanges) {
+          if (!savedAtLeastOnce) {
+            useWorkflowStore.setState({ lastSavedAt: Date.now() });
+          }
+          if (savedAtLeastOnce && !silent && saveToast) toast.success(saveToast);
+          return true;
+        }
+
+        const {
           isDirty: prevIsDirty,
           hasLayoutChanges: prevHasLayoutChanges,
-          lastSavedAt: prevLastSavedAt ?? null,
+          lastSavedAt: prevLastSavedAt,
+          nodes,
+          edges,
+          viewport,
+          workflowData,
+          graphVersion,
+        } = stateAfterFlush;
+        const updatedWorkflowData = {
+          ...workflowData,
+          graph: { nodes, edges, viewport },
+          hash: Date.now().toString(),
+        } as typeof workflowData;
+        const submittedMetadata = JSON.stringify({
+          ...workflowData,
+          graph: undefined,
+          hash: undefined,
         });
-        // Errors are handled in the mutation hook; no extra toasts here to avoid duplicates
-        console.error('Failed to save workflow:', error);
+
+        const savePromise = (async (): Promise<boolean> => {
+          useWorkflowStore.setState({
+            workflowData: updatedWorkflowData,
+            isDirty: false,
+            hasLayoutChanges: false,
+            suppressNextLayoutDirty: false,
+            suppressNextViewportDirty: false,
+            lastSavedAt: Date.now(),
+          });
+
+          try {
+            await saveWorkflowMutation.mutateAsync({
+              agentId,
+              workflowData: updatedWorkflowData,
+              silent,
+            });
+
+            // The mutation success handler clears dirty flags. Restore them if
+            // the graph changed while this exact snapshot was being persisted;
+            // the loop will then save the newer snapshot before publishing.
+            const current = useWorkflowStore.getState();
+            const currentMetadata = JSON.stringify({
+              ...current.workflowData,
+              graph: undefined,
+              hash: undefined,
+            });
+            const semanticChanged =
+              current.graphVersion !== graphVersion || currentMetadata !== submittedMetadata;
+            const graphOrLayoutChanged =
+              current.nodes !== nodes || current.edges !== edges || current.viewport !== viewport;
+            if (semanticChanged || graphOrLayoutChanged) {
+              useWorkflowStore.setState({
+                isDirty: semanticChanged,
+                hasLayoutChanges: !semanticChanged && graphOrLayoutChanged,
+              });
+            }
+            return true;
+          } catch (error) {
+            useWorkflowStore.setState({
+              isDirty: prevIsDirty,
+              hasLayoutChanges: prevHasLayoutChanges,
+              lastSavedAt: prevLastSavedAt ?? null,
+            });
+            // The mutation hook owns user-facing error feedback.
+            console.error('Failed to save workflow:', error);
+            return false;
+          }
+        })();
+
+        inFlightSaveRef.current = savePromise;
+        try {
+          if (!(await savePromise)) return false;
+          savedAtLeastOnce = true;
+        } finally {
+          if (inFlightSaveRef.current === savePromise) inFlightSaveRef.current = null;
+        }
       }
     },
     [agentId, saveWorkflowMutation]
@@ -92,7 +127,11 @@ export const useCombinedWorkflowSave = (agentId: string) => {
     async (options?: { silent?: boolean; successToast?: string }) => {
       const silent = options?.silent ?? false;
       // Ensure the latest edits are saved quietly to avoid duplicate toasts
-      await handleCombinedSave({ silent: true });
+      const saved = await handleCombinedSave({ silent: true });
+      if (!saved) {
+        if (!silent) toast.error(t('workflow.workflowDraftSaveFailed'));
+        return;
+      }
       // Publish is the user-facing action. Keep its success feedback here so
       // the prerequisite draft save cannot produce a second toast.
       const res = await publishWorkflowMutation.mutateAsync({ agentId, silent: true });

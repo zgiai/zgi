@@ -1323,7 +1323,7 @@ const messages: IntegrationMessages = {
       retryHint:
         '服务商已收到请求，但凭据、应用状态、权限或网络白名单中至少有一项不符合要求。请按连接指南检查后再试。',
       wecomTrustedIPHint:
-        '企业微信拒绝了 ZGI API 服务器的访问。请把运行 ZGI 后端的服务器公网出口 IP 加入该自建应用的可信 IP，然后重新验证。',
+        '企业微信拒绝了 ZGI API 服务器的访问。请在“服务商管理后台 → 服务商信息 → 基本信息 → IP 白名单”中加入 ZGI 后端服务器的公网出口 IP，等待至少 1 分钟后重新验证。',
       dingtalkConfigurationHint:
         '请确认 AppKey、AppSecret、AgentId 来自同一企业内部应用，并已开通部门/通讯录读取权限、配置可见范围、发布并启用应用；若启用了 IP 白名单，还需加入 ZGI API 服务器公网出口 IP。',
       editConnection: '检查并修改配置',
@@ -1418,9 +1418,36 @@ const messages: IntegrationMessages = {
   delete: {
     title: '删除连接？',
     description: '此操作会永久移除加密凭据，且无法撤销。',
-    loadingImpact: '正在检查关联的智能体...',
+    loadingImpact: '正在检查智能体和工作流引用...',
     impact: '当前有 {count} 个智能体引用此连接。',
     impactUnavailable: '暂时无法确认此连接的使用关系，请稍后重试。',
+    refreshImpact: '刷新引用关系',
+    references: {
+      title: '引用明细',
+      summary: '{agents} 个智能体，{workflows} 个工作流',
+      workspace: '工作空间：{name}',
+      unavailableWorkspace: '工作空间已不可用',
+      unavailableAgent: '智能体已不可用',
+      unavailableWorkflow: '工作流已不可用',
+      unavailableNode: '未命名节点',
+      assetType: {
+        agent: '智能体',
+        workflow: '工作流',
+      },
+      scope: {
+        draft: '仅草稿',
+        published: '仅已发布',
+        both: '草稿与已发布',
+      },
+      openAsset: '打开“{name}”',
+      detachDescription:
+        '可从所有相关草稿中移除此连接，并撤销已发布运行时对该连接的访问。此操作不会修改或自动重新发布已有工作流图。',
+      detachAll: '解除全部引用',
+      detachTitle: '解除全部引用？',
+      detachConfirmDescription:
+        '将处理 {count} 个相关智能体或工作流：清理草稿绑定，并立即撤销已发布运行时的连接访问。已有发布版本不会被改写，也不会自动重新发布。完成后仍需单独确认解除账号。',
+      detachConfirm: '确认解除全部引用',
+    },
     defaultImpact: '这是组织默认连接，删除后请重新选择默认连接。',
     cancel: '取消',
     confirm: '删除连接',
@@ -1432,8 +1459,9 @@ const messages: IntegrationMessages = {
     personalEffect:
       '此账号会同时从你的 AIChat 外部应用选择中移除。若服务商无法自动确认撤销，系统会保留恢复事项，并提示你前往服务商的已授权应用页面检查。',
     sharedEffect:
-      '解除共享账号前必须先移除智能体绑定。账号解除后，相关成员和工作空间将无法再通过此连接访问服务商。',
-    resolveDependencies: '请先前往相关智能体解除此连接的绑定，然后重新执行解除账号。',
+      '解除共享账号前必须先移除智能体和工作流引用。账号解除后，相关成员和工作空间将无法再通过此连接访问服务商。',
+    resolveDependencies:
+      '请核对下方草稿与已发布引用。你可以逐项处理，也可以先执行“解除全部引用”，再解除账号。',
     confirm: '解除账号',
   },
   policies: {
@@ -1492,6 +1520,7 @@ const messages: IntegrationMessages = {
     tested: '连接测试成功：凭据和服务商 API 可用；这不表示 AIChat 已选择或已经调用',
     defaultSet: '默认连接已更新',
     deleted: '连接已移除',
+    referencesDetached: '全部引用已解除，请继续确认是否解除账号',
     policiesSaved: '操作策略已保存',
     grantSaved: '使用规则已保存',
     grantDeleted: '使用规则已删除',

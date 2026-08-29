@@ -149,52 +149,72 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 }
 
 func updatePlanMetaTool() llmadapter.Tool {
+	parameters := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"explanation":   map[string]interface{}{"type": "string"},
+			"plan":          planSnapshotSchema(),
+			"phase_updates": phaseUpdateSchema(),
+			"outcomes": map[string]interface{}{
+				"type": "array",
+				"items": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"id":                   map[string]interface{}{"type": "string"},
+						"goal":                 map[string]interface{}{"type": "string"},
+						"status":               map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+						"target_resource_type": map[string]interface{}{"type": "string"},
+						"target_resource_id":   map[string]interface{}{"type": "string"},
+						"depends_on":           map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"capabilities":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"constraints":          map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"evidence_refs":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"required":             map[string]interface{}{"type": "boolean"},
+					},
+					"required":             []string{"goal"},
+					"additionalProperties": false,
+				},
+			},
+		},
+		// Each branch requires exactly one payload form. If a call supplies two
+		// forms it matches more than one branch and therefore fails oneOf. Keep
+		// the handler's matching check as defense in depth.
+		"oneOf": []interface{}{
+			map[string]interface{}{"required": []string{"plan"}},
+			map[string]interface{}{"required": []string{"outcomes"}},
+			map[string]interface{}{"required": []string{"phase_updates"}},
+		},
+		"additionalProperties": false,
+	}
 	return llmadapter.Tool{
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Replace the user-visible outcome contract only when the requested result structure changes, a failure invalidates the current route, or the user changes the goal. Ordinary tool success is reconciled automatically and must not trigger this tool. Prefer outcomes; plan is a compatibility projection.",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"explanation": map[string]interface{}{"type": "string"},
-					"plan": map[string]interface{}{
-						"type": "array",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"id":            map[string]interface{}{"type": "string"},
-								"step":          map[string]interface{}{"type": "string"},
-								"status":        map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
-								"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-								"note":          map[string]interface{}{"type": "string"},
-							},
-							"required": []string{"step", "status"},
-						},
-					},
-					"outcomes": map[string]interface{}{
-						"type": "array",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"id":                   map[string]interface{}{"type": "string"},
-								"goal":                 map[string]interface{}{"type": "string"},
-								"status":               map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
-								"target_resource_type": map[string]interface{}{"type": "string"},
-								"target_resource_id":   map[string]interface{}{"type": "string"},
-								"depends_on":           map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-								"capabilities":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-								"constraints":          map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-								"evidence_refs":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-								"required":             map[string]interface{}{"type": "boolean"},
-							},
-							"required": []string{"goal"},
-						},
-					},
-				},
-			},
+			Description: "Replace the user-visible outcome contract when its structure changes, or patch an existing phase after the goal changes. The server creates and maintains projected external Action bindings automatically. Ordinary tool success is reconciled automatically and must not trigger this tool.",
+			Parameters:  parameters,
 		},
 	}
+}
+
+func phaseUpdateSchema() map[string]interface{} {
+	item := evidenceMapCopy(planSnapshotSchema()["items"])
+	item["required"] = []string{"id"}
+	return map[string]interface{}{
+		"type":        "array",
+		"description": "Patch existing phases by exact ID after the goal or route changes. Unmentioned phases and all server-owned binding data remain unchanged.",
+		"minItems":    1,
+		"maxItems":    16,
+		"items":       item,
+	}
+}
+
+func evidenceMapCopy(value interface{}) map[string]interface{} {
+	raw, _ := value.(map[string]interface{})
+	out := make(map[string]interface{}, len(raw))
+	for key, item := range raw {
+		out[key] = item
+	}
+	return out
 }
 
 func loadSkillMetaTool(skillIDs []string) llmadapter.Tool {
@@ -436,28 +456,38 @@ func finalAnswerMetaToolWithOptions(options MetaToolOptions) llmadapter.Tool {
 func planSnapshotSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type":        "array",
-		"description": "Optional execution plan snapshot for audit. It does not determine whether the final answer is accepted.",
+		"description": "Execution plan snapshot used when the requested outcome structure changes. Projected external Action execution bindings are created and maintained by the server.",
 		"maxItems":    16,
 		"items": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"id":            map[string]interface{}{"type": "string"},
-				"step":          map[string]interface{}{"type": "string"},
-				"status":        map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+				"id":     map[string]interface{}{"type": "string"},
+				"step":   map[string]interface{}{"type": "string"},
+				"status": map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+				"completion_mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"tool", "final_answer", "non_tool"},
+					"description": "Classify a phase that intentionally has no expected_action as final-answer-only or non-tool work. Use tool when expected_action is present.",
+				},
 				"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 				"note":          map[string]interface{}{"type": "string"},
 				"expected_action": map[string]interface{}{
 					"type":        "object",
-					"description": "Optional structured action expected to complete this phase. Use exact loaded skill/tool IDs and stable target resource IDs when known.",
+					"description": "Optional advisory action expected to complete this phase. Server-owned projected external Action bindings cannot be created or changed by this field.",
 					"properties": map[string]interface{}{
-						"skill_id":  map[string]interface{}{"type": "string"},
+						"skill_id":  map[string]interface{}{"type": "string", "description": "Optional for a projected external Action; required for ordinary skill tools."},
 						"tool_name": map[string]interface{}{"type": "string"},
 						"target": map[string]interface{}{
 							"type":                 "object",
 							"additionalProperties": map[string]interface{}{"type": "string"},
 						},
+						"target_arguments": map[string]interface{}{
+							"type":                 "object",
+							"description":          "Optional stable Action target values keyed by their exact business-argument path (for example recipient_ref or calendar.id). The server keeps only paths authorized by the projected Action binding.",
+							"additionalProperties": map[string]interface{}{"type": "string"},
+						},
 					},
-					"required": []string{"skill_id", "tool_name"},
+					"required": []string{"tool_name"},
 				},
 			},
 			"required": []string{"step", "status"},

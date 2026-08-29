@@ -6,7 +6,8 @@ interface IntegrationFlowProxyDefinition {
   errorCodePrefix: string;
   label: string;
   serviceLabel: string;
-  allowCallback: boolean;
+  bufferResponse?: boolean;
+  validRoute: (method: string, path: readonly string[]) => boolean;
 }
 
 const oauthProxyDefinition: IntegrationFlowProxyDefinition = {
@@ -14,7 +15,7 @@ const oauthProxyDefinition: IntegrationFlowProxyDefinition = {
   errorCodePrefix: 'integration_oauth_proxy',
   label: 'OAuth',
   serviceLabel: 'Integration OAuth',
-  allowCallback: true,
+  validRoute: (method, path) => validIntegrationFlowProxyRoute(method, path, true),
 };
 
 const providerInstallProxyDefinition: IntegrationFlowProxyDefinition = {
@@ -22,7 +23,18 @@ const providerInstallProxyDefinition: IntegrationFlowProxyDefinition = {
   errorCodePrefix: 'integration_provider_install_proxy',
   label: 'Provider installation',
   serviceLabel: 'Integration provider installation',
-  allowCallback: false,
+  validRoute: (method, path) => validIntegrationFlowProxyRoute(method, path, false),
+};
+
+const wecomCallbackProxyDefinition: IntegrationFlowProxyDefinition = {
+  upstreamPrefix: '/console/api/integrations/wecom',
+  errorCodePrefix: 'integration_wecom_callback_proxy',
+  label: 'WeCom callback',
+  serviceLabel: 'Integration WeCom callback',
+  // WeCom's callback verifier uses a legacy HTTP client. Return a fixed-length
+  // response instead of forwarding the upstream stream with chunked encoding.
+  bufferResponse: true,
+  validRoute: validWeComCallbackProxyRoute,
 };
 
 const forwardedRequestHeaders = [
@@ -89,6 +101,22 @@ function validIntegrationFlowProxyRoute(
 
 function validOAuthFlowID(value: string | undefined): boolean {
   return typeof value === 'string' && /^[A-Za-z0-9_-]{32,256}$/.test(value);
+}
+
+function validWeComCallbackProxyRoute(method: string, path: readonly string[]): boolean {
+  if (method !== 'GET' && method !== 'POST') return false;
+  if (path.length === 2 && path[0] === 'install' && path[1] === 'callback') {
+    return method === 'GET';
+  }
+  if (path.length === 2 && path[0] === 'suite' && path[1] === 'events') {
+    return true;
+  }
+  return (
+    path.length === 3 &&
+    path[0] === 'data' &&
+    path[1] === 'events' &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(path[2] ?? '')
+  );
 }
 
 function resolveUpstreamBaseURL(requestURL: URL): URL | null {
@@ -171,7 +199,7 @@ async function proxyIntegrationFlowRequest(
 ): Promise<Response> {
   const method = request.method.toUpperCase() as IntegrationFlowProxyMethod;
   const path = rawPath.map(segment => segment.trim());
-  if (!validIntegrationFlowProxyRoute(method, path, definition.allowCallback)) {
+  if (!definition.validRoute(method, path)) {
     return proxyError(
       404,
       `${definition.errorCodePrefix}_not_found`,
@@ -222,10 +250,20 @@ async function proxyIntegrationFlowRequest(
       redirect: 'manual',
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
+    const headers = buildResponseHeaders(upstream);
+    if (definition.bufferResponse) {
+      const responseBody = await upstream.arrayBuffer();
+      headers.set('content-length', String(responseBody.byteLength));
+      return new Response(responseBody, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers,
+      });
+    }
     return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
-      headers: buildResponseHeaders(upstream),
+      headers,
     });
   } catch {
     return proxyError(
@@ -248,4 +286,11 @@ export function proxyIntegrationProviderInstallRequest(
   rawPath: readonly string[]
 ): Promise<Response> {
   return proxyIntegrationFlowRequest(request, rawPath, providerInstallProxyDefinition);
+}
+
+export function proxyIntegrationWeComCallbackRequest(
+  request: Request,
+  rawPath: readonly string[]
+): Promise<Response> {
+  return proxyIntegrationFlowRequest(request, rawPath, wecomCallbackProxyDefinition);
 }

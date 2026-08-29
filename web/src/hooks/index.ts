@@ -207,6 +207,7 @@ export {
   useCreateIntegrationConnectionGrant,
   useCreateMyIntegrationConnection,
   useDeleteIntegrationConnection,
+  useDetachIntegrationConnectionReferences,
   useDeleteIntegrationConnectionGrant,
   useDeleteMyIntegrationConnection,
   useDeleteIntegrationOAuthClientConfig,

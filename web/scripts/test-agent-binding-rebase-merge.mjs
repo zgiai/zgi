@@ -29,6 +29,13 @@ const workflow = (bindingId, timeoutSeconds = 10) => ({
   timeout_seconds: timeoutSeconds,
 });
 
+const integration = (integrationId, connectionId, actionId = 'message.send') => ({
+  integration_id: integrationId,
+  connection_id: connectionId,
+  access_mode: 'write',
+  allowed_action_ids: [actionId],
+});
+
 const basePayload = {
   system_prompt: 'submitted prompt',
   model_provider: 'provider',
@@ -173,6 +180,81 @@ const basePayload = {
     ]
   );
   assert.equal(merged.binding_revision, 'revision-saved');
+}
+
+{
+  const submitted = {
+    ...basePayload,
+    integration_bindings: [integration('wecom', 'connection-a')],
+  };
+  const current = { ...submitted, integration_bindings: [] };
+  const saved = {
+    ...submitted,
+    integration_bindings: [integration('wecom', 'connection-a')],
+    binding_revision: 'revision-saved',
+  };
+
+  const merged = mergeSupersededAgentRuntimePayload(submitted, current, saved);
+  assert.deepEqual(merged.integration_bindings, []);
+}
+
+{
+  const submitted = {
+    ...basePayload,
+    integration_bindings: [integration('wecom', 'connection-a')],
+  };
+  const current = { ...submitted };
+  const saved = {
+    ...submitted,
+    integration_bindings: [integration('wecom', 'connection-b')],
+    binding_revision: 'revision-saved',
+  };
+
+  const merged = mergeSupersededAgentRuntimePayload(submitted, current, saved);
+  assert.deepEqual(merged.integration_bindings, [integration('wecom', 'connection-b')]);
+}
+
+{
+  const submitted = {
+    ...basePayload,
+    integration_bindings: [integration('wecom', 'connection-a')],
+  };
+  const current = { ...submitted, integration_bindings: [] };
+  const saved = {
+    ...submitted,
+    integration_bindings: [integration('wecom', 'connection-b')],
+    binding_revision: 'revision-saved',
+  };
+
+  const merged = mergeSupersededAgentRuntimePayload(submitted, current, saved);
+  assert.deepEqual(merged.integration_bindings, []);
+}
+
+{
+  const submitted = {
+    ...basePayload,
+    integration_bindings: [
+      integration('wecom', 'connection-a'),
+      integration('mail', 'connection-mail-a', 'mail.search'),
+    ],
+  };
+  const current = {
+    ...submitted,
+    integration_bindings: [integration('mail', 'connection-mail-a', 'mail.search')],
+  };
+  const saved = {
+    ...submitted,
+    integration_bindings: [
+      integration('wecom', 'connection-a'),
+      integration('mail', 'connection-mail-b', 'mail.search'),
+    ],
+    binding_revision: 'revision-saved',
+  };
+
+  const merged = mergeSupersededAgentRuntimePayload(submitted, current, saved);
+  assert.deepEqual(merged.integration_bindings, [
+    integration('mail', 'connection-mail-b', 'mail.search'),
+  ]);
 }
 
 console.log('Agent binding rebase merge checks passed.');

@@ -5,9 +5,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	integrations "github.com/zgiai/zgi/api/internal/modules/integrations/core"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
+	integrationpreferences "github.com/zgiai/zgi/api/internal/modules/integrations/preferences"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
@@ -79,32 +82,6 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		AccountService:             accountService,
 		WorkspaceManagementService: tenantService,
 	})
-
-	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
-		RegisterIntegrationRoutes(v1, IntegrationRouteDeps{
-			DB:                      db,
-			Registry:                serviceContainer.GetIntegrationRegistry(),
-			Connections:             serviceContainer.GetIntegrationConnectionService(),
-			ConnectionRepo:          serviceContainer.GetIntegrationConnectionRepository(),
-			Grants:                  serviceContainer.GetIntegrationConnectionGrantRepository(),
-			Access:                  serviceContainer.GetIntegrationConnectionAccessService(),
-			Preferences:             serviceContainer.GetIntegrationAIChatPreferenceService(),
-			HealthEvents:            serviceContainer.GetIntegrationConnectionHealthRepository(),
-			Policies:                serviceContainer.GetIntegrationActionPolicyService(),
-			Executions:              serviceContainer.GetIntegrationExecutionRepository(),
-			AccountService:          accountService,
-			OAuthFlows:              serviceContainer.GetIntegrationOAuthFlowService(),
-			OAuthClients:            serviceContainer.GetIntegrationOAuthClientService(),
-			OAuthRecovery:           serviceContainer.GetIntegrationOAuthRecoveryOutbox(),
-			ProviderInstallFlows:    serviceContainer.GetIntegrationProviderInstallFlowService(),
-			WeComCallbacks:          serviceContainer.GetIntegrationWeComAdapter(),
-			ApplicationErrorCatalog: applicationErrorCatalog,
-			OAuthCallbackURL:        currentConfig.ExternalIntegrations.OAuth.CallbackURL,
-			OAuthResultURL:          currentConfig.ExternalIntegrations.OAuth.ResultURL,
-			WeComInstallCallbackURL: currentConfig.ExternalIntegrations.WeCom.InstallCallbackURL,
-			WeComResultURL:          currentConfig.ExternalIntegrations.WeCom.ResultURL,
-		})
-	}
 
 	// ---------- API Key ----------
 	if _, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
@@ -216,7 +193,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Workflow ----------
-	RegisterWorkflowRoutes(v1, WorkflowRouteDeps{
+	workflowService := RegisterWorkflowRoutes(v1, WorkflowRouteDeps{
 		DB:                          db,
 		AccountService:              accountService,
 		FileService:                 serviceContainer.GetFileService(),
@@ -235,10 +212,46 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		AutomationRunnerSetter:      serviceContainer,
 		ShortLinkService:            serviceContainer.GetShortLinkService(),
 	})
+	serviceContainer.SetWorkflowConnectorBindingBackfillRunner(workflowService)
+
+	// Integration reference management reuses the same WorkflowService that
+	// owns graph persistence so graph edits and binding-ledger revocation share
+	// one transaction and one authorization model.
+	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
+		RegisterIntegrationRoutes(v1, IntegrationRouteDeps{
+			DB:                      db,
+			Registry:                serviceContainer.GetIntegrationRegistry(),
+			Connections:             serviceContainer.GetIntegrationConnectionService(),
+			ConnectionRepo:          serviceContainer.GetIntegrationConnectionRepository(),
+			Grants:                  serviceContainer.GetIntegrationConnectionGrantRepository(),
+			Access:                  serviceContainer.GetIntegrationConnectionAccessService(),
+			Preferences:             serviceContainer.GetIntegrationAIChatPreferenceService(),
+			HealthEvents:            serviceContainer.GetIntegrationConnectionHealthRepository(),
+			Policies:                serviceContainer.GetIntegrationActionPolicyService(),
+			Executions:              serviceContainer.GetIntegrationExecutionRepository(),
+			AccountService:          accountService,
+			OAuthFlows:              serviceContainer.GetIntegrationOAuthFlowService(),
+			OAuthClients:            serviceContainer.GetIntegrationOAuthClientService(),
+			OAuthRecovery:           serviceContainer.GetIntegrationOAuthRecoveryOutbox(),
+			ProviderInstallFlows:    serviceContainer.GetIntegrationProviderInstallFlowService(),
+			WeComCallbacks:          serviceContainer.GetIntegrationWeComAdapter(),
+			AgentBindings:           agentbindings.NewRepository(db),
+			WorkflowReferences:      workflowService,
+			ApplicationErrorCatalog: applicationErrorCatalog,
+			OAuthCallbackURL:        currentConfig.ExternalIntegrations.OAuth.CallbackURL,
+			OAuthResultURL:          currentConfig.ExternalIntegrations.OAuth.ResultURL,
+			WeComInstallCallbackURL: currentConfig.ExternalIntegrations.WeCom.InstallCallbackURL,
+			WeComResultURL:          currentConfig.ExternalIntegrations.WeCom.ResultURL,
+		})
+	}
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetIntegrationRegistry(), integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()))
+	var externalActionProjections integrationmetatools.ActionProjectionResolver
+	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
+		externalActionProjections = serviceContainer.GetIntegrationActionProjectionService()
+	}
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetIntegrationRegistry(), externalActionProjections, integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()))
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, PromptRouteDeps{
@@ -277,7 +290,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 
 	// ---------- AIChat ----------
-	var aiChatIntegrationPreferences *integrations.DefaultAIChatIntegrationPreferenceService
+	var aiChatIntegrationPreferences *integrationpreferences.DefaultAIChatIntegrationPreferenceService
 	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
 		aiChatIntegrationPreferences = serviceContainer.GetIntegrationAIChatPreferenceService()
 	}
@@ -297,8 +310,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			serviceContainer.GetOrganizationService(),
 			integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
 		),
-		AccountService:         accountService,
-		IntegrationPreferences: aiChatIntegrationPreferences,
+		AccountService:               accountService,
+		IntegrationPreferences:       aiChatIntegrationPreferences,
+		IntegrationActionProjections: externalActionProjections,
 	})
 	if llmModule != nil && llmModule.LLMModelModule != nil {
 		RegisterImageRuntimeRoutes(v1, ImageRuntimeRouteDeps{

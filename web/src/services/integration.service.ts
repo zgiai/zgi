@@ -7,6 +7,7 @@ import type {
   AcknowledgeIntegrationOAuthRecoveryResponse,
   CompleteIntegrationConnectionSetupRequest,
   CreateIntegrationConnectionRequest,
+  DetachIntegrationConnectionReferencesRequest,
   GetIntegrationExecutionsParams,
   IntegrationActionPolicyResponse,
   IntegrationCatalogResponse,
@@ -367,6 +368,13 @@ class IntegrationService extends BaseService {
 
   getDeleteImpact(id: string): Promise<ApiResponseData<IntegrationConnectionDeleteImpact>> {
     return this.request('get', `/integrations/connections/${id}/delete-impact`);
+  }
+
+  detachConnectionReferences(
+    id: string,
+    data: DetachIntegrationConnectionReferencesRequest
+  ): Promise<ApiResponseData<IntegrationConnectionDeleteImpact>> {
+    return this.request('post', `/integrations/connections/${id}/detach-references`, data);
   }
 
   deleteConnection(id: string): Promise<ApiResponseData<null>> {
