@@ -752,6 +752,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			// Basic info
 			ID:                  m.ID,
 			Provider:            m.Provider,
+			Vendor:              catalogvendor.Lookup(m.Provider, m.Model),
 			Model:               m.Model,
 			ModelName:           m.ModelName,
 			Family:              m.Family,

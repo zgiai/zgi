@@ -350,6 +350,7 @@ type ModelView struct {
 	// Basic info
 	ID                  uuid.UUID  `json:"id"`
 	Provider            string     `json:"provider"`
+	Vendor              string     `json:"vendor,omitempty"`
 	Model               string     `json:"model"`
 	ModelName           string     `json:"model_name"`
 	Family              string     `json:"family"`                // Model family (e.g., GPT-4, Claude)
