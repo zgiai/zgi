@@ -413,7 +413,8 @@ export type DigitalHumanChannelDeliveryStatus =
   | 'processing'
   | 'succeeded'
   | 'failed'
-  | 'unknown';
+  | 'unknown'
+  | 'dismissed';
 
 export interface DigitalHumanChannelInstallation {
   id: string;
@@ -586,6 +587,8 @@ export interface DigitalHumanChannelDelivery {
   provider_request_id?: string;
   error_code?: string;
   error_message?: string;
+  dismissed_at?: string | null;
+  dismissed_by?: string | null;
   created_at: string;
   updated_at: string;
 }

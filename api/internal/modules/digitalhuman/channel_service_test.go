@@ -976,6 +976,58 @@ func TestDeliveryUnknownOutcomeIsNotAutomaticallyRetried(t *testing.T) {
 	}
 }
 
+func TestDeliveryCanBeDismissedWithoutAnotherProviderAttempt(t *testing.T) {
+	for _, status := range []channelruntime.DeliveryStatus{
+		channelruntime.DeliveryFailed,
+		channelruntime.DeliveryUnknown,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
+			installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
+			now := time.Now().UTC()
+			delivery := newChannelTestDelivery(t, scope, digitalHumanID, installation, binding, now.Add(-time.Minute))
+			delivery.Status = status
+			delivery.AttemptCount = 1
+			delivery.ErrorCode = "channel.provider.send_not_allowed"
+			store.deliveries[delivery.ID] = delivery
+			service.now = func() time.Time { return now }
+
+			if err := service.DismissDelivery(t.Context(), scope, digitalHumanID, delivery.ID); err != nil {
+				t.Fatalf("DismissDelivery() error = %v", err)
+			}
+
+			stored := store.deliveries[delivery.ID]
+			if stored.Status != channelruntime.DeliveryDismissed || stored.DismissedAt == nil || !stored.DismissedAt.Equal(now) ||
+				stored.DismissedBy == nil || *stored.DismissedBy != scope.ActorID {
+				t.Fatalf("dismissed delivery = %#v", stored)
+			}
+			if stored.ErrorCode != delivery.ErrorCode || stored.AttemptCount != 1 {
+				t.Fatalf("dismissal lost delivery audit evidence: %#v", stored)
+			}
+			if err := service.DispatchDeliveries(t.Context(), 10); err != nil {
+				t.Fatalf("DispatchDeliveries() error = %v", err)
+			}
+			if runtime.calls != 0 || adapter.deliveryCalls != 0 {
+				t.Fatalf("SubmitInvocation() calls = %d, Deliver() calls = %d", runtime.calls, adapter.deliveryCalls)
+			}
+		})
+	}
+}
+
+func TestDeliveryDismissRejectsUnsafeState(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
+	delivery := newChannelTestDelivery(t, scope, digitalHumanID, installation, binding, time.Now().UTC())
+	store.deliveries[delivery.ID] = delivery
+
+	if err := service.DismissDelivery(t.Context(), scope, digitalHumanID, delivery.ID); !errors.Is(err, ErrChannelDeliveryConflict) {
+		t.Fatalf("DismissDelivery() error = %v, want ErrChannelDeliveryConflict", err)
+	}
+	if delivery.Status != channelruntime.DeliveryPending || delivery.DismissedAt != nil || delivery.DismissedBy != nil {
+		t.Fatalf("delivery changed after rejected dismissal: %#v", delivery)
+	}
+}
+
 func TestDeliveryMissingReceiptIsMarkedUnknown(t *testing.T) {
 	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
 	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
@@ -1521,6 +1573,16 @@ func (store *channelStoreStub) RequeueDelivery(_ context.Context, _ Scope, subje
 		return ErrChannelDeliveryConflict
 	}
 	delivery.Status, delivery.AvailableAt = channelruntime.DeliveryPending, now
+	return nil
+}
+func (store *channelStoreStub) DismissDelivery(_ context.Context, scope Scope, subjectID, id uuid.UUID, now time.Time) error {
+	delivery := store.deliveries[id]
+	if delivery == nil || delivery.SubjectID != subjectID ||
+		(delivery.Status != channelruntime.DeliveryFailed && delivery.Status != channelruntime.DeliveryUnknown) {
+		return ErrChannelDeliveryConflict
+	}
+	delivery.Status, delivery.ClaimedAt = channelruntime.DeliveryDismissed, nil
+	delivery.DismissedAt, delivery.DismissedBy, delivery.UpdatedAt = &now, &scope.ActorID, now
 	return nil
 }
 func (store *channelStoreStub) MarkStaleDeliveriesUnknown(_ context.Context, claimedBefore, _ time.Time) error {

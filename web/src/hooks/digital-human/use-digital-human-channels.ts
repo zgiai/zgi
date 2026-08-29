@@ -129,6 +129,14 @@ export function useDigitalHumanChannelMutations(id: string) {
     },
     onError: error => channelMutationError(error, t('channels.errors.deliveryRetry')),
   });
+  const dismissDelivery = useMutation({
+    mutationFn: (deliveryId: string) => digitalHumanService.dismissChannelDelivery(id, deliveryId),
+    onSuccess: () => {
+      toast.success(t('channels.messages.deliveryDismissed'));
+      return invalidateActivity();
+    },
+    onError: error => channelMutationError(error, t('channels.errors.deliveryDismiss')),
+  });
 
   return {
     createInstallation,
@@ -138,6 +146,7 @@ export function useDigitalHumanChannelMutations(id: string) {
     startConnectionTest,
     deleteInstallation,
     retryDelivery,
+    dismissDelivery,
   };
 }
 

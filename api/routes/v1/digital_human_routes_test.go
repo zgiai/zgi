@@ -51,6 +51,7 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodGet, "/console/api/digital-humans/:id/channels/events", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
 		{http.MethodGet, "/console/api/digital-humans/:id/channels/deliveries", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
 		{http.MethodPost, "/console/api/digital-humans/:id/channels/deliveries/:delivery_id/retry", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodPost, "/console/api/digital-humans/:id/channels/deliveries/:delivery_id/dismiss", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodGet, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanView},
 		{http.MethodPost, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodPatch, "/console/api/digital-humans/:id/tasks/:task_id", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
@@ -94,7 +95,7 @@ func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 60; got != want {
+	if got, want := len(routes), 61; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -131,6 +132,7 @@ func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
 		"GET /console/api/digital-humans/:id/channels/events":                                                             false,
 		"GET /console/api/digital-humans/:id/channels/deliveries":                                                         false,
 		"POST /console/api/digital-humans/:id/channels/deliveries/:delivery_id/retry":                                     false,
+		"POST /console/api/digital-humans/:id/channels/deliveries/:delivery_id/dismiss":                                   false,
 		"GET /console/api/digital-humans/:id/tasks":                                                                       false,
 		"POST /console/api/digital-humans/:id/tasks":                                                                      false,
 		"GET /console/api/digital-humans/:id/tasks/:task_id":                                                              false,

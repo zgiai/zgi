@@ -92,8 +92,16 @@ const messages: DigitalHumansMessages = {
     blockedNeedsHelp: '任务受阻，需要补充信息或作出决定。',
     taskRunFailedNeedsReview: '最近一次执行失败，请查看原因并决定是否重试。',
     deliveryFailed: '有一条渠道回复未送达',
-    deliveryFailedDescription: '进入外部连接查看原因并重新发送。',
+    deliveryFailedDescription: '查看失败原因，并选择重新发送或不再处理。',
     handle: '处理',
+    ignore: '忽略',
+    restoreIgnored: '恢复已忽略（{count}）',
+    clearIgnored: '清除忽略记录（{count}）',
+    allAttentionIgnored: '关注项已全部忽略',
+    allAttentionIgnoredDescription: '这些事项已暂时隐藏；清除忽略记录后可重新显示。',
+    attentionPagination: '第 {page}/{totalPages} 页 · 共 {total} 项',
+    previousAttentionPage: '上一页关注项',
+    nextAttentionPage: '下一页关注项',
     connectionsTitle: '外部连接',
     manageConnections: '管理',
     noConnections: '尚未连接外部应用',
@@ -791,7 +799,8 @@ const messages: DigitalHumansMessages = {
           reply_delivery: '最终回复成功送达',
         },
         capabilityFailure: {
-          permission_missing: '缺少此项所需的应用身份权限。开通后点击“刷新”重新检测，无需发布新版本。',
+          permission_missing:
+            '缺少此项所需的应用身份权限。开通后点击“刷新”重新检测，无需发布新版本。',
           bot_not_in_chat: '机器人尚未加入这个群聊。',
           app_unavailable: '应用对该群聊或测试成员不可用，请检查可用范围并发布。',
           credentials_invalid: '应用凭证已失效，请重新保存凭证。',
@@ -1012,10 +1021,19 @@ const messages: DigitalHumansMessages = {
         succeeded: '送达于 {time}',
         failed: '失败于 {time}',
         unknown: '更新于 {time}',
+        dismissed: '关闭于 {time}',
       },
       noText: '没有回复内容',
       unknownHint: '渠道结果不确定。为避免重复回复，请先在对应平台确认后再决定如何处理。',
       retry: '重试投递',
+      dismiss: '不再处理',
+      dismissedHint: '这条历史投递已关闭，不会再次发送；原始记录仍保留用于审计。',
+      dismissDialog: {
+        title: '不再处理这次投递？',
+        description:
+          '适用于外部平台已经恢复、但这条历史消息无需补发的情况。关闭后不会重发，也不会继续出现在“需要关注”中；失败原因和尝试记录仍会保留。',
+        confirm: '确认不再处理',
+      },
       failure: {
         generic: '外部平台拒绝了这次投递，或暂时无法完成发送。',
         outcomeUnknown: '无法确认外部平台是否已收到消息，系统已停止自动重试。',
@@ -1036,6 +1054,7 @@ const messages: DigitalHumansMessages = {
         succeeded: '已送达',
         failed: '失败',
         unknown: '结果未知',
+        dismissed: '已关闭',
       },
     },
     messages: {
@@ -1045,6 +1064,7 @@ const messages: DigitalHumansMessages = {
       credentialUpdated: '应用凭证已更新。',
       installationVerified: '应用凭证和机器人身份验证通过。',
       deliveryRetried: '投递已重新入队。',
+      deliveryDismissed: '这次历史投递已关闭，不会重新发送。',
       webhookCopied: 'Webhook 地址已复制。',
     },
     errors: {
@@ -1052,6 +1072,7 @@ const messages: DigitalHumansMessages = {
       verification: '基础连接验证失败。请检查 App ID、App Secret、机器人能力和应用发布状态。',
       installationDelete: '无法删除外部渠道。',
       deliveryRetry: '无法重试这次投递。',
+      deliveryDismiss: '无法关闭这次投递。请刷新后重试。',
     },
   },
   tasks: {

@@ -56,6 +56,7 @@ type ChannelStore interface {
 	RetryDelivery(context.Context, uuid.UUID, time.Time, string, string) error
 	FailDelivery(context.Context, uuid.UUID, channelruntime.DeliveryStatus, string, string, time.Time) error
 	RequeueDelivery(context.Context, Scope, uuid.UUID, uuid.UUID, time.Time) error
+	DismissDelivery(context.Context, Scope, uuid.UUID, uuid.UUID, time.Time) error
 	MarkStaleDeliveriesUnknown(context.Context, time.Time, time.Time) error
 }
 
@@ -849,6 +850,27 @@ func (r *GormRepository) RequeueDelivery(ctx context.Context, scope Scope, subje
 	})
 	if result.Error != nil {
 		return fmt.Errorf("requeue channel delivery: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return ErrChannelDeliveryConflict
+	}
+	return nil
+}
+
+func (r *GormRepository) DismissDelivery(ctx context.Context, scope Scope, subjectID, deliveryID uuid.UUID, now time.Time) error {
+	if !validScope(scope) || subjectID == uuid.Nil || deliveryID == uuid.Nil || now.IsZero() {
+		return ErrInvalidRequest
+	}
+	result := r.db.WithContext(ctx).Model(&channelruntime.Delivery{}).Where(
+		"id = ? AND organization_id = ? AND workspace_id = ? AND subject_type = ? AND subject_id = ? AND status IN ?",
+		deliveryID, scope.OrganizationID, scope.WorkspaceID, runtimeidentity.SubjectTypeDigitalHuman, subjectID,
+		[]channelruntime.DeliveryStatus{channelruntime.DeliveryFailed, channelruntime.DeliveryUnknown},
+	).Updates(map[string]any{
+		"status": channelruntime.DeliveryDismissed, "claimed_at": nil,
+		"dismissed_at": now, "dismissed_by": scope.ActorID, "updated_at": now,
+	})
+	if result.Error != nil {
+		return fmt.Errorf("dismiss channel delivery: %w", result.Error)
 	}
 	if result.RowsAffected != 1 {
 		return ErrChannelDeliveryConflict

@@ -7,27 +7,38 @@ import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   CircleDashed,
+  CircleOff,
+  EyeOff,
   ListTodo,
   MessageSquare,
   RadioTower,
   RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { getAgentTextIconDisplay } from '@/components/agents/agent-runtime/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
 import { digitalHumanTaskDisplayStatus } from '@/components/digital-human/digital-human-task-presentation';
-import { useDigitalHumanChannels } from '@/hooks/digital-human/use-digital-human-channels';
+import {
+  useDigitalHumanChannelMutations,
+  useDigitalHumanChannels,
+} from '@/hooks/digital-human/use-digital-human-channels';
 import { useDigitalHumanTasks } from '@/hooks/digital-human/use-digital-human-tasks';
 import { useDigitalHuman, useDigitalHumanRuns } from '@/hooks/digital-human/use-digital-humans';
 import { useLocale } from '@/hooks/use-locale';
 import { useMediaQuery } from '@/hooks/use-media-query';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type {
+  DigitalHumanChannelDelivery,
   DigitalHumanChannelInstallation,
   DigitalHumanRun,
   DigitalHumanRunStatus,
@@ -36,6 +47,7 @@ import type {
 } from '@/services/types/digital-human';
 
 const activeRunStatuses = new Set<DigitalHumanRunStatus>(['queued', 'running', 'canceling']);
+const attentionPageSize = 3;
 const taskStatusOrder: Record<DigitalHumanTaskStatus, number> = {
   proposed: 0,
   blocked: 1,
@@ -53,8 +65,15 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const tasks = useDigitalHumanTasks(id, currentLocalDayRunWindow());
   const runs = useDigitalHumanRuns(id);
   const channels = useDigitalHumanChannels(id, true);
+  const channelMutations = useDigitalHumanChannelMutations(id);
+  const permissions = useAccountPermissions();
+  const canManageDeliveries = permissions.hasPermission('digital_human.run');
   const [refreshState, setRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>(
     'idle'
+  );
+  const [attentionPage, setAttentionPage] = useState(1);
+  const [ignoredAttentionKeys, setIgnoredAttentionKeys] = useState<Set<string>>(() =>
+    readIgnoredAttentionKeys(id)
   );
 
   useEffect(() => {
@@ -62,6 +81,32 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
     const timer = window.setTimeout(() => setRefreshState('idle'), 2_500);
     return () => window.clearTimeout(timer);
   }, [refreshState]);
+
+  useEffect(() => {
+    setIgnoredAttentionKeys(readIgnoredAttentionKeys(id));
+    setAttentionPage(1);
+  }, [id]);
+
+  function ignoreAttention(key: string) {
+    setIgnoredAttentionKeys(current => {
+      const next = new Set(current);
+      next.add(key);
+      writeIgnoredAttentionKeys(id, next);
+      return next;
+    });
+  }
+
+  function restoreIgnoredAttention() {
+    const next = new Set<string>();
+    writeIgnoredAttentionKeys(id, next);
+    setIgnoredAttentionKeys(next);
+    setAttentionPage(1);
+  }
+
+  function dismissAttentionDelivery(deliveryId?: string) {
+    if (!deliveryId) return;
+    channelMutations.dismissDelivery.mutate(deliveryId);
+  }
 
   async function refreshDashboard() {
     if (refreshState === 'refreshing') return;
@@ -127,7 +172,23 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
       normalizeRunStatus(task.last_run_status ?? '') === 'failed' &&
       !attentionTaskIds.has(task.id)
   );
-  const attentionCount = attentionTasks.length + failedTaskRuns.length + failedDeliveries.length;
+  const allAttentionItems = buildDashboardAttentionItems({
+    id,
+    attentionTasks,
+    failedTaskRuns,
+    failedDeliveries,
+    t,
+  });
+  const attentionItems = allAttentionItems.filter(item => !ignoredAttentionKeys.has(item.key));
+  const ignoredAttentionCount = allAttentionItems.length - attentionItems.length;
+  const ignoredAttentionRecordCount = ignoredAttentionKeys.size;
+  const attentionCount = attentionItems.length;
+  const attentionTotalPages = Math.max(1, Math.ceil(attentionCount / attentionPageSize));
+  const currentAttentionPage = Math.min(attentionPage, attentionTotalPages);
+  const pagedAttentionItems = attentionItems.slice(
+    (currentAttentionPage - 1) * attentionPageSize,
+    currentAttentionPage * attentionPageSize
+  );
   const todayCompleted = tasks.data?.data.successful_run_count ?? 0;
   const dashboardStatus = resolveDashboardStatus({
     definitionStatus: definition.status,
@@ -342,53 +403,71 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
 
         <aside className="flex min-w-0 flex-col gap-5 2xl:gap-6">
           <section className="overflow-hidden rounded-xl border bg-background">
-            <div className="flex items-center justify-between border-b px-5 py-4">
+            <div className="flex min-h-[61px] flex-wrap items-center justify-between gap-2 border-b px-5 py-3.5">
               <div className="flex items-center gap-2">
                 <h2 className="font-semibold">{t('dashboard.attentionTitle')}</h2>
                 {attentionCount > 0 ? <Badge variant="warning">{attentionCount}</Badge> : null}
               </div>
+              {ignoredAttentionRecordCount > 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="-mr-2 text-muted-foreground"
+                  onClick={restoreIgnoredAttention}
+                >
+                  <RotateCcw className="size-3.5" />
+                  {t('dashboard.clearIgnored', { count: ignoredAttentionRecordCount })}
+                </Button>
+              ) : null}
             </div>
             {attentionCount === 0 ? (
               <InlineState
                 compact
                 icon={<CheckCircle2 className="size-5 text-success" />}
-                title={t('dashboard.noAttention')}
-                description={t('dashboard.noAttentionDescription')}
+                title={
+                  ignoredAttentionCount > 0
+                    ? t('dashboard.allAttentionIgnored')
+                    : t('dashboard.noAttention')
+                }
+                description={
+                  ignoredAttentionCount > 0
+                    ? t('dashboard.allAttentionIgnoredDescription')
+                    : t('dashboard.noAttentionDescription')
+                }
               />
             ) : (
-              <div className="divide-y">
-                {attentionTasks.slice(0, 3).map(task => (
-                  <AttentionRow
-                    key={task.id}
-                    title={task.name}
-                    description={
-                      task.work_status === 'proposed'
-                        ? t('dashboard.proposalNeedsDecision')
-                        : t('dashboard.blockedNeedsHelp')
-                    }
-                    href={`/console/digital-humans/${id}/tasks?task=${task.id}`}
-                    tone={task.work_status === 'blocked' ? 'danger' : 'warning'}
+              <>
+                <div className="divide-y">
+                  {pagedAttentionItems.map(item => (
+                    <AttentionRow
+                      key={item.key}
+                      title={item.title}
+                      description={item.description}
+                      href={item.href}
+                      tone={item.tone}
+                      onIgnore={() => ignoreAttention(item.key)}
+                      onDismiss={
+                        item.deliveryId && canManageDeliveries
+                          ? () => dismissAttentionDelivery(item.deliveryId)
+                          : undefined
+                      }
+                      dismissing={
+                        channelMutations.dismissDelivery.isPending &&
+                        channelMutations.dismissDelivery.variables === item.deliveryId
+                      }
+                    />
+                  ))}
+                </div>
+                {attentionTotalPages > 1 ? (
+                  <AttentionPagination
+                    page={currentAttentionPage}
+                    totalPages={attentionTotalPages}
+                    total={attentionCount}
+                    onPageChange={setAttentionPage}
                   />
-                ))}
-                {failedTaskRuns.slice(0, 2).map(task => (
-                  <AttentionRow
-                    key={`failed-run-${task.id}`}
-                    title={task.name}
-                    description={t('dashboard.taskRunFailedNeedsReview')}
-                    href={`/console/digital-humans/${id}/tasks?task=${task.id}`}
-                    tone="danger"
-                  />
-                ))}
-                {failedDeliveries.slice(0, 2).map(delivery => (
-                  <AttentionRow
-                    key={delivery.id}
-                    title={t('dashboard.deliveryFailed')}
-                    description={delivery.error_message || t('dashboard.deliveryFailedDescription')}
-                    href={`/console/digital-humans/${id}/channels`}
-                    tone="danger"
-                  />
-                ))}
-              </div>
+                ) : null}
+              </>
             )}
           </section>
 
@@ -805,38 +884,212 @@ function TaskStatusBadge({ task }: { task: DigitalHumanTask }) {
   return <Badge variant={variant}>{t(`tasks.status.${status}`)}</Badge>;
 }
 
+interface DashboardAttentionItem {
+  key: string;
+  title: string;
+  description: string;
+  href: string;
+  tone: 'warning' | 'danger';
+  occurredAt: string;
+  deliveryId?: string;
+}
+
+function buildDashboardAttentionItems({
+  id,
+  attentionTasks,
+  failedTaskRuns,
+  failedDeliveries,
+  t,
+}: {
+  id: string;
+  attentionTasks: DigitalHumanTask[];
+  failedTaskRuns: DigitalHumanTask[];
+  failedDeliveries: DigitalHumanChannelDelivery[];
+  t: ReturnType<typeof useT<'digitalHumans'>>;
+}) {
+  const items: DashboardAttentionItem[] = [
+    ...attentionTasks.map(task => ({
+      key: `task-${task.id}-${task.work_status}-${task.revision}`,
+      title: task.name,
+      description:
+        task.work_status === 'proposed'
+          ? t('dashboard.proposalNeedsDecision')
+          : t('dashboard.blockedNeedsHelp'),
+      href: `/console/digital-humans/${id}/tasks?task=${task.id}`,
+      tone: task.work_status === 'blocked' ? ('danger' as const) : ('warning' as const),
+      occurredAt: task.updated_at,
+    })),
+    ...failedTaskRuns.map(task => ({
+      key: `failed-run-${task.id}-${task.last_run_at ?? task.updated_at}`,
+      title: task.name,
+      description: t('dashboard.taskRunFailedNeedsReview'),
+      href: `/console/digital-humans/${id}/tasks?task=${task.id}`,
+      tone: 'danger' as const,
+      occurredAt: task.last_run_at ?? task.updated_at,
+    })),
+    ...failedDeliveries.map(delivery => ({
+      key: `failed-delivery-${delivery.id}-${delivery.status}-${delivery.updated_at}`,
+      title: t('dashboard.deliveryFailed'),
+      description: delivery.error_message || t('dashboard.deliveryFailedDescription'),
+      href: `/console/digital-humans/${id}/channels`,
+      tone: 'danger' as const,
+      occurredAt: delivery.updated_at,
+      deliveryId: delivery.id,
+    })),
+  ];
+
+  return items.sort((left, right) => {
+    if (left.tone !== right.tone) return left.tone === 'danger' ? -1 : 1;
+    return Date.parse(right.occurredAt) - Date.parse(left.occurredAt);
+  });
+}
+
 function AttentionRow({
   title,
   description,
   href,
   tone,
+  onIgnore,
+  onDismiss,
+  dismissing = false,
 }: {
   title: string;
   description: string;
   href: string;
   tone: 'warning' | 'danger';
+  onIgnore: () => void;
+  onDismiss?: () => void;
+  dismissing?: boolean;
 }) {
   const t = useT('digitalHumans');
   return (
-    <Link
-      href={href}
-      className="group flex gap-3 px-5 py-4 outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-    >
-      <AlertCircle
-        className={cn(
-          'mt-0.5 size-4 shrink-0',
-          tone === 'danger' ? 'text-destructive' : 'text-warning'
-        )}
-      />
-      <div className="min-w-0 flex-1">
-        <p className="line-clamp-2 text-sm font-medium">{title}</p>
-        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{description}</p>
+    <article className="group px-5 py-3.5 transition-colors hover:bg-muted/20">
+      <Link
+        href={href}
+        className="flex min-w-0 gap-3 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <AlertCircle
+          className={cn(
+            'mt-0.5 size-4 shrink-0',
+            tone === 'danger' ? 'text-destructive' : 'text-warning'
+          )}
+        />
+        <div className="min-w-0 flex-1">
+          <p className="line-clamp-1 text-sm font-medium">{title}</p>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{description}</p>
+        </div>
+      </Link>
+      <div className="mt-2 flex items-center justify-end gap-1 border-t border-border/60 pt-2">
+        <Button asChild variant="ghost" size="xs">
+          <Link href={href}>
+            {t('dashboard.handle')}
+            <ArrowRight className="size-3.5" />
+          </Link>
+        </Button>
+        {onDismiss ? (
+          <ConfirmDialog
+            trigger={
+              <Button type="button" variant="ghost" size="xs" disabled={dismissing}>
+                <CircleOff className="size-3.5" />
+                {t('channels.deliveries.dismiss')}
+              </Button>
+            }
+            title={t('channels.deliveries.dismissDialog.title')}
+            description={t('channels.deliveries.dismissDialog.description')}
+            confirmText={t('channels.deliveries.dismissDialog.confirm')}
+            cancelText={t('common.cancel')}
+            variant="warning"
+            loading={dismissing}
+            onConfirm={onDismiss}
+          />
+        ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="text-muted-foreground"
+          onClick={onIgnore}
+        >
+          <EyeOff className="size-3.5" />
+          {t('dashboard.ignore')}
+        </Button>
       </div>
-      <span className="shrink-0 self-center text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-        {t('dashboard.handle')}
-      </span>
-    </Link>
+    </article>
   );
+}
+
+function AttentionPagination({
+  page,
+  totalPages,
+  total,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  const t = useT('digitalHumans');
+  return (
+    <div className="flex items-center justify-between gap-3 border-t bg-muted/10 px-4 py-2.5">
+      <span className="text-xs tabular-nums text-muted-foreground">
+        {t('dashboard.attentionPagination', { page, totalPages, total })}
+      </span>
+      <div className="flex items-center gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          isIcon
+          aria-label={t('dashboard.previousAttentionPage')}
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          <ChevronLeft className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          isIcon
+          aria-label={t('dashboard.nextAttentionPage')}
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          <ChevronRight className="size-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ignoredAttentionStorageKey(id: string) {
+  return `zgi:digital-human:${id}:dashboard-attention-ignored`;
+}
+
+function readIgnoredAttentionKeys(id: string) {
+  if (typeof window === 'undefined') return new Set<string>();
+  try {
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem(ignoredAttentionStorageKey(id)) ?? '[]'
+    );
+    if (!Array.isArray(value)) return new Set<string>();
+    return new Set(value.filter((item): item is string => typeof item === 'string'));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function writeIgnoredAttentionKeys(id: string, keys: Set<string>) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      ignoredAttentionStorageKey(id),
+      JSON.stringify([...keys].slice(-200))
+    );
+  } catch {
+    // The dashboard remains usable when browser storage is unavailable.
+  }
 }
 
 function ConnectionRow({ installation }: { installation: DigitalHumanChannelInstallation }) {
@@ -961,10 +1214,7 @@ function taskNextTimestamp(task: DigitalHumanTask) {
   return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
 }
 
-function formatTaskSchedule(
-  task: DigitalHumanTask,
-  t: ReturnType<typeof useT<'digitalHumans'>>
-) {
+function formatTaskSchedule(task: DigitalHumanTask, t: ReturnType<typeof useT<'digitalHumans'>>) {
   if (task.schedule.type === 'manual') return t('tasks.schedule.manual');
   if (task.schedule.type === 'cron') return t('tasks.schedule.cron');
   return t('tasks.schedule.once');

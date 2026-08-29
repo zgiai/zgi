@@ -24,6 +24,7 @@ type channelHandlerServiceStub struct {
 	verifyInstallation  func(context.Context, Scope, uuid.UUID, uuid.UUID) (*ChannelInstallationVerification, error)
 	startConnectionTest func(context.Context, Scope, uuid.UUID, uuid.UUID, StartChannelConnectionTestRequest) (*ChannelConnectionTest, error)
 	deleteInstallation  func(context.Context, Scope, uuid.UUID, uuid.UUID) error
+	dismissDelivery     func(context.Context, Scope, uuid.UUID, uuid.UUID) error
 }
 
 func (stub channelHandlerServiceStub) HandleWebhook(ctx context.Context, provider string, installationID uuid.UUID, request channelruntime.WebhookRequest) (*ChannelWebhookResult, error) {
@@ -52,6 +53,10 @@ func (stub channelHandlerServiceStub) StartConnectionTest(
 	request StartChannelConnectionTestRequest,
 ) (*ChannelConnectionTest, error) {
 	return stub.startConnectionTest(ctx, scope, digitalHumanID, installationID, request)
+}
+
+func (stub channelHandlerServiceStub) DismissDelivery(ctx context.Context, scope Scope, digitalHumanID, deliveryID uuid.UUID) error {
+	return stub.dismissDelivery(ctx, scope, digitalHumanID, deliveryID)
 }
 
 func TestChannelInstallationVerifyHandlerUsesScopedInstallation(t *testing.T) {
@@ -128,6 +133,28 @@ func TestChannelInstallationDeleteHandlerUsesSimpleRequest(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK || !called {
+		t.Fatalf("response = %d %s, called = %t", recorder.Code, recorder.Body.String(), called)
+	}
+}
+
+func TestChannelDeliveryDismissHandlerClosesWithoutQueuing(t *testing.T) {
+	scope := Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New()}
+	digitalHumanID, deliveryID := uuid.New(), uuid.New()
+	called := false
+	service := channelHandlerServiceStub{dismissDelivery: func(_ context.Context, gotScope Scope, gotDigitalHumanID, gotDeliveryID uuid.UUID) error {
+		called = true
+		if gotScope != scope || gotDigitalHumanID != digitalHumanID || gotDeliveryID != deliveryID {
+			t.Fatalf("DismissDelivery() = scope %#v, digital human %s, delivery %s", gotScope, gotDigitalHumanID, gotDeliveryID)
+		}
+		return nil
+	}}
+	router := channelAuthenticatedTestRouter(t, service, scope)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/digital-humans/"+digitalHumanID.String()+"/channels/deliveries/"+deliveryID.String()+"/dismiss", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || !called || !strings.Contains(recorder.Body.String(), `"dismissed":true`) || strings.Contains(recorder.Body.String(), `"queued"`) {
 		t.Fatalf("response = %d %s, called = %t", recorder.Code, recorder.Body.String(), called)
 	}
 }

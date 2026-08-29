@@ -36,6 +36,7 @@ type ChannelHandlerService interface {
 	ListEvents(context.Context, Scope, uuid.UUID, ListQuery) (*ChannelEventListResult, error)
 	ListDeliveries(context.Context, Scope, uuid.UUID, ListQuery) (*ChannelDeliveryListResult, error)
 	RetryDelivery(context.Context, Scope, uuid.UUID, uuid.UUID) error
+	DismissDelivery(context.Context, Scope, uuid.UUID, uuid.UUID) error
 	ProbeWebhook(context.Context, string, uuid.UUID) error
 	HandleWebhook(context.Context, string, uuid.UUID, channelruntime.WebhookRequest) (*ChannelWebhookResult, error)
 }
@@ -76,6 +77,7 @@ func (handler *ChannelHandler) RegisterAuthenticatedRoutes(router *gin.RouterGro
 	group.GET("/events", handler.ListEvents)
 	group.GET("/deliveries", handler.ListDeliveries)
 	group.POST("/deliveries/:delivery_id/retry", handler.RetryDelivery)
+	group.POST("/deliveries/:delivery_id/dismiss", handler.DismissDelivery)
 }
 
 func (handler *ChannelHandler) CreateInstallation(c *gin.Context) {
@@ -233,6 +235,18 @@ func (handler *ChannelHandler) RetryDelivery(c *gin.Context) {
 		return
 	}
 	writeDigitalHumanData(c, http.StatusAccepted, gin.H{"queued": true})
+}
+
+func (handler *ChannelHandler) DismissDelivery(c *gin.Context) {
+	scope, digitalHumanID, deliveryID, ok := handler.scopeAndResourceID(c, "delivery_id")
+	if !ok {
+		return
+	}
+	if err := handler.service.DismissDelivery(c.Request.Context(), scope, digitalHumanID, deliveryID); err != nil {
+		handler.base.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, gin.H{"dismissed": true})
 }
 
 func (handler *ChannelHandler) HandleChannelWebhook(c *gin.Context) {

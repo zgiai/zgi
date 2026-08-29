@@ -133,6 +133,7 @@ const (
 	DeliverySucceeded  DeliveryStatus = "succeeded"
 	DeliveryFailed     DeliveryStatus = "failed"
 	DeliveryUnknown    DeliveryStatus = "unknown"
+	DeliveryDismissed  DeliveryStatus = "dismissed"
 )
 
 type DeliveryKind string
@@ -175,6 +176,8 @@ type Delivery struct {
 	ProviderRequestID      string                      `gorm:"type:varchar(128);not null" json:"provider_request_id,omitempty"`
 	ErrorCode              string                      `gorm:"type:varchar(128);not null" json:"error_code,omitempty"`
 	ErrorMessage           string                      `gorm:"type:text;not null" json:"error_message,omitempty"`
+	DismissedAt            *time.Time                  `json:"dismissed_at,omitempty"`
+	DismissedBy            *uuid.UUID                  `gorm:"type:uuid" json:"dismissed_by,omitempty"`
 	CreatedAt              time.Time                   `gorm:"not null" json:"created_at"`
 	UpdatedAt              time.Time                   `gorm:"not null" json:"updated_at"`
 }

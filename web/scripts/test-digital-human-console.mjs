@@ -340,6 +340,26 @@ assert.match(
   'DigitalHuman workspace task board must hide terminal tasks by default'
 );
 assert.match(
+  dashboard,
+  /attentionPageSize = 3[\s\S]*buildDashboardAttentionItems[\s\S]*AttentionPagination/,
+  'DigitalHuman attention items must share one prioritized, paginated queue'
+);
+assert.match(
+  dashboard,
+  /ignoreAttention[\s\S]*writeIgnoredAttentionKeys[\s\S]*restoreIgnoredAttention/,
+  'DigitalHuman attention items must support reversible dashboard dismissal'
+);
+assert.match(
+  service,
+  /dismissChannelDelivery[\s\S]*\/deliveries\/\$\{deliveryId\}\/dismiss/,
+  'DigitalHuman operators must be able to close a historical failed delivery without resending it'
+);
+assert.match(
+  channels,
+  /channels\.deliveries\.dismissDialog/,
+  'DigitalHuman channel activity must confirm source-level delivery dismissal'
+);
+assert.match(
   tasks,
   /useState<StatusFilter>\('open'\)[\s\S]*openStatuses/,
   'DigitalHuman task management must default to unfinished work while preserving an all-status filter'

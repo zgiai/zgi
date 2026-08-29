@@ -349,6 +349,14 @@ class DigitalHumanService extends BaseService {
     );
   }
 
+  dismissChannelDelivery(id: string, deliveryId: string): Promise<ApiResponseData<unknown>> {
+    return this.request(
+      'post',
+      `/digital-humans/${id}/channels/deliveries/${deliveryId}/dismiss`,
+      {}
+    );
+  }
+
   listTasks(
     id: string,
     params?: {

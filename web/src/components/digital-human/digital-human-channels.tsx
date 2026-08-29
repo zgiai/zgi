@@ -7,6 +7,7 @@ import {
   Bot,
   Cable,
   CheckCircle2,
+  CircleOff,
   Clock3,
   Copy,
   ExternalLink,
@@ -293,8 +294,14 @@ export function DigitalHumanChannels({ id }: { id: string }) {
         loading={queries.events.isLoading || queries.deliveries.isLoading}
         error={activityError}
         canRetry={canRetry}
-        retryingId={mutations.retryDelivery.variables}
+        retryingId={
+          mutations.retryDelivery.isPending ? mutations.retryDelivery.variables : undefined
+        }
         onRetry={deliveryId => mutations.retryDelivery.mutate(deliveryId)}
+        dismissingId={
+          mutations.dismissDelivery.isPending ? mutations.dismissDelivery.variables : undefined
+        }
+        onDismiss={deliveryId => mutations.dismissDelivery.mutate(deliveryId)}
         onRefresh={refresh}
       />
 
@@ -723,6 +730,8 @@ function ActivityPanel({
   canRetry,
   retryingId,
   onRetry,
+  dismissingId,
+  onDismiss,
   onRefresh,
 }: {
   id: string;
@@ -735,6 +744,8 @@ function ActivityPanel({
   canRetry: boolean;
   retryingId?: string;
   onRetry: (deliveryId: string) => void;
+  dismissingId?: string;
+  onDismiss: (deliveryId: string) => void;
   onRefresh: () => void;
 }) {
   const t = useT('digitalHumans');
@@ -815,6 +826,8 @@ function ActivityPanel({
                       canRetry={canRetry}
                       retrying={retryingId === delivery.id}
                       onRetry={() => onRetry(delivery.id)}
+                      dismissing={dismissingId === delivery.id}
+                      onDismiss={() => onDismiss(delivery.id)}
                     />
                   ))}
                 </div>
@@ -892,6 +905,8 @@ function DeliveryRow({
   canRetry,
   retrying,
   onRetry,
+  dismissing,
+  onDismiss,
 }: {
   delivery: DigitalHumanChannelDelivery;
   event?: DigitalHumanChannelInboundEvent;
@@ -899,11 +914,15 @@ function DeliveryRow({
   canRetry: boolean;
   retrying: boolean;
   onRetry: () => void;
+  dismissing: boolean;
+  onDismiss: () => void;
 }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
   const canSafelyRetry = delivery.status === 'failed' && canRetry;
-  const displayTime = delivery.delivered_at || delivery.updated_at || delivery.created_at;
+  const canDismiss = ['failed', 'unknown'].includes(delivery.status) && canRetry;
+  const displayTime =
+    delivery.dismissed_at || delivery.delivered_at || delivery.updated_at || delivery.created_at;
   const time = formatChannelTime(displayTime, locale);
   const duration = channelDuration(event?.received_at, delivery.delivered_at);
   const localizedError =
@@ -951,13 +970,23 @@ function DeliveryRow({
           {delivery.payload?.text || t('channels.deliveries.noText')}
         </p>
         {delivery.error_code ? (
-          <div className="mt-1 text-xs text-destructive">
+          <div
+            className={cn(
+              'mt-1 text-xs',
+              delivery.status === 'dismissed' ? 'text-muted-foreground' : 'text-destructive'
+            )}
+          >
             <p>{localizedError}</p>
           </div>
         ) : null}
         {delivery.status === 'unknown' ? (
           <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
             {t('channels.deliveries.unknownHint')}
+          </p>
+        ) : null}
+        {delivery.status === 'dismissed' ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t('channels.deliveries.dismissedHint')}
           </p>
         ) : null}
       </div>
@@ -976,6 +1005,27 @@ function DeliveryRow({
             )}
             {t('channels.deliveries.retry')}
           </Button>
+        ) : null}
+        {canDismiss ? (
+          <ConfirmDialog
+            trigger={
+              <Button variant="ghost" size="sm" disabled={dismissing || retrying}>
+                {dismissing ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <CircleOff className="size-3.5" />
+                )}
+                {t('channels.deliveries.dismiss')}
+              </Button>
+            }
+            title={t('channels.deliveries.dismissDialog.title')}
+            description={t('channels.deliveries.dismissDialog.description')}
+            confirmText={t('channels.deliveries.dismissDialog.confirm')}
+            cancelText={t('common.cancel')}
+            variant="warning"
+            loading={dismissing}
+            onConfirm={onDismiss}
+          />
         ) : null}
       </div>
     </div>
@@ -1319,12 +1369,16 @@ function DeliveryStatus({ status }: { status: DigitalHumanChannelDeliveryStatus 
       ? 'success'
       : status === 'failed'
         ? 'destructive'
+        : status === 'dismissed'
+          ? 'subtle'
         : status === 'unknown'
           ? 'warning'
           : 'info';
   const Icon =
     status === 'succeeded'
       ? CheckCircle2
+      : status === 'dismissed'
+        ? CircleOff
       : status === 'pending' || status === 'processing'
         ? Clock3
         : Send;

@@ -169,7 +169,7 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 			if method == http.MethodGet {
 				return workspacemodel.WorkspacePermissionDigitalHumanLogsView
 			}
-			if method == http.MethodPost && strings.HasSuffix(path, "/retry") {
+			if method == http.MethodPost && (strings.HasSuffix(path, "/retry") || strings.HasSuffix(path, "/dismiss")) {
 				return workspacemodel.WorkspacePermissionDigitalHumanRun
 			}
 			return ""

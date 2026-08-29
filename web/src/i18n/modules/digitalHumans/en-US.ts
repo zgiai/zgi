@@ -95,8 +95,17 @@ const messages = {
     blockedNeedsHelp: 'This task is blocked and needs a decision or more information.',
     taskRunFailedNeedsReview: 'The latest execution failed. Review the cause before retrying.',
     deliveryFailed: 'A channel reply was not delivered',
-    deliveryFailedDescription: 'Open external connections to review and retry the reply.',
+    deliveryFailedDescription: 'Review the failure, then retry or close it without resending.',
     handle: 'Review',
+    ignore: 'Ignore',
+    restoreIgnored: 'Restore ignored ({count})',
+    clearIgnored: 'Clear ignored records ({count})',
+    allAttentionIgnored: 'All attention items are ignored',
+    allAttentionIgnoredDescription:
+      'These items are temporarily hidden. Clear ignored records to show them again.',
+    attentionPagination: 'Page {page} of {totalPages} · {total} items',
+    previousAttentionPage: 'Previous attention page',
+    nextAttentionPage: 'Next attention page',
     connectionsTitle: 'Connections',
     manageConnections: 'Manage',
     noConnections: 'No external connection',
@@ -1092,11 +1101,21 @@ const messages = {
         succeeded: 'Delivered {time}',
         failed: 'Failed {time}',
         unknown: 'Updated {time}',
+        dismissed: 'Closed {time}',
       },
       noText: 'No response text',
       unknownHint:
         'The provider result is uncertain. Verify the target platform before retrying to avoid a duplicate reply.',
       retry: 'Retry delivery',
+      dismiss: 'Do not retry',
+      dismissedHint:
+        'This historical delivery is closed and will not be sent again. Its original audit record is preserved.',
+      dismissDialog: {
+        title: 'Stop handling this delivery?',
+        description:
+          'Use this when the external platform has recovered but this historical message should not be resent. It will leave Needs attention without another send, while preserving the failure and attempt history.',
+        confirm: 'Do not retry',
+      },
       failure: {
         generic: 'The external platform rejected or could not complete this delivery.',
         outcomeUnknown: 'The provider outcome could not be confirmed; automatic retry stopped.',
@@ -1120,6 +1139,7 @@ const messages = {
         succeeded: 'Delivered',
         failed: 'Failed',
         unknown: 'Unknown',
+        dismissed: 'Closed',
       },
     },
     messages: {
@@ -1129,6 +1149,7 @@ const messages = {
       credentialUpdated: 'App credential updated.',
       installationVerified: 'App credential and bot identity verified.',
       deliveryRetried: 'Delivery queued for retry.',
+      deliveryDismissed: 'Historical delivery closed without resending.',
       webhookCopied: 'Webhook URL copied.',
     },
     errors: {
@@ -1137,6 +1158,7 @@ const messages = {
         'Basic connection verification failed. Check the App ID, App Secret, bot capability, and app publication status.',
       installationDelete: 'Could not delete the external channel.',
       deliveryRetry: 'Could not retry this delivery.',
+      deliveryDismiss: 'Could not close this delivery. Refresh and try again.',
     },
   },
   tasks: {

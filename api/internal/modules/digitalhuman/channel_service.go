@@ -502,7 +502,7 @@ func (service *ChannelService) GetConnectionTest(
 	case channelruntime.DeliverySucceeded:
 		result.Status, result.ReplyDelivered = ChannelConnectionTestSucceeded, true
 		setConnectionTestCapability(result, ChannelConnectionCapabilityReplyDelivery, ChannelConnectionCapabilityPassed, "", nil)
-	case channelruntime.DeliveryFailed, channelruntime.DeliveryUnknown:
+	case channelruntime.DeliveryFailed, channelruntime.DeliveryUnknown, channelruntime.DeliveryDismissed:
 		result.Status = ChannelConnectionTestFailed
 		result.FailureCode = connectionTestDeliveryFailureCode(delivery.ErrorCode)
 		setConnectionTestCapability(result, ChannelConnectionCapabilityReplyDelivery, ChannelConnectionCapabilityFailed, result.FailureCode, nil)
@@ -1076,6 +1076,10 @@ func (service *ChannelService) ListDeliveries(ctx context.Context, scope Scope, 
 
 func (service *ChannelService) RetryDelivery(ctx context.Context, scope Scope, digitalHumanID, deliveryID uuid.UUID) error {
 	return applicationError(service.store.RequeueDelivery(ctx, scope, digitalHumanID, deliveryID, service.now()), "digital_human.channel.delivery.retry")
+}
+
+func (service *ChannelService) DismissDelivery(ctx context.Context, scope Scope, digitalHumanID, deliveryID uuid.UUID) error {
+	return applicationError(service.store.DismissDelivery(ctx, scope, digitalHumanID, deliveryID, service.now()), "digital_human.channel.delivery.dismiss")
 }
 
 // DispatchDeliveries executes already-committed send intents without touching
