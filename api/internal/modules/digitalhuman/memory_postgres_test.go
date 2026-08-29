@@ -483,6 +483,32 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 	if job.ConfigRevision != state.ConfigRevision || job.MemoryEpoch != state.MemoryEpoch {
 		t.Fatalf("job fence = %s/%d, want %s/%d", job.ConfigRevision, job.MemoryEpoch, state.ConfigRevision, state.MemoryEpoch)
 	}
+
+	missingMessageID := uuid.New()
+	missingSourceJob := &MemoryExtractionJob{
+		ID: uuid.New(), OrganizationID: organizationID, WorkspaceID: workspaceID,
+		DigitalHumanID: detail.Definition.ID, RunID: &runID, ConversationID: &conversationID,
+		MessageID: &missingMessageID, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
+		ArtifactRefs:   datatypes.JSON(`[]`),
+		IdempotencyKey: "missing-source:" + runID.String(), Status: MemoryExtractionJobPending,
+		ScheduledAt: fixedNow, CreatedAt: fixedNow, UpdatedAt: fixedNow,
+	}
+	if created, err := repository.CreateMemoryExtractionJob(t.Context(), missingSourceJob); err != nil || !created {
+		t.Fatalf("create missing-source extraction job: created=%v err=%v", created, err)
+	}
+	if err := runner.RunJob(t.Context(), missingSourceJob.ID); err != nil {
+		t.Fatalf("run missing-source extraction job: %v", err)
+	}
+	var canceledJob MemoryExtractionJob
+	if err := tx.Where("id = ?", missingSourceJob.ID).Take(&canceledJob).Error; err != nil {
+		t.Fatal(err)
+	}
+	if canceledJob.Status != MemoryExtractionJobCanceled || canceledJob.ErrorCode != "source_not_found" || canceledJob.AttemptCount != 1 {
+		t.Fatalf("missing-source extraction job = %#v", canceledJob)
+	}
+	if extractor.calls != 1 {
+		t.Fatalf("extractor calls after missing source = %d, want 1", extractor.calls)
+	}
 }
 
 type recordingMemoryExtractor struct {

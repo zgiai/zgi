@@ -194,6 +194,14 @@ func (r *MemoryExtractionRunner) RunJob(ctx context.Context, jobID uuid.UUID) er
 
 	run, event, source, err := r.loadSource(ctx, job)
 	if err != nil {
+		// Extraction jobs intentionally keep references instead of copying chat
+		// content. A user may remove the referenced conversation or message before
+		// the delayed worker runs. That source cannot reappear, so retrying only
+		// produces recurring scheduler errors; cancel the stale job terminally.
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status, errorCode = MemoryExtractionJobCanceled, "source_not_found"
+			return nil
+		}
 		fail(memoryExtractionErrorCode(err))
 		return err
 	}
