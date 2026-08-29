@@ -304,7 +304,10 @@ function formatStructuredAmount(amount: number, currency: string): string {
   const normalizedCurrency = currency.trim().toUpperCase();
   const symbol =
     normalizedCurrency === 'CNY' ? '¥' : normalizedCurrency === 'USD' ? '$' : `${currency} `;
-  return `${symbol}${Number.isInteger(amount) ? amount.toFixed(2) : amount.toString()}`;
+  return `${symbol}${amount.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function structuredOperationLabel(operation: string, labels?: ModelPriceDisplayLabels): string {
