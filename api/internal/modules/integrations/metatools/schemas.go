@@ -369,11 +369,11 @@ func executeActionOutputSchema() map[string]interface{} {
 		"reason_code":             map[string]interface{}{"type": "string", "maxLength": 128},
 		"cost_usd":                map[string]interface{}{"type": "number", "minimum": 0},
 		"result_count":            map[string]interface{}{"type": "integer", "minimum": 0},
+		"attempt_count":           map[string]interface{}{"type": "integer", "minimum": 0},
 		"empty_result":            map[string]interface{}{"type": "boolean"},
 		"result_semantics": map[string]interface{}{
 			"type": "string", "enum": []string{"provider_succeeded_no_matching_items"},
 		},
-		"attempt_count": map[string]interface{}{"type": "integer", "minimum": 0},
 		"operation_status": map[string]interface{}{
 			"type": "string", "enum": []string{"completed", "already_completed", "executing", "failed_safe", "partially_succeeded", "succeeded", "failed", "outcome_unknown"},
 		},

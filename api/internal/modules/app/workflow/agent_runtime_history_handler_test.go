@@ -837,6 +837,59 @@ func TestAgentRuntimeStepsWithoutTraceKeepsFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeStepsIncludeSanitizedMemoryMutation(t *testing.T) {
+	message := &runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: uuid.New(),
+		Answer:         "Done",
+		Status:         runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{
+					"kind": "memory_mutation", "status": "success",
+					"memory_scope": "agent", "action": "update", "key": "preferences", "display_name": "回答偏好",
+					"mutation_status": "updated", "source_kind": "automatic", "revision": 3.0,
+					"operation_id": "operation-1", "runtime_id": "memory_mutation:operation-1",
+					"created_at": 1700000000.0,
+				},
+			},
+		},
+		CreatedAt: time.Unix(1700000000, 0),
+		UpdatedAt: time.Unix(1700000001, 0),
+	}
+
+	items := buildAgentRuntimeSteps(message)
+
+	if len(items) != 2 {
+		t.Fatalf("items len = %d, want memory mutation and final answer", len(items))
+	}
+	step := items[0]
+	if step.Type != "memory_mutation" || step.Title != "Memory updated: 回答偏好" || step.Status != "succeeded" {
+		t.Fatalf("memory step = %#v, want successful memory update", step)
+	}
+	input, ok := step.Input.(map[string]interface{})
+	if !ok || input["key"] != "preferences" || input["display_name"] != "回答偏好" || input["action"] != "update" {
+		t.Fatalf("memory input = %#v, want action, key, and display name", step.Input)
+	}
+	output, ok := step.Output.(map[string]interface{})
+	if !ok || output["status"] != "updated" || output["operation_id"] != "operation-1" || output["revision"] != 3.0 {
+		t.Fatalf("memory output = %#v, want sanitized result metadata", step.Output)
+	}
+	serialized := fmt.Sprintf("%#v", step)
+	if strings.Contains(serialized, "content") || strings.Contains(serialized, "evidence") {
+		t.Fatalf("memory step leaked forbidden fields: %s", serialized)
+	}
+}
+
+func TestAgentRuntimeMemoryMutationTitleFallsBackToKey(t *testing.T) {
+	title := agentRuntimeEventTitle(map[string]interface{}{
+		"kind": "memory_mutation", "action": "update", "key": "project_context",
+	})
+	if title != "Memory updated: project_context" {
+		t.Fatalf("title = %q, want key fallback", title)
+	}
+}
+
 func TestAgentRuntimeEventsLegacyCompactToolNamesKeepUserInputsInOrder(t *testing.T) {
 	modelInvocation := func(runtimeID string, toolNames ...string) map[string]interface{} {
 		items := make([]interface{}, 0, len(toolNames))

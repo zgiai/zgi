@@ -2255,12 +2255,17 @@ func isOriginalPreviewSupported(uploadFile *dto.UploadFile) bool {
 	if mimeType != "" && mimeType != "application/octet-stream" {
 		return mimeType == "application/pdf" ||
 			strings.HasPrefix(mimeType, "image/") ||
+			strings.HasPrefix(mimeType, "video/") ||
+			strings.HasPrefix(mimeType, "audio/") ||
 			isOfficeOriginalPreviewMIMEType(mimeType) ||
 			isTextOriginalPreviewMIMEType(mimeType)
 	}
 
 	extension := strings.ToLower(strings.TrimPrefix(uploadFile.Extension, "."))
-	if extension == "pdf" || file_model.IsImageExtension(extension) {
+	if extension == "pdf" ||
+		file_model.IsImageExtension(extension) ||
+		file_model.IsVideoExtension(extension) ||
+		file_model.IsAudioExtension(extension) {
 		return true
 	}
 	if isOfficeOriginalPreviewExtension(extension) {

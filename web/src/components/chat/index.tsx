@@ -170,6 +170,7 @@ interface AIChatVariantProps {
   enableToolGovernance?: boolean;
   voiceTranscriber?: AIChatVoiceTranscriber;
   speechSynthesizer?: AIChatSpeechSynthesizer;
+  headerRightAction?: React.ReactNode;
 }
 
 type ChatProps =

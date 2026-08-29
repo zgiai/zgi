@@ -735,6 +735,12 @@ func sanitizeWorkflowEventValue(value interface{}) interface{} {
 	switch typed := value.(type) {
 	case map[string]interface{}:
 		return sanitizeWorkflowEventData(typed)
+	case []map[string]interface{}:
+		output := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			output = append(output, sanitizeWorkflowEventData(item))
+		}
+		return output
 	case []interface{}:
 		output := make([]interface{}, 0, len(typed))
 		for _, item := range typed {

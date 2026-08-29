@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -54,7 +55,11 @@ func (h *WorkflowHandler) sendSSEErrorData(ctx context.Context, w http.ResponseW
 
 	event := map[string]interface{}{
 		"event": "error",
-		"data":  data,
+		"data": projectWorkflowEventDataForInvocation(
+			workflowEventProjectionInvokeFromContext(ctx),
+			workflowpause.EventError,
+			data,
+		),
 	}
 
 	jsonData, err := json.Marshal(event)

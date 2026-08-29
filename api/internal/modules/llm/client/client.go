@@ -103,6 +103,10 @@ type AppContext struct {
 
 	// NodeType identifies the workflow node type that triggered the call.
 	NodeType string
+
+	// SuppressInvocationContent keeps request and response bodies out of
+	// invocation-content storage and full-content traces.
+	SuppressInvocationContent bool
 }
 
 // Validate checks if the AppContext has required fields

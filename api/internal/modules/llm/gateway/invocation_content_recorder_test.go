@@ -242,6 +242,22 @@ func TestCleanupExpiredInvocationContentBoundsWorkPerRun(t *testing.T) {
 	}
 }
 
+func TestTraceChatSuppressesPrivacySensitiveInvocationContent(t *testing.T) {
+	recorder := &invocationContentRecorder{queue: make(chan invocationContentRecord, 1)}
+	service := &llmGatewayServiceImpl{invocationContent: recorder}
+	ctx := applyInvocationContentPrivacy(context.Background(), &AppContext{SuppressInvocationContent: true})
+	service.traceChatCompletion(
+		ctx,
+		&adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "saved memory body"}}},
+		&adapter.ChatResponse{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "response"}}}},
+		time.Now().Add(-time.Second), time.Now(),
+		&BillingContext{RequestID: "private", OrganizationID: "org"}, nil,
+	)
+	if len(recorder.queue) != 0 {
+		t.Fatal("privacy-sensitive Agent memory content was queued for invocation storage")
+	}
+}
+
 func BenchmarkInvocationContentRecorderDisabledFastPath(b *testing.B) {
 	recorder := &invocationContentRecorder{queue: make(chan invocationContentRecord, 1), settings: &sync.Map{}}
 	recorder.settings.Store("org-off", invocationContentSettingCache{

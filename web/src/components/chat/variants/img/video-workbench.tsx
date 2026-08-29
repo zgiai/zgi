@@ -27,6 +27,7 @@ import {
 import { toast } from 'sonner';
 
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
+import { WorkspaceVoiceInputControl } from '@/components/chat/variants/aichat/voice/workspace-voice-input-control';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -52,9 +53,11 @@ import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
 import {
   useDeleteVideoTask,
   useGenerateVideoTask,
+  usePrefetchVideoRuntimeTask,
   useVideoRuntimeTask,
   useVideoRuntimeTasks,
 } from '@/hooks/video-runtime/use-video-runtime';
+import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type { ModelItem } from '@/services/types/model';
@@ -70,6 +73,14 @@ const VIDEO_RESOLUTIONS = ['720p', '1080p'] as const;
 const VIDEO_REFERENCE_MODES = ['auto'] as const;
 const VIDEO_FRAME_REFERENCE_MODE = 'first_last_frame';
 const VIDEO_AUDIO_MODES = ['off', 'on'] as const;
+const preloadedMediaUrls = new Set<string>();
+const preloadedVideoUrls = new Map<string, 'metadata' | 'auto'>();
+const retainedPreloadedVideoElements = new Map<string, HTMLVideoElement>();
+const mountedRetainedVideoUrls = new Set<string>();
+const videoPosterCache = new Map<string, string>();
+const videoPosterPromises = new Map<string, Promise<string | null>>();
+const HISTORY_AUTO_PREFETCH_COUNT = 6;
+const MAX_RETAINED_VIDEO_PRELOADS = 12;
 const REFERENCE_KIND_ORDER: ReferenceKind[] = ['image', 'video', 'audio'];
 const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
   image: 'image/*',
@@ -162,6 +173,7 @@ export function VideoWorkbench() {
   } = useVideoRuntimeTasks(debouncedHistoryQuery);
   const generateMutation = useGenerateVideoTask();
   const deleteTaskMutation = useDeleteVideoTask();
+  const prefetchTaskDetail = usePrefetchVideoRuntimeTask();
   const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>({
     provider: '',
     model: '',
@@ -221,7 +233,10 @@ export function VideoWorkbench() {
     () => getVideoGenerationOptions(selectedModelItem),
     [selectedModelItem]
   );
-  const effectiveReferenceMode = getEffectiveReferenceMode(settings.referenceMode, generationOptions);
+  const effectiveReferenceMode = getEffectiveReferenceMode(
+    settings.referenceMode,
+    generationOptions
+  );
   const allowedReferenceKinds = React.useMemo(
     () => getAllowedReferenceKinds(selectedModelItem, effectiveReferenceMode),
     [effectiveReferenceMode, selectedModelItem]
@@ -294,10 +309,14 @@ export function VideoWorkbench() {
     submitClientRequestIdRef.current = clientRequestId;
     setIsSubmitting(true);
     try {
+      const isFrameReferenceMode = effectiveReferenceMode === VIDEO_FRAME_REFERENCE_MODE;
+      const referenceFilesToUpload = isFrameReferenceMode
+        ? referenceFiles.filter(referenceFile => referenceFile.kind === 'image')
+        : referenceFiles;
       const uploadedReferences =
-        referenceFiles.length > 0
+        referenceFilesToUpload.length > 0
           ? await Promise.all(
-              referenceFiles.map(referenceFile =>
+              referenceFilesToUpload.map(referenceFile =>
                 uploadVideoReferenceFile(
                   referenceFile.file,
                   t('chat.videoWorkbench.referenceUploadNoUrl')
@@ -305,7 +324,6 @@ export function VideoWorkbench() {
               )
             )
           : [];
-      const isFrameReferenceMode = effectiveReferenceMode === VIDEO_FRAME_REFERENCE_MODE;
       const frameImageReferences = isFrameReferenceMode
         ? uploadedReferences.filter(reference => reference.kind === 'image')
         : [];
@@ -325,8 +343,6 @@ export function VideoWorkbench() {
               ...(frameImageReferences[1]?.url
                 ? { last_frame_url: frameImageReferences[1].url }
                 : {}),
-              ...(referenceUrls.length > 0 ? { reference_urls: referenceUrls } : {}),
-              ...(referenceTypes.length > 0 ? { reference_types: referenceTypes } : {}),
             }
           : {
               ...(referenceUrls[0] ? { reference_url: referenceUrls[0] } : {}),
@@ -347,7 +363,6 @@ export function VideoWorkbench() {
       if (taskID) {
         completedPollingTaskIdsRef.current.delete(taskID);
         setPollingTaskId(taskID);
-        void reloadTasks();
       }
       setPrompt('');
       setReferenceFiles(files => {
@@ -369,7 +384,6 @@ export function VideoWorkbench() {
     generationOptions.audioModes.length,
     prompt,
     referenceFiles,
-    reloadTasks,
     selectedModel.model,
     selectedModel.provider,
     settings,
@@ -393,6 +407,14 @@ export function VideoWorkbench() {
     [deleteTaskMutation, pollingTaskId, selectedTaskId, t]
   );
 
+  const handlePrefetchTask = React.useCallback(
+    (task: VideoRuntimeTask) => {
+      prefetchTaskDetail(task);
+      preloadTaskMedia(task);
+    },
+    [prefetchTaskDetail]
+  );
+
   return (
     <div className="flex h-full min-h-0 w-full bg-background">
       <GenerationRecordsSidebar
@@ -401,8 +423,7 @@ export function VideoWorkbench() {
         query={historyQuery}
         onQueryChange={setHistoryQuery}
         isSearchPending={
-          historyQuery.trim() !== debouncedHistoryQuery ||
-          (isFetchingTasks && !isFetchingNextPage)
+          historyQuery.trim() !== debouncedHistoryQuery || (isFetchingTasks && !isFetchingNextPage)
         }
         isLoading={isLoadingTasks}
         isError={isTasksError}
@@ -411,6 +432,7 @@ export function VideoWorkbench() {
         onLoadMore={fetchNextPage}
         selectedTaskId={selectedTaskId}
         onSelectTask={setSelectedTaskId}
+        onPrefetchTask={handlePrefetchTask}
         onDeleteTask={handleDeleteTask}
         deletingTaskId={deleteTaskMutation.variables ?? null}
         onRefresh={() => void reloadTasks()}
@@ -475,6 +497,7 @@ function GenerationRecordsSidebar({
   onLoadMore,
   selectedTaskId,
   onSelectTask,
+  onPrefetchTask,
   onDeleteTask,
   deletingTaskId,
   onRefresh,
@@ -491,14 +514,20 @@ function GenerationRecordsSidebar({
   onLoadMore: () => Promise<unknown>;
   selectedTaskId: string | null;
   onSelectTask: (taskId: string) => void;
+  onPrefetchTask: (task: VideoRuntimeTask) => void;
   onDeleteTask: (taskId: string) => void;
   deletingTaskId: string | null;
   onRefresh: () => void;
 }) {
   const t = useT('webapp');
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const [deleteTargetTask, setDeleteTargetTask] = React.useState<VideoRuntimeTask | null>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
+  const autoPrefetchTasks = React.useMemo(
+    () => tasks.slice(0, HISTORY_AUTO_PREFETCH_COUNT),
+    [tasks]
+  );
   const loadMoreRef = useInfiniteObserver({
     hasNextPage,
     isFetchingNextPage,
@@ -511,6 +540,18 @@ function GenerationRecordsSidebar({
   React.useEffect(() => {
     listRef.current?.scrollTo({ top: 0 });
   }, [query]);
+
+  React.useEffect(() => {
+    if (isLoading || isError || isSearchPending || autoPrefetchTasks.length === 0) return;
+
+    const timeoutIds = autoPrefetchTasks.map((task, index) =>
+      window.setTimeout(() => onPrefetchTask(task), 120 + index * 80)
+    );
+
+    return () => {
+      timeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId));
+    };
+  }, [autoPrefetchTasks, isError, isLoading, isSearchPending, onPrefetchTask]);
 
   return (
     <aside className="hidden h-full w-[328px] shrink-0 flex-col border-r border-border bg-background md:flex">
@@ -619,7 +660,8 @@ function GenerationRecordsSidebar({
                 isSelected={task.task_id === selectedTaskId}
                 isDeleting={task.task_id === deletingTaskId}
                 onSelect={() => onSelectTask(task.task_id)}
-                onDelete={() => onDeleteTask(task.task_id)}
+                onPrefetch={() => onPrefetchTask(task)}
+                onDelete={() => setDeleteTargetTask(task)}
               />
             ))}
             <div ref={loadMoreRef} className="flex min-h-9 items-center justify-center py-2">
@@ -646,6 +688,20 @@ function GenerationRecordsSidebar({
           </div>
         )}
       </div>
+      <ConfirmDialog
+        variant="danger"
+        open={deleteTargetTask !== null}
+        onOpenChange={open => {
+          if (!open) setDeleteTargetTask(null);
+        }}
+        title={t('chat.videoWorkbench.deleteRecordConfirmTitle')}
+        description={t('chat.videoWorkbench.deleteRecordConfirmDescription')}
+        confirmText={t('chat.videoWorkbench.deleteRecord')}
+        cancelText={t('chat.videoWorkbench.deleteRecordCancel')}
+        onConfirm={() => {
+          if (deleteTargetTask) onDeleteTask(deleteTargetTask.task_id);
+        }}
+      />
     </aside>
   );
 }
@@ -655,18 +711,22 @@ function VideoTaskCard({
   isSelected,
   isDeleting,
   onSelect,
+  onPrefetch,
   onDelete,
 }: {
   task: VideoRuntimeTask;
   isSelected: boolean;
   isDeleting: boolean;
   onSelect: () => void;
+  onPrefetch: () => void;
   onDelete: () => void;
 }) {
   const t = useT('webapp');
   const status = getTaskDisplayStatus(task);
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
+  const videoUrl = toDirectToolFileDeliveryUrl(status === 'succeeded' ? task.video_url : undefined);
+  const posterUrl = useVideoPoster(videoUrl);
   const Icon = isLoadingStatus
     ? Loader2
     : status === 'succeeded'
@@ -678,10 +738,16 @@ function VideoTaskCard({
     <div
       role="button"
       tabIndex={0}
-      onClick={onSelect}
+      onPointerEnter={onPrefetch}
+      onFocus={onPrefetch}
+      onClick={() => {
+        onPrefetch();
+        onSelect();
+      }}
       onKeyDown={event => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
+          onPrefetch();
           onSelect();
         }
       }}
@@ -693,14 +759,18 @@ function VideoTaskCard({
       )}
     >
       <div className="relative h-[72px] w-[92px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-slate-800 via-slate-900 to-black shadow-sm">
-        {task.video_url && status === 'succeeded' ? (
-          <video
-            src={task.video_url}
-            muted
-            playsInline
-            preload="metadata"
-            className="h-full w-full object-cover opacity-90"
-          />
+        {videoUrl ? (
+          posterUrl ? (
+            <img src={posterUrl} alt="" className="h-full w-full object-cover opacity-90" />
+          ) : (
+            <video
+              src={videoUrl}
+              muted
+              playsInline
+              preload="metadata"
+              className="h-full w-full object-cover opacity-90"
+            />
+          )
         ) : (
           <Image
             src="/assets/video/default-video-cover.webp"
@@ -840,6 +910,10 @@ function ComposerPanel({
   const [isConfirmSubmitting, setIsConfirmSubmitting] = React.useState(false);
   const confirmSubmitRef = React.useRef(false);
   const effectiveGenerating = isGenerating || isConfirmSubmitting;
+  const effectiveReferenceMode = getEffectiveReferenceMode(
+    settings.referenceMode,
+    generationOptions
+  );
   const submitDisabled =
     !prompt.trim() || !selectedModel.provider || !selectedModel.model || effectiveGenerating;
 
@@ -863,7 +937,7 @@ function ComposerPanel({
           <ReferenceMaterialButton
             allowedKinds={allowedReferenceKinds}
             maxFiles={maxReferenceFiles}
-            mode={settings.referenceMode}
+            mode={effectiveReferenceMode}
             files={referenceFiles}
             onFilesSelected={files =>
               onReferenceFilesChange(prev => {
@@ -914,7 +988,18 @@ function ComposerPanel({
                 [VIDEO_FRAME_REFERENCE_MODE]: t('chat.videoWorkbench.referenceModeFirstLastFrame'),
               }}
               menuHint={t('chat.videoWorkbench.referenceModePriceHintShort')}
-              onChange={referenceMode => onSettingsChange({ ...settings, referenceMode })}
+              onChange={referenceMode => {
+                onSettingsChange({ ...settings, referenceMode });
+                if (referenceMode === VIDEO_FRAME_REFERENCE_MODE) {
+                  onReferenceFilesChange(prev => {
+                    const next = prev.filter(file => file.kind === 'image');
+                    prev.forEach(file => {
+                      if (!next.includes(file)) URL.revokeObjectURL(file.previewUrl);
+                    });
+                    return next;
+                  });
+                }
+              }}
             />
           ) : null}
           {generationOptions.audioModes.length > 1 ? (
@@ -953,6 +1038,11 @@ function ComposerPanel({
         </div>
 
         <div className="flex items-center justify-end gap-3">
+          <WorkspaceVoiceInputControl
+            value={prompt}
+            onChange={onPromptChange}
+            disabled={effectiveGenerating}
+          />
           {modelError ? (
             <Badge className="rounded-md border-red-500/30 bg-red-500/10 text-red-300">
               {t('chat.videoWorkbench.modelsLoadFailed')}
@@ -1045,6 +1135,48 @@ function ComposerPanel({
   );
 }
 
+function RetainedVideoPlayer({ src, posterUrl }: { src: string; posterUrl: string }) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const normalizedUrl = src.trim();
+    const container = containerRef.current;
+    if (!normalizedUrl || !container) return;
+
+    preloadVideo(normalizedUrl, 'auto');
+    const video = retainedPreloadedVideoElements.get(normalizedUrl);
+    if (!video) return;
+
+    mountedRetainedVideoUrls.add(normalizedUrl);
+    video.controls = true;
+    video.muted = false;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.className = 'h-full w-full bg-black object-contain';
+    if (posterUrl) {
+      video.poster = posterUrl;
+    } else {
+      video.removeAttribute('poster');
+    }
+
+    container.replaceChildren(video);
+
+    return () => {
+      mountedRetainedVideoUrls.delete(normalizedUrl);
+      video.pause();
+      if (video.parentElement === container) {
+        container.removeChild(video);
+      }
+    };
+  }, [posterUrl, src]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="aspect-video w-full overflow-hidden rounded-lg border border-border bg-black"
+    />
+  );
+}
 function TaskDetailSheet({
   task,
   onOpenChange,
@@ -1053,7 +1185,16 @@ function TaskDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT('webapp');
+  const { locale } = useLocale();
+  const [downloadingTaskId, setDownloadingTaskId] = React.useState<string | null>(null);
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
+  const isDownloadingVideo = Boolean(task?.task_id && downloadingTaskId === task.task_id);
+  const videoUrl = toDirectToolFileDeliveryUrl(task?.video_url);
+  const posterUrl = useVideoPoster(videoUrl);
+  const displayErrorMessage = React.useMemo(
+    () => formatVideoTaskErrorMessage(task?.error_message, locale),
+    [locale, task?.error_message]
+  );
   const referenceMaterials = React.useMemo(
     () =>
       getTaskReferenceMaterials(
@@ -1063,6 +1204,22 @@ function TaskDetailSheet({
       ),
     [task, t]
   );
+  const handleDownloadVideo = React.useCallback(async () => {
+    if (!task?.video_url || isDownloadingVideo) return;
+    setDownloadingTaskId(task.task_id);
+    try {
+      await downloadUrlAsFile(task.video_url, getVideoDownloadFileName(task));
+      toast.success(t('chat.videoWorkbench.downloadVideoStarted'));
+    } catch {
+      toast.error(t('chat.videoWorkbench.downloadVideoFailed'));
+    } finally {
+      setDownloadingTaskId(current => (current === task.task_id ? null : current));
+    }
+  }, [isDownloadingVideo, task, t]);
+
+  React.useEffect(() => {
+    if (task) preloadTaskMedia(task, { eagerVideo: true });
+  }, [task]);
 
   return (
     <Sheet open={!!task} onOpenChange={onOpenChange}>
@@ -1083,12 +1240,8 @@ function TaskDetailSheet({
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               <div className="space-y-4">
-                {task.video_url ? (
-                  <video
-                    className="aspect-video w-full rounded-lg border border-border bg-black object-contain"
-                    controls
-                    src={task.video_url}
-                  />
+                {videoUrl ? (
+                  <RetainedVideoPlayer src={videoUrl} posterUrl={posterUrl} />
                 ) : (
                   <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border bg-[#030711]">
                     <Image
@@ -1153,9 +1306,9 @@ function TaskDetailSheet({
                   />
                 </div>
 
-                {task.error_message && status === 'failed' ? (
+                {displayErrorMessage && status === 'failed' ? (
                   <DetailSection title={t('chat.videoWorkbench.errorMessage')}>
-                    <p className="text-sm leading-6 text-red-600">{task.error_message}</p>
+                    <p className="text-sm leading-6 text-red-600">{displayErrorMessage}</p>
                   </DetailSection>
                 ) : null}
               </div>
@@ -1175,11 +1328,17 @@ function TaskDetailSheet({
                 {t('chat.videoWorkbench.copyTaskId')}
               </Button>
               {task.video_url ? (
-                <Button asChild type="button" className="h-9 rounded-md">
-                  <a href={task.video_url} download rel="noreferrer">
-                    {t('chat.videoWorkbench.downloadVideo')}
-                    <Download className="ml-2 h-4 w-4" />
-                  </a>
+                <Button
+                  type="button"
+                  className="h-9 rounded-md"
+                  disabled={isDownloadingVideo}
+                  onClick={() => void handleDownloadVideo()}
+                >
+                  {isDownloadingVideo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  {isDownloadingVideo
+                    ? t('chat.videoWorkbench.downloadingVideo')
+                    : t('chat.videoWorkbench.downloadVideo')}
+                  <Download className="ml-2 h-4 w-4" />
                 </Button>
               ) : null}
             </div>
@@ -1298,8 +1457,256 @@ function getTaskReferenceMaterials(
   if (Array.isArray(payload.image_urls)) {
     payload.image_urls.forEach(url => pushMaterial(url, 'image'));
   }
+  if (Array.isArray(payload.reference_urls)) {
+    payload.reference_urls.forEach((url, index) => {
+      pushMaterial(url, referenceKindAtPayloadIndex(payload.reference_types, index, url));
+    });
+  }
 
   return materials;
+}
+
+function referenceKindAtPayloadIndex(
+  referenceTypes: unknown,
+  index: number,
+  referenceUrl: unknown
+): ReferenceKind {
+  if (Array.isArray(referenceTypes)) {
+    const rawKind = referenceTypes[index];
+    if (typeof rawKind === 'string') {
+      const kind = rawKind.trim().toLowerCase();
+      if (kind === 'image' || kind === 'video' || kind === 'audio') return kind;
+    }
+  }
+  if (typeof referenceUrl !== 'string') return 'image';
+  return getReferenceKindFromURL(referenceUrl);
+}
+
+function useVideoPoster(url: string | undefined) {
+  const normalizedUrl = url?.trim() || '';
+  const [posterUrl, setPosterUrl] = React.useState(() =>
+    normalizedUrl ? videoPosterCache.get(normalizedUrl) || '' : ''
+  );
+
+  React.useEffect(() => {
+    if (!normalizedUrl) {
+      setPosterUrl('');
+      return;
+    }
+
+    const cachedPoster = videoPosterCache.get(normalizedUrl);
+    if (cachedPoster) {
+      setPosterUrl(cachedPoster);
+      return;
+    }
+
+    let cancelled = false;
+    setPosterUrl('');
+    ensureVideoPoster(normalizedUrl).then(nextPosterUrl => {
+      if (!cancelled && nextPosterUrl) {
+        setPosterUrl(nextPosterUrl);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedUrl]);
+
+  return posterUrl;
+}
+
+function preloadTaskMedia(task: VideoRuntimeTask, options: { eagerVideo?: boolean } = {}) {
+  if (typeof window === 'undefined') return;
+
+  const videoUrl = toDirectToolFileDeliveryUrl(task.video_url);
+  preloadVideo(videoUrl, options.eagerVideo ? 'auto' : 'metadata');
+  if (options.eagerVideo) void ensureVideoPoster(videoUrl);
+  getTaskReferenceMaterials(task, '', '').forEach(material => {
+    if (material.kind === 'image') {
+      preloadImage(material.url);
+    } else if (material.kind === 'video') {
+      const materialVideoUrl = toDirectToolFileDeliveryUrl(material.url);
+      preloadVideo(materialVideoUrl, options.eagerVideo ? 'auto' : 'metadata');
+      if (options.eagerVideo) void ensureVideoPoster(materialVideoUrl);
+    }
+  });
+}
+
+function preloadImage(url: string | undefined) {
+  const normalizedUrl = normalizePreloadUrl(url);
+  if (!normalizedUrl) return;
+  const image = new window.Image();
+  image.src = normalizedUrl;
+}
+
+function preloadVideo(url: string | undefined, preload: 'metadata' | 'auto' = 'metadata') {
+  const normalizedUrl = url?.trim();
+  if (!normalizedUrl || typeof document === 'undefined') return;
+
+  const previousPreload = preloadedVideoUrls.get(normalizedUrl);
+  const retainedVideo = retainedPreloadedVideoElements.get(normalizedUrl);
+  if (retainedVideo) {
+    if (previousPreload !== 'auto' && preload === 'auto') {
+      retainedVideo.preload = 'auto';
+      retainedVideo.load();
+      preloadedVideoUrls.set(normalizedUrl, 'auto');
+    }
+    return;
+  }
+  if (previousPreload === 'auto' || (previousPreload === 'metadata' && preload === 'metadata')) {
+    return;
+  }
+
+  const video = document.createElement('video');
+  video.preload = preload;
+  video.muted = true;
+  video.playsInline = true;
+  video.src = normalizedUrl;
+  video.load();
+  retainedPreloadedVideoElements.set(normalizedUrl, video);
+  preloadedVideoUrls.set(normalizedUrl, preload);
+  trimRetainedVideoPreloads();
+}
+
+function trimRetainedVideoPreloads() {
+  for (const [url, video] of retainedPreloadedVideoElements) {
+    if (retainedPreloadedVideoElements.size <= MAX_RETAINED_VIDEO_PRELOADS) return;
+    if (mountedRetainedVideoUrls.has(url)) continue;
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    retainedPreloadedVideoElements.delete(url);
+    preloadedVideoUrls.delete(url);
+  }
+}
+
+function ensureVideoPoster(url: string | undefined): Promise<string | null> {
+  const normalizedUrl = url?.trim();
+  if (!normalizedUrl || typeof document === 'undefined') return Promise.resolve(null);
+  const cachedPoster = videoPosterCache.get(normalizedUrl);
+  if (cachedPoster) return Promise.resolve(cachedPoster);
+  const pendingPoster = videoPosterPromises.get(normalizedUrl);
+  if (pendingPoster) return pendingPoster;
+
+  const posterPromise = new Promise<string | null>(resolve => {
+    const video = document.createElement('video');
+    let settled = false;
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      video.removeEventListener('loadeddata', handleLoadedData);
+      video.removeEventListener('seeked', handleLoadedData);
+      video.removeEventListener('error', handleError);
+    };
+    const finish = (posterUrl: string | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      videoPosterPromises.delete(normalizedUrl);
+      if (posterUrl) videoPosterCache.set(normalizedUrl, posterUrl);
+      resolve(posterUrl);
+    };
+    const handleError = () => finish(null);
+    const handleLoadedData = () => {
+      try {
+        const width = video.videoWidth || 320;
+        const height = video.videoHeight || 180;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          finish(null);
+          return;
+        }
+        context.drawImage(video, 0, 0, width, height);
+        finish(canvas.toDataURL('image/jpeg', 0.72));
+      } catch {
+        finish(null);
+      }
+    };
+    const timeoutId = window.setTimeout(() => finish(null), 10000);
+
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.addEventListener('loadeddata', handleLoadedData, { once: true });
+    video.addEventListener('seeked', handleLoadedData, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+    video.src = normalizedUrl;
+    video.load();
+  });
+
+  videoPosterPromises.set(normalizedUrl, posterPromise);
+  return posterPromise;
+}
+
+function toDirectToolFileDeliveryUrl(url: string | undefined) {
+  const normalizedUrl = url?.trim();
+  if (!normalizedUrl) return '';
+
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const parsedUrl = new URL(normalizedUrl, base);
+    if (!parsedUrl.pathname.startsWith('/console/api/files/tools/')) {
+      return normalizedUrl;
+    }
+    if (parsedUrl.searchParams.get('download')) {
+      return normalizedUrl;
+    }
+    parsedUrl.searchParams.set('delivery', 'direct');
+    if (!/^https?:\/\//i.test(normalizedUrl) && !normalizedUrl.startsWith('//')) {
+      return `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+    }
+    return parsedUrl.toString();
+  } catch {
+    return normalizedUrl;
+  }
+}
+
+function normalizePreloadUrl(url: string | undefined) {
+  const normalizedUrl = url?.trim();
+  if (!normalizedUrl || preloadedMediaUrls.has(normalizedUrl)) return '';
+  preloadedMediaUrls.add(normalizedUrl);
+  return normalizedUrl;
+}
+
+async function downloadUrlAsFile(url: string, fileName: string) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Download failed with status ${response.status}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = fileName;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+function getVideoDownloadFileName(task: VideoRuntimeTask) {
+  const baseName = [task.model_label || task.model || 'video', task.task_id || Date.now()]
+    .filter(Boolean)
+    .join('-');
+  return `${sanitizeDownloadFileName(baseName)}.mp4`;
+}
+
+function sanitizeDownloadFileName(value: string) {
+  const withoutControlCharacters = Array.from(value)
+    .map(character => (character.charCodeAt(0) < 32 ? '-' : character))
+    .join('');
+  return (
+    withoutControlCharacters
+      .replace(/[<>:"/\\|?*]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 140) || 'video'
+  );
 }
 
 function taskHasVideoInput(task: VideoRuntimeTask) {
@@ -1317,6 +1724,105 @@ function getTaskDisplayStatus(task: VideoRuntimeTask): NormalizedVideoStatus {
   const status = normalizeStatus(task.status);
   if (status === 'succeeded' && task.error_message && !task.video_url) return 'failed';
   return status;
+}
+
+function formatVideoTaskErrorMessage(message: string | undefined, locale: string) {
+  const normalizedMessage = message?.trim();
+  if (!normalizedMessage) return '';
+  if (!locale.toLowerCase().startsWith('zh')) return normalizedMessage;
+
+  const localizedMessage = localizeVideoContentReferences(normalizedMessage);
+  const lowerMessage = normalizedMessage.toLowerCase();
+  if (
+    lowerMessage.includes('first/last frame content cannot be mixed with reference media content')
+  ) {
+    return '首尾帧模式参考素材只能为图片';
+  }
+  if (lowerMessage.includes('may contain real person')) {
+    const contentLabels = videoContentReferenceLabels(normalizedMessage);
+    if (contentLabels.length > 0) {
+      return `${contentLabels.join('、')}可能包含真人`;
+    }
+    return '输入图片可能包含真人';
+  }
+  if (lowerMessage.includes('output video') && lowerMessage.includes('sensitive information')) {
+    return '模型输出视频涉及敏感内容';
+  }
+  if (lowerMessage.includes('may contain sensitive information')) {
+    const contentLabels = videoContentReferenceLabels(normalizedMessage);
+    if (contentLabels.length > 0) {
+      return `${contentLabels.join('、')}含有敏感内容`;
+    }
+    return '输入内容含有敏感内容';
+  }
+  if (lowerMessage.includes('output video') && lowerMessage.includes('copyright restrictions')) {
+    return '模型输出视频涉及版权问题';
+  }
+  if (lowerMessage.includes('copyright restrictions')) {
+    const contentLabels = videoContentReferenceLabels(normalizedMessage);
+    if (contentLabels.length > 0) {
+      return `${contentLabels.join('、')}涉及版权问题`;
+    }
+  }
+  if (lowerMessage.includes('reference images')) {
+    const referenceImageLimit = normalizedMessage.match(
+      /expected\s+at\s+most\s+([0-9]+)\s+reference\s+images/i
+    );
+    if (referenceImageLimit?.[1]) {
+      return `图片素材最多${referenceImageLimit[1]}张`;
+    }
+  }
+  if (lowerMessage.includes('audio duration (seconds)')) {
+    const audioDurationLimit = normalizedMessage.match(
+      /less\s+than\s+or\s+equal\s+to\s+([0-9]+(?:\.[0-9]+)?)/i
+    );
+    if (audioDurationLimit?.[1]) {
+      return `${videoInvalidContentPrefix(normalizedMessage)}音频素材总时长不能超过${audioDurationLimit[1]}秒`;
+    }
+  }
+
+  return localizedMessage;
+}
+
+function localizeVideoContentReferences(message: string) {
+  return message
+    .replace(
+      /the\s+parameter\s+`?content\[(\d+)\]`?\s+specified\s+in\s+the\s+request\s+is\s+not\s+valid(\s*:)?/gi,
+      (_match, indexText: string, colon: string | undefined) => {
+        const label = videoContentReferenceLabel(indexText);
+        return label ? `${label}无效${colon ? '：' : ''}` : _match;
+      }
+    )
+    .replace(/`?content\[(\d+)\]`?/gi, (_match, indexText: string) => {
+      const label = videoContentReferenceLabel(indexText);
+      return label || _match;
+    });
+}
+
+function videoInvalidContentPrefix(message: string) {
+  const match = message.match(
+    /the\s+parameter\s+`?content\[(\d+)\]`?\s+specified\s+in\s+the\s+request\s+is\s+not\s+valid\s*:?/i
+  );
+  if (!match?.[1]) return '';
+  const label = videoContentReferenceLabel(match[1]);
+  return label ? `${label}无效：` : '';
+}
+
+function videoContentReferenceLabels(message: string) {
+  const labels: string[] = [];
+  for (const match of message.matchAll(/`?content\[(\d+)\]`?/gi)) {
+    const label = videoContentReferenceLabel(match[1]);
+    if (label && !labels.includes(label)) {
+      labels.push(label);
+    }
+  }
+  return labels;
+}
+
+function videoContentReferenceLabel(indexText: string) {
+  const index = Number.parseInt(indexText, 10);
+  if (!Number.isFinite(index)) return '';
+  return index === 0 ? '提示词' : `素材${index}`;
 }
 
 function ConfirmationSpec({ label, value }: { label: string; value: string }) {
@@ -1727,11 +2233,22 @@ function supportsVideoAudioGeneration(videoConfig: Record<string, unknown> | nul
 }
 
 function getReferenceModeOptions(videoConfig: Record<string, unknown> | null): string[] {
-  return getStringOptions(
+  const rawModes = getStringOptions(
     videoConfig,
-    ['reference_modes', 'referenceModes'],
-    [...VIDEO_REFERENCE_MODES]
+    ['reference_modes', 'referenceModes', 'modes'],
+    []
   );
+  const normalizedModes = rawModes.map(mode => normalizeReferenceModeOption(mode)).filter(Boolean);
+  const uniqueModes = Array.from(new Set(normalizedModes));
+  return uniqueModes.length > 0 ? uniqueModes : [...VIDEO_REFERENCE_MODES];
+}
+
+function normalizeReferenceModeOption(mode: string) {
+  const normalizedMode = mode.trim().toLowerCase();
+  if (!normalizedMode) return '';
+  if (normalizedMode === 'omni_reference' || normalizedMode === 'auto') return 'auto';
+  if (normalizedMode === VIDEO_FRAME_REFERENCE_MODE) return VIDEO_FRAME_REFERENCE_MODE;
+  return normalizedMode;
 }
 
 function getAllowedReferenceKinds(
@@ -1763,7 +2280,9 @@ function getVideoReferenceKinds(model?: ModelItem): ReferenceKind[] {
   return configuredKinds;
 }
 
-function getReferenceKindsFromVideoConfig(videoConfig: Record<string, unknown> | null): ReferenceKind[] {
+function getReferenceKindsFromVideoConfig(
+  videoConfig: Record<string, unknown> | null
+): ReferenceKind[] {
   if (!videoConfig) return [];
 
   const audioInput = [
@@ -1835,18 +2354,42 @@ function getModelVideoConfig(model?: ModelItem): Record<string, unknown> | null 
     parameters?: unknown;
   };
 
-  return (
-    getNestedRecord(maybeModel.video, []) ??
-    getNestedRecord(maybeModel.capabilities, ['video']) ??
-    getNestedRecord(maybeModel.default_parameters, ['capabilities', 'video']) ??
-    getNestedRecord(maybeModel.default_parameters, ['video']) ??
-    getNestedRecord(maybeModel.config, ['video']) ??
-    getNestedRecord(maybeModel.config_parameters, ['video']) ??
-    getNestedRecord(maybeModel.parameters_metadata, ['video']) ??
-    getNestedRecord(maybeModel.supported_parameters, ['video']) ??
-    getNestedRecord(maybeModel.features, ['video']) ??
-    getNestedRecord(maybeModel.parameters, ['video'])
-  );
+  return mergeVideoConfigRecords([
+    getNestedRecord(maybeModel.default_parameters, ['capabilities', 'video']),
+    getNestedRecord(maybeModel.default_parameters, ['video']),
+    getNestedRecord(maybeModel.video, []),
+    getNestedRecord(maybeModel.capabilities, ['video']),
+    getNestedRecord(maybeModel.config, ['video']),
+    getNestedRecord(maybeModel.config_parameters, ['video']),
+    getNestedRecord(maybeModel.parameters_metadata, ['video']),
+    getNestedRecord(maybeModel.supported_parameters, ['video']),
+    getNestedRecord(maybeModel.features, ['video']),
+    getNestedRecord(maybeModel.parameters, ['video']),
+  ]);
+}
+
+function mergeVideoConfigRecords(
+  records: Array<Record<string, unknown> | null>
+): Record<string, unknown> | null {
+  const merged: Record<string, unknown> = {};
+  let hasRecord = false;
+
+  records.forEach(record => {
+    if (!record) return;
+    hasRecord = true;
+    Object.entries(record).forEach(([key, value]) => {
+      const existingValue = merged[key];
+      if (isPlainRecord(existingValue) && isPlainRecord(value)) {
+        merged[key] = { ...existingValue, ...value };
+      } else if (Array.isArray(existingValue) && Array.isArray(value)) {
+        merged[key] = Array.from(new Set([...existingValue, ...value]));
+      } else {
+        merged[key] = value;
+      }
+    });
+  });
+
+  return hasRecord ? merged : null;
 }
 
 function getNestedValue(value: unknown, path: string[]): unknown {
@@ -1864,9 +2407,11 @@ function getNestedRecord(value: unknown, path: string[]): Record<string, unknown
     if (!current || typeof current !== 'object') return null;
     current = (current as Record<string, unknown>)[key];
   }
-  return current && typeof current === 'object' && !Array.isArray(current)
-    ? (current as Record<string, unknown>)
-    : null;
+  return isPlainRecord(current) ? (current as Record<string, unknown>) : null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function toPositiveNumber(value: unknown): number {
@@ -1881,6 +2426,13 @@ function isTruthy(value: unknown): boolean {
 function getReferenceKindFromFile(file: File, allowedKinds: ReferenceKind[]): ReferenceKind | null {
   const kind = allowedKinds.find(candidate => file.type.startsWith(candidate + '/'));
   return kind ?? null;
+}
+
+function getReferenceKindFromURL(referenceUrl: string): ReferenceKind {
+  const normalized = referenceUrl.trim().toLowerCase().split('?')[0]?.split('#')[0] ?? '';
+  if (/\.(mp4|mov|webm|m4v|avi|mkv)$/.test(normalized)) return 'video';
+  if (/\.(mp3|wav|m4a|aac|flac|ogg)$/.test(normalized)) return 'audio';
+  return 'image';
 }
 
 async function uploadVideoReferenceFile(file: File, missingUrlMessage: string): Promise<string> {

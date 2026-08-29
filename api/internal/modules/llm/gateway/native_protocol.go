@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	modelCategoryImage             = "image"
 	modelCategoryResponses         = "responses"
 	modelCategoryAnthropicMessages = "anthropic_messages"
 )

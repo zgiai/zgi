@@ -1060,22 +1060,10 @@ func videoPricingInputVideo(req *adapter.VideoTaskRequest, resp *adapter.VideoRe
 }
 
 func (s *llmGatewayServiceImpl) organizationUSDToCNYRate(ctx context.Context, organizationID uuid.UUID) decimal.Decimal {
-	fallback := decimal.NewFromInt(7)
-	if s == nil || s.db == nil || organizationID == uuid.Nil {
-		return fallback
+	if s == nil {
+		return decimal.NewFromInt(7)
 	}
-	var row struct {
-		USDToCNYRate decimal.Decimal `gorm:"column:usd_to_cny_rate"`
-	}
-	err := s.db.WithContext(ctx).
-		Table("organizations").
-		Select("usd_to_cny_rate").
-		Where("id = ?", organizationID).
-		Take(&row).Error
-	if err != nil || !row.USDToCNYRate.IsPositive() {
-		return fallback
-	}
-	return row.USDToCNYRate
+	return loadOrganizationUSDToCNYRate(ctx, s.db, organizationID)
 }
 
 func isSuccessfulVideoStatus(status string) bool {

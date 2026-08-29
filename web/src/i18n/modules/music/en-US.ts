@@ -18,6 +18,7 @@ const messages = {
   selectModel: 'Select a model',
   loadingModels: 'Loading models…',
   noModels: 'No available music model. Enable a channel with music generation capability first.',
+  voiceInputInUse: 'In use',
   retry: 'Retry',
   mode: 'Mode',
   modes: {

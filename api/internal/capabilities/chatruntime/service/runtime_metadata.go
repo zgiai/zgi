@@ -115,11 +115,15 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 	if prepared == nil || prepared.Message == nil {
 		return
 	}
+	suppressContent := prepared.parts != nil && prepared.parts.AgentMemoryEnabled
+	if suppressContent {
+		trace = modelInvocationTraceWithoutContent(trace)
+	}
 	invocation := modelInvocationFromTrace(trace, runtimeUserSystemPrompt(prepared), shouldRedactModelInvocationRequest(prepared))
 	if len(invocation) == 0 {
 		return
 	}
-	if shouldPersistAgentLogContext(prepared) {
+	if shouldPersistAgentLogContext(prepared) && !suppressContent {
 		invocation["log_context"] = modelInvocationLogContext(trace.Request, runtimeUserSystemPrompt(prepared))
 	}
 	metadata := mergeModelInvocationMetadata(prepared.Message.Metadata, invocation)
@@ -148,6 +152,18 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		logger.WarnContext(ctx, "failed to persist aichat model invocation metadata", "message_id", prepared.Message.ID.String(), err)
 	}
+}
+
+func modelInvocationTraceWithoutContent(trace skillloop.ModelInvocationTrace) skillloop.ModelInvocationTrace {
+	if trace.Request != nil {
+		trace.Request = &adapter.ChatRequest{
+			Provider: trace.Request.Provider,
+			Model:    trace.Request.Model,
+			Stream:   trace.Request.Stream,
+		}
+	}
+	trace.Response = nil
+	return trace
 }
 
 func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
@@ -1201,6 +1217,48 @@ func clientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 	return metadata
 }
 
+// ClientVisibleMessageMetadata returns the public projection of durable message
+// metadata. Model-replay transcripts and detailed model request/response traces
+// remain available to backend history reconstruction and diagnostics only.
+func ClientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
+	metadata := RedactPrivateContextMetadata(source)
+	if len(metadata) == 0 {
+		return metadata
+	}
+	if raw, ok := metadata["model_invocations"]; ok {
+		delete(metadata, "model_invocations")
+		metadata["model_invocations_redacted"] = true
+		if count := len(modelInvocationsFromMetadata(raw)); count > 0 {
+			metadata["model_invocation_count"] = count
+		}
+	}
+	if control := copyStringAnyMap(mapFromOperationContext(metadata["context_control"])); len(control) > 0 {
+		if compaction := mapFromOperationContext(control["compaction"]); len(compaction) > 0 {
+			publicCompaction := map[string]interface{}{}
+			if status := strings.TrimSpace(stringFromAny(compaction["status"])); status != "" {
+				publicCompaction["status"] = status
+			}
+			if len(publicCompaction) == 0 {
+				delete(control, "compaction")
+			} else {
+				control["compaction"] = publicCompaction
+			}
+		}
+		metadata["context_control"] = control
+	}
+	return clientVisibleMessageMetadata(metadata)
+}
+
+// RedactPrivateContextMetadata returns a detached metadata copy before it
+// crosses an HTTP or SSE boundary. The durable turn transcript remains private
+// DB metadata used only to reconstruct later model requests.
+func RedactPrivateContextMetadata(source map[string]interface{}) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	delete(metadata, agentTranscriptMetadataKey)
+	delete(metadata, agentTranscriptVersionMetadataKey)
+	return metadata
+}
+
 func filterFinalAnswerInvocations(value interface{}) ([]map[string]interface{}, bool) {
 	invocations := skillInvocationsFromMetadata(value)
 	if len(invocations) == 0 {
@@ -1381,6 +1439,70 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 	}
 	if trace.BudgetEstimateScale > 0 {
 		invocation["budget_estimate_scale"] = trace.BudgetEstimateScale
+	}
+	agentContext := map[string]interface{}{}
+	if value := strings.TrimSpace(trace.AgentRunID); value != "" {
+		agentContext["agent_run_id"] = value
+	}
+	if trace.ContextAPIRound > 0 {
+		agentContext["api_round"] = trace.ContextAPIRound
+	}
+	if value := strings.TrimSpace(trace.ContextRequestType); value != "" {
+		agentContext["request_type"] = value
+	}
+	if value := strings.TrimSpace(trace.ContextDecision); value != "" {
+		agentContext["decision"] = value
+	}
+	if trace.ContextModelWindowTokens > 0 {
+		agentContext["model_window_tokens"] = trace.ContextModelWindowTokens
+	}
+	if trace.ContextConfiguredWindowK > 0 {
+		agentContext["configured_window_k"] = trace.ContextConfiguredWindowK
+	}
+	if trace.ContextEffectiveWindow > 0 {
+		agentContext["effective_window_tokens"] = trace.ContextEffectiveWindow
+	}
+	if trace.ContextWindowClamped {
+		agentContext["window_clamped"] = true
+	}
+	if trace.ContextSoftLimit > 0 {
+		agentContext["soft_limit"] = trace.ContextSoftLimit
+	}
+	if trace.ContextHardLimit > 0 {
+		agentContext["hard_limit"] = trace.ContextHardLimit
+	}
+	if trace.ContextTargetTokens > 0 {
+		agentContext["target_tokens"] = trace.ContextTargetTokens
+	}
+	if trace.ContextFixedTokens > 0 {
+		agentContext["fixed_tokens"] = trace.ContextFixedTokens
+	}
+	if trace.ContextCompressibleTokens > 0 {
+		agentContext["compressible_tokens"] = trace.ContextCompressibleTokens
+	}
+	if trace.ContextToolTokensBefore > 0 {
+		agentContext["tool_result_tokens_before"] = trace.ContextToolTokensBefore
+	}
+	if trace.ContextToolTokensAfter > 0 {
+		agentContext["tool_result_tokens_after"] = trace.ContextToolTokensAfter
+	}
+	if trace.ContextToolProjectionCount > 0 {
+		agentContext["tool_projection_count"] = trace.ContextToolProjectionCount
+	}
+	if trace.ContextLossyRecoveryRounds > 0 {
+		agentContext["lossy_recovery_dropped_rounds"] = trace.ContextLossyRecoveryRounds
+	}
+	if trace.ContextCompactedThrough > 0 {
+		agentContext["compacted_through_api_round"] = trace.ContextCompactedThrough
+	}
+	if trace.ContextCompactionFailures > 0 {
+		agentContext["consecutive_compaction_failures"] = trace.ContextCompactionFailures
+	}
+	if trace.BudgetPromptLimit > 0 && trace.EstimatedPromptTokens > 0 {
+		agentContext["pressure"] = float64(trace.EstimatedPromptTokens) / float64(trace.BudgetPromptLimit)
+	}
+	if len(agentContext) > 0 {
+		invocation["agent_context"] = agentContext
 	}
 	if strings.TrimSpace(userSystemPrompt) != "" {
 		invocation["user_system_prompt"] = strings.TrimSpace(userSystemPrompt)
@@ -2085,6 +2207,7 @@ func applySkillInvocationSummary(metadata map[string]interface{}, invocations []
 	loadedSeen := map[string]struct{}{}
 	toolSeen := map[string]struct{}{}
 	toolCallCount := 0
+	memoryOperationCount := 0
 	guardrailCount := 0
 	addConfiguredSkillIDs(metadata, selectedSeen, &selected)
 
@@ -2115,6 +2238,9 @@ func applySkillInvocationSummary(metadata map[string]interface{}, invocations []
 				toolsUsed = append(toolsUsed, toolName)
 			}
 		}
+		if kind == "memory_mutation" {
+			memoryOperationCount++
+		}
 		if kind == "guardrail" {
 			guardrailCount++
 		}
@@ -2127,6 +2253,7 @@ func applySkillInvocationSummary(metadata map[string]interface{}, invocations []
 	metadata["skill_step_count"] = actionTraceCount
 	metadata["skill_call_count"] = actionTraceCount
 	metadata["tool_call_count"] = toolCallCount
+	metadata["memory_operation_count"] = memoryOperationCount
 	metadata["guardrail_count"] = guardrailCount
 	metadata["skill_names"] = selected
 	metadata["tool_names"] = toolsUsed
@@ -3056,7 +3183,7 @@ func countSkillActionInvocations(invocations []map[string]interface{}) int {
 
 func visibleSkillInvocationKind(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "skill_load", "skill_load_attempt", "reference_read", "tool_call", "tool_governance", "client_action", "intermediate_answer", "user_input_request", "guardrail":
+	case "skill_load", "skill_load_attempt", "reference_read", "tool_call", "tool_governance", "client_action", "intermediate_answer", "user_input_request", "guardrail", "memory_mutation":
 		return true
 	default:
 		return false

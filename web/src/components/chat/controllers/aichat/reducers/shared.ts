@@ -798,6 +798,7 @@ export function clearRuntimeMessageMetadata(
 export function isTransientProgressItem(item: AIChatAgenticTimelineItem): boolean {
   return (
     item.type === 'progress_text' &&
+    item.status !== 'completed' &&
     !item.content.trim() &&
     (item.transient === true || Boolean(item.phase))
   );

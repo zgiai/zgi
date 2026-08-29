@@ -508,12 +508,14 @@ func (s *service) prepareUserInputContinuationChat(
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
-	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
+	applyAgentMemoryToolsPolicy(parts)
+	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
 		return nil, err
 	}
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
+	appendCurrentTurnAgentTranscript(llmRequest, message)
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
@@ -529,6 +531,7 @@ func (s *service) prepareUserInputContinuationChat(
 		Continuation:     true,
 		ContinuationType: "user_input",
 		parts:            parts,
+		contextBudget:    contextResult,
 	}, nil
 }
 

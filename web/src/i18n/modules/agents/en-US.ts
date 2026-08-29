@@ -2075,6 +2075,8 @@ const messages = {
         'Resource status changed. Review the latest rollback impact and retry.',
       bindingRevisionRebased:
         'Bindings changed elsewhere. Non-binding edits were kept and server bindings were applied: {resources}',
+      memoryRevisionChanged:
+        'Memory settings changed elsewhere. Your draft was kept; refresh and review it before saving again.',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
       fixMemorySlotsBeforeSave: 'Fix memory item keys before saving.',
       fixMemorySlotsBeforePublish: 'Fix memory item keys before publishing.',
@@ -2558,6 +2560,9 @@ const messages = {
       agentTitle: 'Memory',
       agentDescription:
         'Define what the Agent should remember for each user. Each memory item has a stable ID and an optional display name.',
+      autoExtractionTitle: 'Organize and update memory automatically',
+      autoExtractionDescription:
+        'Once enabled, the Agent identifies user information, preferences, and requests worth keeping from conversations and updates memory automatically, helping future responses feel more relevant. This may add model calls during a conversation or after it becomes idle, increasing token usage.',
       emptySlots: 'No memory items configured yet.',
       addSlot: 'Add memory item',
       addCustomSlot: 'Custom item',

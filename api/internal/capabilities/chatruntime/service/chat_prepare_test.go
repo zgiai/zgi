@@ -144,6 +144,10 @@ func (f fakeWaitingMessageRepo) ListBranch(context.Context, uuid.UUID, int) ([]*
 	panic("not implemented")
 }
 
+func (f fakeWaitingMessageRepo) ListBranchPage(context.Context, uuid.UUID, uuid.UUID, *uuid.UUID, int) (*repository.MessageBranchPage, error) {
+	panic("not implemented")
+}
+
 func (f fakeWaitingMessageRepo) CountByConversation(context.Context, uuid.UUID) (int64, error) {
 	panic("not implemented")
 }

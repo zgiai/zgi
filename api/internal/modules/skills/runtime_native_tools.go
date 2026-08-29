@@ -466,9 +466,9 @@ func AppendNativeToolProjections(
 
 // dependencyOrderedNativeToolProjections emits every eligible preparation
 // Action before the target Action that declares it. Therefore any prefix cut by
-// the direct-alias limit is dependency-closed: a target can never consume a
-// slot while its authorized same-connection preparation Action is displaced by
-// an unrelated projection.
+	// the direct-alias limit is dependency-closed: a target can never consume a
+	// slot while its authorized same-connection preparation Action is displaced by
+	// an unrelated projection.
 func dependencyOrderedNativeToolProjections(projections []NativeToolProjection, limit int) []NativeToolProjection {
 	if len(projections) < 2 {
 		return append([]NativeToolProjection(nil), projections...)

@@ -149,6 +149,55 @@ func TestProcessTimelineRecorderKeepsPresentationOrderAcrossActionsAndContinuati
 	}
 }
 
+func TestProcessTimelineKeepsDelegatedFinalOutputAcrossLifecycleEvents(t *testing.T) {
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(t.Context(), t.Context(), &service{}, prepared, nil)
+
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{
+		"answer": "streamed ", "presentation_role": presentationRoleFinalOutput,
+	}); err != nil {
+		t.Fatalf("record delegated output: %v", err)
+	}
+	if err := recorder.RecordEvent("workflow_finished", map[string]interface{}{"workflow_run_id": "run-1", "status": "succeeded"}); err != nil {
+		t.Fatalf("record workflow finish: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventSkillCallEnd, map[string]interface{}{"invocation_id": "call-1", "status": "success"}); err != nil {
+		t.Fatalf("record skill finish: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{
+		"answer": "answer", "presentation_role": presentationRoleFinalOutput,
+	}); err != nil {
+		t.Fatalf("record reconciled output: %v", err)
+	}
+	if err := recorder.FinalizePresentation(nil); err != nil {
+		t.Fatalf("finalize presentation: %v", err)
+	}
+
+	projection := presentationProjectionFromMetadata(message.Metadata)
+	var finalItems []map[string]interface{}
+	for _, item := range projection.Items {
+		if stringFromAny(item["kind"]) == presentationKindText {
+			finalItems = append(finalItems, item)
+		}
+	}
+	if len(finalItems) != 1 {
+		t.Fatalf("presentation = %#v, want one delegated final output segment", projection)
+	}
+	if got := stringFromAny(finalItems[0]["content"]); got != "streamed answer" {
+		t.Fatalf("final output = %q, want streamed answer", got)
+	}
+	if got := stringFromAny(finalItems[0]["content_phase"]); got != presentationPhaseFinal {
+		t.Fatalf("final output phase = %q, want final", got)
+	}
+	if got := stringFromAny(finalItems[0]["presentation_role"]); got != presentationRoleFinalOutput {
+		t.Fatalf("final output role = %q, want %q", got, presentationRoleFinalOutput)
+	}
+}
+
 func TestProcessTimelineRecorderDiscardsRetractedControlNarration(t *testing.T) {
 	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
 	prepared := &PreparedChat{

@@ -20,11 +20,13 @@ import (
 type PricingOperation string
 
 const (
-	PricingOperationChat      PricingOperation = "chat"
-	PricingOperationEmbedding PricingOperation = "embedding"
-	PricingOperationRerank    PricingOperation = "rerank"
-	PricingOperationImage     PricingOperation = "image_generation"
-	PricingOperationVideo     PricingOperation = "video_generation"
+	PricingOperationChat          PricingOperation = "chat"
+	PricingOperationEmbedding     PricingOperation = "embedding"
+	PricingOperationRerank        PricingOperation = "rerank"
+	PricingOperationImage         PricingOperation = "image_generation"
+	PricingOperationVideo         PricingOperation = "video_generation"
+	PricingOperationSpeech        PricingOperation = "speech_generation"
+	PricingOperationTranscription PricingOperation = "transcription"
 )
 
 type PricingMeter string

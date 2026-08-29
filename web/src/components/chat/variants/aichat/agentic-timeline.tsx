@@ -176,6 +176,7 @@ interface AIChatAgenticTimelineProps {
   defaultOpen?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  showWorkflowFailureDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
   suppressPendingToolGovernanceApprovals?: boolean;
   messageStatus?: AIChatMessage['status'];
@@ -1116,18 +1117,14 @@ function SkillTimelineRow({
   );
 }
 
-function memoryEventContent(item: MemoryTimelineItem): string {
-  return (item.event.content ?? item.event.content_preview ?? '').trim();
-}
-
 function memoryEventTitle(
   item: MemoryTimelineItem,
   locale: string,
   showMemoryKey: boolean
 ): string {
   return getAIChatUserMemoryMutationTitle(item.event.action, locale, {
-    content: item.event.content_preview || item.event.content,
-    entryId: item.event.entry_id ?? (showMemoryKey ? item.event.key : undefined),
+    content: showMemoryKey ? undefined : item.event.content_preview || item.event.content,
+    entryId: showMemoryKey ? undefined : item.event.entry_id,
   });
 }
 
@@ -1139,61 +1136,25 @@ function MemoryTimelineRow({
   showMemoryKey: boolean;
 }) {
   const { locale } = useLocale();
-  const [isOpen, setIsOpen] = useState(false);
-  const content = memoryEventContent(item);
-  const canExpand = Boolean(
-    content || (showMemoryKey && item.event.key) || item.event.category || item.event.memory_type
-  );
+  const t = useT('webapp');
+  const memoryDisplayName = item.event.display_name || item.event.key;
 
   return (
-    <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 text-xs text-foreground">
-      <button
-        type="button"
-        className="flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left"
-        onClick={() => canExpand && setIsOpen(open => !open)}
-        aria-expanded={isOpen}
-      >
-        <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-background text-emerald-600">
-          <CheckCircle2 className="size-3.5" />
+    <div className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-left text-xs text-foreground">
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-background text-emerald-600">
+        <CheckCircle2 className="size-3.5" />
+      </span>
+      <span className="min-w-0 flex-1 truncate">
+        {!showMemoryKey &&
+        item.event.memory_scope === 'agent' &&
+        item.event.source_kind === 'automatic'
+          ? t('agentChat.memory.autoUpdated')
+          : memoryEventTitle(item, locale, showMemoryKey)}
+      </span>
+      {showMemoryKey && memoryDisplayName ? (
+        <span className="max-w-32 shrink-0 truncate rounded border border-emerald-500/20 bg-background/70 px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          {memoryDisplayName}
         </span>
-        <span className="min-w-0 flex-1 truncate">
-          {memoryEventTitle(item, locale, showMemoryKey)}
-        </span>
-        {showMemoryKey && item.event.key ? (
-          <span className="max-w-32 shrink-0 truncate rounded border border-emerald-500/20 bg-background/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-            {item.event.key}
-          </span>
-        ) : null}
-        {canExpand ? (
-          <ChevronDown
-            className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', {
-              'rotate-180': isOpen,
-            })}
-          />
-        ) : null}
-      </button>
-      {isOpen ? (
-        <div className="space-y-2 border-t border-emerald-500/15 bg-background/70 px-2.5 py-2">
-          {content ? (
-            <div className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background p-2 leading-relaxed text-foreground/85">
-              {content}
-            </div>
-          ) : null}
-          {item.event.category || item.event.memory_type ? (
-            <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-              {item.event.category ? (
-                <span className="rounded border bg-background/80 px-1.5 py-0.5">
-                  {item.event.category}
-                </span>
-              ) : null}
-              {item.event.memory_type ? (
-                <span className="rounded border bg-background/80 px-1.5 py-0.5">
-                  {item.event.memory_type}
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
       ) : null}
     </div>
   );
@@ -3174,7 +3135,13 @@ function ToolGovernanceDecisionRow({
   );
 }
 
-function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
+function WorkflowTimelineRow({
+  item,
+  showFailureDetails,
+}: {
+  item: WorkflowTimelineItem;
+  showFailureDetails: boolean;
+}) {
   const nodes: WorkflowRunNodeListItem[] = item.nodes.map((node, index) => ({
     title: node.title ?? node.nodeId ?? node.nodeType ?? '',
     nodeId: node.nodeId ?? `workflow-node-${index}`,
@@ -3204,6 +3171,7 @@ function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
         elapsedTime={item.elapsedTime}
         error={item.error}
         items={nodes}
+        showFailureDetails={showFailureDetails}
         defaultOpen={item.status === 'running' || item.status === 'pending_approval'}
         className="max-w-3xl rounded-md bg-background"
       />
@@ -3603,7 +3571,11 @@ function isSupersededResolvedApprovalGovernanceItem(
 function isTransientProgressItem(
   item: Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>
 ) {
-  return !item.content.trim() && (item.transient === true || Boolean(item.phase));
+  return (
+    item.status !== 'completed' &&
+    !item.content.trim() &&
+    (item.transient === true || Boolean(item.phase))
+  );
 }
 
 function stableIndex(value: string, length: number): number {
@@ -3621,6 +3593,13 @@ function buildProgressText(
   locale: string,
   t: WebappTranslator
 ) {
+  if (item.phase === 'context_compaction') {
+    return t(
+      item.status === 'completed'
+        ? 'consoleChat.contextCompaction.completed'
+        : 'consoleChat.contextCompaction.running'
+    );
+  }
   if (item.phase !== 'tool_planning') {
     if (item.phase === 'planning') {
       return t('consoleChat.skills.agentic.preparingAction');
@@ -3651,6 +3630,9 @@ function buildTransientProgressText(
   locale: string,
   t: WebappTranslator
 ) {
+  if (item.phase === 'context_compaction') {
+    return t('consoleChat.contextCompaction.running');
+  }
   if (item.phase === 'client_action') {
     return t('consoleChat.skills.agentic.clientAction');
   }
@@ -3882,6 +3864,7 @@ function TimelineRenderRow({
   skillDisplayById,
   showMemoryKey,
   showSkillEventDetails,
+  showWorkflowFailureDetails,
   enableToolGovernanceApprovals,
   onToolGovernanceDecision,
 }: {
@@ -3889,6 +3872,7 @@ function TimelineRenderRow({
   skillDisplayById: AIChatSkillDisplayMap;
   showMemoryKey: boolean;
   showSkillEventDetails: boolean;
+  showWorkflowFailureDetails: boolean;
   enableToolGovernanceApprovals: boolean;
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
@@ -3897,7 +3881,11 @@ function TimelineRenderRow({
   switch (item.renderType) {
     case 'transient_progress':
       return (
-        <div className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse">
+		<div
+		  className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse"
+		  role="status"
+		  aria-live="polite"
+		>
           <span>{item.content}</span>
         </div>
       );
@@ -3934,7 +3922,9 @@ function TimelineRenderRow({
         />
       );
     case 'workflow':
-      return <WorkflowTimelineRow item={item.item} />;
+      return (
+        <WorkflowTimelineRow item={item.item} showFailureDetails={showWorkflowFailureDetails} />
+      );
     case 'skill':
       return <SkillTimelineRow event={item.view} showDetails={showSkillEventDetails} />;
   }
@@ -4043,6 +4033,7 @@ export function AIChatAgenticTimeline({
   defaultOpen = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
+  showWorkflowFailureDetails = true,
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
   messageStatus,
@@ -4192,6 +4183,7 @@ export function AIChatAgenticTimeline({
               skillDisplayById={skillDisplayById}
               showMemoryKey={showMemoryKey}
               showSkillEventDetails={showSkillEventDetails}
+              showWorkflowFailureDetails={showWorkflowFailureDetails}
               enableToolGovernanceApprovals={enableToolGovernanceApprovals}
               onToolGovernanceDecision={onToolGovernanceDecision}
             />

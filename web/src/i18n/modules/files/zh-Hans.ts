@@ -125,6 +125,7 @@ const messages: FilesMessages = {
     fileMeta: '{extension} 原文件预览',
     loading: '正在加载预览...',
     loadError: '文件预览加载失败',
+    fileMissing: '文件已丢失或被删除，无法预览',
     noFileSelected: '未选择文件',
     unsupportedTitle: '暂不支持预览该文件',
     unsupportedDescription:

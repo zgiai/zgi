@@ -1208,16 +1208,17 @@ func (s *channelService) GetRoutesForModel(ctx context.Context, organizationID u
 		}
 
 		qr := &model.RouteQueryResult{
-			RouteID:        r.ID,
-			OrganizationID: r.OrganizationID,
-			Type:           r.Type,
-			Source:         model.RouteSourceExplicit,
-			Name:           r.Name,
-			Priority:       r.Priority,
-			Weight:         r.Weight,
-			ModelMaps:      r.ModelMaps,
-			ParamOverride:  r.ParamOverride,
-			HeaderOverride: r.HeaderOverride,
+			RouteID:         r.ID,
+			OrganizationID:  r.OrganizationID,
+			Type:            r.Type,
+			Source:          model.RouteSourceExplicit,
+			Name:            r.Name,
+			Priority:        r.Priority,
+			Weight:          r.Weight,
+			NativeProtocols: r.NativeProtocols,
+			ModelMaps:       r.ModelMaps,
+			ParamOverride:   r.ParamOverride,
+			HeaderOverride:  r.HeaderOverride,
 		}
 
 		// Fill in details based on route type

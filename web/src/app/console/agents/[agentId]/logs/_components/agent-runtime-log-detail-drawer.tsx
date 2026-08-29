@@ -7,6 +7,7 @@ import {
   AlertCircle,
   Bot,
   BookOpenText,
+  Brain,
   ChevronRight,
   Clock,
   Hash,
@@ -275,6 +276,7 @@ function stepIcon(type: string) {
     return Workflow;
   }
   if (type === 'reference_read') return BookOpenText;
+  if (type === 'memory_mutation') return Brain;
   if (type === 'guardrail') return ShieldAlert;
   return Hash;
 }

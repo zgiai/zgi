@@ -556,6 +556,8 @@ func agentRuntimeEventType(event map[string]interface{}) string {
 		return "user_input_request"
 	case "guardrail":
 		return "guardrail"
+	case "memory_mutation":
+		return "memory_mutation"
 	case "workflow_run":
 		return "workflow_run"
 	case "workflow_node":
@@ -605,6 +607,21 @@ func agentRuntimeEventTitle(event map[string]interface{}) string {
 		return "User input requested"
 	case "guardrail":
 		return "Guardrail"
+	case "memory_mutation":
+		name := runtimeString(event["display_name"])
+		if name == "" {
+			name = runtimeString(event["key"])
+		}
+		if runtimeString(event["action"]) == "clear" {
+			if name != "" {
+				return "Memory cleared: " + name
+			}
+			return "Memory cleared"
+		}
+		if name != "" {
+			return "Memory updated: " + name
+		}
+		return "Memory updated"
 	case "workflow_run":
 		return workflowRunTitle(event)
 	case "workflow_node":

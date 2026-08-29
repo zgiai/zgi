@@ -16,10 +16,17 @@ import (
 const planExpectedActionServerProjectionKey = "_server_projected_tool_name"
 const planExpectedActionServerBindingFingerprintKey = "_server_projected_binding_fingerprint"
 
-func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession) []adapter.Tool {
+func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool) []adapter.Tool {
+	runtimeDefinitions := make([]adapter.Tool, 0, len(runtimeTools))
+	for _, runtimeTool := range runtimeTools {
+		if strings.TrimSpace(runtimeTool.Definition.Function.Name) != "" && runtimeTool.Handler != nil {
+			runtimeDefinitions = append(runtimeDefinitions, runtimeTool.Definition)
+		}
+	}
 	if session != nil {
 		current := session.ToolSet()
 		tools := append([]adapter.Tool(nil), current.ProviderTools...)
+		tools = append(tools, runtimeDefinitions...)
 		return append(tools, skills.NativeControlToolsForSession(
 			resolved,
 			current.ActiveSkillIDs,
@@ -28,11 +35,52 @@ func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.Nat
 		)...)
 	}
 	if toolSet == nil {
-		return skills.NativeControlToolsForSkills(resolved, nil)
+		return append(runtimeDefinitions, skills.NativeControlToolsForSkills(resolved, nil)...)
 	}
 	tools := append([]adapter.Tool(nil), toolSet.ProviderTools...)
+	tools = append(tools, runtimeDefinitions...)
 	tools = append(tools, skills.NativeControlToolsForSkills(resolved, toolSet.ActiveSkillIDs)...)
 	return tools
+}
+
+func runtimeToolForCall(runtimeTools []RuntimeTool, call adapter.ToolCall) (RuntimeTool, bool) {
+	name := strings.TrimSpace(call.Function.Name)
+	for _, runtimeTool := range runtimeTools {
+		if runtimeTool.Handler != nil && strings.EqualFold(strings.TrimSpace(runtimeTool.Definition.Function.Name), name) {
+			return runtimeTool, true
+		}
+	}
+	return RuntimeTool{}, false
+}
+
+func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTool RuntimeTool) skillStepResult {
+	result := runtimeTool.Handler(ctx, call)
+	status := strings.TrimSpace(result.Status)
+	if status == "" {
+		status = "success"
+		if result.Error != nil {
+			status = "failed"
+		}
+	}
+	trace := skills.SkillTrace{
+		Kind:      "tool_call",
+		SkillID:   strings.TrimSpace(runtimeTool.SkillID),
+		ToolName:  strings.TrimSpace(runtimeTool.Definition.Function.Name),
+		Status:    status,
+		Arguments: result.Arguments,
+		Result:    result.Result,
+	}
+	if result.Error != nil {
+		trace.Error = status
+	}
+	message := skills.ToolResultMessage(call.ID, result.Result)
+	step := successfulSkillStep(trace, message, false, true)
+	step.toolResult = result.Result
+	if result.Recoverable {
+		step = recoverableSkillStep(trace, message, false, true)
+		step.toolResult = result.Result
+	}
+	return step
 }
 
 func nativeAgentLoopSystemMessage() adapter.Message {
@@ -53,6 +101,7 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"When no more tool calls are needed, provide the complete user-facing final answer as ordinary assistant content. For complex work, briefly state the completed result, the key basis for the work, and any material limitation or unfinished item.",
 		"Use update_plan only for short outcome or step status changes, never for detailed reasoning. Use submit_turn_state when exact working state must survive approval, navigation, refresh, user input, or another continuation boundary.",
 		"Use read_skill_reference only when an active skill's instructions require a reference. Use request_user_input only when missing information blocks reliable progress.",
+		"When a projected or compacted tool-result receipt omits evidence needed for the current task, use read_context_artifact with its exact artifact_ref to retrieve the complete original result.",
 		"All user-visible progress, questions, and final answers must use the language of the user's latest request. Never expose internal protocol details, hidden reasoning, tool aliases, IDs, or bookkeeping.",
 		"Never claim an external action succeeded without a matching successful tool result. Do not repeat a failed tool call with unchanged arguments.",
 		"Read-only calls may be grouped when useful, but call at most one side-effecting or governed mutation in one assistant turn, then wait for its result.",
@@ -507,7 +556,6 @@ func nativeExternalActionPreparationHintsContainAction(
 	}
 	return false
 }
-
 func nativeMaterializeProjectedActionDefaults(
 	arguments map[string]interface{},
 	defaults map[string]interface{},
@@ -593,7 +641,7 @@ func nativeSessionControlCallsOnly(calls []adapter.ToolCall) bool {
 	}
 	for _, call := range calls {
 		switch strings.TrimSpace(call.Function.Name) {
-		case skills.MetaToolActivateSkills, skills.MetaToolSearchSkills:
+		case skills.MetaToolActivateSkills, skills.MetaToolSearchSkills, contextArtifactToolName:
 			continue
 		default:
 			return false

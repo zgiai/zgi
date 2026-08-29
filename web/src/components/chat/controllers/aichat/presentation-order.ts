@@ -165,6 +165,7 @@ export function processTextPresentationItem(
     content:
       typeof payload.segment_content === 'string' ? payload.segment_content : fallbackContent,
     content_phase: phase,
+    presentation_role: payload.presentation_role === 'final_output' ? 'final_output' : undefined,
     created_at_ms: typeof payload.created_at_ms === 'number' ? payload.created_at_ms : Date.now(),
   };
 }
@@ -336,7 +337,11 @@ export function orderedPresentationTimeline(
   );
   presentationItems.forEach(item => {
     if (item.kind === 'text') {
-      if (item.content_phase !== 'final' && item.content) {
+      if (
+        item.content_phase !== 'final' &&
+        item.presentation_role !== 'final_output' &&
+        item.content
+      ) {
         ordered.push({
           id: item.presentation_id ?? item.segment_id,
           type: 'process_text',

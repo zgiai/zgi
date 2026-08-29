@@ -39,6 +39,7 @@ export interface WorkflowRunNodeListItem {
 export interface WorkflowRunNodesListProps {
   items: WorkflowRunNodeListItem[];
   showDetail?: boolean;
+  showFailureDetails?: boolean;
   variant?: 'panel' | 'canvas';
   hideCanvasNodeChrome?: boolean;
 }

@@ -198,6 +198,7 @@ const messages: AiProvidersMessages = {
     cohere: 'Cohere',
     deepseek: '深度求索',
     doubao: '豆包',
+    doubaoSpeech: '豆包语音',
     google: '谷歌',
     infiniai: '无问芯穹',
     meta: 'Meta',

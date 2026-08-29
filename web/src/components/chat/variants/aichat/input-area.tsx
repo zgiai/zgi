@@ -205,6 +205,7 @@ interface AIChatInputAreaProps {
   isModelInitializing?: boolean;
   modelMissing: boolean;
   isSending: boolean;
+  disabled?: boolean;
   canStop?: boolean;
   isStopping: boolean;
   onInputChange: (value: string) => void;
@@ -305,6 +306,7 @@ export function AIChatInputArea({
   isModelInitializing = false,
   modelMissing,
   isSending,
+  disabled = false,
   canStop,
   isStopping,
   onInputChange,
@@ -510,7 +512,9 @@ export function AIChatInputArea({
     !isModelInitializing &&
     !isPreparingSend &&
     !isUploading &&
-    !hasUploadError;
+    !hasUploadError &&
+    !disabled;
+  const interactionDisabled = disabled || isSending;
   const activeQuestions = useMemo(
     () => (activeUserInputRequest?.questions ?? []).filter(question => question.question?.trim()),
     [activeUserInputRequest?.questions]
@@ -570,7 +574,7 @@ export function AIChatInputArea({
     Boolean(activeQuestionAnswer.trim()) &&
     !isUploading &&
     !hasUploadError &&
-    !isSending;
+    !interactionDisabled;
 
   const handleVoiceInputError = useCallback(
     (error: unknown) => {
@@ -1167,7 +1171,7 @@ export function AIChatInputArea({
       event.preventDefault();
       if (event.dataTransfer) {
         event.dataTransfer.dropEffect =
-          isSending || isUploading || remainingSlots <= 0 ? 'none' : 'copy';
+          interactionDisabled || isUploading || remainingSlots <= 0 ? 'none' : 'copy';
       }
     };
 
@@ -1199,7 +1203,7 @@ export function AIChatInputArea({
       window.removeEventListener('dragleave', handleDragLeave);
       window.removeEventListener('drop', handleDrop);
     };
-  }, [enableUpload, enqueueFiles, isSending, isUploading, remainingSlots]);
+  }, [enableUpload, enqueueFiles, interactionDisabled, isUploading, remainingSlots]);
 
   return (
     <>
@@ -1209,7 +1213,7 @@ export function AIChatInputArea({
       />
       {enableUpload && !hasBlockingApproval && isDraggingFiles ? (
         <AIChatDragUploadOverlay
-          isSending={isSending}
+          isSending={interactionDisabled}
           isUploading={isUploading}
           remainingSlots={remainingSlots}
           attachmentLimit={AICHAT_ATTACHMENT_LIMIT}
@@ -1418,6 +1422,7 @@ export function AIChatInputArea({
                   <Textarea
                     ref={textareaRef}
                     value={input}
+                    disabled={disabled}
                     rows={1}
                     onChange={handleComposerInputChange}
                     onPaste={handlePaste}
@@ -1427,7 +1432,7 @@ export function AIChatInputArea({
                       if (event.key === 'Enter' && !event.shiftKey) {
                         if (shouldIgnoreCompositionEnter(event)) return;
                         if (
-                          isSending ||
+                          interactionDisabled ||
                           isPreparingSend ||
                           isModelInitializing ||
                           isUploading ||
@@ -1467,6 +1472,7 @@ export function AIChatInputArea({
               type="file"
               multiple
               hidden
+              disabled={disabled}
               accept={inputAccept}
               onChange={event => handleFilesSelected(event, 'document')}
             />
@@ -1475,6 +1481,7 @@ export function AIChatInputArea({
               type="file"
               multiple
               hidden
+              disabled={disabled}
               accept={buildFileInputAcceptAttribute(imageExtensions)}
               onChange={event => handleFilesSelected(event, 'image')}
             />
@@ -1486,7 +1493,7 @@ export function AIChatInputArea({
                 modelMissing={modelMissing}
                 modelCapabilityFilter={modelCapabilityFilter}
                 hasImageAttachment={hasImageAttachment}
-                isSending={isSending}
+                isSending={interactionDisabled}
                 canStop={canStop}
                 isUploading={isUploading || isPreparingSend}
                 isStopping={isStopping}

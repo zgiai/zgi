@@ -23,6 +23,7 @@ export type { NodeRunStatus, WorkflowRunNodeListItem } from './types';
 const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
   items,
   showDetail = true,
+  showFailureDetails = true,
   variant = 'panel',
   hideCanvasNodeChrome = false,
 }) => {
@@ -393,7 +394,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                 </div>
               </div>
             ) : null}
-            {!isCanvasVariant && raw.error ? (
+            {!isCanvasVariant && showFailureDetails && raw.error ? (
               <div
                 className="mt-2 rounded-md border border-destructive/15 bg-destructive/[0.03] px-2.5 py-2"
                 title={raw.error}
@@ -913,6 +914,7 @@ const WorkflowRunNodesList: React.FC<WorkflowRunNodesListProps> = ({
                               <WorkflowRunNodesList
                                 items={round.nodes}
                                 showDetail={showDetail}
+                                showFailureDetails={showFailureDetails}
                                 variant="panel"
                               />
                             </div>

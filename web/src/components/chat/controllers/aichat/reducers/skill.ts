@@ -271,6 +271,34 @@ function upsertMemoryTimelineItem(
 ): AIChatAgenticTimelineItem[] {
   const baseTimeline = removeTransientProgressItems(timeline);
   const presentationPosition = presentationPositionFromPayload(payload);
+  const isAutomaticAgentMemory =
+    payload.memory_scope === 'agent' && payload.source_kind === 'automatic';
+  if (isAutomaticAgentMemory) {
+    const itemId = `memory-auto-${payload.message_id}`;
+    const existingIndex = baseTimeline.findIndex(
+      item => item.type === 'memory_event' && item.id === itemId
+    );
+    const existing = existingIndex >= 0 ? baseTimeline[existingIndex] : undefined;
+    const existingKeys = existing?.type === 'memory_event' ? existing.event.keys ?? [] : [];
+    const keys = Array.from(
+      new Set([...existingKeys, ...(payload.key ? [payload.key] : [])].filter(Boolean))
+    );
+    const merged: AIChatAgenticTimelineItem = {
+      id: itemId,
+      type: 'memory_event',
+      event: {
+        ...(existing?.type === 'memory_event' ? existing.event : {}),
+        ...payload,
+        keys,
+        operation_count: keys.length,
+      },
+      created_at: payload.created_at ?? existing?.created_at,
+      event_id: eventId ?? (existing && 'event_id' in existing ? existing.event_id : null),
+      ...presentationPosition,
+    };
+    if (existingIndex < 0) return [...baseTimeline, merged];
+    return baseTimeline.map((item, index) => (index === existingIndex ? merged : item));
+  }
   const itemId =
     eventId ??
     `memory-${payload.action}-${payload.entry_id ?? 'entry'}-${payload.created_at ?? Date.now()}`;
@@ -789,6 +817,37 @@ export function applyAgentProgressState(
   if (hasSameEvent) {
     return current;
   }
+  if (payload.phase === 'context_compaction' && payload.progress_id) {
+    const existingIndex = timeline.findIndex(
+      item => item.type === 'progress_text' && item.progress_id === payload.progress_id
+    );
+    const status = payload.status === 'completed' ? 'completed' : 'running';
+    const item: AIChatAgenticTimelineItem = {
+      id: existingIndex >= 0 ? timeline[existingIndex].id : payload.progress_id,
+      type: 'progress_text',
+      content: '',
+      phase: payload.phase,
+      progress_id: payload.progress_id,
+      transient: status !== 'completed',
+      status,
+      created_at: payload.created_at,
+      event_id: eventId ?? null,
+    };
+    const nextTimeline = [...timeline];
+    if (existingIndex >= 0) nextTimeline[existingIndex] = item;
+    else nextTimeline.push(item);
+    return {
+      ...current,
+      streamingByMessageId: {
+        ...current.streamingByMessageId,
+        [payload.message_id]: {
+          ...previousStreaming,
+          timeline: nextTimeline,
+          last_event_id: eventId ?? previousStreaming.last_event_id,
+        },
+      },
+    };
+  }
   const lastItem = timeline[timeline.length - 1];
   const isRepeatedStructuredProgress =
     lastItem?.type === 'progress_text' &&
@@ -823,6 +882,7 @@ export function applyAgentProgressState(
       type: 'progress_text',
       content,
       phase: payload.phase,
+      progress_id: payload.progress_id,
       transient,
       meta_tool_name: payload.meta_tool_name,
       skill_id: payload.skill_id,

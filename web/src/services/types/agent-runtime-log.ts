@@ -65,6 +65,7 @@ export type AgentRuntimeStepType =
   | 'final_answer'
   | 'user_input_request'
   | 'guardrail'
+  | 'memory_mutation'
   | 'workflow_run'
   | 'workflow_node'
   | 'workflow_approval'

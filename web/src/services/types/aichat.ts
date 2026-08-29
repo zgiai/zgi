@@ -80,7 +80,8 @@ export type AIChatSkillInvocationKind =
   | 'intermediate_answer'
   | 'final_answer'
   | 'user_input_request'
-  | 'memory_planner';
+  | 'memory_planner'
+  | 'memory_mutation';
 
 export type AIChatMemoryMutationAction = 'create' | 'update' | 'delete' | 'clear';
 
@@ -262,6 +263,15 @@ export interface AIChatSkillInvocation {
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
+  memory_scope?: 'account' | 'agent';
+  action?: AIChatMemoryMutationAction;
+  key?: string;
+  display_name?: string;
+  mutation_status?: 'updated' | 'cleared' | 'unchanged' | string;
+  source_kind?: 'legacy' | 'explicit' | 'automatic' | 'manager';
+  operation_id?: string;
+  revision?: number;
+  undoable_until?: number;
 }
 
 export interface AIChatWorkflowRunNodeMetadata {
@@ -428,6 +438,7 @@ export interface AIChatPresentationTextItem extends AIChatPresentationPosition {
   segment_id: string;
   content: string;
   content_phase: AIChatPresentationContentPhase;
+  presentation_role?: 'final_output';
   created_at_ms?: number;
 }
 
@@ -626,6 +637,7 @@ export interface AIChatMessageChunkEventData extends AIChatPresentationPosition 
   segment_id?: string;
   segment_content?: string;
   content_phase?: AIChatPresentationContentPhase;
+  presentation_role?: 'final_output';
   __sensitiveOutputBlocked?: boolean;
 }
 
@@ -655,6 +667,7 @@ export interface AIChatErrorEventData {
   message?: string;
   code?: string | number;
   params?: Record<string, unknown>;
+  retryable?: boolean;
 }
 
 export interface AIChatSkillLoadStartEventData {
@@ -1039,7 +1052,8 @@ export interface AIChatAgentProgressEventData {
     | 'tool_planning'
     | 'model_processing'
     | 'client_action'
-    | 'client_action_result';
+    | 'client_action_result'
+    | 'context_compaction';
   progress_id?: string;
   stage?: 'initial' | 'extended' | 'long_running';
   activity?: 'awaiting_response' | 'reasoning' | 'preparing_action' | 'reviewing_tool_result';
@@ -1096,9 +1110,16 @@ export interface AIChatMemoryMutationEventData {
   action: AIChatMemoryMutationAction;
   entry_id?: string;
   key?: string;
+  display_name?: string;
   category?: string;
   memory_type?: string;
   status?: AIChatSkillActivityStatus;
+  source_kind?: 'legacy' | 'explicit' | 'automatic' | 'manager';
+  operation_id?: string;
+  revision?: number;
+  undoable_until?: number;
+  keys?: string[];
+  operation_count?: number;
   content?: string;
   content_preview?: string;
   created_at?: number;

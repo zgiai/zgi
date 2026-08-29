@@ -58,8 +58,14 @@ func TestBuildVideoRequestKeepsImageReferenceOutOfInputVideo(t *testing.T) {
 	references := videoReferenceURLs(req)
 	videoReq := buildVideoRequest("doubao", "seedance", "prompt", req, normalizeGenerateOptions(GenerateOptions{}), "user", references)
 
-	if videoReq.ImageURL != "https://example.com/ref.png" {
-		t.Fatalf("ImageURL = %q, want image reference", videoReq.ImageURL)
+	if len(videoReq.ReferenceURLs) != 1 || videoReq.ReferenceURLs[0] != "https://example.com/ref.png" {
+		t.Fatalf("ReferenceURLs = %#v, want image reference", videoReq.ReferenceURLs)
+	}
+	if len(videoReq.ReferenceTypes) != 1 || videoReq.ReferenceTypes[0] != "image" {
+		t.Fatalf("ReferenceTypes = %#v, want image", videoReq.ReferenceTypes)
+	}
+	if videoReq.ImageURL != "" || len(videoReq.ImageURLs) != 0 {
+		t.Fatalf("legacy image references = %q/%v, want empty for omni reference", videoReq.ImageURL, videoReq.ImageURLs)
 	}
 	if videoReq.VideoURL != "" {
 		t.Fatalf("VideoURL = %q, want empty for image reference", videoReq.VideoURL)
@@ -77,8 +83,14 @@ func TestBuildVideoRequestMarksVideoReferenceAsInputVideo(t *testing.T) {
 	references := videoReferenceURLs(req)
 	videoReq := buildVideoRequest("doubao", "seedance", "prompt", req, normalizeGenerateOptions(GenerateOptions{}), "user", references)
 
-	if videoReq.VideoURL != "https://example.com/ref.mp4" {
-		t.Fatalf("VideoURL = %q, want video reference", videoReq.VideoURL)
+	if len(videoReq.ReferenceURLs) != 1 || videoReq.ReferenceURLs[0] != "https://example.com/ref.mp4" {
+		t.Fatalf("ReferenceURLs = %#v, want video reference", videoReq.ReferenceURLs)
+	}
+	if len(videoReq.ReferenceTypes) != 1 || videoReq.ReferenceTypes[0] != "video" {
+		t.Fatalf("ReferenceTypes = %#v, want video", videoReq.ReferenceTypes)
+	}
+	if videoReq.VideoURL != "" {
+		t.Fatalf("VideoURL = %q, want empty for omni reference", videoReq.VideoURL)
 	}
 	if videoReq.ImageURL != "" || len(videoReq.ImageURLs) != 0 {
 		t.Fatalf("image references = %q/%v, want empty for video reference", videoReq.ImageURL, videoReq.ImageURLs)
@@ -132,6 +144,18 @@ func TestVideoErrorMessageExtractsUpstreamErrorText(t *testing.T) {
 
 	got := videoErrorMessage(err)
 	const want = "Error while downloading image"
+	if got != want {
+		t.Fatalf("videoErrorMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestVideoErrorMessageExtractsUpstreamTextFromAdapterError(t *testing.T) {
+	err := &adapter.AdapterError{
+		Message: "Video generation failed: all 1 candidate channels failed for video model doubao-seedance-2-0-260128: upstream error: The parameter `content[3]` specified in the request is not valid: audio duration is too long",
+	}
+
+	got := videoErrorMessage(err)
+	const want = "The parameter `content[3]` specified in the request is not valid: audio duration is too long"
 	if got != want {
 		t.Fatalf("videoErrorMessage() = %q, want %q", got, want)
 	}

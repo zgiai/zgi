@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
@@ -50,6 +52,8 @@ func (s *service) runPreparedToolLoop(
 	if s.llmClient == nil {
 		return "", nil, fmt.Errorf("llm client is not configured")
 	}
+	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
+	runtimeTools := s.agentMemoryRuntimeTools(persistCtx, prepared, timeline)
 	resolved := &skills.ResolvedSkills{}
 	if chatPartsBusinessSkillsEnabled(prepared.parts) {
 		if s.skillRuntime == nil {
@@ -71,17 +75,21 @@ func (s *service) runPreparedToolLoop(
 		if len(resolved.Skills) == 0 {
 			return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 		}
-	} else if prepared.parts == nil || !prepared.parts.ProtocolToolsEnabled {
+	} else if (prepared.parts == nil || !prepared.parts.ProtocolToolsEnabled) && len(runtimeTools) == 0 {
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 
-	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
+	contextManager, err := s.newAgentContextManager(ctx, prepared)
+	if err != nil {
+		return "", nil, err
+	}
 	runner := &skillloop.Runner{
 		LLMClient:             s.llmClient,
 		SkillRuntime:          s.skillRuntime,
 		AppContext:            newBillingAppContext(prepared),
 		ModelIdleTimeout:      s.modelIdleTimeoutValue(),
 		ModelProgressSchedule: s.modelProgressSchedule,
+		ContextManager:        contextManager,
 		OnEvent: func(event skillloop.Event) error {
 			if event.Type == skillloop.EventUserInputRequested {
 				s.persistUserInputRequestBestEffort(persistCtx, prepared, event.Payload)
@@ -94,6 +102,9 @@ func (s *service) runPreparedToolLoop(
 		},
 		OnArtifact: func(artifact map[string]interface{}) {
 			s.persistGeneratedArtifactBestEffort(ctx, prepared, artifact)
+		},
+		OnModelRequest: func(phase string, round int, request *adapter.ChatRequest, decision *contextmgr.Decision) {
+			s.writeAgentContextPromptDumpBestEffort(ctx, prepared, phase, round, request, decision)
 		},
 		OnModelInvocation: func(trace skillloop.ModelInvocationTrace) {
 			s.persistModelInvocationBestEffort(persistCtx, prepared, trace)
@@ -125,6 +136,10 @@ func (s *service) runPreparedToolLoop(
 	}
 	authorizeSkillStep := s.currentAgentSkillStepAuthorizer(prepared)
 	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
+	if len(runtimeTools) > 0 {
+		proactiveAllowed := prepared.parts.AgentMemoryAutoExtractionEnabled && globalAgentMemoryAutoExtractionEnabled()
+		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
+	}
 	executionContext := s.skillExecutionContext(prepared)
 	var externalActionProjections []integrationmetatools.ActionProjection
 	if nativeLoop {
@@ -135,7 +150,7 @@ func (s *service) runPreparedToolLoop(
 	var nativeSkillSession *skills.NativeSkillSession
 	if nativeLoop {
 		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, additionalSystemMessages)
-		reservedNativeToolNames := nativeProjectionReservedToolNames()
+		reservedNativeToolNames := nativeProjectionReservedToolNames(runtimeTools)
 		toolSetOptions := skills.NativeToolSetOptions{
 			TenantID:          prepared.Scope.OrganizationID.String(),
 			BudgetChars:       budgetChars,
@@ -147,7 +162,11 @@ func (s *service) runPreparedToolLoop(
 		}
 		protocol := nativeSkillProtocolForPrepared(prepared)
 		prepared.Message.Metadata["native_skill_protocol"] = protocol
-		if protocol == skills.NativeSkillProtocolProgressiveV1 {
+		if len(resolved.Skills) == 0 {
+			projected := skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{}}
+			nativeToolSet = &projected
+			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillDiagnostics(projected)
+		} else if protocol == skills.NativeSkillProtocolProgressiveV1 {
 			initialSkillIDs := nativeInitialActiveSkillIDs(prepared, resolved)
 			if len(nativeExternalActionTools) > 0 {
 				initialSkillIDs = appendUniqueNativeSkillID(initialSkillIDs, skills.SkillExternalApps)
@@ -212,11 +231,12 @@ func (s *service) runPreparedToolLoop(
 	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                       loopPrepared,
 		Resolved:                       resolved,
-		ProtocolToolsOnly:              len(resolved.Skills) == 0,
+		ProtocolToolsOnly:              len(resolved.Skills) == 0 && len(runtimeTools) == 0,
 		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
 		NativeAgentLoop:                nativeLoop,
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
+		RuntimeTools:                   runtimeTools,
 		ExecutionContext:               executionContext,
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
@@ -243,6 +263,7 @@ func (s *service) runPreparedToolLoop(
 	if err == nil && presentationErr != nil {
 		err = presentationErr
 	}
+	s.persistAgentTurnTranscript(persistCtx, prepared, contextManager, answer, err != nil)
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
@@ -392,6 +413,10 @@ func externalActionProjectedInputSchema(input map[string]interface{}) (map[strin
 	}
 	if _, collision := properties["plan_phase_id"]; collision {
 		return nil, false
+	}
+	properties["plan_phase_id"] = map[string]interface{}{
+		"type":        "string",
+		"description": "Required only when multiple plan phases call this same projected Action for the same target. Use the exact matching operation_plan phase id. The runtime removes this control value before provider execution.",
 	}
 	schema["properties"] = properties
 	return schema, true
@@ -2969,11 +2994,30 @@ func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
 
 func chatPartsToolLoopEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.ExecutionMode != executionModeDirectChat &&
-		(parts.ProtocolToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+		(parts.ProtocolToolsEnabled || parts.AgentMemoryToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
 }
 
-func nativeProjectionReservedToolNames() []string {
-	return []string{skillloop.ContextArtifactToolName}
+func runtimeToolNames(runtimeTools []skillloop.RuntimeTool) []string {
+	if len(runtimeTools) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(runtimeTools))
+	for _, runtimeTool := range runtimeTools {
+		if name := strings.TrimSpace(runtimeTool.Definition.Function.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func nativeProjectionReservedToolNames(runtimeTools []skillloop.RuntimeTool) []string {
+	names := append([]string(nil), runtimeToolNames(runtimeTools)...)
+	for _, existing := range names {
+		if strings.EqualFold(strings.TrimSpace(existing), skillloop.ContextArtifactToolName) {
+			return names
+		}
+	}
+	return append(names, skillloop.ContextArtifactToolName)
 }
 
 func continuationMessageForExecutionMode(message adapter.Message, mode string) adapter.Message {

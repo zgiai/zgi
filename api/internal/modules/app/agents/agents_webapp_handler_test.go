@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,12 +13,52 @@ import (
 	"github.com/stretchr/testify/require"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	file_model "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 )
+
+func TestAgentsHandlerFailRuntimeSanitizesAgentMemoryErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "invalid input", err: fmt.Errorf("%w: private slot detail", agentmemory.ErrInvalidInput), wantStatus: http.StatusBadRequest},
+		{name: "revision conflict", err: fmt.Errorf("%w: private revision detail", agentmemory.ErrConflict), wantStatus: http.StatusConflict, wantCode: agentMemoryValueRevisionConflictCode},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			(&AgentsHandler{}).failRuntime(ctx, test.err)
+
+			require.Equal(t, test.wantStatus, recorder.Code)
+			require.NotContains(t, recorder.Body.String(), "private")
+			if test.wantCode != "" {
+				require.Contains(t, recorder.Body.String(), test.wantCode)
+			}
+		})
+	}
+}
+
+func TestPutDirectMemoryRejectsNewWritesWhenMemoryIsDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/memory/profile", bytes.NewBufferString(`{"content":"value"}`))
+
+	(&AgentsHandler{}).putDirectMemory(ctx, memoryAccessScope{writesEnabled: false})
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
 
 func TestAgentsHandler_UpdateWebAppStatus_PassesContextAndRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -904,6 +945,10 @@ func (s *stubWebAppStatusHandlerService) ListAgentMemorySlots(context.Context, s
 
 func (s *stubWebAppStatusHandlerService) ReplaceAgentMemorySlots(context.Context, string, string, []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error) {
 	s.replaceMemorySlotsCalled = true
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) UpdateAgentMemoryConfig(context.Context, string, string, dto.AgentMemoryConfigRequest) (*dto.AgentMemoryConfigResponse, error) {
 	return nil, nil
 }
 

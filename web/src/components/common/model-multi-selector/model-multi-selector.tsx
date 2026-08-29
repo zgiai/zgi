@@ -43,6 +43,7 @@ export interface ModelMultiSelectorProps {
   preferredProvider?: string;
   autoCollapseOthers?: boolean;
   providerFilter?: string;
+  itemFilter?: (model: ModelItem) => boolean;
   onSelectionMetaChange?: (models: ModelItem[]) => void;
   supplementalModels?: ModelItem[];
   selectionPolicy?: ModelSelectionPolicy;
@@ -82,6 +83,7 @@ function ModelMultiSelectorBase({
   preferredProvider,
   autoCollapseOthers = false,
   providerFilter,
+  itemFilter,
   onSelectionMetaChange,
   supplementalModels = EMPTY_MODEL_ITEMS,
   selectionPolicy = 'available',
@@ -193,16 +195,17 @@ function ModelMultiSelectorBase({
       normalizedProviderFilter && normalizedProviderFilter !== 'all'
         ? allItems.filter(m => (m.provider || 'unknown').toLowerCase() === normalizedProviderFilter)
         : allItems;
+    const scopedItems = itemFilter ? providerItems.filter(itemFilter) : providerItems;
 
-    if (!search.trim()) return providerItems;
+    if (!search.trim()) return scopedItems;
     const keyword = search.trim().toLowerCase();
-    return providerItems.filter(
+    return scopedItems.filter(
       m =>
         m.model.toLowerCase().includes(keyword) ||
         (m.model_name && m.model_name.toLowerCase().includes(keyword)) ||
         (m.provider && m.provider.toLowerCase().includes(keyword))
     );
-  }, [allItems, providerFilter, search]);
+  }, [allItems, itemFilter, providerFilter, search]);
 
   // Group models by provider
   const groupedModels = useMemo<ProviderGroup[]>(() => {
@@ -445,22 +448,29 @@ function ModelMultiSelectorBase({
           <div className="text-xs text-muted-foreground">{effectivePlaceholder}</div>
         ) : (
           <div className="flex flex-wrap gap-2 max-h-[86px] overflow-y-auto">
-            {selected.map(m => (
-              <span
-                key={m}
-                className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-accent text-accent-foreground border"
-              >
-                {m}
-                <button
-                  type="button"
-                  className="ml-1 opacity-70 hover:opacity-100"
-                  onClick={() => toggleSelectedName(m)}
-                  disabled={disabled}
+            {selected.map(m => {
+              const model =
+                selectedItems.find(item => item.model === m) ??
+                items.find(item => item.model === m);
+              const modelLabel = model ? getModelDisplayName(model, locale) : m;
+              return (
+                <span
+                  key={m}
+                  title={m}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-accent text-accent-foreground border"
                 >
-                  <X size={12} />
-                </button>
-              </span>
-            ))}
+                  {modelLabel}
+                  <button
+                    type="button"
+                    className="ml-1 opacity-70 hover:opacity-100"
+                    onClick={() => toggleSelectedName(m)}
+                    disabled={disabled}
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
       </div>

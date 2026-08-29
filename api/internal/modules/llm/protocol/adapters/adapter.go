@@ -499,17 +499,22 @@ type AdapterConfig struct {
 
 // ImageRequest represents image generation request
 type ImageRequest struct {
-	Provider       string `json:"-"`
-	Model          string `json:"model"`
-	Prompt         string `json:"prompt"`
-	N              *int   `json:"n,omitempty"`
-	Size           string `json:"size,omitempty"`
-	Quality        string `json:"quality,omitempty"`
-	Style          string `json:"style,omitempty"`
-	ResponseFormat string `json:"response_format,omitempty"`
-	User           string `json:"user,omitempty"`
-	GenerationMode string `json:"generation_mode,omitempty"`
-	MaxImages      *int   `json:"max_images,omitempty"`
+	Provider          string `json:"-"`
+	Model             string `json:"model"`
+	Prompt            string `json:"prompt"`
+	N                 *int   `json:"n,omitempty"`
+	Size              string `json:"size,omitempty"`
+	Quality           string `json:"quality,omitempty"`
+	Style             string `json:"style,omitempty"`
+	ResponseFormat    string `json:"response_format,omitempty"`
+	User              string `json:"user,omitempty"`
+	GenerationMode    string `json:"generation_mode,omitempty"`
+	MaxImages         *int   `json:"max_images,omitempty"`
+	ReferenceImageURL string `json:"reference_image_url,omitempty"`
+
+	ReferenceImageBytes    []byte `json:"-"`
+	ReferenceImageFilename string `json:"-"`
+	ReferenceImageMimeType string `json:"-"`
 
 	// AdditionalParameters model-specific parameters
 	AdditionalParameters map[string]interface{} `json:"-"`
@@ -536,6 +541,8 @@ type VideoRequest struct {
 	Prompt         string   `json:"prompt,omitempty"`
 	ImageURL       string   `json:"image_url,omitempty"`
 	ImageURLs      []string `json:"image_urls,omitempty"`
+	ReferenceURLs  []string `json:"reference_urls,omitempty"`
+	ReferenceTypes []string `json:"reference_types,omitempty"`
 	FirstFrameURL  string   `json:"first_frame_url,omitempty"`
 	LastFrameURL   string   `json:"last_frame_url,omitempty"`
 	VideoURL       string   `json:"video_url,omitempty"`
@@ -568,8 +575,8 @@ func (r *VideoRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	for _, key := range []string{
-		"model", "prompt", "image_url", "image_urls", "first_frame_url", "last_frame_url", "video_url",
-		"audio_url", "negative_prompt", "size", "ratio", "resolution", "duration", "n",
+		"model", "prompt", "image_url", "image_urls", "reference_urls", "reference_types",
+		"first_frame_url", "last_frame_url", "video_url", "audio_url", "negative_prompt", "size", "ratio", "resolution", "duration", "n",
 		"generate_audio", "prompt_extend", "watermark", "callback_url", "user",
 	} {
 		delete(raw, key)

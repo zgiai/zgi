@@ -6,19 +6,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
-	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
-	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 const (
-	ToolUpdate = "update_agent_memory"
-	ToolClear  = "clear_agent_memory"
+	ToolMutate = "mutate_agent_memory"
 
-	maxPlanningRounds  = 3
-	maxPlanningRetries = 1
-
-	minDecisionConfidence = 0.55
+	legacyToolUpdate = "update_agent_memory"
+	legacyToolClear  = "clear_agent_memory"
 )
 
 var ErrInvalidInput = errors.New("invalid input")
@@ -27,6 +21,7 @@ var zeroUUID = uuid.Nil
 
 type Slot struct {
 	Key         string `json:"key"`
+	Name        string `json:"name,omitempty"`
 	Description string `json:"description"`
 	MaxChars    int    `json:"max_chars"`
 	Enabled     bool   `json:"enabled"`
@@ -34,94 +29,76 @@ type Slot struct {
 }
 
 type State struct {
-	Enabled       bool
-	AgentID       uuid.UUID
-	UserScope     string
-	EnabledSlots  []Slot
-	SavedValues   []agentmemory.SlotValueResponse
-	ContextStatus string
-	ContextError  string
+	Enabled        bool
+	AgentID        uuid.UUID
+	UserScope      string
+	MemoryEpoch    *int64
+	ConfigScope    string
+	ConfigRevision string
+	EnabledSlots   []Slot
+	SavedValues    []agentmemory.SlotValueResponse
+	ContextStatus  string
+	ContextError   string
 }
 
-type Decision struct {
-	Action     string   `json:"action"`
-	Key        string   `json:"key,omitempty"`
-	Content    string   `json:"content,omitempty"`
-	Confidence *float64 `json:"confidence,omitempty"`
-	Reason     string   `json:"reason,omitempty"`
+type ToolOperation struct {
+	Action   string `json:"action"`
+	Key      string `json:"key"`
+	Content  string `json:"content,omitempty"`
+	Evidence string `json:"evidence"`
+	Mode     string `json:"mode"`
 }
 
-type PlannerResult struct {
-	Status   string
-	Decision Decision
-	Error    error
-}
-
-type MutationResult struct {
-	Status string
-	Key    string
-	Result map[string]interface{}
-	Error  error
+type ToolArguments struct {
+	Operations []ToolOperation `json:"operations"`
 }
 
 type MemoryService interface {
+	ReadRuntimeFence(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, configScope, configRevision string) (int64, error)
 	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
-	UpdateValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.UpdateValueRequest, meta agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error)
-	ClearValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, key string, meta agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error)
+	MutateValues(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.MutateValuesRequest, meta agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error)
 }
 
 type ContextRequest struct {
-	SystemPrompt  string
-	Enabled       bool
-	Slots         []Slot
-	MemoryService MemoryService
-	WorkspaceID   uuid.UUID
-	AgentID       uuid.UUID
-	UserID        uuid.UUID
-	UserScope     string
-	Budget        int
+	SystemPrompt   string
+	Enabled        bool
+	Slots          []Slot
+	MemoryService  MemoryService
+	WorkspaceID    uuid.UUID
+	AgentID        uuid.UUID
+	UserID         uuid.UUID
+	UserScope      string
+	ConfigScope    string
+	ConfigRevision string
+	Budget         int
 }
 
 type ContextResult struct {
 	SystemPrompt string
+	Context      string
 	Metadata     map[string]interface{}
 	State        *State
 }
 
-type PreflightRequest struct {
-	LatestUserMessage string
-	LLMRequest        *adapter.ChatRequest
-	State             *State
+type MutationRequest struct {
 	MemoryService     MemoryService
 	WorkspaceID       uuid.UUID
 	AgentID           uuid.UUID
 	UserID            uuid.UUID
 	UserScope         string
+	Slots             []Slot
+	CurrentValues     []agentmemory.SlotValueResponse
 	MutationMetadata  agentmemory.MutationMetadata
-	LLMClient         llmclient.LLMClient
-	AppContext        *llmclient.AppContext
-	UseJSONMode       bool
-	OnToolCallStart   func(toolName string, arguments map[string]interface{})
-	OnToolCallEnd     func(trace skills.SkillTrace)
+	LatestUserMessage string
+	ProactiveAllowed  bool
 }
 
-type PreflightResult struct {
-	Usage           *adapter.Usage
-	Messages        []adapter.Message
-	Traces          []skills.SkillTrace
-	MetadataUpdates map[string]interface{}
-}
-
-type MutationRequest struct {
-	MemoryService    MemoryService
-	WorkspaceID      uuid.UUID
-	AgentID          uuid.UUID
-	UserID           uuid.UUID
-	UserScope        string
-	Slots            []Slot
-	MutationMetadata agentmemory.MutationMetadata
-	OnToolCallStart  func(toolName string, arguments map[string]interface{})
-	OnToolCallEnd    func(trace skills.SkillTrace)
+type MutationResult struct {
+	Status    string
+	Arguments map[string]interface{}
+	Result    map[string]interface{}
+	Response  *agentmemory.MutateValuesResponse
+	Error     error
 }
 
 func RuntimeSlots(input []Slot) []agentmemory.RuntimeSlot {
@@ -132,6 +109,7 @@ func RuntimeSlots(input []Slot) []agentmemory.RuntimeSlot {
 		}
 		out = append(out, agentmemory.RuntimeSlot{
 			Key:         slot.Key,
+			Name:        slot.Name,
 			Description: slot.Description,
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,

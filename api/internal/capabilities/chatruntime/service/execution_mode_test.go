@@ -69,6 +69,7 @@ func TestExecutionModeForNewRequests(t *testing.T) {
 	}{
 		{name: "agent", caller: Caller{Type: runtimemodel.ConversationCallerAgent}, parts: &chatRequestParts{ModelSupportsFunctionCalling: true}, want: executionModeNativeAgentLoop},
 		{name: "work chat with skills", parts: &chatRequestParts{ModelSupportsFunctionCalling: true, SkillIDs: []string{"calculator"}}, want: executionModeNativeToolLoop},
+		{name: "memory only", parts: &chatRequestParts{ModelSupportsFunctionCalling: true, AgentMemoryToolsEnabled: true}, want: executionModeNativeToolLoop},
 		{name: "work chat without skills", parts: &chatRequestParts{ModelSupportsFunctionCalling: true}, want: executionModeDirectChat},
 		{name: "work chat without function calling", parts: &chatRequestParts{}, want: executionModeDirectChat},
 	}
@@ -81,11 +82,23 @@ func TestExecutionModeForNewRequests(t *testing.T) {
 	}
 }
 
-func TestFinalizeExecutionModeRejectsAgentWithoutFunctionCalling(t *testing.T) {
+func TestFinalizeExecutionModeDegradesAgentWithoutFunctionCalling(t *testing.T) {
 	parts := &chatRequestParts{Provider: "private", ModelName: "text-only"}
 	err := finalizeExecutionMode(Caller{Type: runtimemodel.ConversationCallerAgent}, parts)
-	if err == nil || !strings.Contains(err.Error(), "does not support function calling") {
-		t.Fatalf("finalizeExecutionMode() error = %v, want function-calling error", err)
+	if err != nil || parts.ExecutionMode != executionModeDirectChat || parts.ExecutionRouteReason != executionRouteFunctionCallingUnavailable {
+		t.Fatalf("finalizeExecutionMode() error=%v mode=%q reason=%q", err, parts.ExecutionMode, parts.ExecutionRouteReason)
+	}
+}
+
+func TestFinalizeExecutionModeReevaluatesPersistedMemoryOnlyRoutes(t *testing.T) {
+	parts := &chatRequestParts{ExecutionMode: executionModeDirectChat, ModelSupportsFunctionCalling: true, AgentMemoryToolsEnabled: true}
+	if err := finalizeExecutionMode(Caller{}, parts); err != nil || parts.ExecutionMode != executionModeNativeToolLoop {
+		t.Fatalf("enable memory: err=%v mode=%q", err, parts.ExecutionMode)
+	}
+	parts.AgentMemoryToolsEnabled = false
+	parts.ExecutionMode = executionModeNativeToolLoop
+	if err := finalizeExecutionMode(Caller{}, parts); err != nil || parts.ExecutionMode != executionModeDirectChat {
+		t.Fatalf("disable memory: err=%v mode=%q", err, parts.ExecutionMode)
 	}
 }
 
@@ -244,8 +257,11 @@ func TestRetiredAgentLoopRegenerationRejectsLostRequiredCapability(t *testing.T)
 	if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, caller, message, parts); err != nil {
 		t.Fatalf("applyRootRegenerationModelCapabilities() error = %v", err)
 	}
-	if err := finalizeExecutionMode(caller, parts); err == nil {
-		t.Fatal("finalizeExecutionMode() error = nil, want function-calling error")
+	if err := finalizeExecutionMode(caller, parts); err != nil {
+		t.Fatalf("finalizeExecutionMode() error = %v", err)
+	}
+	if parts.ExecutionMode != executionModeDirectChat {
+		t.Fatalf("execution mode = %q, want direct-chat fallback", parts.ExecutionMode)
 	}
 }
 

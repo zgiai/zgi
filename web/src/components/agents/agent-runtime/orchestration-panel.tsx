@@ -61,6 +61,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   isGeneratingSuggestions: boolean;
   fileUploadEnabled: boolean;
   agentMemoryEnabled: boolean;
+  agentMemoryAutoExtractionEnabled: boolean;
   agentMemorySlots: AgentMemorySlotConfig[];
   agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
   defaultHomeTitle: string;
@@ -93,6 +94,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   onChangeSuggestedQuestions: (value: string[]) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
+  onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => void;
   onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
 }
 
@@ -126,6 +128,7 @@ export function AgentRuntimeOrchestrationPanel({
   isGeneratingSuggestions,
   fileUploadEnabled,
   agentMemoryEnabled,
+  agentMemoryAutoExtractionEnabled,
   agentMemorySlots,
   agentMemorySlotValidationErrors,
   defaultHomeTitle,
@@ -156,6 +159,7 @@ export function AgentRuntimeOrchestrationPanel({
   onChangeSuggestedQuestions,
   onChangeFileUploadEnabled,
   onChangeAgentMemoryEnabled,
+  onChangeAgentMemoryAutoExtractionEnabled,
   onChangeAgentMemorySlots,
 }: AgentRuntimeOrchestrationPanelProps) {
   const t = useT('agents.agentRuntime');
@@ -277,11 +281,13 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeMemorySection
             open={openSections.memory}
             agentMemoryEnabled={agentMemoryEnabled}
+            agentMemoryAutoExtractionEnabled={agentMemoryAutoExtractionEnabled}
             agentMemorySlots={agentMemorySlots}
             agentMemorySlotValidationErrors={agentMemorySlotValidationErrors}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeAgentMemoryEnabled={onChangeAgentMemoryEnabled}
+            onChangeAgentMemoryAutoExtractionEnabled={onChangeAgentMemoryAutoExtractionEnabled}
             onChangeAgentMemorySlots={onChangeAgentMemorySlots}
           />
 

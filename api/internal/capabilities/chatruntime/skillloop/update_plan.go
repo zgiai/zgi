@@ -341,7 +341,6 @@ func restoreOperationPlanProjectedServerAttestation(phase map[string]interface{}
 		}
 	}
 }
-
 func normalizeOutcomeSnapshot(value interface{}) ([]map[string]interface{}, error) {
 	raw := mapSliceFromAny(value)
 	if len(raw) == 0 {

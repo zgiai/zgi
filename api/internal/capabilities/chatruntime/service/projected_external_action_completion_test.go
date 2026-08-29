@@ -81,7 +81,6 @@ func TestProjectedExternalActionCompletionBridgeUsesExecutionEvidenceKinds(t *te
 		})
 	}
 }
-
 func TestProjectedExternalActionAttemptStatusRequiresConfirmedProviderSuccess(t *testing.T) {
 	tests := []struct {
 		name            string

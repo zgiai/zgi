@@ -1,12 +1,14 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -24,9 +26,12 @@ const (
 	zgiCloudMusicPath             = "/audio/music/generations"
 	zgiCloudMusicLyricsPath       = "/audio/music/lyrics"
 	zgiCloudMusicCompensationPath = "/audio/music/delivery-compensations"
+	zgiCloudImagesGenerationsPath = "/images/generations"
+	zgiCloudImagesEditsPath       = "/images/edits"
 	errUnsupportedFmt             = "%w: zgi-cloud adapter does not support %s"
 	zgiCloudAudioContentType      = "audio/mpeg"
 	zgiCloudMP3Format             = "mp3"
+	zgiCloudImageEditFidelity     = "high"
 
 	headerSettlementID      = "X-ZGI-Settlement-ID"
 	headerOfficialPoints    = "X-ZGI-Official-Points"
@@ -311,7 +316,11 @@ func (a *ZGICloudAdapter) CreateEmbeddings(ctx context.Context, request *adapter
 }
 
 func (a *ZGICloudAdapter) CreateImage(ctx context.Context, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
-	url := fmt.Sprintf("%s/images/generations", a.baseURL)
+	if len(request.ReferenceImageBytes) > 0 {
+		return a.createImageEdit(ctx, request)
+	}
+
+	url := fmt.Sprintf("%s%s", a.baseURL, zgiCloudImagesGenerationsPath)
 	payload := map[string]any{
 		"model":  request.Model,
 		"prompt": request.Prompt,
@@ -334,11 +343,106 @@ func (a *ZGICloudAdapter) CreateImage(ctx context.Context, request *adapter.Imag
 	if request.User != "" {
 		payload["user"] = request.User
 	}
+	if request.GenerationMode != "" {
+		payload["generation_mode"] = request.GenerationMode
+	}
+	if request.MaxImages != nil {
+		payload["max_images"] = *request.MaxImages
+	}
+	if strings.TrimSpace(request.ReferenceImageURL) != "" {
+		payload["reference_image_url"] = request.ReferenceImageURL
+	}
 	for k, v := range request.AdditionalParameters {
 		payload[k] = v
 	}
 
 	httpResp, err := a.httpClient.DoRequestDetailed(ctx, "POST", url, a.buildHeaders(), payload)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, handleOpenAICompatibleError(httpResp.StatusCode, httpResp.Body)
+	}
+
+	var response adapter.ImageResponse
+	if err := json.Unmarshal(httpResp.Body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	response.Settlement = settlementFromHeaders(httpResp.Header)
+	return &response, nil
+}
+
+func (a *ZGICloudAdapter) createImageEdit(ctx context.Context, request *adapter.ImageRequest) (*adapter.ImageResponse, error) {
+	if !openAIImageEditModelSupportsReference(request.Model) {
+		return nil, fmt.Errorf("%w: reference image is not supported for zgi-cloud image model %s", adapter.ErrCapabilityUnsupported, request.Model)
+	}
+	if err := validateOpenAIImageEditSize(request.Size); err != nil {
+		return nil, err
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("model", request.Model); err != nil {
+		return nil, fmt.Errorf("failed to write multipart model field: %w", err)
+	}
+	if err := writer.WriteField("prompt", request.Prompt); err != nil {
+		return nil, fmt.Errorf("failed to write multipart prompt field: %w", err)
+	}
+	filename := strings.TrimSpace(request.ReferenceImageFilename)
+	if filename == "" {
+		filename = "reference-image"
+	}
+	mimeType := strings.TrimSpace(request.ReferenceImageMimeType)
+	if mimeType == "" {
+		mimeType = http.DetectContentType(request.ReferenceImageBytes)
+	}
+	if err := writeOpenAIImageEditFilePart(writer, "image", filename, mimeType, request.ReferenceImageBytes); err != nil {
+		return nil, err
+	}
+	if request.N != nil {
+		if err := writer.WriteField("n", strconv.Itoa(*request.N)); err != nil {
+			return nil, fmt.Errorf("failed to write multipart n field: %w", err)
+		}
+	}
+	if strings.TrimSpace(request.Size) != "" {
+		if err := writer.WriteField("size", request.Size); err != nil {
+			return nil, fmt.Errorf("failed to write multipart size field: %w", err)
+		}
+	}
+	if strings.TrimSpace(request.Quality) != "" {
+		if err := writer.WriteField("quality", request.Quality); err != nil {
+			return nil, fmt.Errorf("failed to write multipart quality field: %w", err)
+		}
+	}
+	if strings.TrimSpace(request.User) != "" {
+		if err := writer.WriteField("user", request.User); err != nil {
+			return nil, fmt.Errorf("failed to write multipart user field: %w", err)
+		}
+	}
+	if _, ok := request.AdditionalParameters["input_fidelity"]; !ok {
+		if err := writer.WriteField("input_fidelity", zgiCloudImageEditFidelity); err != nil {
+			return nil, fmt.Errorf("failed to write multipart input_fidelity field: %w", err)
+		}
+	}
+	for k, v := range request.AdditionalParameters {
+		if openAIImageEditReservedField(k) {
+			continue
+		}
+		value, ok := openAIImageEditMultipartScalar(v)
+		if !ok {
+			continue
+		}
+		if err := writer.WriteField(k, value); err != nil {
+			return nil, fmt.Errorf("failed to write multipart %s field: %w", k, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close multipart body: %w", err)
+	}
+
+	headers := a.buildHeaders()
+	headers["Content-Type"] = writer.FormDataContentType()
+	httpResp, err := a.httpClient.DoRawRequestDetailed(ctx, "POST", fmt.Sprintf("%s%s", a.baseURL, zgiCloudImagesEditsPath), headers, bytes.NewReader(body.Bytes()))
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

@@ -65,3 +65,39 @@ func TestSetupPreparedAgentSSESendsRuntimeIdentityBeforeBody(t *testing.T) {
 		t.Fatalf("status = %d, want 200", recorder.Code)
 	}
 }
+
+func TestWriteAgentChatEndRedactsPrivateMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	prepared := &runtimeservice.PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      &runtimemodel.Message{ID: uuid.New()},
+	}
+	metadata := map[string]interface{}{
+		"agent_transcript_version": 1,
+		"agent_transcript":         []interface{}{map[string]interface{}{"role": "tool", "content": "private tool result"}},
+		"model_invocations":        []interface{}{map[string]interface{}{"request": "private prompt"}},
+		"skill_invocations":        []interface{}{map[string]interface{}{"kind": "tool_call", "tool_name": "search"}},
+	}
+
+	writeAgentChatEnd(ginContext, prepared, &runtimeservice.ChatResult{
+		Status:   runtimemodel.MessageStatusCompleted,
+		Metadata: metadata,
+	})
+
+	body := recorder.Body.String()
+	for _, privateValue := range []string{"agent_transcript", "private tool result", "model_invocations\"", "private prompt"} {
+		if strings.Contains(body, privateValue) {
+			t.Fatalf("message_end exposed %q: %s", privateValue, body)
+		}
+	}
+	for _, publicValue := range []string{"skill_invocations", "search", "model_invocations_redacted", "model_invocation_count"} {
+		if !strings.Contains(body, publicValue) {
+			t.Fatalf("message_end lost %q: %s", publicValue, body)
+		}
+	}
+	if _, ok := metadata["agent_transcript"]; !ok {
+		t.Fatalf("SSE redaction mutated durable metadata: %#v", metadata)
+	}
+}

@@ -91,6 +91,9 @@ func init() {
 	adapter.GlobalFactory.Register("doubao", func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
 		return NewDoubaoAdapter(config)
 	})
+	adapter.GlobalFactory.Register(doubaoSpeechProviderName, func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		return NewDoubaoAdapter(config)
+	})
 
 	// Volcengine adapter
 	adapter.GlobalFactory.Register("volcengine", func(config *adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {

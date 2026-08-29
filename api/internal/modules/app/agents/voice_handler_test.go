@@ -64,6 +64,35 @@ func TestAgentVoiceTranscriptionUsesAuthenticatedAgentScope(t *testing.T) {
 	}
 }
 
+func TestWorkspaceVoiceTranscriptionUsesAuthenticatedOrganizationScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	organizationID := uuid.New()
+	transcriber := &voiceTranscriberStub{response: &adapter.TranscriptionResponse{
+		RequestID: uuid.NewString(),
+		Text:      "workspace transcript",
+	}}
+	handler := NewAgentsHandler(nil, nil, nil, nil, nil, &noopChatRuntimeService{})
+	handler.SetVoiceService(NewVoiceService(
+		&voiceModelResolverStub{model: &llmdefaultservice.ResolvedModel{Model: "volc.seedasr.sauc.duration"}},
+		transcriber,
+	))
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/agents/runtime/audio/transcriptions", bytes.NewReader([]byte{1, 2, 3, 4}))
+	c.Request.Header.Set("Content-Type", "audio/pcm")
+	c.Set("organization_id", organizationID.String())
+
+	handler.TranscribeWorkspaceVoice(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if transcriber.organizationID != organizationID.String() {
+		t.Fatalf("organization = %q, want %q", transcriber.organizationID, organizationID)
+	}
+}
+
 func TestAgentVoiceTranscriptionRejectsOversizedAudioBeforeDispatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ids := webAppRuntimePermissionIDs{

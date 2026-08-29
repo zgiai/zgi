@@ -31,26 +31,33 @@ import type { AgentConfigSection } from '../types';
 import type { AgentMemorySlotValidationError } from '../utils';
 
 const MAX_AGENT_MEMORY_SLOTS = 5;
+// Automatic memory maintenance is implemented but not exposed during the initial release.
+// Keep the UI and configuration wiring intact so it can be restored without a migration.
+const SHOW_AGENT_MEMORY_AUTO_MAINTENANCE = false;
 
 interface AgentRuntimeMemorySectionProps {
   open: boolean;
   agentMemoryEnabled: boolean;
+  agentMemoryAutoExtractionEnabled: boolean;
   agentMemorySlots: AgentMemorySlotConfig[];
   agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
+  onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => void;
   onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
 }
 
 export function AgentRuntimeMemorySection({
   open,
   agentMemoryEnabled,
+  agentMemoryAutoExtractionEnabled,
   agentMemorySlots,
   agentMemorySlotValidationErrors,
   readOnly = false,
   onToggleSection,
   onChangeAgentMemoryEnabled,
+  onChangeAgentMemoryAutoExtractionEnabled,
   onChangeAgentMemorySlots,
 }: AgentRuntimeMemorySectionProps) {
   const t = useT('agents.agentRuntime');
@@ -378,6 +385,21 @@ export function AgentRuntimeMemorySection({
             </div>
             {agentMemoryEnabled && (
               <div className="space-y-2">
+                {SHOW_AGENT_MEMORY_AUTO_MAINTENANCE ? (
+                  <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
+                    <div>
+                      <div className="text-xs font-medium">{t('memory.autoExtractionTitle')}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {t('memory.autoExtractionDescription')}
+                      </div>
+                    </div>
+                    <Switch
+                      checked={agentMemoryAutoExtractionEnabled}
+                      disabled={readOnly}
+                      onCheckedChange={onChangeAgentMemoryAutoExtractionEnabled}
+                    />
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"

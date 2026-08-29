@@ -262,12 +262,13 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
-	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
+	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
 		return nil, err
 	}
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
+	appendCurrentTurnAgentTranscript(llmRequest, message)
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
@@ -282,6 +283,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 		Continuation:                   true,
 		SuppressInitialNaturalProgress: true,
 		parts:                          parts,
+		contextBudget:                  contextResult,
 	}, nil
 }
 

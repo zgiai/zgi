@@ -1821,7 +1821,6 @@ func operationPlanInvocationExecutionEvidenceView(invocation map[string]interfac
 	normalized["kind"] = "tool_call"
 	return normalized
 }
-
 func operationPlanInvocationHasServerProjectionEvidence(invocation map[string]interface{}) bool {
 	arguments := mapFromOperationContext(invocation["arguments"])
 	return strings.TrimSpace(stringFromAny(arguments[operationPlanServerProjectedEpochKey])) != "" ||

@@ -194,8 +194,8 @@ func TestRunnerNativeStreamConvertsProcessCommentaryBeforeBusinessTool(t *testin
 			continue
 		}
 		toolTurnFound = true
-		if strings.TrimSpace(messageContent(message.Content)) != "" || strings.TrimSpace(message.ReasoningContent) != "" {
-			t.Fatalf("tool turn carried presentation-only content into next request: %#v", message)
+		if !strings.Contains(messageContent(message.Content), "relevant values") || strings.TrimSpace(message.ReasoningContent) != "" {
+			t.Fatalf("tool turn did not retain ordinary assistant content while removing reasoning: %#v", message)
 		}
 	}
 	if !toolTurnFound {
@@ -787,6 +787,23 @@ func runnerTestEventsContainText(events []Event, target string) bool {
 		}
 	}
 	return false
+}
+
+func TestNativeAgentToolsForRunIncludesRuntimeToolWithoutSkills(t *testing.T) {
+	runtimeTool := RuntimeTool{
+		Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "mutate_agent_memory"}},
+		Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult {
+			return RuntimeToolResult{Status: "success", Result: map[string]interface{}{"status": "success"}}
+		},
+	}
+	tools := nativeAgentToolsForRun(&skills.ResolvedSkills{}, nil, nil, []RuntimeTool{runtimeTool})
+	if !runnerTestHasTool(tools, "mutate_agent_memory") {
+		t.Fatalf("tools = %#v, want runtime memory tool", tools)
+	}
+	step := handleRuntimeToolCall(context.Background(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Name: "mutate_agent_memory"}}, runtimeTool)
+	if step.trace.Status != "success" || !step.usedTool || step.recoverable {
+		t.Fatalf("runtime step = %#v", step)
+	}
 }
 
 func TestNativeExecutionCallWrapsActionArgumentsUnderFixedIdentity(t *testing.T) {
@@ -1390,6 +1407,7 @@ func TestRunnerProjectedAliasCollisionRoutesThroughExternalSkillRuntime(t *testi
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
 	}}
 	state := map[string]interface{}{"operation_plan": map[string]interface{}{}}
+	runtimeRouteCalls := 0
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
@@ -1403,11 +1421,21 @@ func TestRunnerProjectedAliasCollisionRoutesThroughExternalSkillRuntime(t *testi
 			Messages: []adapter.Message{{Role: "user", Content: "给 Alice 发送企业微信消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
+		RuntimeTools: []RuntimeTool{{
+			Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "EXECUTE_ACTION"}},
+			Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult {
+				runtimeRouteCalls++
+				return RuntimeToolResult{Status: "error", Error: errors.New("wrong runtime route")}
+			},
+		}},
 		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
 		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "消息已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
+	}
+	if runtimeRouteCalls != 0 {
+		t.Fatalf("runtime collision handler calls = %d, projected alias was misrouted", runtimeRouteCalls)
 	}
 	if got := actionTool.actionIDs(); !reflect.DeepEqual(got, []string{"wecom.message.send"}) {
 		t.Fatalf("external Skill runtime Actions = %#v, want one send", got)
@@ -2763,6 +2791,109 @@ func (t *projectedExternalActionRunnerTool) businessStrings(key string) []string
 	return out
 }
 
+func TestRunnerRetriesPendingExternalActionAfterDifferentActionSucceeded(t *testing.T) {
+	toolCall := func(callID string, actionID string) adapter.ToolCall {
+		arguments, err := json.Marshal(map[string]interface{}{
+			"integration_id": "wecom",
+			"action_id":      actionID,
+		})
+		if err != nil {
+			t.Fatalf("marshal tool arguments: %v", err)
+		}
+		return adapter.ToolCall{
+			ID:   callID,
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      "execute_action",
+				Arguments: string(arguments),
+			},
+		}
+	}
+
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{
+			Role: "assistant", ToolCalls: []adapter.ToolCall{toolCall("execute-search", "wecom.contact.search")},
+		}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "查询和发送都已完成。"}, FinishReason: "stop"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{
+			Role: "assistant", ToolCalls: []adapter.ToolCall{toolCall("execute-send", "wecom.message.send")},
+		}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
+	}}
+
+	executedActions := make([]string, 0, 2)
+	runtimeTool := RuntimeTool{
+		Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "execute_action"}},
+		SkillID:    skills.SkillExternalApps,
+		Handler: func(_ context.Context, call adapter.ToolCall) RuntimeToolResult {
+			arguments := map[string]interface{}{}
+			if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
+				t.Fatalf("decode runtime tool arguments: %v", err)
+			}
+			actionID, _ := arguments["action_id"].(string)
+			executedActions = append(executedActions, actionID)
+			return RuntimeToolResult{
+				Status: "success",
+				Arguments: map[string]interface{}{
+					"integration_id": "wecom",
+					"action_id":      actionID,
+				},
+				Result: map[string]interface{}{
+					"integration_id":   "wecom",
+					"action_id":        actionID,
+					"operation_status": "completed",
+				},
+			}
+		},
+	}
+
+	runner := &Runner{LLMClient: fakeLLM, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-external-sequence", "msg-external-sequence", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "查询企业微信成员并给他发送消息"}},
+	})
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:        prepared,
+		Resolved:        &skills.ResolvedSkills{},
+		NativeAgentLoop: true,
+		RuntimeTools:    []RuntimeTool{runtimeTool},
+		RuntimeStateSnapshot: func() map[string]interface{} {
+			invocations := []interface{}{map[string]interface{}{
+				"invocation_id": "guide-search", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "wecom", "action_id": "wecom.contact.search", "effect": "read", "can_execute": true,
+				},
+			}}
+			if len(executedActions) > 0 {
+				invocations = append(invocations, map[string]interface{}{
+					"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+					"result": map[string]interface{}{
+						"integration_id": "wecom", "action_id": "wecom.message.send", "effect": "external_send", "can_execute": true,
+					},
+				})
+			}
+			return map[string]interface{}{
+				"latest_user_request": "查询企业微信成员并给他发送消息",
+				"skill_invocations":   invocations,
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "消息已发送。" {
+		t.Fatalf("answer = %q", answer)
+	}
+	if !reflect.DeepEqual(executedActions, []string{"wecom.contact.search", "wecom.message.send"}) {
+		t.Fatalf("executed actions = %#v, want search then send exactly once", executedActions)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want query, rejected final, corrected send, final", fakeLLM.appChatCalls)
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], `action_id="wecom.message.send"`) {
+		t.Fatal("external-action correction did not target the latest pending send action")
+	}
+}
+
 func TestRunnerAcceptsTruthfulNonExecutionAfterEmptyExternalQuery(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "查询和发送都已完成。"}, FinishReason: "stop"}}},
@@ -2854,5 +2985,17 @@ func TestRunnerReturnsSafeTerminalAnswerWhenExternalRetryIsExhausted(t *testing.
 	}
 	if fakeLLM.appChatCalls != 2 {
 		t.Fatalf("AppChat calls = %d, want exactly one retry for the pending guide", fakeLLM.appChatCalls)
+	}
+}
+
+func runnerTestUnusedExternalActionTool(t *testing.T) RuntimeTool {
+	t.Helper()
+	return RuntimeTool{
+		Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "execute_action"}},
+		SkillID:    skills.SkillExternalApps,
+		Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult {
+			t.Fatal("unexpected external action execution")
+			return RuntimeToolResult{}
+		},
 	}
 }

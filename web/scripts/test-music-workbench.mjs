@@ -35,11 +35,29 @@ function loadTypeScriptModule(relativePath, mocks = new Map()) {
   }
 }
 
-function renderMusicComposer(mutation) {
-  const stateValues = ['instrumental', 'A quiet piano piece', '', 1, null, false];
+function renderMusicComposer(mutation, mode = 'instrumental') {
+  const stateValues = [
+    mode,
+    {
+      instrumental: 'A quiet piano piece',
+      auto_lyrics: 'A quiet piano piece',
+      vocal: 'A quiet piano piece',
+    },
+    '',
+    null,
+    1,
+    null,
+    false,
+  ];
   let stateIndex = 0;
   const react = {
     useEffect() {},
+    useCallback(callback) {
+      return callback;
+    },
+    useMemo(factory) {
+      return factory();
+    },
     useRef(initialValue) {
       return { current: initialValue };
     },
@@ -60,6 +78,7 @@ function renderMusicComposer(mutation) {
       ['@/components/ui/button', components],
       ['@/components/ui/select', components],
       ['@/components/ui/textarea', components],
+      ['@/components/chat/variants/aichat/voice/workspace-voice-input-control', components],
       ['@/hooks/music/use-music-tasks', { useCreateMusicTasks: () => mutation }],
       ['@/i18n', { useT: () => key => key }],
       ['@/lib/utils', { cn: (...values) => values.filter(Boolean).join(' ') }],
@@ -223,6 +242,31 @@ try {
     },
   });
   assert.ok(composerForm, 'music composer must render a form');
+  const autoLyricsForm = renderMusicComposer(
+    { error: null, isPending: false, reset() {}, mutateAsync() {} },
+    'auto_lyrics'
+  );
+  for (const [mode, form] of [
+    ['instrumental', composerForm],
+    ['auto lyrics', autoLyricsForm],
+  ]) {
+    const promptSurface = form.props.children[1];
+    const promptSections = promptSurface.props.children[0];
+    const promptSection = promptSections.find(
+      section => !section.props.className.includes('hidden')
+    );
+    const promptTextarea = promptSection.props.children[1];
+    assert.match(
+      promptSection.props.className,
+      /\bflex-1\b/,
+      `${mode} prompt section must fill the visible prompt surface`
+    );
+    assert.match(
+      promptTextarea.props.className,
+      /\bmax-h-none\b.*\bflex-1\b/,
+      `${mode} textarea must fill the prompt section without the shared height cap`
+    );
+  }
   const submitEvent = { preventDefault() {} };
   const pendingSubmission = composerForm.props.onSubmit(submitEvent);
   const ignoredSubmission = composerForm.props.onSubmit(submitEvent);
@@ -509,6 +553,13 @@ const composerSource = readFileSync(
   path.join(root, 'src/components/music/music-composer.tsx'),
   'utf8'
 );
+const workspaceVoiceInputSource = readFileSync(
+  path.join(
+    root,
+    'src/components/chat/variants/aichat/voice/workspace-voice-input-control.tsx'
+  ),
+  'utf8'
+);
 const trackListSource = readFileSync(
   path.join(root, 'src/components/music/music-track-list.tsx'),
   'utf8'
@@ -548,6 +599,42 @@ const musicSources = [
   segmentedProgressSource,
 ];
 assert.match(composerSource, /mode === 'vocal'/);
+assert.match(workspaceVoiceInputSource, /useImperativeHandle\(ref, \(\) => \(\{ finish:/);
+assert.match(
+  composerSource,
+  /activeVoiceField && activeVoiceField !== 'lyrics'[\s\S]*promptVoiceInputRefs\.current\[activeVoiceField\]\?\.finish\(\)[\s\S]*activeVoiceField === 'lyrics'[\s\S]*lyricsVoiceInputRef\.current\?\.finish\(\)[\s\S]*setMode\(nextMode\)/,
+  'switching music modes must finish and transcribe whichever voice recording is active in the background'
+);
+assert.doesNotMatch(
+  composerSource,
+  /finish\(\)[\s\S]*setActiveVoiceField\(null\)[\s\S]*setMode\(nextMode\)/,
+  'mode switching must keep voice input occupied until the previous transcription finishes'
+);
+assert.match(
+  composerSource,
+  /useState<Record<MusicMode, string>>\(createEmptyPrompts\)/,
+  'each music mode must keep an independent prompt value'
+);
+assert.match(
+  composerSource,
+  /MUSIC_MODES\.map\(promptMode =>[\s\S]*promptMode === mode \? 'flex' : 'hidden'[\s\S]*promptVoiceInputRefs\.current\[promptMode\] = handle[\s\S]*\[promptMode\]: value/,
+  'each music mode must keep its voice control mounted and write transcription to its own prompt'
+);
+assert.match(
+  composerSource,
+  /const promptVoiceActiveChangeHandlers = React\.useMemo\([\s\S]*onActiveChange=\{promptVoiceActiveChangeHandlers\[promptMode\]\}/,
+  'per-mode activity callbacks must stay stable so rerenders do not clear active recordings'
+);
+assert.match(
+  composerSource,
+  /voiceInputInUse[\s\S]*t\('voiceInputInUse'\)/,
+  'the newly selected mode must show that voice input is in use while the previous transcription finishes'
+);
+assert.match(
+  composerSource,
+  /mode !== 'vocal' && 'hidden'[\s\S]*ref=\{lyricsVoiceInputRef\}/,
+  'the lyrics voice control must remain mounted while its transcription finishes'
+);
 assert.match(trackListSource, /MusicWaveform/);
 assert.match(lyricsSource, /task\.lyrics/);
 assert.match(playerSource, /toMusicDownloadURL/);

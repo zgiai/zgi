@@ -61,6 +61,34 @@ type taskListPage struct {
 	HasMore bool
 }
 
+var videoTaskListColumns = []string{
+	"id",
+	"organization_id",
+	"account_id",
+	"workspace_id",
+	"task_id",
+	"client_request_id",
+	"upstream_task_id",
+	"provider",
+	"model",
+	"model_label",
+	"prompt",
+	"status",
+	"video_url",
+	"error_message",
+	"duration_seconds",
+	"resolution",
+	"ratio",
+	"has_input_video",
+	"generate_audio",
+	"voice",
+	"estimated_credits",
+	"actual_credits",
+	"created_at",
+	"updated_at",
+	"completed_at",
+}
+
 func newTaskRepository(db *gorm.DB) *taskRepository {
 	return &taskRepository{db: db}
 }
@@ -105,7 +133,11 @@ func (r *taskRepository) list(ctx context.Context, scope Scope, params taskListP
 		limit = 20
 	}
 	var records []videoTaskRecord
-	if err := query.Order("created_at DESC").Order("id DESC").Limit(limit + 1).Find(&records).Error; err != nil {
+	if err := query.Select(videoTaskListColumns).
+		Order("created_at DESC").
+		Order("id DESC").
+		Limit(limit + 1).
+		Find(&records).Error; err != nil {
 		return taskListPage{}, err
 	}
 	hasMore := len(records) > limit

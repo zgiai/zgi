@@ -568,15 +568,16 @@ func (c *llmClientImpl) buildGatewayAppContext(appCtx *AppContext) (*gateway.App
 	}
 
 	gatewayCtx := &gateway.AppContext{
-		AppID:          &appUUID,
-		AppType:        &appCtx.AppType,
-		AccountID:      &accountUUID,
-		SessionID:      appCtx.SessionID,
-		ConversationID: appCtx.ConversationID,
-		WorkflowID:     appCtx.WorkflowID,
-		WorkflowRunID:  appCtx.WorkflowRunID,
-		NodeID:         appCtx.NodeID,
-		NodeType:       appCtx.NodeType,
+		AppID:                     &appUUID,
+		AppType:                   &appCtx.AppType,
+		AccountID:                 &accountUUID,
+		SessionID:                 appCtx.SessionID,
+		ConversationID:            appCtx.ConversationID,
+		WorkflowID:                appCtx.WorkflowID,
+		WorkflowRunID:             appCtx.WorkflowRunID,
+		NodeID:                    appCtx.NodeID,
+		NodeType:                  appCtx.NodeType,
+		SuppressInvocationContent: appCtx.SuppressInvocationContent,
 	}
 	if appCtx.BillingSubjectType != "" {
 		billingSubjectType := appCtx.BillingSubjectType

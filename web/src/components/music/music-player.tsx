@@ -40,6 +40,33 @@ interface MusicPlayerProps {
 }
 
 const seekSeconds = 10;
+const retainedMusicAudioElements = new Map<string, HTMLAudioElement>();
+const MAX_RETAINED_MUSIC_AUDIO = 10;
+
+function preloadMusicAudio(source: string | null | undefined) {
+  const normalizedSource = source?.trim();
+  if (!normalizedSource || typeof document === 'undefined') return;
+  if (retainedMusicAudioElements.has(normalizedSource)) return;
+
+  const audio = document.createElement('audio');
+  audio.preload = 'auto';
+  audio.src = normalizedSource;
+  audio.load();
+  retainedMusicAudioElements.set(normalizedSource, audio);
+  trimRetainedMusicAudio();
+}
+
+function trimRetainedMusicAudio() {
+  while (retainedMusicAudioElements.size > MAX_RETAINED_MUSIC_AUDIO) {
+    const firstEntry = retainedMusicAudioElements.entries().next().value;
+    if (!firstEntry) return;
+    const [source, audio] = firstEntry;
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    retainedMusicAudioElements.delete(source);
+  }
+}
 
 function SeekStepIcon({ direction }: { direction: 'backward' | 'forward' }) {
   const Icon = direction === 'backward' ? RotateCcw : RotateCw;
@@ -98,6 +125,7 @@ export function MusicPlayer({
   }, [source, task?.duration_ms, updatePlaying]);
 
   React.useEffect(() => {
+    preloadMusicAudio(source);
     if (audioRef.current) audioRef.current.volume = volume / 100;
   }, [source, volume]);
 

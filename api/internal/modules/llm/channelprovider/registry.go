@@ -3,6 +3,7 @@ package channelprovider
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	appconfig "github.com/zgiai/zgi/api/config"
@@ -61,6 +62,7 @@ var specs = map[string]Spec{
 	"kimi":              {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
 	"volcengine":        {Name: "volcengine", AdapterKey: "volcengine", LookupProvider: "doubao", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
 	"doubao":            {Name: "doubao", AdapterKey: "doubao", LookupProvider: "doubao", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
+	"doubao-speech":     {Name: "doubao-speech", AdapterKey: "doubao-speech", LookupProvider: "doubao"},
 	"ark":               {Name: "doubao", AdapterKey: "doubao", LookupProvider: "doubao", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
 	"google":            {Name: "google", AdapterKey: "gcp-imagen", LookupProvider: "google"},
 	"gemini":            {Name: "google", AdapterKey: "gcp-imagen", LookupProvider: "google"},
@@ -114,8 +116,28 @@ func ValidateConnectionSpec(spec Spec, apiBaseURL string) error {
 	if spec.RequiresBaseURL && strings.TrimSpace(apiBaseURL) == "" {
 		return fmt.Errorf("api_base_url is required for channel_provider %q", spec.Name)
 	}
+	if spec.Name == doubaoSpeechChannelProvider {
+		if err := validateDoubaoSpeechBaseURL(apiBaseURL); err != nil {
+			return err
+		}
+	}
 	if err := ValidateBaseURLForSpec(spec, "api_base_url", apiBaseURL); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateDoubaoSpeechBaseURL(raw string) error {
+	baseURL := strings.TrimSpace(raw)
+	if baseURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("invalid api_base_url for channel_provider %q: %w", doubaoSpeechChannelProvider, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("api_base_url scheme must be http or https for channel_provider %q", doubaoSpeechChannelProvider)
 	}
 	return nil
 }

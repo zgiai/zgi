@@ -122,8 +122,8 @@ func TestExternalActionNativeProjectionRequiresCompleteFrozenIdentityAndActiveSk
 		t.Fatalf("projection binding = %#v", binding)
 	}
 	properties := mapFromOperationContext(projections[0].InputSchema["properties"])
-	if _, ok := properties["plan_phase_id"]; ok {
-		t.Fatalf("projection schema leaked server-owned plan_phase_id: %#v", projections[0].InputSchema)
+	if _, ok := properties["plan_phase_id"]; !ok {
+		t.Fatalf("projection schema = %#v, want plan_phase_id control property", projections[0].InputSchema)
 	}
 	if original := mapFromOperationContext(valid.InputSchema["properties"]); original["plan_phase_id"] != nil {
 		t.Fatalf("source Action schema was mutated: %#v", valid.InputSchema)
@@ -167,7 +167,7 @@ func TestExternalActionNativePreparationHintsPreserveServerTransform(t *testing.
 }
 
 func TestExternalActionProjectionReservesContextArtifactReaderCaseInsensitively(t *testing.T) {
-	reserved := nativeProjectionReservedToolNames()
+	reserved := nativeProjectionReservedToolNames(nil)
 	found := false
 	for _, name := range reserved {
 		found = found || strings.EqualFold(name, skillloop.ContextArtifactToolName)

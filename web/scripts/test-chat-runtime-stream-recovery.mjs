@@ -58,6 +58,11 @@ assert.match(recovery, /refreshConversation\(conversationId\)/);
 assert.match(recovery, /refreshMessagesSilently\(conversationId\)/);
 assert.match(recovery, /stillRunning \? 'disconnected' : 'idle'/);
 
+const progressReducer = read('src/components/chat/controllers/aichat/reducers/skill.ts');
+assert.match(progressReducer, /payload\.phase === 'context_compaction'/);
+assert.match(progressReducer, /item\.progress_id === payload\.progress_id/);
+assert.match(progressReducer, /last_event_id: eventId \?\?/);
+
 const chat = read('src/components/chat/variants/aichat/aichat-chat.tsx');
 assert.match(chat, /canStop=\{canStopPendingWorkflowInteraction \|\| activeConversationRunning\}/);
 assert.match(chat, /controller\.connectionState === 'disconnected'/);
