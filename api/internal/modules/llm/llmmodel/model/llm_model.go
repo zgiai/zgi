@@ -20,8 +20,8 @@ type LLMModel struct {
 	ID uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
 
 	// Provider reference
-	Provider string `gorm:"type:varchar(100);not null;index:idx_model_provider" json:"provider"`             // References LLMProvider.Provider
-	Vendor   string `gorm:"type:varchar(100);not null;default:'';index:idx_llm_models_vendor" json:"vendor"` // Model maker/owner, independent from the serving provider
+	Provider string `gorm:"type:varchar(100);not null;index:idx_model_provider" json:"provider"` // References LLMProvider.Provider
+	Vendor   string `gorm:"-" json:"vendor,omitempty"`                                           // Runtime catalog projection; not persisted
 
 	// Basic info (ModelMeta aligned)
 	Object              string     `gorm:"-" json:"object"` // Fixed value "model" (not stored in DB)

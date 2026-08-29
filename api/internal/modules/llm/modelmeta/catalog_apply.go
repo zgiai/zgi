@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	"gorm.io/gorm"
@@ -141,6 +142,15 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 	if err != nil {
 		return err
 	}
+	vendors := make([]catalogvendor.Entry, 0, len(catalog.Models))
+	for _, catalogModel := range catalog.Models {
+		vendors = append(vendors, catalogvendor.Entry{
+			Provider: catalogModel.Provider,
+			Model:    catalogModel.Model,
+			Vendor:   catalogModel.Vendor,
+		})
+	}
+	catalogvendor.Replace(vendors)
 	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
 		invalidator.InvalidateModelCache(ctx)
 	}
@@ -636,9 +646,6 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	}
 	if hasColumn(db, "llm_models", "cache_write_price_configured") {
 		values["cache_write_price_configured"] = cacheWritePrice != nil
-	}
-	if vendor := strings.TrimSpace(model.Vendor); vendor != "" && hasColumn(db, "llm_models", "vendor") {
-		values["vendor"] = vendor
 	}
 	if hasColumn(db, "llm_models", "is_active") {
 		values["is_active"] = model.IsActive

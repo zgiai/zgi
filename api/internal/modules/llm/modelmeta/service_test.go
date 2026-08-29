@@ -70,20 +70,11 @@ func TestModelMetaDiffDetectsPriceConfiguredStateChange(t *testing.T) {
 	}
 }
 
-func TestModelMetaPublishesAndDiffsVendor(t *testing.T) {
+func TestModelMetaPublishesVendor(t *testing.T) {
 	remote := &ModelMetaData{Vendor: " qwen "}
 	published := publishedModelFromMeta(remote)
 	if published.Vendor != "qwen" {
 		t.Fatalf("published vendor = %q, want qwen", published.Vendor)
-	}
-
-	local := &llmmodel.LLMModel{Vendor: "alibaba"}
-	svc := &Service{}
-	if !svc.hasChanges(local, remote) {
-		t.Fatal("hasChanges = false, want true when vendor differs")
-	}
-	if fields := svc.computeDiffFields(local, remote); !hasDiffField(fields, "vendor") {
-		t.Fatalf("diff fields = %#v, want vendor", fields)
 	}
 }
 

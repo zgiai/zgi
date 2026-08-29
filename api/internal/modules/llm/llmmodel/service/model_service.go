@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -177,12 +178,22 @@ func (s *modelService) GetGlobal(ctx context.Context, id uuid.UUID) (*model.LLMM
 	if err != nil {
 		return nil, ErrModelNotFound
 	}
+	catalogvendor.Enrich(m.Provider, m.Model, &m.Vendor)
 	return m, nil
 }
 
 func (s *modelService) ListGlobal(ctx context.Context, req *dto.ListModelRequest) ([]*model.LLMModel, int64, error) {
 	offset := (req.Page - 1) * req.PageSize
-	return s.globalRepo.List(ctx, req.ProviderID, req.Provider, req.UseCase, req.Status, req.IsActive, offset, req.PageSize)
+	models, total, err := s.globalRepo.List(ctx, req.ProviderID, req.Provider, req.UseCase, req.Status, req.IsActive, offset, req.PageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, item := range models {
+		if item != nil {
+			catalogvendor.Enrich(item.Provider, item.Model, &item.Vendor)
+		}
+	}
+	return models, total, nil
 }
 
 func (s *modelService) UpdateGlobal(ctx context.Context, id uuid.UUID, req *dto.UpdateModelRequest) (*model.LLMModel, error) {

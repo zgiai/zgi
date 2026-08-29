@@ -1080,9 +1080,6 @@ func normalizedStructuredPricing(raw []byte) interface{} {
 
 // hasChanges checks if a model has changes compared to remote data
 func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bool {
-	if remoteVendor := strings.TrimSpace(remote.Vendor); remoteVendor != "" && local.Vendor != remoteVendor {
-		return true
-	}
 	if local.ModelName != remote.ModelName {
 		return true
 	}
@@ -1175,9 +1172,6 @@ func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bo
 func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaData) []DiffField {
 	var diffs []DiffField
 	remoteUseCases := ensureRemoteUseCases(remote)
-	if remoteVendor := strings.TrimSpace(remote.Vendor); remoteVendor != "" && local.Vendor != remoteVendor {
-		diffs = append(diffs, DiffField{Field: "vendor", OldValue: local.Vendor, NewValue: remoteVendor})
-	}
 
 	if local.ModelName != remote.ModelName {
 		diffs = append(diffs, DiffField{Field: "model_name", OldValue: local.ModelName, NewValue: remote.ModelName})
