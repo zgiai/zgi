@@ -108,6 +108,7 @@ const messages: ModelsMessages = {
     available: '可用',
     unavailable: '不可用',
     generalModel: '通用模型',
+    metadataUnavailable: '部分模型信息无效或暂不可用。',
     functionCalling: '函数调用',
     vision: '视觉理解',
     reasoning: '推理',

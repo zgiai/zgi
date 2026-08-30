@@ -113,15 +113,15 @@ interface GetModelPriceDisplayParams {
  * @util Determine whether a model should use image generation pricing display.
  */
 export function isImageGenerationModel(useCases?: ModelUseCase[] | null): boolean {
-  return Boolean(useCases?.includes('image-gen'));
+  return Array.isArray(useCases) && useCases.includes('image-gen');
 }
 
 export function isVideoGenerationModel(useCases?: ModelUseCase[] | null): boolean {
-  return Boolean(useCases?.includes('video-gen'));
+  return Array.isArray(useCases) && useCases.includes('video-gen');
 }
 
 export function isInputOnlyPriceModel(useCases?: ModelUseCase[] | null): boolean {
-  const cases = useCases ?? [];
+  const cases = Array.isArray(useCases) ? useCases : [];
   return (
     cases.some(useCase => useCase === 'embedding' || useCase === 'rerank') &&
     !cases.some(useCase =>
@@ -220,7 +220,7 @@ function getStructuredPriceDisplay(
   fallbackCurrency: string | null | undefined,
   labels?: ModelPriceDisplayLabels
 ): ModelPriceDisplayItem[] {
-  if (!pricing) return [];
+  if (!isRecord(pricing)) return [];
 
   if (typeof pricing.price_per_image === 'number' && Number.isFinite(pricing.price_per_image)) {
     return [
@@ -228,44 +228,57 @@ function getStructuredPriceDisplay(
         'image',
         labels?.image ?? '图像',
         pricing.price_per_image,
-        fallbackCurrency || pricing.currency || 'CNY',
+        safeCurrency(fallbackCurrency, pricing.currency, 'CNY'),
         labels?.perImage ?? '/ 张'
       ),
     ];
   }
 
-  const tokenTier = [...(pricing.token_tiers ?? [])].sort(
-    (left, right) => (left.min_input_tokens ?? 0) - (right.min_input_tokens ?? 0)
-  )[0];
+  const tokenTier = (Array.isArray(pricing.token_tiers) ? pricing.token_tiers : [])
+    .filter(isRecord)
+    .sort(
+      (left, right) =>
+        finiteNumber(left.min_input_tokens) - finiteNumber(right.min_input_tokens)
+    )[0];
   if (tokenTier) {
     return [
       buildOptionalStructuredPriceItem(
         'input',
         labels?.input ?? '输入',
-        tokenTier.input_price_per_million,
-        fallbackCurrency || pricing.currency || 'USD',
+        finiteNumberOrUndefined(tokenTier.input_price_per_million),
+        safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
         labels?.perMillionTokens ?? '/ 百万 tokens'
       ),
       buildOptionalStructuredPriceItem(
         'output',
         labels?.output ?? '输出',
-        tokenTier.output_price_per_million,
-        fallbackCurrency || pricing.currency || 'USD',
+        finiteNumberOrUndefined(tokenTier.output_price_per_million),
+        safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
         labels?.perMillionTokens ?? '/ 百万 tokens'
       ),
     ].filter((item): item is ModelPriceDisplayItem => item !== null);
   }
 
-  return (pricing.metered ?? []).flatMap(item => {
-    const amount = Number(item.price?.amount);
+  const metered = Array.isArray(pricing.metered) ? pricing.metered : [];
+  return metered.flatMap(rawItem => {
+    if (!isRecord(rawItem)) return [];
+    const price = isRecord(rawItem.price) ? rawItem.price : undefined;
+    const amount = Number(price?.amount);
     if (!Number.isFinite(amount)) return [];
     return [
       buildStructuredPriceItem(
         'output',
-        structuredOperationLabel(item.operation || item.meter || 'metered', labels),
+        structuredOperationLabel(
+          nonEmptyString(rawItem.operation) || nonEmptyString(rawItem.meter) || 'metered',
+          labels
+        ),
         amount,
-        item.price?.currency || fallbackCurrency || pricing.currency || 'CNY',
-        structuredUnitLabel(item.base_unit, item.price?.per_quantity, labels)
+        safeCurrency(price?.currency, fallbackCurrency, pricing.currency, 'CNY'),
+        structuredUnitLabel(
+          nonEmptyString(rawItem.base_unit),
+          finiteNumberOrUndefined(price?.per_quantity),
+          labels
+        )
       ),
     ];
   });
@@ -301,7 +314,7 @@ function buildStructuredPriceItem(
 }
 
 function formatStructuredAmount(amount: number, currency: string): string {
-  const normalizedCurrency = currency.trim().toUpperCase();
+  const normalizedCurrency = safeCurrency(currency, 'USD').trim().toUpperCase();
   const symbol =
     normalizedCurrency === 'CNY' ? '¥' : normalizedCurrency === 'USD' ? '$' : `${currency} `;
   return `${symbol}${amount.toLocaleString(undefined, {
@@ -380,7 +393,7 @@ function formatSourceCurrencyAmount(
   sourceCurrency: string | null | undefined,
   billingDisplay: BillingDisplaySettings
 ): string {
-  const normalizedCurrency = sourceCurrency?.trim().toUpperCase();
+  const normalizedCurrency = nonEmptyString(sourceCurrency)?.toUpperCase();
   try {
     const priceUSD =
       normalizedCurrency === 'CNY'
@@ -398,25 +411,29 @@ function getVideoPriceDisplayRows(
   labels: ModelPriceDisplayLabels | undefined
 ): VideoPriceDisplayRow[] {
   const videoPricing = pricing?.video_generation;
-  if (!videoPricing) return [];
+  if (!isRecord(videoPricing)) return [];
 
-  const billingUnit = videoPricing.billing_unit ?? 'million_video_tokens';
+  const billingUnit = nonEmptyString(videoPricing.billing_unit) ?? 'million_video_tokens';
   const unit = videoPriceUnit(billingUnit);
-  const currency = videoPricing.currency ?? pricing?.currency ?? fallbackCurrency;
+  const currency = safeCurrencyOrUndefined(
+    videoPricing.currency,
+    pricing?.currency,
+    fallbackCurrency
+  );
   const rates = flattenVideoRates(videoPricing.rates, videoPricing.resolution_rates);
 
-  return rates
-    .map(rate => {
-      const price = videoRatePrice(rate, billingUnit);
-      if (price === null) return null;
-      return {
+  return rates.flatMap(rate => {
+    const price = videoRatePrice(rate, billingUnit);
+    if (price === null) return [];
+    return [
+      {
         detail: videoRateDetail(rate, labels),
         price,
         unit,
         currency,
-      };
-    })
-    .filter((row): row is VideoPriceDisplayRow => row !== null);
+      } satisfies VideoPriceDisplayRow,
+    ];
+  });
 }
 
 function summarizeVideoPriceRows(rows: VideoPriceDisplayRow[]): ModelPriceDisplayItem[] {
@@ -461,13 +478,18 @@ function flattenVideoRates(
 ): VideoGenerationPricingRate[] {
   const flattened: VideoGenerationPricingRate[] = [];
   if (Array.isArray(rates)) {
-    flattened.push(...rates);
+    flattened.push(...rates.filter(isRecord));
   }
   if (Array.isArray(resolutionRates)) {
     for (const resolutionRate of resolutionRates) {
+      if (!isRecord(resolutionRate)) continue;
       if (!Array.isArray(resolutionRate?.rates)) continue;
       for (const rate of resolutionRate.rates) {
-        flattened.push({ ...rate, resolution: rate.resolution ?? resolutionRate.resolution });
+        if (!isRecord(rate)) continue;
+        flattened.push({
+          ...rate,
+          resolution: nonEmptyString(rate.resolution) ?? nonEmptyString(resolutionRate.resolution),
+        });
       }
     }
   }
@@ -526,4 +548,28 @@ function nonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed === '' ? undefined : trimmed;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function finiteNumberOrUndefined(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function safeCurrency(...values: unknown[]): string {
+  return safeCurrencyOrUndefined(...values) ?? 'USD';
+}
+
+function safeCurrencyOrUndefined(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const currency = nonEmptyString(value);
+    if (currency) return currency;
+  }
+  return undefined;
 }

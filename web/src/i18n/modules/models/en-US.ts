@@ -113,6 +113,7 @@ const messages = {
     available: 'Available',
     unavailable: 'Unavailable',
     generalModel: 'General model',
+    metadataUnavailable: 'Some model metadata is invalid or unavailable.',
     functionCalling: 'Function calling',
     vision: 'Vision',
     reasoning: 'Reasoning',
