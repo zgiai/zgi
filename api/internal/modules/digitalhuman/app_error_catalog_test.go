@@ -28,3 +28,20 @@ func TestCatalogDefinitionsLocalizeRevisionConflict(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalogDefinitionsExplainUnavailableCredentialStorage(t *testing.T) {
+	t.Parallel()
+	definitions := append(appcatalog.DefaultDefinitions(), CatalogDefinitions()...)
+	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	presentation, err := catalog.Present(AppCodeCredentialStorageUnavailable, appcatalog.LocaleChineseSimplified, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if presentation.HTTPStatus != 503 || presentation.Message != "安全凭证存储尚未配置，请联系管理员完成配置后，再保存渠道或网页搜索凭证。" {
+		t.Fatalf("presentation = %#v", presentation)
+	}
+}

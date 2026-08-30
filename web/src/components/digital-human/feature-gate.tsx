@@ -1,8 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Bot, Loader2, LockKeyhole } from 'lucide-react';
-import { useSystemFeatures } from '@/hooks/auth/use-system-features';
+import { Loader2, LockKeyhole } from 'lucide-react';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import type { PermissionCode } from '@/constants/permissions';
@@ -15,23 +14,13 @@ export function DigitalHumanFeatureGate({
   permission?: PermissionCode;
 }) {
   const t = useT('digitalHumans');
-  const features = useSystemFeatures();
   const permissions = useAccountPermissions();
 
-  if (features.isLoading || permissions.isLoading) {
+  if (permissions.isLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center" aria-label={t('loading')}>
         <Loader2 className="size-6 animate-spin text-muted-foreground" />
       </div>
-    );
-  }
-  if (!features.data?.enable_digital_human) {
-    return (
-      <FeatureState
-        icon={Bot}
-        title={t('disabled.title')}
-        description={t('disabled.description')}
-      />
     );
   }
   if (!permissions.hasPermission(permission)) {
@@ -51,7 +40,7 @@ function FeatureState({
   title,
   description,
 }: {
-  icon: typeof Bot;
+  icon: typeof LockKeyhole;
   title: string;
   description: string;
 }) {

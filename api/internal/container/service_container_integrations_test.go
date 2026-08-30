@@ -2,6 +2,7 @@ package container
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -33,6 +34,18 @@ func TestIntegrationRegistryRegistersGitHubWithExternalIntegrations(t *testing.T
 	}
 	if _, found := registry.ProviderDefinition(integrations.IntegrationWebSearch); !found {
 		t.Fatal("Web Search must be registered with the unified external-integration runtime")
+	}
+}
+
+func TestIntegrationCredentialCipherWithoutKeysDefersConfigurationFailure(t *testing.T) {
+	container := &ServiceContainer{config: &config.Config{}}
+	cipher := container.GetIntegrationCredentialCipher()
+
+	if _, err := cipher.EncryptCredentials(map[string]string{"token": "secret"}, integrations.CredentialAAD{}); !errors.Is(err, integrations.ErrCredentialCipherUnavailable) {
+		t.Fatalf("EncryptCredentials() error = %v, want ErrCredentialCipherUnavailable", err)
+	}
+	if _, err := cipher.DecryptCredentials("envelope", integrations.CredentialAAD{}); !errors.Is(err, integrations.ErrCredentialCipherUnavailable) {
+		t.Fatalf("DecryptCredentials() error = %v, want ErrCredentialCipherUnavailable", err)
 	}
 }
 

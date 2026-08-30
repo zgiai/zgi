@@ -746,14 +746,15 @@ actually depends on earlier provider messages.
 
 ### DigitalHuman Feishu channel
 
-The DigitalHuman channel gateway requires `DIGITAL_HUMAN_ENABLED=true`.
-Restart the API after changing the flag. Configure a **Feishu tenant app** with
-its App ID, App Secret, event Verification Token, and Encrypt Key. By default,
-the encrypted credential belongs to the channel installation and does not
-create a Connection Center record. An existing organization credential from
-Connection Center may be selected instead. Channel reads and sends call Feishu
-directly and do not depend on Connection action grants, action policy, cached
-scope observations, approval, or operation receipts.
+The DigitalHuman channel gateway is available whenever the API is running.
+Configure the shared integration credential keyring before storing channel
+credentials, then configure a **Feishu tenant app** with its App ID, App Secret,
+event Verification Token, and Encrypt Key. By default, the encrypted credential
+belongs to the channel installation and does not create a Connection Center
+record. An existing organization credential from Connection Center may be
+selected instead. Channel reads and sends call Feishu directly and do not depend
+on Connection action grants, action policy, cached scope observations, approval,
+or operation receipts.
 
 For attributed group context, also grant the application identity
 `im:message:readonly`, `im:message.group_msg`, and `im:chat.members:read`, then

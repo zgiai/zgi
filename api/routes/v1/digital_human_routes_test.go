@@ -66,25 +66,12 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 type digitalHumanRoutesAccountService struct{ interfaces.AccountService }
 type digitalHumanRoutesOrganizationService struct{ interfaces.OrganizationService }
 
-func TestRegisterDigitalHumanRoutesDisabledDoesNotRequireDependencies(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	group := router.Group("/console/api")
-
-	RegisterDigitalHumanRoutes(group, DigitalHumanRouteDeps{Enabled: false})
-
-	if got := len(router.Routes()); got != 0 {
-		t.Fatalf("registered route count = %d, want 0", got)
-	}
-}
-
-func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
+func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	group := router.Group("/console/api")
 
 	RegisterDigitalHumanRoutes(group, DigitalHumanRouteDeps{
-		Enabled:                 true,
 		Service:                 digitalHumanRoutesService{},
 		Runtime:                 digitalHumanRoutesRuntime{},
 		Channels:                digitalHumanRoutesChannels{},
@@ -154,14 +141,14 @@ func TestRegisterDigitalHumanRoutesEnabledRegistersLifecycleAPI(t *testing.T) {
 	}
 }
 
-func TestRegisterDigitalHumanRoutesEnabledFailsFastOnMissingDependencies(t *testing.T) {
+func TestRegisterDigitalHumanRoutesFailsFastOnMissingDependencies(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("RegisterDigitalHumanRoutes() did not panic")
 		}
 	}()
-	RegisterDigitalHumanRoutes(gin.New().Group("/console/api"), DigitalHumanRouteDeps{Enabled: true})
+	RegisterDigitalHumanRoutes(gin.New().Group("/console/api"), DigitalHumanRouteDeps{})
 }
 
 func digitalHumanRoutesCatalog(t *testing.T) *appcatalog.Catalog {

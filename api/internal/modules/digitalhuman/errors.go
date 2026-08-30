@@ -58,6 +58,9 @@ var (
 	ErrChannelConflict = errors.New("digital human channel conflict")
 	// ErrChannelNotReady indicates an invalid or incomplete provider connection.
 	ErrChannelNotReady = errors.New("digital human channel is not ready")
+	// ErrCredentialStorageUnavailable indicates that the deployment cannot
+	// securely persist DigitalHuman-owned channel or direct Skill credentials.
+	ErrCredentialStorageUnavailable = errors.New("digital human credential storage is unavailable")
 	// ErrChannelDeliveryNotFound indicates a missing scoped delivery record.
 	ErrChannelDeliveryNotFound = errors.New("digital human channel delivery not found")
 	// ErrChannelDeliveryConflict indicates an unsafe delivery state transition.

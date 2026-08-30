@@ -64,6 +64,9 @@ func (resolver *IntegrationChannelCredentialResolver) ResolveCredential(
 		}
 		credentials, err := resolver.cipher.DecryptCredentials(stored.EncryptedCredentials, channelCredentialAAD(stored))
 		if err != nil {
+			if errors.Is(err, integrations.ErrCredentialCipherUnavailable) {
+				return nil, ErrCredentialStorageUnavailable
+			}
 			return nil, fmt.Errorf("decrypt channel installation credential: %w", err)
 		}
 		return &channelruntime.ResolvedChannelCredential{Values: credentials, Version: stored.CredentialVersion}, nil
@@ -211,6 +214,9 @@ func (resolver *IntegrationChannelCredentialResolver) CreateEmbeddedInstallation
 		CredentialVersion: 1,
 	})
 	if err != nil {
+		if errors.Is(err, integrations.ErrCredentialCipherUnavailable) {
+			return ErrCredentialStorageUnavailable
+		}
 		return fmt.Errorf("encrypt channel installation credential: %w", err)
 	}
 	credential := &ChannelInstallationCredential{
@@ -244,6 +250,9 @@ func (resolver *IntegrationChannelCredentialResolver) ReplaceEmbeddedCredential(
 		version = stored.CredentialVersion + 1
 		current, err = resolver.cipher.DecryptCredentials(stored.EncryptedCredentials, channelCredentialAAD(stored))
 		if err != nil {
+			if errors.Is(err, integrations.ErrCredentialCipherUnavailable) {
+				return ErrCredentialStorageUnavailable
+			}
 			return fmt.Errorf("decrypt channel installation credential: %w", err)
 		}
 	case errors.Is(loadErr, ErrChannelCredentialNotFound):
@@ -269,6 +278,9 @@ func (resolver *IntegrationChannelCredentialResolver) ReplaceEmbeddedCredential(
 		CredentialVersion: version,
 	})
 	if err != nil {
+		if errors.Is(err, integrations.ErrCredentialCipherUnavailable) {
+			return ErrCredentialStorageUnavailable
+		}
 		return fmt.Errorf("encrypt channel installation credential: %w", err)
 	}
 	createdAt, createdBy := now, scope.ActorID

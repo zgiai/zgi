@@ -23,22 +23,23 @@ var (
 	// AppCodeVersionRestoreImpactChanged identifies a stale version restore preview.
 	AppCodeVersionRestoreImpactChanged = apperror.MustCode("digital_human.version.restore_impact_changed")
 	// AppCodeDeleteBlocked identifies deletion prevented by durable references.
-	AppCodeDeleteBlocked               = apperror.MustCode("digital_human.delete.blocked")
-	AppCodePersonaTemplateNotFound     = apperror.MustCode("digital_human.persona_template.not_found")
-	AppCodePersonaTemplateNameConflict = apperror.MustCode("digital_human.persona_template.name.conflict")
-	AppCodeResourceBindingInvalid      = apperror.MustCode("digital_human.resource_binding.invalid")
-	AppCodeRunNotFound                 = apperror.MustCode("digital_human.run.not_found")
-	AppCodeRunConflict                 = apperror.MustCode("digital_human.run.conflict")
-	AppCodeConversationNotFound        = apperror.MustCode("digital_human.conversation.not_found")
-	AppCodeMemoryNotFound              = apperror.MustCode("digital_human.memory.not_found")
-	AppCodeMemoryConflict              = apperror.MustCode("digital_human.memory.conflict")
-	AppCodeMemoryPolicyRejected        = apperror.MustCode("digital_human.memory.policy_rejected")
-	AppCodeMemoryUndoUnavailable       = apperror.MustCode("digital_human.memory.undo_unavailable")
-	AppCodeChannelInstallationNotFound = apperror.MustCode("digital_human.channel.installation.not_found")
-	AppCodeChannelConflict             = apperror.MustCode("digital_human.channel.conflict")
-	AppCodeChannelNotReady             = apperror.MustCode("digital_human.channel.not_ready")
-	AppCodeChannelDeliveryNotFound     = apperror.MustCode("digital_human.channel.delivery.not_found")
-	AppCodeChannelDeliveryConflict     = apperror.MustCode("digital_human.channel.delivery.conflict")
+	AppCodeDeleteBlocked                = apperror.MustCode("digital_human.delete.blocked")
+	AppCodePersonaTemplateNotFound      = apperror.MustCode("digital_human.persona_template.not_found")
+	AppCodePersonaTemplateNameConflict  = apperror.MustCode("digital_human.persona_template.name.conflict")
+	AppCodeResourceBindingInvalid       = apperror.MustCode("digital_human.resource_binding.invalid")
+	AppCodeRunNotFound                  = apperror.MustCode("digital_human.run.not_found")
+	AppCodeRunConflict                  = apperror.MustCode("digital_human.run.conflict")
+	AppCodeConversationNotFound         = apperror.MustCode("digital_human.conversation.not_found")
+	AppCodeMemoryNotFound               = apperror.MustCode("digital_human.memory.not_found")
+	AppCodeMemoryConflict               = apperror.MustCode("digital_human.memory.conflict")
+	AppCodeMemoryPolicyRejected         = apperror.MustCode("digital_human.memory.policy_rejected")
+	AppCodeMemoryUndoUnavailable        = apperror.MustCode("digital_human.memory.undo_unavailable")
+	AppCodeChannelInstallationNotFound  = apperror.MustCode("digital_human.channel.installation.not_found")
+	AppCodeChannelConflict              = apperror.MustCode("digital_human.channel.conflict")
+	AppCodeChannelNotReady              = apperror.MustCode("digital_human.channel.not_ready")
+	AppCodeCredentialStorageUnavailable = apperror.MustCode("digital_human.credential_storage.unavailable")
+	AppCodeChannelDeliveryNotFound      = apperror.MustCode("digital_human.channel.delivery.not_found")
+	AppCodeChannelDeliveryConflict      = apperror.MustCode("digital_human.channel.delivery.conflict")
 )
 
 // CatalogDefinitions returns public application errors owned by DigitalHuman.
@@ -97,6 +98,9 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The channel configuration changed or is already in use.", "渠道配置已变化或已被占用。"),
 		digitalHumanDefinition(AppCodeChannelNotReady, appcatalog.CategoryValidation, 400,
 			"The channel connection, webhook security, or bot identity could not be verified.", "无法验证渠道连接、Webhook 安全配置或机器人身份。"),
+		digitalHumanDefinition(AppCodeCredentialStorageUnavailable, appcatalog.CategoryInternal, 503,
+			"Secure credential storage is not configured. Ask an administrator to configure it before saving channel or web-search credentials.",
+			"安全凭证存储尚未配置，请联系管理员完成配置后，再保存渠道或网页搜索凭证。"),
 		digitalHumanDefinition(AppCodeChannelDeliveryNotFound, appcatalog.CategoryNotFound, 404,
 			"The channel delivery was not found.", "未找到该渠道投递记录。"),
 		digitalHumanDefinition(AppCodeChannelDeliveryConflict, appcatalog.CategoryConflict, 409,

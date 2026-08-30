@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -24,6 +25,10 @@ const (
 )
 
 var credentialKeyIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// ErrCredentialCipherUnavailable indicates that the deployment has not
+// configured a key capable of encrypting integration credentials.
+var ErrCredentialCipherUnavailable = errors.New("integration credential cipher is unavailable")
 
 // CredentialAAD binds an encrypted credential envelope to exactly one
 // organization connection and credential revision.
@@ -103,7 +108,7 @@ func newCredentialAEAD(masterKey string) (cipher.AEAD, error) {
 
 func (c *credentialKeyring) EncryptCredentials(credentials map[string]string, aad CredentialAAD) (string, error) {
 	if c == nil || c.aeads == nil {
-		return "", fmt.Errorf("integration credential cipher is unavailable")
+		return "", ErrCredentialCipherUnavailable
 	}
 	aead := c.aeads[c.activeKeyID]
 	if aead == nil {
@@ -133,7 +138,7 @@ func (c *credentialKeyring) EncryptCredentials(credentials map[string]string, aa
 
 func (c *credentialKeyring) DecryptCredentials(envelope string, aad CredentialAAD) (map[string]string, error) {
 	if c == nil || c.aeads == nil {
-		return nil, fmt.Errorf("integration credential cipher is unavailable")
+		return nil, ErrCredentialCipherUnavailable
 	}
 	if err := validateCredentialAAD(aad); err != nil {
 		return nil, err

@@ -2,10 +2,6 @@ const messages = {
   title: 'Digital Humans',
   subtitle: 'Persistent team identities with their own persona, tools, and execution history.',
   loading: 'Loading digital humans',
-  disabled: {
-    title: 'Digital Humans are not enabled',
-    description: 'Enable DIGITAL_HUMAN_ENABLED for this deployment before using this module.',
-  },
   forbidden: {
     title: 'Permission required',
     description: 'Your workspace role does not allow this Digital Human action.',

@@ -144,7 +144,6 @@ export function ConsoleSidebar({
   const isWorkspaceRequired = contextStatus === 'workspace_required';
   const systemFeatures = useSystemFeatures();
   const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
-  const digitalHumanEnabled = Boolean(systemFeatures.data?.enable_digital_human);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
@@ -229,15 +228,11 @@ export function ConsoleSidebar({
         key: 'resources',
         title: t('resources'),
         items: [
-          ...(digitalHumanEnabled
-            ? [
-                {
-                  title: t('digitalHumans'),
-                  href: '/console/digital-humans',
-                  icon: ContactRound,
-                },
-              ]
-            : []),
+          {
+            title: t('digitalHumans'),
+            href: '/console/digital-humans',
+            icon: ContactRound,
+          },
           {
             title: t('agents'),
             href: '/console/agents',
@@ -302,7 +297,7 @@ export function ConsoleSidebar({
         ],
       },
     ],
-    [digitalHumanEnabled, externalIntegrationsEnabled, t]
+    [externalIntegrationsEnabled, t]
   );
 
   // Filter groups and items
@@ -585,7 +580,6 @@ export function ConsoleMobileSidebar({
   const isWorkspaceRequired = contextStatus === 'workspace_required';
   const systemFeatures = useSystemFeatures();
   const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
-  const digitalHumanEnabled = Boolean(systemFeatures.data?.enable_digital_human);
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
     work: true,
     resources: true,
@@ -630,15 +624,11 @@ export function ConsoleMobileSidebar({
         key: 'resources',
         title: t('resources'),
         items: [
-          ...(digitalHumanEnabled
-            ? [
-                {
-                  title: t('digitalHumans'),
-                  href: '/console/digital-humans',
-                  icon: ContactRound,
-                },
-              ]
-            : []),
+          {
+            title: t('digitalHumans'),
+            href: '/console/digital-humans',
+            icon: ContactRound,
+          },
           {
             title: t('agents'),
             href: '/console/agents',
@@ -705,7 +695,7 @@ export function ConsoleMobileSidebar({
     ];
 
     return filterConsoleNavGroups(groups, isWorkspaceRequired, hasAnyPermission);
-  }, [digitalHumanEnabled, externalIntegrationsEnabled, hasAnyPermission, isWorkspaceRequired, t]);
+  }, [externalIntegrationsEnabled, hasAnyPermission, isWorkspaceRequired, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));

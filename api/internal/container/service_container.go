@@ -1356,6 +1356,16 @@ func (c *ServiceContainer) GetIntegrationConnectionHealthService() *integrations
 	return c.integrationConnectionHealth
 }
 
+type unavailableIntegrationCredentialCipher struct{}
+
+func (unavailableIntegrationCredentialCipher) EncryptCredentials(map[string]string, integrations.CredentialAAD) (string, error) {
+	return "", integrations.ErrCredentialCipherUnavailable
+}
+
+func (unavailableIntegrationCredentialCipher) DecryptCredentials(string, integrations.CredentialAAD) (map[string]string, error) {
+	return nil, integrations.ErrCredentialCipherUnavailable
+}
+
 func (c *ServiceContainer) GetIntegrationCredentialCipher() integrations.CredentialCipher {
 	if c.integrationCredentialCipher == nil {
 		activeKeyID := "legacy"
@@ -1369,6 +1379,10 @@ func (c *ServiceContainer) GetIntegrationCredentialCipher() integrations.Credent
 				keys["legacy"] = c.config.Encryption.APIKeyEncryptionKey
 				activeKeyID = "legacy"
 			}
+		}
+		if len(keys) == 0 {
+			c.integrationCredentialCipher = unavailableIntegrationCredentialCipher{}
+			return c.integrationCredentialCipher
 		}
 		cipher, err := integrations.NewCredentialKeyring(activeKeyID, keys)
 		if err != nil {

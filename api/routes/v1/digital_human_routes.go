@@ -31,9 +31,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// DigitalHumanRouteDeps contains the deployment gate and lifecycle dependencies.
+// DigitalHumanRouteDeps contains the lifecycle dependencies.
 type DigitalHumanRouteDeps struct {
-	Enabled                 bool
 	Service                 digitalhuman.HandlerService
 	Runtime                 digitalhuman.RuntimeHandlerService
 	Channels                digitalhuman.ChannelHandlerService
@@ -44,7 +43,7 @@ type DigitalHumanRouteDeps struct {
 }
 
 // DigitalHumanRuntimeDeps contains the shared bottom-layer runtime and durable
-// worker dependencies. It is initialized only when the feature is enabled.
+// worker dependencies.
 type DigitalHumanRuntimeDeps struct {
 	DB                  *gorm.DB
 	LLMClient           llmclient.LLMClient
@@ -70,11 +69,8 @@ type DigitalHumanRuntimeBundle struct {
 	Receivers *digitalhuman.ChannelReceiverManager
 }
 
-// RegisterDigitalHumanRoutes exposes the module only when its feature flag is enabled.
+// RegisterDigitalHumanRoutes exposes the DigitalHuman module.
 func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteDeps) {
-	if !deps.Enabled {
-		return
-	}
 	if router == nil || deps.Service == nil || deps.Runtime == nil || deps.Channels == nil || deps.Tasks == nil || deps.AccountService == nil || deps.OrganizationService == nil {
 		panic("digital human routes require lifecycle, runtime, channel, account, and permission services")
 	}

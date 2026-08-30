@@ -4,10 +4,6 @@ const messages: DigitalHumansMessages = {
   title: '数字人',
   subtitle: '拥有独立身份、人设、工具与运行历史的长期团队成员。',
   loading: '正在加载数字人',
-  disabled: {
-    title: '数字人功能尚未启用',
-    description: '请先为当前部署启用 DIGITAL_HUMAN_ENABLED。',
-  },
   forbidden: { title: '需要权限', description: '当前工作空间角色无权执行此数字人操作。' },
   list: {
     search: '搜索数字人',

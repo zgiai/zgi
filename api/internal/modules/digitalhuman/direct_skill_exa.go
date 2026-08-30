@@ -176,6 +176,9 @@ func (provider *ExaDirectSkillProvider) UpdateConfiguration(
 				map[string]string{"api_token": token}, directSkillCredentialAAD(scope.OrganizationID, id, 1),
 			)
 			if encryptErr != nil {
+				if errors.Is(encryptErr, integrations.ErrCredentialCipherUnavailable) {
+					return ErrCredentialStorageUnavailable
+				}
 				return fmt.Errorf("encrypt DigitalHuman direct Skill credential: %w", encryptErr)
 			}
 			updated = &DirectSkillCredential{
@@ -198,6 +201,9 @@ func (provider *ExaDirectSkillProvider) UpdateConfiguration(
 				map[string]string{"api_token": token}, directSkillCredentialAAD(scope.OrganizationID, next.ID, next.CredentialVersion),
 			)
 			if encryptErr != nil {
+				if errors.Is(encryptErr, integrations.ErrCredentialCipherUnavailable) {
+					return ErrCredentialStorageUnavailable
+				}
 				return fmt.Errorf("encrypt DigitalHuman direct Skill credential: %w", encryptErr)
 			}
 			next.EncryptedCredentials = envelope
