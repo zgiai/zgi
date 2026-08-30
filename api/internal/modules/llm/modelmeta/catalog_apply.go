@@ -26,6 +26,20 @@ type PublishedCatalog struct {
 	PublishedAt time.Time
 	Providers   []PublishedProvider
 	Models      []PublishedModel
+	Vendors     []PublishedVendor
+}
+
+type PublishedVendor struct {
+	Vendor      string
+	VendorName  string
+	CNName      string
+	ENName      string
+	Description string
+	Website     string
+	CountryCode string
+	Status      string
+	IsActive    bool
+	Metadata    map[string]interface{}
 }
 
 type PublishedProvider struct {
@@ -151,6 +165,19 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 		})
 	}
 	catalogvendor.Replace(vendors)
+	vendorMetadata := make([]catalogvendor.Metadata, 0, len(catalog.Vendors))
+	for _, vendor := range catalog.Vendors {
+		vendorMetadata = append(vendorMetadata, catalogvendor.Metadata{
+			Vendor:      vendor.Vendor,
+			VendorName:  vendor.VendorName,
+			CNName:      vendor.CNName,
+			ENName:      vendor.ENName,
+			Description: vendor.Description,
+			Website:     vendor.Website,
+			CountryCode: vendor.CountryCode,
+		})
+	}
+	catalogvendor.ReplaceMetadata(vendorMetadata)
 	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
 		invalidator.InvalidateModelCache(ctx)
 	}

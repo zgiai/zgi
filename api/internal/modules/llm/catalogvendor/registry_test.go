@@ -31,3 +31,26 @@ func TestReplaceProviderPreservesOtherProviders(t *testing.T) {
 		t.Fatalf("other provider vendor = %q, want 千问", got)
 	}
 }
+
+func TestReplaceMetadataAndLookupMetadata(t *testing.T) {
+	ReplaceMetadata([]Metadata{{
+		Vendor:      " openai ",
+		VendorName:  "OpenAI",
+		CNName:      "OpenAI 中文名",
+		ENName:      "OpenAI",
+		Description: "Console-managed vendor",
+	}})
+
+	got, ok := LookupMetadata("OPENAI")
+	if !ok {
+		t.Fatal("LookupMetadata() did not find normalized vendor")
+	}
+	if got.Vendor != "openai" || got.CNName != "OpenAI 中文名" || got.ENName != "OpenAI" {
+		t.Fatalf("LookupMetadata() = %#v, want Console metadata", got)
+	}
+
+	ReplaceMetadata(nil)
+	if _, ok := LookupMetadata("openai"); ok {
+		t.Fatal("LookupMetadata() after replacement found stale metadata")
+	}
+}

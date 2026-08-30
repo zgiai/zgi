@@ -22,6 +22,7 @@ import { getModelPriceDisplay } from '@/utils/model-price';
 import { useOrganizationStore } from '@/store/organization-store';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
 import { useT } from '@/i18n';
+import { useLocale } from '@/hooks/use-locale';
 
 const USE_CASE_VALUES: ModelUseCase[] = [
   'text-chat',
@@ -57,15 +58,18 @@ const MODEL_VENDOR_METADATA: ManufacturerFilterItem[] = [
   { label: 'Zhipu AI', value: 'zhipu', iconKey: 'zhipu' },
 ];
 
-function modelManufacturer(model: ModelItem): ManufacturerFilterItem {
+function modelManufacturer(model: ModelItem, locale: string): ManufacturerFilterItem {
   const vendor = normalizeSearchValue(model.vendor ?? '');
+  const configured = MODEL_VENDOR_METADATA.find(item => item.value === vendor);
+  const localizedName = locale.toLowerCase().startsWith('zh')
+    ? model.vendor_cn_name || model.vendor_name || model.vendor_en_name
+    : model.vendor_en_name || model.vendor_name || model.vendor_cn_name;
 
-  return (
-    MODEL_VENDOR_METADATA.find(item => item.value === vendor) ?? {
-      label: model.vendor?.trim() || vendor,
-      value: vendor,
-    }
-  );
+  return {
+    ...(configured ?? { value: vendor }),
+    label: localizedName?.trim() || configured?.label || model.vendor?.trim() || vendor,
+    iconKey: configured?.iconKey || vendor,
+  };
 }
 
 interface VideoResolutionRate {
@@ -177,6 +181,7 @@ function getExperienceHref(model: ModelItem): string {
 
 export function ModelPlazaPage() {
   const t = useT('models');
+  const { locale } = useLocale();
   const [search, setSearch] = React.useState('');
   const debouncedSearch = useDebouncedValue(search, 500);
   const [useCaseFilter, setUseCaseFilter] = React.useState<'all' | ModelUseCase>('all');
@@ -204,20 +209,6 @@ export function ModelPlazaPage() {
     ],
     [t, useCaseLabels]
   );
-  const manufacturerLabels = React.useMemo<Record<string, string>>(
-    () => ({
-      anthropic: 'Anthropic',
-      deepseek: t('plaza.manufacturers.deepseek'),
-      doubao: t('plaza.manufacturers.doubao'),
-      minimax: 'MiniMax',
-      moonshot: t('plaza.manufacturers.moonshot'),
-      openai: 'OpenAI',
-      qwen: t('plaza.manufacturers.qwen'),
-      zhipu: t('plaza.manufacturers.zhipu'),
-    }),
-    [t]
-  );
-
   const {
     items: officialProviders,
     isLoading: isOfficialProvidersLoading,
@@ -282,15 +273,12 @@ export function ModelPlazaPage() {
   const manufacturerFilters = React.useMemo<ManufacturerFilterItem[]>(() => {
     const availableManufacturers = new Map<string, ManufacturerFilterItem>();
     allModels.forEach(model => {
-      const manufacturer = modelManufacturer(model);
+      const manufacturer = modelManufacturer(model, locale);
       availableManufacturers.set(manufacturer.value, manufacturer);
     });
     const configuredManufacturers = MODEL_VENDOR_METADATA.filter(manufacturer =>
       availableManufacturers.has(manufacturer.value)
-    ).map(manufacturer => ({
-      ...manufacturer,
-      label: manufacturerLabels[manufacturer.value] ?? manufacturer.label,
-    }));
+    ).map(manufacturer => availableManufacturers.get(manufacturer.value) ?? manufacturer);
     const configuredValues = new Set(configuredManufacturers.map(item => item.value));
     const additionalManufacturers = Array.from(availableManufacturers.values())
       .filter(manufacturer => !configuredValues.has(manufacturer.value))
@@ -301,7 +289,7 @@ export function ModelPlazaPage() {
       ...configuredManufacturers,
       ...additionalManufacturers,
     ];
-  }, [allModels, manufacturerLabels, t]);
+  }, [allModels, locale, t]);
   const {
     models: providerModels,
     total: providerModelsTotal,
@@ -353,7 +341,10 @@ export function ModelPlazaPage() {
           : allModels
       ).filter(model => {
         if (providerFilter !== 'all' && model.provider !== providerFilter) return false;
-        if (manufacturerFilter !== 'all' && modelManufacturer(model).value !== manufacturerFilter) {
+        if (
+          manufacturerFilter !== 'all' &&
+          modelManufacturer(model, locale).value !== manufacturerFilter
+        ) {
           return false;
         }
         return modelMatchesSearch(
@@ -371,6 +362,7 @@ export function ModelPlazaPage() {
       providerSearchModels,
       debouncedSearch,
       manufacturerFilter,
+      locale,
       selectedProvider,
       shouldUseProviderSearch,
       useCaseLabels,
@@ -518,7 +510,7 @@ export function ModelPlazaPage() {
                   key={`${model.provider}:${model.model}`}
                   model={model}
                   useCaseLabels={useCaseLabels}
-                  manufacturerLabel={manufacturerLabels[modelManufacturer(model).value]}
+                  manufacturerLabel={modelManufacturer(model, locale).label}
                 />
               ))}
             </div>
@@ -596,10 +588,11 @@ function ModelCard({
   manufacturerLabel?: string;
 }) {
   const t = useT('models');
+  const { locale } = useLocale();
   const currentOrganization = useOrganizationStore.use.currentOrganization();
   const billingDisplay = getBillingDisplaySettings(currentOrganization);
   const displayName = modelDisplayName(model);
-  const manufacturer = modelManufacturer(model);
+  const manufacturer = modelManufacturer(model, locale);
   const displayManufacturer = manufacturerLabel ?? manufacturer.label;
   const experienceHref = getExperienceHref(model);
   const priceItems = getModelPriceDisplay({

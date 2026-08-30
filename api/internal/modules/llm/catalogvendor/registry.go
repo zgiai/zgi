@@ -11,10 +11,21 @@ type Entry struct {
 	Vendor   string
 }
 
+type Metadata struct {
+	Vendor      string
+	VendorName  string
+	CNName      string
+	ENName      string
+	Description string
+	Website     string
+	CountryCode string
+}
+
 var registry = struct {
 	sync.RWMutex
-	values map[string]string
-}{values: make(map[string]string)}
+	values   map[string]string
+	metadata map[string]Metadata
+}{values: make(map[string]string), metadata: make(map[string]Metadata)}
 
 func key(provider, model string) string {
 	return strings.TrimSpace(provider) + "\x00" + strings.TrimSpace(model)
@@ -26,7 +37,7 @@ func key(provider, model string) string {
 func Replace(entries []Entry) {
 	values := make(map[string]string, len(entries))
 	for _, entry := range entries {
-		vendor := strings.TrimSpace(entry.Vendor)
+		vendor := strings.ToLower(strings.TrimSpace(entry.Vendor))
 		if vendor == "" {
 			continue
 		}
@@ -35,6 +46,23 @@ func Replace(entries []Entry) {
 
 	registry.Lock()
 	registry.values = values
+	registry.Unlock()
+}
+
+// ReplaceMetadata atomically publishes display metadata owned by Console.
+func ReplaceMetadata(entries []Metadata) {
+	metadata := make(map[string]Metadata, len(entries))
+	for _, entry := range entries {
+		vendor := strings.TrimSpace(entry.Vendor)
+		if vendor == "" {
+			continue
+		}
+		entry.Vendor = vendor
+		metadata[vendor] = entry
+	}
+
+	registry.Lock()
+	registry.metadata = metadata
 	registry.Unlock()
 }
 
@@ -63,6 +91,13 @@ func Lookup(provider, model string) string {
 	vendor := registry.values[key(provider, model)]
 	registry.RUnlock()
 	return vendor
+}
+
+func LookupMetadata(vendor string) (Metadata, bool) {
+	registry.RLock()
+	metadata, ok := registry.metadata[strings.ToLower(strings.TrimSpace(vendor))]
+	registry.RUnlock()
+	return metadata, ok
 }
 
 func Enrich(provider, model string, target *string) {

@@ -351,6 +351,9 @@ type ModelView struct {
 	ID                  uuid.UUID  `json:"id"`
 	Provider            string     `json:"provider"`
 	Vendor              string     `json:"vendor,omitempty"`
+	VendorName          string     `json:"vendor_name,omitempty"`
+	VendorCNName        string     `json:"vendor_cn_name,omitempty"`
+	VendorENName        string     `json:"vendor_en_name,omitempty"`
 	Model               string     `json:"model"`
 	ModelName           string     `json:"model_name"`
 	Family              string     `json:"family"`                // Model family (e.g., GPT-4, Claude)

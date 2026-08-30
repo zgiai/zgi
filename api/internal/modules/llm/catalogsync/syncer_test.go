@@ -132,6 +132,29 @@ func TestPublishedModelCapabilityMapping(t *testing.T) {
 	})
 }
 
+func TestCatalogFromResponseIncludesVendorDirectory(t *testing.T) {
+	resp := &pb.GetPublishedCatalogResponse{
+		Vendors: []*pb.CatalogVendor{{
+			Vendor:       "openai",
+			VendorName:   "OpenAI",
+			CnName:       "OpenAI 中文名",
+			EnName:       "OpenAI",
+			Description:  "Console-managed vendor",
+			Website:      "https://openai.com",
+			CountryCode:  "US",
+			Status:       "active",
+			IsActive:     true,
+			MetadataJson: `{"icon_key":"openai"}`,
+		}},
+	}
+
+	catalog := catalogFromResponse(resp)
+	require.Len(t, catalog.Vendors, 1)
+	require.Equal(t, "openai", catalog.Vendors[0].Vendor)
+	require.Equal(t, "OpenAI 中文名", catalog.Vendors[0].CNName)
+	require.Equal(t, "openai", catalog.Vendors[0].Metadata["icon_key"])
+}
+
 func TestPublishedModelLifecycleFieldsMapping(t *testing.T) {
 	resp := &pb.GetPublishedCatalogResponse{
 		Version:     12,

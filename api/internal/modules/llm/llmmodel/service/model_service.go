@@ -856,6 +856,11 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			DefaultParameters:    cloneModelJSONObject(m.DefaultParameters),
 			Capabilities:         capabilitiesFromModelDefaults(m.DefaultParameters),
 		}
+		if metadata, ok := catalogvendor.LookupMetadata(view.Vendor); ok {
+			view.VendorName = metadata.VendorName
+			view.VendorCNName = metadata.CNName
+			view.VendorENName = metadata.ENName
+		}
 
 		// Apply tenant config if exists
 		if cfg, ok := configMap[m.ID]; ok {
@@ -1044,6 +1049,9 @@ func deduplicateModelViews(models []*model.ModelView) []*model.ModelView {
 			if modelViewAvailabilityRank(item) > modelViewAvailabilityRank(current) {
 				if item.Vendor == "" {
 					item.Vendor = current.Vendor
+					item.VendorName = current.VendorName
+					item.VendorCNName = current.VendorCNName
+					item.VendorENName = current.VendorENName
 				}
 				unique[index] = item
 			}
