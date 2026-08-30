@@ -22,7 +22,7 @@ import type {
   CreateCustomModelRequest,
   UpdateCustomModelRequest,
 } from '@/services/types/model';
-import { normalizeModel } from '@/utils/model-normalize';
+import { normalizeModelList } from '@/utils/model-normalize';
 import { useProvider } from '@/hooks/provider/use-provider';
 import { NODE_ENV } from '@/lib/config';
 import { type ProviderDetail } from '@/services';
@@ -150,7 +150,7 @@ export function useProviderModelsAll(
   }, [error, provider, t]);
 
   return {
-    models: (data?.data?.items ?? []).map(normalizeModel),
+    models: normalizeModelList(data?.data?.items),
     isLoading,
     isFetching,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
@@ -221,7 +221,7 @@ export function useAllModelsInfinite(options?: {
 
   const models = useMemo(() => {
     const pages = data?.pages ?? [];
-    const items = pages.flatMap(p => p?.data?.items ?? []).map(normalizeModel);
+    const items = pages.flatMap(p => normalizeModelList(p?.data?.items));
     // The same model identifier can be available through multiple providers.
     const seen = new Set<string>();
     return items.filter(m => {
@@ -297,7 +297,7 @@ export function useAllModels(options?: {
   }, [error, t]);
 
   return {
-    models: (data?.data?.items ?? []).map(normalizeModel),
+    models: normalizeModelList(data?.data?.items),
     isLoading,
     isFetching,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
@@ -352,7 +352,7 @@ export function useAvailableModels(options?: { use_case?: AvailableModelUseCase 
   }, [error, t, use_case]);
 
   return {
-    models: (data?.data?.items ?? []).map(normalizeModel),
+    models: normalizeModelList(data?.data?.items),
     isLoading,
     isFetching,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
@@ -397,7 +397,7 @@ export function useProviderModels(provider?: string): UseProviderModelsReturn {
 
   return {
     provider: detail.provider,
-    models: (data?.data?.items ?? []).map(normalizeModel),
+    models: normalizeModelList(data?.data?.items),
     isLoading: detail.isLoading || isLoading,
     isFetching: detail.isFetching || isFetching,
     error: detail.error || (error ? ((error as { message?: string }).message ?? 'error') : null),
@@ -603,12 +603,12 @@ export function useProviderModelsInfinite(
 
   const models = useMemo(() => {
     const pages = data?.pages ?? [];
-    const items = pages.flatMap(p => p?.data?.items ?? []);
+    const items = pages.flatMap(p => normalizeModelList(p?.data?.items));
     // Deduplicate by ID (backend may return overlapping items between pages)
     const seen = new Map<string, ModelItem>();
     const duplicates: Array<{ duplicate: ModelItem; original: ModelItem }> = [];
 
-    const result = items.map(normalizeModel).filter(m => {
+    const result = items.filter(m => {
       const existing = seen.get(m.id);
       if (existing) {
         duplicates.push({ duplicate: m, original: existing });

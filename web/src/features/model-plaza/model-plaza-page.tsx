@@ -67,7 +67,8 @@ function modelManufacturer(model: ModelItem, locale: string): ManufacturerFilter
 
   return {
     ...(configured ?? { value: vendor }),
-    label: localizedName?.trim() || configured?.label || model.vendor?.trim() || vendor,
+    label:
+      nonEmptyText(localizedName) || configured?.label || nonEmptyText(model.vendor) || vendor || '-',
     iconKey: configured?.iconKey || vendor,
   };
 }
@@ -88,8 +89,8 @@ interface StructuredModelPricing {
   } | null;
 }
 
-function normalizeSearchValue(value: string): string {
-  return value.trim().toLowerCase();
+function normalizeSearchValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
 function getProviderAliases(provider: string, label?: string, rawName?: string): string[] {
@@ -101,7 +102,18 @@ function getProviderAliases(provider: string, label?: string, rawName?: string):
 }
 
 function modelDisplayName(model: ModelItem): string {
-  return model.model_name || model.model || model.id;
+  return (
+    nonEmptyText(model.model_name) ||
+    nonEmptyText(model.model) ||
+    nonEmptyText(model.id) ||
+    '-'
+  );
+}
+
+function nonEmptyText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  return text || undefined;
 }
 
 function modelMatchesSearch(
@@ -158,17 +170,25 @@ async function fetchAllProviderModels(
     totalPages =
       typeof list.total_pages === 'number' && list.total_pages > 0 ? list.total_pages : page;
 
-    (list.items ?? []).map(normalizeModel).forEach(model => {
-      const key = `${model.provider}:${model.model}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      models.push(model);
-    });
+    const items = Array.isArray(list?.items) ? list.items : [];
+    items
+      .filter(isModelRecord)
+      .map(normalizeModel)
+      .forEach(model => {
+        const key = `${model.provider}:${model.model}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        models.push(model);
+      });
 
     page += 1;
   }
 
   return models;
+}
+
+function isModelRecord(value: unknown): value is ModelItem {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function getExperienceHref(model: ModelItem): string {
@@ -506,12 +526,17 @@ export function ModelPlazaPage() {
           <div className="space-y-5">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {filteredModels.map(model => (
-                <ModelCard
-                  key={`${model.provider}:${model.model}`}
-                  model={model}
-                  useCaseLabels={useCaseLabels}
-                  manufacturerLabel={modelManufacturer(model, locale).label}
-                />
+                <ModelCardErrorBoundary
+                  key={`${normalizeSearchValue(model.provider)}:${normalizeSearchValue(model.model)}:${modelDisplayName(model)}`}
+                  fallbackLabel={modelDisplayName(model)}
+                  fallbackMessage={t('plaza.metadataUnavailable')}
+                >
+                  <ModelCard
+                    model={model}
+                    useCaseLabels={useCaseLabels}
+                    manufacturerLabel={modelManufacturer(model, locale).label}
+                  />
+                </ModelCardErrorBoundary>
               ))}
             </div>
             {isFetching ? (
@@ -535,6 +560,35 @@ export function ModelPlazaPage() {
       </div>
     </div>
   );
+}
+
+class ModelCardErrorBoundary extends React.Component<
+  React.PropsWithChildren<{ fallbackLabel: string; fallbackMessage: string }>,
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('Failed to render model plaza card', error);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <Card className="min-h-64 border-border/70 bg-background shadow-none">
+        <CardContent className="flex h-full flex-col justify-center gap-2 p-5">
+          <h2 className="truncate text-lg font-medium" title={this.props.fallbackLabel}>
+            {this.props.fallbackLabel}
+          </h2>
+          <p className="text-sm text-muted-foreground">{this.props.fallbackMessage}</p>
+        </CardContent>
+      </Card>
+    );
+  }
 }
 
 function FilterRow({
@@ -627,17 +681,21 @@ function ModelCard({
     },
   });
   const structuredPricing = model.pricing as StructuredModelPricing | null | undefined;
+  const videoRates = Array.isArray(structuredPricing?.video_generation?.resolution_rates)
+    ? structuredPricing.video_generation.resolution_rates
+    : [];
   const videoResolutions = Array.from(
     new Set(
-      (structuredPricing?.video_generation?.resolution_rates ?? [])
+      videoRates
+        .filter(item => item !== null && typeof item === 'object' && !Array.isArray(item))
         .map(item => item.resolution)
         .filter((resolution): resolution is string => Boolean(resolution))
     )
   );
-  const videoRates = structuredPricing?.video_generation?.resolution_rates ?? [];
   const videoPriceVariesByResolution = [true, false].some(inputVideo => {
     const prices = videoRates.flatMap(item =>
-      (item.rates ?? [])
+      (Array.isArray(item?.rates) ? item.rates : [])
+        .filter(rate => rate !== null && typeof rate === 'object' && !Array.isArray(rate))
         .filter(rate => rate.input_video === inputVideo)
         .map(rate => rate.price_per_million_tokens)
         .filter((price): price is number => typeof price === 'number' && Number.isFinite(price))
@@ -674,7 +732,9 @@ function ModelCard({
             size="sm"
             className="h-7 shrink-0 gap-1 px-2 text-xs text-muted-foreground"
             onClick={() => {
-              void navigator.clipboard.writeText(model.model);
+              void navigator.clipboard.writeText(
+                typeof model.model === 'string' ? model.model : displayName
+              );
               toast.success(t('plaza.copySuccess'));
             }}
             title={t('plaza.copyTitle')}

@@ -72,6 +72,7 @@
     "test:invocation-log-loading-state": "node scripts/test-invocation-log-loading-state.mjs",
     "test:route-access": "node scripts/test-route-access.mjs",
     "test:billing-display": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-billing-display.mjs && node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-usage-fiat-display.mjs",
+    "test:model-plaza-fallbacks": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-model-plaza-fallbacks.mjs",
     "test:work-layout-request-lifecycle": "node scripts/test-work-layout-request-lifecycle.mjs",
     "test:skill-load-timeline-filter": "node scripts/test-skill-load-timeline-filter.mjs",
     "test:aichat-tool-recovery-display": "node scripts/test-aichat-tool-recovery-display.mjs",
