@@ -5,10 +5,201 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
+	"gorm.io/datatypes"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestPricingSnapshotCostUSDUsesExactComponentsBeforeRoundedCredits(t *testing.T) {
+	snapshot := datatypes.JSON(`{
+		"input_cost_usd":"0.000043065",
+		"cache_read_cost_usd":"0.000001856",
+		"cache_write_cost_usd":"0",
+		"output_cost_usd":"0.00012267"
+	}`)
+	got, ok := pricingSnapshotCostUSD(snapshot)
+	want := decimal.RequireFromString("0.000167591")
+	if !ok || !got.Equal(want) {
+		t.Fatalf("pricingSnapshotCostUSD() = %s, %t; want %s, true", got, ok, want)
+	}
+}
+
+func TestPricingSnapshotCostCNYUsesRecordedSettlementAmount(t *testing.T) {
+	got, ok := pricingSnapshotCostCNY(datatypes.JSON(`{"total_cost_cny":"0.0475272"}`))
+	want := decimal.RequireFromString("0.0475272")
+	if !ok || !got.Equal(want) {
+		t.Fatalf("pricingSnapshotCostCNY() = %s, %t; want %s, true", got, ok, want)
+	}
+}
+
+func TestAggregateInvocationBillsKeepsRecordedCNYTotal(t *testing.T) {
+	now := time.Now().UTC()
+	items := aggregateInvocationBills(
+		[]invocationPageRow{{RequestID: "request-1"}},
+		[]invocationBillRow{{
+			RequestID: "request-1", Status: "success", TotalPoints: 6601,
+			PricingSnapshot:  datatypes.JSON(`{"total_cost_usd":"0.006601","total_cost_cny":"0.0475272","cny_per_usd":"7.2"}`),
+			RequestCreatedAt: now, SettledAt: now,
+		}},
+	)
+	if len(items) != 1 || items[0].TotalCostCNY == nil || *items[0].TotalCostCNY != "0.0475272" {
+		t.Fatalf("aggregated items = %#v", items)
+	}
+}
+
+func TestInvocationLogSummaryAggregatesRecordedCallTimeCurrencyTotals(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_usage_bills (
+		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, invocation_source TEXT NOT NULL,
+		app_type TEXT, model_name TEXT NOT NULL, total_tokens INTEGER NOT NULL,
+		total_points INTEGER NOT NULL, pricing_snapshot JSON NOT NULL DEFAULT '{}',
+		request_created_at DATETIME NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+	rows := []map[string]any{
+		{
+			"request_id": "request-1", "organization_id": "org-1", "invocation_source": "product",
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1","total_cost_cny":"0.7","cny_per_usd":"7"}`),
+			"request_created_at": started,
+		},
+		{
+			"request_id": "request-2", "organization_id": "org-1", "invocation_source": "product",
+			"model_name": "model-a", "total_tokens": 200, "total_points": 200,
+			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.2","total_cost_cny":"1.6","cny_per_usd":"8"}`),
+			"request_created_at": started.Add(time.Minute),
+		},
+	}
+	if err := db.Table(usageBillTable).Create(rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &statisticsRepositoryImpl{db: db}
+	summary, err := repo.queryInvocationLogSummary(context.Background(), invocationLogFilters{
+		OrganizationID: "org-1",
+		StartTime:      started.Add(-time.Hour).Unix(),
+		EndTime:        started.Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.TotalCostUSD == nil || decimal.RequireFromString(*summary.TotalCostUSD).Cmp(decimal.RequireFromString("0.3")) != 0 {
+		t.Fatalf("total USD = %#v, want 0.3", summary.TotalCostUSD)
+	}
+	if summary.TotalCostCNY == nil || decimal.RequireFromString(*summary.TotalCostCNY).Cmp(decimal.RequireFromString("2.3")) != 0 {
+		t.Fatalf("total CNY = %#v, want recorded call-time total 2.3", summary.TotalCostCNY)
+	}
+}
+
+func TestInvocationLogSummaryOmitsCNYWhenAnyBillLacksRecordedConversion(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_usage_bills (
+		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, invocation_source TEXT NOT NULL,
+		app_type TEXT, model_name TEXT NOT NULL, total_tokens INTEGER NOT NULL,
+		total_points INTEGER NOT NULL, pricing_snapshot JSON NOT NULL DEFAULT '{}',
+		request_created_at DATETIME NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+	rows := []map[string]any{
+		{
+			"request_id": "request-recorded", "organization_id": "org-1", "invocation_source": "product",
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1","total_cost_cny":"0.7"}`),
+			"request_created_at": started,
+		},
+		{
+			"request_id": "request-usd-only", "organization_id": "org-1", "invocation_source": "product",
+			"model_name": "model-a", "total_tokens": 100, "total_points": 100,
+			"pricing_snapshot":   datatypes.JSON(`{"total_cost_usd":"0.1"}`),
+			"request_created_at": started.Add(time.Minute),
+		},
+	}
+	if err := db.Table(usageBillTable).Create(rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &statisticsRepositoryImpl{db: db}
+	summary, err := repo.queryInvocationLogSummary(context.Background(), invocationLogFilters{
+		OrganizationID: "org-1",
+		StartTime:      started.Add(-time.Hour).Unix(),
+		EndTime:        started.Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.TotalCostUSD == nil || summary.TotalCostCNY != nil {
+		t.Fatalf("mixed snapshot summary = %#v; want exact USD and no CNY conversion", summary)
+	}
+}
+
+func TestInvocationPricingDetailsExposeActualTokenPricesAndSources(t *testing.T) {
+	bill := invocationBillRow{
+		BillingLane:   "private",
+		PricingSource: "upstream_model_price",
+		UsageSource:   "provider_usage",
+		PricingSnapshot: datatypes.JSON(`{
+			"input_price_usd_per_1m_tokens":"5",
+			"cache_read_price_usd_per_1m_tokens":"0.5",
+			"cache_write_price_usd_per_1m_tokens":"0",
+			"output_price_usd_per_1m_tokens":"30",
+			"input_cost_usd":"0.001995",
+			"cache_read_cost_usd":"0.004096",
+			"cache_write_cost_usd":"0",
+			"output_cost_usd":"0.00051",
+			"cny_per_usd":"7.2",
+			"billing_display_currency":"CNY",
+			"cache_read_price_source":"synced_model",
+			"cache_write_price_source":"organization_override"
+		}`),
+	}
+
+	details := invocationPricingDetails(bill)
+	if details == nil {
+		t.Fatal("invocationPricingDetails() = nil")
+	}
+	if details.BillingLane != "private" || details.PricingSource != "upstream_model_price" {
+		t.Fatalf("unexpected sources: %#v", details)
+	}
+	if details.CacheReadPriceUSDPer1MTokens == nil || *details.CacheReadPriceUSDPer1MTokens != "0.5" {
+		t.Fatalf("cache read price = %#v, want 0.5", details.CacheReadPriceUSDPer1MTokens)
+	}
+	if details.CacheReadCostUSD == nil || *details.CacheReadCostUSD != "0.004096" {
+		t.Fatalf("cache read cost = %#v, want 0.004096", details.CacheReadCostUSD)
+	}
+	if details.CNYPerUSD == nil || *details.CNYPerUSD != "7.2" {
+		t.Fatalf("call-time exchange rate = %#v, want 7.2", details.CNYPerUSD)
+	}
+	if details.BillingDisplayCurrency != "CNY" {
+		t.Fatalf("call-time billing currency = %q, want CNY", details.BillingDisplayCurrency)
+	}
+	if details.CacheReadPriceSource != "synced_model" || details.CacheWritePriceSource != "organization_override" {
+		t.Fatalf("unexpected cache price sources: %#v", details)
+	}
+}
+
+func TestInvocationPricingDetailsKeepPlatformSettlementWithoutInventingPrices(t *testing.T) {
+	details := invocationPricingDetails(invocationBillRow{BillingLane: "platform"})
+	if details == nil || details.BillingLane != "platform" {
+		t.Fatalf("platform details = %#v", details)
+	}
+	if details.InputPriceUSDPer1MTokens != nil || details.CacheReadPriceUSDPer1MTokens != nil || details.OutputPriceUSDPer1MTokens != nil {
+		t.Fatalf("platform settlement must not invent token prices: %#v", details)
+	}
+}
 
 func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
@@ -18,10 +209,19 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		channel_id TEXT,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_routes (id TEXT PRIMARY KEY, name TEXT NOT NULL)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Table("llm_routes").Create(map[string]any{
+		"id": "channel-1", "name": "Official Cloud A",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	createInvocationContentAvailabilityTable(t, db)
@@ -37,7 +237,7 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Table(usageBillTable).Where("request_id = ?", "req-product").Updates(map[string]any{
-		"app_type": "agent", "model_name": "agent-model",
+		"app_type": "agent", "model_name": "agent-model", "channel_id": "channel-1",
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +271,7 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if retried == nil || retried.AttemptCount != 2 || retried.Status != "success" || retried.TotalTokens != 30 {
 		t.Fatalf("unexpected retried invocation: %#v", retried)
 	}
-	if product == nil || !product.ContentAvailable || product.ContentExpiresAt == nil || retried.ContentAvailable {
+	if product == nil || product.ChannelName != "Official Cloud A" || !product.ContentAvailable || product.ContentExpiresAt == nil || retried.ContentAvailable {
 		t.Fatalf("unexpected content availability: product=%#v retried=%#v", product, retried)
 	}
 
@@ -117,7 +317,7 @@ func TestGetInvocationLogCursorPreservesSubMillisecondPrecision(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {
@@ -166,7 +366,7 @@ func TestGetInvocationLogKeepsRetryAttemptsInsideSelectedTimeRange(t *testing.T)
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {
@@ -205,7 +405,7 @@ func TestGetInvocationLogIncludesFractionalPartOfEndSecond(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {
@@ -237,7 +437,7 @@ func TestGetInvocationLogKeepsBaseLogAvailableWithoutOptionalContentTable(t *tes
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
 		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
-		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
 		error_code TEXT, request_created_at DATETIME NOT NULL, settled_at DATETIME NOT NULL
 	)`).Error; err != nil {

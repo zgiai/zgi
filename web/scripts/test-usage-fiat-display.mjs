@@ -15,12 +15,18 @@ for (const [locale, usageMessages] of [
   ['en-US', enMessages.usage],
   ['zh-Hans', zhHansMessages.usage],
 ]) {
-  const visibleCopy = collectStrings(usageMessages).join('\n');
+  const visibleCopy = collectStrings({
+    ...usageMessages,
+    invocations: {
+      ...usageMessages.invocations,
+      details: undefined,
+    },
+  }).join('\n');
 
   assert.doesNotMatch(
     visibleCopy,
     /点数|\bpoints?\b|\bcredits?\b/i,
-    `${locale} usage copy must describe fiat cost instead of internal credits`
+    `${locale} non-detail usage copy must describe fiat cost instead of internal credits`
   );
 }
 
@@ -92,6 +98,37 @@ assert.equal(
 );
 assert.equal(zhHansMessages.usage.modelDetails.showAllModels, '查看全部 {count} 个模型');
 assert.equal(zhHansMessages.usage.modelDetails.collapse, '收起');
+assert.equal(
+  zhHansMessages.usage.invocations.details.pricingSourceConfigured,
+  '调用时模型配置价',
+  'recorded model prices must use a clear call-time source label'
+);
+assert.equal(zhHansMessages.usage.invocations.details.perMillionTokens, '{price}/M');
+assert.equal(enMessages.usage.invocations.details.perMillionTokens, '{price}/M');
+assert.equal(
+  zhHansMessages.usage.invocations.details.historicalDetailsUnavailable,
+  '历史记录暂无明细'
+);
+
+const invocationDetailsSource = await readFile(
+  new URL('../src/components/usage/invocation-log-section.tsx', import.meta.url),
+  'utf8'
+);
+assert.doesNotMatch(
+  invocationDetailsSource,
+  /platformFormula(?:CNY)?/,
+  'token billing details must not explain model charges using internal point conversion formulas'
+);
+assert.match(
+  invocationDetailsSource,
+  /cacheWriteUnitPrice[\s\S]*item\.cache_write_tokens > 0 \? inputUnitPrice/,
+  'legacy cache tokens without a recorded cache price must use the recorded input unit price'
+);
+assert.match(
+  invocationDetailsSource,
+  /completeComponents\.length === 0[\s\S]*historicalDetailsUnavailable/,
+  'historical records without actual unit prices must collapse the empty settlement breakdown'
+);
 
 const tokenTrendSource = await readFile(
   new URL('../src/components/usage/token-trend-chart.tsx', import.meta.url),

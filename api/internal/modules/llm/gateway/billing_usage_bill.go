@@ -32,6 +32,8 @@ var usageBillUpsertColumns = []string{
 	"use_system_provider",
 	"status",
 	"prompt_tokens",
+	"cache_read_tokens",
+	"cache_write_tokens",
 	"completion_tokens",
 	"total_tokens",
 	"official_points",
@@ -100,7 +102,7 @@ func (b *BillingService) buildUsageBill(
 	}
 	useSystemProvider := usageBillingLaneUsesSystemProvider(billingLane)
 
-	promptTokens, completionTokens, totalTokens := usageBillTokens(bc, status)
+	promptTokens, cacheReadTokens, cacheWriteTokens, completionTokens, totalTokens := usageBillTokens(bc, status)
 	officialPoints, privatePoints := usageBillPoints(bc, status, billingLane)
 	pricingSnapshot := bc.PricingSnapshot
 	if len(pricingSnapshot) == 0 || string(pricingSnapshot) == "null" {
@@ -139,6 +141,8 @@ func (b *BillingService) buildUsageBill(
 		UseSystemProvider: useSystemProvider,
 		Status:            status,
 		PromptTokens:      promptTokens,
+		CacheReadTokens:   cacheReadTokens,
+		CacheWriteTokens:  cacheWriteTokens,
 		CompletionTokens:  completionTokens,
 		TotalTokens:       totalTokens,
 		OfficialPoints:    officialPoints,
@@ -175,19 +179,21 @@ func normalizeUsageBillTimes(requestCreatedAt, settledAt time.Time) (time.Time, 
 	return requestCreatedAt, settledAt
 }
 
-func usageBillTokens(bc *BillingContext, status string) (int64, int64, int64) {
+func usageBillTokens(bc *BillingContext, status string) (int64, int64, int64, int64, int64) {
 	if status != usageBillStatusSuccess && status != usageBillStatusPartial {
-		return 0, 0, 0
+		return 0, 0, 0, 0, 0
 	}
 
 	promptTokens := maxInt64(int64(bc.PromptTokens), 0)
+	cacheReadTokens := maxInt64(int64(bc.CacheReadTokens), 0)
+	cacheWriteTokens := maxInt64(int64(bc.CacheWriteTokens), 0)
 	completionTokens := maxInt64(int64(bc.CompletionTokens), 0)
 	totalTokens := maxInt64(int64(bc.TotalTokens), 0)
 	if totalTokens == 0 {
-		totalTokens = promptTokens + completionTokens
+		totalTokens = promptTokens + cacheReadTokens + cacheWriteTokens + completionTokens
 	}
 
-	return promptTokens, completionTokens, totalTokens
+	return promptTokens, cacheReadTokens, cacheWriteTokens, completionTokens, totalTokens
 }
 
 func usageBillPoints(bc *BillingContext, status string, billingLane UsageBillingLane) (int64, int64) {

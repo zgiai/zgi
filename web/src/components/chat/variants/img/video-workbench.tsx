@@ -2008,7 +2008,7 @@ function ReferenceMaterialButton({
         type="button"
         disabled={disabled}
         className={cn(
-          'flex size-[90px] shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border bg-muted/20 text-muted-foreground transition',
+          'flex h-[90px] min-w-[90px] max-w-full shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border bg-muted/20 px-2 text-muted-foreground transition sm:w-auto',
           disabled
             ? 'cursor-not-allowed opacity-50'
             : 'hover:border-border-strong hover:bg-muted/30 hover:text-foreground'
@@ -2016,7 +2016,9 @@ function ReferenceMaterialButton({
         onClick={() => inputRef.current?.click()}
       >
         <ImagePlus className="h-4 w-4" />
-        <span className="text-[11px] font-medium leading-none">{referenceLabel}</span>
+        <span className="max-w-full text-center text-[11px] font-medium leading-tight break-words">
+          {referenceLabel}
+        </span>
       </button>
 
       {files.length > 0 ? (

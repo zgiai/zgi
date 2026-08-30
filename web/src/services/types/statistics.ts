@@ -15,6 +15,8 @@ export interface ModelUsageSummary {
   failed_count: number;
   partial_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   official_points: number;
@@ -32,6 +34,8 @@ export interface ModelUsageByModelItem {
   failed_count: number;
   partial_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   official_points: number;
@@ -47,6 +51,8 @@ export interface ModelUsageByAppTypeItem {
   failed_count: number;
   partial_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   official_points: number;
@@ -62,6 +68,8 @@ export interface ModelUsageDailyItem {
   failed_count: number;
   partial_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   official_tokens: number;
@@ -126,6 +134,8 @@ export interface InvocationLogSummary {
   unknown_count: number;
   total_tokens: number;
   total_points: number;
+  total_cost_usd?: string;
+  total_cost_cny?: string;
 }
 
 export interface InvocationLogItem {
@@ -135,12 +145,18 @@ export interface InvocationLogItem {
   app_type: string;
   model_name: string;
   provider_name: string;
+  channel_name: string;
   status: InvocationStatus;
   attempt_count: number;
   prompt_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   total_points: number;
+  total_cost_usd?: string;
+  total_cost_cny?: string;
+  pricing_details?: InvocationPricingDetails;
   duration_ms: number;
   started_at: number;
   settled_at: number;
@@ -149,6 +165,26 @@ export interface InvocationLogItem {
   content_expires_at?: number;
   input?: unknown;
   output?: unknown;
+}
+
+export interface InvocationPricingDetails {
+  billing_lane: string;
+  pricing_source?: string;
+  usage_source?: string;
+  input_price_usd_per_1m_tokens?: string;
+  cache_read_price_usd_per_1m_tokens?: string;
+  cache_write_price_usd_per_1m_tokens?: string;
+  output_price_usd_per_1m_tokens?: string;
+  input_cost_usd?: string;
+  cache_read_cost_usd?: string;
+  cache_write_cost_usd?: string;
+  output_cost_usd?: string;
+  cny_per_usd?: string;
+  billing_display_currency?: string;
+  input_price_source?: string;
+  cache_read_price_source?: string;
+  cache_write_price_source?: string;
+  output_price_source?: string;
 }
 
 export interface InvocationLogCursor {

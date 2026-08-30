@@ -15,6 +15,7 @@ import {
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
 import { formatNumber } from '@/utils/format';
+import { formatTokenCount } from '@/utils/token-format';
 
 interface TokenTrendChartProps {
   dailyData: ModelUsageDailyItem[];
@@ -219,7 +220,7 @@ export function TokenTrendChart({
                   tickLine={false}
                   tick={{ fontSize: 12, fill: '#6B7280' }}
                   tickFormatter={value =>
-                    chartMode === 'points' ? formatCost(value) : formatNumber(value, 2) || '0'
+                    chartMode === 'points' ? formatCost(value) : formatTokenCount(value, locale)
                   }
                   dx={-10}
                 />
@@ -259,15 +260,15 @@ export function TokenTrendChart({
                           <div className="space-y-1 text-muted-foreground">
                             <div>
                               {t('usage.chart.officialTokensSeries')}:{' '}
-                              {formatNumber(data.officialTokens, 2)} {unitLabel}
+                              {formatTokenCount(data.officialTokens, locale)} {unitLabel}
                             </div>
                             <div>
                               {t('usage.chart.privateTokensSeries')}:{' '}
-                              {formatNumber(data.privateTokens, 2)} {unitLabel}
+                              {formatTokenCount(data.privateTokens, locale)} {unitLabel}
                             </div>
                             <div>
                               {t('usage.chart.totalTokensSeries')}:{' '}
-                              {formatNumber(data.totalTokens, 2)} {unitLabel}
+                              {formatTokenCount(data.totalTokens, locale)} {unitLabel}
                             </div>
                             <div>
                               {t('usage.cards.attemptCount')}: {formatNumber(data.attemptCount)}
@@ -288,7 +289,7 @@ export function TokenTrendChart({
                               {seriesLabel}:{' '}
                               {chartMode === 'points'
                                 ? formatCost(data.totalPoints)
-                                : formatNumber(data.totalTokens, 2)}{' '}
+                                : formatTokenCount(data.totalTokens, locale)}{' '}
                               {unitLabel}
                             </div>
                             <div>
@@ -367,7 +368,10 @@ export function TokenTrendChart({
           )}
           <span className="text-muted-foreground">
             {t('usage.chart.totalLabel', {
-              count: chartMode === 'points' ? formatCost(totalValue) : formatNumber(totalValue, 2),
+              count:
+                chartMode === 'points'
+                  ? formatCost(totalValue)
+                  : formatTokenCount(totalValue, locale),
             })}
             {unitLabel ? ` ${unitLabel}` : null}
           </span>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { useLocale } from 'next-intl';
 import { QrCode, XCircle } from 'lucide-react';
 import { useT } from '@/i18n';
 import QRCode from 'react-qr-code';
@@ -22,6 +23,7 @@ import { usePaymentStatusPolling } from '@/hooks/pay/use-payment-status-polling'
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { AiCreditProduct, Wallet, OrderStatus, PaymentMethod } from '@/services/types/pay';
+import { formatRecordedCurrencyAmount } from '@/utils/billing-display';
 
 // Alipay icon component
 function AlipayIcon({ className }: { className?: string }) {
@@ -62,6 +64,7 @@ export function BuyAiCreditDialog({
   isLoading = false,
 }: BuyAiCreditDialogProps) {
   const t = useT('dashboard');
+  const locale = useLocale();
   const [useBalance, setUseBalance] = useState(false);
   const [balanceAmount, setBalanceAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('alipay');
@@ -73,6 +76,9 @@ export function BuyAiCreditDialog({
 
   const productPrice = product?.price ?? 0;
   const availableBalance = walletData?.available_balance ?? 0;
+  const productCurrency = product?.currency?.trim().toUpperCase() || 'CNY';
+  const walletCurrency = walletData?.currency?.trim().toUpperCase() || 'CNY';
+  const canUseBalance = productCurrency === walletCurrency;
 
   // Reset state when dialog opens/closes or product changes
   useEffect(() => {
@@ -136,12 +142,12 @@ export function BuyAiCreditDialog({
 
   // Calculate deduction and payment amounts
   const deductionAmount = useMemo(() => {
-    if (!useBalance || !balanceAmount) return 0;
+    if (!canUseBalance || !useBalance || !balanceAmount) return 0;
     const amount = parseFloat(balanceAmount);
     if (isNaN(amount) || amount <= 0) return 0;
     // Cannot deduct more than available balance or product price
     return Math.min(amount, availableBalance, productPrice);
-  }, [useBalance, balanceAmount, availableBalance, productPrice]);
+  }, [canUseBalance, useBalance, balanceAmount, availableBalance, productPrice]);
 
   const finalPaymentAmount = useMemo(() => {
     return Math.max(0, productPrice - deductionAmount);
@@ -233,7 +239,7 @@ export function BuyAiCreditDialog({
                   </div>
                   <div className="text-lg font-bold">{product.product_name}</div>
                   <div className="text-2xl font-bold text-blue-600 mt-2">
-                    ¥ {productPrice.toFixed(2)}
+                    {formatRecordedCurrencyAmount(productPrice, productCurrency, { locale })}
                   </div>
                 </div>
 
@@ -243,6 +249,7 @@ export function BuyAiCreditDialog({
                     <Checkbox
                       id="use-balance"
                       checked={useBalance}
+                      disabled={!canUseBalance}
                       onCheckedChange={checked => {
                         const isChecked = checked === true;
                         setUseBalance(isChecked);
@@ -257,7 +264,8 @@ export function BuyAiCreditDialog({
                       {t('costCenter.packages.useBalance')}
                     </Label>
                     <span className="text-sm text-orange-600">
-                      ({t('costCenter.packages.currentBalance')} ¥{availableBalance.toFixed(2)})
+                      ({t('costCenter.packages.currentBalance')}{' '}
+                      {formatRecordedCurrencyAmount(availableBalance, walletCurrency, { locale })})
                     </span>
                   </div>
 
@@ -273,14 +281,15 @@ export function BuyAiCreditDialog({
                           max={Math.min(availableBalance, productPrice)}
                           className="flex-1"
                         />
-                        <span className="text-sm">{t('costCenter.packages.currencyUnit')}</span>
+                        <span className="text-sm">{walletCurrency}</span>
                       </div>
                       <p className="text-xs text-muted-foreground">
                         {t('costCenter.packages.balanceNotice')}
                       </p>
                       <div className="flex justify-end">
                         <span className="text-sm text-muted-foreground">
-                          {t('costCenter.packages.deduction')}: ¥{deductionAmount.toFixed(2)}
+                          {t('costCenter.packages.deduction')}:{' '}
+                          {formatRecordedCurrencyAmount(deductionAmount, walletCurrency, { locale })}
                         </span>
                       </div>
                     </div>
@@ -295,7 +304,10 @@ export function BuyAiCreditDialog({
                         {t('costCenter.packages.selectPaymentMethod')}
                       </div>
                       <div className="text-sm font-bold text-orange-600">
-                        {t('costCenter.packages.payment')}: ¥{finalPaymentAmount.toFixed(2)}
+                        {t('costCenter.packages.payment')}:{' '}
+                        {formatRecordedCurrencyAmount(finalPaymentAmount, productCurrency, {
+                          locale,
+                        })}
                       </div>
                     </div>
 

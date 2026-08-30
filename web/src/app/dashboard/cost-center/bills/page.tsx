@@ -30,6 +30,12 @@ import { formatDate } from '@/utils/format';
 import { useCloudOnlyPage } from '@/hooks/use-cloud-only-page';
 import { toast } from 'sonner';
 import { normalizeToastDescription } from '@/utils/error-notifications';
+import { useOrganizations } from '@/hooks/organization/use-organizations';
+import {
+  formatRecordedCurrencyAmount,
+  getBillingDisplaySettings,
+} from '@/utils/billing-display';
+import type { Transaction } from '@/services/types/pay';
 
 function formatDateToRFC(dateStr: string, isEndDate = false): string {
   if (!dateStr) return '';
@@ -80,6 +86,11 @@ const initialFilterState: FilterState = {
 export default function BillsPage() {
   const isCloud = useCloudOnlyPage();
   const t = useT('dashboard');
+  const { currentOrganization } = useOrganizations(true);
+  const billingDisplay = useMemo(
+    () => getBillingDisplaySettings(currentOrganization),
+    [currentOrganization]
+  );
 
   // Filter form (user input)
   const [filters, setFilters] = useState<FilterState>(initialFilterState);
@@ -91,33 +102,23 @@ export default function BillsPage() {
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
-  const currencyFormatter = useMemo(
-    () =>
-      new Intl.NumberFormat(undefined, {
-        style: 'currency',
-        currency: 'CNY',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }),
-    []
-  );
-
-  const formatCurrencyAmount = useCallback(
-    (amount: number | undefined, showSign = true): string => {
-      if (amount === undefined || amount === null) return '-';
-
-      if (!showSign) {
-        return currencyFormatter.format(amount);
+  const formatRechargeAmount = useCallback(
+    (transaction: Transaction): string => {
+      const canDisplayUSD =
+        billingDisplay.currency === 'USD' &&
+        transaction.recharge_amount_usd !== undefined &&
+        (transaction.amount_currency_status === 'canonical_usd' ||
+          (transaction.amount_currency_status === 'converted_at_call' &&
+            (transaction.amount_exchange_rate ?? 0) > 0));
+      if (canDisplayUSD) {
+        return formatRecordedCurrencyAmount(transaction.recharge_amount_usd, 'USD');
       }
-
-      if (amount === 0) {
-        return currencyFormatter.format(0);
-      }
-
-      const sign = amount > 0 ? '+ ' : '- ';
-      return `${sign}${currencyFormatter.format(Math.abs(amount))}`;
+      return formatRecordedCurrencyAmount(
+        transaction.recharge_amount_cny ?? transaction.recharge_amount,
+        transaction.recharge_currency || 'CNY'
+      );
     },
-    [currencyFormatter]
+    [billingDisplay.currency]
   );
 
   // Build API request filters from searchParams
@@ -362,13 +363,20 @@ export default function BillsPage() {
                       </TableCell>
                       <TableCell className="max-w-md truncate">{transaction.detail_text || '-'}</TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
-                        {formatCurrencyAmount(transaction.recharge_amount, false)}
+                        {formatRechargeAmount(transaction)}
                       </TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
-                        {formatCurrencyAmount(transaction.wallet_change_amount, true)}
+                        {formatRecordedCurrencyAmount(
+                          transaction.wallet_change_amount,
+                          transaction.wallet_currency || 'CNY',
+                          { showSign: true }
+                        )}
                       </TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
-                        {formatCurrencyAmount(transaction.balance_after, false)}
+                        {formatRecordedCurrencyAmount(
+                          transaction.balance_after,
+                          transaction.wallet_currency || 'CNY'
+                        )}
                       </TableCell>
                     </TableRow>
                   );

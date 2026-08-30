@@ -23,7 +23,7 @@ import type { AIChatController } from '@/components/chat/controllers/aichat-cont
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import type { AIChatRuntimeSurface } from '@/services/types/aichat';
 import type { ImageRuntimeModel } from '@/services/types/image-runtime';
-import type { ModelUseCase } from '@/services/types/model';
+import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
 import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
 import type { AIChatSpeechSynthesizer } from '@/components/chat/variants/aichat/voice/speech-playback';
 
@@ -137,6 +137,7 @@ interface AIChatVariantProps {
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
   modelUseCase?: ModelUseCase;
+  modelAvailabilityUseCase?: AvailableModelUseCase;
   preferredModelUseCase?: ModelUseCase;
   requireModel?: boolean;
   showMemoryToggle?: boolean;

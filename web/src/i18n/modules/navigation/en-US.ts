@@ -14,6 +14,7 @@ const messages = {
   systemSettings: 'Personal Settings',
   profile: 'Profile',
   models: 'Models',
+  modelPlaza: 'Model Plaza',
   orders: 'Orders',
   products: 'Products',
   datasets: 'Datasets',

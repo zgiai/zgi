@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	llmcache "github.com/zgiai/zgi/api/internal/modules/llm/cache"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
@@ -101,6 +102,7 @@ type availableModelsService struct {
 	globalProviderRepo providerrepo.ProviderRepository
 	providerConfigRepo providerrepo.ProviderConfigRepository
 	customProviderRepo providerrepo.CustomProviderRepository
+	channelProvider    platformchannel.ChannelProvider
 
 	// Tenant config cache (per-tenant)
 	tenantCache   map[uuid.UUID]*tenantCacheEntry
@@ -203,6 +205,13 @@ func NewAvailableModelsServiceWithProviderRepos(
 	}
 
 	return svc
+}
+
+// SetChannelProvider supplies the cloud platform-channel catalog used to hydrate
+// official routes. It is intentionally optional so self-hosted deployments keep
+// using only persisted tenant routes.
+func (s *availableModelsService) SetChannelProvider(provider platformchannel.ChannelProvider) {
+	s.channelProvider = provider
 }
 
 // ListAvailableJSON returns the final API response body for the available-models endpoint.
@@ -874,7 +883,7 @@ func (s *availableModelsService) loadEnabledRoutes(ctx context.Context, organiza
 	if err != nil {
 		return nil, err
 	}
-	return enabledRoutes, nil
+	return platformchannel.HydrateOfficialRoutes(ctx, s.channelProvider, organizationID, enabledRoutes)
 }
 
 func (s *availableModelsService) listAvailableGlobalModels(ctx context.Context, availableModelNames map[string]bool, provider string, useCase string) ([]*model.LLMModel, error) {

@@ -35,14 +35,20 @@ func TestMapPurchaseRecordToTransactionResponse(t *testing.T) {
 	t.Parallel()
 
 	record := &platformconsole.PaymentPurchaseRecord{
-		ID:                 "record-1",
-		BatchID:            "ORD-1",
-		TransactionType:    string(model.TransactionTypeOther),
-		DetailText:         "10K Credits",
-		RechargeAmount:     -12.5,
-		WalletChangeAmount: 0,
-		BalanceAfter:       100,
-		CreatedAt:          time.Date(2026, 4, 7, 10, 0, 0, 0, time.UTC),
+		ID:                   "record-1",
+		BatchID:              "ORD-1",
+		TransactionType:      string(model.TransactionTypeOther),
+		DetailText:           "10K Credits",
+		RechargeAmount:       -12.5,
+		RechargeAmountCNY:    -12.5,
+		RechargeAmountUSD:    -1.75,
+		AmountExchangeRate:   7.142857,
+		AmountCurrencyStatus: "converted_at_call",
+		RechargeCurrency:     "CNY",
+		WalletChangeAmount:   0,
+		BalanceAfter:         100,
+		WalletCurrency:       "CNY",
+		CreatedAt:            time.Date(2026, 4, 7, 10, 0, 0, 0, time.UTC),
 	}
 
 	resp := mapPurchaseRecordToTransactionResponse(record)
@@ -50,6 +56,9 @@ func TestMapPurchaseRecordToTransactionResponse(t *testing.T) {
 	assert.Equal(t, string(model.TransactionTypeOther), resp.TransactionType)
 	assert.Equal(t, "10K Credits", resp.DetailText)
 	assert.Equal(t, -12.5, resp.RechargeAmount)
+	assert.Equal(t, -1.75, resp.RechargeAmountUSD)
+	assert.Equal(t, "converted_at_call", resp.AmountCurrencyStatus)
+	assert.Equal(t, "CNY", resp.WalletCurrency)
 	assert.Equal(t, 0.0, resp.WalletChangeAmount)
 	assert.Equal(t, 100.0, resp.BalanceAfter)
 }

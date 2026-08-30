@@ -273,14 +273,20 @@ type ListPaymentPurchaseRecordsRequest struct {
 
 // PaymentPurchaseRecord represents a purchase/refund billing view row.
 type PaymentPurchaseRecord struct {
-	ID                 string    `json:"id"`
-	BatchID            string    `json:"batch_id"`
-	TransactionType    string    `json:"transaction_type"`
-	DetailText         string    `json:"detail_text"`
-	RechargeAmount     float64   `json:"recharge_amount"`
-	WalletChangeAmount float64   `json:"wallet_change_amount"`
-	BalanceAfter       float64   `json:"balance_after"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                   string    `json:"id"`
+	BatchID              string    `json:"batch_id"`
+	TransactionType      string    `json:"transaction_type"`
+	DetailText           string    `json:"detail_text"`
+	RechargeAmount       float64   `json:"recharge_amount"`
+	RechargeAmountCNY    float64   `json:"recharge_amount_cny"`
+	RechargeAmountUSD    float64   `json:"recharge_amount_usd"`
+	AmountExchangeRate   float64   `json:"amount_exchange_rate"`
+	AmountCurrencyStatus string    `json:"amount_currency_status"`
+	RechargeCurrency     string    `json:"recharge_currency"`
+	WalletChangeAmount   float64   `json:"wallet_change_amount"`
+	BalanceAfter         float64   `json:"balance_after"`
+	WalletCurrency       string    `json:"wallet_currency"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 // ListPaymentPurchaseRecordsResponse represents paginated purchase records.

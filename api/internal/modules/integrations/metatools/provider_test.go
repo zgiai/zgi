@@ -80,6 +80,11 @@ func TestProviderPublishesStrictBoundedSchemas(t *testing.T) {
 		}
 	}
 	modelProperties, _ := modelSchema["properties"].(map[string]interface{})
+	for _, forbidden := range []string{"oneOf", "anyOf", "allOf", "enum", "const", "not"} {
+		if _, exists := modelSchema[forbidden]; exists {
+			t.Fatalf("model-visible execute schema contains unsupported root keyword %q: %#v", forbidden, modelSchema)
+		}
+	}
 	argumentSchema, _ := modelProperties["arguments"].(map[string]interface{})
 	argumentDescription := fmt.Sprint(argumentSchema["description"])
 	if argumentSchema["type"] != "object" ||
@@ -124,7 +129,7 @@ func TestProviderPublishesStrictBoundedSchemas(t *testing.T) {
 	}
 	withArgumentsAndBatch := cloneMap(base)
 	withArgumentsAndBatch["batch_items"] = []interface{}{map[string]interface{}{}, map[string]interface{}{}}
-	if err := tools.ValidateJSONSchemaValue(execute.GetEntity().InputSchema, withArgumentsAndBatch); err == nil {
+	if err := validateTopLevelParameters(ToolExecuteAction, withArgumentsAndBatch); err == nil {
 		t.Fatal("execute_action accepted both arguments and batch_items")
 	}
 	withExplicitConnection := cloneMap(base)
@@ -144,7 +149,7 @@ func TestProviderPublishesStrictBoundedSchemas(t *testing.T) {
 	}
 	withBoth := cloneMap(withSelector)
 	withBoth["connection_id"] = fixture.connectionOne.ID.String()
-	if err := tools.ValidateJSONSchemaValue(execute.GetEntity().InputSchema, withBoth); err == nil {
+	if err := validateTopLevelParameters(ToolExecuteAction, withBoth); err == nil {
 		t.Fatal("execute_action accepted both an explicit connection and a selector")
 	}
 }

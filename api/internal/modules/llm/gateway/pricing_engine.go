@@ -42,6 +42,8 @@ type PricingModelRef struct {
 
 type PricingQuote struct {
 	InputUSD        decimal.Decimal
+	CacheReadUSD    decimal.Decimal
+	CacheWriteUSD   decimal.Decimal
 	OutputUSD       decimal.Decimal
 	TotalUSD        decimal.Decimal
 	InputCredits    int64
@@ -53,8 +55,12 @@ type PricingQuote struct {
 	PricingSnapshot datatypes.JSON
 
 	InputTokenPriceUSDPer1M  decimal.Decimal
+	CacheReadPriceUSDPer1M   decimal.Decimal
+	CacheWritePriceUSDPer1M  decimal.Decimal
 	OutputTokenPriceUSDPer1M decimal.Decimal
 	InputTokenPriceResolved  bool
+	CacheReadPriceResolved   bool
+	CacheWritePriceResolved  bool
 	OutputTokenPriceResolved bool
 	InputRuleID              string
 	OutputRuleID             string
@@ -75,6 +81,13 @@ type MeteredUsage struct {
 	Dimensions map[string]string
 }
 
+type TokenUsage struct {
+	InputTokens      int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	OutputTokens     int
+}
+
 type PricingEngine interface {
 	QuoteTokens(ctx context.Context, model PricingModelRef, promptTokens, completionTokens int) (PricingQuote, error)
 	QuoteImage(ctx context.Context, model PricingModelRef, req *adapter.ImageRequest) (PricingQuote, error)
@@ -92,12 +105,18 @@ type pricingModelRecord struct {
 	Name                            string          `gorm:"column:name"`
 	InputPrice                      decimal.Decimal `gorm:"column:input_price"`
 	OutputPrice                     decimal.Decimal `gorm:"column:output_price"`
+	CacheReadPrice                  decimal.Decimal `gorm:"column:cost_cache_read"`
+	CacheWritePrice                 decimal.Decimal `gorm:"column:cost_cache_write"`
 	InputPriceConfigured            bool            `gorm:"column:input_price_configured"`
 	OutputPriceConfigured           bool            `gorm:"column:output_price_configured"`
+	CacheReadPriceConfigured        bool            `gorm:"column:cache_read_price_configured"`
+	CacheWritePriceConfigured       bool            `gorm:"column:cache_write_price_configured"`
 	ImagePrices                     datatypes.JSON  `gorm:"column:image_prices"`
 	Pricing                         datatypes.JSON  `gorm:"column:pricing"`
 	InputPriceOrganizationOverride  bool            `gorm:"-"`
 	OutputPriceOrganizationOverride bool            `gorm:"-"`
+	CacheReadOrganizationOverride   bool            `gorm:"-"`
+	CacheWriteOrganizationOverride  bool            `gorm:"-"`
 }
 
 func NewPricingEngine(db *gorm.DB) PricingEngine {
@@ -129,6 +148,10 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 			"completion_tokens":              completionTokens,
 			"input_price_usd_per_1m_tokens":  model.InputPrice.String(),
 			"output_price_usd_per_1m_tokens": model.OutputPrice.String(),
+			"input_cost_usd":                 inputUSD.String(),
+			"output_cost_usd":                outputUSD.String(),
+			"input_price_source":             configuredPriceSource(model.InputPriceOrganizationOverride),
+			"output_price_source":            configuredPriceSource(model.OutputPriceOrganizationOverride),
 			"input_price_configured":         model.InputPriceConfigured,
 			"output_price_configured":        model.OutputPriceConfigured,
 		})
@@ -145,6 +168,78 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 	}
 
 	return e.quoteTokensWithFallback(ctx, ref, model, found, requiredPrices, promptTokens, completionTokens)
+}
+
+func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef, usage TokenUsage) (PricingQuote, error) {
+	if usage.InputTokens < 0 || usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 || usage.OutputTokens < 0 {
+		return PricingQuote{}, fmt.Errorf("token count must be greater than or equal to zero")
+	}
+	quote, err := e.QuoteTokens(ctx, ref, usage.InputTokens, usage.OutputTokens)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 {
+		return quote, nil
+	}
+	model, found, err := e.loadModel(ctx, ref)
+	if err != nil {
+		return PricingQuote{}, err
+	}
+	if !found || model == nil {
+		return PricingQuote{}, fmt.Errorf("%w: cache token pricing requires a configured model", ErrPricingNotConfigured)
+	}
+	if usage.CacheReadTokens > 0 && !model.CacheReadPriceConfigured {
+		return PricingQuote{}, fmt.Errorf("%w: cache read price is not configured", ErrPricingNotConfigured)
+	}
+	if usage.CacheWriteTokens > 0 && !model.CacheWritePriceConfigured {
+		return PricingQuote{}, fmt.Errorf("%w: cache write price is not configured", ErrPricingNotConfigured)
+	}
+
+	cacheReadUSD := tokenUSD(model.CacheReadPrice, usage.CacheReadTokens)
+	cacheWriteUSD := tokenUSD(model.CacheWritePrice, usage.CacheWriteTokens)
+	inputUSD := quote.InputUSD.Add(cacheReadUSD).Add(cacheWriteUSD)
+	snapshotValues := map[string]interface{}{}
+	if len(quote.PricingSnapshot) > 0 {
+		_ = json.Unmarshal(quote.PricingSnapshot, &snapshotValues)
+	}
+	snapshotValues["prompt_tokens"] = usage.InputTokens
+	snapshotValues["cache_read_tokens"] = usage.CacheReadTokens
+	snapshotValues["cache_write_tokens"] = usage.CacheWriteTokens
+	snapshotValues["completion_tokens"] = usage.OutputTokens
+	snapshotValues["cache_read_price_usd_per_1m_tokens"] = model.CacheReadPrice.String()
+	snapshotValues["cache_write_price_usd_per_1m_tokens"] = model.CacheWritePrice.String()
+	snapshotValues["cache_read_price_source"] = cachePriceSource(model.CacheReadOrganizationOverride)
+	snapshotValues["cache_write_price_source"] = cachePriceSource(model.CacheWriteOrganizationOverride)
+	snapshotValues["input_cost_usd"] = quote.InputUSD.String()
+	snapshotValues["cache_read_cost_usd"] = cacheReadUSD.String()
+	snapshotValues["cache_write_cost_usd"] = cacheWriteUSD.String()
+	snapshotValues["output_cost_usd"] = quote.OutputUSD.String()
+
+	result := newUSDQuote(inputUSD, quote.OutputUSD, quote.PricingSource, quote.RuleID, quote.UsageSource, buildPricingSnapshot(snapshotValues))
+	result.CacheReadUSD = cacheReadUSD
+	result.CacheWriteUSD = cacheWriteUSD
+	result.InputTokenPriceUSDPer1M = quote.InputTokenPriceUSDPer1M
+	result.OutputTokenPriceUSDPer1M = quote.OutputTokenPriceUSDPer1M
+	result.InputTokenPriceResolved = quote.InputTokenPriceResolved
+	result.OutputTokenPriceResolved = quote.OutputTokenPriceResolved
+	result.InputRuleID = quote.InputRuleID
+	result.OutputRuleID = quote.OutputRuleID
+	result.CacheReadPriceUSDPer1M = model.CacheReadPrice
+	result.CacheWritePriceUSDPer1M = model.CacheWritePrice
+	result.CacheReadPriceResolved = model.CacheReadPriceConfigured
+	result.CacheWritePriceResolved = model.CacheWritePriceConfigured
+	return result, nil
+}
+
+func cachePriceSource(organizationOverride bool) string {
+	return configuredPriceSource(organizationOverride)
+}
+
+func configuredPriceSource(organizationOverride bool) string {
+	if organizationOverride {
+		return "organization_override"
+	}
+	return "synced_model"
 }
 
 type tokenPricingRequirement struct {
@@ -320,12 +415,16 @@ func (e *pricingEngine) quoteTokensWithFallback(
 		"completion_tokens":              completionTokens,
 		"input_price_usd_per_1m_tokens":  inputPrice.String(),
 		"output_price_usd_per_1m_tokens": outputPrice.String(),
+		"input_cost_usd":                 inputUSD.String(),
+		"output_cost_usd":                outputUSD.String(),
 		"input_rule_id":                  inputRule.ID,
 		"output_rule_id":                 outputRule.ID,
 		"input_rule_source":              inputRule.PricingSource,
 		"output_rule_source":             outputRule.PricingSource,
 		"input_price_from_model":         inputFromModel,
 		"output_price_from_model":        outputFromModel,
+		"input_price_source":             resolvedTokenPriceSource(inputFromModel, modelPriceOrganizationOverride(model, true), inputRule.PricingSource),
+		"output_price_source":            resolvedTokenPriceSource(outputFromModel, modelPriceOrganizationOverride(model, false), outputRule.PricingSource),
 	})
 
 	quote := newUSDQuote(inputUSD, outputUSD, source, ruleID, UsageSourceProviderUsage, snapshot)
@@ -338,6 +437,23 @@ func (e *pricingEngine) quoteTokensWithFallback(
 		inputRule.ID,
 		outputRule.ID,
 	), nil
+}
+
+func resolvedTokenPriceSource(fromModel bool, organizationOverride bool, fallbackSource PricingSource) string {
+	if fromModel {
+		return configuredPriceSource(organizationOverride)
+	}
+	return string(fallbackSource)
+}
+
+func modelPriceOrganizationOverride(model *pricingModelRecord, input bool) bool {
+	if model == nil {
+		return false
+	}
+	if input {
+		return model.InputPriceOrganizationOverride
+	}
+	return model.OutputPriceOrganizationOverride
 }
 
 func (e *pricingEngine) quoteImageWithFallback(
@@ -524,8 +640,10 @@ func (e *pricingEngine) loadModel(ctx context.Context, ref PricingModelRef) (*pr
 }
 
 type pricingModelConfigOverride struct {
-	InputPriceOverride  *decimal.Decimal `gorm:"column:input_price_override"`
-	OutputPriceOverride *decimal.Decimal `gorm:"column:output_price_override"`
+	InputPriceOverride      *decimal.Decimal `gorm:"column:input_price_override"`
+	OutputPriceOverride     *decimal.Decimal `gorm:"column:output_price_override"`
+	CacheReadPriceOverride  *decimal.Decimal `gorm:"column:cache_read_price_override"`
+	CacheWritePriceOverride *decimal.Decimal `gorm:"column:cache_write_price_override"`
 }
 
 func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, record *pricingModelRecord, organizationID uuid.UUID) error {
@@ -536,7 +654,7 @@ func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, reco
 	var cfg pricingModelConfigOverride
 	err := e.db.WithContext(ctx).
 		Table("llm_model_configs").
-		Select("input_price_override", "output_price_override").
+		Select(e.modelConfigOverrideColumns()).
 		Where("organization_id = ? AND model_id = ? AND deleted_at IS NULL", organizationID, record.ID).
 		First(&cfg).Error
 	if err != nil {
@@ -555,7 +673,29 @@ func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, reco
 		record.OutputPriceConfigured = true
 		record.OutputPriceOrganizationOverride = true
 	}
+	if cfg.CacheReadPriceOverride != nil {
+		record.CacheReadPrice = *cfg.CacheReadPriceOverride
+		record.CacheReadPriceConfigured = true
+		record.CacheReadOrganizationOverride = true
+	}
+	if cfg.CacheWritePriceOverride != nil {
+		record.CacheWritePrice = *cfg.CacheWritePriceOverride
+		record.CacheWritePriceConfigured = true
+		record.CacheWriteOrganizationOverride = true
+	}
 	return nil
+}
+
+func (e *pricingEngine) modelConfigOverrideColumns() string {
+	columns := []string{"input_price_override", "output_price_override"}
+	for _, column := range []string{"cache_read_price_override", "cache_write_price_override"} {
+		if e.hasColumn("llm_model_configs", column) {
+			columns = append(columns, column)
+		} else {
+			columns = append(columns, "NULL AS "+column)
+		}
+	}
+	return strings.Join(columns, ", ")
 }
 
 func normalizePricingModelRef(ref PricingModelRef) PricingModelRef {
@@ -586,6 +726,20 @@ func (e *pricingEngine) loadModelFromTable(ctx context.Context, table string, mo
 		selects = append(selects, "image_prices")
 	} else {
 		selects = append(selects, "'[]' AS image_prices")
+	}
+	for _, pricingColumn := range []struct{ column, configuredAlias string }{
+		{"cost_cache_read", "cache_read_price_configured"},
+		{"cost_cache_write", "cache_write_price_configured"},
+	} {
+		if e.hasColumn(table, pricingColumn.column) {
+			configuredExpr := pricingColumn.column + " IS NOT NULL AS " + pricingColumn.configuredAlias
+			if e.hasColumn(table, pricingColumn.configuredAlias) {
+				configuredExpr = pricingColumn.configuredAlias
+			}
+			selects = append(selects, pricingColumn.column, configuredExpr)
+		} else {
+			selects = append(selects, "0 AS "+pricingColumn.column, "false AS "+pricingColumn.configuredAlias)
+		}
 	}
 	if e.hasColumn(table, "pricing") {
 		selects = append(selects, "pricing")
@@ -637,6 +791,7 @@ func newUSDQuote(inputUSD, outputUSD decimal.Decimal, source PricingSource, rule
 	totalUSD := inputUSD.Add(outputUSD)
 	totalCredits := creditsFromUSD(totalUSD)
 	inputCredits, outputCredits := splitCreditsByUSD(inputUSD, outputUSD, totalCredits)
+	snapshot = enrichPricingSnapshotTotal(snapshot, totalUSD, totalCredits)
 
 	return PricingQuote{
 		InputUSD:        inputUSD,
@@ -650,6 +805,16 @@ func newUSDQuote(inputUSD, outputUSD decimal.Decimal, source PricingSource, rule
 		RuleID:          ruleID,
 		PricingSnapshot: snapshot,
 	}
+}
+
+func enrichPricingSnapshotTotal(snapshot datatypes.JSON, totalUSD decimal.Decimal, chargedCredits int64) datatypes.JSON {
+	values := map[string]interface{}{}
+	if len(snapshot) > 0 {
+		_ = json.Unmarshal(snapshot, &values)
+	}
+	values["total_cost_usd"] = totalUSD.String()
+	values["charged_credits"] = chargedCredits
+	return buildPricingSnapshot(values)
 }
 
 func withTokenPricingBasis(
@@ -685,6 +850,8 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 	if usageSource == "" {
 		usageSource = UsageSourceProviderUsage
 	}
+	inputUSD := tokenUSD(quote.InputTokenPriceUSDPer1M, promptTokens)
+	outputUSD := tokenUSD(quote.OutputTokenPriceUSDPer1M, completionTokens)
 	snapshot := buildPricingSnapshot(map[string]interface{}{
 		"pricing_source":                 quote.PricingSource,
 		"usage_source":                   usageSource,
@@ -692,6 +859,8 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 		"completion_tokens":              completionTokens,
 		"input_price_usd_per_1m_tokens":  quote.InputTokenPriceUSDPer1M.String(),
 		"output_price_usd_per_1m_tokens": quote.OutputTokenPriceUSDPer1M.String(),
+		"input_cost_usd":                 inputUSD.String(),
+		"output_cost_usd":                outputUSD.String(),
 		"input_price_resolved":           quote.InputTokenPriceResolved,
 		"output_price_resolved":          quote.OutputTokenPriceResolved,
 		"input_rule_id":                  quote.InputRuleID,
@@ -700,8 +869,8 @@ func repriceLockedTokenQuote(quote PricingQuote, promptTokens, completionTokens 
 		"locked_pricing":                 true,
 	})
 	repriced := newUSDQuote(
-		tokenUSD(quote.InputTokenPriceUSDPer1M, promptTokens),
-		tokenUSD(quote.OutputTokenPriceUSDPer1M, completionTokens),
+		inputUSD,
+		outputUSD,
 		quote.PricingSource,
 		quote.RuleID,
 		usageSource,

@@ -25,6 +25,8 @@ func TestQueryModelUsageByAppTypeKeepsKnownTypesAndBucketsUnknownTypes(t *testin
 			request_created_at DATETIME NOT NULL,
 			status TEXT NOT NULL,
 			prompt_tokens INTEGER NOT NULL,
+			cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+			cache_write_tokens INTEGER NOT NULL DEFAULT 0,
 			completion_tokens INTEGER NOT NULL,
 			total_tokens INTEGER NOT NULL,
 			official_points INTEGER NOT NULL,

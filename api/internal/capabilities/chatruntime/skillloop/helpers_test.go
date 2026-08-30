@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestNormalizeToolCallsRepairsBareQuotesInArguments(t *testing.T) {
@@ -121,6 +122,57 @@ func TestCloneChatRequestSanitizesHistoricalToolProtocolMessages(t *testing.T) {
 	}
 	if _, ok := cloned.Messages[1].Content.(string); !ok {
 		t.Fatalf("tool content type = %T, want string", cloned.Messages[1].Content)
+	}
+}
+
+func TestProviderCompatibleFunctionToolsRemovesUnsupportedRootKeywords(t *testing.T) {
+	source := []adapter.Tool{{
+		Type: "function",
+		Function: adapter.Function{
+			Name: "composed_tool",
+			Parameters: map[string]interface{}{
+				"oneOf": []interface{}{
+					map[string]interface{}{"type": "object", "required": []string{"query"}},
+				},
+				"properties": map[string]interface{}{
+					"status": map[string]interface{}{"type": "string", "enum": []string{"pending", "completed"}},
+				},
+			},
+		},
+	}}
+
+	got := providerCompatibleFunctionTools(source)
+	parameters, ok := got[0].Function.Parameters.(map[string]interface{})
+	if !ok || parameters["type"] != "object" {
+		t.Fatalf("parameters = %#v, want root object", got[0].Function.Parameters)
+	}
+	for _, keyword := range unsupportedProviderRootSchemaKeywords {
+		if _, exists := parameters[keyword]; exists {
+			t.Fatalf("provider schema contains unsupported root keyword %q: %#v", keyword, parameters)
+		}
+	}
+	properties, _ := parameters["properties"].(map[string]interface{})
+	status, _ := properties["status"].(map[string]interface{})
+	if _, retained := status["enum"]; !retained {
+		t.Fatalf("nested enum was removed: %#v", parameters)
+	}
+	original, _ := source[0].Function.Parameters.(map[string]interface{})
+	if _, retained := original["oneOf"]; !retained {
+		t.Fatal("source tool schema was mutated")
+	}
+}
+
+func TestProviderCompatibleFunctionToolsAcceptsAllMetaToolRoots(t *testing.T) {
+	for _, tool := range providerCompatibleFunctionTools(skills.MetaTools()) {
+		parameters, ok := tool.Function.Parameters.(map[string]interface{})
+		if !ok || parameters["type"] != "object" {
+			t.Fatalf("tool %s parameters = %#v, want root object", tool.Function.Name, tool.Function.Parameters)
+		}
+		for _, keyword := range unsupportedProviderRootSchemaKeywords {
+			if _, exists := parameters[keyword]; exists {
+				t.Fatalf("tool %s contains unsupported root keyword %q", tool.Function.Name, keyword)
+			}
+		}
 	}
 }
 

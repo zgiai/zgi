@@ -91,16 +91,13 @@ func anthropicUsageFromRaw(raw json.RawMessage, previous *adapter.Usage) *adapte
 		return previous
 	}
 
-	usage := &adapter.Usage{}
-	if previous != nil {
-		*usage = *previous
-	}
+	usage := previous
 
 	var direct struct {
 		Usage anthropicUsageShape `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &direct); err == nil {
-		direct.Usage.applyTo(usage)
+		usage = mergeAnthropicTokenUsage(usage, direct.Usage)
 	}
 
 	var event struct {
@@ -109,13 +106,9 @@ func anthropicUsageFromRaw(raw json.RawMessage, previous *adapter.Usage) *adapte
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &event); err == nil {
-		event.Message.Usage.applyTo(usage)
+		usage = mergeAnthropicTokenUsage(usage, event.Message.Usage)
 	}
 
-	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 {
-		return nil
-	}
-	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	return usage
 }
 
@@ -126,13 +119,31 @@ type anthropicUsageShape struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
-func (u anthropicUsageShape) applyTo(usage *adapter.Usage) {
+func mergeAnthropicTokenUsage(previous *adapter.Usage, u anthropicUsageShape) *adapter.Usage {
+	if previous == nil && u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheCreationInputTokens == 0 && u.CacheReadInputTokens == 0 {
+		return nil
+	}
+
+	usage := &adapter.Usage{}
+	if previous != nil {
+		*usage = *previous
+	}
 	if u.InputTokens > 0 {
-		usage.PromptTokens = u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+		usage.UncachedInputTokens = u.InputTokens
+	}
+	if u.CacheReadInputTokens > 0 {
+		usage.CacheReadTokens = u.CacheReadInputTokens
+	}
+	if u.CacheCreationInputTokens > 0 {
+		usage.CacheWriteTokens = u.CacheCreationInputTokens
 	}
 	if u.OutputTokens > 0 {
 		usage.CompletionTokens = u.OutputTokens
 	}
+	usage.PromptTokens = usage.UncachedInputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	usage.NormalizeCacheTokens()
+	return usage
 }
 
 func streamRawHTTPEvents(
