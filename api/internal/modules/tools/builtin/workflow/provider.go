@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin"
@@ -28,6 +29,9 @@ const (
 
 	agentRuntimeSourceParameter = "agent_runtime_source"
 	workflowApprovalUIAllowed   = "ui_approval_allowed"
+	publishedWorkflowError      = "workflow run failed"
+	workflowErrorVisibilityKey  = "error_visibility"
+	workflowErrorGeneric        = "generic"
 )
 
 type RunnerProvider func() automationaction.AutomationWorkflowRunner
@@ -183,7 +187,7 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 	}
 	if emitter := workflowevents.FromContext(ctx); emitter != nil {
 		runReq.EventSink = func(event automationaction.WorkflowRunEvent) {
-			if invocation.Mode == automationaction.WorkflowInvocationModeAgentTaskTool && isWorkflowAnswerTransportEvent(event.Type) {
+			if suppressAgentWorkflowAnswerTransport(invocation.Mode, event.Type) {
 				return
 			}
 			payload := make(map[string]interface{}, len(event.Payload)+3)
@@ -193,6 +197,7 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 			payload["invocation_id"] = invocation.InvocationID
 			payload["invocation_mode"] = invocation.Mode
 			payload["invocation_protocol_version"] = invocation.ProtocolVersion
+			applyPublishedWorkflowEventFailureExposure(t.Runtime(), event.Type, payload)
 			annotateWorkflowApprovalUIAccess(t.Runtime(), event.Type, payload)
 			emitter(workflowevents.Event{
 				Type:            event.Type,
@@ -211,9 +216,13 @@ func (t *workflowTool) runWorkflow(ctx context.Context, scope workflowScope, par
 	result, runErr := runner.RunAutomationWorkflow(runCtx, runReq)
 	if result == nil {
 		if runErr != nil {
-			return jsonMessages(failedWorkflowPayload("", "", "", runErr))
+			payload := failedWorkflowPayload("", "", "", runErr)
+			applyPublishedWorkflowResultFailureExposure(t.Runtime(), payload)
+			return jsonMessages(payload)
 		}
-		return jsonMessages(failedWorkflowPayload("", "", "", fmt.Errorf("workflow returned empty result")))
+		payload := failedWorkflowPayload("", "", "", fmt.Errorf("workflow returned empty result"))
+		applyPublishedWorkflowResultFailureExposure(t.Runtime(), payload)
+		return jsonMessages(payload)
 	}
 	// The invocation identity belongs to the parent Agent turn. Keep it intact
 	// even when a legacy/custom runner has not echoed the new result fields yet.
@@ -302,6 +311,7 @@ func workflowResultPayload(result *automationaction.WorkflowRunResult, runErr er
 		payload["status"] = "failed"
 		payload["error"] = strings.TrimSpace(runErr.Error())
 	}
+	applyPublishedWorkflowResultFailureExposure(runtime, payload)
 	return payload
 }
 
@@ -336,6 +346,24 @@ func isWorkflowAnswerTransportEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
 	case "message", "text_chunk", "text_replace", "message_end":
 		return true
+	default:
+		return false
+	}
+}
+
+func suppressAgentWorkflowAnswerTransport(invocationMode string, eventType string) bool {
+	if !isWorkflowAnswerTransportEvent(eventType) {
+		return false
+	}
+
+	switch strings.TrimSpace(invocationMode) {
+	case automationaction.WorkflowInvocationModeAgentTaskTool:
+		return true
+	case automationaction.WorkflowInvocationModeAgentDelegate:
+		// The parent Agent owns message_end and replacement semantics, but ordered
+		// conversation message chunks must cross this boundary immediately so the
+		// delegated workflow can take over the visible answer stream.
+		return strings.TrimSpace(eventType) != "message"
 	default:
 		return false
 	}
@@ -420,6 +448,7 @@ func workflowStatusPayload(result *automationaction.WorkflowRunStatusResult, run
 	if strings.TrimSpace(result.Error) != "" {
 		payload["error"] = strings.TrimSpace(result.Error)
 	}
+	applyPublishedWorkflowResultFailureExposure(runtime, payload)
 	return payload
 }
 
@@ -437,6 +466,57 @@ func failedWorkflowPayload(workflowRunID, workflowID, agentID string, err error)
 		payload["error"] = strings.TrimSpace(err.Error())
 	}
 	return payload
+}
+
+func applyPublishedWorkflowResultFailureExposure(runtime *tools.ToolRuntime, payload map[string]interface{}) {
+	if !publishedWorkflowFailureDetailsHidden(runtime) || payload == nil {
+		return
+	}
+	if !failureprojection.IsFailureStatus(stringValue(payload, "status")) {
+		return
+	}
+	projected := failureprojection.ProjectPublicPayload(payload, publishedWorkflowError, true)
+	for key := range payload {
+		delete(payload, key)
+	}
+	for key, value := range projected {
+		payload[key] = value
+	}
+	payload[workflowErrorVisibilityKey] = workflowErrorGeneric
+}
+
+func applyPublishedWorkflowEventFailureExposure(runtime *tools.ToolRuntime, eventType string, payload map[string]interface{}) {
+	if !publishedWorkflowFailureDetailsHidden(runtime) || payload == nil {
+		return
+	}
+	if !workflowEventReportsFailure(eventType, payload) {
+		return
+	}
+	projected := failureprojection.ProjectPublicPayload(payload, publishedWorkflowError, true)
+	for key := range payload {
+		delete(payload, key)
+	}
+	for key, value := range projected {
+		payload[key] = value
+	}
+	payload[workflowErrorVisibilityKey] = workflowErrorGeneric
+}
+
+func publishedWorkflowFailureDetailsHidden(runtime *tools.ToolRuntime) bool {
+	switch strings.ToLower(runtimeStringParameter(runtime, agentRuntimeSourceParameter)) {
+	case "webapp", "external-api":
+		return true
+	default:
+		return false
+	}
+}
+
+func workflowEventReportsFailure(eventType string, payload map[string]interface{}) bool {
+	eventType = strings.ToLower(strings.TrimSpace(eventType))
+	if eventType == "error" || strings.HasSuffix(eventType, "_failed") {
+		return true
+	}
+	return failureprojection.IsFailureStatus(stringValue(payload, "status"))
 }
 
 func normalizeWorkflowStatus(status string, outputs map[string]interface{}) string {
@@ -1320,7 +1400,7 @@ func workflowToolDescription(kind string) string {
 	case ToolListAgentWorkflows:
 		return "List workflows bound to the current Agent. Does not expose arbitrary workflow lookup."
 	case ToolRunAgentWorkflow:
-		return "Run a workflow bound to the current Agent by binding_id. For task workflows, follow the binding's input_schema exactly and use an empty inputs object when it declares no start inputs. For conversational workflows, pass the user's current request in inputs.query. Returns structured status, outputs, primary_output, workflow_run_id, and output_keys. After a succeeded run, the final answer must be based on primary_output or outputs; do not claim workflow output that is not present. If succeeded with no primary_output or outputs, say the workflow ran but returned no displayable output and include workflow_run_id."
+		return "Run a workflow bound to the current Agent by binding_id. For task workflows, follow the binding's input_schema exactly and use an empty inputs object when it declares no start inputs. For conversational workflows, pass the user's current request in inputs.query. Returns structured status, outputs, primary_output, workflow_run_id, and output_keys. After a succeeded run, the final answer must be based on primary_output or outputs; do not claim workflow output that is not present. If succeeded with no primary_output or outputs, say the workflow ran but returned no displayable output and include workflow_run_id. If a failed result has error_visibility=generic, tell the user only that the workflow run failed; do not include identifiers and do not state or infer a specific reason."
 	case ToolGetWorkflowRunStatus:
 		return "Query a previously started Agent-bound workflow run by workflow_run_id."
 	default:

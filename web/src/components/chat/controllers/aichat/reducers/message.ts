@@ -519,6 +519,7 @@ export function applyMessageChunkState(
     answerChunk
   );
   const isPresentationV2 = Boolean(presentationItem);
+  const isFinalOutputStream = presentationItem?.presentation_role === 'final_output';
   const nextPresentationItems = presentationItem
     ? upsertPresentationItem(previousStreaming?.presentationItems, presentationItem)
     : previousStreaming?.presentationItems;
@@ -534,7 +535,9 @@ export function applyMessageChunkState(
     ? {
         ...existingMessage,
         answer: isPresentationV2
-          ? existingMessage.answer
+          ? isFinalOutputStream
+            ? presentationItem.content
+            : existingMessage.answer
           : isSensitiveBlocked
             ? answerChunk
             : `${existingMessage.answer}${appendChunk}`,
@@ -555,7 +558,11 @@ export function applyMessageChunkState(
         createdAt: now,
       });
   if (!existingMessage) {
-    nextMessage.answer = isPresentationV2 ? '' : appendChunk;
+    nextMessage.answer = isPresentationV2
+      ? isFinalOutputStream
+        ? presentationItem.content
+        : ''
+      : appendChunk;
     if (isSensitiveBlocked) {
       nextMessage.metadata = {
         ...nextMessage.metadata,
@@ -564,7 +571,9 @@ export function applyMessageChunkState(
     }
   }
   const nextStreamingAnswer = isPresentationV2
-    ? (previousStreaming?.answer ?? existingMessage?.answer ?? '')
+    ? isFinalOutputStream
+      ? presentationItem.content
+      : (previousStreaming?.answer ?? existingMessage?.answer ?? '')
     : isSensitiveBlocked
       ? answerChunk
       : `${previousStreaming?.answer ?? existingMessage?.answer ?? ''}${appendChunk}`;

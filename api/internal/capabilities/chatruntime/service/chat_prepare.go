@@ -359,7 +359,7 @@ func (s *service) resolveParentMessage(ctx context.Context, scope Scope, convers
 	return &parentID, nil
 }
 
-func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parentID *uuid.UUID, parts *chatRequestParts) (*contextBudgetResult, error) {
+func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parentID *uuid.UUID, parts *chatRequestParts, conversationIDs ...uuid.UUID) (*contextBudgetResult, error) {
 	systemPrompt := strings.TrimSpace(parts.SystemPrompt)
 	if systemPrompt == "" {
 		rendered, err := renderAIChatSystemPrompt(parts.Surface)
@@ -398,10 +398,22 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		systemPrompt = strings.TrimSpace(systemPrompt) + "\n\n" + strings.TrimSpace(stringFromAny(unavailable.Content))
 	}
 	if resolvedSpecOK && resolvedSpec.ContextWindow > 0 {
-		branch, err := s.loadContextBranch(ctx, parentID, maxContextCandidateMessages)
+		var contextState *loadedContextState
+		if len(conversationIDs) > 0 && conversationIDs[0] != uuid.Nil {
+			contextState, err = s.loadContextState(ctx, scope, conversationIDs[0], parentID)
+		} else if parentID != nil && *parentID != uuid.Nil {
+			parent, parentErr := s.repos.Message.GetScoped(ctx, *parentID, scope.OrganizationID, scope.AccountID)
+			if parentErr != nil {
+				return nil, parentErr
+			}
+			contextState, err = s.loadContextState(ctx, scope, parent.ConversationID, parentID)
+		} else {
+			contextState = &loadedContextState{RawMessages: []*runtimemodel.Message{}}
+		}
 		if err != nil {
 			return nil, err
 		}
+		branch := contextState.RawMessages
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(parts, branch)
 		applyRecentOperationPlansFromBranch(parts, branch)
@@ -409,9 +421,13 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		if err != nil {
 			return nil, err
 		}
+		result.RawMessages = contextState.RawMessages
 		result.Metadata = mergeUserMemoryMetadata(result.Metadata, memoryMetadata)
 		result.Metadata = mergeUserMemoryMetadata(result.Metadata, agentMemoryMetadata)
 		return result, nil
+	}
+	if len(conversationIDs) > 0 && conversationIDs[0] != uuid.Nil {
+		return nil, fmt.Errorf("%w: model context_window is unavailable", ErrInvalidInput)
 	}
 	currentContent, contextMetadata := s.buildFallbackCurrentUserContent(parts)
 	messages := []adapter.Message{{Role: "system", Content: systemPrompt}}
@@ -421,25 +437,22 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 	contextMetadata = mergeUserMemoryMetadata(contextMetadata, memoryMetadata)
 	contextMetadata = mergeUserMemoryMetadata(contextMetadata, agentMemoryMetadata)
 	if parentID != nil && *parentID != uuid.Nil {
-		branch, err := s.repos.Message.ListBranch(ctx, *parentID, maxContextMessages)
+		parent, err := s.repos.Message.GetScoped(ctx, *parentID, scope.OrganizationID, scope.AccountID)
 		if err != nil {
 			return nil, err
 		}
+		state, err := s.loadContextState(ctx, scope, parent.ConversationID, parentID)
+		if err != nil {
+			return nil, err
+		}
+		branch := state.RawMessages
 		if !shouldIsolateHistoryForCurrentTurn(parts) {
-			for _, item := range branch {
-				if item == nil {
-					continue
-				}
-				userMessage, err := s.historicalUserMessage(ctx, item, parts.ModelSupportsVision)
-				if err != nil {
-					return nil, err
-				}
-				if userMessage != nil {
-					messages = append(messages, *userMessage)
-				}
-				if isUsableAssistantHistoryStatus(item.Status) && strings.TrimSpace(item.Answer) != "" {
-					messages = append(messages, adapter.Message{Role: "assistant", Content: item.Answer})
-				}
+			groups, err := s.historyMessageGroups(ctx, branch, parts.ModelSupportsVision)
+			if err != nil {
+				return nil, err
+			}
+			for _, group := range groups {
+				messages = append(messages, group...)
 			}
 		}
 		applyRecentOperationPlansFromBranch(parts, branch)
@@ -722,13 +735,6 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	}
 	parts.SkillMode = skillModeAuto
 	return nil
-}
-
-func (s *service) loadContextBranch(ctx context.Context, parentID *uuid.UUID, maxDepth int) ([]*runtimemodel.Message, error) {
-	if parentID == nil || *parentID == uuid.Nil {
-		return []*runtimemodel.Message{}, nil
-	}
-	return s.repos.Message.ListBranch(ctx, *parentID, maxDepth)
 }
 
 func renderAIChatSystemPrompt(surface string) (string, error) {

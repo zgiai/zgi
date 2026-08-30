@@ -10,11 +10,17 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
+
+// ContextArtifactToolName remains reserved even on runtimes that do not expose
+// the optional oversized-result receipt reader, so projected business Actions
+// cannot claim a protocol name used by compatible runtimes.
+const ContextArtifactToolName = "read_context_artifact"
 
 const (
 	defaultMaxSkillPlanningRounds                 = 50
@@ -56,6 +62,7 @@ type skillStepResult struct {
 type planningResult struct {
 	message               adapter.Message
 	usage                 *adapter.Usage
+	contextMessages       []adapter.Message
 	answerStreamed        bool
 	naturalAnswerStreamed bool
 	provisionalContent    string
@@ -83,6 +90,8 @@ type restoredSkillInstructionState struct {
 	restored       []string
 	message        *adapter.Message
 }
+
+type reactiveCompactAttemptContextKey struct{}
 
 func metaToolsForRun(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, preferExplicitFinalAnswer bool, requireFinalPlanSnapshot bool) []adapter.Tool {
 	tools := skills.MetaToolsForSkillStateWithOptions(resolved, loadedSkills, skills.MetaToolOptions{
@@ -235,8 +244,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureCounts := map[string]int{}
 	failedToolCallAttemptCounts := map[string]int{}
 	emptyFinalAnswerRetryCount := 0
-	externalActionCompletionRetryCount := 0
-	externalActionSucceeded := false
+	externalActionCompletionRetryCounts := map[string]int{}
+	projectedPlanLedgerRetryCount := 0
 	skillToolCallCounts := map[string]int{}
 	successfulToolCalls := []SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
@@ -276,6 +285,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		} else {
 			planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, false)
 		}
+		planningReq.Tools = appendContextArtifactTool(planningReq.Tools, r.ContextManager != nil)
 		allowPlanUpdate := planRevisionRequired || operationPlanModelRevisionRequired(req, roundRuntimeState)
 		allowIntermediateAnswer := !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState)
 		if !req.NativeAgentLoop {
@@ -318,6 +328,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			planningResult, err = r.runSkillPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
 		}
 		usage = mergeUsage(usage, planningResult.usage)
+		if len(planningResult.contextMessages) > 0 {
+			messages = cloneMessagesForProvider(planningResult.contextMessages)
+		}
 		if eventErr := prepared.presentationEventError(); eventErr != nil {
 			return answerBuilder.String(), usage, eventErr
 		}
@@ -352,6 +365,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			return answerBuilder.String(), usage, fmt.Errorf("%w: model returned neither a tool call nor assistant content", ErrAgentOutputTruncated)
 		}
 		if req.TerminalOnly && len(toolCalls) > 0 {
+			if checkpointErr := r.checkpointTerminalToolBatch(ctx, messages, planningMessage, toolCalls, "", adapter.Message{}, "terminal-only execution rejected an unexpected tool call"); checkpointErr != nil {
+				return answerBuilder.String(), usage, checkpointErr
+			}
 			return answerBuilder.String(), usage, errors.Join(
 				ErrFinalAnswerUnavailable,
 				errors.New("terminal-only model returned an unexpected tool call after retry"),
@@ -391,19 +407,37 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			emptyFinalAnswerRetryCount = 0
 			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
-			terminalStateGuardRecord(req, guard)
-			if guard.Path != terminalStateGuardAccepted {
-				if !req.TerminalOnly &&
-					terminalStateGuardRequiresExternalExecutionRetry(guard) &&
-					!externalActionSucceeded &&
-					externalActionCompletionRetryCount < 1 {
-					externalActionCompletionRetryCount++
+			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
+				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
+					terminalStateGuardRecord(req, guard)
+					projectedPlanLedgerRetryCount++
 					messages = append(messages,
 						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
-						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage()},
+						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
 					)
 					continue
 				}
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, text)
+			}
+			if guard.Path != terminalStateGuardAccepted &&
+				terminalStateGuardRequiresExternalExecutionRetry(guard) {
+				if !req.TerminalOnly &&
+					terminalStateGuardCanRetryPendingExternalAction(
+						guard.PendingExternalAction,
+						externalActionCompletionRetryCounts,
+					) {
+					terminalStateGuardRecord(req, guard)
+					externalActionCompletionRetryCounts[guard.PendingExternalAction.RetryKey]++
+					messages = append(messages,
+						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
+						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage(guard.PendingExternalAction)},
+					)
+					continue
+				}
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, text)
+			}
+			terminalStateGuardRecord(req, guard)
+			if guard.Path != terminalStateGuardAccepted {
 				terminalStateGuardNotify(req, guard)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
@@ -427,25 +461,57 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					partialAnswer, _ := partialJSONStringField(call.Function.Arguments, "answer")
 					appendAnswerText(&answerBuilder, strings.TrimSpace(partialAnswer))
 				}
+				if checkpointErr := r.checkpointTerminalToolBatch(ctx, messages, planningMessage, toolCalls, call.ID, result.toolMessage, "the round ended after submit_final_answer was rejected"); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
 				return answerBuilder.String(), usage, parseErr
 			}
 
 			submission.streamed = submission.streamed || planningResult.answerStreamed
 			guard := terminalStateGuardEvaluate(roundRuntimeState, submission.answer)
-			terminalStateGuardRecord(req, guard)
-			if guard.Path != terminalStateGuardAccepted {
-				if terminalStateGuardRequiresExternalExecutionRetry(guard) &&
-					!externalActionSucceeded &&
-					externalActionCompletionRetryCount < 1 {
-					externalActionCompletionRetryCount++
+			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
+				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
+					terminalStateGuardRecord(req, guard)
+					projectedPlanLedgerRetryCount++
 					messages = append(messages,
 						adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
-						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage()},
+						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
 					)
 					continue
 				}
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, submission.answer)
+			}
+			if guard.Path != terminalStateGuardAccepted &&
+				terminalStateGuardRequiresExternalExecutionRetry(guard) &&
+				terminalStateGuardCanRetryPendingExternalAction(
+					guard.PendingExternalAction,
+					externalActionCompletionRetryCounts,
+				) {
+				terminalStateGuardRecord(req, guard)
+				externalActionCompletionRetryCounts[guard.PendingExternalAction.RetryKey]++
+				messages = append(messages,
+					adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
+					adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage(guard.PendingExternalAction)},
+				)
+				continue
+			}
+			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresExternalExecutionRetry(guard) {
+				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, submission.answer)
+			}
+			terminalStateGuardRecord(req, guard)
+			if guard.Path != terminalStateGuardAccepted {
+				guardErr := terminalStateGuardError(guard)
+				result := failedFinalAnswerSkillStep(call.ID, guardErr, "resolve the terminal-state blockers before submitting a final answer")
+				if checkpointErr := r.checkpointTerminalToolBatch(ctx, messages, planningMessage, toolCalls, call.ID, result.toolMessage, "the round ended after submit_final_answer failed terminal-state validation"); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
 				terminalStateGuardNotify(req, guard)
-				return answerBuilder.String(), usage, terminalStateGuardError(guard)
+				return answerBuilder.String(), usage, guardErr
+			}
+			guardAnswer := strings.TrimSpace(firstNonEmptyString(guard.FinalAnswer, submission.answer))
+			if guardAnswer != strings.TrimSpace(submission.answer) {
+				submission.answer = guardAnswer
+				submission.streamed = false
 			}
 
 			result := finalAnswerSkillStep(call.ID, submission)
@@ -456,6 +522,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			appendAnswerText(&answerBuilder, result.answer)
 			if !result.answerStreamed {
 				r.emitAnswerChunk(ctx, prepared, result.answer, nil)
+			}
+			if checkpointErr := r.checkpointTerminalToolBatch(ctx, messages, planningMessage, toolCalls, call.ID, result.toolMessage, "the round ended after submit_final_answer was accepted"); checkpointErr != nil {
+				return answerBuilder.String(), usage, checkpointErr
 			}
 			terminalStateGuardNotify(req, guard)
 			logger.DebugContext(ctx, "aichat skill loop accepted explicit terminal answer",
@@ -504,6 +573,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			r.recordTrace(traces, trace)
 			r.logSkillTrace(ctx, prepared, trace)
 			r.emitSkillError(ctx, prepared, trace)
+			planningMessage.Role = "assistant"
+			planningMessage.ToolCalls = toolCalls
+			planningMessage.ReasoningContent = ""
+			messages = append(messages, planningMessage)
+			messages = appendCancelledSiblingToolResults(messages, toolCalls, "the Agent tool-step safety limit was reached before this tool could run")
+			if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+				return answerBuilder.String(), usage, checkpointErr
+			}
 			answer, explanationUsage, explanationErr := r.completeBusinessToolFailure(
 				ctx,
 				req,
@@ -529,12 +606,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 		planningMessage.Role = "assistant"
 		planningMessage.ToolCalls = toolCalls
-		if len(toolCalls) > 0 {
-			// Tool-turn narration is presentation-only. It is never part of the
-			// final answer or the next model request.
-			planningMessage.Content = ""
-			planningMessage.ReasoningContent = ""
-		}
+		// Internal reasoning is never replayed. Ordinary assistant content is
+		// retained even on tool-call turns because it may contain model-visible
+		// plans, constraints, and judgments needed by the next API round.
+		planningMessage.ReasoningContent = ""
 		messages = append(messages, planningMessage)
 
 		roundHadRecoverableFailure := false
@@ -544,7 +619,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		stopBusinessLoop := false
 		var stopBusinessLoopTrace skills.SkillTrace
 		roundDeferredSystemMessages := []adapter.Message{}
-		for _, call := range toolCalls {
+		for callIndex, call := range toolCalls {
 			stepCount++
 			executionCall := call
 			runtimeTool, runtimeCall := runtimeToolForCall(req.RuntimeTools, call)
@@ -613,6 +688,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				}
 				if result.toolMessage.Role != "" || result.toolMessage.ToolCallID != "" || result.toolMessage.Content != nil {
 					messages = append(messages, result.toolMessage)
+					if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+						return answerBuilder.String(), usage, checkpointErr
+					}
 				}
 				continue
 			}
@@ -673,7 +751,23 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				if !result.recoverable {
 					r.emitSkillError(ctx, prepared, result.trace)
 				}
+				if result.toolMessage.Role != "" || result.toolMessage.ToolCallID != "" || result.toolMessage.Content != nil {
+					messages = append(messages, result.toolMessage)
+				}
+				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round stopped after a fatal sibling tool failure")
+				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
 				return answerBuilder.String(), usage, result.fatalErr
+			}
+			messages = append(messages, result.toolMessage)
+			if projected, stats := projectMaterializedFileContent(messages, result.toolMessage.ToolCallID, result.toolResult); stats.removedRunes > 0 {
+				messages = projected
+				r.diagnostics.projectedRefs = appendUniqueProjectionRefs(r.diagnostics.projectedRefs, stats.refs...)
+				r.diagnostics.projectedChars += stats.removedRunes
+			}
+			if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+				return answerBuilder.String(), usage, checkpointErr
 			}
 			if result.usedSkill {
 				skillUsed = true
@@ -689,22 +783,34 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						Arguments: copyStringAnyMap(result.trace.Arguments),
 						Result:    copyStringAnyMap(result.toolResult),
 					})
-					if strings.EqualFold(strings.TrimSpace(result.trace.SkillID), "external-apps") &&
-						strings.EqualFold(strings.TrimSpace(result.trace.ToolName), "execute_action") {
-						externalActionSucceeded = true
-					}
 				}
 			}
 			if result.pendingApproval != nil {
+				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for approval before this sibling tool could run")
+				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
 				return answerBuilder.String(), usage, &WorkflowApprovalPendingError{Payload: result.pendingApproval}
 			}
 			if result.pendingQuestion != nil {
+				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for a workflow answer before this sibling tool could run")
+				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
 				return answerBuilder.String(), usage, &WorkflowQuestionPendingError{Payload: result.pendingQuestion}
 			}
 			if result.pendingGovernance != nil {
+				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for governance before this sibling tool could run")
+				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
 				return answerBuilder.String(), usage, &ToolGovernancePendingError{Payload: result.pendingGovernance}
 			}
 			if result.pendingClientAction != nil {
+				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for a client action before this sibling tool could run")
+				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
 				return answerBuilder.String(), usage, &ClientActionPendingError{Payload: result.pendingClientAction}
 			}
 			if result.answer != "" {
@@ -720,6 +826,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					"skill_step_count", stepCount,
 					"tool_call_count", toolCallCount,
 				)
+				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for user input before this sibling tool could run")
+				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
 				return answerBuilder.String(), usage, &UserInputPendingError{Payload: result.pendingUserInput}
 			}
 			if result.terminal {
@@ -729,17 +839,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					"skill_step_count", stepCount,
 					"tool_call_count", toolCallCount,
 				)
+				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round ended before this sibling tool could run")
+				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
 				return answerBuilder.String(), usage, nil
 			}
 			if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "skill_load") &&
 				strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
 				r.diagnostics.loadedSkillIDs = appendUniqueProjectionRefs(r.diagnostics.loadedSkillIDs, result.trace.SkillID)
-			}
-			messages = append(messages, result.toolMessage)
-			if projected, stats := projectMaterializedFileContent(messages, result.toolMessage.ToolCallID, result.toolResult); stats.removedRunes > 0 {
-				messages = projected
-				r.diagnostics.projectedRefs = appendUniqueProjectionRefs(r.diagnostics.projectedRefs, stats.refs...)
-				r.diagnostics.projectedChars += stats.removedRunes
 			}
 			if message, ok := governedReadFileTargetSystemMessage(result.trace); ok {
 				roundDeferredSystemMessages = append(roundDeferredSystemMessages, message)
@@ -756,6 +864,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		if len(roundDeferredSystemMessages) > 0 {
 			messages = append(messages, roundDeferredSystemMessages...)
+			if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+				return answerBuilder.String(), usage, checkpointErr
+			}
 		}
 		if stopBusinessLoop && !roundHadSuccess && !roundMadeFailureProgress {
 			failureReason := "the model repeated the same failed business-tool call without changing its arguments"
@@ -1127,6 +1238,7 @@ func legacyToolChatTools(input []adapter.Tool, allowSkillReload bool) []adapter.
 		skills.MetaToolReadSkillReference: {},
 		skills.MetaToolCallSkillTool:      {},
 		skills.MetaToolRequestUserInput:   {},
+		contextArtifactToolName:           {},
 	}
 	if allowSkillReload {
 		allowed[skills.MetaToolLoadSkill] = struct{}{}
@@ -1266,6 +1378,7 @@ func businessToolCallCountForCalls(resolved *skills.ResolvedSkills, loadedSkills
 				count++
 			}
 		case skills.MetaToolReadSkillReference,
+			contextArtifactToolName,
 			skills.MetaToolRequestUserInput,
 			skills.MetaToolTurnState,
 			skills.MetaToolUpdatePlan,
@@ -1718,6 +1831,41 @@ func validAdditionalSystemMessages(input []adapter.Message) []adapter.Message {
 	return out
 }
 
+func appendCancelledSiblingToolResults(messages []adapter.Message, calls []adapter.ToolCall, reason string) []adapter.Message {
+	for _, call := range calls {
+		callID := strings.TrimSpace(call.ID)
+		if callID == "" {
+			continue
+		}
+		messages = append(messages, skills.ToolResultMessage(callID, map[string]interface{}{
+			"status":      "cancelled",
+			"tool_name":   strings.TrimSpace(call.Function.Name),
+			"reason":      strings.TrimSpace(reason),
+			"instruction": "The tool was not executed. Decide whether it is still needed after the paused run resumes.",
+		}))
+	}
+	return messages
+}
+
+func (r *Runner) checkpointTerminalToolBatch(ctx context.Context, messages []adapter.Message, assistant adapter.Message, calls []adapter.ToolCall, completedCallID string, completedResult adapter.Message, reason string) error {
+	if r == nil || r.ContextManager == nil {
+		return nil
+	}
+	assistant.Role = "assistant"
+	assistant.ToolCalls = calls
+	assistant.ReasoningContent = ""
+	completed := append(cloneMessagesForProvider(messages), assistant)
+	completedCallID = strings.TrimSpace(completedCallID)
+	for _, call := range calls {
+		if completedCallID != "" && strings.TrimSpace(call.ID) == completedCallID {
+			completed = append(completed, completedResult)
+			continue
+		}
+		completed = appendCancelledSiblingToolResults(completed, []adapter.ToolCall{call}, reason)
+	}
+	return r.checkpointContext(ctx, completed)
+}
+
 func governedReadFileTargetSystemMessage(trace skills.SkillTrace) (adapter.Message, bool) {
 	if trace.Governance == nil ||
 		!strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillFileReader) ||
@@ -1788,11 +1936,9 @@ func (r *Runner) runNativeAgentRound(ctx context.Context, prepared *PreparedChat
 }
 
 func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool, phase string) (planningResult, error) {
-	planningReq = cloneChatRequest(planningReq)
-	sourceMessages := cloneMessagesForProvider(planningReq.Messages)
-	planningReq.Messages = adapter.NormalizeSystemMessages(sourceMessages)
-	planningReq.Tools = providerCompatibleFunctionTools(planningReq.Tools)
-	if err := r.applyFinalPlanningRequestBudget(planningReq, sourceMessages); err != nil {
+	var err error
+	planningReq, err = r.prepareContextRequest(ctx, planningReq)
+	if err != nil {
 		r.recordModelInvocation(ModelInvocationTrace{
 			Phase:     phase,
 			Round:     round,
@@ -1808,17 +1954,29 @@ func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, 
 	}
 	defer progress.Stop()
 	if shouldStreamSkillPlanning(prepared) {
-		result, ok, err := r.runModelToolRoundStream(ctx, prepared, planningReq, round, nil, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, phase, progress)
-		if err != nil {
-			return result, err
+		result, ok, streamErr := r.runModelToolRoundStream(ctx, prepared, planningReq, round, nil, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, phase, progress)
+		if streamErr != nil {
+			result = r.finishFailedContextRequest(planningReq, result)
+			if retried, retryResult, retryErr := r.retryAfterPromptTooLong(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, phase, streamErr); retried {
+				retryResult.usage = mergeUsage(result.usage, retryResult.usage)
+				return retryResult, retryErr
+			}
+			return result, streamErr
 		}
 		if ok {
-			return result, nil
+			return r.finishContextRequest(ctx, planningReq, result)
+		}
+		// Opening the stream was an upstream attempt. Re-run the complete
+		// preflight before the non-streaming fallback call as well.
+		planningReq, err = r.prepareContextRequest(ctx, planningReq)
+		if err != nil {
+			return planningResult{}, err
 		}
 	}
 
 	planningReq.Stream = false
 	startedAt := time.Now()
+	r.recordModelRequest(phase, round, planningReq)
 	callCtx, cancel := context.WithTimeout(ctx, r.modelIdleTimeout())
 	resultCh := make(chan modelToolRoundCallResult, 1)
 	go func() {
@@ -1847,7 +2005,12 @@ func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, 
 			Request:    planningReq,
 			Error:      err.Error(),
 		})
-		return planningResult{}, err
+		result := r.finishFailedContextRequest(planningReq, planningResult{})
+		if retried, retryResult, retryErr := r.retryAfterPromptTooLong(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, phase, err); retried {
+			retryResult.usage = mergeUsage(result.usage, retryResult.usage)
+			return retryResult, retryErr
+		}
+		return result, err
 	}
 	message := firstPlanningMessage(planningResp)
 	usage := planningRespUsage(planningResp)
@@ -1868,17 +2031,125 @@ func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, 
 		Error:              errorString(terminationErr),
 	})
 	if terminationErr != nil {
-		return planningResult{
+		result, observeErr := r.finishContextRequest(ctx, planningReq, planningResult{
 			message:           message,
 			usage:             usage,
 			reasoningObserved: strings.TrimSpace(message.ReasoningContent) != "",
-		}, terminationErr
+		})
+		if observeErr != nil {
+			return result, observeErr
+		}
+		return result, terminationErr
 	}
-	return planningResult{
+	return r.finishContextRequest(ctx, planningReq, planningResult{
 		message:           message,
 		usage:             usage,
 		reasoningObserved: strings.TrimSpace(message.ReasoningContent) != "",
-	}, nil
+	})
+}
+
+func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatRequest, error) {
+	request = cloneChatRequest(request)
+	sourceMessages := cloneMessagesForProvider(request.Messages)
+	request.Messages = adapter.NormalizeSystemMessages(sourceMessages)
+	request.Tools = providerCompatibleFunctionTools(request.Tools)
+	r.contextDecision = nil
+	if r.ContextManager == nil {
+		return request, r.applyFinalPlanningRequestBudget(request, sourceMessages)
+	}
+	prepared, decision, err := r.ContextManager.PrepareBeforeModelCall(ctx, request)
+	if err != nil {
+		return request, err
+	}
+	r.contextDecision = &decision
+	r.diagnostics.requestBudget = planningRequestBudgetDiagnostics{
+		safeContextLimit:     decision.Budget.HardLimit,
+		promptBudget:         decision.Budget.PromptBudget,
+		originalPromptTokens: decision.BeforeTokens,
+		finalPromptTokens:    decision.FinalPromptTokens,
+		estimateScale:        decision.EstimateScale,
+	}
+	return prepared, nil
+}
+
+func (r *Runner) finishContextRequest(ctx context.Context, request *adapter.ChatRequest, result planningResult) (planningResult, error) {
+	result.contextMessages = cloneMessagesForProvider(request.Messages)
+	if r.ContextManager == nil {
+		return result, nil
+	}
+	mainModelUsage := result.usage
+	result.usage = mergeUsage(r.ContextManager.ConsumeCompactionUsage(), result.usage)
+	if result.message.Role == "" && result.message.Content == nil && len(result.message.ToolCalls) == 0 {
+		return result, nil
+	}
+	if err := r.ContextManager.ObserveModelResponse(ctx, result.message, mainModelUsage); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func (r *Runner) finishFailedContextRequest(request *adapter.ChatRequest, result planningResult) planningResult {
+	result.contextMessages = cloneMessagesForProvider(request.Messages)
+	if r != nil && r.ContextManager != nil {
+		result.usage = mergeUsage(r.ContextManager.ConsumeCompactionUsage(), result.usage)
+	}
+	return result
+}
+
+func (r *Runner) checkpointContext(ctx context.Context, messages []adapter.Message) error {
+	if r == nil || r.ContextManager == nil {
+		return nil
+	}
+	return r.ContextManager.ReplaceMessages(ctx, messages)
+}
+
+func (r *Runner) retryAfterPromptTooLong(
+	ctx context.Context,
+	prepared *PreparedChat,
+	request *adapter.ChatRequest,
+	round int,
+	onChunk func(string) error,
+	terminalProtocol bool,
+	terminalStreamingAllowed bool,
+	suppressNaturalProgress bool,
+	phase string,
+	callErr error,
+) (bool, planningResult, error) {
+	if r == nil || r.ContextManager == nil || !isPromptTooLongError(callErr) {
+		return false, planningResult{}, nil
+	}
+	if attempted, _ := ctx.Value(reactiveCompactAttemptContextKey{}).(bool); attempted {
+		return true, planningResult{}, fmt.Errorf("%w: model request remained too large after reactive compaction: %v", contextmgr.ErrContextExhausted, callErr)
+	}
+	reactiveRequest, decision, compactErr := r.ContextManager.PrepareReactiveCompact(ctx, request)
+	if compactErr != nil {
+		return true, planningResult{}, errors.Join(callErr, fmt.Errorf("%w: reactive context compaction failed: %v", contextmgr.ErrContextExhausted, compactErr))
+	}
+	r.contextDecision = &decision
+	retryCtx := context.WithValue(ctx, reactiveCompactAttemptContextKey{}, true)
+	result, err := r.runModelToolRound(retryCtx, prepared, reactiveRequest, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, phase)
+	return true, result, err
+}
+
+func isPromptTooLongError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"prompt_too_long",
+		"context_length_exceeded",
+		"maximum context length",
+		"context window exceeded",
+		"input is too long",
+		"too many input tokens",
+		"request too large for model",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) runSkillPlanningWithRetry(

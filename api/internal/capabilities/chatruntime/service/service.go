@@ -9,11 +9,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -25,7 +27,6 @@ import (
 const (
 	defaultConversationTitle = "New chat"
 	systemPromptVersion      = "aichat.v1"
-	maxContextMessages       = 20
 	maxConversationTitleLen  = 50
 	defaultSearchLimit       = 20
 	maxSearchLimit           = 50
@@ -215,10 +216,47 @@ type CreateCompletedMessageRequest struct {
 	Metadata        map[string]interface{}
 }
 
+type CreatePendingMessageRequest struct {
+	ConversationID  uuid.UUID
+	Query           string
+	Answer          string
+	ModelProvider   string
+	ModelName       string
+	ModelParameters map[string]interface{}
+	Metadata        map[string]interface{}
+}
+
 type CreateConversationWithCompletedMessageRequest struct {
 	ConversationID uuid.UUID
 	Title          string
 	Message        CreateCompletedMessageRequest
+}
+
+type CreateConversationWithPendingMessageRequest struct {
+	ConversationID uuid.UUID
+	Title          string
+	Message        CreatePendingMessageRequest
+}
+
+type CompleteMessageRequest struct {
+	ConversationID uuid.UUID
+	MessageID      uuid.UUID
+	Answer         string
+	Metadata       map[string]interface{}
+}
+
+type FailMessageRequest struct {
+	ConversationID uuid.UUID
+	MessageID      uuid.UUID
+	ErrorMessage   string
+	Metadata       map[string]interface{}
+}
+
+type StopRuntimeMessageRequest struct {
+	ConversationID uuid.UUID
+	MessageID      uuid.UUID
+	Answer         string
+	Metadata       map[string]interface{}
 }
 
 type Service interface {
@@ -260,6 +298,11 @@ type Service interface {
 	RunClientActionContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredUserInputContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	CreatePendingMessage(ctx context.Context, scope Scope, req CreatePendingMessageRequest) (*runtimemodel.Message, error)
+	CreateConversationWithPendingMessage(ctx context.Context, scope Scope, caller Caller, req CreateConversationWithPendingMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error)
+	CompleteMessage(ctx context.Context, scope Scope, req CompleteMessageRequest) (*runtimemodel.Message, error)
+	FailMessage(ctx context.Context, scope Scope, req FailMessageRequest) (*runtimemodel.Message, error)
+	StopRuntimeMessage(ctx context.Context, scope Scope, req StopRuntimeMessageRequest) (*runtimemodel.Message, error)
 	CreateCompletedMessage(ctx context.Context, scope Scope, req CreateCompletedMessageRequest) (*runtimemodel.Message, error)
 	CreateConversationWithCompletedMessage(ctx context.Context, scope Scope, caller Caller, req CreateConversationWithCompletedMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error)
 	BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
@@ -341,6 +384,7 @@ type service struct {
 	agentMemoryService             AgentMemoryContextService
 	agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	integrationPrefs               AIChatIntegrationPreferenceResolver
+	externalActionProjections      integrationmetatools.ActionProjectionResolver
 	customSkillStorage             customSkillStorage
 	modelIdleTimeout               time.Duration
 	modelProgressSchedule          modelprogress.Schedule
@@ -391,6 +435,7 @@ func NewServiceWithSkillRuntime(
 	var agentMemoryService AgentMemoryContextService
 	var agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	var integrationPrefs AIChatIntegrationPreferenceResolver
+	var externalActionProjections integrationmetatools.ActionProjectionResolver
 	for _, item := range optionalServices {
 		switch typed := item.(type) {
 		case AgentMemoryContextService:
@@ -404,6 +449,10 @@ func NewServiceWithSkillRuntime(
 		case AIChatIntegrationPreferenceResolver:
 			if integrationPrefs == nil {
 				integrationPrefs = typed
+			}
+		case integrationmetatools.ActionProjectionResolver:
+			if externalActionProjections == nil {
+				externalActionProjections = typed
 			}
 		}
 	}
@@ -423,6 +472,7 @@ func NewServiceWithSkillRuntime(
 		agentMemoryService:             agentMemoryService,
 		agentMemoryExtractionScheduler: agentMemoryExtractionScheduler,
 		integrationPrefs:               integrationPrefs,
+		externalActionProjections:      externalActionProjections,
 		customSkillStorage:             newFilesystemCustomSkillStorage(customSkillStorageRoot),
 		modelIdleTimeout:               configuredModelIdleTimeout(),
 	}
@@ -450,6 +500,8 @@ type PreparedChat struct {
 	RunConfig                      RunConfig
 	ParentID                       *uuid.UUID
 	parts                          *chatRequestParts
+	contextBudget                  *contextBudgetResult
+	contextManager                 *contextmgr.Manager
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage

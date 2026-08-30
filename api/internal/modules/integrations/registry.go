@@ -1019,6 +1019,7 @@ func normalizeActionPreparationHints(integrationID string, action ActionDefiniti
 		hint := raw
 		hint.ActionID = strings.ToLower(strings.TrimSpace(hint.ActionID))
 		hint.Relation = ActionPreparationRelation(strings.ToLower(strings.TrimSpace(string(hint.Relation))))
+		hint.ResultTransform = ActionPreparationResultTransform(strings.ToLower(strings.TrimSpace(string(hint.ResultTransform))))
 		hint.Description = strings.TrimSpace(hint.Description)
 		if !integrationIdentifierPattern.MatchString(hint.ActionID) || hint.ActionID == action.ID {
 			return nil, fmt.Errorf("integration %s action %s preparation action is invalid", integrationID, action.ID)
@@ -1060,6 +1061,18 @@ func normalizeActionPreparationHints(integrationID string, action ActionDefiniti
 		}
 		sort.Strings(paths)
 		hint.ResultPaths = paths
+		switch hint.ResultTransform {
+		case "":
+			if len(hint.TargetArguments) != 1 {
+				return nil, fmt.Errorf("integration %s action %s preparation with multiple targets requires a result transform", integrationID, action.ID)
+			}
+		case ActionPreparationSplitSlashPair:
+			if hint.Relation != ActionPreparationResolveTarget || len(hint.TargetArguments) != 2 || len(hint.ResultPaths) != 1 {
+				return nil, fmt.Errorf("integration %s action %s split-slash preparation requires one result path and two resolve-target arguments", integrationID, action.ID)
+			}
+		default:
+			return nil, fmt.Errorf("integration %s action %s preparation result transform is invalid", integrationID, action.ID)
+		}
 		key := string(hint.Relation) + "\x00" + hint.ActionID + "\x00" + strings.Join(hint.TargetArguments, "\x00")
 		if _, duplicated := seen[key]; duplicated {
 			return nil, fmt.Errorf("integration %s action %s preparation hint is duplicated", integrationID, action.ID)

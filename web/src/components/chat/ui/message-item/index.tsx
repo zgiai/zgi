@@ -15,8 +15,14 @@ import {
   QuestionAnswerTranscript,
 } from '@/components/workflow/question-answer/question-answer-transcript';
 
+const IMAGE_GENERATION_CLIENT_MAX_MS = 10 * 60 * 1000;
+
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
 }
 
 function numberValue(value: unknown): number | undefined {
@@ -41,6 +47,8 @@ interface MessageItemProps {
   showWorkflowNodeDetail?: boolean;
   /** Show workflow run monitor (hide entire workflow section if false) */
   showWorkflowDetail?: boolean;
+  /** Show node and workflow failure messages in the workflow run monitor */
+  showWorkflowFailureDetails?: boolean;
   /** Allow expanding workflow run summary to inspect node details */
   allowWorkflowDetailExpand?: boolean;
   /** Default open state for workflow run summary */
@@ -55,6 +63,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   message,
   showWorkflowNodeDetail = true,
   showWorkflowDetail = true,
+  showWorkflowFailureDetails = true,
   allowWorkflowDetailExpand = true,
   defaultWorkflowDetailOpen = true,
   showAvatar = true,
@@ -63,6 +72,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
 }) => {
   const t = useT('common');
   const tAgents = useT('agents');
+  const tWebapp = useT('webapp');
   // Defer heavy markdown parsing under streaming to reduce render pressure
   const deferredAnswer = useDeferredValue(message.answer);
 
@@ -72,7 +82,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       isSensitiveOutputBlockedValue(deferredAnswer),
     [deferredAnswer, message.messageData]
   );
-  const displayAnswer = isSensitiveBlocked ? t('sensitiveOutput.blocked') : deferredAnswer;
+  const safeAnswer = isSensitiveBlocked ? t('sensitiveOutput.blocked') : deferredAnswer;
   const questionAnswerTranscript = useMemo(() => {
     const metadata =
       message.messageData?.metadata && typeof message.messageData.metadata === 'object'
@@ -85,10 +95,19 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const hasQuestionAnswerTranscript = questionAnswerTranscript.length > 0;
 
   const isUser = useMemo(() => message.query && message.query.trim().length > 0, [message.query]);
-  const hasAi = useMemo(() => displayAnswer && displayAnswer.length > 0, [displayAnswer]);
   const hasAddon = Boolean(messageAddon);
   const generatedImages = useMemo(() => message.generatedImages || [], [message.generatedImages]);
   const hasImages = generatedImages.length > 0;
+  const imageGenerationStatus = useMemo(() => getImageGenerationStatus(message), [message]);
+  const imageGenerationErrorText = useMemo(
+    () => getImageGenerationErrorText(message, imageGenerationStatus, tWebapp),
+    [message, imageGenerationStatus, tWebapp]
+  );
+  const displayAnswer = imageGenerationErrorText || safeAnswer;
+  const hasAi = useMemo(() => displayAnswer && displayAnswer.length > 0, [displayAnswer]);
+  const isImageGenerating = isActiveImageGenerationStatus(imageGenerationStatus);
+  const isImageCancelled = imageGenerationStatus === 'cancelled' || imageGenerationStatus === 'canceled';
+  const referenceImage = useMemo(() => getMessageReferenceImage(message), [message]);
   const imageModelLabel =
     stringValue(message.messageData?.model_label) ||
     stringValue(message.model?.modelName) ||
@@ -105,6 +124,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     const phase = message.clientState?.phase ?? 'idle';
     return phase === 'requesting' || phase === 'streaming';
   }, [message.clientState?.phase]);
+  const shouldShowGenericLoading = isClientLoading && !(isImageGenerating && hasImages);
   const isMessageEnd = useMemo(() => {
     const clientCompleted = message.clientState?.phase === 'completed';
     const wfStatus = message.WorkflowRunInfo?.status;
@@ -192,7 +212,16 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       {isUser && (
         <div className="flex justify-end">
           <div className="max-w-[80%] rounded-2xl px-3 py-2 bg-muted/80 text-sm whitespace-pre-wrap">
-            <div className="whitespace-pre-wrap">{message.query}</div>
+            {referenceImage ? (
+              <div className="mb-2 overflow-hidden rounded-lg bg-background/60">
+                <img
+                  src={referenceImage.url}
+                  alt={referenceImage.filename || 'Reference image'}
+                  className="max-h-52 max-w-full object-contain"
+                />
+              </div>
+            ) : null}
+            {message.query ? <div className="whitespace-pre-wrap">{message.query}</div> : null}
           </div>
         </div>
       )}
@@ -206,7 +235,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
               </div>
             )}
             <div>
-              {isClientLoading && !message.WorkflowRunInfo && (
+              {shouldShowGenericLoading && !message.WorkflowRunInfo && (
                 <Loader size={16} className="animate-spin" />
               )}
             </div>
@@ -219,6 +248,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                 items={nodeItems}
                 error={message.WorkflowRunInfo?.error}
                 showDetail={showWorkflowNodeDetail}
+                showFailureDetails={showWorkflowFailureDetails}
                 allowExpand={allowWorkflowDetailExpand}
                 defaultOpen={defaultWorkflowDetailOpen}
               />
@@ -235,6 +265,16 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                 content={displayAnswer}
                 isStreaming={isClientLoading}
                 renderIdentity={message.messageId}
+              />
+            ) : isImageGenerating && !hasImages ? (
+              <ImageGenerationStatusRow
+                icon="running"
+                label={tWebapp('chat.imageInput.taskRunning')}
+              />
+            ) : isImageCancelled ? (
+              <ImageGenerationStatusRow
+                icon="cancelled"
+                label={tWebapp('chat.imageInput.taskCancelled')}
               />
             ) : workflowPauseStatus || isEmptyStoppedWorkflow ? (
               <div
@@ -278,7 +318,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                   </div>
                 </div>
               </div>
-            ) : isClientLoading ? (
+            ) : shouldShowGenericLoading ? (
               <div className="space-y-2">
                 <Skeleton className="h-4 w-2/3" />
                 <Skeleton className="h-4 w-1/2" />
@@ -288,6 +328,13 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
               <span className="text-muted-foreground break-words">--</span>
             ) : null}
 
+            {hasAi && isImageGenerating && !hasImages ? (
+              <ImageGenerationStatusRow
+                icon="running"
+                label={tWebapp('chat.imageInput.taskRunning')}
+                className="mt-3"
+              />
+            ) : null}
             {hasImages && (
               <div className="mt-4">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -304,7 +351,12 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                       className="relative aspect-square overflow-hidden rounded-lg border bg-muted group"
                     >
                       {img.isLoading ? (
-                        <Skeleton className="h-full w-full" />
+                        <div className="flex h-full w-full items-center justify-center bg-muted/70">
+                          <div className="flex flex-col items-center gap-2 text-xs text-muted-foreground">
+                            <Loader className="size-5 animate-spin" aria-hidden="true" />
+                            <span>{tWebapp('chat.imageInput.generatingShort')}</span>
+                          </div>
+                        </div>
                       ) : (
                         <MarkdownImage
                           src={img.url}
@@ -358,11 +410,15 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
       next.message.messageData?.questionAnswerTranscript &&
     prev.message.messageData?.metadata === next.message.messageData?.metadata;
   const sameImages = prev.message.generatedImages === next.message.generatedImages;
+  const sameReferenceInput =
+    prev.message.inputs?.image_reference === next.message.inputs?.image_reference;
   const sameImageHeader =
     prev.message.model === next.message.model &&
     prev.message.messageData?.model_label === next.message.messageData?.model_label &&
     prev.message.messageData?.model_name === next.message.messageData?.model_name &&
-    prev.message.messageData?.created_at === next.message.messageData?.created_at;
+    prev.message.messageData?.created_at === next.message.messageData?.created_at &&
+    prev.message.messageData?.image_task_status === next.message.messageData?.image_task_status &&
+    prev.message.messageData?.image_generation === next.message.messageData?.image_generation;
   // If node counts are equal, shallow-compare the tail where updates are most frequent
   let sameNodesTail = true;
   if (sameNodeLen && nextNodes.length > 0) {
@@ -379,10 +435,12 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
     sameSensitiveBlocked &&
     sameQuestionAnswerTranscript &&
     sameImageHeader &&
+    sameReferenceInput &&
     sameNodeLen &&
     sameNodesTail &&
     sameImages &&
     prev.showWorkflowDetail === next.showWorkflowDetail &&
+    prev.showWorkflowFailureDetails === next.showWorkflowFailureDetails &&
     prev.showWorkflowNodeDetail === next.showWorkflowNodeDetail &&
     prev.allowWorkflowDetailExpand === next.allowWorkflowDetailExpand &&
     prev.defaultWorkflowDetailOpen === next.defaultWorkflowDetailOpen &&
@@ -391,5 +449,165 @@ const MessageItem = memo(MessageItemComponent, (prev, next) => {
     prev.messageAddon === next.messageAddon
   );
 });
+
+function ImageGenerationStatusRow({
+  icon,
+  label,
+  className,
+}: {
+  icon: 'running' | 'cancelled';
+  label: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'flex w-fit items-center gap-2 rounded-lg border bg-muted/35 px-3 py-2 text-sm text-muted-foreground not-prose',
+        className
+      )}
+      role="status"
+      aria-live="polite"
+    >
+      {icon === 'running' ? (
+        <Loader className="size-4 animate-spin" aria-hidden="true" />
+      ) : (
+        <CircleStop className="size-4" aria-hidden="true" />
+      )}
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function getImageGenerationStatus(message: Message): string {
+  const metadata = objectValue(message.messageData?.metadata);
+  const imageGeneration =
+    objectValue(message.messageData?.image_generation) || objectValue(metadata?.image_generation);
+  const status = (
+    stringValue(message.messageData?.image_task_status) ||
+    stringValue(metadata?.image_task_status) ||
+    stringValue(imageGeneration?.status) ||
+    stringValue(message.clientState?.status) ||
+    stringValue(message.clientState?.phase)
+  ).toLowerCase();
+  const messageStatus = stringValue(message.messageData?.status).toLowerCase();
+  const messageError =
+    stringValue(message.messageData?.error) || stringValue(metadata?.image_task_error) || message.answer;
+  if (isActiveImageGenerationStatus(status) && isImageMessageOlderThanTimeout(message)) {
+    return 'failed';
+  }
+  if (
+    messageStatus === 'error' &&
+    (isActiveImageGenerationStatus(status) ||
+      status === 'runtime_lease_expired' ||
+      messageError.toLowerCase() === 'runtime_lease_expired')
+  ) {
+    return 'failed';
+  }
+  if (status === 'runtime_lease_expired' || status === 'image_task_timeout' || status === 'timeout') {
+    return 'failed';
+  }
+  return status;
+}
+
+function isActiveImageGenerationStatus(status: string): boolean {
+  if (
+    status === 'succeeded' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'canceled' ||
+    status === 'runtime_lease_expired' ||
+    status === 'image_task_timeout' ||
+    status === 'timeout'
+  ) {
+    return false;
+  }
+  return (
+    status === 'pending' ||
+    status === 'running' ||
+    status === 'processing' ||
+    status === 'in_progress' ||
+    status === 'streaming' ||
+    status === 'requesting'
+  );
+}
+
+function isImageMessageOlderThanTimeout(message: Message): boolean {
+  const createdAt = timestampMs(message.messageData?.created_at);
+  return createdAt > 0 && Date.now() - createdAt >= IMAGE_GENERATION_CLIENT_MAX_MS;
+}
+
+function timestampMs(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+  if (typeof value !== 'string') {
+    return 0;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 0;
+  }
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) {
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getImageGenerationErrorText(
+  message: Message,
+  status: string,
+  t: ReturnType<typeof useT<'webapp'>>
+): string {
+  if (status !== 'failed') {
+    return '';
+  }
+  const metadata = objectValue(message.messageData?.metadata);
+  const rawError =
+    stringValue(message.messageData?.error) ||
+    stringValue(metadata?.image_task_error) ||
+    stringValue(message.answer);
+  if (isImageTimeoutError(rawError) || (!rawError && isImageMessageOlderThanTimeout(message))) {
+    return t('chat.imageInput.taskTimeout');
+  }
+  if (rawError.toLowerCase() === 'prompt_too_long') {
+    return t('chat.imageInput.promptTooLong', { max: 4000 });
+  }
+  if (rawError.toLowerCase() === 'upstream_failed') {
+    return t('chat.imageInput.taskProviderFailed');
+  }
+  return isInternalImageGenerationError(rawError) ? t('chat.imageInput.taskFailed') : '';
+}
+
+function isImageTimeoutError(value: unknown): boolean {
+  const normalized = stringValue(value).toLowerCase();
+  return (
+    normalized === 'runtime_lease_expired' ||
+    normalized === 'image_task_timeout' ||
+    normalized === 'timeout'
+  );
+}
+
+function isInternalImageGenerationError(value: unknown): boolean {
+  const normalized = stringValue(value).toLowerCase();
+  return isImageTimeoutError(normalized) || normalized === 'upstream_failed';
+}
+
+function getMessageReferenceImage(message: Message): { url: string; filename: string } | null {
+  const inputReference = objectValue(message.inputs?.image_reference);
+  const messageDataReference = objectValue(message.messageData?.image_reference);
+  const metadata = objectValue(message.messageData?.metadata);
+  const imageGeneration =
+    objectValue(message.messageData?.image_generation) || objectValue(metadata?.image_generation);
+  const persistedReference = objectValue(imageGeneration?.reference_image);
+  const reference = inputReference || messageDataReference || persistedReference;
+  const url = stringValue(reference?.url);
+  if (!url) return null;
+  return {
+    url,
+    filename: stringValue(reference?.filename),
+  };
+}
 
 export default MessageItem;

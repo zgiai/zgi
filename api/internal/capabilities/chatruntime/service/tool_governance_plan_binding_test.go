@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestGovernedInvocationCompletesUniqueBoundPlanPhase(t *testing.T) {
@@ -384,5 +385,39 @@ func TestGovernedInvocationRejectsPlanPhaseIDWithMismatchedExpectedAction(t *tes
 		if binding := mapFromOperationContext(phase[operationPlanRuntimeBindingKey]); len(binding) > 0 {
 			t.Fatalf("mismatched requested phase unexpectedly bound: %#v", binding)
 		}
+	}
+}
+
+func TestApprovedProjectedInvocationDerivesOperationIdentityOnlyFromExactBoundPhase(t *testing.T) {
+	frozen := projectedExternalActionCompletionFrozenInvocation("Alice")
+	metadata := projectedExternalActionCompletionMetadata(false, "Alice", "epoch-1")
+	bound := bindPendingGovernedInvocationToOperationPlan(metadata, map[string]interface{}{
+		"frozen_invocation": frozen,
+		"plan_phase_id":     "phase-send",
+	})
+	operationItemID := approvedFrozenProjectedExternalActionOperationItemID(bound, frozen)
+	want := skills.ProjectedExternalActionOperationItemID(
+		"phase-send", "epoch-1", "binding-fingerprint-1", "wecom", "wecom.message.send", "connection-1",
+	)
+	if operationItemID == "" || operationItemID != want {
+		t.Fatalf("approved operation identity = %q, want %q", operationItemID, want)
+	}
+	if replay := approvedFrozenProjectedExternalActionOperationItemID(bound, frozen); replay != operationItemID {
+		t.Fatalf("same frozen phase replay identity = %q, want %q", replay, operationItemID)
+	}
+	completed := copyStringAnyMap(bound)
+	completedPhases := mapSliceFromAny(mapFromOperationContext(completed["operation_plan"])["phases"])
+	completedPhases[0]["status"] = operationPlanStepStatusCompleted
+	mapFromOperationContext(completed["operation_plan"])["phases"] = mapsToInterfaceSlice(completedPhases)
+	if replay := approvedFrozenProjectedExternalActionOperationItemID(completed, frozen); replay != operationItemID {
+		t.Fatalf("completed phase replay identity = %q, want %q", replay, operationItemID)
+	}
+
+	spoofed := copyStringAnyMap(bound)
+	phases := mapSliceFromAny(mapFromOperationContext(spoofed["operation_plan"])["phases"])
+	phases[0]["id"] = "phase-attacker"
+	mapFromOperationContext(spoofed["operation_plan"])["phases"] = mapsToInterfaceSlice(phases)
+	if got := approvedFrozenProjectedExternalActionOperationItemID(spoofed, frozen); got != "" {
+		t.Fatalf("cross-phase spoof derived operation identity %q", got)
 	}
 }

@@ -41,3 +41,9 @@ export const IMAGE_RESOLUTIONS = [
   { id: '1024', name: '1024px', label: '标准' },
   { id: '2048', name: '2048px', label: '高清' },
 ] as const;
+
+export const IMAGE_PROMPT_MAX_CHARACTERS = 4000;
+
+export function getImagePromptCharacterCount(prompt: string): number {
+  return Array.from(prompt.trim()).length;
+}

@@ -206,6 +206,7 @@ const messages = {
     cohere: 'Cohere',
     deepseek: 'DeepSeek',
     doubao: 'Doubao',
+    doubaoSpeech: 'Doubao Speech',
     google: 'Google',
     infiniai: 'Infini AI',
     meta: 'Meta',

@@ -163,7 +163,10 @@ func TestModelVisibleJSONSchemaRemovesReadOnlyPropertiesAndDependencies(t *testi
 			"connection_selector": map[string]interface{}{
 				"type": "string", "enum": []string{"preferred"},
 			},
-			"arguments": map[string]interface{}{"type": "object"},
+			"arguments": map[string]interface{}{
+				"type":               "object",
+				"x-zgi-discard-when": map[string]interface{}{"argument": "mode", "equals": "self"},
+			},
 		},
 		"required": []string{"integration_id", "connection_id", "arguments"},
 		"dependentRequired": map[string]interface{}{
@@ -193,7 +196,7 @@ func TestModelVisibleJSONSchemaRemovesReadOnlyPropertiesAndDependencies(t *testi
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
 	text := string(encoded)
-	for _, forbidden := range []string{"connection_id", "connection_name", connectionID, "readOnly"} {
+	for _, forbidden := range []string{"connection_id", "connection_name", connectionID, "readOnly", "x-zgi-discard-when"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("model-visible schema contains %q: %s", forbidden, text)
 		}
@@ -217,7 +220,9 @@ func TestModelVisibleJSONSchemaRemovesReadOnlyPropertiesAndDependencies(t *testi
 	if err != nil {
 		t.Fatalf("json.Marshal(original) error = %v", err)
 	}
-	if !strings.Contains(string(original), connectionID) || !strings.Contains(string(original), `"readOnly":true`) {
+	if !strings.Contains(string(original), connectionID) ||
+		!strings.Contains(string(original), `"readOnly":true`) ||
+		!strings.Contains(string(original), `"x-zgi-discard-when"`) {
 		t.Fatalf("source schema was mutated: %s", original)
 	}
 }

@@ -103,8 +103,10 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 	if eventType == streamEventAgentProgress {
 		return r.Emit(eventType, payload)
 	}
-	r.transitionActivePresentationSegment(presentationPhaseProcess)
-	r.activeSegmentID = ""
+	if !r.activePresentationSegmentIsFinalOutput() {
+		r.transitionActivePresentationSegment(presentationPhaseProcess)
+		r.activeSegmentID = ""
+	}
 	if isWorkflowTimelineEvent(eventType) {
 		r.service.persistWorkflowRunEventBestEffort(r.persistCtx, r.prepared, eventType, payload)
 	}
@@ -138,16 +140,30 @@ func (r *processTimelineRecorder) recordPresentationTextChunk(payload map[string
 	if r.activeSegmentID == "" {
 		sequence := r.presentation.nextSequence()
 		item := newPresentationTextItem(r.prepared.Message.ID.String(), sequence, content, r.currentTime())
+		if role := strings.TrimSpace(payloadString(payload, "presentation_role")); role != "" {
+			item["presentation_role"] = role
+		}
 		r.activeSegmentID = stringFromAny(item["presentation_id"])
 		r.presentation.upsert(item)
 	} else if item := r.presentation.itemByID(r.activeSegmentID); len(item) > 0 {
 		item["content"] = stringFromAny(item["content"]) + content
 		item["content_phase"] = presentationPhaseProvisional
+		if role := strings.TrimSpace(payloadString(payload, "presentation_role")); role != "" {
+			item["presentation_role"] = role
+		}
 		r.presentation.upsert(item)
 	}
 	annotatePresentationPayload(payload, r.presentation.itemByID(r.activeSegmentID))
 	payload["segment_content"] = stringFromAny(r.presentation.itemByID(r.activeSegmentID)["content"])
 	r.applyPresentationMetadata()
+}
+
+func (r *processTimelineRecorder) activePresentationSegmentIsFinalOutput() bool {
+	if r == nil || r.activeSegmentID == "" {
+		return false
+	}
+	item := r.presentation.itemByID(r.activeSegmentID)
+	return strings.EqualFold(strings.TrimSpace(stringFromAny(item["presentation_role"])), presentationRoleFinalOutput)
 }
 
 func (r *processTimelineRecorder) transitionActivePresentationSegment(phase string) {

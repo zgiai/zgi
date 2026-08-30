@@ -15,6 +15,7 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (
@@ -80,6 +81,11 @@ func (h *AgentsHandler) generateSpeech(c *gin.Context, organizationID string) {
 	}
 
 	c.Writer.Header().Del("Content-Type")
+	logger.WarnContext(c.Request.Context(), "speech generation failed",
+		"path", c.FullPath(),
+		"organization_id", organizationID,
+		"error", err,
+	)
 	handleSpeechError(c, err)
 }
 

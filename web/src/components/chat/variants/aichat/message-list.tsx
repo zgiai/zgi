@@ -45,6 +45,7 @@ interface AIChatMessageListProps {
   layout?: 'full' | 'embedded';
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
+  showWorkflowFailureDetails?: boolean;
   showContextualOperationStatus?: boolean;
   enableToolGovernanceApprovals?: boolean;
   suppressPendingToolGovernanceApprovals?: boolean;
@@ -131,6 +132,7 @@ export function AIChatMessageList({
   layout = 'full',
   showMemoryKey = true,
   showSkillEventDetails = true,
+  showWorkflowFailureDetails = true,
   showContextualOperationStatus = false,
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
@@ -206,6 +208,7 @@ export function AIChatMessageList({
                 showAssistantModelMeta={showAssistantModelMeta}
                 showMemoryKey={showMemoryKey}
                 showSkillEventDetails={showSkillEventDetails}
+                showWorkflowFailureDetails={showWorkflowFailureDetails}
                 showContextualOperationStatus={showContextualOperationStatus}
                 enableToolGovernanceApprovals={enableToolGovernanceApprovals}
                 suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}

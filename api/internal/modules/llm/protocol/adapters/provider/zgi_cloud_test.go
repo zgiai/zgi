@@ -924,6 +924,166 @@ func TestZGICloudAdapterCreateImage_ForwardsToConsoleInternal(t *testing.T) {
 	}
 }
 
+func TestZGICloudAdapterCreateImage_ForwardsReferenceImageURLToConsoleInternal(t *testing.T) {
+	t.Helper()
+
+	var gotPayload map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/internal/images/generations" {
+			t.Fatalf("path = %q, want /v1/internal/images/generations", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"created":1732083164,"data":[{"url":"https://cdn.example.com/generated.png"}]}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:  server.URL + "/v1/internal",
+		AuthHook: func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:             "qwen-image-2.0",
+		Prompt:            "edit with reference",
+		ReferenceImageURL: "https://files.example.com/reference.png",
+	})
+	if err != nil {
+		t.Fatalf("CreateImage() error = %v", err)
+	}
+	if gotPayload["reference_image_url"] != "https://files.example.com/reference.png" {
+		t.Fatalf("reference_image_url = %#v, want reference URL", gotPayload["reference_image_url"])
+	}
+}
+
+func TestZGICloudAdapterCreateImage_ForwardsSequenceOptionsToConsoleInternal(t *testing.T) {
+	t.Helper()
+
+	var gotPayload map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/internal/images/generations" {
+			t.Fatalf("path = %q, want /v1/internal/images/generations", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"created":1732083164,"data":[{"url":"https://cdn.example.com/generated.png"}]}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:  server.URL + "/v1/internal",
+		AuthHook: func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	maxImages := 3
+	_, err = a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:          "doubao-seedream-4-0-250828",
+		Prompt:         "draw a sequence",
+		GenerationMode: "sequence",
+		MaxImages:      &maxImages,
+	})
+	if err != nil {
+		t.Fatalf("CreateImage() error = %v", err)
+	}
+	if gotPayload["generation_mode"] != "sequence" {
+		t.Fatalf("generation_mode = %#v, want sequence", gotPayload["generation_mode"])
+	}
+	if gotPayload["max_images"] != float64(maxImages) {
+		t.Fatalf("max_images = %#v, want %d", gotPayload["max_images"], maxImages)
+	}
+}
+
+func TestZGICloudAdapterCreateImage_UsesEditsWithReferenceImageBytes(t *testing.T) {
+	t.Helper()
+
+	var gotPath string
+	var gotImage string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data; boundary=") {
+			t.Fatalf("Content-Type = %q, want multipart/form-data", r.Header.Get("Content-Type"))
+		}
+		if err := r.ParseMultipartForm(64 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		file, _, err := r.FormFile("image")
+		if err != nil {
+			t.Fatalf("image file missing: %v", err)
+		}
+		defer file.Close()
+		content, err := io.ReadAll(file)
+		if err != nil {
+			t.Fatalf("read image: %v", err)
+		}
+		gotImage = string(content)
+		if got := r.FormValue("model"); got != "gpt-image-2" {
+			t.Fatalf("model = %q, want gpt-image-2", got)
+		}
+		if got := r.FormValue("prompt"); got != "make the background pink" {
+			t.Fatalf("prompt = %q", got)
+		}
+		if got := r.FormValue("input_fidelity"); got != "high" {
+			t.Fatalf("input_fidelity = %q, want high", got)
+		}
+		if got := r.FormValue("background"); got != "auto" {
+			t.Fatalf("background = %q, want auto", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerSettlementID, "image-edit-settlement")
+		w.Header().Set(headerOfficialPoints, "45")
+		w.Header().Set(headerSettlementStatus, "settled")
+		fmt.Fprint(w, `{"created":1732083164,"data":[{"url":"https://cdn.example.com/edited.png"}]}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:  server.URL + "/v1/internal",
+		AuthHook: func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	resp, err := a.CreateImage(context.Background(), &adapter.ImageRequest{
+		Model:                  "gpt-image-2",
+		Prompt:                 "make the background pink",
+		ReferenceImageBytes:    []byte("PNGDATA"),
+		ReferenceImageFilename: "reference.png",
+		ReferenceImageMimeType: "image/png",
+		AdditionalParameters: map[string]interface{}{
+			"background": "auto",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateImage() error = %v", err)
+	}
+	if gotPath != "/v1/internal/images/edits" {
+		t.Fatalf("path = %q, want /v1/internal/images/edits", gotPath)
+	}
+	if gotImage != "PNGDATA" {
+		t.Fatalf("image = %q, want PNGDATA", gotImage)
+	}
+	if len(resp.Data) != 1 || resp.Data[0].URL != "https://cdn.example.com/edited.png" {
+		t.Fatalf("response data = %#v, want edited image url", resp.Data)
+	}
+	if resp.Settlement == nil || resp.Settlement.SettlementID != "image-edit-settlement" || resp.Settlement.OfficialPoints != 45 {
+		t.Fatalf("settlement = %#v", resp.Settlement)
+	}
+}
+
 func TestZGICloudAdapterCreateEmbeddings_ForwardsToConsoleInternal(t *testing.T) {
 	t.Helper()
 

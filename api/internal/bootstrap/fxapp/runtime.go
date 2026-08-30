@@ -16,6 +16,7 @@ import (
 	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	graphflowworker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
+	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	videoservice "github.com/zgiai/zgi/api/internal/modules/video/service"
@@ -41,6 +42,7 @@ type runtimeParams struct {
 	GraphFlowService    *graphflow.Service
 	WorkflowTestService *workflowtest.Service
 	LLMClient           llmclient.LLMClient
+	ImageTaskPoller     *imageservice.TaskPoller
 	VideoTaskPoller     *videoservice.TaskPoller
 	TaskManager         *queue.TaskManager
 	TaskHandlerRegistry *container.TaskHandlerRegistrar
@@ -136,6 +138,7 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	registerOpenTelemetryLifecycle(lc, params.OpenTelemetry, params.Logger)
 	RegisterWorkflowTestLocalWorkerLifecycle(lc, params.Config, params.WorkflowTestService, params.LLMClient, params.Logger)
 	RegisterVideoRuntimeTaskPollerLifecycle(lc, params.VideoTaskPoller, params.Logger)
+	RegisterImageRuntimeTaskPollerLifecycle(lc, params.ImageTaskPoller, params.Logger)
 	RegisterTaskManagerLifecycle(lc, params.TaskManager, params.TaskHandlerRegistry, params.Logger)
 	RegisterSchedulerLifecycle(lc, params.Scheduler, params.Logger)
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
@@ -632,6 +635,37 @@ func RegisterVideoRuntimeTaskPollerLifecycle(
 			go poller.Start(pollerCtx)
 			if log != nil {
 				log.Info("Video runtime task poller started")
+			}
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
+}
+
+func RegisterImageRuntimeTaskPollerLifecycle(
+	lc fx.Lifecycle,
+	poller *imageservice.TaskPoller,
+	log *zap.Logger,
+) {
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			if poller == nil {
+				if log != nil {
+					log.Info("Image runtime task poller skipped")
+				}
+				return nil
+			}
+			var pollerCtx context.Context
+			pollerCtx, cancel = context.WithCancel(context.Background())
+			go poller.Start(pollerCtx)
+			if log != nil {
+				log.Info("Image runtime task poller started")
 			}
 			return nil
 		},

@@ -144,6 +144,16 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     apiKeyPlaceholder: 'sk-xxx',
   },
   {
+    value: 'doubao-speech',
+    labelKey: 'dialog.protocolOptions.doubaoSpeech',
+    icon: 'doubao',
+    provider: 'doubao',
+    category: 'vertical',
+    defaultApiBaseUrl: 'https://openspeech.bytedance.com',
+    apiKeyPlaceholder: 'Doubao Speech API Key',
+    notesKey: 'dialog.protocolNotes.doubaoSpeech',
+  },
+  {
     value: 'google',
     labelKey: 'dialog.protocolOptions.google',
     icon: 'google',

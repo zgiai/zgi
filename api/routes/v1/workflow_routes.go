@@ -127,7 +127,12 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 		runtimeLogHandler,
 		chatRuntimeService,
 	)
-	agentRuntimeLogsHandler := workflowHandlerPkg.NewAgentRuntimeLogsHandler(agentsRepo, chatRuntimeService, deps.OrganizationService)
+	agentRuntimeLogsHandler := workflowHandlerPkg.NewAgentRuntimeLogsHandler(
+		agentsRepo,
+		chatRuntimeService,
+		deps.OrganizationService,
+		workflowHandlerPkg.WithAgentRuntimeWorkflowDiagnostics(workflowRunLogRepo, workflowNodeRuntimeLogRepo),
+	)
 
 	apps := router.Group("/agents")
 	// Add middleware for workflow routes

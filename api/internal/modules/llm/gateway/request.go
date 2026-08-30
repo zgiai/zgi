@@ -13,7 +13,9 @@ import (
 	"github.com/shopspring/decimal"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -205,7 +207,6 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		RequestCreatedAt:     requestCreatedAt,
 		AttemptID:            attemptID,
 	}
-
 	if appCtx != nil {
 		billingCtx.AppID = appCtx.AppID
 		billingCtx.AppType = appCtx.AppType
@@ -262,6 +263,12 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 		attemptID,
 	)
 	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
+	switch useCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string); llmmodel.UseCase(useCase) {
+	case llmmodel.UseCaseTextToSpeech:
+		billingCtx.PricingOperation = PricingOperationSpeech
+	case llmmodel.UseCaseSpeechToText:
+		billingCtx.PricingOperation = PricingOperationTranscription
+	}
 
 	decision, err := s.resolveBillingDecision(providerSelection, billingCtx)
 	if err != nil {

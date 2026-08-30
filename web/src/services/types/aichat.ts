@@ -438,6 +438,7 @@ export interface AIChatPresentationTextItem extends AIChatPresentationPosition {
   segment_id: string;
   content: string;
   content_phase: AIChatPresentationContentPhase;
+  presentation_role?: 'final_output';
   created_at_ms?: number;
 }
 
@@ -636,6 +637,7 @@ export interface AIChatMessageChunkEventData extends AIChatPresentationPosition 
   segment_id?: string;
   segment_content?: string;
   content_phase?: AIChatPresentationContentPhase;
+  presentation_role?: 'final_output';
   __sensitiveOutputBlocked?: boolean;
 }
 
@@ -665,6 +667,7 @@ export interface AIChatErrorEventData {
   message?: string;
   code?: string | number;
   params?: Record<string, unknown>;
+  retryable?: boolean;
 }
 
 export interface AIChatSkillLoadStartEventData {
@@ -1049,7 +1052,8 @@ export interface AIChatAgentProgressEventData {
     | 'tool_planning'
     | 'model_processing'
     | 'client_action'
-    | 'client_action_result';
+    | 'client_action_result'
+    | 'context_compaction';
   progress_id?: string;
   stage?: 'initial' | 'extended' | 'long_running';
   activity?: 'awaiting_response' | 'reasoning' | 'preparing_action' | 'reviewing_tool_result';

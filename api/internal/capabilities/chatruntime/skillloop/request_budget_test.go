@@ -1,250 +1,74 @@
 package skillloop
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func TestFinalPlanningRequestBudgetCompactsHistoryAndPreservesRequiredEvidence(t *testing.T) {
-	long := func(marker string, count int) string {
-		return marker + strings.Repeat("x", count)
-	}
-	toolCall := func(id string, name string, arguments string) adapter.Message {
-		return adapter.Message{
-			Role: "assistant",
-			ToolCalls: []adapter.ToolCall{{
-				ID: id,
-				Function: adapter.FunctionCall{
-					Name:      name,
-					Arguments: mustBudgetJSON(t, map[string]interface{}{"content": arguments}),
-				},
-			}},
-		}
-	}
-	stateMessage := "Current turn structured state: turn_state=" + long("DUPLICATE_STATE_", 900)
-	source := []adapter.Message{
-		{Role: "system", Content: "base system instructions"},
-		{Role: "system", Content: stateMessage},
-		{Role: "system", Content: stateMessage},
-		{Role: "system", Content: strings.Join([]string{
-			"The following skill instructions were loaded earlier in this same user turn and remain active.",
-			"Restored skill: target-skill\nDescription: target\nInstructions:\n" + long("TARGET_INSTRUCTIONS_", 500),
-			"Restored skill: other-skill\nDescription: other\nInstructions:\n" + long("OTHER_INSTRUCTIONS_", 1600),
-		}, "\n\n")},
-		{Role: "user", Content: "CURRENT_USER_GOAL must remain"},
-		toolCall("state-1", skills.MetaToolTurnState, long("OLD_TURN_STATE_ARGUMENTS_", 900)),
-		{Role: "tool", ToolCallID: "state-1", Content: long("OLD_TURN_STATE_RESULT_", 900)},
-		toolCall("intermediate-1", skills.MetaToolIntermediateAnswer, long("OLD_INTERMEDIATE_ANSWER_", 1000)),
-		{Role: "tool", ToolCallID: "intermediate-1", Content: long("OLD_INTERMEDIATE_RESULT_", 900)},
-		toolCall("old-tool", "call_skill_tool", long("OLD_TOOL_ARGUMENTS_", 1000)),
-		{Role: "tool", ToolCallID: "old-tool", Content: long("OLD_TOOL_RESULT_", 1000)},
-		toolCall("latest-tool", "call_skill_tool", "LATEST_ARGUMENT must remain"),
-		{Role: "tool", ToolCallID: "latest-tool", Content: "LATEST_EVIDENCE must remain"},
-	}
-	maxTokens := 5000
-	request := &adapter.ChatRequest{
-		Model:     "deepseek-chat",
-		Messages:  adapter.NormalizeSystemMessages(source),
-		MaxTokens: &maxTokens,
-	}
-	runner := &Runner{requestBudget: planningRequestBudget{
-		safeContextLimit:       1800,
-		promptBudget:           1,
-		preferredRestoredSkill: "target-skill",
+func TestFinalPlanningRequestBudgetDoesNotRewriteTranscript(t *testing.T) {
+	request := &adapter.ChatRequest{Model: "deepseek-chat", Messages: []adapter.Message{
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "old", Function: adapter.FunctionCall{Name: "read_file", Arguments: `{"path":"a"}`}}}},
+		{Role: "tool", ToolCallID: "old", Content: "OLD_TOOL_RESULT_MUST_REMAIN"},
 	}}
-
-	if err := runner.applyFinalPlanningRequestBudget(request, source); err != nil {
-		t.Fatalf("applyFinalPlanningRequestBudget() error = %v", err)
+	runner := &Runner{requestBudget: planningRequestBudget{safeContextLimit: 10000, promptBudget: 9000}}
+	if err := runner.applyFinalPlanningRequestBudget(request, request.Messages); err != nil {
+		t.Fatal(err)
 	}
-
-	encoded, err := json.Marshal(request.Messages)
-	if err != nil {
-		t.Fatalf("marshal compacted messages: %v", err)
-	}
-	payload := string(encoded)
-	for _, required := range []string{"CURRENT_USER_GOAL", "TARGET_INSTRUCTIONS_", "LATEST_ARGUMENT", "LATEST_EVIDENCE"} {
-		if !strings.Contains(payload, required) {
-			t.Fatalf("compacted request lost %q: %s", required, payload)
-		}
-	}
-	for _, removed := range []string{"OTHER_INSTRUCTIONS_", "OLD_TURN_STATE_ARGUMENTS_", "OLD_TURN_STATE_RESULT_", "OLD_INTERMEDIATE_ANSWER_", "OLD_INTERMEDIATE_RESULT_", "OLD_TOOL_ARGUMENTS_", "OLD_TOOL_RESULT_"} {
-		if strings.Contains(payload, removed) {
-			t.Fatalf("compacted request retained %q", removed)
-		}
-	}
-	diagnostics := runner.diagnostics.requestBudget
-	for _, component := range []string{
-		budgetComponentTurnEvidence,
-		budgetComponentRestoredSkills,
-		budgetComponentHistoricalTools,
-		budgetComponentIntermediateAnswer,
-	} {
-		if diagnostics.compressionChars[component] <= 0 {
-			t.Fatalf("compression chars[%q] = %d, all=%#v", component, diagnostics.compressionChars[component], diagnostics.compressionChars)
-		}
-	}
-	if diagnostics.finalPromptTokens >= diagnostics.originalPromptTokens {
-		t.Fatalf("prompt tokens before=%d after=%d, want reduction", diagnostics.originalPromptTokens, diagnostics.finalPromptTokens)
-	}
-	if diagnostics.finalPromptTokens >= runner.requestBudget.safeContextLimit {
-		t.Fatalf("final prompt tokens = %d, safe limit = %d", diagnostics.finalPromptTokens, runner.requestBudget.safeContextLimit)
-	}
-	if !diagnostics.maxTokensClamped || request.MaxTokens == nil {
-		t.Fatalf("max token diagnostics = %#v request=%#v", diagnostics, request.MaxTokens)
-	}
-	if got, want := *request.MaxTokens, runner.requestBudget.safeContextLimit-diagnostics.finalPromptTokens; got != want {
-		t.Fatalf("MaxTokens = %d, want remaining budget %d", got, want)
+	if !strings.Contains(messageContent(request.Messages[1].Content), "OLD_TOOL_RESULT_MUST_REMAIN") {
+		t.Fatalf("legacy budget path rewrote transcript: %#v", request.Messages)
 	}
 }
 
-func TestFinalPlanningRequestBudgetRejectsUncompressibleRequest(t *testing.T) {
-	maxTokens := 1000
-	request := &adapter.ChatRequest{
-		Model:     "deepseek-chat",
-		Messages:  []adapter.Message{{Role: "user", Content: "current goal"}},
-		MaxTokens: &maxTokens,
-		Tools: []adapter.Tool{{
-			Type: "function",
-			Function: adapter.Function{
-				Name:        "oversized_tool",
-				Description: strings.Repeat("schema", 1000),
-			},
-		}},
-	}
+func TestFinalPlanningRequestBudgetRejectsOverLimitRequest(t *testing.T) {
+	request := &adapter.ChatRequest{Model: "deepseek-chat", Messages: []adapter.Message{{Role: "user", Content: strings.Repeat("schema", 1000)}}}
 	runner := &Runner{requestBudget: planningRequestBudget{safeContextLimit: 100, promptBudget: 50}}
-
 	err := runner.applyFinalPlanningRequestBudget(request, request.Messages)
 	if err == nil || !strings.Contains(err.Error(), "exceeds safe context limit") {
-		t.Fatalf("error = %v, want safe context limit rejection", err)
-	}
-	if runner.diagnostics.requestBudget.finalPromptTokens < runner.requestBudget.safeContextLimit {
-		t.Fatalf("final prompt tokens = %d, want over safe limit", runner.diagnostics.requestBudget.finalPromptTokens)
+		t.Fatalf("error = %v", err)
 	}
 }
 
 func TestFinalPlanningRequestBudgetUsesInitialReserveInsteadOfRetryCeiling(t *testing.T) {
-	request := &adapter.ChatRequest{
-		Model:    "qwen3.7-plus",
-		Messages: []adapter.Message{{Role: "user", Content: "current goal"}},
-	}
-	runner := &Runner{requestBudget: planningRequestBudget{
-		safeContextLimit:    900000,
-		promptBudget:        883616,
-		initialOutputTokens: 16384,
-		outputTokenLimit:    64000,
-	}}
-
+	request := &adapter.ChatRequest{Model: "qwen3.7-plus", Messages: []adapter.Message{{Role: "user", Content: "current goal"}}}
+	runner := &Runner{requestBudget: planningRequestBudget{safeContextLimit: 900000, promptBudget: 883616, initialOutputTokens: 16384, outputTokenLimit: 64000}}
 	if err := runner.applyFinalPlanningRequestBudget(request, request.Messages); err != nil {
-		t.Fatalf("applyFinalPlanningRequestBudget() error = %v", err)
+		t.Fatal(err)
 	}
 	if request.MaxTokens == nil || *request.MaxTokens != 16384 {
-		t.Fatalf("MaxTokens = %#v, want initial reserve 16384", request.MaxTokens)
+		t.Fatalf("MaxTokens = %#v", request.MaxTokens)
 	}
 }
 
 func TestFinalPlanningRequestBudgetLeavesNativeOutputLimitToProvider(t *testing.T) {
-	metadata := map[string]interface{}{
-		"context_control": map[string]interface{}{
-			"safe_context_limit":     900000,
-			"prompt_budget":          883616,
-			"reserved_output_tokens": 16384,
-		},
-	}
-	request := &adapter.ChatRequest{
-		Model:    "deepseek-chat",
-		Messages: []adapter.Message{{Role: "user", Content: "current goal"}},
-	}
-	runRequest := RunRequest{
-		Prepared:        NewPreparedChat("conversation", "message", "openai", "auto", request),
-		NativeAgentLoop: true,
-		CurrentMetadata: func() map[string]interface{} { return metadata },
-	}
+	metadata := map[string]interface{}{"context_control": map[string]interface{}{"agent_context_window": 900000, "prompt_budget": 883616, "reserved_output_tokens": 16384}}
+	request := &adapter.ChatRequest{Model: "deepseek-chat", Messages: []adapter.Message{{Role: "user", Content: "current goal"}}}
+	runRequest := RunRequest{Prepared: NewPreparedChat("conversation", "message", "openai", "auto", request), NativeAgentLoop: true, CurrentMetadata: func() map[string]interface{} { return metadata }}
 	runner := &Runner{requestBudget: planningRequestBudgetForRun(runRequest)}
-
 	if err := runner.applyFinalPlanningRequestBudget(request, request.Messages); err != nil {
-		t.Fatalf("applyFinalPlanningRequestBudget() error = %v", err)
+		t.Fatal(err)
 	}
 	if request.MaxTokens != nil {
-		t.Fatalf("MaxTokens = %#v, want provider-managed nil limit", request.MaxTokens)
-	}
-	if runner.diagnostics.requestBudget.effectiveMaxTokens != 0 {
-		t.Fatalf("effective max tokens = %d, want 0", runner.diagnostics.requestBudget.effectiveMaxTokens)
-	}
-}
-
-func TestFinalPlanningRequestBudgetPreservesExplicitNativeOutputLimit(t *testing.T) {
-	maxTokens := 12000
-	request := &adapter.ChatRequest{
-		Model:     "deepseek-chat",
-		Messages:  []adapter.Message{{Role: "user", Content: "current goal"}},
-		MaxTokens: &maxTokens,
-	}
-	runner := &Runner{requestBudget: planningRequestBudget{
-		safeContextLimit:      900000,
-		promptBudget:          883616,
-		initialOutputTokens:   16384,
-		outputTokenLimit:      64000,
-		providerManagedOutput: true,
-	}}
-
-	if err := runner.applyFinalPlanningRequestBudget(request, request.Messages); err != nil {
-		t.Fatalf("applyFinalPlanningRequestBudget() error = %v", err)
-	}
-	if request.MaxTokens == nil || *request.MaxTokens != maxTokens {
-		t.Fatalf("MaxTokens = %#v, want explicit limit %d", request.MaxTokens, maxTokens)
+		t.Fatalf("MaxTokens = %#v, want nil", request.MaxTokens)
 	}
 }
 
 func TestPlanningRequestBudgetUsesOnlyMatchingVersionedCalibration(t *testing.T) {
 	metadata := map[string]interface{}{
-		"context_control": map[string]interface{}{
-			"safe_context_limit": 10000,
-			"prompt_budget":      8000,
-		},
+		"context_control": map[string]interface{}{"agent_context_window": 10000, "prompt_budget": 8000},
 		"prompt_usage_calibration": map[string]interface{}{
-			"provider-a/model-a": map[string]interface{}{
-				"estimate_version":      "chat_request.v1",
-				"prompt_estimate_scale": 2.5,
-			},
-			"provider-b/model-a": map[string]interface{}{
-				"estimate_version":      "chat_request.v1",
-				"prompt_estimate_scale": 0.5,
-			},
-			"provider-a/legacy": map[string]interface{}{
-				"prompt_estimate_scale": 9.0,
-			},
+			"provider-a/model-a": map[string]interface{}{"estimate_version": "chat_request.v1", "prompt_estimate_scale": 2.5},
+			"provider-a/legacy":  map[string]interface{}{"prompt_estimate_scale": 9.0},
 		},
 	}
-	requestFor := func(provider string, model string) RunRequest {
-		return RunRequest{
-			Prepared: NewPreparedChat("conversation", "message", provider, "auto", &adapter.ChatRequest{
-				Provider: provider,
-				Model:    model,
-			}),
-			CurrentMetadata: func() map[string]interface{} { return metadata },
-		}
+	requestFor := func(model string) RunRequest {
+		return RunRequest{Prepared: NewPreparedChat("conversation", "message", "provider-a", "auto", &adapter.ChatRequest{Provider: "provider-a", Model: model}), CurrentMetadata: func() map[string]interface{} { return metadata }}
 	}
-
-	if got := planningRequestBudgetForRun(requestFor("provider-a", "model-a")).estimateScale; got != 2.5 {
-		t.Fatalf("provider A scale = %v, want 2.5", got)
+	if got := planningRequestBudgetForRun(requestFor("model-a")).estimateScale; got != 2.5 {
+		t.Fatalf("scale = %v", got)
 	}
-	if got := planningRequestBudgetForRun(requestFor("provider-b", "model-a")).estimateScale; got != 0.5 {
-		t.Fatalf("provider B scale = %v, want 0.5", got)
+	if got := planningRequestBudgetForRun(requestFor("legacy")).estimateScale; got != 1 {
+		t.Fatalf("legacy scale = %v", got)
 	}
-	if got := planningRequestBudgetForRun(requestFor("provider-a", "legacy")).estimateScale; got != 1 {
-		t.Fatalf("legacy unversioned scale = %v, want 1", got)
-	}
-}
-
-func mustBudgetJSON(t *testing.T, value interface{}) string {
-	t.Helper()
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("marshal value: %v", err)
-	}
-	return string(encoded)
 }

@@ -62,6 +62,7 @@ type ProviderSelection struct {
 	// Channel configuration from the selected route
 	RouteID                     uuid.UUID
 	ChannelProvider             string
+	AdapterProviderOverride     string
 	APIKey                      string // Decrypted API key
 	APIBaseURL                  string
 	NativeProtocols             channelmodel.NativeProtocolConfig
@@ -91,6 +92,7 @@ type ChannelSelection struct {
 	RouteID                     uuid.UUID
 	ModelName                   string
 	ChannelProvider             string
+	AdapterProviderOverride     string
 	APIBaseURL                  string
 	NativeProtocols             channelmodel.NativeProtocolConfig
 	APIKey                      string // Decrypted API key
@@ -412,6 +414,8 @@ func llmModelFromPrivateModel(customModel *llmmodel.CustomModel) *llmmodel.LLMMo
 		ChatCompletions:   customModel.ChatCompletions,
 		Embeddings:        customModel.Embeddings,
 		ImageGeneration:   customModel.ImageGeneration,
+		SpeechGeneration:  customModel.SpeechGeneration,
+		Transcription:     customModel.Transcription,
 		Responses:         customModel.Responses,
 		ContextWindow:     customModel.ContextWindow,
 		MaxOutputTokens:   customModel.MaxOutputTokens,
@@ -872,6 +876,7 @@ func (r *ChannelRouter) buildChannelSelection(
 	}
 
 	selection.ChannelProvider = route.ChannelProvider
+	selection.AdapterProviderOverride = adapterProviderOverrideForRoute(route, modelCategory)
 	selection.APIBaseURL = route.APIBaseURL
 	selection.NativeProtocols = route.NativeProtocols
 	selection.ModelMaps = route.ModelMaps
@@ -960,7 +965,7 @@ func applyNativeProtocolBaseURL(selection *ChannelSelection, modelCategory strin
 
 	var endpoint channelmodel.NativeProtocolEndpoint
 	switch modelCategory {
-	case modelCategoryResponses:
+	case modelCategoryResponses, modelCategoryImage:
 		endpoint = selection.NativeProtocols.OpenAIResponses
 	case modelCategoryAnthropicMessages:
 		endpoint = selection.NativeProtocols.AnthropicMessages
@@ -977,6 +982,19 @@ func applyNativeProtocolBaseURL(selection *ChannelSelection, modelCategory strin
 	}
 	selection.APIBaseURL = strings.TrimRight(baseURL, "/")
 	return nil
+}
+
+func adapterProviderOverrideForRoute(route *channelmodel.LLMRoute, modelCategory string) string {
+	if route == nil || modelCategory != modelCategoryImage {
+		return ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(route.ChannelProvider), "qwen") {
+		return ""
+	}
+	if !route.NativeProtocols.OpenAIResponses.Enabled {
+		return ""
+	}
+	return "openai-compatible"
 }
 
 func (r *ChannelRouter) loadRouteCredential(ctx context.Context, route *channelmodel.LLMRoute) (*credentialmodel.TenantCredential, error) {
@@ -1028,6 +1046,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 			UseSystemProvider:           cs.UseSystemProvider,
 			RouteID:                     cs.RouteID,
 			ChannelProvider:             cs.ChannelProvider,
+			AdapterProviderOverride:     cs.AdapterProviderOverride,
 			APIKey:                      cs.APIKey,
 			APIBaseURL:                  cs.APIBaseURL,
 			NativeProtocols:             cs.NativeProtocols,
@@ -1094,6 +1113,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 		UseSystemProvider:           cs.UseSystemProvider,
 		RouteID:                     cs.RouteID,
 		ChannelProvider:             cs.ChannelProvider,
+		AdapterProviderOverride:     cs.AdapterProviderOverride,
 		APIKey:                      cs.APIKey,
 		APIBaseURL:                  cs.APIBaseURL,
 		NativeProtocols:             cs.NativeProtocols,

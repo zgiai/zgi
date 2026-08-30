@@ -27,6 +27,7 @@ type RouteQueryResult struct {
 	ChannelProvider  string                 `json:"channel_provider"`
 	Models           []string               `gorm:"type:jsonb;serializer:json" json:"models"`
 	APIBaseURL       string                 `json:"api_base_url"`
+	NativeProtocols  NativeProtocolConfig   `gorm:"type:jsonb;serializer:json;default:'{}'" json:"native_protocols,omitempty"`
 	Priority         int                    `json:"priority"`
 	Weight           int                    `json:"weight"`
 	APIKeyCiphertext string                 `json:"-"`

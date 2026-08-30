@@ -8,6 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
@@ -233,7 +234,11 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetIntegrationRegistry(), integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()))
+	var externalActionProjections integrationmetatools.ActionProjectionResolver
+	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
+		externalActionProjections = serviceContainer.GetIntegrationActionProjectionService()
+	}
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetIntegrationRegistry(), externalActionProjections, integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()))
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, PromptRouteDeps{
@@ -292,16 +297,20 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			serviceContainer.GetOrganizationService(),
 			integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
 		),
-		AccountService:         accountService,
-		IntegrationPreferences: aiChatIntegrationPreferences,
+		AccountService:               accountService,
+		IntegrationPreferences:       aiChatIntegrationPreferences,
+		IntegrationActionProjections: externalActionProjections,
 	})
 	if llmModule != nil && llmModule.LLMModelModule != nil {
 		RegisterImageRuntimeRoutes(v1, ImageRuntimeRouteDeps{
-			AvailableModels: llmModule.LLMModelModule.AvailableModelsSvc,
-			Routes:          llmModule.ChannelSvc,
-			LLMClient:       serviceContainer.GetLLMClient(),
-			ChatService:     chatService,
-			AccountService:  accountService,
+			DB:                      db,
+			AvailableModels:         llmModule.LLMModelModule.AvailableModelsSvc,
+			Routes:                  llmModule.ChannelSvc,
+			LLMClient:               serviceContainer.GetLLMClient(),
+			ChatService:             chatService,
+			AccountService:          accountService,
+			FileService:             serviceContainer.GetFileService(),
+			ApplicationErrorCatalog: applicationErrorCatalog,
 		})
 		RegisterVideoRuntimeRoutes(v1, VideoRuntimeRouteDeps{
 			DB:              db,

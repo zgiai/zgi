@@ -40,6 +40,7 @@ func (r *Runner) runModelToolRoundStream(
 	streamReq := cloneChatRequest(planningReq)
 	streamReq.Stream = true
 	startedAt := time.Now()
+	r.recordModelRequest(phase, round, streamReq)
 	stream, fallbackProgressStreamed, err := r.openSkillPlanningStream(ctx, prepared, streamReq, onEvent, phase == "agent_tool_loop")
 	if err != nil {
 		r.recordModelInvocation(ModelInvocationTrace{
@@ -570,7 +571,7 @@ func (r *Runner) emitStreamingToolPlanningProgress(
 	if metaToolName == "" || strings.EqualFold(metaToolName, skills.MetaToolIntermediateAnswer) || strings.EqualFold(metaToolName, skills.MetaToolFinalAnswer) {
 		return false
 	}
-	if metaToolName == skills.MetaToolActivateSkills || metaToolName == skills.MetaToolSearchSkills {
+	if metaToolName == skills.MetaToolActivateSkills || metaToolName == skills.MetaToolSearchSkills || metaToolName == contextArtifactToolName {
 		return false
 	}
 

@@ -923,7 +923,9 @@ func (s *llmGatewayServiceImpl) validateRerankRequest(req *adapter.RerankRequest
 // createAdapterConfig creates adapter configuration from provider selection
 func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection, organizationID ...uuid.UUID) *adapter.AdapterConfig {
 	adapterProvider := selection.ChannelProvider
-	if spec, err := channelprovider.Resolve(selection.ChannelProvider); err == nil {
+	if strings.TrimSpace(selection.AdapterProviderOverride) != "" {
+		adapterProvider = strings.TrimSpace(selection.AdapterProviderOverride)
+	} else if spec, err := channelprovider.Resolve(selection.ChannelProvider); err == nil {
 		adapterProvider = spec.AdapterKey
 	}
 	llmConfig := appconfig.Current().LLM
@@ -938,7 +940,12 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,
 		AllowPrivateBaseURL: selection.UseSystemProvider || channelprovider.AllowsPrivateBaseURL(selection.ChannelProvider),
 	}
-
+	if len(selection.ParamOverride) > 0 {
+		config.CustomParams = make(map[string]interface{}, len(selection.ParamOverride))
+		for key, value := range selection.ParamOverride {
+			config.CustomParams[key] = value
+		}
+	}
 	// In V2 architecture, API key is already decrypted and passed through ProviderSelection
 	if selection.APIKey != "" {
 		config.APIKey = selection.APIKey

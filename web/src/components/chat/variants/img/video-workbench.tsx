@@ -27,6 +27,7 @@ import {
 import { toast } from 'sonner';
 
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
+import { WorkspaceVoiceInputControl } from '@/components/chat/variants/aichat/voice/workspace-voice-input-control';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -74,9 +75,12 @@ const VIDEO_FRAME_REFERENCE_MODE = 'first_last_frame';
 const VIDEO_AUDIO_MODES = ['off', 'on'] as const;
 const preloadedMediaUrls = new Set<string>();
 const preloadedVideoUrls = new Map<string, 'metadata' | 'auto'>();
+const retainedPreloadedVideoElements = new Map<string, HTMLVideoElement>();
+const mountedRetainedVideoUrls = new Set<string>();
 const videoPosterCache = new Map<string, string>();
 const videoPosterPromises = new Map<string, Promise<string | null>>();
 const HISTORY_AUTO_PREFETCH_COUNT = 6;
+const MAX_RETAINED_VIDEO_PRELOADS = 12;
 const REFERENCE_KIND_ORDER: ReferenceKind[] = ['image', 'video', 'audio'];
 const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
   image: 'image/*',
@@ -359,7 +363,6 @@ export function VideoWorkbench() {
       if (taskID) {
         completedPollingTaskIdsRef.current.delete(taskID);
         setPollingTaskId(taskID);
-        void reloadTasks();
       }
       setPrompt('');
       setReferenceFiles(files => {
@@ -381,7 +384,6 @@ export function VideoWorkbench() {
     generationOptions.audioModes.length,
     prompt,
     referenceFiles,
-    reloadTasks,
     selectedModel.model,
     selectedModel.provider,
     settings,
@@ -758,14 +760,17 @@ function VideoTaskCard({
     >
       <div className="relative h-[72px] w-[92px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-slate-800 via-slate-900 to-black shadow-sm">
         {videoUrl ? (
-          <video
-            src={videoUrl}
-            poster={posterUrl || undefined}
-            muted
-            playsInline
-            preload="metadata"
-            className="h-full w-full object-cover opacity-90"
-          />
+          posterUrl ? (
+            <img src={posterUrl} alt="" className="h-full w-full object-cover opacity-90" />
+          ) : (
+            <video
+              src={videoUrl}
+              muted
+              playsInline
+              preload="metadata"
+              className="h-full w-full object-cover opacity-90"
+            />
+          )
         ) : (
           <Image
             src="/assets/video/default-video-cover.webp"
@@ -1033,6 +1038,11 @@ function ComposerPanel({
         </div>
 
         <div className="flex items-center justify-end gap-3">
+          <WorkspaceVoiceInputControl
+            value={prompt}
+            onChange={onPromptChange}
+            disabled={effectiveGenerating}
+          />
           {modelError ? (
             <Badge className="rounded-md border-red-500/30 bg-red-500/10 text-red-300">
               {t('chat.videoWorkbench.modelsLoadFailed')}
@@ -1125,6 +1135,48 @@ function ComposerPanel({
   );
 }
 
+function RetainedVideoPlayer({ src, posterUrl }: { src: string; posterUrl: string }) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const normalizedUrl = src.trim();
+    const container = containerRef.current;
+    if (!normalizedUrl || !container) return;
+
+    preloadVideo(normalizedUrl, 'auto');
+    const video = retainedPreloadedVideoElements.get(normalizedUrl);
+    if (!video) return;
+
+    mountedRetainedVideoUrls.add(normalizedUrl);
+    video.controls = true;
+    video.muted = false;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.className = 'h-full w-full bg-black object-contain';
+    if (posterUrl) {
+      video.poster = posterUrl;
+    } else {
+      video.removeAttribute('poster');
+    }
+
+    container.replaceChildren(video);
+
+    return () => {
+      mountedRetainedVideoUrls.delete(normalizedUrl);
+      video.pause();
+      if (video.parentElement === container) {
+        container.removeChild(video);
+      }
+    };
+  }, [posterUrl, src]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="aspect-video w-full overflow-hidden rounded-lg border border-border bg-black"
+    />
+  );
+}
 function TaskDetailSheet({
   task,
   onOpenChange,
@@ -1189,13 +1241,7 @@ function TaskDetailSheet({
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               <div className="space-y-4">
                 {videoUrl ? (
-                  <video
-                    className="aspect-video w-full rounded-lg border border-border bg-black object-contain"
-                    controls
-                    preload="auto"
-                    poster={posterUrl || undefined}
-                    src={videoUrl}
-                  />
+                  <RetainedVideoPlayer src={videoUrl} posterUrl={posterUrl} />
                 ) : (
                   <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border bg-[#030711]">
                     <Image
@@ -1496,18 +1542,43 @@ function preloadImage(url: string | undefined) {
 
 function preloadVideo(url: string | undefined, preload: 'metadata' | 'auto' = 'metadata') {
   const normalizedUrl = url?.trim();
-  if (!normalizedUrl) return;
+  if (!normalizedUrl || typeof document === 'undefined') return;
+
   const previousPreload = preloadedVideoUrls.get(normalizedUrl);
+  const retainedVideo = retainedPreloadedVideoElements.get(normalizedUrl);
+  if (retainedVideo) {
+    if (previousPreload !== 'auto' && preload === 'auto') {
+      retainedVideo.preload = 'auto';
+      retainedVideo.load();
+      preloadedVideoUrls.set(normalizedUrl, 'auto');
+    }
+    return;
+  }
   if (previousPreload === 'auto' || (previousPreload === 'metadata' && preload === 'metadata')) {
     return;
   }
-  preloadedVideoUrls.set(normalizedUrl, preload);
+
   const video = document.createElement('video');
   video.preload = preload;
   video.muted = true;
   video.playsInline = true;
   video.src = normalizedUrl;
   video.load();
+  retainedPreloadedVideoElements.set(normalizedUrl, video);
+  preloadedVideoUrls.set(normalizedUrl, preload);
+  trimRetainedVideoPreloads();
+}
+
+function trimRetainedVideoPreloads() {
+  for (const [url, video] of retainedPreloadedVideoElements) {
+    if (retainedPreloadedVideoElements.size <= MAX_RETAINED_VIDEO_PRELOADS) return;
+    if (mountedRetainedVideoUrls.has(url)) continue;
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    retainedPreloadedVideoElements.delete(url);
+    preloadedVideoUrls.delete(url);
+  }
 }
 
 function ensureVideoPoster(url: string | undefined): Promise<string | null> {

@@ -240,6 +240,7 @@ type ServiceContainer struct {
 	integrationConnectionAccess     *integrations.DefaultConnectionAccessService
 	integrationAIChatPreferenceRepo *integrations.GormAIChatIntegrationPreferenceRepository
 	integrationAIChatPreferences    *integrations.DefaultAIChatIntegrationPreferenceService
+	integrationActionProjections    *integration_metatools.ActionProjectionService
 	integrationConnectionHealthRepo *integrations.GormConnectionHealthRepository
 	integrationConnectionHealth     *integrations.DefaultConnectionHealthService
 	integrationActionPolicyRepo     *integrations.GormActionPolicyRepository
@@ -1315,6 +1316,22 @@ func (c *ServiceContainer) GetIntegrationAIChatPreferenceService() *integrations
 		)
 	}
 	return c.integrationAIChatPreferences
+}
+
+func (c *ServiceContainer) GetIntegrationActionProjectionService() *integration_metatools.ActionProjectionService {
+	if c.integrationActionProjections == nil {
+		service, err := integration_metatools.NewActionProjectionService(
+			c.GetIntegrationRegistry(),
+			c.GetIntegrationConnectionRepository(),
+			c.GetIntegrationConnectionAccessService(),
+			c.GetIntegrationActionPolicyService(),
+		)
+		if err != nil {
+			panic(fmt.Sprintf("initialize integration Action projection service: %v", err))
+		}
+		c.integrationActionProjections = service
+	}
+	return c.integrationActionProjections
 }
 
 func (c *ServiceContainer) GetIntegrationConnectionHealthRepository() *integrations.GormConnectionHealthRepository {

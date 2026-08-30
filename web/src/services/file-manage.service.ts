@@ -127,7 +127,10 @@ class FileManageService extends BaseService {
   async getOriginalPreviewUrl(
     fileId: string
   ): Promise<ApiResponseData<FileOriginalPreviewUrlResponse>> {
-    return this.request('get', `/console/api/files/${fileId}/preview-url`);
+    return this.request('get', `/console/api/files/${fileId}/preview-url`, undefined, {
+      skipErrorHandling: true,
+      retryAttemptsOverride: 0,
+    });
   }
 
   async getSourcePreviewPages(

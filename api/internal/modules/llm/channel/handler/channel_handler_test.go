@@ -346,6 +346,13 @@ func TestHandleChannelMutationErrorMapsProviderAPIKeyInvalidToBadRequest(t *test
 	}
 }
 
+func TestIsCreateRouteInputErrorRecognizesCredentialScopeMismatch(t *testing.T) {
+	err := fmt.Errorf(`model "seed-tts-2.0" requires channel_provider "doubao-speech"`)
+	if !isCreateRouteInputError(err) {
+		t.Fatalf("isCreateRouteInputError() = false, want true")
+	}
+}
+
 func newJSONContext(body string) (*gin.Context, *httptest.ResponseRecorder) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

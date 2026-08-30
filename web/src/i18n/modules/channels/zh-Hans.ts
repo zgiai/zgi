@@ -186,6 +186,16 @@ const messages: ChannelsMessages = {
           description: '接入 DashScope 原生能力，适合通义文本、视觉、图片、重排和多模态模型。',
           capabilities: '文本、视觉、图片、重排',
         },
+        doubao: {
+          label: '火山引擎豆包',
+          description: '接入火山方舟原生能力，支持豆包文本、向量、图片和视频模型。',
+          capabilities: '文本、向量、图片、视频',
+        },
+        doubaoSpeech: {
+          label: '豆包语音',
+          description: '接入豆包语音官方服务，使用语音控制台 API Key，支持语音合成和流式识别。',
+          capabilities: '语音合成、语音识别',
+        },
         deepseek: {
           label: 'DeepSeek',
           description: '接入 DeepSeek 官方模型服务，适合通用对话、代码和推理模型。',
@@ -270,6 +280,8 @@ const messages: ChannelsMessages = {
       initialFundsRate: '按美元输入更直观，系统会换算为点数额度。',
       initialFundsDefault: '公司内部渠道建议默认 $100，可根据使用场景调整。',
       providerLocked: '已按当前提供商锁定适配器；如需选择其他协议，请从渠道页新建渠道。',
+      doubaoSpeechBaseUrl:
+        'TTS 使用 HTTPS；STT 会在运行时自动切换为 WSS，无需填写 WebSocket 地址。',
       sharedCredentialIsolation:
         '当前凭据由 {count} 个渠道共享。修改服务商、API 基础地址或 API 密钥时，系统会为当前渠道创建独立凭据，其他渠道保持不变。',
       priority: '数字越小越优先。',
@@ -342,6 +354,7 @@ const messages: ChannelsMessages = {
       qwen: '阿里云（通义千问）',
       moonshotaiCn: '月之暗面（Kimi）',
       doubao: '火山引擎（豆包）',
+      doubaoSpeech: '豆包语音',
       google: 'Google（Gemini）',
     },
     protocolGroups: {
@@ -350,6 +363,7 @@ const messages: ChannelsMessages = {
       vertical: '垂直厂商',
     },
     protocolNotes: {
+      doubaoSpeech: '请使用豆包语音控制台生成的 API Key，不要使用火山方舟 API Key。',
       google: 'Gemini 文本与 Vertex 图片模式的 API Key 和 API 基础地址规则不同。',
     },
     errors: {
