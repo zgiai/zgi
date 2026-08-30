@@ -1730,6 +1730,8 @@ const messages = {
       selectedTables: 'Selected tables',
     },
     hints: {
+      restrictedSql:
+        'Only one SELECT, INSERT, UPDATE, or DELETE against tables in the selected data source is allowed. DDL, multiple statements, locking reads, and CTEs are rejected. Workflow variables are passed as bound parameters.',
       timeoutSeconds: '0 uses the backend default (30s).',
       maxRetries: '0 means no retry. Recommended: 0-3.',
     },
@@ -1743,11 +1745,10 @@ const messages = {
       noTables: 'No tables found for this database.',
       noColumns: 'No columns available',
       selectorHintTitle: 'No data source selected',
-      selectorHintDesc: 'Click to choose data source and tables',
+      selectorHintDesc: 'Choose a data source and optionally restrict tables',
     },
     validation: {
       dataSourceRequired: 'Data source is required',
-      tableSelectionRequired: 'At least one table must be selected',
       sqlRequired: 'SQL is required',
       timeoutPositive: 'Timeout should be a positive number',
     },

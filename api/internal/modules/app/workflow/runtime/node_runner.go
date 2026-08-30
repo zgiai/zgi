@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/databaseauthorization"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/subgraph"
@@ -11,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -29,6 +33,9 @@ type Dependencies struct {
 	AutomationDefinitionService automationdefinition.Service
 	NotificationSMSService      notificationsms.Service
 	SQLBase                     sql_base.SQLBase
+	DefaultModelResolver        llmdefaultservice.DefaultModelResolver
+	DatabaseAuthorizer          databaseauthorization.Authorizer
+	Text2SQLCatalogLoader       text2sql.CatalogLoader
 }
 
 // NodeRunner creates and executes concrete workflow nodes outside graph_engine.
@@ -94,6 +101,9 @@ func (r *NodeRunner) optionalDependencies(nodeID string, nodeType shared.NodeTyp
 		} else {
 			logger.Warn("No LLMClient available for %s node: %s", nodeType, nodeID)
 		}
+		if nodeType == shared.SQLGenerator && r.deps.DefaultModelResolver != nil {
+			optionalDeps = append(optionalDeps, r.deps.DefaultModelResolver)
+		}
 		if nodeType == shared.LLM && r.deps.PromptResolver != nil {
 			optionalDeps = append(optionalDeps, r.deps.PromptResolver)
 		}
@@ -129,8 +139,14 @@ func (r *NodeRunner) optionalDependencies(nodeID string, nodeType shared.NodeTyp
 		}
 	}
 
-	if nodeType == shared.CallDatabase && r.deps.SQLBase != nil {
+	if (nodeType == shared.CallDatabase || nodeType == shared.SQLGenerator) && r.deps.SQLBase != nil {
 		optionalDeps = append(optionalDeps, r.deps.SQLBase)
+	}
+	if (nodeType == shared.CallDatabase || nodeType == shared.SQLGenerator) && r.deps.DatabaseAuthorizer != nil {
+		optionalDeps = append(optionalDeps, r.deps.DatabaseAuthorizer)
+	}
+	if nodeType == shared.SQLGenerator && r.deps.Text2SQLCatalogLoader != nil {
+		optionalDeps = append(optionalDeps, r.deps.Text2SQLCatalogLoader)
 	}
 
 	if nodeType == shared.HTTPRequest || nodeType == shared.LLM {

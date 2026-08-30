@@ -8,6 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
 	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlanalysis"
 )
 
 // SQLBase defines the interface for postgres-meta service
@@ -528,10 +529,8 @@ type QueryResult struct {
 	Rows         [][]any  `json:"rows"`
 }
 
-// ParsedQuery represents parsed SQL query
-type ParsedQuery struct {
-	// Add fields as needed
-}
+// ParsedQuery represents a parsed SQL query.
+type ParsedQuery = sqlanalysis.Analysis
 
 // Privilege types
 type TablePrivilege struct {

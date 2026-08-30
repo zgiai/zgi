@@ -16,9 +16,83 @@ import (
 
 type fakeSQLBase struct {
 	sql_base.SQLBase
-	auditCtx    *audit.Context
-	auditCtxs   []audit.Context
-	executeFunc func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error)
+	auditCtx      *audit.Context
+	auditCtxs     []audit.Context
+	executionOpts []sql_base.ExecuteSQLOptions
+	params        [][]any
+	executeFunc   func(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error)
+}
+
+type fakeDatabaseAuthorizer struct {
+	err             error
+	resolveErr      error
+	requests        []databaseauthorization.Request
+	resolveRequests []databaseauthorization.Request
+	resolvedTables  []databaseauthorization.TableReference
+}
+
+func (f *fakeDatabaseAuthorizer) Authorize(_ context.Context, req databaseauthorization.Request) error {
+	f.requests = append(f.requests, req)
+	return f.err
+}
+
+func (f *fakeDatabaseAuthorizer) ResolveTables(_ context.Context, req databaseauthorization.Request) ([]databaseauthorization.TableReference, error) {
+	f.resolveRequests = append(f.resolveRequests, req)
+	if f.resolveErr != nil {
+		return nil, f.resolveErr
+	}
+	if f.resolvedTables != nil {
+		return f.resolvedTables, nil
+	}
+	result := make([]databaseauthorization.TableReference, 0, len(req.Relations))
+	for index, relation := range req.Relations {
+		result = append(result, databaseauthorization.TableReference{
+			ID: fmt.Sprintf("table-%d", index+1), TableID: index + 1,
+			Schema: relation.Schema, Name: relation.Name,
+		})
+	}
+	return result, nil
+}
+
+func TestExecuteRunResolvesTablesFromSelectedDataSource(t *testing.T) {
+	var executedSQL string
+	sqlClient := &fakeSQLBase{executeFunc: func(_ context.Context, query string, _ []any, _ *audit.Context) (*sql_base.QueryResult, error) {
+		executedSQL = query
+		return &sql_base.QueryResult{}, nil
+	}}
+	authorizer := &fakeDatabaseAuthorizer{resolvedTables: []databaseauthorization.TableReference{{
+		ID: "table-1", TableID: 7, Schema: "public", Name: "zgi_base_users",
+	}}}
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			NodeID: "call-db-node", NodeType: shared.CallDatabase,
+			OrganizationID: "organization-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1",
+		},
+		NodeData:  NodeData{DataSource: DataSourceConfig{ID: "db-1"}, ManualSQL: "SELECT * FROM users"},
+		sqlClient: sqlClient, authorizer: authorizer,
+	}
+
+	result, err := node.executeRun(context.Background())
+
+	if err != nil || result == nil || result.Status != shared.SUCCEEDED {
+		t.Fatalf("result=%#v error=%v, want success", result, err)
+	}
+	if executedSQL != `SELECT * FROM "public"."zgi_base_users"` {
+		t.Fatalf("executed SQL = %q, want resolved physical table", executedSQL)
+	}
+	if len(authorizer.resolveRequests) != 1 || len(authorizer.requests) != 1 {
+		t.Fatalf("resolve/authorize requests = %d/%d, want 1/1", len(authorizer.resolveRequests), len(authorizer.requests))
+	}
+	if len(authorizer.requests[0].Tables) != 1 || authorizer.requests[0].Tables[0].ID != "table-1" {
+		t.Fatalf("authorization tables = %#v, want resolved table", authorizer.requests[0].Tables)
+	}
+	if sqlClient.auditCtx == nil || sqlClient.auditCtx.TableID != "table-1" || sqlClient.auditCtx.TableName != "zgi_base_users" {
+		t.Fatalf("audit context = %#v, want resolved table", sqlClient.auditCtx)
+	}
+	tableContext, ok := result.Outputs["table_context"].([]TableRef)
+	if !ok || len(tableContext) != 1 || tableContext[0].ID != "table-1" {
+		t.Fatalf("table context = %#v, want resolved table", result.Outputs["table_context"])
+	}
 }
 
 func (f *fakeSQLBase) ExecuteSQL(ctx context.Context, query string, params []any, auditCtx *audit.Context) (*sql_base.QueryResult, error) {
@@ -297,6 +371,200 @@ func TestExecuteWithRetryUsesSingleAuditRequestIDAcrossAttempts(t *testing.T) {
 		if got.Attempt != i+1 {
 			t.Fatalf("attempt %d audit attempt = %d, want %d", i+1, got.Attempt, i+1)
 		}
+	}
+	if len(mockClient.executionOpts) != 3 {
+		t.Fatalf("execution option count = %d, want 3", len(mockClient.executionOpts))
+	}
+	for i, opts := range mockClient.executionOpts {
+		if !opts.ReadOnly {
+			t.Fatalf("attempt %d read-only = false, want true", i+1)
+		}
+		if !opts.CatalogOnly {
+			t.Fatalf("attempt %d catalog-only = false, want true", i+1)
+		}
+	}
+	if reauthorizationCount != 2 {
+		t.Fatalf("reauthorization count = %d, want one before each retry", reauthorizationCount)
+	}
+}
+
+func TestExecuteWithRetryDoesNotRetryWrites(t *testing.T) {
+	executionCount := 0
+	mockClient := &fakeSQLBase{executeFunc: func(context.Context, string, []any, *audit.Context) (*sql_base.QueryResult, error) {
+		executionCount++
+		return nil, errors.New("write failed")
+	}}
+	node := &Node{
+		NodeData:  NodeData{Execution: ExecutionConfig{MaxRetries: 3}},
+		sqlClient: mockClient,
+	}
+
+	_, attempts, err := node.executeWithRetry(context.Background(), "UPDATE users SET active = false", nil, nil, sql_base.ExecuteSQLOptions{CatalogOnly: true}, nil)
+	if err == nil {
+		t.Fatal("executeWithRetry error = nil, want write failure")
+	}
+	if attempts != 1 || executionCount != 1 {
+		t.Fatalf("attempts=%d executions=%d, want one non-retried write", attempts, executionCount)
+	}
+}
+
+func TestExecuteRunEnforcesReadOnlyTransactionForSelect(t *testing.T) {
+	var executedSQL string
+	mockClient := &fakeSQLBase{executeFunc: func(_ context.Context, query string, _ []any, _ *audit.Context) (*sql_base.QueryResult, error) {
+		executedSQL = query
+		return &sql_base.QueryResult{Columns: []string{"value"}, Rows: [][]any{{int64(1)}}}, nil
+	}}
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			InstanceID: "test-instance", NodeID: "call-db-node", NodeType: shared.CallDatabase,
+			OrganizationID: "organization-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1",
+		},
+		NodeData:  NodeData{DataSource: DataSourceConfig{ID: "db-1"}, ManualSQL: "SELECT count(*) AS value FROM users"},
+		sqlClient: mockClient, authorizer: &fakeDatabaseAuthorizer{},
+	}
+
+	result, err := node.executeRun(context.Background())
+
+	if err != nil {
+		t.Fatalf("executeRun returned error: %v", err)
+	}
+	if result == nil || result.Status != shared.SUCCEEDED {
+		t.Fatalf("result = %#v, want successful result", result)
+	}
+	if len(mockClient.executionOpts) != 1 || !mockClient.executionOpts[0].ReadOnly || !mockClient.executionOpts[0].CatalogOnly {
+		t.Fatalf("execution options = %#v, want one read-only catalog-only execution", mockClient.executionOpts)
+	}
+	if executedSQL != `SELECT count(*) AS value FROM "public"."zgi_base_users"` {
+		t.Fatalf("executed SQL = %q, want resolved physical table", executedSQL)
+	}
+}
+
+func TestExecuteRunDoesNotExecuteWhenTableResolutionFails(t *testing.T) {
+	executed := false
+	sqlClient := &fakeSQLBase{executeFunc: func(_ context.Context, _ string, _ []any, _ *audit.Context) (*sql_base.QueryResult, error) {
+		executed = true
+		return &sql_base.QueryResult{}, nil
+	}}
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			NodeID: "call-db-node", NodeType: shared.CallDatabase,
+			OrganizationID: "organization-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1",
+		},
+		NodeData:   NodeData{DataSource: DataSourceConfig{ID: "db-1"}, ManualSQL: "SELECT * FROM missing_table"},
+		sqlClient:  sqlClient,
+		authorizer: &fakeDatabaseAuthorizer{resolveErr: databaseauthorization.ErrAccessDenied},
+	}
+
+	result, err := node.executeRun(context.Background())
+
+	if result != nil || !errors.Is(err, databaseauthorization.ErrAccessDenied) {
+		t.Fatalf("result=%#v error=%v, want access denied", result, err)
+	}
+	if executed {
+		t.Fatal("SQL must not execute after table resolution denial")
+	}
+}
+
+func TestExecuteRunRejectsLockingSelect(t *testing.T) {
+	mockClient := &fakeSQLBase{executeFunc: func(context.Context, string, []any, *audit.Context) (*sql_base.QueryResult, error) {
+		return &sql_base.QueryResult{Columns: []string{"id"}, Rows: [][]any{{int64(1)}}}, nil
+	}}
+	authorizer := &fakeDatabaseAuthorizer{}
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			InstanceID: "test-instance", NodeID: "call-db-node", NodeType: shared.CallDatabase,
+			OrganizationID: "organization-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1",
+		},
+		NodeData:  NodeData{DataSource: DataSourceConfig{ID: "db-1"}, ManualSQL: "SELECT id FROM users FOR UPDATE"},
+		sqlClient: mockClient, authorizer: authorizer,
+	}
+
+	result, err := node.executeRun(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "locking SELECT") {
+		t.Fatalf("error = %v, want locking SELECT rejection", err)
+	}
+	if result != nil || len(authorizer.requests) != 0 || len(mockClient.executionOpts) != 0 {
+		t.Fatalf("result=%#v authorizations=%d executions=%d, want rejection before authorization", result, len(authorizer.requests), len(mockClient.executionOpts))
+	}
+}
+
+func TestExecuteRunRejectsDDL(t *testing.T) {
+	var executedSQL string
+	mockClient := &fakeSQLBase{executeFunc: func(_ context.Context, query string, _ []any, _ *audit.Context) (*sql_base.QueryResult, error) {
+		executedSQL = query
+		return &sql_base.QueryResult{}, nil
+	}}
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			InstanceID: "test-instance", NodeID: "call-db-node", NodeType: shared.CallDatabase,
+			OrganizationID: "organization-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1",
+		},
+		NodeData:  NodeData{DataSource: DataSourceConfig{ID: "db-1"}, ManualSQL: "CREATE TABLE workflow_probe (value text)"},
+		sqlClient: mockClient, authorizer: &fakeDatabaseAuthorizer{},
+	}
+
+	result, err := node.executeRun(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "only SELECT, INSERT, UPDATE, and DELETE") {
+		t.Fatalf("error = %v, want DDL rejection", err)
+	}
+	if result != nil || executedSQL != "" {
+		t.Fatalf("result=%#v executed SQL=%q, want rejection before execution", result, executedSQL)
+	}
+}
+
+func TestExecuteRunRejectsFunctionSideEffectsBeforeAuthorization(t *testing.T) {
+	for _, sql := range []string{
+		"SELECT pg_advisory_lock(42)",
+		"INSERT INTO users(name) VALUES ('a') RETURNING mutate_other_rows()",
+		"SELECT public.lower(1)",
+	} {
+		t.Run(sql, func(t *testing.T) {
+			mockClient := &fakeSQLBase{}
+			authorizer := &fakeDatabaseAuthorizer{}
+			node := &Node{
+				NodeStruct: base.NodeStruct{
+					InstanceID: "test-instance", NodeID: "call-db-node", NodeType: shared.CallDatabase,
+					OrganizationID: "organization-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1",
+				},
+				NodeData:  NodeData{DataSource: DataSourceConfig{ID: "db-1"}, ManualSQL: sql},
+				sqlClient: mockClient, authorizer: authorizer,
+			}
+
+			result, err := node.executeRun(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "is not allowed") {
+				t.Fatalf("error = %v, want unsafe function rejection", err)
+			}
+			if result != nil {
+				t.Fatalf("result = %#v, want nil", result)
+			}
+			if len(mockClient.executionOpts) != 0 {
+				t.Fatalf("execution options = %#v, want no SQL execution", mockClient.executionOpts)
+			}
+		})
+	}
+}
+
+func TestExecuteRunFailsClosedWhenReadOnlyExecutionIsUnavailable(t *testing.T) {
+	type legacySQLBase struct{ sql_base.SQLBase }
+	node := &Node{
+		NodeStruct: base.NodeStruct{
+			InstanceID: "test-instance", NodeID: "call-db-node", NodeType: shared.CallDatabase,
+			OrganizationID: "organization-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1",
+		},
+		NodeData:  NodeData{DataSource: DataSourceConfig{ID: "db-1"}, ManualSQL: "SELECT 1"},
+		sqlClient: legacySQLBase{}, authorizer: &fakeDatabaseAuthorizer{},
+	}
+
+	result, err := node.executeRun(context.Background())
+
+	if err != nil {
+		t.Fatalf("executeRun returned transport error: %v", err)
+	}
+	if result == nil || result.Status != shared.FAILED {
+		t.Fatalf("result = %#v, want failed result", result)
+	}
+	if !strings.Contains(result.ErrMsg, sql_base.ErrCatalogOnlyExecutionUnsupported.Error()) {
+		t.Fatalf("error = %q, want catalog-only unsupported error", result.ErrMsg)
 	}
 }
 

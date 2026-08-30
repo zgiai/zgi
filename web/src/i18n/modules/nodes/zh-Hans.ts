@@ -1665,6 +1665,8 @@ const messages: NodesMessages = {
       selectedTables: '已选数据表',
     },
     hints: {
+      restrictedSql:
+        '仅支持对所选数据源内的数据表执行单条 SELECT、INSERT、UPDATE 或 DELETE。禁止 DDL、多语句、锁定查询和 CTE；工作流变量会作为安全参数传入。',
       timeoutSeconds: '填 0 使用后端默认值（30 秒）。',
       maxRetries: '填 0 表示不重试，建议范围 0-3。',
     },
@@ -1678,11 +1680,10 @@ const messages: NodesMessages = {
       noTables: '未发现数据表',
       noColumns: '暂无可用字段',
       selectorHintTitle: '未选择数据源',
-      selectorHintDesc: '点击选择数据源与数据表',
+      selectorHintDesc: '点击选择数据源，可按需限定数据表',
     },
     validation: {
       dataSourceRequired: '必须选择数据源',
-      tableSelectionRequired: '至少选择一个数据表',
       sqlRequired: 'SQL 不能为空',
       timeoutPositive: '超时时间应为正数',
     },

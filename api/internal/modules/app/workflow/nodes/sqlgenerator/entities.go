@@ -73,6 +73,66 @@ type NodeData struct {
 	IsStaticConfig bool `json:"-"`
 }
 
+func (nd *NodeData) UnmarshalJSON(data []byte) error {
+	type alias NodeData
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	mode, err := normalizeTableSelectionMode(decoded.TableSelectionMode)
+	if err != nil {
+		return err
+	}
+	decoded.TableSelectionMode = mode
+	*nd = NodeData(decoded)
+	return nil
+}
+
+func normalizeTableSelectionMode(mode TableSelectionMode) (TableSelectionMode, error) {
+	switch TableSelectionMode(strings.TrimSpace(string(mode))) {
+	case "", TableSelectionModeManual:
+		return TableSelectionModeManual, nil
+	case TableSelectionModeAutomatic:
+		return TableSelectionModeAutomatic, nil
+	default:
+		return "", fmt.Errorf("invalid table_selection_mode %q", mode)
+	}
+}
+
+// ValidateConfiguration checks the persisted node contract shared by runtime and precheck.
+func (nd *NodeData) ValidateConfiguration() error {
+	mode, err := normalizeTableSelectionMode(nd.TableSelectionMode)
+	if err != nil {
+		return err
+	}
+	nd.TableSelectionMode = mode
+	if strings.TrimSpace(nd.Model.Provider) == "" {
+		return fmt.Errorf("model provider is required")
+	}
+	if strings.TrimSpace(nd.Model.Name) == "" {
+		return fmt.Errorf("model name is required")
+	}
+	if strings.TrimSpace(nd.Prompt.User) == "" {
+		return fmt.Errorf("user prompt cannot be empty")
+	}
+	if strings.TrimSpace(nd.DataSource.Source.ID) == "" {
+		return fmt.Errorf("data source is required")
+	}
+	if mode == TableSelectionModeManual && len(nd.DataSource.Tables) == 0 {
+		return fmt.Errorf("manual table selection requires at least one table")
+	}
+	if mode == TableSelectionModeAutomatic && len(nd.DataSource.Tables) != 0 {
+		return fmt.Errorf("automatic table selection requires tables to be empty")
+	}
+	for key := range nd.Model.Parameters {
+		if strings.EqualFold(strings.TrimSpace(key), "stop") {
+			return fmt.Errorf("completion_params.stop is not supported by Text2SQL because it can truncate the required JSON response")
+		}
+	}
+	return nil
+}
+
 var defaultMetadataConfig = MetadataConfig{
 	Mode:            MetadataModeColumns,
 	MaxColumns:      30,
@@ -89,13 +149,18 @@ func (nd *NodeData) ensureDefaults() {
 	}
 
 	if nd.Execution.TimeoutSeconds <= 0 {
-		nd.Execution.TimeoutSeconds = 30
+		nd.Execution.TimeoutSeconds = defaultTimeoutSeconds
 	}
 	if nd.Execution.MaxRetries < 0 {
 		nd.Execution.MaxRetries = 0
 	}
 
-	nd.Prompt.Metadata = defaultMetadataConfig
+	if nd.Prompt.Metadata.Mode == "" {
+		nd.Prompt.Metadata.Mode = defaultMetadataConfig.Mode
+	}
+	if nd.Prompt.Metadata.MaxColumns <= 0 {
+		nd.Prompt.Metadata.MaxColumns = defaultMetadataConfig.MaxColumns
+	}
 	nd.Prompt.QuickBindings = deriveVariableSelectorsFromPrompt(nd.Prompt.User)
 }
 
