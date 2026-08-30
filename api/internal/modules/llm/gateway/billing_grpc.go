@@ -800,7 +800,7 @@ func (s *RemoteBilling) isAttemptTerminal(ctx context.Context, attemptID string)
 		}
 		return false, fmt.Errorf("load attempt status: %w", err)
 	}
-	return attempt.Status == billingAttemptStatusSettled || attempt.Status == billingAttemptStatusRolledBack, nil
+	return billingAttemptStatusIsFinalized(attempt.Status), nil
 }
 
 func (s *RemoteBilling) Close() error {

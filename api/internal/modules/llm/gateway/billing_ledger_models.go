@@ -50,6 +50,12 @@ const (
 	billingPhaseCompensate = "compensate"
 )
 
+func billingAttemptStatusIsFinalized(status string) bool {
+	return status == billingAttemptStatusSettled ||
+		status == billingAttemptStatusRolledBack ||
+		status == billingAttemptStatusCompensated
+}
+
 type BillingAttempt struct {
 	AttemptID         string           `gorm:"column:attempt_id;primaryKey;size:120"`
 	RequestID         string           `gorm:"column:request_id;size:100;not null;index"`

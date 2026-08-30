@@ -14,13 +14,16 @@ import (
 )
 
 func TestBillingServiceCompensatePrivateMusicDeliveryRefundsExactlyOnce(t *testing.T) {
-	service, db, organizationID, apiKeyID, channelID, requestID := newMusicCompensationFixture(t)
+	service, db, billing, organizationID, apiKeyID, channelID, requestID := newMusicCompensationFixture(t)
 
 	if err := service.CompensatePrivateMusicDelivery(t.Context(), organizationID, requestID); err != nil {
 		t.Fatalf("CompensatePrivateMusicDelivery() error = %v", err)
 	}
 	if err := service.CompensatePrivateMusicDelivery(t.Context(), organizationID, requestID); err != nil {
 		t.Fatalf("second CompensatePrivateMusicDelivery() error = %v", err)
+	}
+	if err := service.Settle(t.Context(), billing); err != nil {
+		t.Fatalf("Settle() after compensation error = %v", err)
 	}
 
 	var apiKey apikeymodel.TenantAPIKey
@@ -75,7 +78,7 @@ func TestBillingServiceCompensatePrivateMusicDeliveryRefundsExactlyOnce(t *testi
 }
 
 func TestBillingServiceCompensatePrivateMusicDeliveryRejectsNonMusicAttempt(t *testing.T) {
-	service, db, organizationID, _, _, requestID := newMusicCompensationFixture(t)
+	service, db, _, organizationID, _, _, requestID := newMusicCompensationFixture(t)
 	if err := db.Model(&UsageBill{}).Where("attempt_id = ?", requestID).Update("pricing_snapshot", datatypes.JSON(`{"operation":"speech_generation","meter":"input_text","base_unit":"billed_character"}`)).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +96,7 @@ func TestBillingServiceCompensatePrivateMusicDeliveryRejectsNonMusicAttempt(t *t
 	}
 }
 
-func newMusicCompensationFixture(t *testing.T) (*BillingService, *gorm.DB, uuid.UUID, string, uuid.UUID, string) {
+func newMusicCompensationFixture(t *testing.T) (*BillingService, *gorm.DB, *BillingContext, uuid.UUID, string, uuid.UUID, string) {
 	t.Helper()
 	dsn := "file:" + uuid.NewString() + "?mode=memory&cache=shared"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -171,5 +174,5 @@ func newMusicCompensationFixture(t *testing.T) (*BillingService, *gorm.DB, uuid.
 	if err := service.Settle(t.Context(), billing); err != nil {
 		t.Fatalf("Settle() error = %v", err)
 	}
-	return service, db, organizationID, apiKeyID, channelID, requestID
+	return service, db, billing, organizationID, apiKeyID, channelID, requestID
 }
