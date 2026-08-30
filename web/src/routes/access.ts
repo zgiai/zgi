@@ -9,6 +9,7 @@ export const ORGANIZATION_SCOPED_CONSOLE_ROUTES = [
   '/console',
   '/console/skills',
   '/console/integrations',
+  '/console/model',
   '/console/work',
   '/console/work/chat',
   '/console/work/image',

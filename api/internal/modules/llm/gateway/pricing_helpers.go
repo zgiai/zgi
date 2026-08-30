@@ -68,6 +68,31 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlement(
 	return s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
 }
 
+type cacheTokenPricingEngine interface {
+	QuoteTokenUsage(context.Context, PricingModelRef, TokenUsage) (PricingQuote, error)
+}
+
+func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlementUsage(
+	ctx context.Context,
+	bc *BillingContext,
+	model PricingModelRef,
+	usage TokenUsage,
+) (PricingQuote, error) {
+	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 {
+		return s.quoteTokenPricingForSettlement(ctx, bc, model, usage.InputTokens, usage.OutputTokens)
+	}
+	engine := s.pricing()
+	cacheEngine, ok := engine.(cacheTokenPricingEngine)
+	if !ok {
+		return PricingQuote{}, fmt.Errorf("pricing engine does not support cache token pricing")
+	}
+	quote, err := cacheEngine.QuoteTokenUsage(ctx, model, usage)
+	if err != nil {
+		return PricingQuote{}, wrapPricingNotConfiguredError(err, pricingErrorParamsFromModelRef(model))
+	}
+	return quote, nil
+}
+
 func (s *llmGatewayServiceImpl) quoteImagePricing(
 	ctx context.Context,
 	model PricingModelRef,

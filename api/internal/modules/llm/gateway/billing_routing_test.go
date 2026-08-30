@@ -35,6 +35,61 @@ type fakeBillingProvider struct {
 	checkBalanceErr    error
 }
 
+func TestApplyPlatformSettlementCostSnapshotRecordsCallTimeCurrencyFacts(t *testing.T) {
+	bc := &BillingContext{}
+	applyPlatformSettlementCostSnapshot(bc, &adapter.SettlementResult{
+		TotalCostUSD:                  "0.006601",
+		TotalCostCNY:                  "0.0475272",
+		CNYPerUSD:                     "7.2",
+		InputPriceUSDPer1MTokens:      "5",
+		CacheWritePriceUSDPer1MTokens: "2.5",
+		OutputPriceUSDPer1MTokens:     "30",
+		InputCostUSD:                  "0.00001",
+		CacheWriteCostUSD:             "0.004096",
+		OutputCostUSD:                 "0.002495",
+	})
+
+	if !bc.TotalUSD.Equal(decimal.RequireFromString("0.006601")) {
+		t.Fatalf("total USD = %s, want 0.006601", bc.TotalUSD)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(bc.PricingSnapshot, &snapshot); err != nil {
+		t.Fatalf("unmarshal pricing snapshot: %v", err)
+	}
+	if snapshot["total_cost_usd"] != "0.006601" || snapshot["total_cost_cny"] != "0.0475272" || snapshot["cny_per_usd"] != "7.2" {
+		t.Fatalf("pricing snapshot = %#v", snapshot)
+	}
+	if snapshot["exchange_rate_source"] != "console_settlement" {
+		t.Fatalf("exchange rate source = %#v", snapshot["exchange_rate_source"])
+	}
+	if snapshot["input_price_usd_per_1m_tokens"] != "5" || snapshot["cache_write_price_usd_per_1m_tokens"] != "2.5" || snapshot["output_price_usd_per_1m_tokens"] != "30" {
+		t.Fatalf("component prices missing from pricing snapshot: %#v", snapshot)
+	}
+	if snapshot["input_cost_usd"] != "0.00001" || snapshot["cache_write_cost_usd"] != "0.004096" || snapshot["output_cost_usd"] != "0.002495" {
+		t.Fatalf("component costs missing from pricing snapshot: %#v", snapshot)
+	}
+}
+
+func TestApplyLocalBillingCurrencySnapshotRecordsOrganizationCallTimeRate(t *testing.T) {
+	bc := &BillingContext{
+		TotalUSD:        decimal.RequireFromString("0.006601"),
+		DisplayCurrency: "CNY",
+		USDToCNYRate:    decimal.RequireFromString("7.2"),
+	}
+	applyLocalBillingCurrencySnapshot(bc)
+
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(bc.PricingSnapshot, &snapshot); err != nil {
+		t.Fatalf("unmarshal pricing snapshot: %v", err)
+	}
+	if snapshot["total_cost_cny"] != "0.0475272" || snapshot["cny_per_usd"] != "7.2" {
+		t.Fatalf("pricing snapshot = %#v", snapshot)
+	}
+	if snapshot["billing_display_currency"] != "CNY" || snapshot["exchange_rate_source"] != "organization_call_snapshot" {
+		t.Fatalf("billing display snapshot = %#v", snapshot)
+	}
+}
+
 type fakeProxySettlementBillingProvider struct {
 	fakeBillingProvider
 	lastProxySettle   *BillingContext

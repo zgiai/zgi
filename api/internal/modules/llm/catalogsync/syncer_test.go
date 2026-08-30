@@ -132,6 +132,29 @@ func TestPublishedModelCapabilityMapping(t *testing.T) {
 	})
 }
 
+func TestCatalogFromResponseIncludesVendorDirectory(t *testing.T) {
+	resp := &pb.GetPublishedCatalogResponse{
+		Vendors: []*pb.CatalogVendor{{
+			Vendor:       "openai",
+			VendorName:   "OpenAI",
+			CnName:       "OpenAI 中文名",
+			EnName:       "OpenAI",
+			Description:  "Console-managed vendor",
+			Website:      "https://openai.com",
+			CountryCode:  "US",
+			Status:       "active",
+			IsActive:     true,
+			MetadataJson: `{"icon_key":"openai"}`,
+		}},
+	}
+
+	catalog := catalogFromResponse(resp)
+	require.Len(t, catalog.Vendors, 1)
+	require.Equal(t, "openai", catalog.Vendors[0].Vendor)
+	require.Equal(t, "OpenAI 中文名", catalog.Vendors[0].CNName)
+	require.Equal(t, "openai", catalog.Vendors[0].Metadata["icon_key"])
+}
+
 func TestPublishedModelLifecycleFieldsMapping(t *testing.T) {
 	resp := &pb.GetPublishedCatalogResponse{
 		Version:     12,
@@ -139,6 +162,7 @@ func TestPublishedModelLifecycleFieldsMapping(t *testing.T) {
 		Models: []*pb.CatalogModel{
 			{
 				Provider:            "deepseek",
+				Vendor:              "deepseek",
 				Model:               "deepseek-chat",
 				ModelName:           "DeepSeek Chat",
 				Status:              "deprecated",
@@ -157,6 +181,7 @@ func TestPublishedModelLifecycleFieldsMapping(t *testing.T) {
 
 	catalog := catalogFromResponse(resp)
 	require.Len(t, catalog.Models, 2)
+	require.Equal(t, "deepseek", catalog.Models[0].Vendor)
 	require.Equal(t, "deepseek", catalog.Models[0].ReplacementProvider)
 	require.Equal(t, "deepseek-v4-flash", catalog.Models[0].ReplacementModel)
 	require.Equal(t, "Compatibility model is deprecated.", catalog.Models[0].DeprecationReason)

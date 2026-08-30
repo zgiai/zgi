@@ -170,8 +170,14 @@ export interface Transaction {
   transaction_type: TransactionType;
   detail_text: string;
   recharge_amount: number;
+  recharge_amount_cny?: number;
+  recharge_amount_usd?: number;
+  amount_exchange_rate?: number;
+  amount_currency_status?: string;
+  recharge_currency?: string;
   wallet_change_amount: number;
   balance_after: number;
+  wallet_currency?: string;
 
   // Legacy fields kept for backward compatibility with older consumers.
   amount?: number;

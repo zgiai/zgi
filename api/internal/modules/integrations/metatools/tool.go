@@ -1970,6 +1970,11 @@ func validateTopLevelParameters(toolName string, parameters map[string]interface
 		if selectorProvided && normalizedString(selectorRaw) != preferredSelector {
 			return integrations.NewError(integrations.ErrorCodeInvalidInput, "execute_action connection_selector is invalid", nil)
 		}
+		_, argumentsProvided := parameters["arguments"]
+		_, batchItemsProvided := parameters["batch_items"]
+		if argumentsProvided && batchItemsProvided {
+			return integrations.NewError(integrations.ErrorCodeInvalidInput, "execute_action accepts either arguments or batch_items, not both", nil)
+		}
 	}
 	return nil
 }

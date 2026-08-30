@@ -4,13 +4,19 @@ import { URL } from 'node:url';
 
 import {
   DEFAULT_BILLING_DISPLAY,
+  calculateRecordedTokenCostUSD,
   billingDisplayInputToUSD,
   billingDisplayInputValueFromUSD,
+  formatBillingDisplayAmountFromUSD,
   formatBillingDisplayAmountFromNormalizedCredits,
+  formatRecordedBillingAmountFromUSD,
+  formatRecordedCurrencyAmount,
+  formatCatalogCurrencyAmount,
   getBillingDisplaySettings,
   normalizedAiCreditsToUSD,
 } from '../src/utils/billing-display.ts';
 import { normalizeAiCreditValue, normalizeModelUsageData } from '../src/utils/ai-credits.ts';
+import { formatTokenCount } from '../src/utils/token-format.ts';
 
 const usdSettings = {
   currency: 'USD',
@@ -21,6 +27,29 @@ const cnySettings = {
   currency: 'CNY',
   usdToCnyRate: 7,
 };
+
+assert.equal(
+  formatTokenCount(1_056, 'en-US'),
+  '1,056',
+  'usage token counts must use grouping separators without K/M abbreviation'
+);
+assert.equal(formatTokenCount(0, 'en-US'), '0', 'zero token usage must remain visible');
+
+assert.equal(
+  calculateRecordedTokenCostUSD(11_895, '5'),
+  '0.059475',
+  'historical component subtotals must be reconstructed from the recorded unit price'
+);
+assert.equal(
+  calculateRecordedTokenCostUSD(68, '30'),
+  '0.00204',
+  'historical output subtotals must preserve exact decimal arithmetic'
+);
+assert.equal(
+  calculateRecordedTokenCostUSD(11_895, undefined),
+  undefined,
+  'missing recorded prices must not fall back to current model pricing'
+);
 
 assert.deepEqual(
   getBillingDisplaySettings(),
@@ -64,6 +93,62 @@ assert.equal(
   '',
   'empty token price inputs must stay empty so validation can reject them'
 );
+assert.equal(
+  billingDisplayInputValueFromUSD(0.0001806, true, usdSettings),
+  '0.0001806',
+  'model price inputs must preserve prices beyond six decimal places'
+);
+assert.equal(
+  billingDisplayInputToUSD('0.0012642', cnySettings),
+  '0.0001806',
+  'CNY model price conversion must preserve the canonical USD decimal value'
+);
+assert.equal(
+  billingDisplayInputToUSD('10', cnySettings),
+  '1.428571428571',
+  'CNY model prices must be stored at the canonical USD column precision'
+);
+assert.equal(
+  billingDisplayInputValueFromUSD('1.428571428571', true, cnySettings),
+  '10',
+  'CNY model price inputs must hide canonical USD storage quantization tails'
+);
+assert.equal(
+  billingDisplayInputValueFromUSD('0.000000000001', true, cnySettings),
+  '0.000000000007',
+  'quantization cleanup must not round meaningful tiny model prices to zero'
+);
+assert.equal(
+  formatBillingDisplayAmountFromUSD(0.0001806, usdSettings),
+  '$0.0001806',
+  'small model prices must be displayed directly without truncation'
+);
+assert.equal(
+  formatBillingDisplayAmountFromUSD('0.000167591', usdSettings),
+  '$0.000167591',
+  'exact settled USD strings must not be reconstructed from rounded integer credits'
+);
+
+assert.equal(
+  formatRecordedBillingAmountFromUSD('0.006601', 'CNY', '7.2', { locale: 'en-US' }),
+  '¥0.0475272',
+  'historical CNY display must use the exchange rate recorded with the call'
+);
+assert.equal(
+  formatRecordedBillingAmountFromUSD('0.006601', 'CNY', undefined, { locale: 'en-US' }),
+  '$0.006601',
+  'historical records without a rate must preserve their actual USD currency'
+);
+assert.match(
+  formatRecordedCurrencyAmount(100, 'CNY', { locale: 'en-US' }),
+  /CNY\s*100\.00/,
+  'commercial balances must display their own currency code'
+);
+assert.match(
+  formatCatalogCurrencyAmount(72, 'CNY', usdSettings, { locale: 'en-US' }),
+  /^≈USD\s*10\.29$/,
+  'current product catalog prices may follow the organization display currency using the current rate'
+);
 
 assert.equal(
   normalizedAiCreditsToUSD(9_661.55),
@@ -93,14 +178,14 @@ assert.equal(
 
 assert.equal(
   formatBillingDisplayAmountFromNormalizedCredits(0.01, cnySettings, { locale: 'zh-CN' }),
-  '<¥0.0001',
-  'a non-zero CNY amount below the display threshold should use only the less-than marker'
+  '≈¥0.00007',
+  'a non-zero CNY amount must be displayed directly below the former threshold'
 );
 
 assert.equal(
   formatBillingDisplayAmountFromNormalizedCredits(0.05, usdSettings, { locale: 'en-US' }),
-  '<$0.0001',
-  'non-zero usage must not be rounded down to a visible zero'
+  '$0.00005',
+  'non-zero usage must be displayed directly below the former threshold'
 );
 assert.equal(
   formatBillingDisplayAmountFromNormalizedCredits(0.1, usdSettings, { locale: 'en-US' }),
@@ -267,6 +352,14 @@ const [enSettingsSource, zhHansSettingsSource] = await Promise.all([
   readFile(new URL('../src/i18n/modules/settings/en-US.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/i18n/modules/settings/zh-Hans.ts', import.meta.url), 'utf8'),
 ]);
+const [customModelDialogSource, providerModelPageSource] = await Promise.all([
+  readFile(new URL('../src/components/providers/custom-model-dialog.tsx', import.meta.url), 'utf8'),
+  readFile(new URL('../src/app/dashboard/provider/[providerId]/page.tsx', import.meta.url), 'utf8'),
+]);
+const modelsGroupTableSource = await readFile(
+  new URL('../src/components/providers/models-group-table.tsx', import.meta.url),
+  'utf8'
+);
 const tokenPriceCellSource = pricingFallbackSource.slice(
   pricingFallbackSource.indexOf('function TokenPriceCell'),
   pricingFallbackSource.indexOf('function ImagePriceCell')
@@ -311,6 +404,36 @@ assert.match(
   enSettingsSource,
   /cnyPerMillionShort: 'CNY \/ 1M tokens'/,
   'the English token price unit must follow CNY display mode'
+);
+assert.match(
+  customModelDialogSource,
+  /input_price: billingDisplayInputToUSD\(values\.input_price \?\? '', billingDisplay\)/,
+  'custom model display prices must be converted back to canonical USD before saving'
+);
+assert.match(
+  customModelDialogSource,
+  /cache_read_price: billingDisplayInputToUSD/,
+  'custom models must submit a distinct cache read price'
+);
+assert.match(
+  customModelDialogSource,
+  /cache_write_price: billingDisplayInputToUSD/,
+  'custom models must submit a distinct cache write price'
+);
+assert.doesNotMatch(
+  modelsGroupTableSource,
+  /onEditPrice|aiProviders\.models\.actions\.setPrice/,
+  'model tables must not expose a second price-only edit icon'
+);
+assert.match(
+  modelsGroupTableSource,
+  /TooltipContent>[\s\S]*aiProviders\.models\.actions\.edit/,
+  'the remaining complete model editor must identify itself with a tooltip'
+);
+assert.doesNotMatch(
+  providerModelPageSource,
+  /onEditPrice=/,
+  'provider pages must use the complete model editor instead of the price-only shortcut'
 );
 
 console.log('Billing display checks passed.');

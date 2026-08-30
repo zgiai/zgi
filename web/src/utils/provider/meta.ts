@@ -32,11 +32,15 @@ const PROVIDER_CANONICAL_ALIASES: Record<string, string> = {
   '01ai': 'zeroone',
   '360ai': 'ai360',
   anthropic: 'anthropic',
+  alibaba: 'alibaba',
+  amazon: 'aws',
+  ant: 'antgroup',
   baichuan: 'baichuan',
   baidu: 'wenxin',
   cohere: 'cohere',
   deepseek: 'deepseek',
   doubao: 'doubao',
+  bytedance: 'bytedance',
   'doubao-speech': 'doubaoSpeech',
   gemini: 'google',
   glm: 'zhipu',
@@ -45,12 +49,14 @@ const PROVIDER_CANONICAL_ALIASES: Record<string, string> = {
   'infini-ai': 'infiniai',
   infinigence: 'infiniai',
   minimax: 'minimax',
+  mimo: 'xiaomimimo',
   mistral: 'mistral',
   moonshot: 'moonshot',
   moonshotai: 'moonshot',
   nvidia: 'nvidia',
   ollama: 'ollama',
   openai: 'openai',
+  pangu: 'huawei',
   qianfan: 'wenxin',
   qwen: 'qwen',
   sensenova: 'sensenova',
@@ -70,13 +76,18 @@ const PROVIDER_CANONICAL_ALIASES: Record<string, string> = {
 
 const PROVIDER_ICON_KEYS: Record<string, string> = {
   ai360: 'ai360',
+  alibaba: 'alibaba',
   anthropic: 'anthropic',
+  antgroup: 'antgroup',
+  aws: 'aws',
   baichuan: 'baichuan',
   cohere: 'cohere',
   deepseek: 'deepseek',
   doubao: 'doubao',
+  bytedance: 'bytedance',
   doubaoSpeech: 'doubao',
   google: 'google',
+  huawei: 'huawei',
   infinigence: 'infinigence',
   meta: 'meta',
   minimax: 'minimax',
@@ -92,6 +103,7 @@ const PROVIDER_ICON_KEYS: Record<string, string> = {
   tencentcloud: 'tencentcloud',
   wenxin: 'wenxin',
   xai: 'xai',
+  xiaomimimo: 'xiaomimimo',
   zeroone: 'zeroone',
   zhipu: 'zhipu',
 };
@@ -229,6 +241,11 @@ export function resolveProviderDisplayInfo(
 
   return {
     name: localized?.provider_name || fallbackName,
-    description: localized?.description || localized?.tagline || provider.description || provider.tagline || '',
+    description:
+      localized?.description ||
+      localized?.tagline ||
+      provider.description ||
+      provider.tagline ||
+      '',
   };
 }

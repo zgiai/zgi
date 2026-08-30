@@ -177,16 +177,9 @@ func executeActionInputSchema() map[string]interface{} {
 			"arguments":      map[string]interface{}{"keyword": "Yang"},
 		},
 	}
-	// An explicit UUID and a server-side selector are mutually exclusive. Both
-	// may be omitted because the server then applies the preferred selector.
-	schema["allOf"] = []interface{}{
-		map[string]interface{}{
-			"not": map[string]interface{}{"required": []string{"connection_id", "connection_selector"}},
-		},
-		map[string]interface{}{
-			"not": map[string]interface{}{"required": []string{"arguments", "batch_items"}},
-		},
-	}
+	// Cross-field exclusivity is enforced by validateTopLevelParameters. Keep
+	// the function schema's root a plain object because some upstream function
+	// calling providers reject allOf/not and other composition keywords there.
 	return schema
 }
 

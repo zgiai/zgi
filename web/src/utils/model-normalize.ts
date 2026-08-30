@@ -1,4 +1,4 @@
-import type { ModelItem, ModelParameters } from '@/services/types/model';
+import type { ModelItem, ModelParameters, ModelUseCase } from '@/services/types/model';
 
 /**
  * Provides default values for ModelParameters
@@ -21,17 +21,31 @@ export const getDefaultParameters = (): ModelParameters => ({
 export function normalizeModel(model: ModelItem): ModelItem {
   if (!model) return model;
 
+  const arrayOrEmpty = <T>(value: unknown): T[] => (Array.isArray(value) ? value : []);
+  const objectOrEmpty = <T extends object>(value: unknown): T =>
+    (value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}) as T;
+
   return {
     ...model,
-    endpoints: model.endpoints || {},
-    features: model.features || {},
-    tools: model.tools || {},
+    endpoints: objectOrEmpty<ModelItem['endpoints']>(model.endpoints),
+    features: objectOrEmpty<ModelItem['features']>(model.features),
+    tools: objectOrEmpty<ModelItem['tools']>(model.tools),
     parameters: {
       ...getDefaultParameters(),
-      ...(model.parameters || {}),
+      ...objectOrEmpty<NonNullable<ModelItem['parameters']>>(model.parameters),
     },
-    use_cases: model.use_cases || [],
-    input_modalities: model.input_modalities || [],
-    output_modalities: model.output_modalities || [],
+    use_cases: arrayOrEmpty<ModelUseCase>(model.use_cases),
+    input_modalities: arrayOrEmpty<string>(model.input_modalities),
+    output_modalities: arrayOrEmpty<string>(model.output_modalities),
   };
+}
+
+/** Normalizes an untrusted API list and drops entries that are not objects. */
+export function normalizeModelList(value: unknown): ModelItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (item): item is ModelItem => item !== null && typeof item === 'object' && !Array.isArray(item)
+    )
+    .map(normalizeModel);
 }

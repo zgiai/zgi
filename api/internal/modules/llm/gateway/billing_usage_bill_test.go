@@ -90,6 +90,8 @@ func TestBuildUsageBill_PartialKeepsRecordedUsageAndPoints(t *testing.T) {
 	bc := testUsageBillContext(time.Time{}, time.Time{})
 	bc.Status = billingContextStatusPartial
 	bc.PromptTokens = 10
+	bc.CacheReadTokens = 3
+	bc.CacheWriteTokens = 2
 	bc.CompletionTokens = 5
 	bc.TotalTokens = 0
 	bc.ActualCredits = 7
@@ -98,8 +100,8 @@ func TestBuildUsageBill_PartialKeepsRecordedUsageAndPoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildUsageBill returned error: %v", err)
 	}
-	if bill.PromptTokens != 10 || bill.CompletionTokens != 5 || bill.TotalTokens != 15 {
-		t.Fatalf("tokens = %d/%d/%d, want 10/5/15", bill.PromptTokens, bill.CompletionTokens, bill.TotalTokens)
+	if bill.PromptTokens != 10 || bill.CacheReadTokens != 3 || bill.CacheWriteTokens != 2 || bill.CompletionTokens != 5 || bill.TotalTokens != 20 {
+		t.Fatalf("tokens = %d/%d/%d/%d/%d, want 10/3/2/5/20", bill.PromptTokens, bill.CacheReadTokens, bill.CacheWriteTokens, bill.CompletionTokens, bill.TotalTokens)
 	}
 	if bill.PrivatePoints != 7 || bill.TotalPoints != 7 {
 		t.Fatalf("points = private %d total %d, want 7/7", bill.PrivatePoints, bill.TotalPoints)

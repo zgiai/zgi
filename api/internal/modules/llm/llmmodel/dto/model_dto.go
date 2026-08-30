@@ -72,15 +72,17 @@ type ListModelRequest struct {
 
 // ConfigureModelRequest is the request for configuring a tenant's model
 type ConfigureModelRequest struct {
-	ModelID             uuid.UUID `json:"model_id" binding:"required"`
-	IsEnabled           *bool     `json:"is_enabled"`
-	CustomDisplayName   string    `json:"custom_display_name"`
-	InputPriceOverride  *string   `json:"input_price_override"`
-	OutputPriceOverride *string   `json:"output_price_override"`
-	AccessScope         string    `json:"access_scope"`
-	VisibleGroups       []string  `json:"visible_groups"`
-	VisibleUsers        []string  `json:"visible_users"`
-	SortOrder           *int      `json:"sort_order"`
+	ModelID                 uuid.UUID `json:"model_id" binding:"required"`
+	IsEnabled               *bool     `json:"is_enabled"`
+	CustomDisplayName       string    `json:"custom_display_name"`
+	InputPriceOverride      *string   `json:"input_price_override"`
+	OutputPriceOverride     *string   `json:"output_price_override"`
+	CacheReadPriceOverride  *string   `json:"cache_read_price_override"`
+	CacheWritePriceOverride *string   `json:"cache_write_price_override"`
+	AccessScope             string    `json:"access_scope"`
+	VisibleGroups           []string  `json:"visible_groups"`
+	VisibleUsers            []string  `json:"visible_users"`
+	SortOrder               *int      `json:"sort_order"`
 }
 
 // CreateCustomModelRequest is the request for creating a tenant's custom model.
@@ -101,6 +103,8 @@ type CreateCustomModelRequest struct {
 	MaxOutputTokens int    `json:"max_output_tokens"`
 	InputPrice      string `json:"input_price"`
 	OutputPrice     string `json:"output_price"`
+	CacheReadPrice  string `json:"cache_read_price"`
+	CacheWritePrice string `json:"cache_write_price"`
 	KnowledgeCutoff string `json:"knowledge_cutoff"`
 	Description     string `json:"description"`
 
@@ -119,6 +123,8 @@ type UpdateCustomModelRequest struct {
 	MaxOutputTokens *int     `json:"max_output_tokens"`
 	InputPrice      *string  `json:"input_price"`
 	OutputPrice     *string  `json:"output_price"`
+	CacheReadPrice  *string  `json:"cache_read_price"`
+	CacheWritePrice *string  `json:"cache_write_price"`
 	KnowledgeCutoff *string  `json:"knowledge_cutoff"`
 	Description     *string  `json:"description"`
 	IsActive        *bool    `json:"is_active"`

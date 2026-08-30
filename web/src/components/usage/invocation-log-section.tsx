@@ -38,13 +38,20 @@ import type {
   InvocationLogItem,
   InvocationLogCursor,
   InvocationLogSummary,
+  InvocationPricingDetails,
 } from '@/services/types/statistics';
 import {
+  calculateRecordedTokenCostUSD,
   formatBillingDisplayAmountFromNormalizedCredits,
+  formatRecordedBillingAmount,
+  formatRecordedBillingAmountFromUSD,
+  DEFAULT_BILLING_DISPLAY,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
+import { formatAiCreditValue } from '@/utils/ai-credits';
 import { formatNumber } from '@/utils/format';
 import { normalizeModelUsageAppType } from '@/utils/model-usage-app-type';
+import { formatTokenCount } from '@/utils/token-format';
 
 type SourceFilter = 'all' | Exclude<InvocationSource, 'unknown'>;
 
@@ -126,6 +133,7 @@ export function InvocationLogSection({
       : summaryCache?.key === paginationKey
         ? summaryCache.summary
         : undefined;
+  const hasInitialLoadError = query.isError && !query.data;
   const items = query.data?.items ?? [];
   const total = summary?.invocation_count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -144,7 +152,7 @@ export function InvocationLogSection({
     });
   };
   const formatCost = (value: number) =>
-    formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
+    formatInvocationSummaryCost(summary, billingDisplay, value, locale);
 
   return (
     <Card className="border-border/80 shadow-sm">
@@ -170,7 +178,31 @@ export function InvocationLogSection({
           </div>
         </div>
 
-        {query.isLoading ? (
+        {hasInitialLoadError ? (
+          <div
+            role="alert"
+            className="flex flex-col gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div>
+              <p className="text-sm font-medium text-destructive">
+                {t('usage.invocations.loadFailed')}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t('usage.invocations.loadFailedDescription')}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={query.isFetching}
+              onClick={() => void query.refetch()}
+            >
+              {t(query.isFetching ? 'usage.invocations.retrying' : 'usage.invocations.retry')}
+            </Button>
+          </div>
+        ) : query.isLoading ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {Array.from({ length: 4 }).map((_, index) => (
               <Skeleton key={index} className="h-20 rounded-xl" />
@@ -192,7 +224,7 @@ export function InvocationLogSection({
             />
             <SummaryMetric
               label={t('usage.invocations.metrics.tokensAndCost')}
-              value={formatNumber(summary?.total_tokens ?? 0, 0)}
+              value={formatTokenCount(summary?.total_tokens ?? 0, locale)}
               detail={formatCost(summary?.total_points ?? 0)}
             />
           </div>
@@ -204,172 +236,181 @@ export function InvocationLogSection({
         ) : null}
       </CardHeader>
 
-      <CardContent className="px-0 pb-0">
-        <div className="overflow-x-auto border-t">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="min-w-[156px] pl-6">
-                  {t('usage.invocations.table.time')}
-                </TableHead>
-                <TableHead>{t('usage.invocations.table.source')}</TableHead>
-                <TableHead className="min-w-[180px]">
-                  {t('usage.invocations.table.model')}
-                </TableHead>
-                <TableHead>{t('usage.invocations.table.business')}</TableHead>
-                <TableHead>{t('usage.invocations.table.status')}</TableHead>
-                <TableHead>{t('usage.invocations.table.content')}</TableHead>
-                <TableHead className="text-right">{t('usage.invocations.table.tokens')}</TableHead>
-                <TableHead className="text-right">
-                  {t('usage.invocations.table.duration')}
-                </TableHead>
-                <TableHead className="text-right">{t('usage.invocations.table.cost')}</TableHead>
-                <TableHead className="pr-6 text-right">
-                  {t('usage.invocations.table.details')}
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {query.isLoading ? (
-                Array.from({ length: 5 }).map((_, index) => (
-                  <TableRow key={index}>
-                    <TableCell colSpan={10} className="px-6 py-3">
-                      <Skeleton className="h-8 w-full" />
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : items.length === 0 ? (
+      {!hasInitialLoadError ? (
+        <CardContent className="px-0 pb-0">
+          <div className="overflow-x-auto border-t">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={10} className="h-28 text-center text-muted-foreground">
-                    {t('usage.invocations.empty')}
-                  </TableCell>
+                  <TableHead className="min-w-[156px] pl-6">
+                    {t('usage.invocations.table.time')}
+                  </TableHead>
+                  <TableHead>{t('usage.invocations.table.source')}</TableHead>
+                  <TableHead className="min-w-[180px]">
+                    {t('usage.invocations.table.model')}
+                  </TableHead>
+                  <TableHead>{t('usage.invocations.table.channel')}</TableHead>
+                  <TableHead>{t('usage.invocations.table.business')}</TableHead>
+                  <TableHead>{t('usage.invocations.table.status')}</TableHead>
+                  <TableHead>{t('usage.invocations.table.content')}</TableHead>
+                  <TableHead className="text-right">
+                    {t('usage.invocations.table.tokens')}
+                  </TableHead>
+                  <TableHead className="text-right">
+                    {t('usage.invocations.table.duration')}
+                  </TableHead>
+                  <TableHead className="text-right">{t('usage.invocations.table.cost')}</TableHead>
+                  <TableHead className="pr-6 text-right">
+                    {t('usage.invocations.table.details')}
+                  </TableHead>
                 </TableRow>
-              ) : (
-                items.map(item => (
-                  <TableRow key={item.invocation_id}>
-                    <TableCell className="pl-6 tabular-nums">
-                      <div>{new Date(item.started_at).toLocaleString(locale)}</div>
-                      <div
-                        className="mt-0.5 max-w-[132px] truncate font-mono text-[11px] text-muted-foreground"
-                        title={item.invocation_id}
-                      >
-                        {item.invocation_id}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          item.invocation_source === 'api'
-                            ? 'info'
-                            : item.invocation_source === 'product'
-                              ? 'secondary'
-                              : 'subtle'
-                        }
-                      >
-                        {t(`usage.invocations.sources.${item.invocation_source}`)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium">{item.model_name}</div>
-                      <div className="text-xs text-muted-foreground">{item.provider_name}</div>
-                    </TableCell>
-                    <TableCell>{t(`usage.appTypes.${knownAppType(item.app_type)}`)}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={item.status} attempts={item.attempt_count} />
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={item.content_available ? 'success' : 'subtle'}>
-                        {t(
-                          `usage.invocations.contentStatus.${
-                            item.content_available ? 'available' : 'unavailable'
-                          }`
-                        )}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatNumber(item.total_tokens, 0)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatDuration(item.duration_ms)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatCost(item.total_points)}
-                    </TableCell>
-                    <TableCell className="pr-6 text-right">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setSelectedInvocation(item)}
-                      >
-                        {t('usage.invocations.details.action')}
-                      </Button>
+              </TableHeader>
+              <TableBody>
+                {query.isLoading ? (
+                  Array.from({ length: 5 }).map((_, index) => (
+                    <TableRow key={index}>
+                      <TableCell colSpan={11} className="px-6 py-3">
+                        <Skeleton className="h-8 w-full" />
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : items.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={11} className="h-28 text-center text-muted-foreground">
+                      {t('usage.invocations.empty')}
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-        {total > 0 ? (
-          <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span>
-                {t('usage.invocations.pagination.summary', {
-                  start: pageStart,
-                  end: pageEnd,
-                  total,
-                })}
-              </span>
-              <Select value={String(pageSize)} onValueChange={value => setPageSize(Number(value))}>
-                <SelectTrigger
-                  className="h-8 w-[116px]"
-                  aria-label={t('usage.invocations.pagination.pageSizeLabel')}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {invocationPageSizes.map(size => (
-                    <SelectItem key={size} value={String(size)}>
-                      {t('usage.invocations.pagination.pageSize', { size })}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center justify-between gap-3 sm:justify-end">
-              <span className="text-sm tabular-nums text-muted-foreground">
-                {t('usage.invocations.pagination.pageSummary', {
-                  page: activePagination.pageIndex + 1,
-                  total: totalPages,
-                })}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={goToPreviousPage}
-                disabled={activePagination.pageIndex === 0 || query.isFetching}
-              >
-                {t('usage.invocations.pagination.previous')}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={goToNextPage}
-                disabled={!nextCursor || query.isFetching}
-              >
-                {t('usage.invocations.pagination.next')}
-              </Button>
-            </div>
+                ) : (
+                  items.map(item => (
+                    <TableRow key={item.invocation_id}>
+                      <TableCell className="pl-6 tabular-nums">
+                        <div>{new Date(item.started_at).toLocaleString(locale)}</div>
+                        <div
+                          className="mt-0.5 max-w-[132px] truncate font-mono text-[11px] text-muted-foreground"
+                          title={item.invocation_id}
+                        >
+                          {item.invocation_id}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            item.invocation_source === 'api'
+                              ? 'info'
+                              : item.invocation_source === 'product'
+                                ? 'secondary'
+                                : 'subtle'
+                          }
+                        >
+                          {t(`usage.invocations.sources.${item.invocation_source}`)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">{item.model_name}</div>
+                        <div className="text-xs text-muted-foreground">{item.provider_name}</div>
+                      </TableCell>
+                      <TableCell>{item.channel_name || '-'}</TableCell>
+                      <TableCell>{t(`usage.appTypes.${knownAppType(item.app_type)}`)}</TableCell>
+                      <TableCell>
+                        <StatusBadge status={item.status} attempts={item.attempt_count} />
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={item.content_available ? 'success' : 'subtle'}>
+                          {t(
+                            `usage.invocations.contentStatus.${
+                              item.content_available ? 'available' : 'unavailable'
+                            }`
+                          )}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatTokenCount(item.total_tokens, locale)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatDuration(item.duration_ms)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatInvocationCost(item, billingDisplay, locale)}
+                      </TableCell>
+                      <TableCell className="pr-6 text-right">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setSelectedInvocation(item)}
+                        >
+                          {t('usage.invocations.details.action')}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
           </div>
-        ) : null}
-      </CardContent>
+          {total > 0 ? (
+            <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>
+                  {t('usage.invocations.pagination.summary', {
+                    start: pageStart,
+                    end: pageEnd,
+                    total,
+                  })}
+                </span>
+                <Select
+                  value={String(pageSize)}
+                  onValueChange={value => setPageSize(Number(value))}
+                >
+                  <SelectTrigger
+                    className="h-8 w-[116px]"
+                    aria-label={t('usage.invocations.pagination.pageSizeLabel')}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {invocationPageSizes.map(size => (
+                      <SelectItem key={size} value={String(size)}>
+                        {t('usage.invocations.pagination.pageSize', { size })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center justify-between gap-3 sm:justify-end">
+                <span className="text-sm tabular-nums text-muted-foreground">
+                  {t('usage.invocations.pagination.pageSummary', {
+                    page: activePagination.pageIndex + 1,
+                    total: totalPages,
+                  })}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={goToPreviousPage}
+                  disabled={activePagination.pageIndex === 0 || query.isFetching}
+                >
+                  {t('usage.invocations.pagination.previous')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={goToNextPage}
+                  disabled={!nextCursor || query.isFetching}
+                >
+                  {t('usage.invocations.pagination.next')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </CardContent>
+      ) : null}
       <InvocationDetailSheet
         item={selectedInvocation}
-        billingDisplay={billingDisplay}
         canViewContent={canViewContent}
+        billingDisplay={billingDisplay}
         onOpenChange={open => {
           if (!open) setSelectedInvocation(null);
         }}
@@ -380,14 +421,14 @@ export function InvocationLogSection({
 
 function InvocationDetailSheet({
   item,
-  billingDisplay,
   onOpenChange,
   canViewContent,
+  billingDisplay,
 }: {
   item: InvocationLogItem | null;
-  billingDisplay: BillingDisplaySettings;
   onOpenChange: (open: boolean) => void;
   canViewContent: boolean;
+  billingDisplay: BillingDisplaySettings;
 }) {
   const t = useT('dashboard');
   const locale = useLocale();
@@ -399,8 +440,6 @@ function InvocationDetailSheet({
       : item.invocation_source === 'product'
         ? t('usage.invocations.details.sourceProduct')
         : t('usage.invocations.details.sourceUnknown');
-  const formatCost = (value: number) =>
-    formatBillingDisplayAmountFromNormalizedCredits(value, billingDisplay, { locale });
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
@@ -429,6 +468,7 @@ function InvocationDetailSheet({
                 [t('usage.invocations.details.appId'), item.app_id],
                 [t('usage.invocations.details.model'), item.model_name],
                 [t('usage.invocations.details.provider'), item.provider_name],
+                [t('usage.invocations.details.channel'), item.channel_name || '-'],
                 [
                   t('usage.invocations.details.startedAt'),
                   new Date(item.started_at).toLocaleString(locale),
@@ -446,15 +486,36 @@ function InvocationDetailSheet({
           <DetailSection title={t('usage.invocations.details.usage')}>
             <DetailValues
               values={[
-                [t('usage.invocations.details.promptTokens'), formatNumber(item.prompt_tokens, 0)],
+                [
+                  t('usage.invocations.details.promptTokens'),
+                  formatTokenCount(item.prompt_tokens, locale),
+                ],
+                [
+                  t('usage.invocations.details.cacheReadTokens'),
+                  formatTokenCount(item.cache_read_tokens ?? 0, locale),
+                ],
+                [
+                  t('usage.invocations.details.cacheWriteTokens'),
+                  formatTokenCount(item.cache_write_tokens ?? 0, locale),
+                ],
                 [
                   t('usage.invocations.details.completionTokens'),
-                  formatNumber(item.completion_tokens, 0),
+                  formatTokenCount(item.completion_tokens, locale),
                 ],
-                [t('usage.invocations.details.totalTokens'), formatNumber(item.total_tokens, 0)],
-                [t('usage.invocations.details.cost'), formatCost(item.total_points)],
+                [
+                  t('usage.invocations.details.totalTokens'),
+                  formatTokenCount(item.total_tokens, locale),
+                ],
+                [
+                  t('usage.invocations.details.pointsAndPrice'),
+                  t('usage.invocations.details.pointsAndPriceValue', {
+                    points: formatAiCreditValue(item.total_points, { locale }),
+                    price: formatInvocationCost(item, billingDisplay, locale),
+                  }),
+                ],
               ]}
             />
+            <BillingBreakdown item={item} billingDisplay={billingDisplay} />
           </DetailSection>
 
           {item.error_code ? (
@@ -482,6 +543,329 @@ function InvocationDetailSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+function BillingBreakdown({
+  item,
+  billingDisplay,
+}: {
+  item: InvocationLogItem;
+  billingDisplay: BillingDisplaySettings;
+}) {
+  const t = useT('dashboard');
+  const locale = useLocale();
+  const details = item.pricing_details;
+  const formulaTotalCost = formatInvocationCost(item, billingDisplay, locale);
+  const isPlatform = details?.billing_lane === 'platform';
+  const components = pricingComponents(item, details);
+  const completeComponents = components.filter(isCompletePricingComponent);
+  if (completeComponents.length === 0) {
+    return (
+      <div className="mt-3 rounded-lg border p-4 text-sm text-muted-foreground">
+        {t('usage.invocations.details.historicalDetailsUnavailable')}
+      </div>
+    );
+  }
+  const componentFormula = `${completeComponents
+    .map(component =>
+      t('usage.invocations.details.componentFormula', {
+        tokens: formatTokenCount(component.tokens, locale),
+        unitPrice: formatHistoricalUSD(
+          component.unitPrice,
+          billingDisplay,
+          details?.cny_per_usd,
+          locale
+        ),
+      })
+    )
+    .join(
+      ' + '
+    )} ${t('usage.invocations.details.componentTotalFormula', { cost: formulaTotalCost })}`;
+  const formula = componentFormula;
+
+  return (
+    <div className="mt-3 space-y-3 rounded-lg border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-medium">
+          {t('usage.invocations.details.settlementDetails')}
+        </div>
+        <Badge variant="outline">
+          {!details
+            ? t('usage.invocations.details.settlementUnknown')
+            : isPlatform
+              ? t('usage.invocations.details.platformSettlement')
+              : t('usage.invocations.details.privateSettlement')}
+        </Badge>
+      </div>
+
+      {item.total_cost_usd || item.total_cost_cny || details?.cny_per_usd ? (
+        <DetailValues
+          values={[
+            [
+              t('usage.invocations.details.settledUSD'),
+              item.total_cost_usd
+                ? formatRecordedBillingAmount(item.total_cost_usd, 'USD', { locale })
+                : undefined,
+            ],
+            [
+              t('usage.invocations.details.settledCNY'),
+              item.total_cost_cny
+                ? formatRecordedBillingAmount(item.total_cost_cny, 'CNY', { locale })
+                : undefined,
+            ],
+            [
+              t('usage.invocations.details.callTimeExchangeRate'),
+              details?.cny_per_usd
+                ? t('usage.invocations.details.callTimeExchangeRateValue', {
+                    rate: details.cny_per_usd,
+                  })
+                : undefined,
+            ],
+            [
+              t('usage.invocations.details.callTimeCurrency'),
+              details?.billing_display_currency || undefined,
+            ],
+          ]}
+        />
+      ) : null}
+
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('usage.invocations.details.item')}</TableHead>
+              <TableHead className="text-right">{t('usage.invocations.details.tokens')}</TableHead>
+              <TableHead className="text-right">
+                {t('usage.invocations.details.unitPrice')}
+              </TableHead>
+              <TableHead className="text-right">
+                {t('usage.invocations.details.subtotal')}
+              </TableHead>
+              <TableHead>{t('usage.invocations.details.pricingSource')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {components.map(component => (
+              <TableRow key={component.key}>
+                <TableCell>{t(component.labelKey)}</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatTokenCount(component.tokens, locale)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {component.unitPrice === undefined
+                    ? t('usage.invocations.details.detailUnavailable')
+                    : t('usage.invocations.details.perMillionTokens', {
+                        price: formatHistoricalUSD(
+                          component.unitPrice,
+                          billingDisplay,
+                          details?.cny_per_usd,
+                          locale
+                        ),
+                      })}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {component.cost === undefined
+                    ? t('usage.invocations.details.detailUnavailable')
+                    : formatHistoricalUSD(
+                        component.cost,
+                        billingDisplay,
+                        details?.cny_per_usd,
+                        locale
+                      )}
+                </TableCell>
+                <TableCell>{t(pricingSourceKey(component.source, isPlatform))}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+
+      {formula ? (
+        <div className="rounded-md bg-muted/50 p-3 text-xs">
+          <div className="text-muted-foreground">{t('usage.invocations.details.formula')}</div>
+          <div className="mt-1 break-words font-mono text-foreground">{formula}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface PricingComponent {
+  key: 'input' | 'cacheRead' | 'cacheWrite' | 'output';
+  labelKey:
+    | 'usage.invocations.details.promptTokens'
+    | 'usage.invocations.details.cacheReadTokens'
+    | 'usage.invocations.details.cacheWriteTokens'
+    | 'usage.invocations.details.completionTokens';
+  tokens: number;
+  unitPrice?: string;
+  cost?: string;
+  source?: string;
+}
+
+interface CompletePricingComponent extends PricingComponent {
+  unitPrice: string;
+  cost: string;
+}
+
+function isCompletePricingComponent(
+  component: PricingComponent
+): component is CompletePricingComponent {
+  return component.tokens > 0 && component.unitPrice !== undefined && component.cost !== undefined;
+}
+
+function pricingComponents(
+  item: InvocationLogItem,
+  details: InvocationPricingDetails | undefined
+): PricingComponent[] {
+  const labelKeys = {
+    input: 'usage.invocations.details.promptTokens',
+    cacheRead: 'usage.invocations.details.cacheReadTokens',
+    cacheWrite: 'usage.invocations.details.cacheWriteTokens',
+    output: 'usage.invocations.details.completionTokens',
+  } as const;
+  const inputUnitPrice = details?.input_price_usd_per_1m_tokens;
+  const cacheReadUnitPrice =
+    details?.cache_read_price_usd_per_1m_tokens ??
+    (item.cache_read_tokens > 0 ? inputUnitPrice : undefined);
+  const cacheWriteUnitPrice =
+    details?.cache_write_price_usd_per_1m_tokens ??
+    (item.cache_write_tokens > 0 ? inputUnitPrice : undefined);
+  const components: PricingComponent[] = [
+    {
+      key: 'input',
+      labelKey: labelKeys.input,
+      tokens: item.prompt_tokens,
+      unitPrice: inputUnitPrice,
+      cost:
+        details?.input_cost_usd ??
+        calculateRecordedTokenCostUSD(item.prompt_tokens, inputUnitPrice),
+      source: details?.input_price_source ?? details?.pricing_source,
+    },
+    {
+      key: 'cacheRead',
+      labelKey: labelKeys.cacheRead,
+      tokens: item.cache_read_tokens,
+      unitPrice: cacheReadUnitPrice,
+      cost:
+        details?.cache_read_cost_usd ??
+        calculateRecordedTokenCostUSD(item.cache_read_tokens, cacheReadUnitPrice),
+      source:
+        details?.cache_read_price_source ?? details?.input_price_source ?? details?.pricing_source,
+    },
+    {
+      key: 'cacheWrite',
+      labelKey: labelKeys.cacheWrite,
+      tokens: item.cache_write_tokens,
+      unitPrice: cacheWriteUnitPrice,
+      cost:
+        details?.cache_write_cost_usd ??
+        calculateRecordedTokenCostUSD(item.cache_write_tokens, cacheWriteUnitPrice),
+      source:
+        details?.cache_write_price_source ?? details?.input_price_source ?? details?.pricing_source,
+    },
+    {
+      key: 'output',
+      labelKey: labelKeys.output,
+      tokens: item.completion_tokens,
+      unitPrice: details?.output_price_usd_per_1m_tokens,
+      cost:
+        details?.output_cost_usd ??
+        calculateRecordedTokenCostUSD(
+          item.completion_tokens,
+          details?.output_price_usd_per_1m_tokens
+        ),
+      source: details?.output_price_source ?? details?.pricing_source,
+    },
+  ];
+  return components.filter(
+    component =>
+      component.tokens > 0 || component.unitPrice !== undefined || component.cost !== undefined
+  );
+}
+
+function formatHistoricalUSD(
+  value: string,
+  billingDisplay: BillingDisplaySettings,
+  recordedRate: string | undefined,
+  locale?: Intl.LocalesArgument
+): string {
+  return formatRecordedBillingAmountFromUSD(value, billingDisplay.currency, recordedRate, {
+    locale,
+  });
+}
+
+function formatInvocationCost(
+  item: InvocationLogItem,
+  billingDisplay: BillingDisplaySettings,
+  locale?: Intl.LocalesArgument
+): string {
+  if (billingDisplay.currency === 'CNY' && item.total_cost_cny) {
+    return formatRecordedBillingAmount(item.total_cost_cny, 'CNY', { locale });
+  }
+  if (item.total_cost_usd) {
+    return formatRecordedBillingAmountFromUSD(
+      item.total_cost_usd,
+      billingDisplay.currency,
+      item.pricing_details?.cny_per_usd,
+      { locale }
+    );
+  }
+  return formatBillingDisplayAmountFromNormalizedCredits(
+    item.total_points,
+    DEFAULT_BILLING_DISPLAY,
+    { locale }
+  );
+}
+
+function formatInvocationSummaryCost(
+  summary: InvocationLogSummary | undefined,
+  billingDisplay: BillingDisplaySettings,
+  fallbackPoints: number,
+  locale?: Intl.LocalesArgument
+): string {
+  if (billingDisplay.currency === 'CNY' && summary?.total_cost_cny) {
+    return formatRecordedBillingAmount(summary.total_cost_cny, 'CNY', { locale });
+  }
+  if (summary?.total_cost_usd) {
+    return formatRecordedBillingAmountFromUSD(
+      summary.total_cost_usd,
+      billingDisplay.currency,
+      billingDisplay.usdToCnyRate,
+      { locale }
+    );
+  }
+  return formatBillingDisplayAmountFromNormalizedCredits(fallbackPoints, billingDisplay, {
+    locale,
+  });
+}
+
+function pricingSourceKey(
+  source: string | undefined,
+  isPlatform: boolean
+):
+  | 'usage.invocations.details.platformSettlement'
+  | 'usage.invocations.details.pricingSourceUpstream'
+  | 'usage.invocations.details.pricingSourceConfigured'
+  | 'usage.invocations.details.pricingSourceOrganization'
+  | 'usage.invocations.details.pricingSourceAdminFallback'
+  | 'usage.invocations.details.pricingSourceCodeFallback'
+  | 'usage.invocations.details.pricingSourceUnknown' {
+  if (isPlatform) return 'usage.invocations.details.platformSettlement';
+  switch (source) {
+    case 'synced_model':
+      return 'usage.invocations.details.pricingSourceUpstream';
+    case 'upstream_model_price':
+      return 'usage.invocations.details.pricingSourceConfigured';
+    case 'organization_override':
+      return 'usage.invocations.details.pricingSourceOrganization';
+    case 'admin_fallback':
+      return 'usage.invocations.details.pricingSourceAdminFallback';
+    case 'code_default_fallback':
+      return 'usage.invocations.details.pricingSourceCodeFallback';
+    default:
+      return 'usage.invocations.details.pricingSourceUnknown';
+  }
 }
 
 type InvocationErrorKey =

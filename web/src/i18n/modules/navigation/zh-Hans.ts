@@ -16,6 +16,7 @@ const messages: NavigationMessages = {
   systemSettings: '个人设置',
   profile: '个人资料',
   models: '模型',
+  modelPlaza: '模型广场',
   orders: '订单',
   products: '产品',
   datasets: '知识库',

@@ -22,7 +22,7 @@ import type {
   CreateCustomModelRequest,
   UpdateCustomModelRequest,
 } from '@/services/types/model';
-import { normalizeModel } from '@/utils/model-normalize';
+import { normalizeModelList } from '@/utils/model-normalize';
 import { useProvider } from '@/hooks/provider/use-provider';
 import { NODE_ENV } from '@/lib/config';
 import { type ProviderDetail } from '@/services';
@@ -137,17 +137,20 @@ export function useProviderModelsAll(
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
-    retry: false,
+    retry: (failureCount, requestError) => isNetworkError(requestError) && failureCount < 1,
+    retryDelay: 500,
   });
 
   useEffect(() => {
     if (error) {
-      showErrorToast(t('messages.loadFailed'), error);
+      showErrorToast(t('messages.loadFailed'), error, {
+        id: `provider-models-load-failed:${provider || 'unknown'}`,
+      });
     }
-  }, [error, t]);
+  }, [error, provider, t]);
 
   return {
-    models: (data?.data?.items ?? []).map(normalizeModel),
+    models: normalizeModelList(data?.data?.items),
     isLoading,
     isFetching,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
@@ -172,6 +175,7 @@ export function useAllModelsInfinite(options?: {
   hasNextPage: boolean;
   fetchNextPage: () => Promise<void>;
   isFetchingNextPage: boolean;
+  total: number;
   error: string | null;
   refetch: () => Promise<void>;
 } {
@@ -203,6 +207,9 @@ export function useAllModelsInfinite(options?: {
       getNextPageParam: lastPage => {
         const d = lastPage?.data;
         if (!d) return undefined;
+        if (typeof d.total_pages === 'number' && d.total_pages > 0) {
+          return d.page < d.total_pages ? d.page + 1 : undefined;
+        }
         return d.has_more ? d.page + 1 : undefined;
       },
       enabled,
@@ -214,12 +221,13 @@ export function useAllModelsInfinite(options?: {
 
   const models = useMemo(() => {
     const pages = data?.pages ?? [];
-    const items = pages.flatMap(p => p?.data?.items ?? []).map(normalizeModel);
-    // Deduplicate by name
+    const items = pages.flatMap(p => normalizeModelList(p?.data?.items));
+    // The same model identifier can be available through multiple providers.
     const seen = new Set<string>();
     return items.filter(m => {
-      if (seen.has(m.model)) return false;
-      seen.add(m.model);
+      const modelKey = `${m.provider}:${m.model}`;
+      if (seen.has(modelKey)) return false;
+      seen.add(modelKey);
       return true;
     });
   }, [data]);
@@ -232,6 +240,8 @@ export function useAllModelsInfinite(options?: {
     await refetch();
   }, [refetch]);
 
+  const total = data?.pages?.[0]?.data?.total ?? models.length;
+
   return {
     models,
     isLoading,
@@ -239,6 +249,7 @@ export function useAllModelsInfinite(options?: {
     hasNextPage: hasNextPage ?? false,
     fetchNextPage: stableFetchNextPage,
     isFetchingNextPage,
+    total,
     error: null,
     refetch: stableRefetch,
   };
@@ -286,7 +297,7 @@ export function useAllModels(options?: {
   }, [error, t]);
 
   return {
-    models: (data?.data?.items ?? []).map(normalizeModel),
+    models: normalizeModelList(data?.data?.items),
     isLoading,
     isFetching,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
@@ -341,7 +352,7 @@ export function useAvailableModels(options?: { use_case?: AvailableModelUseCase 
   }, [error, t, use_case]);
 
   return {
-    models: (data?.data?.items ?? []).map(normalizeModel),
+    models: normalizeModelList(data?.data?.items),
     isLoading,
     isFetching,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
@@ -386,7 +397,7 @@ export function useProviderModels(provider?: string): UseProviderModelsReturn {
 
   return {
     provider: detail.provider,
-    models: (data?.data?.items ?? []).map(normalizeModel),
+    models: normalizeModelList(data?.data?.items),
     isLoading: detail.isLoading || isLoading,
     isFetching: detail.isFetching || isFetching,
     error: detail.error || (error ? ((error as { message?: string }).message ?? 'error') : null),
@@ -592,12 +603,12 @@ export function useProviderModelsInfinite(
 
   const models = useMemo(() => {
     const pages = data?.pages ?? [];
-    const items = pages.flatMap(p => p?.data?.items ?? []);
+    const items = pages.flatMap(p => normalizeModelList(p?.data?.items));
     // Deduplicate by ID (backend may return overlapping items between pages)
     const seen = new Map<string, ModelItem>();
     const duplicates: Array<{ duplicate: ModelItem; original: ModelItem }> = [];
 
-    const result = items.map(normalizeModel).filter(m => {
+    const result = items.filter(m => {
       const existing = seen.get(m.id);
       if (existing) {
         duplicates.push({ duplicate: m, original: existing });

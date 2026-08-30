@@ -262,6 +262,7 @@ const messages: AiProvidersMessages = {
       description: '从左侧选择一个提供商以查看其模型',
     },
     loadError: '加载模型失败：{error}',
+    loadErrorDescription: '暂时无法获取模型列表，可在当前页面直接重试。',
     searchPlaceholder: '搜索模型...',
     features: {
       streaming: '流式输出',
@@ -359,7 +360,7 @@ const messages: AiProvidersMessages = {
     actions: {
       enable: '启用',
       disable: '禁用',
-      edit: '编辑',
+      edit: '编辑模型',
       delete: '删除',
       enableSelected: '允许所选',
       disableSelected: '关闭所选',
@@ -409,6 +410,9 @@ const messages: AiProvidersMessages = {
       cancel: '取消',
       save: '保存',
       saving: '保存中...',
+      syncedPrices:
+        '上游同步价（美元/1M）：输入 {input}，输出 {output}，缓存读取 {cacheRead}，缓存写入 {cacheWrite}',
+      notProvided: '未提供',
     },
     table: {
       model: '模型',
@@ -458,6 +462,8 @@ const messages: AiProvidersMessages = {
       tagline: '标语',
       inputPrice: '输入价格',
       outputPrice: '输出价格',
+      cacheReadPrice: '缓存读取价格',
+      cacheWritePrice: '缓存写入价格',
       priceConfiguredHint: '留空表示未配置，填 0 表示免费。',
       cachedPrice: '缓存输入价格',
       contextWindow: '最大上下文窗口',

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -177,12 +178,22 @@ func (s *modelService) GetGlobal(ctx context.Context, id uuid.UUID) (*model.LLMM
 	if err != nil {
 		return nil, ErrModelNotFound
 	}
+	catalogvendor.Enrich(m.Provider, m.Model, &m.Vendor)
 	return m, nil
 }
 
 func (s *modelService) ListGlobal(ctx context.Context, req *dto.ListModelRequest) ([]*model.LLMModel, int64, error) {
 	offset := (req.Page - 1) * req.PageSize
-	return s.globalRepo.List(ctx, req.ProviderID, req.Provider, req.UseCase, req.Status, req.IsActive, offset, req.PageSize)
+	models, total, err := s.globalRepo.List(ctx, req.ProviderID, req.Provider, req.UseCase, req.Status, req.IsActive, offset, req.PageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, item := range models {
+		if item != nil {
+			catalogvendor.Enrich(item.Provider, item.Model, &item.Vendor)
+		}
+	}
+	return models, total, nil
 }
 
 func (s *modelService) UpdateGlobal(ctx context.Context, id uuid.UUID, req *dto.UpdateModelRequest) (*model.LLMModel, error) {
@@ -319,6 +330,20 @@ func (s *modelService) ConfigureModel(ctx context.Context, organizationID uuid.U
 		}
 		config.OutputPriceOverride = cost
 	}
+	if req.CacheReadPriceOverride != nil {
+		cost, err := parseOptionalModelPriceOverride(*req.CacheReadPriceOverride, "cache_read_price_override")
+		if err != nil {
+			return nil, err
+		}
+		config.CacheReadPriceOverride = cost
+	}
+	if req.CacheWritePriceOverride != nil {
+		cost, err := parseOptionalModelPriceOverride(*req.CacheWritePriceOverride, "cache_write_price_override")
+		if err != nil {
+			return nil, err
+		}
+		config.CacheWritePriceOverride = cost
+	}
 	if req.SortOrder != nil {
 		config.SortOrder = *req.SortOrder
 	}
@@ -397,6 +422,14 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
+	costCacheRead, err := parseOptionalModelPrice(req.CacheReadPrice, "cache_read_price")
+	if err != nil {
+		return nil, err
+	}
+	costCacheWrite, err := parseOptionalModelPrice(req.CacheWritePrice, "cache_write_price")
+	if err != nil {
+		return nil, err
+	}
 
 	useCases := model.EnsureUseCases(req.UseCases, req.Endpoints)
 
@@ -423,26 +456,30 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 	}
 
 	m := &model.CustomModel{
-		OrganizationID:        organizationID,
-		ProviderID:            providerID,
-		Provider:              req.Provider,
-		Name:                  req.Name,
-		DisplayName:           req.DisplayName,
-		UseCases:              model.StringArray(useCases),
-		ContextWindow:         req.ContextWindow,
-		MaxOutputTokens:       req.MaxOutputTokens,
-		InputPrice:            costInput,
-		OutputPrice:           costOutput,
-		InputPriceConfigured:  modelPriceConfigured(req.InputPrice),
-		OutputPriceConfigured: modelPriceConfigured(req.OutputPrice),
-		KnowledgeCutoff:       req.KnowledgeCutoff,
-		Description:           req.Description,
-		IsActive:              true,
-		Endpoints:             endpoints,
-		Features:              features,
-		Tools:                 tools,
-		Parameters:            parameters,
-		ConfigParameters:      configParameters,
+		OrganizationID:            organizationID,
+		ProviderID:                providerID,
+		Provider:                  req.Provider,
+		Name:                      req.Name,
+		DisplayName:               req.DisplayName,
+		UseCases:                  model.StringArray(useCases),
+		ContextWindow:             req.ContextWindow,
+		MaxOutputTokens:           req.MaxOutputTokens,
+		InputPrice:                costInput,
+		OutputPrice:               costOutput,
+		CostCacheRead:             costCacheRead,
+		CostCacheWrite:            costCacheWrite,
+		InputPriceConfigured:      modelPriceConfigured(req.InputPrice),
+		OutputPriceConfigured:     modelPriceConfigured(req.OutputPrice),
+		CacheReadPriceConfigured:  modelPriceConfigured(req.CacheReadPrice),
+		CacheWritePriceConfigured: modelPriceConfigured(req.CacheWritePrice),
+		KnowledgeCutoff:           req.KnowledgeCutoff,
+		Description:               req.Description,
+		IsActive:                  true,
+		Endpoints:                 endpoints,
+		Features:                  features,
+		Tools:                     tools,
+		Parameters:                parameters,
+		ConfigParameters:          configParameters,
 	}
 
 	if err := s.customRepo.Create(ctx, m); err != nil {
@@ -513,6 +550,22 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 		}
 		m.OutputPrice = price
 		m.OutputPriceConfigured = modelPriceConfigured(*req.OutputPrice)
+	}
+	if req.CacheReadPrice != nil {
+		price, err := parseOptionalModelPrice(*req.CacheReadPrice, "cache_read_price")
+		if err != nil {
+			return nil, err
+		}
+		m.CostCacheRead = price
+		m.CacheReadPriceConfigured = modelPriceConfigured(*req.CacheReadPrice)
+	}
+	if req.CacheWritePrice != nil {
+		price, err := parseOptionalModelPrice(*req.CacheWritePrice, "cache_write_price")
+		if err != nil {
+			return nil, err
+		}
+		m.CostCacheWrite = price
+		m.CacheWritePriceConfigured = modelPriceConfigured(*req.CacheWritePrice)
 	}
 	if req.KnowledgeCutoff != nil {
 		m.KnowledgeCutoff = *req.KnowledgeCutoff
@@ -680,6 +733,15 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		costInput, _ := m.InputPrice.Float64()
 		costOutput, _ := m.OutputPrice.Float64()
 		cachedInputPrice, _ := m.CachedInputPrice.Float64()
+		cacheReadPrice, _ := m.CostCacheRead.Float64()
+		cacheWritePrice, _ := m.CostCacheWrite.Float64()
+		var syncedCacheReadPrice, syncedCacheWritePrice *float64
+		if m.CacheReadPriceConfigured {
+			syncedCacheReadPrice = &cacheReadPrice
+		}
+		if m.CacheWritePriceConfigured {
+			syncedCacheWritePrice = &cacheWritePrice
+		}
 
 		// Check if model is available (has enabled channels for this tenant)
 		isAvailable := availableModels.Supports(m.Provider, m.Model)
@@ -690,6 +752,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			// Basic info
 			ID:                  m.ID,
 			Provider:            m.Provider,
+			Vendor:              catalogvendor.Lookup(m.Provider, m.Model),
 			Model:               m.Model,
 			ModelName:           m.ModelName,
 			Family:              m.Family,
@@ -714,6 +777,12 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			InputPriceConfigured:  m.InputPriceConfigured,
 			OutputPriceConfigured: m.OutputPriceConfigured,
 			CachedInputPrice:      cachedInputPrice,
+			CacheReadPrice:        cacheReadPrice,
+			CacheWritePrice:       cacheWritePrice,
+			SyncedInputPrice:      &costInput,
+			SyncedOutputPrice:     &costOutput,
+			SyncedCacheReadPrice:  syncedCacheReadPrice,
+			SyncedCacheWritePrice: syncedCacheWritePrice,
 			Pricing:               append([]byte(nil), m.Pricing...),
 
 			// Context
@@ -787,6 +856,11 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			DefaultParameters:    cloneModelJSONObject(m.DefaultParameters),
 			Capabilities:         capabilitiesFromModelDefaults(m.DefaultParameters),
 		}
+		if metadata, ok := catalogvendor.LookupMetadata(view.Vendor); ok {
+			view.VendorName = metadata.VendorName
+			view.VendorCNName = metadata.CNName
+			view.VendorENName = metadata.ENName
+		}
 
 		// Apply tenant config if exists
 		if cfg, ok := configMap[m.ID]; ok {
@@ -796,13 +870,25 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			}
 			if cfg.InputPriceOverride != nil {
 				overrideInputPrice, _ := cfg.InputPriceOverride.Float64()
+				view.InputPriceOverride = &overrideInputPrice
 				view.InputPrice = overrideInputPrice
 				view.InputPriceConfigured = true
 			}
 			if cfg.OutputPriceOverride != nil {
 				overrideOutputPrice, _ := cfg.OutputPriceOverride.Float64()
+				view.OutputPriceOverride = &overrideOutputPrice
 				view.OutputPrice = overrideOutputPrice
 				view.OutputPriceConfigured = true
+			}
+			if cfg.CacheReadPriceOverride != nil {
+				override, _ := cfg.CacheReadPriceOverride.Float64()
+				view.CacheReadPriceOverride = &override
+				view.CacheReadPrice = override
+			}
+			if cfg.CacheWritePriceOverride != nil {
+				override, _ := cfg.CacheWritePriceOverride.Float64()
+				view.CacheWritePriceOverride = &override
+				view.CacheWritePrice = override
 			}
 		}
 		view.Callable = view.IsAvailable && view.IsEnabled
@@ -837,6 +923,8 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		// Convert decimal to float64 for custom models
 		customInputPrice, _ := m.InputPrice.Float64()
 		customOutputPrice, _ := m.OutputPrice.Float64()
+		customCacheReadPrice, _ := m.CostCacheRead.Float64()
+		customCacheWritePrice, _ := m.CostCacheWrite.Float64()
 
 		// Custom models are available if they have routes configured
 		customIsAvailable := availableModels.Supports(m.Provider, m.Name)
@@ -855,11 +943,15 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			OpenWeights:   false,
 
 			// Pricing (per million tokens)
-			Currency:              "USD",
-			InputPrice:            customInputPrice,
-			OutputPrice:           customOutputPrice,
-			InputPriceConfigured:  m.InputPriceConfigured,
-			OutputPriceConfigured: m.OutputPriceConfigured,
+			Currency:                  "USD",
+			InputPrice:                customInputPrice,
+			OutputPrice:               customOutputPrice,
+			InputPriceConfigured:      m.InputPriceConfigured,
+			OutputPriceConfigured:     m.OutputPriceConfigured,
+			CacheReadPrice:            customCacheReadPrice,
+			CacheWritePrice:           customCacheWritePrice,
+			CacheReadPriceConfigured:  m.CacheReadPriceConfigured,
+			CacheWritePriceConfigured: m.CacheWritePriceConfigured,
 
 			// Context
 			ContextWindow:   m.ContextWindow,
@@ -934,7 +1026,57 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		result = append(result, view)
 	}
 
-	return result, nil
+	return deduplicateModelViews(result), nil
+}
+
+// deduplicateModelViews preserves source precedence. ListTenantModels appends
+// platform/Console catalog models before tenant custom models, so a matching
+// The catalog model wins when both sources are equally available. When Cloud is
+// unavailable, a callable custom model takes over the single visible entry.
+func deduplicateModelViews(models []*model.ModelView) []*model.ModelView {
+	unique := make([]*model.ModelView, 0, len(models))
+	seen := make(map[string]int, len(models))
+	for _, item := range models {
+		if item == nil {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(item.Model))
+		if key == "" {
+			key = item.ID.String()
+		}
+		if index, exists := seen[key]; exists {
+			current := unique[index]
+			if modelViewAvailabilityRank(item) > modelViewAvailabilityRank(current) {
+				if item.Vendor == "" {
+					item.Vendor = current.Vendor
+					item.VendorName = current.VendorName
+					item.VendorCNName = current.VendorCNName
+					item.VendorENName = current.VendorENName
+				}
+				unique[index] = item
+			}
+			continue
+		}
+		seen[key] = len(unique)
+		unique = append(unique, item)
+	}
+	return unique
+}
+
+func modelViewAvailabilityRank(item *model.ModelView) int {
+	if item == nil {
+		return 0
+	}
+	if item.Callable || (item.IsAvailable && item.IsEnabled) {
+		return 3
+	}
+	if item.IsAvailable {
+		return 2
+	}
+	if item.IsEnabled {
+		return 1
+	}
+	return 0
 }
 
 func matchesProviderFilter(modelProvider string, provider string) bool {

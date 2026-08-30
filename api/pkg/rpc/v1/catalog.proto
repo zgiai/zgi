@@ -27,6 +27,20 @@ message GetPublishedCatalogResponse {
     int64 published_at = 2;
     repeated CatalogProvider providers = 3;
     repeated CatalogModel models = 4;
+    repeated CatalogVendor vendors = 5;
+}
+
+message CatalogVendor {
+    string vendor = 1;
+    string vendor_name = 2;
+    string cn_name = 3;
+    string en_name = 4;
+    string description = 5;
+    string website = 6;
+    string country_code = 7;
+    string status = 8;
+    bool is_active = 9;
+    string metadata_json = 10;
 }
 
 message CatalogProvider {
@@ -82,6 +96,7 @@ message CatalogModel {
     string replacement_model = 33;
     string deprecation_reason = 34;
     string pricing_json = 35;
+    string vendor = 36;
 }
 
 message CatalogModelEndpoints {
