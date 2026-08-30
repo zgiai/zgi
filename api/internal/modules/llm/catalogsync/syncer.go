@@ -275,6 +275,7 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 			InputPrice:             model.GetInputPrice(),
 			OutputPrice:            model.GetOutputPrice(),
 			CachedInputPrice:       model.GetCachedInputPrice(),
+			CacheReadPrice:         model.CachedInputPrice,
 			Pricing:                json.RawMessage(model.GetPricingJson()),
 			InputPriceConfigured:   model.InputPrice != nil,
 			OutputPriceConfigured:  model.OutputPrice != nil,

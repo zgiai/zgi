@@ -106,14 +106,20 @@ func mapPurchaseRecordToTransactionResponse(record *platformconsole.PaymentPurch
 		return nil
 	}
 	return &BillingTransactionResponse{
-		ID:                 record.ID,
-		BatchID:            record.BatchID,
-		TransactionType:    record.TransactionType,
-		DetailText:         record.DetailText,
-		RechargeAmount:     record.RechargeAmount,
-		WalletChangeAmount: record.WalletChangeAmount,
-		BalanceAfter:       record.BalanceAfter,
-		CreatedAt:          record.CreatedAt,
+		ID:                   record.ID,
+		BatchID:              record.BatchID,
+		TransactionType:      record.TransactionType,
+		DetailText:           record.DetailText,
+		RechargeAmount:       record.RechargeAmount,
+		RechargeAmountCNY:    record.RechargeAmountCNY,
+		RechargeAmountUSD:    record.RechargeAmountUSD,
+		AmountExchangeRate:   record.AmountExchangeRate,
+		AmountCurrencyStatus: record.AmountCurrencyStatus,
+		RechargeCurrency:     record.RechargeCurrency,
+		WalletChangeAmount:   record.WalletChangeAmount,
+		BalanceAfter:         record.BalanceAfter,
+		WalletCurrency:       record.WalletCurrency,
+		CreatedAt:            record.CreatedAt,
 	}
 }
 
@@ -128,9 +134,9 @@ func buildEmptyTransactionsExportWorkbook() ([]byte, error) {
 		"\u65f6\u95f4",
 		transactionTypeHeaderLabel,
 		detailHeaderLabel,
-		"\u5145\u503c\u91d1\u989d",
-		"\u94b1\u5305\u53d8\u52a8",
-		"\u8d26\u6237\u4f59\u989d",
+		"\u5145\u503c\u91d1\u989d (CNY)",
+		"\u94b1\u5305\u53d8\u52a8 (CNY)",
+		"\u8d26\u6237\u4f59\u989d (CNY)",
 	}
 	for i, header := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
@@ -226,14 +232,20 @@ func findTransactionsExportColumn(headers []string, target string) int {
 
 // BillingTransactionResponse represents the billing list response payload.
 type BillingTransactionResponse struct {
-	ID                 string    `json:"id"`
-	BatchID            string    `json:"batch_id"`
-	TransactionType    string    `json:"transaction_type"`
-	DetailText         string    `json:"detail_text"`
-	RechargeAmount     float64   `json:"recharge_amount"`
-	WalletChangeAmount float64   `json:"wallet_change_amount"`
-	BalanceAfter       float64   `json:"balance_after"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                   string    `json:"id"`
+	BatchID              string    `json:"batch_id"`
+	TransactionType      string    `json:"transaction_type"`
+	DetailText           string    `json:"detail_text"`
+	RechargeAmount       float64   `json:"recharge_amount"`
+	RechargeAmountCNY    float64   `json:"recharge_amount_cny"`
+	RechargeAmountUSD    float64   `json:"recharge_amount_usd"`
+	AmountExchangeRate   float64   `json:"amount_exchange_rate"`
+	AmountCurrencyStatus string    `json:"amount_currency_status"`
+	RechargeCurrency     string    `json:"recharge_currency"`
+	WalletChangeAmount   float64   `json:"wallet_change_amount"`
+	BalanceAfter         float64   `json:"balance_after"`
+	WalletCurrency       string    `json:"wallet_currency"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 // TransactionListResponse represents paginated transaction list

@@ -50,6 +50,8 @@ function sanitizeSummary(summary: ModelUsageSummary): ModelUsageSummary {
     failed_count: toNumber(summary.failed_count),
     partial_count: toNumber(summary.partial_count),
     prompt_tokens: toNumber(summary.prompt_tokens),
+    cache_read_tokens: toNumber(summary.cache_read_tokens),
+    cache_write_tokens: toNumber(summary.cache_write_tokens),
     completion_tokens: toNumber(summary.completion_tokens),
     total_tokens: toNumber(summary.total_tokens),
     official_points: toNumber(summary.official_points),
@@ -66,6 +68,8 @@ function sanitizeModelItem(item: ModelUsageByModelItem): ModelUsageByModelItem {
     failed_count: toNumber(item.failed_count),
     partial_count: toNumber(item.partial_count),
     prompt_tokens: toNumber(item.prompt_tokens),
+    cache_read_tokens: toNumber(item.cache_read_tokens),
+    cache_write_tokens: toNumber(item.cache_write_tokens),
     completion_tokens: toNumber(item.completion_tokens),
     total_tokens: toNumber(item.total_tokens),
     official_points: toNumber(item.official_points),
@@ -83,6 +87,8 @@ function sanitizeAppTypeItem(item: ModelUsageByAppTypeItem): ModelUsageByAppType
     failed_count: toNumber(item.failed_count),
     partial_count: toNumber(item.partial_count),
     prompt_tokens: toNumber(item.prompt_tokens),
+    cache_read_tokens: toNumber(item.cache_read_tokens),
+    cache_write_tokens: toNumber(item.cache_write_tokens),
     completion_tokens: toNumber(item.completion_tokens),
     total_tokens: toNumber(item.total_tokens),
     official_points: toNumber(item.official_points),
@@ -100,6 +106,8 @@ function sanitizeDailyItem(item: ModelUsageDailyItem): ModelUsageDailyItem {
     failed_count: toNumber(item.failed_count),
     partial_count: toNumber(item.partial_count),
     prompt_tokens: toNumber(item.prompt_tokens),
+    cache_read_tokens: toNumber(item.cache_read_tokens),
+    cache_write_tokens: toNumber(item.cache_write_tokens),
     completion_tokens: toNumber(item.completion_tokens),
     total_tokens: toNumber(item.total_tokens),
     official_tokens: toNumber(item.official_tokens),
@@ -174,7 +182,13 @@ export function useInvocationLog(params: GetInvocationLogParams, enabled = true)
     queryFn: () => statisticsService.getInvocationLog(params),
     enabled,
     staleTime: 60_000,
-    retry: false,
+    // Retry one transient read failure, but leave authorization and other
+    // deterministic client errors for the inline error state to surface.
+    retry: (failureCount, error) => {
+      if (failureCount >= 1 || !isAxiosError(error)) return false;
+      const status = error.response?.status;
+      return status === undefined || status === 429 || status >= 500;
+    },
   });
 
   useEffect(() => {
@@ -201,6 +215,8 @@ export function useInvocationLog(params: GetInvocationLogParams, enabled = true)
         ...item,
         attempt_count: toNumber(item.attempt_count),
         prompt_tokens: toNumber(item.prompt_tokens),
+        cache_read_tokens: toNumber(item.cache_read_tokens),
+        cache_write_tokens: toNumber(item.cache_write_tokens),
         completion_tokens: toNumber(item.completion_tokens),
         total_tokens: toNumber(item.total_tokens),
         total_points: normalizeAiCreditValue(toNumber(item.total_points), { precision: 3 }) ?? 0,

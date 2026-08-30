@@ -161,6 +161,18 @@ export interface ModelItem {
   input_price_configured?: boolean;
   output_price_configured?: boolean;
   cached_input_price?: number;
+  cache_read_price?: number;
+  cache_write_price?: number;
+  cache_read_price_configured?: boolean;
+  cache_write_price_configured?: boolean;
+  synced_input_price?: number | null;
+  synced_output_price?: number | null;
+  synced_cache_read_price?: number | null;
+  synced_cache_write_price?: number | null;
+  input_price_override?: number | null;
+  output_price_override?: number | null;
+  cache_read_price_override?: number | null;
+  cache_write_price_override?: number | null;
   pricing?: ModelPricing | null;
   context_window: number;
   max_output_tokens: number;
@@ -228,6 +240,8 @@ export interface ConfigureModelRequest {
   custom_display_name?: string;
   input_price_override?: string;
   output_price_override?: string;
+  cache_read_price_override?: string;
+  cache_write_price_override?: string;
   access_scope?: string;
   visible_groups?: string[];
   visible_users?: string[];
@@ -262,6 +276,8 @@ export interface CreateCustomModelRequest {
   max_output_tokens?: number;
   input_price?: string;
   output_price?: string;
+  cache_read_price?: string;
+  cache_write_price?: string;
   knowledge_cutoff?: string;
   description?: string;
   endpoints?: ModelEndpoints;

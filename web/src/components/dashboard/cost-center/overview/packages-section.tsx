@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useLocale } from 'next-intl';
 import { useT } from '@/i18n/translations';
 import { PackageCard } from '@/components/dashboard/recharge/package-card';
 import { BuyAiCreditDialog } from '@/components/dashboard/recharge/buy-ai-credit-dialog';
@@ -9,9 +10,14 @@ import { useBuyAiCredits } from '@/hooks/pay/use-buy-ai-credits';
 import { useWallet } from '@/hooks/pay/use-wallet';
 import { useAiCredits } from '@/hooks/pay/use-ai-credits';
 import type { AiCreditProduct, PaymentMethod } from '@/services/types/pay';
+import { formatCatalogCurrencyAmount, getBillingDisplaySettings } from '@/utils/billing-display';
+import { useOrganizations } from '@/hooks/organization/use-organizations';
 
 export function PackagesSection() {
   const t = useT('dashboard');
+  const locale = useLocale();
+  const { currentOrganization } = useOrganizations(true);
+  const billingDisplay = getBillingDisplaySettings(currentOrganization);
   const { data: aiCreditProducts, isLoading: isAiCreditProductsLoading } = useAiCreditProducts();
   const { mutate: buyAiCredits, isPending: isBuying } = useBuyAiCredits();
   const { data: walletData, refetch: refetchWallet } = useWallet();
@@ -127,7 +133,12 @@ export function PackagesSection() {
                   id={product.id || `product-${index}`}
                   name={product.product_name}
                   points={formatCreditAmount(product.credit_amount)}
-                  price={`¥ ${product.price.toFixed(2)}`}
+                  price={formatCatalogCurrencyAmount(
+                    product.price,
+                    product.currency,
+                    billingDisplay,
+                    { locale }
+                  )}
                   productCode={product.product_code}
                   isBuying={isBuying}
                   onBuy={() => handleBuyButtonClick(product)}

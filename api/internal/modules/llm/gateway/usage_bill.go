@@ -39,6 +39,8 @@ type UsageBill struct {
 	UseSystemProvider bool             `gorm:"column:use_system_provider;not null;default:false;index:idx_usage_bills_org_source_created,priority:2"`
 	Status            string           `gorm:"column:status;type:varchar(20);not null;index"`
 	PromptTokens      int64            `gorm:"column:prompt_tokens;not null;default:0"`
+	CacheReadTokens   int64            `gorm:"column:cache_read_tokens;not null;default:0"`
+	CacheWriteTokens  int64            `gorm:"column:cache_write_tokens;not null;default:0"`
 	CompletionTokens  int64            `gorm:"column:completion_tokens;not null;default:0"`
 	TotalTokens       int64            `gorm:"column:total_tokens;not null;default:0"`
 	OfficialPoints    int64            `gorm:"column:official_points;not null;default:0"`

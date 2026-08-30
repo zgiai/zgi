@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -67,10 +67,23 @@ import type {
 import { USE_CASE_BADGE_COLORS, USE_CASE_ORDER } from '@/config/model-colors';
 import { resolveModelConfigParameterCopy } from '@/utils/model-config-parameter-i18n';
 import { CUSTOM_MODEL_ID_PATTERN } from '@/utils/model-id';
+import {
+  billingDisplayInputToUSD,
+  billingDisplayInputValueFromUSD,
+  getBillingCurrencySymbol,
+  getBillingDisplaySettings,
+} from '@/utils/billing-display';
+import { useOrganizationStore } from '@/store/organization-store';
 
 const useCases: ModelUseCase[] = USE_CASE_ORDER;
 const EXCLUSIVE_USE_CASES: string[] = ['text-chat', 'embedding', 'rerank'];
-const CONFIG_PARAMETER_TYPES = ['int', 'float', 'string', 'boolean', 'text'] as const satisfies readonly ParameterValueType[];
+const CONFIG_PARAMETER_TYPES = [
+  'int',
+  'float',
+  'string',
+  'boolean',
+  'text',
+] as const satisfies readonly ParameterValueType[];
 
 const endpointSchema = z.object({
   chat_completions: z.boolean().default(false),
@@ -120,7 +133,9 @@ const parameterSchema = z.object({
   stop: z.boolean().default(true),
   max_stop_sequences: z.coerce.number().min(0).default(4),
 });
-const ENDPOINT_KEYS = Object.keys(endpointSchema.shape) as Array<keyof z.infer<typeof endpointSchema>>;
+const ENDPOINT_KEYS = Object.keys(endpointSchema.shape) as Array<
+  keyof z.infer<typeof endpointSchema>
+>;
 const FEATURE_KEYS = Object.keys(featureSchema.shape) as Array<keyof z.infer<typeof featureSchema>>;
 const TOOL_KEYS = Object.keys(toolSchema.shape) as Array<keyof z.infer<typeof toolSchema>>;
 const MODALITY_OPTIONS = [
@@ -267,9 +282,7 @@ function buildConfigParameters(
   });
 }
 
-const createSchema = (
-  t: (key: string, values?: Record<string, string | number>) => string
-) =>
+const createSchema = (t: (key: string, values?: Record<string, string | number>) => string) =>
   z
     .object({
       model: z
@@ -290,7 +303,8 @@ const createSchema = (
       max_output_tokens: z.coerce.number().min(0).optional(),
       input_price: z.string().optional(),
       output_price: z.string().optional(),
-      cached_input_price: z.string().optional(),
+      cache_read_price: z.string().optional(),
+      cache_write_price: z.string().optional(),
 
       input_modalities: z.array(z.string()).min(1),
       output_modalities: z.array(z.string()).min(1),
@@ -305,7 +319,10 @@ const createSchema = (
       config_parameters: z.array(
         z
           .object({
-            name: z.string().trim().min(1, t('aiProviders.models.validation.configParameterNameRequired')),
+            name: z
+              .string()
+              .trim()
+              .min(1, t('aiProviders.models.validation.configParameterNameRequired')),
             template_key: z
               .string()
               .trim()
@@ -333,8 +350,9 @@ const createSchema = (
               return;
             }
 
-            const numericFields: Array<keyof Pick<ConfigParameterFormValue, 'default' | 'min' | 'max'>> =
-              ['default', 'min', 'max'];
+            const numericFields: Array<
+              keyof Pick<ConfigParameterFormValue, 'default' | 'min' | 'max'>
+            > = ['default', 'min', 'max'];
 
             numericFields.forEach(fieldName => {
               const fieldValue = value[fieldName].trim();
@@ -393,6 +411,17 @@ export function CustomModelDialog({
   isSubmitting,
 }: CustomModelDialogProps) {
   const t = useT();
+  const currentOrganization = useOrganizationStore.use.currentOrganization();
+  const billingDisplay = useMemo(
+    () => getBillingDisplaySettings(currentOrganization),
+    [currentOrganization]
+  );
+  const currencySymbol = getBillingCurrencySymbol(billingDisplay);
+  const perMillionUnit = t(
+    billingDisplay.currency === 'CNY'
+      ? 'aiProviders.models.priceDialog.cnyPerMillion'
+      : 'aiProviders.models.priceDialog.usdPerMillion'
+  );
   const formSchema = createSchema((key, values) => t(key as never, values));
   type CustomModelFormInput = z.input<typeof formSchema>;
   type CustomModelFormValues = z.output<typeof formSchema>;
@@ -414,7 +443,8 @@ export function CustomModelDialog({
       max_output_tokens: 4096,
       input_price: '',
       output_price: '',
-      cached_input_price: '0',
+      cache_read_price: '',
+      cache_write_price: '',
       input_modalities: ['text'],
       output_modalities: ['text'],
       knowledge_cutoff: '',
@@ -530,9 +560,26 @@ export function CustomModelDialog({
         tier: normalizeTier(initialData.tier),
         context_window: initialData.context_window,
         max_output_tokens: initialData.max_output_tokens,
-        input_price: initialData.input_price_configured ? String(initialData.input_price) : '',
-        output_price: initialData.output_price_configured ? String(initialData.output_price) : '',
-        cached_input_price: String(initialData.cached_input_price || '0'),
+        input_price: billingDisplayInputValueFromUSD(
+          initialData.input_price,
+          initialData.input_price_configured,
+          billingDisplay
+        ),
+        output_price: billingDisplayInputValueFromUSD(
+          initialData.output_price,
+          initialData.output_price_configured,
+          billingDisplay
+        ),
+        cache_read_price: billingDisplayInputValueFromUSD(
+          initialData.cache_read_price,
+          initialData.cache_read_price_configured,
+          billingDisplay
+        ),
+        cache_write_price: billingDisplayInputValueFromUSD(
+          initialData.cache_write_price,
+          initialData.cache_write_price_configured,
+          billingDisplay
+        ),
         input_modalities: initialData.input_modalities || ['text'],
         output_modalities: initialData.output_modalities || ['text'],
         knowledge_cutoff: initialData.training_data?.cutoff_date || '',
@@ -599,7 +646,8 @@ export function CustomModelDialog({
         max_output_tokens: 4096,
         input_price: '',
         output_price: '',
-        cached_input_price: '0',
+        cache_read_price: '',
+        cache_write_price: '',
         input_modalities: ['text'],
         output_modalities: ['text'],
         knowledge_cutoff: '',
@@ -622,7 +670,7 @@ export function CustomModelDialog({
       });
     }
     appliedConfigParametersRef.current = null;
-  }, [initialData, form, open]);
+  }, [billingDisplay, initialData, form, open]);
 
   useEffect(() => {
     if (!open || !initialData?.id || !currentSchemaModel) {
@@ -667,6 +715,10 @@ export function CustomModelDialog({
 
     const data = {
       ...rest,
+      input_price: billingDisplayInputToUSD(values.input_price ?? '', billingDisplay),
+      output_price: billingDisplayInputToUSD(values.output_price ?? '', billingDisplay),
+      cache_read_price: billingDisplayInputToUSD(values.cache_read_price ?? '', billingDisplay),
+      cache_write_price: billingDisplayInputToUSD(values.cache_write_price ?? '', billingDisplay),
       use_cases: values.use_cases as ModelUseCase[],
       parameters: mappedParameters,
       config_parameters: buildConfigParameters(config_parameters),
@@ -1001,7 +1053,7 @@ export function CustomModelDialog({
                       <CreditCard className="h-4 w-4 text-primary" />
                       {t('aiProviders.models.sections.pricing')}
                     </h3>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="input_price"
@@ -1011,9 +1063,18 @@ export function CustomModelDialog({
                             <FormControl>
                               <div className="relative">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
-                                  $
+                                  {currencySymbol}
                                 </span>
-                                <Input className="pl-6" {...field} />
+                                <Input
+                                  className="pl-6 pr-24"
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  {...field}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                  {perMillionUnit}
+                                </span>
                               </div>
                             </FormControl>
                             <FormDescription>
@@ -1032,9 +1093,18 @@ export function CustomModelDialog({
                             <FormControl>
                               <div className="relative">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
-                                  $
+                                  {currencySymbol}
                                 </span>
-                                <Input className="pl-6" {...field} />
+                                <Input
+                                  className="pl-6 pr-24"
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  {...field}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                  {perMillionUnit}
+                                </span>
                               </div>
                             </FormControl>
                             <FormDescription>
@@ -1046,18 +1116,60 @@ export function CustomModelDialog({
                       />
                       <FormField
                         control={form.control}
-                        name="cached_input_price"
+                        name="cache_read_price"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>{t('aiProviders.models.fields.cachedPrice')}</FormLabel>
+                            <FormLabel>{t('aiProviders.models.fields.cacheReadPrice')}</FormLabel>
                             <FormControl>
                               <div className="relative">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
-                                  $
+                                  {currencySymbol}
                                 </span>
-                                <Input className="pl-6" {...field} />
+                                <Input
+                                  className="pl-6 pr-24"
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  {...field}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                  {perMillionUnit}
+                                </span>
                               </div>
                             </FormControl>
+                            <FormDescription>
+                              {t('aiProviders.models.fields.priceConfiguredHint')}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="cache_write_price"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('aiProviders.models.fields.cacheWritePrice')}</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                  {currencySymbol}
+                                </span>
+                                <Input
+                                  className="pl-6 pr-24"
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  {...field}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                  {perMillionUnit}
+                                </span>
+                              </div>
+                            </FormControl>
+                            <FormDescription>
+                              {t('aiProviders.models.fields.priceConfiguredHint')}
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -1314,7 +1426,8 @@ export function CustomModelDialog({
 
                     <div className="space-y-4">
                       {configParameterFields.map((field, index) => {
-                        const rowValue = configParameterValues?.[index] ?? createEmptyConfigParameter();
+                        const rowValue =
+                          configParameterValues?.[index] ?? createEmptyConfigParameter();
                         const isNumericType = isNumericParameterType(rowValue.type);
                         const { help, label } = resolveModelConfigParameterCopy({
                           parameter: {
@@ -1325,10 +1438,14 @@ export function CustomModelDialog({
                         });
 
                         return (
-                          <div key={field.fieldId} className="rounded-xl border p-4 space-y-4 bg-muted/10">
+                          <div
+                            key={field.fieldId}
+                            className="rounded-xl border p-4 space-y-4 bg-muted/10"
+                          >
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-sm font-medium">
-                                {rowValue.name || t('aiProviders.customModel.configParameters.title')}
+                                {rowValue.name ||
+                                  t('aiProviders.customModel.configParameters.title')}
                               </div>
                               <Button
                                 type="button"
@@ -1441,7 +1558,12 @@ export function CustomModelDialog({
                               />
                             </div>
 
-                            <div className={cn('grid gap-4', isNumericType ? 'lg:grid-cols-4' : 'lg:grid-cols-2')}>
+                            <div
+                              className={cn(
+                                'grid gap-4',
+                                isNumericType ? 'lg:grid-cols-4' : 'lg:grid-cols-2'
+                              )}
+                            >
                               <FormField
                                 control={form.control}
                                 name={`config_parameters.${index}.default` as const}
@@ -1504,9 +1626,7 @@ export function CustomModelDialog({
                                     render={({ field }) => (
                                       <FormItem>
                                         <FormLabel>
-                                          {t(
-                                            'aiProviders.customModel.configParameters.fields.min'
-                                          )}
+                                          {t('aiProviders.customModel.configParameters.fields.min')}
                                         </FormLabel>
                                         <FormControl>
                                           <Input
@@ -1527,9 +1647,7 @@ export function CustomModelDialog({
                                     render={({ field }) => (
                                       <FormItem>
                                         <FormLabel>
-                                          {t(
-                                            'aiProviders.customModel.configParameters.fields.max'
-                                          )}
+                                          {t('aiProviders.customModel.configParameters.fields.max')}
                                         </FormLabel>
                                         <FormControl>
                                           <Input

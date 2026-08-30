@@ -2052,6 +2052,7 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 	request = cloneChatRequest(request)
 	sourceMessages := cloneMessagesForProvider(request.Messages)
 	request.Messages = adapter.NormalizeSystemMessages(sourceMessages)
+	request.Tools = providerCompatibleFunctionTools(request.Tools)
 	r.contextDecision = nil
 	if r.ContextManager == nil {
 		return request, r.applyFinalPlanningRequestBudget(request, sourceMessages)

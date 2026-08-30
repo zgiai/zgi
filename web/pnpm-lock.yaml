@@ -179,6 +179,9 @@ importers:
       date-fns:
         specifier: ^4.1.0
         version: 4.1.0
+      decimal.js-light:
+        specifier: 2.5.1
+        version: 2.5.1
       docx-preview:
         specifier: ^0.3.7
         version: 0.3.7

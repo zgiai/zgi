@@ -52,7 +52,6 @@ interface ModelsGroupTableProps {
   readOnly?: boolean;
   onEditModel?: (m: ModelItem) => void;
   onDeleteModel?: (m: ModelItem) => void;
-  onEditPrice?: (m: ModelItem) => void;
   onCreateModel?: () => void;
   onConfigureChannel?: (m: ModelItem) => void;
 }
@@ -79,7 +78,6 @@ export default function ModelsGroupTable({
   readOnly = false,
   onEditModel,
   onDeleteModel,
-  onEditPrice,
   onCreateModel,
   onConfigureChannel,
 }: ModelsGroupTableProps): JSX.Element {
@@ -433,7 +431,7 @@ export default function ModelsGroupTable({
                         </span>
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-start justify-between gap-2 text-sm">
+                        <div className="text-sm">
                           <div className="space-y-1.5">
                             {getModelPriceDisplay({
                               inputPrice: m.input_price,
@@ -487,26 +485,6 @@ export default function ModelsGroupTable({
                               );
                             })}
                           </div>
-                          {onEditPrice && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  isIcon
-                                  className="h-7 w-7 shrink-0"
-                                  onClick={() => onEditPrice(m)}
-                                >
-                                  <span className="sr-only">
-                                    {t('aiProviders.models.actions.setPrice')}
-                                  </span>
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {t('aiProviders.models.actions.setPrice')}
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
                         </div>
                       </TableCell>
                       {showEnabledColumn && (
@@ -516,15 +494,24 @@ export default function ModelsGroupTable({
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
                             {onEditModel && (
-                              <Button
-                                variant="ghost"
-                                isIcon
-                                className="h-8 w-8"
-                                onClick={() => onEditModel(m)}
-                              >
-                                <span className="sr-only">Edit</span>
-                                <Pencil className="w-4 h-4" />
-                              </Button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    isIcon
+                                    className="h-8 w-8"
+                                    onClick={() => onEditModel(m)}
+                                  >
+                                    <span className="sr-only">
+                                      {t('aiProviders.models.actions.edit')}
+                                    </span>
+                                    <Pencil className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {t('aiProviders.models.actions.edit')}
+                                </TooltipContent>
+                              </Tooltip>
                             )}
                             {onDeleteModel && (
                               <Button

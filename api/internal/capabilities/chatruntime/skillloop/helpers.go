@@ -12,6 +12,10 @@ import (
 
 const maxInvalidToolArgumentPreviewRunes = 800
 
+var unsupportedProviderRootSchemaKeywords = [...]string{
+	"oneOf", "anyOf", "allOf", "enum", "const", "not",
+}
+
 var modelInvocationTokenEstimator = tokenestimate.NewEstimator()
 
 func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
@@ -31,6 +35,43 @@ func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
 		}
 	}
 	return &cloned
+}
+
+// providerCompatibleFunctionTools keeps function schemas acceptable to
+// providers that require a plain object at the root. Authoritative argument
+// validation still happens in the Skill and Tool runtimes, so removing only
+// root composition keywords does not bypass execution-time validation.
+func providerCompatibleFunctionTools(source []adapter.Tool) []adapter.Tool {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make([]adapter.Tool, 0, len(source))
+	for _, tool := range source {
+		cloned := tool
+		schema := cloneFunctionParameters(tool.Function.Parameters)
+		schema["type"] = "object"
+		for _, keyword := range unsupportedProviderRootSchemaKeywords {
+			delete(schema, keyword)
+		}
+		cloned.Function.Parameters = schema
+		out = append(out, cloned)
+	}
+	return out
+}
+
+func cloneFunctionParameters(parameters interface{}) map[string]interface{} {
+	encoded, err := json.Marshal(parameters)
+	if err == nil {
+		var cloned map[string]interface{}
+		if json.Unmarshal(encoded, &cloned) == nil && cloned != nil {
+			return cloned
+		}
+	}
+	return map[string]interface{}{
+		"type":                 "object",
+		"properties":           map[string]interface{}{},
+		"additionalProperties": true,
+	}
 }
 
 func chatRequestPromptChars(request *adapter.ChatRequest) int {

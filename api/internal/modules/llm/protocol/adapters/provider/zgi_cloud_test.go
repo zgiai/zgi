@@ -382,6 +382,13 @@ func TestZGICloudAdapterChatCompletion_ForwardsToConsoleInternal(t *testing.T) {
 		w.Header().Set(headerOfficialPoints, "7")
 		w.Header().Set(headerRemainingBalance, "93")
 		w.Header().Set(headerSettlementStatus, "settled")
+		w.Header().Set(headerTotalCostUSD, "0.006601")
+		w.Header().Set(headerTotalCostCNY, "0.0475272")
+		w.Header().Set(headerCNYPerUSD, "7.2")
+		w.Header().Set(headerInputPriceUSD, "5")
+		w.Header().Set(headerOutputPriceUSD, "30")
+		w.Header().Set(headerInputCostUSD, "0.000055")
+		w.Header().Set(headerOutputCostUSD, "0.00021")
 		fmt.Fprint(w, `{
 			"id":"chatcmpl-zgi-cloud-1",
 			"object":"chat.completion",
@@ -430,6 +437,12 @@ func TestZGICloudAdapterChatCompletion_ForwardsToConsoleInternal(t *testing.T) {
 	if resp.Settlement == nil || resp.Settlement.SettlementID != "deduction-1" || resp.Settlement.OfficialPoints != 7 {
 		t.Fatalf("settlement = %+v, want deduction-1/7", resp.Settlement)
 	}
+	if resp.Settlement.TotalCostUSD != "0.006601" || resp.Settlement.TotalCostCNY != "0.0475272" || resp.Settlement.CNYPerUSD != "7.2" {
+		t.Fatalf("settlement cost snapshot = %+v", resp.Settlement)
+	}
+	if resp.Settlement.InputPriceUSDPer1MTokens != "5" || resp.Settlement.OutputPriceUSDPer1MTokens != "30" || resp.Settlement.InputCostUSD != "0.000055" || resp.Settlement.OutputCostUSD != "0.00021" {
+		t.Fatalf("settlement component pricing = %+v", resp.Settlement)
+	}
 }
 
 func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.T) {
@@ -444,7 +457,7 @@ func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.
 		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
 		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n")
 		fmt.Fprint(w, "event: zgi.settlement\n")
-		fmt.Fprint(w, "data: {\"settlement_id\":\"deduction-stream\",\"official_points\":9,\"remaining_balance\":91,\"status\":\"settled\"}\n\n")
+		fmt.Fprint(w, "data: {\"settlement_id\":\"deduction-stream\",\"official_points\":9,\"remaining_balance\":91,\"status\":\"settled\",\"total_cost_usd\":\"0.009\",\"total_cost_cny\":\"0.0648\",\"cny_per_usd\":\"7.2\"}\n\n")
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer server.Close()
@@ -487,6 +500,9 @@ func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.
 	}
 	if done.Settlement == nil || done.Settlement.SettlementID != "deduction-stream" || done.Settlement.OfficialPoints != 9 {
 		t.Fatalf("done settlement = %+v, want deduction-stream/9", done.Settlement)
+	}
+	if done.Settlement.TotalCostCNY != "0.0648" || done.Settlement.CNYPerUSD != "7.2" {
+		t.Fatalf("done settlement cost snapshot = %+v", done.Settlement)
 	}
 	if done.Usage == nil || done.Usage.TotalTokens != 5 {
 		t.Fatalf("done usage = %+v, want total 5", done.Usage)
@@ -754,7 +770,7 @@ func TestZGICloudAdapterCreateAnthropicMessage_ForwardsToConsoleInternalAnthropi
 			"role":"assistant",
 			"model":"claude-sonnet-4-0",
 			"content":[{"type":"text","text":"ok"}],
-			"usage":{"input_tokens":7,"output_tokens":3}
+			"usage":{"input_tokens":30,"cache_read_input_tokens":20,"cache_creation_input_tokens":10,"output_tokens":5}
 		}`)
 	}))
 	defer server.Close()
@@ -792,8 +808,8 @@ func TestZGICloudAdapterCreateAnthropicMessage_ForwardsToConsoleInternalAnthropi
 	if gotPayload["model"] != "claude-sonnet-4-0" || gotPayload["max_tokens"] != float64(64) {
 		t.Fatalf("payload = %#v, want raw messages body", gotPayload)
 	}
-	if resp.Usage == nil || resp.Usage.PromptTokens != 7 || resp.Usage.CompletionTokens != 3 || resp.Usage.TotalTokens != 10 {
-		t.Fatalf("usage = %+v, want prompt=7 completion=3 total=10", resp.Usage)
+	if resp.Usage == nil || resp.Usage.PromptTokens != 60 || resp.Usage.UncachedInputTokens != 30 || resp.Usage.CacheReadTokens != 20 || resp.Usage.CacheWriteTokens != 10 || resp.Usage.CompletionTokens != 5 || resp.Usage.TotalTokens != 65 {
+		t.Fatalf("usage = %+v, want uncached=30 cache_read=20 cache_write=10 completion=5 total=65", resp.Usage)
 	}
 }
 
@@ -811,11 +827,11 @@ func TestZGICloudAdapterCreateAnthropicMessageStream_PreservesNativeEvents(t *te
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "event: message_start\n")
-		fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":28,\"cache_read_input_tokens\":18,\"cache_creation_input_tokens\":10,\"output_tokens\":0}}}\n\n")
 		fmt.Fprint(w, "event: content_block_delta\n")
 		fmt.Fprint(w, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n")
 		fmt.Fprint(w, "event: message_delta\n")
-		fmt.Fprint(w, "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":2}}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":52}}\n\n")
 		fmt.Fprint(w, "event: message_stop\n")
 		fmt.Fprint(w, "data: {\"type\":\"message_stop\"}\n\n")
 		flusher.Flush()
@@ -861,8 +877,8 @@ func TestZGICloudAdapterCreateAnthropicMessageStream_PreservesNativeEvents(t *te
 	if len(events) != 4 || events[0] != "message_start" || events[1] != "content_block_delta" || events[2] != "message_delta" || events[3] != "message_stop" {
 		t.Fatalf("events = %#v, want native Anthropic events", events)
 	}
-	if usage == nil || usage.PromptTokens != 5 || usage.CompletionTokens != 2 || usage.TotalTokens != 7 {
-		t.Fatalf("usage = %+v, want prompt=5 completion=2 total=7", usage)
+	if usage == nil || usage.PromptTokens != 56 || usage.UncachedInputTokens != 28 || usage.CacheReadTokens != 18 || usage.CacheWriteTokens != 10 || usage.CompletionTokens != 52 || usage.TotalTokens != 108 {
+		t.Fatalf("usage = %+v, want uncached=28 cache_read=18 cache_write=10 completion=52 total=108", usage)
 	}
 }
 

@@ -5,7 +5,12 @@ import type { ModelSelectorValue } from '@/components/common/model-selector';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
-import type { DefaultModelUseCase, DefaultModelValue, ModelItem } from '@/services/types/model';
+import type {
+  AvailableModelUseCase,
+  DefaultModelUseCase,
+  DefaultModelValue,
+  ModelItem,
+} from '@/services/types/model';
 import {
   getLastSelectedAiModel,
   saveLastSelectedAiModel,
@@ -53,6 +58,7 @@ export function usePersistedAIChatModelSelection({
   legacyScope,
   repairUnavailableSelection = false,
   useCase = 'agent',
+  availabilityUseCase,
   preferredUseCase,
 }: {
   accountId?: string | null;
@@ -60,6 +66,7 @@ export function usePersistedAIChatModelSelection({
   legacyScope?: AiModelScope;
   repairUnavailableSelection?: boolean;
   useCase?: DefaultModelUseCase;
+  availabilityUseCase?: AvailableModelUseCase;
   preferredUseCase?: DefaultModelUseCase;
 }) {
   const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
@@ -68,7 +75,7 @@ export function usePersistedAIChatModelSelection({
     return saved ? { provider: saved.provider, model: saved.model, params: {} } : EMPTY_MODEL_VALUE;
   });
   const [isInitialModelResolved, setIsInitialModelResolved] = useState(false);
-  const availableModels = useAvailableModels({ use_case: useCase });
+  const availableModels = useAvailableModels({ use_case: availabilityUseCase ?? useCase });
   const preferredDefaultModel = useDefaultModelByUseCase(preferredUseCase ?? useCase);
   const fallbackDefaultModel = useDefaultModelByUseCase(useCase);
   const defaultModel =

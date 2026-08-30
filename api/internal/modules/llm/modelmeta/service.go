@@ -24,7 +24,7 @@ import (
 const (
 	modelMetaAPIVersion     = "v1"
 	defaultModelMetaAPIBase = "https://models.zgi.ai"
-	priceScale              = 6
+	priceScale              = 12
 )
 
 var errModelMetaAPIURLNotConfigured = errors.New("MODELMETA_API_URL is not configured")
@@ -121,48 +121,54 @@ type ModelMetaProviderResponse struct {
 
 // ModelMetaData represents a model from a ModelMeta-compatible API.
 type ModelMetaData struct {
-	ID               string                 `json:"id"`
-	Object           string                 `json:"object"`
-	Provider         string                 `json:"provider"`
-	IconSlug         string                 `json:"icon_slug"`
-	Model            string                 `json:"model"`
-	ModelName        string                 `json:"model_name"`
-	NameAlias        string                 `json:"name"`
-	DisplayNameAlias string                 `json:"display_name"`
-	Description      *string                `json:"description"`
-	Tagline          string                 `json:"tagline"`
-	Family           string                 `json:"family"`
-	FamilyName       string                 `json:"family_name"`
-	FamilyDefault    bool                   `json:"family_default"`
-	Status           string                 `json:"status"`
-	AccessType       string                 `json:"access_type"`
-	ContextWindow    int                    `json:"context_window"`
-	MaxOutputTokens  int                    `json:"max_output_tokens"`
-	Currency         string                 `json:"currency"`
-	InputPrice       *float64               `json:"input_price"`
-	OutputPrice      *float64               `json:"output_price"`
-	CachedInputPrice float64                `json:"cached_input_price"`
-	Pricing          json.RawMessage        `json:"pricing"`
-	IsFlagship       bool                   `json:"is_flagship"`
-	IsRecommended    bool                   `json:"is_recommended"`
-	IsFeatured       bool                   `json:"is_featured"`
-	IsNew            bool                   `json:"is_new"`
-	Endpoints        map[string]interface{} `json:"endpoints"`
-	Features         map[string]interface{} `json:"features"`
-	Tools            map[string]interface{} `json:"tools"`
-	Capabilities     map[string]interface{} `json:"capabilities"`
-	Video            map[string]interface{} `json:"video"`
-	UseCases         []string               `json:"use_cases"`
-	InputModalities  []string               `json:"input_modalities"`
-	OutputModalities []string               `json:"output_modalities"`
-	Parameters       map[string]interface{} `json:"parameters"`
-	Evaluation       map[string]interface{} `json:"evaluation"`
-	ConfigParameters json.RawMessage        `json:"config_parameters"`
-	KnowledgeCutoff  string                 `json:"knowledge_cutoff"`
-	ReleaseDate      string                 `json:"release_date"`
-	LastUpdated      int64                  `json:"last_updated"`
-	CreatedAt        int64                  `json:"created_at"`
-	UpdatedAt        int64                  `json:"updated_at"`
+	ID                        string                 `json:"id"`
+	Object                    string                 `json:"object"`
+	Provider                  string                 `json:"provider"`
+	IconSlug                  string                 `json:"icon_slug"`
+	Model                     string                 `json:"model"`
+	ModelName                 string                 `json:"model_name"`
+	NameAlias                 string                 `json:"name"`
+	DisplayNameAlias          string                 `json:"display_name"`
+	Description               *string                `json:"description"`
+	Tagline                   string                 `json:"tagline"`
+	Family                    string                 `json:"family"`
+	FamilyName                string                 `json:"family_name"`
+	FamilyDefault             bool                   `json:"family_default"`
+	Status                    string                 `json:"status"`
+	AccessType                string                 `json:"access_type"`
+	ContextWindow             int                    `json:"context_window"`
+	MaxOutputTokens           int                    `json:"max_output_tokens"`
+	Currency                  string                 `json:"currency"`
+	InputPrice                *float64               `json:"input_price"`
+	OutputPrice               *float64               `json:"output_price"`
+	InputPricePerMillion      *float64               `json:"input_price_per_million"`
+	OutputPricePerMillion     *float64               `json:"output_price_per_million"`
+	CachedInputPrice          float64                `json:"cached_input_price"`
+	CacheReadPrice            *float64               `json:"cache_read_price"`
+	CacheReadPricePerMillion  *float64               `json:"cache_read_price_per_million"`
+	CacheWritePrice           *float64               `json:"cache_write_price"`
+	CacheWritePricePerMillion *float64               `json:"cache_write_price_per_million"`
+	Pricing                   json.RawMessage        `json:"pricing"`
+	IsFlagship                bool                   `json:"is_flagship"`
+	IsRecommended             bool                   `json:"is_recommended"`
+	IsFeatured                bool                   `json:"is_featured"`
+	IsNew                     bool                   `json:"is_new"`
+	Endpoints                 map[string]interface{} `json:"endpoints"`
+	Features                  map[string]interface{} `json:"features"`
+	Tools                     map[string]interface{} `json:"tools"`
+	Capabilities              map[string]interface{} `json:"capabilities"`
+	Video                     map[string]interface{} `json:"video"`
+	UseCases                  []string               `json:"use_cases"`
+	InputModalities           []string               `json:"input_modalities"`
+	OutputModalities          []string               `json:"output_modalities"`
+	Parameters                map[string]interface{} `json:"parameters"`
+	Evaluation                map[string]interface{} `json:"evaluation"`
+	ConfigParameters          json.RawMessage        `json:"config_parameters"`
+	KnowledgeCutoff           string                 `json:"knowledge_cutoff"`
+	ReleaseDate               string                 `json:"release_date"`
+	LastUpdated               int64                  `json:"last_updated"`
+	CreatedAt                 int64                  `json:"created_at"`
+	UpdatedAt                 int64                  `json:"updated_at"`
 }
 
 // SyncResult represents the result of a sync operation
@@ -791,11 +797,29 @@ func mergeModelMetaDetail(base, detail ModelMetaData) ModelMetaData {
 	if detail.InputPrice != nil {
 		base.InputPrice = detail.InputPrice
 	}
+	if detail.InputPricePerMillion != nil {
+		base.InputPricePerMillion = detail.InputPricePerMillion
+	}
 	if detail.OutputPrice != nil {
 		base.OutputPrice = detail.OutputPrice
 	}
+	if detail.OutputPricePerMillion != nil {
+		base.OutputPricePerMillion = detail.OutputPricePerMillion
+	}
 	if detail.CachedInputPrice != 0 {
 		base.CachedInputPrice = detail.CachedInputPrice
+	}
+	if detail.CacheReadPrice != nil {
+		base.CacheReadPrice = detail.CacheReadPrice
+	}
+	if detail.CacheReadPricePerMillion != nil {
+		base.CacheReadPricePerMillion = detail.CacheReadPricePerMillion
+	}
+	if detail.CacheWritePrice != nil {
+		base.CacheWritePrice = detail.CacheWritePrice
+	}
+	if detail.CacheWritePricePerMillion != nil {
+		base.CacheWritePricePerMillion = detail.CacheWritePricePerMillion
 	}
 	if len(detail.Pricing) > 0 {
 		base.Pricing = detail.Pricing
@@ -1290,6 +1314,22 @@ func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaD
 }
 
 func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
+	inputPrice := meta.InputPrice
+	if inputPrice == nil {
+		inputPrice = meta.InputPricePerMillion
+	}
+	outputPrice := meta.OutputPrice
+	if outputPrice == nil {
+		outputPrice = meta.OutputPricePerMillion
+	}
+	cacheReadPrice := meta.CacheReadPrice
+	if cacheReadPrice == nil {
+		cacheReadPrice = meta.CacheReadPricePerMillion
+	}
+	cacheWritePrice := meta.CacheWritePrice
+	if cacheWritePrice == nil {
+		cacheWritePrice = meta.CacheWritePricePerMillion
+	}
 	endpoints := parsePublishedModelEndpoints(meta.Endpoints)
 	features := parsePublishedModelFeatures(meta.Features)
 	tools := parsePublishedModelTools(meta.Tools)
@@ -1319,12 +1359,14 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 		Currency:               meta.Currency,
 		ContextWindow:          meta.ContextWindow,
 		MaxOutputTokens:        meta.MaxOutputTokens,
-		InputPrice:             remotePriceValue(meta.InputPrice),
-		OutputPrice:            remotePriceValue(meta.OutputPrice),
+		InputPrice:             remotePriceValue(inputPrice),
+		OutputPrice:            remotePriceValue(outputPrice),
 		CachedInputPrice:       meta.CachedInputPrice,
+		CacheReadPrice:         cacheReadPrice,
+		CacheWritePrice:        cacheWritePrice,
 		Pricing:                meta.Pricing,
-		InputPriceConfigured:   meta.InputPrice != nil,
-		OutputPriceConfigured:  meta.OutputPrice != nil,
+		InputPriceConfigured:   inputPrice != nil,
+		OutputPriceConfigured:  outputPrice != nil,
 		UseCases:               llmmodel.EnsureUseCases(meta.UseCases, endpoints),
 		InputModalities:        normalizeStringValues(meta.InputModalities),
 		OutputModalities:       normalizeStringValues(meta.OutputModalities),

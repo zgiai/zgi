@@ -47,6 +47,8 @@ const EMPTY_SUMMARY: ModelUsageSummary = {
   failed_count: 0,
   partial_count: 0,
   prompt_tokens: 0,
+  cache_read_tokens: 0,
+  cache_write_tokens: 0,
   completion_tokens: 0,
   total_tokens: 0,
   official_points: 0,
@@ -327,6 +329,8 @@ export default function UsageOverviewPage() {
             totalAttempts={summary.attempt_count}
             totalTokens={summary.total_tokens}
             promptTokens={summary.prompt_tokens}
+            cacheReadTokens={summary.cache_read_tokens}
+            cacheWriteTokens={summary.cache_write_tokens}
             completionTokens={summary.completion_tokens}
             showSourceBreakdown={showSourceBreakdown}
             billingDisplay={billingDisplay}
