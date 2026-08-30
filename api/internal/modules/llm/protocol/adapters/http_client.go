@@ -418,6 +418,35 @@ func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
 // Uses a separate HTTP client without client-level timeout to allow long-running streams.
 // The context is used for cancellation instead of a fixed timeout.
 func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, headers map[string]string, body interface{}) (*http.Response, error) {
+	streamHeaders := map[string]string{
+		"Accept":        "text/event-stream",
+		"Cache-Control": "no-cache",
+		"Connection":    "keep-alive",
+	}
+	for key, value := range headers {
+		streamHeaders[key] = value
+	}
+	return c.doSingleRequest(ctx, method, url, streamHeaders, body, c.streamClient)
+}
+
+// DoSingleRequestNoRedirect executes exactly one request and rejects redirects.
+// It is intended for generation endpoints that may charge as soon as a POST is dispatched.
+func (c *HTTPClient) DoSingleRequestNoRedirect(ctx context.Context, method, url string, headers map[string]string, body interface{}) (*http.Response, error) {
+	client := *c.streamClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return c.doSingleRequest(ctx, method, url, headers, body, &client)
+}
+
+func (c *HTTPClient) doSingleRequest(
+	ctx context.Context,
+	method string,
+	url string,
+	headers map[string]string,
+	body interface{},
+	client *http.Client,
+) (*http.Response, error) {
 	var reqBody io.Reader
 	if body != nil {
 		jsonData, err := json.Marshal(body)
@@ -437,9 +466,6 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Connection", "keep-alive")
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
@@ -449,9 +475,9 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 		c.authHook(req)
 	}
 
-	// Use streamClient which has no client-level timeout
-	// This prevents "context deadline exceeded" errors during long streaming responses
-	resp, err := c.streamClient.Do(req)
+	// Streaming and paid-generation callers pass a client without a fixed timeout;
+	// their request context remains the cancellation boundary.
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", NormalizeTransportError(err))
 	}

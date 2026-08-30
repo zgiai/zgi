@@ -244,7 +244,7 @@ const messages: DashboardMessages = {
       totalPoints: '总费用',
       pointsConsumption: '费用',
       pointsConsumptionHint: '当前筛选条件下的总费用',
-      topModels: 'Top Models',
+      topModels: '热门模型',
       modelCount: '当前结果共 {count} 个模型',
       noModels: '当前结果暂无模型数据',
       inputTokens: '输入',

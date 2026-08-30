@@ -16,7 +16,7 @@ import (
 const defaultMiniMaxBaseURL = "https://api.minimaxi.com/v1"
 
 // MiniMaxAdapter implements the documented MiniMax OpenAI-compatible text API
-// and the native image generation API.
+// and the native image and music generation APIs.
 type MiniMaxAdapter struct {
 	config     *adapter.AdapterConfig
 	httpClient *adapter.HTTPClient
@@ -307,7 +307,7 @@ func (a *MiniMaxAdapter) GetProviderInfo() *adapter.ProviderInfo {
 		DisplayName:  "MiniMax",
 		Description:  "MiniMax models",
 		BaseURL:      a.baseURL,
-		Capabilities: []string{"chat", "stream", "image", "model_listing"},
+		Capabilities: []string{"chat", "stream", "image", "music", "lyrics", "model_listing"},
 		Version:      "v1",
 	}
 }

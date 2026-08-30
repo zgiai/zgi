@@ -37,6 +37,19 @@ type TranscriptionResponse struct {
 	Text      string `json:"text"`
 }
 
+type clientReadTracker struct {
+	src     io.Reader
+	readErr error
+}
+
+func (r *clientReadTracker) Read(p []byte) (int, error) {
+	n, err := r.src.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) && r.readErr == nil {
+		r.readErr = err
+	}
+	return n, err
+}
+
 // Transcribe routes one PCM stream through the selected official or private channel.
 func (s *llmGatewayServiceImpl) Transcribe(
 	ctx context.Context,
@@ -144,7 +157,8 @@ func (s *llmGatewayServiceImpl) Transcribe(
 		if err := s.activateUpstreamProbeForAttempt(ctx, selection, billingCtx); err != nil {
 			return nil, err
 		}
-		meteredAudio := newTranscriptionMeteredReader(request.Audio, transcriptionMaxAudioBytes())
+		source := &clientReadTracker{src: request.Audio}
+		meteredAudio := newTranscriptionMeteredReader(source, transcriptionMaxAudioBytes())
 		result, err := transcriptionAdapter.Transcribe(ctx, &adapter.TranscriptionRequest{
 			RequestID: requestID,
 			Model:     request.Model,
@@ -157,8 +171,16 @@ func (s *llmGatewayServiceImpl) Transcribe(
 		if err != nil {
 			setBillingFailure(billingCtx, err)
 			billingCtx.ResponseTime = responseTime
-			s.recordUpstreamProviderError(ctx, selection, billingCtx, err)
-			return nil, errors.Join(err, s.rollbackPreDeduction(ctx, billingCtx))
+			clientReadFailure := source.readErr != nil && errors.Is(err, source.readErr)
+			clientLimitFailure := errors.Is(err, ErrTranscriptionAudioTooLong)
+			if !clientReadFailure && !clientLimitFailure {
+				s.recordUpstreamProviderError(ctx, selection, billingCtx, err)
+			}
+			resultErr := errors.Join(err, s.rollbackPreDeduction(ctx, billingCtx))
+			if clientReadFailure {
+				return nil, NewClientIOError(resultErr)
+			}
+			return nil, resultErr
 		}
 		s.recordUpstreamProviderSuccess(ctx, selection, billingCtx)
 		actualUsage := transcriptionMeteredUsage(transcriptionMilliseconds(meteredAudio.BytesRead()))

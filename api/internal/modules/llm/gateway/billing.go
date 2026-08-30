@@ -237,7 +237,7 @@ func (b *BillingService) Settle(ctx context.Context, bc *BillingContext) error {
 			Where("attempt_id = ?", bc.AttemptID).
 			First(&attempt).Error
 		if err == nil {
-			if attempt.Status == billingAttemptStatusSettled || attempt.Status == billingAttemptStatusRolledBack {
+			if billingAttemptStatusIsFinalized(attempt.Status) {
 				alreadyFinalized = true
 				return nil
 			}
