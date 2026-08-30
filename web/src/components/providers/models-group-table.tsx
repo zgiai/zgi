@@ -462,7 +462,7 @@ export default function ModelsGroupTable({
                                 ? t('aiProviders.models.pricing.unconfigured')
                                 : item.isFree
                                   ? t('aiProviders.models.pricing.free')
-                                  : `${item.formattedValue}${t(unitKey)}`;
+                                  : `${item.formattedValue}${item.displayUnit || t(unitKey)}`;
 
                               return (
                                 <div

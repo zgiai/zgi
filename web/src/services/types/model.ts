@@ -141,6 +141,10 @@ export interface ModelUsageGuidelines {
 export interface ModelItem {
   id: string;
   provider: string; // Renamed from name
+  vendor?: string; // Model maker/owner; catalog models provide this field
+  vendor_name?: string;
+  vendor_cn_name?: string;
+  vendor_en_name?: string;
   model: string; // Renamed from name (used in API)
   model_name: string; // Renamed from display_name
   slug?: string; // App-internal

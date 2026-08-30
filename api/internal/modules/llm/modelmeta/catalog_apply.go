@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	"gorm.io/gorm"
@@ -25,6 +26,20 @@ type PublishedCatalog struct {
 	PublishedAt time.Time
 	Providers   []PublishedProvider
 	Models      []PublishedModel
+	Vendors     []PublishedVendor
+}
+
+type PublishedVendor struct {
+	Vendor      string
+	VendorName  string
+	CNName      string
+	ENName      string
+	Description string
+	Website     string
+	CountryCode string
+	Status      string
+	IsActive    bool
+	Metadata    map[string]interface{}
 }
 
 type PublishedProvider struct {
@@ -46,6 +61,7 @@ type PublishedProvider struct {
 
 type PublishedModel struct {
 	Provider               string
+	Vendor                 string
 	Model                  string
 	ModelName              string
 	Type                   string
@@ -140,6 +156,28 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 	if err != nil {
 		return err
 	}
+	vendors := make([]catalogvendor.Entry, 0, len(catalog.Models))
+	for _, catalogModel := range catalog.Models {
+		vendors = append(vendors, catalogvendor.Entry{
+			Provider: catalogModel.Provider,
+			Model:    catalogModel.Model,
+			Vendor:   catalogModel.Vendor,
+		})
+	}
+	catalogvendor.Replace(vendors)
+	vendorMetadata := make([]catalogvendor.Metadata, 0, len(catalog.Vendors))
+	for _, vendor := range catalog.Vendors {
+		vendorMetadata = append(vendorMetadata, catalogvendor.Metadata{
+			Vendor:      vendor.Vendor,
+			VendorName:  vendor.VendorName,
+			CNName:      vendor.CNName,
+			ENName:      vendor.ENName,
+			Description: vendor.Description,
+			Website:     vendor.Website,
+			CountryCode: vendor.CountryCode,
+		})
+	}
+	catalogvendor.ReplaceMetadata(vendorMetadata)
 	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
 		invalidator.InvalidateModelCache(ctx)
 	}

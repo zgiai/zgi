@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"gorm.io/datatypes"
@@ -124,6 +125,7 @@ type ModelMetaData struct {
 	ID                        string                 `json:"id"`
 	Object                    string                 `json:"object"`
 	Provider                  string                 `json:"provider"`
+	Vendor                    string                 `json:"vendor"`
 	IconSlug                  string                 `json:"icon_slug"`
 	Model                     string                 `json:"model"`
 	ModelName                 string                 `json:"model_name"`
@@ -250,6 +252,15 @@ func (s *Service) SyncProviderModels(ctx context.Context, provider string, model
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch models: %w", err)
 	}
+	vendors := make([]catalogvendor.Entry, 0, len(allModels))
+	for _, remoteModel := range allModels {
+		vendors = append(vendors, catalogvendor.Entry{
+			Provider: remoteModel.Provider,
+			Model:    remoteModel.Model,
+			Vendor:   remoteModel.Vendor,
+		})
+	}
+	catalogvendor.ReplaceProvider(provider, vendors)
 
 	// Filter models if specific models are requested
 	var modelsToSync []ModelMetaData
@@ -754,6 +765,9 @@ func mergeModelMetaDetail(base, detail ModelMetaData) ModelMetaData {
 	}
 	if strings.TrimSpace(detail.Provider) != "" {
 		base.Provider = detail.Provider
+	}
+	if strings.TrimSpace(detail.Vendor) != "" {
+		base.Vendor = detail.Vendor
 	}
 	if strings.TrimSpace(detail.IconSlug) != "" {
 		base.IconSlug = detail.IconSlug
@@ -1343,6 +1357,7 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 
 	return PublishedModel{
 		Provider:               meta.Provider,
+		Vendor:                 strings.TrimSpace(meta.Vendor),
 		Model:                  meta.Model,
 		ModelName:              meta.ModelName,
 		Family:                 meta.Family,

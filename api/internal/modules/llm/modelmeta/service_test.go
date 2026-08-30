@@ -70,6 +70,14 @@ func TestModelMetaDiffDetectsPriceConfiguredStateChange(t *testing.T) {
 	}
 }
 
+func TestModelMetaPublishesVendor(t *testing.T) {
+	remote := &ModelMetaData{Vendor: " qwen "}
+	published := publishedModelFromMeta(remote)
+	if published.Vendor != "qwen" {
+		t.Fatalf("published vendor = %q, want qwen", published.Vendor)
+	}
+}
+
 func TestNormalizeRemotePricePreservesOfficialTwelveDecimalPrice(t *testing.T) {
 	got := normalizeRemotePrice(0.000180612345)
 	want := decimal.RequireFromString("0.000180612345")

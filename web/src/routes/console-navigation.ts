@@ -182,6 +182,13 @@ export const ZGI_CONSOLE_SITE_MAP = [
     permissions: NO_PERMISSIONS,
   },
   {
+    href: '/console/model',
+    label: 'Model Plaza',
+    purpose: 'browse and use models available to the organization',
+    scope: 'organization',
+    permissions: NO_PERMISSIONS,
+  },
+  {
     href: '/console/agents',
     label: 'Agents',
     purpose: 'create, configure, debug, and publish agents',

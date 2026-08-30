@@ -175,6 +175,7 @@ export function useAllModelsInfinite(options?: {
   hasNextPage: boolean;
   fetchNextPage: () => Promise<void>;
   isFetchingNextPage: boolean;
+  total: number;
   error: string | null;
   refetch: () => Promise<void>;
 } {
@@ -206,6 +207,9 @@ export function useAllModelsInfinite(options?: {
       getNextPageParam: lastPage => {
         const d = lastPage?.data;
         if (!d) return undefined;
+        if (typeof d.total_pages === 'number' && d.total_pages > 0) {
+          return d.page < d.total_pages ? d.page + 1 : undefined;
+        }
         return d.has_more ? d.page + 1 : undefined;
       },
       enabled,
@@ -218,11 +222,12 @@ export function useAllModelsInfinite(options?: {
   const models = useMemo(() => {
     const pages = data?.pages ?? [];
     const items = pages.flatMap(p => p?.data?.items ?? []).map(normalizeModel);
-    // Deduplicate by name
+    // The same model identifier can be available through multiple providers.
     const seen = new Set<string>();
     return items.filter(m => {
-      if (seen.has(m.model)) return false;
-      seen.add(m.model);
+      const modelKey = `${m.provider}:${m.model}`;
+      if (seen.has(modelKey)) return false;
+      seen.add(modelKey);
       return true;
     });
   }, [data]);
@@ -235,6 +240,8 @@ export function useAllModelsInfinite(options?: {
     await refetch();
   }, [refetch]);
 
+  const total = data?.pages?.[0]?.data?.total ?? models.length;
+
   return {
     models,
     isLoading,
@@ -242,6 +249,7 @@ export function useAllModelsInfinite(options?: {
     hasNextPage: hasNextPage ?? false,
     fetchNextPage: stableFetchNextPage,
     isFetchingNextPage,
+    total,
     error: null,
     refetch: stableRefetch,
   };

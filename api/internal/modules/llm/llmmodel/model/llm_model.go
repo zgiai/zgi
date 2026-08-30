@@ -21,6 +21,7 @@ type LLMModel struct {
 
 	// Provider reference
 	Provider string `gorm:"type:varchar(100);not null;index:idx_model_provider" json:"provider"` // References LLMProvider.Provider
+	Vendor   string `gorm:"-" json:"vendor,omitempty"`                                           // Runtime catalog projection; not persisted
 
 	// Basic info (ModelMeta aligned)
 	Object              string     `gorm:"-" json:"object"` // Fixed value "model" (not stored in DB)

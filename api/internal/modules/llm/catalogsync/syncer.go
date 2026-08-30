@@ -232,6 +232,22 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 		PublishedAt: time.UnixMilli(resp.GetPublishedAt()).UTC(),
 		Providers:   make([]modelmeta.PublishedProvider, 0, len(resp.GetProviders())),
 		Models:      make([]modelmeta.PublishedModel, 0, len(resp.GetModels())),
+		Vendors:     make([]modelmeta.PublishedVendor, 0, len(resp.GetVendors())),
+	}
+
+	for _, vendor := range resp.GetVendors() {
+		catalog.Vendors = append(catalog.Vendors, modelmeta.PublishedVendor{
+			Vendor:      vendor.GetVendor(),
+			VendorName:  vendor.GetVendorName(),
+			CNName:      vendor.GetCnName(),
+			ENName:      vendor.GetEnName(),
+			Description: vendor.GetDescription(),
+			Website:     vendor.GetWebsite(),
+			CountryCode: vendor.GetCountryCode(),
+			Status:      vendor.GetStatus(),
+			IsActive:    vendor.GetIsActive(),
+			Metadata:    decodeJSONMap(vendor.GetMetadataJson()),
+		})
 	}
 
 	for _, provider := range resp.GetProviders() {
@@ -257,6 +273,7 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 		configParameters, defaultParameters := decodeCatalogModelConfigPayload(model.GetConfigParametersJson())
 		catalog.Models = append(catalog.Models, modelmeta.PublishedModel{
 			Provider:               model.GetProvider(),
+			Vendor:                 model.GetVendor(),
 			Model:                  model.GetModel(),
 			ModelName:              model.GetModelName(),
 			Type:                   model.GetType(),

@@ -20,6 +20,7 @@ import {
   ChevronDown,
   PlugZap,
   Workflow,
+  LayoutGrid,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
@@ -301,17 +302,14 @@ export function ConsoleSidebar({
 
   const rootRouteItems = React.useMemo(
     (): RootRouteItem[] => [
-      // Add branch-specific root route items here when needed.
-      // Example:
-      // {
-      //   key: 'model-square',
-      //   title: 'Model Square',
-      //   href: 'https://example.com/modelsquare',
-      //   icon: LayoutGrid,
-      //   target: '_blank',
-      // },
+      {
+        key: 'model-plaza',
+        title: t('modelPlaza'),
+        href: '/console/model',
+        icon: LayoutGrid,
+      },
     ],
-    []
+    [t]
   );
 
   const homeNavLink = (

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -177,12 +178,22 @@ func (s *modelService) GetGlobal(ctx context.Context, id uuid.UUID) (*model.LLMM
 	if err != nil {
 		return nil, ErrModelNotFound
 	}
+	catalogvendor.Enrich(m.Provider, m.Model, &m.Vendor)
 	return m, nil
 }
 
 func (s *modelService) ListGlobal(ctx context.Context, req *dto.ListModelRequest) ([]*model.LLMModel, int64, error) {
 	offset := (req.Page - 1) * req.PageSize
-	return s.globalRepo.List(ctx, req.ProviderID, req.Provider, req.UseCase, req.Status, req.IsActive, offset, req.PageSize)
+	models, total, err := s.globalRepo.List(ctx, req.ProviderID, req.Provider, req.UseCase, req.Status, req.IsActive, offset, req.PageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, item := range models {
+		if item != nil {
+			catalogvendor.Enrich(item.Provider, item.Model, &item.Vendor)
+		}
+	}
+	return models, total, nil
 }
 
 func (s *modelService) UpdateGlobal(ctx context.Context, id uuid.UUID, req *dto.UpdateModelRequest) (*model.LLMModel, error) {
@@ -741,6 +752,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			// Basic info
 			ID:                  m.ID,
 			Provider:            m.Provider,
+			Vendor:              catalogvendor.Lookup(m.Provider, m.Model),
 			Model:               m.Model,
 			ModelName:           m.ModelName,
 			Family:              m.Family,
@@ -843,6 +855,11 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			ConfigParameters:     model.NormalizeConfigParameters(m.ConfigParameters),
 			DefaultParameters:    cloneModelJSONObject(m.DefaultParameters),
 			Capabilities:         capabilitiesFromModelDefaults(m.DefaultParameters),
+		}
+		if metadata, ok := catalogvendor.LookupMetadata(view.Vendor); ok {
+			view.VendorName = metadata.VendorName
+			view.VendorCNName = metadata.CNName
+			view.VendorENName = metadata.ENName
 		}
 
 		// Apply tenant config if exists
@@ -1009,7 +1026,57 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 		result = append(result, view)
 	}
 
-	return result, nil
+	return deduplicateModelViews(result), nil
+}
+
+// deduplicateModelViews preserves source precedence. ListTenantModels appends
+// platform/Console catalog models before tenant custom models, so a matching
+// The catalog model wins when both sources are equally available. When Cloud is
+// unavailable, a callable custom model takes over the single visible entry.
+func deduplicateModelViews(models []*model.ModelView) []*model.ModelView {
+	unique := make([]*model.ModelView, 0, len(models))
+	seen := make(map[string]int, len(models))
+	for _, item := range models {
+		if item == nil {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(item.Model))
+		if key == "" {
+			key = item.ID.String()
+		}
+		if index, exists := seen[key]; exists {
+			current := unique[index]
+			if modelViewAvailabilityRank(item) > modelViewAvailabilityRank(current) {
+				if item.Vendor == "" {
+					item.Vendor = current.Vendor
+					item.VendorName = current.VendorName
+					item.VendorCNName = current.VendorCNName
+					item.VendorENName = current.VendorENName
+				}
+				unique[index] = item
+			}
+			continue
+		}
+		seen[key] = len(unique)
+		unique = append(unique, item)
+	}
+	return unique
+}
+
+func modelViewAvailabilityRank(item *model.ModelView) int {
+	if item == nil {
+		return 0
+	}
+	if item.Callable || (item.IsAvailable && item.IsEnabled) {
+		return 3
+	}
+	if item.IsAvailable {
+		return 2
+	}
+	if item.IsEnabled {
+		return 1
+	}
+	return 0
 }
 
 func matchesProviderFilter(modelProvider string, provider string) bool {
