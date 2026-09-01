@@ -13,7 +13,6 @@ export function getModelExperienceHref(model: ModelItem): string {
   });
   const route = EXPERIENCE_ROUTES.find(item => model.use_cases?.includes(item.useCase));
 
-  // Chat is also the voice entry point: its microphone uses the workspace
-  // speech-to-text default, while agent replies can use text-to-speech.
+  // Speech models fall back to Chat until a dedicated speech workbench exists.
   return `${route?.path ?? '/console/work/chat'}?${params.toString()}`;
 }

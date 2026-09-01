@@ -284,6 +284,8 @@ export function VideoWorkbench() {
   }, []);
 
   React.useEffect(() => {
+    if (isLoading) return;
+
     if (selectedModel.model) {
       const stillAvailable = models.some(
         model => model.provider === selectedModel.provider && model.model === selectedModel.model
@@ -300,7 +302,7 @@ export function VideoWorkbench() {
     }
 
     setSelectedModel({ provider: fallback.provider, model: fallback.model });
-  }, [models, selectedModel.model, selectedModel.provider]);
+  }, [isLoading, models, selectedModel.model, selectedModel.provider]);
 
   const handleGenerate = React.useCallback(async () => {
     if (submitLockRef.current) return;

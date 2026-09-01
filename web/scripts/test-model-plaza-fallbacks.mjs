@@ -61,6 +61,10 @@ const { getModelPriceDisplay } = loadTypeScriptModule('src/utils/model-price.ts'
 const { getModelExperienceHref } = loadTypeScriptModule(
   'src/features/model-plaza/experience-route.ts'
 );
+const videoWorkbenchSource = readFileSync(
+  resolve('src/components/chat/variants/img/video-workbench.tsx'),
+  'utf8'
+);
 
 const experienceModel = (useCases, overrides = {}) => ({
   provider: 'zgi-cloud',
@@ -88,6 +92,11 @@ assert.equal(
 assert.equal(
   getModelExperienceHref(experienceModel(['text-to-speech'])),
   '/console/work/chat?provider=zgi-cloud&model=catalog%2Fmodel+name'
+);
+assert.match(
+  videoWorkbenchSource,
+  /React\.useEffect\(\(\) => \{\s*if \(isLoading\) return;[\s\S]*stillAvailable/,
+  'video workbench must preserve the requested model while available models load'
 );
 
 assert.doesNotThrow(() =>
