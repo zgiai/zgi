@@ -61,6 +61,9 @@ func (s *organizationService) acceptInviteByTokenTransaction(ctx context.Context
 		if err != nil {
 			return err
 		}
+		if err := lockInvitedAccountTx(ctx, tx, accountID); err != nil {
+			return err
+		}
 
 		member, err := organizationMemberExistsTx(ctx, tx, link.OrganizationID, accountID)
 		if err != nil {
@@ -145,6 +148,9 @@ func (s *organizationService) approveInviteRequestTransaction(ctx context.Contex
 		if err := validateOrganizationJoinRequestTargetTx(ctx, tx, &req); err != nil {
 			return err
 		}
+		if err := lockInvitedAccountTx(ctx, tx, req.AccountID); err != nil {
+			return err
+		}
 		now := time.Now()
 		req.Status = model.OrganizationJoinRequestStatusApproved
 		req.ReviewerID = &reviewerAccountID
@@ -208,7 +214,10 @@ func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *
 	}
 	var organization model.Organization
 	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "SHARE"}).
+		// Serialize invite effects within an organization. Besides keeping the
+		// target active for the transaction, this makes the member-name check and
+		// insert one organization-scoped critical section for different accounts.
+		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("id = ?", link.OrganizationID).
 		First(&organization).Error; err != nil {
 		return nil, fmt.Errorf("invited organization is unavailable: %w", err)
@@ -243,6 +252,18 @@ func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *
 	return nil, nil
 }
 
+func lockInvitedAccountTx(ctx context.Context, tx *gorm.DB, accountID string) error {
+	var account auth_model.Account
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("id").
+		Where("id = ?", strings.TrimSpace(accountID)).
+		First(&account).Error; err != nil {
+		return fmt.Errorf("invited account is unavailable: %w", err)
+	}
+	return nil
+}
+
 func newOrganizationInviteJoinRequest(link *model.OrganizationInviteLink, accountID string, name *string, workspaceID *string, status model.OrganizationJoinRequestStatus) *model.OrganizationJoinRequest {
 	return &model.OrganizationJoinRequest{
 		OrganizationID:          link.OrganizationID,
@@ -263,6 +284,9 @@ func (s *organizationService) applyApprovedInviteEffectsTx(ctx context.Context, 
 		return err
 	}
 	if !member {
+		if err := ensureInviteMemberNameAvailableTx(ctx, tx, req.OrganizationID, req.AccountID, req.Name); err != nil {
+			return err
+		}
 		role := model.OrganizationRole(req.DefaultOrganizationRole)
 		if role != model.OrganizationRoleAdmin && role != model.OrganizationRoleNormal {
 			role = model.OrganizationRoleNormal
@@ -316,6 +340,21 @@ func (s *organizationService) applyApprovedInviteEffectsTx(ctx context.Context, 
 		}
 	}
 	return setAcceptedInviteContextTx(ctx, tx, req.AccountID, req.OrganizationID, req.WorkspaceID)
+}
+
+func ensureInviteMemberNameAvailableTx(ctx context.Context, tx *gorm.DB, organizationID, accountID string, name *string) error {
+	if name == nil || strings.TrimSpace(*name) == "" {
+		return nil
+	}
+
+	exists, err := organizationMemberNameExistsTx(ctx, tx, organizationID, strings.TrimSpace(*name), accountID)
+	if err != nil {
+		return fmt.Errorf("check invited member name: %w", err)
+	}
+	if exists {
+		return ErrMemberNameExists
+	}
+	return nil
 }
 
 func setAcceptedInviteContextTx(ctx context.Context, tx *gorm.DB, accountID, organizationID string, workspaceID *string) error {

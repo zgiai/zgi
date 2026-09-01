@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"regexp"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -13,6 +15,24 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestValidateOrganizationInviteTargetSerializesOrganizationEffects(t *testing.T) {
+	db, mock := newOrganizationPermissionRegressionMockDB(t)
+	organizationID := uuid.NewString()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "organizations" WHERE id = $1 ORDER BY "organizations"."id" LIMIT $2 FOR UPDATE`)).
+		WithArgs(organizationID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "status"}).
+			AddRow(organizationID, "Target", model.OrganizationStatusActive))
+
+	workspaceID, err := validateOrganizationInviteTargetTx(t.Context(), db, &model.OrganizationInviteLink{
+		OrganizationID: organizationID,
+		Status:         "active",
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, workspaceID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestAcceptInviteByTokenCreatesTargetScopeTransactionally(t *testing.T) {
 	db := newOrganizationInviteAcceptanceDB(t)
@@ -75,6 +95,33 @@ func TestAcceptInviteByTokenCreatesTargetScopeTransactionally(t *testing.T) {
 	require.Equal(t, []string{accountID, accountID}, accountService.invalidatedAccountIDs)
 }
 
+func TestAcceptInviteByTokenRejectsMissingAccountBeforeCreatingJoinState(t *testing.T) {
+	db := newOrganizationInviteAcceptanceDB(t)
+	organizationID := uuid.NewString()
+	missingAccountID := uuid.NewString()
+	require.NoError(t, db.Create(&model.Organization{
+		ID: organizationID, Name: "Target", Status: model.OrganizationStatusActive,
+	}).Error)
+	link := &model.OrganizationInviteLink{
+		OrganizationID:          organizationID,
+		Token:                   "missing-account-invite",
+		Status:                  "active",
+		RequireApproval:         false,
+		DefaultOrganizationRole: string(model.OrganizationRoleNormal),
+		DefaultWorkspaceRole:    string(model.WorkspaceRoleMember),
+		CreatedBy:               uuid.NewString(),
+	}
+	repository := workspace_repo.NewOrganizationRepository(db)
+	require.NoError(t, repository.CreateInviteLink(t.Context(), link))
+	service := &organizationService{db: db, organizationRepo: repository}
+
+	_, err := service.AcceptInviteByToken(t.Context(), link.Token, missingAccountID, nil)
+
+	require.ErrorContains(t, err, "invited account is unavailable")
+	require.Zero(t, countRows(t, db, &model.OrganizationJoinRequest{}, "account_id = ?", missingAccountID))
+	require.Zero(t, countRows(t, db, &model.OrganizationMember{}, "account_id = ?", missingAccountID))
+}
+
 func TestOrganizationOnlyInviteDoesNotGrantWorkspaceAccess(t *testing.T) {
 	db := newOrganizationInviteAcceptanceDB(t)
 	organizationID := uuid.NewString()
@@ -131,6 +178,101 @@ func TestOrganizationOnlyInviteDoesNotGrantWorkspaceAccess(t *testing.T) {
 	var previousWorkspaceMember model.WorkspaceMember
 	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", oldWorkspaceID, accountID).First(&previousWorkspaceMember).Error)
 	require.False(t, previousWorkspaceMember.Current)
+}
+
+func TestAutoApprovedInviteRejectsDuplicateOrganizationMemberName(t *testing.T) {
+	db := newOrganizationInviteAcceptanceDB(t)
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	existingAccountID := uuid.NewString()
+	duplicateName := "Duplicate Name"
+	require.NoError(t, db.Create(&model.Organization{
+		ID: organizationID, Name: "Target", Status: model.OrganizationStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&auth_model.Account{
+		ID: accountID, Email: "duplicate-invitee@example.com", Name: duplicateName, Status: auth_model.AccountStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&auth_model.Account{
+		ID: existingAccountID, Email: "existing-member@example.com", Name: duplicateName, Status: auth_model.AccountStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&model.OrganizationMember{
+		OrganizationID: organizationID,
+		AccountID:      existingAccountID,
+		Role:           model.OrganizationRoleNormal,
+		Name:           &duplicateName,
+	}).Error)
+	link := &model.OrganizationInviteLink{
+		OrganizationID:          organizationID,
+		Token:                   "duplicate-name-auto-approved",
+		Status:                  "active",
+		RequireApproval:         false,
+		DefaultOrganizationRole: string(model.OrganizationRoleNormal),
+		CreatedBy:               uuid.NewString(),
+	}
+	repository := workspace_repo.NewOrganizationRepository(db)
+	require.NoError(t, repository.CreateInviteLink(t.Context(), link))
+	service := &organizationService{db: db, organizationRepo: repository}
+
+	_, err := service.AcceptInviteByToken(t.Context(), link.Token, accountID, &duplicateName)
+
+	require.ErrorIs(t, err, ErrMemberNameExists)
+	require.Zero(t, countRows(t, db, &model.OrganizationJoinRequest{}, "group_id = ? AND account_id = ?", organizationID, accountID))
+	require.Zero(t, countRows(t, db, &model.OrganizationMember{}, "organization_id = ? AND account_id = ?", organizationID, accountID))
+	require.Zero(t, countRows(t, db, &auth_model.AccountContext{}, "account_id = ?", accountID))
+}
+
+func TestPendingInviteRechecksDuplicateMemberNameAtApproval(t *testing.T) {
+	db := newOrganizationInviteAcceptanceDB(t)
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	conflictingAccountID := uuid.NewString()
+	requestedName := "Pending Name"
+	require.NoError(t, db.Create(&model.Organization{
+		ID: organizationID, Name: "Target", Status: model.OrganizationStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&auth_model.Account{
+		ID: accountID, Email: "pending-name@example.com", Name: requestedName, Status: auth_model.AccountStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&auth_model.Account{
+		ID: conflictingAccountID, Email: "later-member@example.com", Name: requestedName, Status: auth_model.AccountStatusActive,
+	}).Error)
+	link := &model.OrganizationInviteLink{
+		OrganizationID:          organizationID,
+		Token:                   "duplicate-name-pending",
+		Status:                  "active",
+		RequireApproval:         true,
+		DefaultOrganizationRole: string(model.OrganizationRoleNormal),
+		CreatedBy:               uuid.NewString(),
+	}
+	repository := workspace_repo.NewOrganizationRepository(db)
+	require.NoError(t, repository.CreateInviteLink(t.Context(), link))
+	service := &organizationService{db: db, organizationRepo: repository}
+
+	pending, err := service.AcceptInviteByToken(t.Context(), link.Token, accountID, &requestedName)
+	require.NoError(t, err)
+	require.Equal(t, model.OrganizationJoinRequestStatusPending, pending.Status)
+	require.NoError(t, db.Create(&model.OrganizationMember{
+		OrganizationID: organizationID,
+		AccountID:      conflictingAccountID,
+		Role:           model.OrganizationRoleNormal,
+		Name:           &requestedName,
+	}).Error)
+
+	_, err = service.ApproveDepartmentJoinRequest(t.Context(), organizationID, pending.ID, uuid.NewString())
+	require.ErrorIs(t, err, ErrMemberNameExists)
+	var persisted model.OrganizationJoinRequest
+	require.NoError(t, db.Where("id = ?", pending.ID).First(&persisted).Error)
+	require.Equal(t, model.OrganizationJoinRequestStatusPending, persisted.Status)
+	require.Zero(t, countRows(t, db, &model.OrganizationMember{}, "organization_id = ? AND account_id = ?", organizationID, accountID))
+
+	require.NoError(t, db.Delete(&model.OrganizationMember{}, "organization_id = ? AND account_id = ?", organizationID, conflictingAccountID).Error)
+	approved, err := service.ApproveDepartmentJoinRequest(t.Context(), organizationID, pending.ID, uuid.NewString())
+	require.NoError(t, err)
+	require.Equal(t, model.OrganizationJoinRequestStatusApproved, approved.Status)
+	var member model.OrganizationMember
+	require.NoError(t, db.Where("organization_id = ? AND account_id = ?", organizationID, accountID).First(&member).Error)
+	require.NotNil(t, member.Name)
+	require.Equal(t, requestedName, *member.Name)
 }
 
 func TestApprovalRequiredInviteRemainsRetryableUntilApproval(t *testing.T) {
