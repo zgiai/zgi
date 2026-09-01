@@ -790,6 +790,9 @@ func TestAgentsService_GetAgentRuntimeSurfaces_UsesCurrentAgentWorkspaceOverPers
 	expectAgentRuntimeSurfaceRows(mock, agentID, staleWorkspaceID, []agentRuntimeSurfaceExpectation{
 		{surface: string(runtimeauth.PublishedRuntimeSurfaceWebApp), enabled: true},
 	})
+	mock.ExpectQuery(`SELECT id, name FROM "workspaces" WHERE .*organization_id = \$1.*status = \$2.*id IN \(\$3\)`).
+		WithArgs("88888888-8888-8888-8888-888888888888", workspace_model.WorkspaceStatusNormal, currentWorkspaceID.String()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(currentWorkspaceID.String(), "Current Workspace"))
 
 	service := &agentsService{
 		db: db,
@@ -808,6 +811,8 @@ func TestAgentsService_GetAgentRuntimeSurfaces_UsesCurrentAgentWorkspaceOverPers
 	require.NoError(t, err)
 	require.Equal(t, currentWorkspaceID.String(), resp.WorkspaceID)
 	require.Equal(t, "88888888-8888-8888-8888-888888888888", resp.OrganizationID)
+	surfaces := runtimeSurfaceTestMap(resp.Surfaces)
+	require.Equal(t, "Current Workspace", surfaces["app_center"].Grants[0].SubjectDetail.DisplayName)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -827,6 +832,46 @@ func TestAgentsService_GetAgentRuntimeSurfaces_RejectsMissingWorkspaceViewPermis
 
 	_, err := service.GetAgentRuntimeSurfaces(ctx, agentID.String(), "99999999-9999-9999-9999-999999999999")
 	require.ErrorIs(t, err, runtimeservice.ErrPermissionDenied)
+}
+
+func TestAgentsService_AttachAgentRuntimeGrantSubjectDetails(t *testing.T) {
+	db, mock, cleanup := openAgentRuntimeSurfacesMockDBWithMock(t)
+	defer cleanup()
+
+	organizationID := "88888888-8888-8888-8888-888888888888"
+	accountID := "99999999-9999-9999-9999-999999999999"
+	departmentID := "99999999-9999-9999-9999-999999999998"
+	workspaceID := "22222222-2222-2222-2222-222222222222"
+	memberName := "Team Alice"
+
+	mock.ExpectQuery(`SELECT members\.account_id AS id, accounts\.name AS account_name, members\.name AS member_name FROM "members" JOIN accounts ON accounts\.id = members\.account_id WHERE .*members\.organization_id = \$1.*members\.status = \$2.*members\.account_id IN \(\$3\)`).
+		WithArgs(organizationID, workspace_model.OrganizationMemberStatusActive, accountID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "account_name", "member_name"}).
+			AddRow(accountID, "Alice", memberName))
+	mock.ExpectQuery(`SELECT id, name FROM "departments" WHERE .*group_id = \$1.*status = \$2.*id IN \(\$3\)`).
+		WithArgs(organizationID, workspace_model.DepartmentStatusActive, departmentID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(departmentID, "Engineering"))
+	mock.ExpectQuery(`SELECT id, name FROM "workspaces" WHERE .*organization_id = \$1.*status = \$2.*id IN \(\$3\)`).
+		WithArgs(organizationID, workspace_model.WorkspaceStatusNormal, workspaceID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(workspaceID, "Product"))
+
+	surfaces := []dto.AgentRuntimeSurfaceAuthorization{{
+		Surface: "app_center",
+		Enabled: true,
+		Grants: []dto.AgentRuntimeSurfaceGrant{
+			{SubjectType: "account", SubjectID: &accountID, Enabled: true},
+			{SubjectType: "department", SubjectID: &departmentID, Enabled: true},
+			{SubjectType: "workspace", SubjectID: &workspaceID, Enabled: true},
+		},
+	}}
+	service := &agentsService{db: db}
+
+	err := service.attachAgentRuntimeGrantSubjectDetails(context.Background(), organizationID, surfaces)
+	require.NoError(t, err)
+	require.Equal(t, memberName, surfaces[0].Grants[0].SubjectDetail.DisplayName)
+	require.Equal(t, "Engineering", surfaces[0].Grants[1].SubjectDetail.DisplayName)
+	require.Equal(t, "Product", surfaces[0].Grants[2].SubjectDetail.DisplayName)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestAgentsService_UpdateAgentRuntimeSurfaces_RejectsInternalDisable(t *testing.T) {
