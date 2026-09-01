@@ -27,6 +27,7 @@ import (
 	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
@@ -2112,6 +2113,78 @@ func updateAccountExtensions(account *auth_model.Account, mobile, wechat, addres
 // DeleteAccountPermanently implements the DeleteAccountPermanently method
 func (s *AccountService) DeleteAccountPermanently(ctx context.Context, account *auth_model.Account) error {
 	return s.accountRepo.GetDB().WithContext(ctx).Unscoped().Where("id = ?", account.ID).Delete(&auth_model.Account{}).Error
+}
+
+// DeleteUnboundAccountPermanently removes a just-created registration account
+// only while it still has no organization or workspace affiliation. The row
+// lock and in-transaction binding checks prevent a compensation race from
+// removing an account that another request has already attached to a scope.
+func (s *AccountService) DeleteUnboundAccountPermanently(ctx context.Context, account *auth_model.Account) (bool, error) {
+	if account == nil || strings.TrimSpace(account.ID) == "" {
+		return false, nil
+	}
+	if s == nil || s.accountRepo == nil || s.accountRepo.GetDB() == nil {
+		return false, fmt.Errorf("account repository is unavailable")
+	}
+
+	deleted := false
+	err := s.accountRepo.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedAccount auth_model.Account
+		if err := tx.WithContext(ctx).
+			Unscoped().
+			Select("id").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND deleted_at IS NULL", account.ID).
+			Take(&lockedAccount).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return fmt.Errorf("lock registration account: %w", err)
+		}
+
+		for _, binding := range []struct {
+			table string
+			label string
+		}{
+			{table: "members", label: "organization memberships"},
+			{table: "workspace_members", label: "workspace memberships"},
+			{table: "account_contexts", label: "account contexts"},
+			{table: "organization_join_requests", label: "organization join requests"},
+		} {
+			var count int64
+			if err := tx.WithContext(ctx).
+				Table(binding.table).
+				Where("account_id = ?", account.ID).
+				Count(&count).Error; err != nil {
+				return fmt.Errorf("check registration account %s: %w", binding.label, err)
+			}
+			if count > 0 {
+				return nil
+			}
+		}
+
+		result := tx.WithContext(ctx).
+			Unscoped().
+			Where("id = ? AND deleted_at IS NULL", account.ID).
+			Delete(&auth_model.Account{})
+		if result.Error != nil {
+			return fmt.Errorf("delete registration account: %w", result.Error)
+		}
+		deleted = result.RowsAffected == 1
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("delete unbound registration account: %w", err)
+	}
+	if !deleted {
+		logger.WarnContext(ctx, "Skipped registration account compensation because the account is absent or has tenant state", "account_id", account.ID)
+		return false, nil
+	}
+
+	s.InvalidateAccountProfileCache(account.ID)
+	statuscache.InvalidateAccountStatus(ctx, account.ID)
+	workspacecache.InvalidateAccount(ctx, account.ID)
+	return true, nil
 }
 
 // SetAccountRole implements the SetAccountRole method

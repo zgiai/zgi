@@ -88,6 +88,10 @@ type EmailRegistrationAccountGateway interface {
 	Login(ctx context.Context, req *shared_dto.LoginReq) (*auth_model.TokenPair, error, shared_dto.LoginResponse, helper.ErrorResponse)
 }
 
+type emailRegistrationAccountCompensator interface {
+	DeleteUnboundAccountPermanently(ctx context.Context, account *auth_model.Account) (bool, error)
+}
+
 type EmailRegistrationCodeSender interface {
 	SendRegistrationCode(ctx context.Context, language, to, code, idempotencyKey string) error
 }
@@ -107,6 +111,7 @@ type EmailRegistrationService struct {
 	rateLimiter *RedisEmailRegistrationRateLimiter
 	options     EmailRegistrationOptions
 	invitations registrationInvitationGateway
+	compensator emailRegistrationAccountCompensator
 }
 
 func (s *EmailRegistrationService) SetRegistrationInvitationGateway(gateway registrationInvitationGateway) {
@@ -125,13 +130,15 @@ func NewEmailRegistrationService(
 	if options.SendCooldown <= 0 {
 		options.SendCooldown = defaultEmailRegistrationSendCooldown
 	}
-	return &EmailRegistrationService{
+	service := &EmailRegistrationService{
 		accounts:    accounts,
 		tokenMgr:    tokenMgr,
 		codeSender:  codeSender,
 		rateLimiter: NewRedisEmailRegistrationRateLimiter(options.SendCooldown),
 		options:     options,
 	}
+	service.compensator, _ = accounts.(emailRegistrationAccountCompensator)
+	return service
 }
 
 func (s *EmailRegistrationService) SendCode(
@@ -336,8 +343,9 @@ func (s *EmailRegistrationService) Finish(
 	if err != nil {
 		return nil, fmt.Errorf("check registration account before finish: %w", err)
 	}
+	var createdAccount *auth_model.Account
 	if !exists {
-		if _, err := s.accounts.RegisterEx(
+		createdAccount, err = s.accounts.RegisterEx(
 			ctx,
 			emailAddress,
 			name,
@@ -348,7 +356,8 @@ func (s *EmailRegistrationService) Finish(
 			nil,
 			nil,
 			&createWorkspace,
-		); err != nil {
+		)
+		if err != nil {
 			normalizedError := strings.ToLower(err.Error())
 			if strings.Contains(normalizedError, "frozen") || strings.Contains(normalizedError, "freeze") {
 				return nil, fmt.Errorf("%w: %v", ErrEmailRegistrationAccountFrozen, err)
@@ -363,18 +372,33 @@ func (s *EmailRegistrationService) Finish(
 	}
 	_, loginErr, loginResp, _ := s.accounts.Login(ctx, loginReq)
 	if loginErr != nil {
-		return nil, fmt.Errorf("login after email registration: %w", loginErr)
+		return nil, s.compensateInvitedEmailRegistration(
+			ctx,
+			inviteToken,
+			createdAccount,
+			"",
+			fmt.Errorf("login after email registration: %w", loginErr),
+		)
 	}
 	if inviteToken != "" {
 		if loginResp.Account == nil || strings.TrimSpace(loginResp.Account.ID) == "" {
-			return nil, fmt.Errorf("%w: login response account is missing", ErrRegistrationInvitationAcceptance)
+			return nil, s.compensateInvitedEmailRegistration(
+				ctx,
+				inviteToken,
+				createdAccount,
+				loginResp.RefreshToken,
+				fmt.Errorf("%w: login response account is missing", ErrRegistrationInvitationAcceptance),
+			)
 		}
 		invitation, invitationErr := acceptRegistrationInvitation(ctx, s.invitations, inviteToken, loginResp.Account.ID, name)
 		if invitationErr != nil {
-			if loginResp.RefreshToken != "" {
-				_ = s.tokenMgr.RevokeToken(loginResp.RefreshToken, "refresh")
-			}
-			return nil, invitationErr
+			return nil, s.compensateInvitedEmailRegistration(
+				ctx,
+				inviteToken,
+				createdAccount,
+				loginResp.RefreshToken,
+				invitationErr,
+			)
 		}
 		loginResp.Invitation = invitation
 	}
@@ -385,6 +409,38 @@ func (s *EmailRegistrationService) Finish(
 		return nil, ErrEmailRegistrationTokenInvalid
 	}
 	return &loginResp, nil
+}
+
+func (s *EmailRegistrationService) compensateInvitedEmailRegistration(
+	ctx context.Context,
+	inviteToken string,
+	createdAccount *auth_model.Account,
+	refreshToken string,
+	cause error,
+) error {
+	if strings.TrimSpace(inviteToken) == "" {
+		return cause
+	}
+	var cleanupErr error
+	if strings.TrimSpace(refreshToken) != "" {
+		if err := s.tokenMgr.RevokeToken(refreshToken, "refresh"); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("revoke email registration refresh token: %w", err))
+		}
+	}
+	if createdAccount == nil {
+		return errors.Join(cause, cleanupErr)
+	}
+
+	compensationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), emailRegistrationCompensationTimeout)
+	defer cancel()
+	if s.compensator == nil {
+		cleanupErr = errors.Join(cleanupErr, errors.New("remove unbound email registration account: account compensator is unavailable"))
+		return errors.Join(cause, cleanupErr)
+	}
+	if _, err := s.compensator.DeleteUnboundAccountPermanently(compensationCtx, createdAccount); err != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove unbound email registration account: %w", err))
+	}
+	return errors.Join(cause, cleanupErr)
 }
 
 type PackageEmailRegistrationCodeSender struct{}

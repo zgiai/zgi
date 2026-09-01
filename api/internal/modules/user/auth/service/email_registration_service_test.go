@@ -124,15 +124,17 @@ func TestEmailRegistrationAcceptsValidatedInviteWithoutPersonalWorkspace(t *test
 	require.Equal(t, "organization-1", result.Invitation.OrganizationID)
 }
 
-func TestEmailInvitationAcceptanceFailureKeepsRegistrationRetryable(t *testing.T) {
+func TestEmailInvitationAcceptanceFailureRemovesNewUnboundAccountForRegistrationRetry(t *testing.T) {
 	tokenManager := newTestEmailRegistrationTokenManager(t)
 	accounts := &fakeEmailRegistrationAccounts{}
 	sender := &fakeEmailRegistrationSender{}
+	ctx, cancel := context.WithCancel(t.Context())
 	invitation := &fakeRegistrationInvitationGateway{
 		link: &workspace_model.OrganizationInviteLink{
 			ID: "link-retry", OrganizationID: "organization-retry", Token: "invite-retry", Status: "active",
 		},
 		acceptErr: errors.New("database unavailable"),
+		onAccept:  cancel,
 	}
 	service := NewEmailRegistrationService(accounts, tokenManager, sender, EmailRegistrationOptions{AllowRegister: true})
 	service.SetRegistrationInvitationGateway(invitation)
@@ -147,17 +149,128 @@ func TestEmailInvitationAcceptanceFailureKeepsRegistrationRetryable(t *testing.T
 		Password: "secret123", PasswordConfirm: "secret123", InviteToken: "invite-retry",
 	}
 
-	_, err = service.Finish(t.Context(), req, "127.0.0.1")
+	_, err = service.Finish(ctx, req, "127.0.0.1")
 	require.ErrorIs(t, err, ErrRegistrationInvitationAcceptance)
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
 	require.Equal(t, 1, accounts.registerCalls)
 	require.False(t, *accounts.createWorkspaceRequired)
+	require.Equal(t, 1, accounts.deleteUnboundCalls)
+	require.NoError(t, accounts.deleteContextErr, "cleanup must outlive the canceled request context")
+	require.Empty(t, accounts.existingEmail)
 
-	invitation.acceptErr = nil
+	req.InviteToken = ""
 	result, err := service.Finish(t.Context(), req, "127.0.0.1")
 	require.NoError(t, err)
-	require.Equal(t, 1, accounts.registerCalls, "retry must reuse the scope-less account")
-	require.NotNil(t, result.Invitation)
-	require.Equal(t, "approved", result.Invitation.Status)
+	require.Equal(t, 2, accounts.registerCalls, "retry must recreate the removed account with its normal scope")
+	require.True(t, *accounts.createWorkspaceRequired)
+	require.Nil(t, result.Invitation)
+}
+
+func TestEmailInvitationAcceptanceFailurePreservesCleanupError(t *testing.T) {
+	tokenManager := newTestEmailRegistrationTokenManager(t)
+	cleanupErr := errors.New("account cleanup unavailable")
+	refreshToken, err := tokenManager.GenerateDataToken(t.Context(), "refresh", map[string]interface{}{
+		"account_id": "account-1",
+	})
+	require.NoError(t, err)
+	accounts := &fakeEmailRegistrationAccounts{
+		deleteUnboundErr: cleanupErr,
+		loginResponse: &shared_dto.LoginResponse{
+			AccessToken:  "access-token",
+			RefreshToken: refreshToken,
+			Account:      &shared_dto.AccountProfileResponse{ID: "account-1", Email: "cleanup@example.com"},
+		},
+	}
+	sender := &fakeEmailRegistrationSender{}
+	invitation := &fakeRegistrationInvitationGateway{
+		link: &workspace_model.OrganizationInviteLink{
+			ID: "link-cleanup", OrganizationID: "organization-cleanup", Token: "invite-cleanup", Status: "active",
+		},
+		acceptErr: errors.New("invite reset"),
+	}
+	service := NewEmailRegistrationService(accounts, tokenManager, sender, EmailRegistrationOptions{AllowRegister: true})
+	service.SetRegistrationInvitationGateway(invitation)
+	sent, err := service.SendCode(t.Context(), EmailRegistrationSendRequest{Email: "cleanup@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+	verified, err := service.VerifyCode(t.Context(), EmailRegistrationVerifyRequest{
+		Email: "cleanup@example.com", Code: sender.code, Token: sent.Token,
+	})
+	require.NoError(t, err)
+
+	_, err = service.Finish(t.Context(), EmailRegistrationFinishRequest{
+		Email: "cleanup@example.com", Token: verified.Token, Name: "Cleanup",
+		Password: "secret123", PasswordConfirm: "secret123", InviteToken: "invite-cleanup",
+	}, "127.0.0.1")
+
+	require.ErrorIs(t, err, ErrRegistrationInvitationAcceptance)
+	require.ErrorIs(t, err, cleanupErr)
+	require.ErrorContains(t, err, "remove unbound email registration account")
+	require.Equal(t, 1, accounts.deleteUnboundCalls)
+	require.Equal(t, "cleanup@example.com", accounts.existingEmail)
+	_, tokenErr := tokenManager.GetTokenData(refreshToken, "refresh")
+	require.Error(t, tokenErr, "refresh token must be revoked even when account cleanup fails")
+}
+
+func TestEmailInvitationAcceptanceFailureDoesNotDeletePreexistingAccount(t *testing.T) {
+	tokenManager := newTestEmailRegistrationTokenManager(t)
+	accounts := &fakeEmailRegistrationAccounts{existingEmail: "existing@example.com"}
+	invitation := &fakeRegistrationInvitationGateway{
+		link: &workspace_model.OrganizationInviteLink{
+			ID: "link-existing", OrganizationID: "organization-existing", Token: "invite-existing", Status: "active",
+		},
+		acceptErr: errors.New("invite reset"),
+	}
+	service := NewEmailRegistrationService(accounts, tokenManager, &fakeEmailRegistrationSender{}, EmailRegistrationOptions{AllowRegister: true})
+	service.SetRegistrationInvitationGateway(invitation)
+	verifiedToken, err := tokenManager.GenerateDataToken(t.Context(), EmailRegistrationVerifiedTokenType, map[string]interface{}{
+		"registration_email": "existing@example.com",
+		"language":           "en-US",
+	})
+	require.NoError(t, err)
+
+	_, err = service.Finish(t.Context(), EmailRegistrationFinishRequest{
+		Email: "existing@example.com", Token: verifiedToken, Name: "Existing",
+		Password: "secret123", PasswordConfirm: "secret123", InviteToken: "invite-existing",
+	}, "127.0.0.1")
+
+	require.ErrorIs(t, err, ErrRegistrationInvitationAcceptance)
+	require.Zero(t, accounts.registerCalls)
+	require.Zero(t, accounts.deleteUnboundCalls)
+	require.Equal(t, "existing@example.com", accounts.existingEmail)
+}
+
+func TestEmailRegistrationMissingLoginAccountRevokesRefreshWithoutDeletingPreexistingAccount(t *testing.T) {
+	tokenManager := newTestEmailRegistrationTokenManager(t)
+	refreshToken, err := tokenManager.GenerateDataToken(t.Context(), "refresh", map[string]interface{}{
+		"account_id": "account-existing",
+	})
+	require.NoError(t, err)
+	accounts := &fakeEmailRegistrationAccounts{
+		existingEmail: "missing-profile@example.com",
+		loginResponse: &shared_dto.LoginResponse{RefreshToken: refreshToken},
+	}
+	invitation := &fakeRegistrationInvitationGateway{link: &workspace_model.OrganizationInviteLink{
+		ID: "link-missing-profile", OrganizationID: "organization-missing-profile", Token: "invite-missing-profile", Status: "active",
+	}}
+	service := NewEmailRegistrationService(accounts, tokenManager, &fakeEmailRegistrationSender{}, EmailRegistrationOptions{AllowRegister: true})
+	service.SetRegistrationInvitationGateway(invitation)
+	verifiedToken, err := tokenManager.GenerateDataToken(t.Context(), EmailRegistrationVerifiedTokenType, map[string]interface{}{
+		"registration_email": "missing-profile@example.com",
+		"language":           "en-US",
+	})
+	require.NoError(t, err)
+
+	_, err = service.Finish(t.Context(), EmailRegistrationFinishRequest{
+		Email: "missing-profile@example.com", Token: verifiedToken, Name: "Missing Profile",
+		Password: "secret123", PasswordConfirm: "secret123", InviteToken: "invite-missing-profile",
+	}, "127.0.0.1")
+
+	require.ErrorIs(t, err, ErrRegistrationInvitationAcceptance)
+	require.Zero(t, accounts.registerCalls)
+	require.Zero(t, accounts.deleteUnboundCalls)
+	require.Equal(t, "missing-profile@example.com", accounts.existingEmail)
+	_, tokenErr := tokenManager.GetTokenData(refreshToken, "refresh")
+	require.Error(t, tokenErr)
 }
 
 func TestEmailRegistrationLocksChallengeAfterMaximumAttempts(t *testing.T) {
@@ -426,7 +539,12 @@ type fakeEmailRegistrationAccounts struct {
 	registerErr               error
 	registerErrCreatesAccount bool
 	loginErr                  error
+	loginResponse             *shared_dto.LoginResponse
 	createWorkspaceRequired   *bool
+	deleteUnboundCalls        int
+	deleteUnboundErr          error
+	deleteContextErr          error
+	hasScopeBinding           bool
 }
 
 type failRedisCommandOnceHook struct {
@@ -510,6 +628,22 @@ func (f *fakeEmailRegistrationAccounts) RegisterEx(
 	return &auth_model.Account{ID: "account-1", Email: email, Name: name}, nil
 }
 
+func (f *fakeEmailRegistrationAccounts) DeleteUnboundAccountPermanently(
+	ctx context.Context,
+	account *auth_model.Account,
+) (bool, error) {
+	f.deleteUnboundCalls++
+	f.deleteContextErr = ctx.Err()
+	if f.deleteUnboundErr != nil {
+		return false, f.deleteUnboundErr
+	}
+	if f.hasScopeBinding || account == nil || f.existingEmail != account.Email {
+		return false, nil
+	}
+	f.existingEmail = ""
+	return true, nil
+}
+
 func (f *fakeEmailRegistrationAccounts) Login(
 	_ context.Context,
 	req *shared_dto.LoginReq,
@@ -517,6 +651,12 @@ func (f *fakeEmailRegistrationAccounts) Login(
 	f.loginIP = req.LastLoginIp
 	if f.loginErr != nil {
 		return nil, f.loginErr, shared_dto.LoginResponse{}, helper.ErrorResponse{}
+	}
+	if f.loginResponse != nil {
+		return &auth_model.TokenPair{
+			AccessToken:  f.loginResponse.AccessToken,
+			RefreshToken: f.loginResponse.RefreshToken,
+		}, nil, *f.loginResponse, helper.ErrorResponse{}
 	}
 	return &auth_model.TokenPair{AccessToken: "access-token"}, nil, shared_dto.LoginResponse{
 		AccessToken: "access-token",
@@ -529,6 +669,7 @@ type fakeRegistrationInvitationGateway struct {
 	validateErr       error
 	acceptErr         error
 	acceptedAccountID string
+	onAccept          func()
 }
 
 func (f *fakeRegistrationInvitationGateway) ValidateInviteLinkForRegistration(_ context.Context, token string) (*workspace_model.OrganizationInviteLink, error) {
@@ -542,6 +683,9 @@ func (f *fakeRegistrationInvitationGateway) ValidateInviteLinkForRegistration(_ 
 }
 
 func (f *fakeRegistrationInvitationGateway) AcceptInviteByToken(_ context.Context, token, accountID string, _ *string) (*workspace_model.OrganizationJoinRequest, error) {
+	if f.onAccept != nil {
+		f.onAccept()
+	}
 	if f.acceptErr != nil {
 		return nil, f.acceptErr
 	}

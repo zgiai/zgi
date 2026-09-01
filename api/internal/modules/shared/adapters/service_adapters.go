@@ -99,6 +99,10 @@ func (a *AccountServiceAdapter) RegisterEx(ctx context.Context, email string, na
 	return a.accountService.RegisterEx(ctx, email, name, password, openID, provider, language, status, isSetup, createWorkspaceRequired)
 }
 
+func (a *AccountServiceAdapter) DeleteUnboundAccountPermanently(ctx context.Context, account *auth_model.Account) (bool, error) {
+	return a.accountService.DeleteUnboundAccountPermanently(ctx, account)
+}
+
 // All other required methods with placeholder implementations
 
 // GetAccountExtensionByID implements shared.AccountService interface

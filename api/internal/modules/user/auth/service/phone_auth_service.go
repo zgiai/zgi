@@ -104,7 +104,7 @@ type PhoneResetPasswordRequest struct {
 type PhoneAuthAccountGateway interface {
 	FindByPhone(ctx context.Context, phoneE164 string) (*auth_model.Account, error)
 	RegisterByPhone(ctx context.Context, phoneE164 string, name string, password *string, createWorkspaceRequired *bool) (*auth_model.Account, error)
-	DeleteAccountPermanently(ctx context.Context, account *auth_model.Account) error
+	DeleteUnboundAccountPermanently(ctx context.Context, account *auth_model.Account) (bool, error)
 	LoginByAccount(ctx context.Context, account *auth_model.Account, ipAddress string) (*dto.LoginResponse, error)
 	UpdatePhonePassword(ctx context.Context, account *auth_model.Account, password string) error
 }
@@ -290,39 +290,92 @@ func (s *PhoneAuthService) RegisterByPhone(ctx context.Context, req PhoneRegiste
 	if name == "" {
 		name = defaultPhoneAccountName(phoneE164)
 	}
+	createdAccount := false
 	if account == nil {
 		createWorkspace := inviteToken == ""
 		account, err = s.accounts.RegisterByPhone(ctx, phoneE164, name, req.Password, &createWorkspace)
 		if err != nil {
 			return nil, fmt.Errorf("register account by phone: %w", err)
 		}
+		createdAccount = true
 		if inviteToken != "" {
 			if err := s.tokenMgr.BindTokenToAccount(ctx, req.VerifiedToken, PhoneVerifiedTokenType, account.ID); err != nil {
-				compensationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), phoneRegistrationCompensationTimeout)
-				defer cancel()
-				if compensationErr := s.accounts.DeleteAccountPermanently(compensationCtx, account); compensationErr != nil {
-					return nil, fmt.Errorf(
-						"bind invited phone registration retry: %w",
-						errors.Join(err, fmt.Errorf("remove unbound phone registration account: %w", compensationErr)),
-					)
-				}
-				return nil, fmt.Errorf("bind invited phone registration retry: %w", err)
+				return nil, fmt.Errorf(
+					"bind invited phone registration retry: %w",
+					s.cleanupCreatedInvitedPhoneAccount(ctx, req.VerifiedToken, "", account, err),
+				)
 			}
 		}
 	}
 	loginResp, err := s.accounts.LoginByAccount(ctx, account, ipAddress)
 	if err != nil {
+		if createdAccount && inviteToken != "" {
+			err = s.cleanupCreatedInvitedPhoneAccount(ctx, req.VerifiedToken, "", account, err)
+		}
 		return nil, err
 	}
 	if inviteToken != "" {
 		invitation, invitationErr := acceptRegistrationInvitation(ctx, s.invitations, inviteToken, account.ID, name)
 		if invitationErr != nil {
+			if createdAccount {
+				invitationErr = s.cleanupCreatedInvitedPhoneAccount(
+					ctx,
+					req.VerifiedToken,
+					loginResp.RefreshToken,
+					account,
+					invitationErr,
+				)
+			} else if revokeErr := s.revokePhoneRegistrationRefreshToken(loginResp.RefreshToken); revokeErr != nil {
+				invitationErr = errors.Join(invitationErr, revokeErr)
+			}
 			return nil, invitationErr
 		}
 		loginResp.Invitation = invitation
 	}
 	_ = s.tokenMgr.RevokeToken(req.VerifiedToken, PhoneVerifiedTokenType)
 	return loginResp, nil
+}
+
+func (s *PhoneAuthService) cleanupCreatedInvitedPhoneAccount(
+	ctx context.Context,
+	verifiedToken string,
+	refreshToken string,
+	account *auth_model.Account,
+	cause error,
+) error {
+	compensationCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		phoneRegistrationCompensationTimeout,
+	)
+	defer cancel()
+
+	var cleanupErr error
+	deleted, err := s.accounts.DeleteUnboundAccountPermanently(compensationCtx, account)
+	if err != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove unbound phone registration account: %w", err))
+	} else if !deleted {
+		cleanupErr = errors.Join(cleanupErr, errors.New("remove unbound phone registration account: account is no longer unbound"))
+	}
+
+	if err := s.revokePhoneRegistrationRefreshToken(refreshToken); err != nil {
+		cleanupErr = errors.Join(cleanupErr, err)
+	}
+	if deleted {
+		if err := s.tokenMgr.RevokeToken(verifiedToken, PhoneVerifiedTokenType); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("revoke phone registration verification token: %w", err))
+		}
+	}
+	return errors.Join(cause, cleanupErr)
+}
+
+func (s *PhoneAuthService) revokePhoneRegistrationRefreshToken(refreshToken string) error {
+	if strings.TrimSpace(refreshToken) == "" {
+		return nil
+	}
+	if err := s.tokenMgr.RevokeToken(refreshToken, "refresh"); err != nil {
+		return fmt.Errorf("revoke phone registration refresh token: %w", err)
+	}
+	return nil
 }
 
 func (s *PhoneAuthService) LoginByPhone(ctx context.Context, req PhoneLoginRequest, ipAddress string) (*dto.LoginResponse, error) {
