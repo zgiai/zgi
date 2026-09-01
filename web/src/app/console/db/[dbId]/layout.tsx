@@ -109,6 +109,9 @@ export default function DbLayout({ children, params }: LayoutProps) {
   } | null>(null);
   const [createMethodOpen, setCreateMethodOpen] = React.useState(false);
   const [editDbOpen, setEditDbOpen] = React.useState(false);
+  const [accessPolicyOpen, setAccessPolicyOpen] = React.useState(false);
+  const canViewSchemaIndex =
+    canManageSchema || hasEffectivePermission(DATABASE_PERMISSION_ACTIONS.schemaView);
   const [deleteTarget, setDeleteTarget] = React.useState<{ id: string; name: string } | null>(null);
   const [bindingImpact, setBindingImpact] = React.useState<AgentResourceBoundImpact | null>(null);
   const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = React.useState(false);
@@ -502,6 +505,27 @@ export default function DbLayout({ children, params }: LayoutProps) {
                       </span>
                     </Link>
                   )}
+                  {canViewSchemaIndex && !isMismatch && db && (
+                    <Link
+                      href={`/console/db/${dbId}/schema-index`}
+                      aria-current={
+                        pathname === `/console/db/${dbId}/schema-index` ? 'page' : undefined
+                      }
+                      className={cn(
+                        'flex w-full items-center rounded-md px-2.5 py-2 text-xs font-medium transition-colors',
+                        pathname === `/console/db/${dbId}/schema-index`
+                          ? 'bg-primary/10 text-primary'
+                          : 'hover:bg-primary/5 hover:text-primary',
+                        sidebarIsCollapsed && 'justify-center px-0'
+                      )}
+                      title={sidebarIsCollapsed ? t('dbs.schemaIndex.title') : undefined}
+                    >
+                      <Search className="h-4 w-4 shrink-0" />
+                      {!sidebarIsCollapsed && (
+                        <span className="ml-2">{t('dbs.schemaIndex.title')}</span>
+                      )}
+                    </Link>
+                  )}
                   {canUpdateDatabase && !isMismatch && db && (
                     <button
                       type="button"
@@ -529,7 +553,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
           </ResourceSidebar>
 
           {/* Content */}
-          <div className="flex-1 h-full overflow-hidden">
+          <div className="min-w-0 flex-1 h-full overflow-hidden">
             <ErrorBoundary key={pathname}>{children}</ErrorBoundary>
           </div>
         </div>

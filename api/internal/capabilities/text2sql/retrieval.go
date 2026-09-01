@@ -44,7 +44,7 @@ func NewRetrievalService(repo *IndexRepository, models EmbeddingModelResolver, e
 }
 
 func (s *RetrievalService) Retrieve(ctx context.Context, req Request) (SchemaSelection, error) {
-	if s == nil || s.repo == nil || s.models == nil || s.embedder == nil || s.vectors == nil {
+	if s == nil || s.repo == nil || s.models == nil || s.embedder == nil || s.vectors == nil || s.sql == nil {
 		return SchemaSelection{}, ErrIndexNotReady
 	}
 	provider, model, err := s.models.ResolveEmbedding(ctx, req.Scope.OrganizationID)
@@ -54,6 +54,15 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req Request) (SchemaSel
 	rows, err := s.repo.Ready(ctx, req.Scope.WorkspaceID, req.DataSourceID, provider, model)
 	if err != nil || len(rows) == 0 {
 		return SchemaSelection{}, ErrIndexNotReady
+	}
+	tables, err := s.repo.Snapshot(ctx, req.Scope.OrganizationID, req.DataSourceID, s.sql)
+	if err != nil {
+		return SchemaSelection{}, fmt.Errorf("%w: %w", ErrIndexNotReady, err)
+	}
+	var complete bool
+	rows, complete = CompleteIndexes(tables, rows)
+	if !complete {
+		return SchemaSelection{}, fmt.Errorf("%w (%d/%d tables ready)", ErrIndexNotReady, len(rows), len(tables))
 	}
 	collection := collectionName(req.Scope.WorkspaceID, provider, model)
 	queryVector, err := s.embedder.Embed(ctx, provider, model, req.Question)

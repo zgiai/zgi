@@ -29,6 +29,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	dataset_service "github.com/zgiai/zgi/api/internal/modules/dataset/service"
+	"github.com/zgiai/zgi/api/internal/modules/datasource/indexing"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/repository"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	file_repo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
@@ -182,6 +183,7 @@ type ServiceContainer struct {
 
 	// DataSource service
 	dataSourceService     service.DataSourceService
+	databaseSchemaIndexes *indexing.Service
 	sqlAuditRecorder      audit.Recorder
 	sqlBase               sql_base.SQLBase
 	text2SQLCatalogLoader text2sql.CatalogLoader

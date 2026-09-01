@@ -1,4 +1,69 @@
 const messages = {
+  schemaIndex: {
+    title: 'AI schema index',
+    description:
+      'Help AI find relevant tables for SQL generation. This does not modify your business data.',
+    loading: 'Loading index status…',
+    loadError: 'Could not load the index status. Check your access and try again.',
+    reload: 'Reload',
+    tables: 'Tables',
+    model: 'Embedding model',
+    noModel: 'Not configured',
+    progress: '{ready} of {total} tables ready',
+    background:
+      'Work continues after you leave this page. Pending tasks start automatically in the background.',
+    checkedAt: 'Last catalog check: {time}',
+    failures: '{count} tables failed. View details',
+    consent:
+      'Building enables automatic updates when table structures or the default embedding model change. Model usage is billed to this database’s workspace. This is a table-discovery index, not a SQL performance index.',
+    readOnly: 'Schema management permission is required to build or retry indexes.',
+    startError:
+      'Could not submit the request. Check model configuration and your permissions, then retry.',
+    start: 'Build index',
+    retry: 'Retry unfinished indexes',
+    history: {
+      title: 'Update history',
+      description: 'Index builds and automatic updates, summarized once per run.',
+      loading: 'Loading update history…',
+      loadError: 'Could not load update history. Try again later.',
+      empty: 'No update history. Historical indexes are not backfilled.',
+      loadMore: 'Load more',
+      tableCount: '{count} tables affected',
+      unknownTable: 'Preparation',
+      triggers: {
+        initial: 'Initial build',
+        schema_changed: 'Schema changed',
+        model_changed: 'Embedding model changed',
+        manual_retry: 'Manual retry',
+      },
+      statuses: {
+        building: 'In progress',
+        succeeded: 'Completed',
+        failed: 'Failed',
+      },
+    },
+    states: {
+      disabled: 'Not enabled',
+      building: 'Preparing index',
+      ready: 'Ready',
+      failed: 'Needs attention',
+      empty: 'No tables to index',
+    },
+    errors: {
+      timeout: 'This table exceeded its processing time limit.',
+      embedding: 'Embedding generation failed. Check model availability and quota.',
+      storage: 'The vector database could not save the index.',
+      schema: 'The table structure is unavailable or has changed.',
+      scope:
+        'Permissions, workspace, table structure or model configuration changed. Review them before retrying.',
+      interrupted: 'Processing was interrupted. Retry this table.',
+      model: 'Configure an available default embedding model first.',
+      preparation:
+        'Preparation failed. Check database access, model configuration and the task service.',
+      build: 'Indexing failed. Check the server logs for the detailed cause.',
+    },
+  },
+
   title: 'Database Management',
   // confirm, close, refresh, loading moved to common module
   empty: 'No databases',

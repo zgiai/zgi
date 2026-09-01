@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -67,7 +68,14 @@ func (r *IndexRepository) Pending(ctx context.Context, limit int) ([]SchemaIndex
 }
 
 func (r *IndexRepository) Save(ctx context.Context, row *SchemaIndex) error {
-	return r.db.WithContext(ctx).Save(row).Error
+	result := r.db.WithContext(ctx).Model(&SchemaIndex{}).Where("id = ?", row.ID).Select("*").Updates(row)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrIndexNotReady
+	}
+	return nil
 }
 
 func (r *IndexRepository) Superseded(ctx context.Context, current *SchemaIndex) ([]SchemaIndex, error) {
@@ -201,8 +209,10 @@ func (i *Indexer) cleanupSuperseded(ctx context.Context, current *SchemaIndex) e
 func (i *Indexer) fail(ctx context.Context, row *SchemaIndex, code string, cause error) error {
 	row.Status = IndexFailed
 	row.LastErrorCode = &code
-	if err := i.repo.Save(ctx, row); err != nil {
-		return fmt.Errorf("persist index failure: %w", err)
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := i.repo.Save(writeCtx, row); err != nil {
+		return errors.Join(cause, fmt.Errorf("persist index failure: %w", err))
 	}
 	return cause
 }

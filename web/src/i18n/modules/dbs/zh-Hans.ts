@@ -1,6 +1,66 @@
 import type { DbsMessages } from './en-US';
 
 const messages: DbsMessages = {
+  schemaIndex: {
+    title: 'AI 表结构索引',
+    description: '帮助 AI 找到相关表，供智能 SQL 等功能使用，不会修改业务数据。',
+    loading: '正在读取索引状态…',
+    loadError: '无法读取索引状态，请检查访问权限后重试。',
+    reload: '重新加载',
+    tables: '数据表',
+    model: '向量模型',
+    noModel: '未配置',
+    progress: '已完成 {ready} / {total} 张表',
+    background: '离开页面后仍会继续处理，等待中的任务会由后台自动启动。',
+    checkedAt: '最近结构检查：{time}',
+    failures: '{count} 张表失败，查看原因',
+    consent:
+      '建立索引后，表结构或默认向量模型变化时会自动更新，模型费用归属当前数据库的工作空间。这是帮助 AI 找表的索引，不是加速 SQL 的数据库索引。',
+    readOnly: '建立或重试索引需要管理表结构权限。',
+    startError: '提交失败，请检查模型配置和操作权限后重试。',
+    start: '建立索引',
+    retry: '重试未完成索引',
+    history: {
+      title: '更新记录',
+      description: '记录索引建立和自动更新的结果，同一轮任务只生成一条记录。',
+      loading: '正在读取更新记录…',
+      loadError: '无法读取更新记录，请稍后重试。',
+      empty: '暂无更新记录。历史索引不会自动补记。',
+      loadMore: '加载更多',
+      tableCount: '涉及 {count} 张表',
+      unknownTable: '准备阶段',
+      triggers: {
+        initial: '首次建立',
+        schema_changed: '表结构变化',
+        model_changed: '向量模型变化',
+        manual_retry: '手动重试',
+      },
+      statuses: {
+        building: '处理中',
+        succeeded: '已完成',
+        failed: '失败',
+      },
+    },
+    states: {
+      disabled: '尚未开启',
+      building: '正在准备索引',
+      ready: '索引已就绪',
+      failed: '需要处理',
+      empty: '暂无可索引的数据表',
+    },
+    errors: {
+      timeout: '该表处理超时。',
+      embedding: '向量生成失败，请检查模型可用性和额度。',
+      storage: '向量数据库保存索引失败。',
+      schema: '无法读取表结构，或表结构已变化。',
+      scope: '权限、工作空间、表结构或模型配置已变化，请检查后重试。',
+      interrupted: '处理意外中断，请重试该表。',
+      model: '请先配置可用的默认向量模型。',
+      preparation: '准备失败，请检查数据库权限、模型配置和后台任务服务。',
+      build: '索引建立失败，具体原因请查看后端日志。',
+    },
+  },
+
   title: '数据库管理',
   // confirm, close, refresh, loading moved to common module
   empty: '暂无数据库',

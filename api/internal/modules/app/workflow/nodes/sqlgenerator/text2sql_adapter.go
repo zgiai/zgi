@@ -184,41 +184,9 @@ func (n *Node) prepareAutomaticRetriever(ctx context.Context) (text2sql.Retrieve
 		return nil, text2sql.ErrIndexNotReady
 	}
 	models := workflowEmbeddingModels{node: n}
-	provider, model, err := models.ResolveEmbedding(ctx, n.OrganizationID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", text2sql.ErrIndexNotReady, err)
-	}
-	var assets []struct {
-		ID                string
-		TableID           int
-		PhysicalTableName string `gorm:"column:table_name"`
-	}
-	if err := n.db.WithContext(ctx).Table("data_source_tables").Select("id, table_id, table_name").Where("organization_id = ? AND data_source_id = ?", n.OrganizationID, n.NodeData.DataSource.Source.ID).Find(&assets).Error; err != nil {
-		return nil, err
-	}
-	if len(assets) == 0 {
-		return nil, text2sql.ErrIndexNotReady
-	}
 	repo := text2sql.NewIndexRepository(n.db)
 	embedder := workflowEmbedder{node: n}
 	vectors := vectordb.NewWeaviateClient(&config.GlobalConfig.VectorStore)
-	indexer := text2sql.NewIndexer(repo, n.sqlClient, embedder, vectors)
-	for _, asset := range assets {
-		table, loadErr := n.sqlClient.GetTable(ctx, asset.TableID)
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		row := text2sql.NewSchemaIndex(n.OrganizationID, n.WorkspaceID, n.NodeData.DataSource.Source.ID, asset.ID, table, provider, model)
-		if row == nil {
-			return nil, text2sql.ErrIndexNotReady
-		}
-		if ensureErr := repo.Ensure(ctx, row); ensureErr != nil {
-			return nil, ensureErr
-		}
-		if processErr := indexer.Process(ctx, row); processErr != nil {
-			return nil, processErr
-		}
-	}
 	return text2sql.NewRetrievalService(repo, models, embedder, vectors, n.sqlClient), nil
 }
 
