@@ -32,6 +32,7 @@ func projectRegistrationApplicationError(c *gin.Context, projector *apptransport
 		if message.Resolution != apptransport.ResolutionMatched {
 			return false
 		}
+		c.Header(apptransport.HeaderApplicationErrorCode, message.AppCode.String())
 		response.FailWithMessage(c, response.ErrTokenInvalid, message.Message)
 		return true
 	case apperror.IsCode(err, authservice.AppCodeRegistrationMemberNameConflict):
@@ -43,6 +44,7 @@ func projectRegistrationApplicationError(c *gin.Context, projector *apptransport
 		if message.Resolution != apptransport.ResolutionMatched {
 			return false
 		}
+		c.Header(apptransport.HeaderApplicationErrorCode, message.AppCode.String())
 		response.FailWithMessage(c, response.ErrInvalidParam, message.Message)
 		return true
 	default:

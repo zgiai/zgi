@@ -11,7 +11,11 @@ import {
   shouldLockLegacyInviteAccount,
   shouldVerifyRegistrationStatusHint,
 } from '../src/utils/invite-registration.ts';
-import { getRegistrationErrorDescription } from '../src/utils/auth-errors.ts';
+import {
+  APPLICATION_ERROR_CODE_HEADER,
+  getAuthApplicationErrorCode,
+  getRegistrationErrorDescription,
+} from '../src/utils/auth-errors.ts';
 
 const token = 'invite/token with spaces';
 const registrationHref = buildInviteRegistrationHref(token);
@@ -94,6 +98,11 @@ const inviteUnavailableError = {
     code: '401002',
     message: 'This invitation is no longer available. Ask for a new link.',
   },
+  response: {
+    headers: {
+      'x-zgi-app-error-code': 'auth.registration.invitation.unavailable',
+    },
+  },
 };
 assert.deepEqual(getRegistrationErrorDescription(inviteUnavailableError, 'organization-invite'), {
   message: 'This invitation is no longer available. Ask for a new link.',
@@ -107,6 +116,15 @@ const memberNameConflictError = {
     code: '199001',
     message: 'This member name is already in use. Choose another name.',
   },
+  response: {
+    headers: {
+      get(name) {
+        return name === APPLICATION_ERROR_CODE_HEADER
+          ? 'auth.registration.member_name.conflict'
+          : undefined;
+      },
+    },
+  },
 };
 assert.deepEqual(getRegistrationErrorDescription(memberNameConflictError, 'organization-invite'), {
   message: 'This member name is already in use. Choose another name.',
@@ -116,7 +134,14 @@ assert.deepEqual(getRegistrationErrorDescription(memberNameConflictError, '   ')
 });
 assert.deepEqual(
   getRegistrationErrorDescription(
-    { businessError: { code: '199001', message: '   ' } },
+    {
+      businessError: { code: '199001', message: '   ' },
+      response: {
+        headers: {
+          'x-zgi-app-error-code': 'auth.registration.member_name.conflict',
+        },
+      },
+    },
     'organization-invite'
   ),
   { key: 'businessErrors.invalidParameter' }
@@ -131,6 +156,107 @@ const unrelatedRegistrationError = {
 assert.deepEqual(
   getRegistrationErrorDescription(unrelatedRegistrationError, 'organization-invite'),
   { key: 'businessErrors.sendCodeTooManyAttempts' }
+);
+
+for (const reusedLegacyError of [
+  {
+    name: 'expired email verification token',
+    error: {
+      businessError: {
+        code: '401002',
+        message: 'The registration verification token has expired.',
+      },
+    },
+    expected: { key: 'businessErrors.registerTokenExpired' },
+  },
+  {
+    name: 'invalid phone registration token',
+    error: {
+      businessError: {
+        code: '401002',
+        message: 'The phone registration token is invalid.',
+      },
+    },
+    expected: { key: 'businessErrors.registerTokenExpired' },
+  },
+  {
+    name: 'generic invalid parameter',
+    error: {
+      businessError: {
+        code: '199001',
+        message: 'Generic backend parameter detail.',
+      },
+    },
+    expected: { key: 'businessErrors.invalidParameter' },
+  },
+]) {
+  assert.deepEqual(
+    getRegistrationErrorDescription(reusedLegacyError.error, 'organization-invite'),
+    reusedLegacyError.expected,
+    `${reusedLegacyError.name} must not be classified from its reused legacy code`
+  );
+}
+
+assert.deepEqual(
+  getRegistrationErrorDescription(
+    {
+      businessError: {
+        code: '401002',
+        message: 'Mismatched projected detail.',
+      },
+      response: {
+        headers: {
+          'X-ZGI-App-Error-Code': 'auth.registration.member_name.conflict',
+        },
+      },
+    },
+    'organization-invite'
+  ),
+  { key: 'businessErrors.registerTokenExpired' }
+);
+
+assert.deepEqual(
+  getRegistrationErrorDescription(
+    {
+      businessError: {
+        code: '199001',
+        message: 'Unrecognized projected detail.',
+      },
+      response: {
+        headers: {
+          'x-zgi-app-error-code': 'auth.registration.unknown',
+        },
+      },
+    },
+    'organization-invite'
+  ),
+  { key: 'businessErrors.invalidParameter' }
+);
+
+assert.equal(APPLICATION_ERROR_CODE_HEADER, 'x-zgi-app-error-code');
+assert.equal(
+  getAuthApplicationErrorCode({
+    response: {
+      headers: {
+        'X-ZGI-App-Error-Code': ' auth.registration.invitation.unavailable ',
+      },
+    },
+  }),
+  'auth.registration.invitation.unavailable'
+);
+assert.equal(
+  getAuthApplicationErrorCode({
+    response: {
+      headers: {
+        get(name) {
+          return name === APPLICATION_ERROR_CODE_HEADER
+            ? 'auth.registration.member_name.conflict'
+            : undefined;
+        },
+      },
+    },
+  }),
+  'auth.registration.member_name.conflict'
 );
 
 console.log('Registration invitation context and server-verification policy checks passed.');

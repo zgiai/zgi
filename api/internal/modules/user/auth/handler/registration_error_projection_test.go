@@ -26,6 +26,7 @@ func TestRegistrationHandlersKeepLegacyContractForExpectedInviteRejections(t *te
 		err         error
 		language    string
 		wantCode    response.ErrorCode
+		wantAppCode apperror.Code
 		wantMessage string
 	}{
 		{
@@ -39,6 +40,7 @@ func TestRegistrationHandlersKeepLegacyContractForExpectedInviteRejections(t *te
 			),
 			language:    "zh-CN,zh;q=0.9",
 			wantCode:    response.ErrTokenInvalid,
+			wantAppCode: authservice.AppCodeRegistrationInvitationUnavailable,
 			wantMessage: "该邀请已失效或无法使用，请联系管理员获取新的邀请链接。",
 		},
 		{
@@ -49,6 +51,7 @@ func TestRegistrationHandlersKeepLegacyContractForExpectedInviteRejections(t *te
 			),
 			language:    "en-US",
 			wantCode:    response.ErrInvalidParam,
+			wantAppCode: authservice.AppCodeRegistrationMemberNameConflict,
 			wantMessage: "This member name is already in use in the organization. Choose another name and try again.",
 		},
 	}
@@ -69,6 +72,7 @@ func TestRegistrationHandlersKeepLegacyContractForExpectedInviteRejections(t *te
 				body := decodeRegistrationErrorResponse(t, recorder)
 				require.Equal(t, strconv.Itoa(test.wantCode.Code), body.Code)
 				require.Equal(t, test.wantMessage, body.Message)
+				require.Equal(t, test.wantAppCode.String(), recorder.Header().Get(apptransport.HeaderApplicationErrorCode))
 				require.Equal(t, legacyRegistrationHTTPStatus(test.wantCode), recorder.Code)
 				require.NotContains(t, recorder.Body.String(), "private diagnostics")
 			})
@@ -99,6 +103,7 @@ func TestRegistrationHandlersDoNotExposeUnknownInviteAcceptanceErrors(t *testing
 			require.Equal(t, http.StatusInternalServerError, recorder.Code)
 			require.Equal(t, strconv.Itoa(test.wantCode.Code), body.Code)
 			require.Equal(t, test.wantCode.Message, body.Message)
+			require.Empty(t, recorder.Header().Get(apptransport.HeaderApplicationErrorCode))
 			require.NotContains(t, recorder.Body.String(), databaseErr.Error())
 		})
 	}
@@ -130,6 +135,7 @@ func TestRegistrationHandlersDoNotOverlayCatalogFallbackOnLegacyResponse(t *test
 			require.Equal(t, http.StatusInternalServerError, recorder.Code)
 			require.Equal(t, strconv.Itoa(response.ErrSystemError.Code), body.Code)
 			require.Equal(t, response.ErrSystemError.Message, body.Message)
+			require.Empty(t, recorder.Header().Get(apptransport.HeaderApplicationErrorCode))
 			require.NotContains(t, body.Message, "服务暂时出现问题")
 		})
 	}

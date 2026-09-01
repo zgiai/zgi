@@ -4,6 +4,7 @@ export interface ErrorWithBusinessError extends Error {
     message?: string;
   };
   response?: {
+    headers?: unknown;
     data?: {
       code?: string;
       message?: string;
@@ -58,6 +59,13 @@ export interface RegistrationErrorDescription {
   key?: AuthBusinessErrorDescriptionKey;
   message?: string;
 }
+
+export const APPLICATION_ERROR_CODE_HEADER = 'x-zgi-app-error-code';
+
+const REGISTRATION_INVITE_LEGACY_CODES_BY_APP_CODE: Readonly<Record<string, string>> = {
+  'auth.registration.invitation.unavailable': '401002',
+  'auth.registration.member_name.conflict': '199001',
+};
 
 const AUTH_BUSINESS_ERROR_DESCRIPTION_KEYS: Record<string, AuthBusinessErrorDescriptionKey> = {
   account_not_found: 'businessErrors.accountNotFound',
@@ -139,6 +147,25 @@ export function getAuthBusinessErrorData(error: unknown): unknown {
   return getAuthBusinessError(error)?.response?.data?.data;
 }
 
+export function getAuthApplicationErrorCode(error: unknown): string | undefined {
+  const headers = getAuthBusinessError(error)?.response?.headers;
+  if (!headers || typeof headers !== 'object') {
+    return undefined;
+  }
+
+  const get = (headers as { get?: unknown }).get;
+  if (typeof get === 'function') {
+    const value = get.call(headers, APPLICATION_ERROR_CODE_HEADER);
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  const entry = Object.entries(headers).find(
+    ([name]) => name.toLowerCase() === APPLICATION_ERROR_CODE_HEADER
+  );
+  const value = entry?.[1];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
 export function getAuthBusinessErrorDescriptionKey(
   error: unknown,
   options: AuthBusinessErrorDescriptionOptions = {}
@@ -160,16 +187,19 @@ export function getAuthBusinessErrorDescriptionKey(
 }
 
 // Invited registration has more specific server-side rejection reasons while
-// retaining the same legacy numeric codes as ordinary registration. Prefer the
-// server's catalog-projected message only for that flow; ordinary registration
-// keeps the existing client-side code-to-i18n behavior.
+// retaining the same legacy numeric codes as ordinary registration. Only a
+// canonical application-error header can disambiguate that projection; the
+// invite token and reused numeric code are not sufficient by themselves.
 export function getRegistrationErrorDescription(
   error: unknown,
   inviteToken?: string
 ): RegistrationErrorDescription {
   const code = getAuthBusinessErrorCode(error);
   const backendMessage = getAuthBusinessErrorMessage(error)?.trim();
-  const isProjectedInviteRejection = code === '401002' || code === '199001';
+  const applicationCode = getAuthApplicationErrorCode(error);
+  const isProjectedInviteRejection =
+    applicationCode !== undefined &&
+    REGISTRATION_INVITE_LEGACY_CODES_BY_APP_CODE[applicationCode] === code;
   if (inviteToken?.trim() && isProjectedInviteRejection && backendMessage) {
     return { message: backendMessage };
   }
