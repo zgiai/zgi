@@ -35,6 +35,17 @@ func TestValidateOrganizationInviteTargetSerializesOrganizationEffects(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestOrganizationMemberNameWritersShareOrganizationLock(t *testing.T) {
+	db, mock := newOrganizationPermissionRegressionMockDB(t)
+	organizationID := uuid.NewString()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "organizations" WHERE id = $1 LIMIT $2 FOR UPDATE`)).
+		WithArgs(organizationID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(organizationID))
+
+	require.NoError(t, lockOrganizationMemberNamesTx(t.Context(), db, organizationID))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestValidateRegistrationInviteClassifiesExpectedUnavailableStates(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -284,6 +295,47 @@ func TestAutoApprovedInviteRejectsDuplicateOrganizationMemberName(t *testing.T) 
 	require.Zero(t, countRows(t, db, &model.OrganizationJoinRequest{}, "group_id = ? AND account_id = ?", organizationID, accountID))
 	require.Zero(t, countRows(t, db, &model.OrganizationMember{}, "organization_id = ? AND account_id = ?", organizationID, accountID))
 	require.Zero(t, countRows(t, db, &auth_model.AccountContext{}, "account_id = ?", accountID))
+}
+
+func TestAutoApprovedInvitePersistsNormalizedMemberName(t *testing.T) {
+	db := newOrganizationInviteAcceptanceDB(t)
+	organizationID := uuid.NewString()
+	firstAccountID := uuid.NewString()
+	secondAccountID := uuid.NewString()
+	require.NoError(t, db.Create(&model.Organization{
+		ID: organizationID, Name: "Target", Status: model.OrganizationStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&auth_model.Account{
+		ID: firstAccountID, Email: "trimmed-invitee@example.com", Name: "Trimmed", Status: auth_model.AccountStatusActive,
+	}).Error)
+	require.NoError(t, db.Create(&auth_model.Account{
+		ID: secondAccountID, Email: "duplicate-trimmed@example.com", Name: "Duplicate", Status: auth_model.AccountStatusActive,
+	}).Error)
+	link := &model.OrganizationInviteLink{
+		OrganizationID:          organizationID,
+		Token:                   "normalized-name-auto-approved",
+		Status:                  "active",
+		RequireApproval:         false,
+		DefaultOrganizationRole: string(model.OrganizationRoleNormal),
+		CreatedBy:               uuid.NewString(),
+	}
+	repository := workspace_repo.NewOrganizationRepository(db)
+	require.NoError(t, repository.CreateInviteLink(t.Context(), link))
+	service := &organizationService{db: db, organizationRepo: repository}
+
+	requestedName := "  Alice  "
+	accepted, err := service.AcceptInviteByToken(t.Context(), link.Token, firstAccountID, &requestedName)
+	require.NoError(t, err)
+	require.NotNil(t, accepted.Name)
+	require.Equal(t, "Alice", *accepted.Name)
+	var member model.OrganizationMember
+	require.NoError(t, db.Where("organization_id = ? AND account_id = ?", organizationID, firstAccountID).First(&member).Error)
+	require.NotNil(t, member.Name)
+	require.Equal(t, "Alice", *member.Name)
+
+	duplicateName := "Alice"
+	_, err = service.AcceptInviteByToken(t.Context(), link.Token, secondAccountID, &duplicateName)
+	require.ErrorIs(t, err, ErrMemberNameExists)
 }
 
 func TestPendingInviteRechecksDuplicateMemberNameAtApproval(t *testing.T) {

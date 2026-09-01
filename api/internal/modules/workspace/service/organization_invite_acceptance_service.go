@@ -47,6 +47,7 @@ func (s *organizationService) acceptInviteByTokenTransaction(ctx context.Context
 	}
 	token = strings.TrimSpace(token)
 	accountID = strings.TrimSpace(accountID)
+	name = normalizeOrganizationMemberName(name)
 	if token == "" || accountID == "" {
 		return nil, fmt.Errorf("invite token and account are required")
 	}
@@ -151,6 +152,7 @@ func (s *organizationService) approveInviteRequestTransaction(ctx context.Contex
 		if req.Status != model.OrganizationJoinRequestStatusPending {
 			return fmt.Errorf("request is not pending")
 		}
+		req.Name = normalizeOrganizationMemberName(req.Name)
 		if err := validateOrganizationJoinRequestTargetTx(ctx, tx, &req); err != nil {
 			return err
 		}
@@ -297,6 +299,7 @@ func newOrganizationInviteJoinRequest(link *model.OrganizationInviteLink, accoun
 }
 
 func (s *organizationService) applyApprovedInviteEffectsTx(ctx context.Context, tx *gorm.DB, req *model.OrganizationJoinRequest) error {
+	req.Name = normalizeOrganizationMemberName(req.Name)
 	member, err := organizationMemberExistsTx(ctx, tx, req.OrganizationID, req.AccountID)
 	if err != nil {
 		return err
@@ -361,11 +364,12 @@ func (s *organizationService) applyApprovedInviteEffectsTx(ctx context.Context, 
 }
 
 func ensureInviteMemberNameAvailableTx(ctx context.Context, tx *gorm.DB, organizationID, accountID string, name *string) error {
-	if name == nil || strings.TrimSpace(*name) == "" {
+	name = normalizeOrganizationMemberName(name)
+	if name == nil {
 		return nil
 	}
 
-	exists, err := organizationMemberNameExistsTx(ctx, tx, organizationID, strings.TrimSpace(*name), accountID)
+	exists, err := organizationMemberNameExistsTx(ctx, tx, organizationID, *name, accountID)
 	if err != nil {
 		return fmt.Errorf("check invited member name: %w", err)
 	}
@@ -373,6 +377,17 @@ func ensureInviteMemberNameAvailableTx(ctx context.Context, tx *gorm.DB, organiz
 		return ErrMemberNameExists
 	}
 	return nil
+}
+
+func normalizeOrganizationMemberName(name *string) *string {
+	if name == nil {
+		return nil
+	}
+	normalized := strings.TrimSpace(*name)
+	if normalized == "" {
+		return nil
+	}
+	return &normalized
 }
 
 func setAcceptedInviteContextTx(ctx context.Context, tx *gorm.DB, accountID, organizationID string, workspaceID *string) error {

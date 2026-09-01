@@ -40,6 +40,7 @@ type fakeOrganizationService struct {
 	getMemberByAccountIDFn           func(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error)
 	getInviteLinkByTokenFn           func(ctx context.Context, token string) (*model.OrganizationInviteLink, error)
 	acceptInviteByTokenFn            func(ctx context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error)
+	approveDepartmentJoinRequestFn   func(ctx context.Context, organizationID, joinRequestID, reviewerAccountID string) (*model.OrganizationJoinRequest, error)
 	existsMemberByNameFn             func(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error)
 	isOrganizationMemberFn           func(ctx context.Context, organizationID, accountID string) (bool, error)
 	addMemberFn                      func(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error
@@ -159,6 +160,13 @@ func (f fakeOrganizationService) GetInviteLinkByToken(ctx context.Context, token
 func (f fakeOrganizationService) AcceptInviteByToken(ctx context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error) {
 	if f.acceptInviteByTokenFn != nil {
 		return f.acceptInviteByTokenFn(ctx, token, accountID, name)
+	}
+	return nil, nil
+}
+
+func (f fakeOrganizationService) ApproveDepartmentJoinRequest(ctx context.Context, organizationID, joinRequestID, reviewerAccountID string) (*model.OrganizationJoinRequest, error) {
+	if f.approveDepartmentJoinRequestFn != nil {
+		return f.approveDepartmentJoinRequestFn(ctx, organizationID, joinRequestID, reviewerAccountID)
 	}
 	return nil, nil
 }
@@ -2230,6 +2238,67 @@ func TestAcceptInviteLinkDelegatesApprovedEffectsToTransactionalService(t *testi
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, 1, acceptCalls)
 	require.Zero(t, legacyEffectsCalls)
+}
+
+func TestApproveDepartmentJoinRequestMapsDuplicateNameAsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{organizationService: fakeOrganizationService{
+		isOrganizationAdminOrOwnerFn: func(context.Context, string, string) (bool, error) {
+			return true, nil
+		},
+		approveDepartmentJoinRequestFn: func(context.Context, string, string, string) (*model.OrganizationJoinRequest, error) {
+			return nil, workspace_service.ErrMemberNameExists
+		},
+	}}
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/join-requests/request-1/approve")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}, {Key: "id", Value: "request-1"}}
+	c.Set("account_id", "admin-1")
+
+	handler.ApproveDepartmentJoinRequest(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	var body response.Response
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, strconv.Itoa(response.ErrInvalidParam.Code), body.Code)
+	require.Equal(t, "member name already exists", body.Message)
+}
+
+func TestBatchApproveDepartmentJoinRequestsDoesNotLeakInternalErrors(t *testing.T) {
+	t.Parallel()
+
+	handler := &OrganizationHandler{organizationService: fakeOrganizationService{
+		isOrganizationAdminOrOwnerFn: func(context.Context, string, string) (bool, error) {
+			return true, nil
+		},
+		approveDepartmentJoinRequestFn: func(_ context.Context, _ string, requestID string, _ string) (*model.OrganizationJoinRequest, error) {
+			if requestID == "duplicate" {
+				return nil, workspace_service.ErrMemberNameExists
+			}
+			return nil, errors.New("database password appeared in an internal error")
+		},
+	}}
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/join-requests/batch-approve")
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"request_ids":["duplicate","internal"]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+	c.Set("account_id", "admin-1")
+
+	handler.BatchApproveDepartmentJoinRequests(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var envelope struct {
+		Data struct {
+			Failed []struct {
+				ID    string `json:"id"`
+				Error string `json:"error"`
+			} `json:"failed"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
+	require.Equal(t, "member name already exists", envelope.Data.Failed[0].Error)
+	require.Equal(t, "approval failed", envelope.Data.Failed[1].Error)
+	require.NotContains(t, recorder.Body.String(), "database password")
 }
 
 func newOrganizationHandlerTestContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {

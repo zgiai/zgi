@@ -2162,6 +2162,8 @@ func handleCurrentOrganizationMemberAdminError(c *gin.Context, err error) {
 		response.Fail(c, response.ErrAccountNotFound)
 	case errors.Is(err, workspace_service.ErrOrganizationInviteWorkspaceInvalid):
 		response.Fail(c, response.ErrWorkspaceNotInOrganization)
+	case errors.Is(err, workspace_service.ErrMemberNameExists):
+		response.FailWithMessage(c, response.ErrInvalidParam, "member name already exists")
 	case errors.Is(err, workspace_service.ErrDepartmentNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"code": "DepartmentNotFound", "message": err.Error()})
 	case errors.Is(err, workspace_service.ErrMemberAlreadyInDept):
@@ -2487,7 +2489,11 @@ func (h *OrganizationHandler) ApproveDepartmentJoinRequest(c *gin.Context) {
 
 	_, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, reqID, accountID)
 	if err != nil {
-		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		if errors.Is(err, workspace_service.ErrMemberNameExists) {
+			response.FailWithMessage(c, response.ErrInvalidParam, "member name already exists")
+			return
+		}
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -2529,7 +2535,11 @@ func (h *OrganizationHandler) BatchApproveDepartmentJoinRequests(c *gin.Context)
 	for _, id := range reqBody.RequestIDs {
 		_, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, id, accountID)
 		if err != nil {
-			failed = append(failed, failedItem{ID: id, Error: err.Error()})
+			message := "approval failed"
+			if errors.Is(err, workspace_service.ErrMemberNameExists) {
+				message = "member name already exists"
+			}
+			failed = append(failed, failedItem{ID: id, Error: message})
 			continue
 		}
 
@@ -4452,6 +4462,14 @@ func (h *OrganizationHandler) AcceptInviteLink(c *gin.Context) {
 		Name *string `json:"name"`
 	}
 	_ = c.ShouldBindJSON(&reqBody)
+	if reqBody.Name != nil {
+		normalizedName := strings.TrimSpace(*reqBody.Name)
+		if normalizedName == "" {
+			reqBody.Name = nil
+		} else {
+			reqBody.Name = &normalizedName
+		}
+	}
 
 	// Retrieve invite link info first to get organization ID.
 	link, err := h.organizationService.GetInviteLinkByToken(c.Request.Context(), token)
@@ -4483,7 +4501,7 @@ func (h *OrganizationHandler) AcceptInviteLink(c *gin.Context) {
 			return
 		}
 
-		baseName := account.Name
+		baseName := strings.TrimSpace(account.Name)
 		finalName := baseName
 
 		exists, err := h.organizationService.ExistsMemberByName(c.Request.Context(), link.OrganizationID, finalName, accountID)
@@ -4508,6 +4526,10 @@ func (h *OrganizationHandler) AcceptInviteLink(c *gin.Context) {
 
 	req, err := h.organizationService.AcceptInviteByToken(c.Request.Context(), token, accountID, reqBody.Name)
 	if err != nil {
+		if errors.Is(err, workspace_service.ErrMemberNameExists) {
+			response.FailWithMessage(c, response.ErrInvalidParam, "member name already exists")
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
