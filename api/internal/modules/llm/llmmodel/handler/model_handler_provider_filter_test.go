@@ -205,6 +205,33 @@ func TestListTenantModels_NoProviderFilter_ReturnAll(t *testing.T) {
 	assert.Equal(t, float64(2), data["total"])
 }
 
+func TestListTenantModels_AvailableOnlyFiltersBeforePagination(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	organizationID := uuid.New()
+	svc := &fakeModelService{
+		models: []*model.ModelView{
+			{ID: uuid.New(), Provider: "deepseek", Model: "unavailable", IsAvailable: false},
+			{ID: uuid.New(), Provider: "deepseek", Model: "available", IsAvailable: true},
+		},
+	}
+	h := NewModelHandler(svc)
+
+	router := gin.New()
+	router.GET("/llm/models", h.ListTenantModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/llm/models?available_only=true&page=1&page_size=1", nil)
+	req.Header.Set("X-Organization-ID", organizationID.String())
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	data := decodeTenantModelListData(t, w.Body.Bytes())
+	items := data["items"].([]interface{})
+	require.Len(t, items, 1)
+	assert.Equal(t, float64(1), data["total"])
+	assert.Equal(t, "available", items[0].(map[string]interface{})["model"])
+}
+
 func TestListTenantModels_FilterByProvider_Miss(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	organizationID := uuid.New()

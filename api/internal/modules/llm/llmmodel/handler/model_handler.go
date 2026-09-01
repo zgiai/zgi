@@ -184,6 +184,7 @@ func (h *ModelHandler) ListTenantModels(c *gin.Context) {
 		return
 	}
 	isEnabledStr := c.Query("is_enabled")
+	availableOnly := c.Query("available_only") == "true"
 
 	// Parse pagination parameters
 	page := 1
@@ -211,6 +212,19 @@ func (h *ModelHandler) ListTenantModels(c *gin.Context) {
 		filtered := make([]*model.ModelView, 0)
 		for _, m := range models {
 			if m.IsEnabled == isEnabled {
+				filtered = append(filtered, m)
+			}
+		}
+		models = filtered
+	}
+
+	// Model Plaza uses this filter so every returned model is backed by at
+	// least one enabled route. Keep it opt-in to preserve the management view,
+	// which still needs to list unavailable models for configuration.
+	if availableOnly {
+		filtered := make([]*model.ModelView, 0, len(models))
+		for _, m := range models {
+			if m != nil && m.IsAvailable {
 				filtered = append(filtered, m)
 			}
 		}

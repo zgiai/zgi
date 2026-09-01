@@ -77,6 +77,8 @@ export interface GetModelsParams {
   search?: string;
   // Filter by model status
   is_enabled?: boolean; // Renamed from is_active
+  // Only return models backed by at least one enabled route
+  available_only?: boolean;
   // Filter by model type
   type?: string;
   // Filter by model capabilities
