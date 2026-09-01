@@ -38,6 +38,8 @@ type fakeOrganizationService struct {
 	getMembersPaginatedFn            func(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error)
 	getVisibleMembersPaginatedFn     func(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error)
 	getMemberByAccountIDFn           func(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error)
+	getInviteLinkByTokenFn           func(ctx context.Context, token string) (*model.OrganizationInviteLink, error)
+	acceptInviteByTokenFn            func(ctx context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error)
 	existsMemberByNameFn             func(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error)
 	isOrganizationMemberFn           func(ctx context.Context, organizationID, accountID string) (bool, error)
 	addMemberFn                      func(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error
@@ -143,6 +145,20 @@ func (f fakeOrganizationService) GetVisibleOrganizationMembersPaginated(ctx cont
 func (f fakeOrganizationService) GetOrganizationMemberByAccountID(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error) {
 	if f.getMemberByAccountIDFn != nil {
 		return f.getMemberByAccountIDFn(ctx, organizationID, accountID)
+	}
+	return nil, nil
+}
+
+func (f fakeOrganizationService) GetInviteLinkByToken(ctx context.Context, token string) (*model.OrganizationInviteLink, error) {
+	if f.getInviteLinkByTokenFn != nil {
+		return f.getInviteLinkByTokenFn(ctx, token)
+	}
+	return nil, nil
+}
+
+func (f fakeOrganizationService) AcceptInviteByToken(ctx context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error) {
+	if f.acceptInviteByTokenFn != nil {
+		return f.acceptInviteByTokenFn(ctx, token, accountID, name)
 	}
 	return nil, nil
 }
@@ -2153,6 +2169,67 @@ func TestOrganizationRoutesRegisterCurrentMemberDetail(t *testing.T) {
 	}
 
 	t.Fatalf("GET /organizations/current/members/:member_id route was not registered")
+}
+
+func TestAcceptInviteLinkDelegatesApprovedEffectsToTransactionalService(t *testing.T) {
+	t.Parallel()
+
+	departmentID := "department-1"
+	acceptCalls := 0
+	legacyEffectsCalls := 0
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			getInviteLinkByTokenFn: func(_ context.Context, token string) (*model.OrganizationInviteLink, error) {
+				require.Equal(t, "invite-token", token)
+				return &model.OrganizationInviteLink{OrganizationID: "org-1", Status: "active"}, nil
+			},
+			existsMemberByNameFn: func(_ context.Context, organizationID, name, excludeAccountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "Invitee", name)
+				require.Equal(t, "account-1", excludeAccountID)
+				return false, nil
+			},
+			acceptInviteByTokenFn: func(_ context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error) {
+				acceptCalls++
+				require.Equal(t, "invite-token", token)
+				require.Equal(t, "account-1", accountID)
+				require.NotNil(t, name)
+				require.Equal(t, "Invitee", *name)
+				return &model.OrganizationJoinRequest{
+					OrganizationID: "org-1",
+					AccountID:      accountID,
+					DepartmentID:   &departmentID,
+					Status:         model.OrganizationJoinRequestStatusApproved,
+				}, nil
+			},
+			isOrganizationMemberFn: func(context.Context, string, string) (bool, error) {
+				legacyEffectsCalls++
+				return false, nil
+			},
+			addMemberFn: func(context.Context, *shared_dto.AddOrganizationMemberRequest) error {
+				legacyEffectsCalls++
+				return nil
+			},
+		},
+		departmentService: fakeDepartmentService{
+			addMemberFn: func(context.Context, string, string, string) (*model.DepartmentMember, error) {
+				legacyEffectsCalls++
+				return nil, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/invites/invite-token/accept")
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"name":"Invitee"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "token", Value: "invite-token"}}
+	c.Set("account_id", "account-1")
+
+	handler.AcceptInviteLink(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, 1, acceptCalls)
+	require.Zero(t, legacyEffectsCalls)
 }
 
 func newOrganizationHandlerTestContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {

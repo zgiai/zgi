@@ -120,6 +120,9 @@ func (s *organizationService) acceptInviteByTokenTransaction(ctx context.Context
 	}
 	statuscache.InvalidateAccountStatus(ctx, accountID)
 	workspacecache.InvalidateAccount(ctx, accountID)
+	if s.accountService != nil {
+		s.accountService.InvalidateAccountProfileCache(accountID)
+	}
 	return accepted, nil
 }
 
@@ -139,6 +142,9 @@ func (s *organizationService) approveInviteRequestTransaction(ctx context.Contex
 		if req.Status != model.OrganizationJoinRequestStatusPending {
 			return fmt.Errorf("request is not pending")
 		}
+		if err := validateOrganizationJoinRequestTargetTx(ctx, tx, &req); err != nil {
+			return err
+		}
 		now := time.Now()
 		req.Status = model.OrganizationJoinRequestStatusApproved
 		req.ReviewerID = &reviewerAccountID
@@ -157,7 +163,37 @@ func (s *organizationService) approveInviteRequestTransaction(ctx context.Contex
 	}
 	statuscache.InvalidateAccountStatus(ctx, approved.AccountID)
 	workspacecache.InvalidateAccount(ctx, approved.AccountID)
+	if s.accountService != nil {
+		s.accountService.InvalidateAccountProfileCache(approved.AccountID)
+	}
 	return approved, nil
+}
+
+func validateOrganizationJoinRequestTargetTx(ctx context.Context, tx *gorm.DB, req *model.OrganizationJoinRequest) error {
+	if req == nil || req.InviteLinkID == nil || strings.TrimSpace(*req.InviteLinkID) == "" {
+		return fmt.Errorf("invite link is unavailable")
+	}
+
+	var link model.OrganizationInviteLink
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "SHARE"}).
+		Where("id = ?", strings.TrimSpace(*req.InviteLinkID)).
+		First(&link).Error; err != nil {
+		return fmt.Errorf("invite link is unavailable: %w", err)
+	}
+	if link.OrganizationID != req.OrganizationID ||
+		trimOptionalInviteString(link.DepartmentID) != trimOptionalInviteString(req.DepartmentID) {
+		return fmt.Errorf("invite target no longer matches the pending request")
+	}
+
+	workspaceID, err := validateOrganizationInviteTargetTx(ctx, tx, &link)
+	if err != nil {
+		return err
+	}
+	if trimOptionalInviteString(workspaceID) != trimOptionalInviteString(req.WorkspaceID) {
+		return fmt.Errorf("invite target no longer matches the pending request")
+	}
+	return nil
 }
 
 func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *model.OrganizationInviteLink) (*string, error) {
@@ -171,7 +207,10 @@ func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *
 		return nil, fmt.Errorf("invite link expired")
 	}
 	var organization model.Organization
-	if err := tx.WithContext(ctx).Where("id = ?", link.OrganizationID).First(&organization).Error; err != nil {
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "SHARE"}).
+		Where("id = ?", link.OrganizationID).
+		First(&organization).Error; err != nil {
 		return nil, fmt.Errorf("invited organization is unavailable: %w", err)
 	}
 	if !organization.IsActive() {
@@ -180,6 +219,7 @@ func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *
 	if link.DepartmentID != nil && strings.TrimSpace(*link.DepartmentID) != "" {
 		var department model.Department
 		if err := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "SHARE"}).
 			Where("id = ? AND group_id = ? AND status = ?", strings.TrimSpace(*link.DepartmentID), link.OrganizationID, model.DepartmentStatusActive).
 			First(&department).Error; err != nil {
 			return nil, fmt.Errorf("invited department is unavailable: %w", err)
@@ -190,6 +230,7 @@ func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *
 		workspaceID := strings.TrimSpace(*link.WorkspaceID)
 		var workspace model.Workspace
 		if err := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "SHARE"}).
 			Where("id = ? AND organization_id = ? AND status = ?", workspaceID, link.OrganizationID, model.WorkspaceStatusNormal).
 			First(&workspace).Error; err != nil {
 			return nil, fmt.Errorf("invited workspace is unavailable: %w", err)
@@ -282,6 +323,17 @@ func setAcceptedInviteContextTx(ctx context.Context, tx *gorm.DB, accountID, org
 	if workspaceID != nil {
 		workspace = strings.TrimSpace(*workspaceID)
 	}
+	if workspace == "" {
+		if err := tx.WithContext(ctx).
+			Model(&model.WorkspaceMember{}).
+			Where("account_id = ?", accountID).
+			Update("current", false).Error; err != nil {
+			return fmt.Errorf("failed to clear current workspace: %w", err)
+		}
+	} else if err := setInviteCurrentWorkspaceTx(ctx, tx, accountID, workspace); err != nil {
+		return err
+	}
+
 	var ctxModel auth_model.AccountContext
 	err := tx.WithContext(ctx).Where("account_id = ?", accountID).First(&ctxModel).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -300,11 +352,6 @@ func setAcceptedInviteContextTx(ctx context.Context, tx *gorm.DB, accountID, org
 		ctxModel.UpdatedAt = time.Now()
 		if err := tx.WithContext(ctx).Save(&ctxModel).Error; err != nil {
 			return fmt.Errorf("update invited account context: %w", err)
-		}
-	}
-	if workspace != "" {
-		if err := setInviteCurrentWorkspaceTx(ctx, tx, accountID, workspace); err != nil {
-			return err
 		}
 	}
 	return nil

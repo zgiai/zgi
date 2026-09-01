@@ -37,10 +37,12 @@ func TestAcceptInviteByTokenCreatesTargetScopeTransactionally(t *testing.T) {
 	}
 	repository := workspace_repo.NewOrganizationRepository(db)
 	require.NoError(t, repository.CreateInviteLink(t.Context(), link))
+	accountService := &inviteAcceptanceAccountService{}
 
 	service := &organizationService{
 		db:                         db,
 		organizationRepo:           repository,
+		accountService:             accountService,
 		workspaceManagementService: &inviteAcceptanceWorkspaceService{db: db},
 	}
 	validated, err := service.ValidateInviteLinkForRegistration(t.Context(), link.Token)
@@ -62,6 +64,7 @@ func TestAcceptInviteByTokenCreatesTargetScopeTransactionally(t *testing.T) {
 	require.NoError(t, db.Where("account_id = ?", accountID).First(&accountContext).Error)
 	require.Equal(t, organizationID, *accountContext.CurrentOrganizationID)
 	require.Equal(t, workspaceID, *accountContext.CurrentWorkspaceID)
+	require.Equal(t, []string{accountID}, accountService.invalidatedAccountIDs)
 
 	// A retry after a lost response is idempotent and does not duplicate grants.
 	accepted, err = service.AcceptInviteByToken(t.Context(), link.Token, accountID, nil)
@@ -69,16 +72,35 @@ func TestAcceptInviteByTokenCreatesTargetScopeTransactionally(t *testing.T) {
 	require.Equal(t, model.OrganizationJoinRequestStatusApproved, accepted.Status)
 	require.Equal(t, int64(1), countRows(t, db, &model.OrganizationMember{}, "organization_id = ? AND account_id = ?", organizationID, accountID))
 	require.Equal(t, int64(1), countRows(t, db, &model.WorkspaceMember{}, "workspace_id = ? AND account_id = ?", workspaceID, accountID))
+	require.Equal(t, []string{accountID, accountID}, accountService.invalidatedAccountIDs)
 }
 
 func TestOrganizationOnlyInviteDoesNotGrantWorkspaceAccess(t *testing.T) {
 	db := newOrganizationInviteAcceptanceDB(t)
 	organizationID := uuid.NewString()
 	workspaceID := uuid.NewString()
+	oldOrganizationID := uuid.NewString()
+	oldWorkspaceID := uuid.NewString()
 	accountID := uuid.NewString()
 	require.NoError(t, db.Create(&model.Organization{ID: organizationID, Name: "Target", Status: model.OrganizationStatusActive}).Error)
+	require.NoError(t, db.Create(&model.Organization{ID: oldOrganizationID, Name: "Previous", Status: model.OrganizationStatusActive}).Error)
 	require.NoError(t, db.Create(&model.Workspace{ID: workspaceID, Name: "Not Invited", OrganizationID: &organizationID, Status: model.WorkspaceStatusNormal}).Error)
+	require.NoError(t, db.Create(&model.Workspace{ID: oldWorkspaceID, Name: "Previous Workspace", OrganizationID: &oldOrganizationID, Status: model.WorkspaceStatusNormal}).Error)
 	require.NoError(t, db.Create(&auth_model.Account{ID: accountID, Email: "org-only@example.com", Name: "Org Only", Status: auth_model.AccountStatusActive}).Error)
+	require.NoError(t, db.Create(&model.OrganizationMember{
+		OrganizationID: oldOrganizationID, AccountID: accountID, Role: model.OrganizationRoleNormal,
+	}).Error)
+	require.NoError(t, db.Create(&model.OrganizationMember{
+		OrganizationID: organizationID, AccountID: accountID, Role: model.OrganizationRoleNormal,
+	}).Error)
+	oldWorkspaceMember := &model.WorkspaceMember{
+		WorkspaceID: oldWorkspaceID, AccountID: accountID, Role: model.WorkspaceRoleMember, Current: true,
+	}
+	model.ApplyWorkspaceMemberDefaults(oldWorkspaceMember)
+	require.NoError(t, db.Create(oldWorkspaceMember).Error)
+	require.NoError(t, db.Create(&auth_model.AccountContext{
+		AccountID: accountID, CurrentOrganizationID: &oldOrganizationID, CurrentWorkspaceID: &oldWorkspaceID,
+	}).Error)
 	link := &model.OrganizationInviteLink{
 		OrganizationID:          organizationID,
 		Token:                   "organization-only-invite",
@@ -101,11 +123,14 @@ func TestOrganizationOnlyInviteDoesNotGrantWorkspaceAccess(t *testing.T) {
 	require.Nil(t, validated.WorkspaceID)
 	_, err = service.AcceptInviteByToken(t.Context(), link.Token, accountID, nil)
 	require.NoError(t, err)
-	require.Zero(t, countRows(t, db, &model.WorkspaceMember{}, "account_id = ?", accountID))
+	require.Zero(t, countRows(t, db, &model.WorkspaceMember{}, "workspace_id = ? AND account_id = ?", workspaceID, accountID))
 	var accountContext auth_model.AccountContext
 	require.NoError(t, db.Where("account_id = ?", accountID).First(&accountContext).Error)
 	require.Equal(t, organizationID, *accountContext.CurrentOrganizationID)
 	require.Nil(t, accountContext.CurrentWorkspaceID)
+	var previousWorkspaceMember model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", oldWorkspaceID, accountID).First(&previousWorkspaceMember).Error)
+	require.False(t, previousWorkspaceMember.Current)
 }
 
 func TestApprovalRequiredInviteRemainsRetryableUntilApproval(t *testing.T) {
@@ -125,7 +150,8 @@ func TestApprovalRequiredInviteRemainsRetryableUntilApproval(t *testing.T) {
 	}
 	repository := workspace_repo.NewOrganizationRepository(db)
 	require.NoError(t, repository.CreateInviteLink(t.Context(), link))
-	service := &organizationService{db: db, organizationRepo: repository}
+	accountService := &inviteAcceptanceAccountService{}
+	service := &organizationService{db: db, organizationRepo: repository, accountService: accountService}
 
 	first, err := service.AcceptInviteByToken(t.Context(), link.Token, accountID, nil)
 	require.NoError(t, err)
@@ -135,11 +161,101 @@ func TestApprovalRequiredInviteRemainsRetryableUntilApproval(t *testing.T) {
 	require.Equal(t, first.ID, second.ID)
 	require.Equal(t, int64(1), countRows(t, db, &model.OrganizationJoinRequest{}, "group_id = ? AND account_id = ?", organizationID, accountID))
 	require.Zero(t, countRows(t, db, &model.OrganizationMember{}, "organization_id = ? AND account_id = ?", organizationID, accountID))
+	accountService.invalidatedAccountIDs = nil
 
 	approved, err := service.ApproveDepartmentJoinRequest(t.Context(), organizationID, first.ID, uuid.NewString())
 	require.NoError(t, err)
 	require.Equal(t, model.OrganizationJoinRequestStatusApproved, approved.Status)
 	require.Equal(t, int64(1), countRows(t, db, &model.OrganizationMember{}, "organization_id = ? AND account_id = ?", organizationID, accountID))
+	require.Equal(t, []string{accountID}, accountService.invalidatedAccountIDs)
+}
+
+func TestApproveInviteRevalidatesActiveTargetInsideTransaction(t *testing.T) {
+	tests := []struct {
+		name       string
+		deactivate func(*gorm.DB, string, string, string) error
+		wantError  string
+	}{
+		{
+			name: "organization",
+			deactivate: func(db *gorm.DB, organizationID, _, _ string) error {
+				return db.Model(&model.Organization{}).
+					Where("id = ?", organizationID).
+					Update("status", model.OrganizationStatusInactive).Error
+			},
+			wantError: "invited organization is unavailable",
+		},
+		{
+			name: "department",
+			deactivate: func(db *gorm.DB, _, departmentID, _ string) error {
+				return db.Model(&model.Department{}).
+					Where("id = ?", departmentID).
+					Update("status", model.DepartmentStatusArchived).Error
+			},
+			wantError: "invited department is unavailable",
+		},
+		{
+			name: "workspace",
+			deactivate: func(db *gorm.DB, _, _, workspaceID string) error {
+				return db.Model(&model.Workspace{}).
+					Where("id = ?", workspaceID).
+					Update("status", model.WorkspaceStatusArchived).Error
+			},
+			wantError: "invited workspace is unavailable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := newOrganizationInviteAcceptanceDB(t)
+			organizationID := uuid.NewString()
+			departmentID := uuid.NewString()
+			workspaceID := uuid.NewString()
+			accountID := uuid.NewString()
+			require.NoError(t, db.Create(&model.Organization{
+				ID: organizationID, Name: "Target", Status: model.OrganizationStatusActive,
+			}).Error)
+			require.NoError(t, db.Create(&model.Department{
+				ID: departmentID, OrganizationID: organizationID, Name: "Target Department", Status: model.DepartmentStatusActive,
+			}).Error)
+			require.NoError(t, db.Create(&model.Workspace{
+				ID: workspaceID, Name: "Target Workspace", OrganizationID: &organizationID, Status: model.WorkspaceStatusNormal,
+			}).Error)
+			require.NoError(t, db.Create(&auth_model.Account{
+				ID: accountID, Email: tt.name + "-inactive@example.com", Name: "Invitee", Status: auth_model.AccountStatusActive,
+			}).Error)
+			link := &model.OrganizationInviteLink{
+				OrganizationID: organizationID, DepartmentID: &departmentID, WorkspaceID: &workspaceID,
+				Token: "pending-" + tt.name, Status: "active", RequireApproval: true,
+				DefaultOrganizationRole: string(model.OrganizationRoleNormal),
+				DefaultWorkspaceRole:    string(model.WorkspaceRoleMember), CreatedBy: uuid.NewString(),
+			}
+			repository := workspace_repo.NewOrganizationRepository(db)
+			require.NoError(t, repository.CreateInviteLink(t.Context(), link))
+			accountService := &inviteAcceptanceAccountService{}
+			service := &organizationService{
+				db: db, organizationRepo: repository, accountService: accountService,
+				workspaceManagementService: &inviteAcceptanceWorkspaceService{db: db},
+			}
+
+			pending, err := service.AcceptInviteByToken(t.Context(), link.Token, accountID, nil)
+			require.NoError(t, err)
+			require.Equal(t, model.OrganizationJoinRequestStatusPending, pending.Status)
+			accountService.invalidatedAccountIDs = nil
+			require.NoError(t, tt.deactivate(db, organizationID, departmentID, workspaceID))
+
+			_, err = service.ApproveDepartmentJoinRequest(t.Context(), organizationID, pending.ID, uuid.NewString())
+
+			require.ErrorContains(t, err, tt.wantError)
+			var persisted model.OrganizationJoinRequest
+			require.NoError(t, db.Where("id = ?", pending.ID).First(&persisted).Error)
+			require.Equal(t, model.OrganizationJoinRequestStatusPending, persisted.Status)
+			require.Zero(t, countRows(t, db, &model.OrganizationMember{}, "organization_id = ? AND account_id = ?", organizationID, accountID))
+			require.Zero(t, countRows(t, db, &model.DepartmentMember{}, "department_id = ? AND account_id = ?", departmentID, accountID))
+			require.Zero(t, countRows(t, db, &model.WorkspaceMember{}, "workspace_id = ? AND account_id = ?", workspaceID, accountID))
+			require.Empty(t, accountService.invalidatedAccountIDs)
+		})
+	}
 }
 
 func TestExistingOrganizationMemberWorkspaceInviteStillRequiresApproval(t *testing.T) {
@@ -347,6 +463,15 @@ func newOrganizationInviteAcceptanceDB(t *testing.T) *gorm.DB {
 type inviteAcceptanceWorkspaceService struct {
 	interfaces.WorkspaceManagementService
 	db *gorm.DB
+}
+
+type inviteAcceptanceAccountService struct {
+	interfaces.AccountService
+	invalidatedAccountIDs []string
+}
+
+func (s *inviteAcceptanceAccountService) InvalidateAccountProfileCache(accountID string) {
+	s.invalidatedAccountIDs = append(s.invalidatedAccountIDs, accountID)
 }
 
 func (s *inviteAcceptanceWorkspaceService) WithTx(tx *gorm.DB) interfaces.WorkspaceManagementService {

@@ -2282,34 +2282,6 @@ func (h *OrganizationHandler) UpdateMemberInfo(c *gin.Context) {
 	response.Success(c, nil)
 }
 
-func (h *OrganizationHandler) applyDepartmentJoinApprovedEffects(c *gin.Context, req *model.OrganizationJoinRequest) error {
-	isMember, _ := h.organizationService.IsOrganizationMember(c.Request.Context(), req.OrganizationID, req.AccountID)
-	if !isMember {
-		role := model.OrganizationRoleNormal
-		if req.DefaultOrganizationRole != "" {
-			role = model.OrganizationRole(req.DefaultOrganizationRole)
-		}
-		addReq := &dto.AddOrganizationMemberRequest{
-			OrganizationID: req.OrganizationID,
-			AccountID:      req.AccountID,
-			Role:           role,
-			Name:           req.Name,
-		}
-		if err := h.organizationService.AddMember(c.Request.Context(), addReq); err != nil {
-			return err
-		}
-	}
-
-	if req.DepartmentID != nil {
-		_, err := h.departmentService.AddMemberToDepartment(c.Request.Context(), req.OrganizationID, *req.DepartmentID, req.AccountID)
-		if err != nil && err != workspace_service.ErrMemberAlreadyInDept {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func (h *OrganizationHandler) GetDepartmentInviteLink(c *gin.Context) {
 	organizationID := h.getOrganizationID(c)
 	if organizationID == "" {
@@ -2513,13 +2485,8 @@ func (h *OrganizationHandler) ApproveDepartmentJoinRequest(c *gin.Context) {
 		return
 	}
 
-	req, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, reqID, accountID)
+	_, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, reqID, accountID)
 	if err != nil {
-		response.FailWithMessage(c, response.ErrSystemError, err.Error())
-		return
-	}
-
-	if err := h.applyDepartmentJoinApprovedEffects(c, req); err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
@@ -2560,13 +2527,8 @@ func (h *OrganizationHandler) BatchApproveDepartmentJoinRequests(c *gin.Context)
 	var failed []failedItem
 
 	for _, id := range reqBody.RequestIDs {
-		req, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, id, accountID)
+		_, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, id, accountID)
 		if err != nil {
-			failed = append(failed, failedItem{ID: id, Error: err.Error()})
-			continue
-		}
-
-		if err := h.applyDepartmentJoinApprovedEffects(c, req); err != nil {
 			failed = append(failed, failedItem{ID: id, Error: err.Error()})
 			continue
 		}
@@ -4548,29 +4510,6 @@ func (h *OrganizationHandler) AcceptInviteLink(c *gin.Context) {
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
-	}
-
-	if req.Status == model.OrganizationJoinRequestStatusApproved {
-		// Add to organization
-		isMember, _ := h.organizationService.IsOrganizationMember(c.Request.Context(), req.OrganizationID, req.AccountID)
-		if !isMember {
-			role := model.OrganizationRoleNormal
-			if req.DefaultOrganizationRole != "" {
-				role = model.OrganizationRole(req.DefaultOrganizationRole)
-			}
-			addReq := &shared_dto.AddOrganizationMemberRequest{
-				OrganizationID: req.OrganizationID,
-				AccountID:      req.AccountID,
-				Role:           role,
-				Name:           reqBody.Name,
-			}
-			_ = h.organizationService.AddMember(c.Request.Context(), addReq)
-		}
-
-		// Add to department
-		if req.DepartmentID != nil {
-			_, _ = h.departmentService.AddMemberToDepartment(c.Request.Context(), req.OrganizationID, *req.DepartmentID, req.AccountID)
-		}
 	}
 
 	response.Success(c, gin.H{"status": req.Status})
