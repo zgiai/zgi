@@ -4,6 +4,7 @@ import { authService } from '@/services/auth.service';
 import {
   getAuthBusinessErrorDescriptionKey,
   getAuthBusinessErrorMessage,
+  getRegistrationErrorDescription,
 } from '@/utils/auth-errors';
 import { normalizeToastDescription } from '@/utils/error-notifications';
 import type {
@@ -104,12 +105,10 @@ export function usePhoneRegister() {
       }
       toast.success(t('registrationSuccess'));
     },
-    onError: error => {
+    onError: (error, variables) => {
       const title = t('registrationError');
-      const descriptionKey = getAuthBusinessErrorDescriptionKey(error, {
-        context: 'register',
-      });
-      const description = descriptionKey ? t(descriptionKey) : getAuthBusinessErrorMessage(error);
+      const errorDescription = getRegistrationErrorDescription(error, variables.invite_token);
+      const description = errorDescription.key ? t(errorDescription.key) : errorDescription.message;
       toast.error(title, {
         description: normalizeToastDescription(title, description),
       });

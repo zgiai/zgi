@@ -21,7 +21,7 @@ func AuditLogger() gin.HandlerFunc {
 			"log_type", "audit",
 			"request_id", c.GetString(requestIDContextKey),
 			"method", c.Request.Method,
-			"path", c.Request.URL.Path,
+			"path", requestLogPath(c),
 			"status", c.Writer.Status(),
 			"client_ip", c.ClientIP(),
 		}

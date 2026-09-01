@@ -24,7 +24,7 @@ export function SSOCallbackHandler() {
   const ticket = (searchParams.get('ticket') || '').trim();
   const error = (searchParams.get('error') || '').trim();
   const destinationUrl = withBasePathIfInternal(
-    searchParams.get('redirect') || '/onboarding/organization'
+    searchParams.get('redirect') || '/console'
   );
   const retryRedirectTarget = destinationUrl;
   const retryUrl = buildSsoStartUrl('casdoor', retryRedirectTarget);

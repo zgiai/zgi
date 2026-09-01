@@ -673,18 +673,25 @@ const messages = {
       continue: 'Continue',
       personalWorkbench: 'Personal workbench',
       noWorkspaceName: 'No workspace selected',
+      organizationRoles: {
+        owner: 'Organization Owner',
+        admin: 'Organization Admin',
+        normal: 'Member',
+      },
       workspaceContext: 'Workspace context',
       permissionScope: 'My visible scope',
       visibleWorkspaceCount: '{count} workspaces',
       workspaceContextDescription:
         'The selected workspace is used when opening concrete asset pages. The overview still aggregates everything visible to you.',
       personalWorkbenchDescription:
-        'You are in the personal workbench. Organization product entry points and app center remain available; asset links switch to their workspace before opening.',
-      readyTitle: 'Ready for core workflows',
-      incompleteTitle: 'Required setup incomplete',
-      readyDescription: 'Chat and knowledge workflows have the required model capabilities.',
-      incompleteDescription:
-        'Configure the required model capabilities before using chat, agents, and knowledge workflows.',
+        'You are in the personal workbench. Organization product entry points and the app center remain available; select a workspace before opening workspace-owned assets.',
+      readyTitle: 'Chat is ready',
+      incompleteTitle: 'Chat model setup incomplete',
+      readyDescription: 'A text chat model is available for conversations.',
+      incompleteDescription: 'Connect a text chat model before starting conversations.',
+      readinessUnavailableTitle: 'Chat readiness is temporarily unavailable',
+      readinessUnavailableDescription:
+        'We could not verify text chat model availability. Refresh to check again.',
       capabilitiesConfigured: 'capabilities configured',
       api: 'API',
       database: 'Database',
@@ -696,6 +703,28 @@ const messages = {
       missingCount: '{count} missing',
       checking: 'Checking',
       setupChecklist: 'Setup checklist',
+      onboarding: {
+        title: 'Your first workspace activities',
+        description: 'Complete these steps with your account while exploring the shared workspace.',
+        progress: '{completed} of {total}',
+        workspaceTitle: 'Enter your workspace',
+        workspaceDescription: 'Your organization and workspace context are ready to use.',
+        modelTitle: 'Connect a chat model',
+        modelDescription: 'Configure an available provider and chat model for this organization.',
+        chatTitle: 'Start your first conversation',
+        chatDescription: 'Confirm the model path end to end with a real conversation.',
+        agentTitle: 'Create an agent yourself',
+        agentDescription: 'Turn a model, instructions, and tools into a reusable assistant.',
+        knowledgeTitle: 'Create a knowledge base yourself',
+        knowledgeDescription: 'Create a knowledge base under your account for grounded answers.',
+        workflowDescription: 'Compose repeatable multi-step AI work with visual workflows.',
+        loadError:
+          'Some workspace overview data could not be loaded. You can still use the console.',
+      },
+      quickStart: {
+        title: 'Explore workspace capabilities',
+        description: 'Core and advanced tools stay visible so you always know what is available.',
+      },
       required: 'Required',
       recommended: 'Recommended',
       resources: 'Resources',
@@ -713,8 +742,7 @@ const messages = {
       runnableAppFallbackDescription: 'Open this app from the app center.',
       noRunnableAppsTitle: 'No runnable apps yet',
       noRunnableAppsDescription: 'Published apps that are available to you will appear here.',
-      noWorkspaceHint:
-        'Recent work switches to the owning workspace before opening a concrete asset.',
+      noWorkspaceHint: 'Select a workspace before opening workspace-owned assets from recent work.',
       workspaceOverview: {
         eyebrow: 'My visible assets',
         title: 'Workspace assets aggregated by permission',
@@ -729,11 +757,12 @@ const messages = {
         recentEyebrow: 'Return to work quickly',
         recentTitle: 'Recent work',
         recentDescription:
-          'Latest conversations, agents, knowledge bases, and databases visible to you. Opening one switches to its workspace first.',
+          'Latest conversations and assets available in the current workspace or organization context.',
         recentCount: '{count} items',
         emptyRecentTitle: 'No recent work yet',
         emptyRecentDescription:
           'Recent conversations, agents, knowledge bases, and databases will appear after activity in your visible workspaces.',
+        recentLoadError: 'Recent work could not be loaded. Refresh to try again.',
         unknownWorkspace: 'Unknown workspace',
         openRecentFailed: 'Failed to open recent work',
         stats: {

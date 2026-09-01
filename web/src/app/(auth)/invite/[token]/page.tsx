@@ -2,8 +2,8 @@
 
 import { toast } from 'sonner';
 
-import { useState, useEffect, type FormEvent } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
+import { useRouter, useParams, usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import Link from 'next/link';
 import * as z from 'zod';
@@ -21,6 +21,13 @@ import { authenticationService } from '@/services/auth.service';
 import { useAuthStore } from '@/store/auth-store';
 import { clearSessionBoundClientState } from '@/lib/auth/client-state';
 import { getErrorMessage } from '@/utils/error-notifications';
+import {
+  buildInviteRegistrationHref,
+  readRegistrationStatusHint,
+  removeRegistrationStatusHint,
+  resolveRegistrationHintStatus,
+  shouldVerifyRegistrationStatusHint,
+} from '@/utils/invite-registration';
 
 const inviteAcceptErrorTranslationKeys = {
   alreadyMember: 'auth.inviteAcceptErrors.alreadyMember',
@@ -83,6 +90,9 @@ export default function InvitePage() {
   const params = useParams();
   const token = params.token as string;
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const registrationStatusHint = readRegistrationStatusHint(searchParams);
   const t = useT();
 
   const { data: inviteInfo, isLoading: loading, error } = useInviteInfo(token);
@@ -94,6 +104,7 @@ export default function InvitePage() {
   const [emailChecked, setEmailChecked] = useState(false);
   const [checkingEmail, setCheckingEmail] = useState(false);
   const [joinRequestPending, setJoinRequestPending] = useState(false);
+  const hasVerifiedRegistrationStatusHint = useRef(false);
 
   // Login form schema
   const loginSchema = z.object({
@@ -117,13 +128,6 @@ export default function InvitePage() {
   useEffect(() => {
     if (isAuthenticated && inviteInfo) {
       setNeedsAuth(false);
-
-      if (typeof window !== 'undefined') {
-        const justRegistered = sessionStorage.getItem('invite_token') === token;
-        if (justRegistered) {
-          sessionStorage.removeItem('invite_token');
-        }
-      }
     }
   }, [isAuthenticated, inviteInfo, token]);
 
@@ -158,6 +162,7 @@ export default function InvitePage() {
 
   // Handle accepting invite
   const handleAcceptInvite = (memberName?: string) => {
+    hasVerifiedRegistrationStatusHint.current = true;
     acceptInvite(
       { token, member_name: memberName },
       {
@@ -169,8 +174,19 @@ export default function InvitePage() {
             return;
           }
 
-          toast.success(t('auth.joinedOrganization'));
-          window.location.href = '/console';
+          if (result.status === 'approved') {
+            toast.success(t('auth.joinedOrganization'));
+            window.location.href = '/console';
+            return;
+          }
+
+          setJoinRequestPending(false);
+          setIsProcessing(false);
+          toast.error(
+            result.status === 'expired'
+              ? t('auth.inviteAcceptErrors.expired')
+              : t('auth.failedToJoin')
+          );
         },
         onError: error => {
           toast.error(getInviteAcceptErrorMessage(error));
@@ -179,6 +195,60 @@ export default function InvitePage() {
       }
     );
   };
+
+  // A registration status in the URL is only a hint. Re-run the idempotent
+  // acceptance endpoint so the server remains authoritative for pending state.
+  useEffect(() => {
+    if (
+      !shouldVerifyRegistrationStatusHint({
+        hint: registrationStatusHint,
+        isAuthenticated,
+        hasInviteInfo: Boolean(inviteInfo),
+        alreadyVerified: hasVerifiedRegistrationStatusHint.current,
+      })
+    ) {
+      return;
+    }
+
+    hasVerifiedRegistrationStatusHint.current = true;
+    setIsProcessing(true);
+    acceptInvite(
+      { token },
+      {
+        onSuccess: result => {
+          const resolution = resolveRegistrationHintStatus(result.status);
+          if (resolution === 'pending') {
+            setJoinRequestPending(true);
+            setIsProcessing(false);
+            return;
+          }
+
+          if (resolution === 'approved') {
+            window.location.href = '/console';
+            return;
+          }
+
+          setJoinRequestPending(false);
+          setIsProcessing(false);
+          router.replace(removeRegistrationStatusHint(pathname, searchParams));
+        },
+        onError: () => {
+          setJoinRequestPending(false);
+          setIsProcessing(false);
+          router.replace(removeRegistrationStatusHint(pathname, searchParams));
+        },
+      }
+    );
+  }, [
+    acceptInvite,
+    inviteInfo,
+    isAuthenticated,
+    pathname,
+    registrationStatusHint,
+    router,
+    searchParams,
+    token,
+  ]);
 
   // Handle direct accept if already logged in
   const handleDirectAccept = () => {
@@ -196,10 +266,7 @@ export default function InvitePage() {
         setEmailChecked(true);
         loginForm.setValue('email', email);
       } else {
-        if (typeof window !== 'undefined') {
-          sessionStorage.setItem('invite_token', token);
-        }
-        router.push(`/register?redirect=${encodeURIComponent(`/invite/${token}`)}`);
+        router.push(buildInviteRegistrationHref(token));
       }
     } catch {
       toast.error(t('common.error'));

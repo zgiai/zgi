@@ -15,10 +15,18 @@ type ResourceStats struct {
 	Files       int64 `json:"files"`
 }
 
+// ActivityStats represents stable account activity used by workspace onboarding.
+type ActivityStats struct {
+	DirectConversations int64 `json:"direct_conversations"`
+	CreatedAgents       int64 `json:"created_agents"`
+	CreatedDatasets     int64 `json:"created_datasets"`
+}
+
 // DashboardStatsResponse represents the dashboard statistics response
 type DashboardStatsResponse struct {
 	Models    ModelsStats   `json:"models"`
 	Resources ResourceStats `json:"resources"`
+	Activity  ActivityStats `json:"activity"`
 }
 
 // DashboardWorkspaceScopes describes the workspace sets visible to the current account.

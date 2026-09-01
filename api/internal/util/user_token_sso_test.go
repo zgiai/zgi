@@ -177,6 +177,35 @@ func TestTokenManagerConsumeTokenDataAtomicallyDeletesToken(t *testing.T) {
 	require.ErrorContains(t, err, "token not found")
 }
 
+func TestTokenManagerBindsDataTokenToExactlyOneAccount(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() {
+		_ = client.Close()
+		redisUtil.SetClient(nil)
+	})
+	redisUtil.SetClient(client)
+
+	tm := NewTokenManager()
+	token, err := tm.GenerateDataToken(t.Context(), "phone_verified", map[string]interface{}{
+		"phone_e164": "+8613800138000",
+		"scene":      "register",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, tm.BindTokenToAccount(t.Context(), token, "phone_verified", "account-1"))
+	data, err := tm.GetTokenData(token, "phone_verified")
+	require.NoError(t, err)
+	require.NotNil(t, data.AccountID)
+	require.Equal(t, "account-1", *data.AccountID)
+	require.NoError(t, tm.BindTokenToAccount(t.Context(), token, "phone_verified", "account-1"))
+	require.ErrorContains(t, tm.BindTokenToAccount(t.Context(), token, "phone_verified", "account-2"), "another account")
+
+	data, err = tm.GetTokenData(token, "phone_verified")
+	require.NoError(t, err)
+	require.Equal(t, "account-1", *data.AccountID)
+}
+
 func TestTokenManagerConsumeTokenDataAllowsOnlyOneConcurrentConsumer(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})

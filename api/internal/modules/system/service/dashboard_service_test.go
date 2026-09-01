@@ -104,6 +104,74 @@ func TestDashboardServiceRecentConversationsBranchesByRuntimeType(t *testing.T) 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDashboardServiceRecentWorkIncludesDirectChatConversations(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["chat_runtime_conversations"] = true
+	svc.tableCache["workspaces"] = true
+
+	updatedAt := time.Unix(1710000000, 0).UTC()
+	mock.ExpectQuery(`(?s)SELECT .*FROM "?chat_runtime_conversations"? AS c.*LEFT JOIN workspaces AS w.*c\.organization_id =.*c\.account_id =.*c\.source =.*c\.caller_type =.*c\.conversation_type =.*c\.dialogue_count > 0.*c\.workspace_id IN.*ORDER BY c\.updated_at DESC.*LIMIT`).
+		WithArgs("org-1", "acc-1", "console", "aichat", "chat", "ws-1", 5).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"title",
+			"resource_id",
+			"workspace_id",
+			"workspace_name",
+			"updated_at",
+			"created_at",
+		}).AddRow("chat-1", "First direct chat", "chat-1", "ws-1", "Default Workspace", updatedAt, updatedAt))
+
+	resp, err := svc.GetRecentWork(context.Background(), model.RecentWorkRequest{
+		OrganizationID: "org-1",
+		AccountID:      "acc-1",
+		Limit:          5,
+		WorkspaceIDs:   []string{"ws-1"},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 1)
+	require.Equal(t, "conversation", resp.Items[0].Type)
+	require.Equal(t, "chat-1", resp.Items[0].ResourceID)
+	require.Empty(t, resp.Items[0].ParentID)
+	require.Equal(t, "ws-1", resp.Items[0].WorkspaceID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardServiceRecentWorkRefreshesBetweenRequests(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["chat_runtime_conversations"] = true
+	svc.tableCache["workspaces"] = true
+
+	updatedAt := time.Unix(1710000000, 0).UTC()
+	query := `(?s)SELECT .*FROM "?chat_runtime_conversations"? AS c.*LEFT JOIN workspaces AS w.*c\.organization_id =.*c\.account_id =.*c\.source =.*c\.caller_type =.*c\.conversation_type =.*c\.dialogue_count > 0.*c\.workspace_id IN.*ORDER BY c\.updated_at DESC.*LIMIT`
+	columns := []string{"id", "title", "resource_id", "workspace_id", "workspace_name", "updated_at", "created_at"}
+	mock.ExpectQuery(query).
+		WithArgs("org-1", "acc-1", "console", "aichat", "chat", "ws-1", 5).
+		WillReturnRows(sqlmock.NewRows(columns))
+	mock.ExpectQuery(query).
+		WithArgs("org-1", "acc-1", "console", "aichat", "chat", "ws-1", 5).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow("chat-1", "First direct chat", "chat-1", "ws-1", "Default Workspace", updatedAt, updatedAt))
+
+	req := model.RecentWorkRequest{
+		OrganizationID: "org-1",
+		AccountID:      "acc-1",
+		Limit:          5,
+		WorkspaceIDs:   []string{"ws-1"},
+	}
+	first, err := svc.GetRecentWork(context.Background(), req)
+	require.NoError(t, err)
+	require.Empty(t, first.Items)
+
+	second, err := svc.GetRecentWork(context.Background(), req)
+	require.NoError(t, err)
+	require.Len(t, second.Items, 1)
+	require.Equal(t, "chat-1", second.Items[0].ResourceID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestDashboardServiceRecentWorkUsesLogScopedConversationWorkspaces(t *testing.T) {
 	db, mock := openDashboardServiceMockDB(t)
 	svc := NewDashboardService(db).(*dashboardService)
@@ -202,6 +270,77 @@ func TestDashboardServiceFileStatsUsesWorkspaceScopeOnly(t *testing.T) {
 	})
 
 	require.Equal(t, int64(3), stats.Files)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardServiceActivityStatsCountsVisibleAndOrganizationDirectChatHistory(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["chat_runtime_conversations"] = true
+	svc.tableCache["agents"] = true
+	svc.tableCache["datasets"] = true
+
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?chat_runtime_conversations"? WHERE .*organization_id =.*account_id =.*source =.*caller_type =.*conversation_type =.*dialogue_count > 0.*workspace_id IN.*workspace_id IS NULL`).
+		WithArgs("org-1", "acc-1", "console", "aichat", "chat", "ws-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?agents"? WHERE .*tenant_id IN.*created_by =.*agent_type =.*is_universal =.*internal`).
+		WithArgs("ws-1", "acc-1", "AGENT", false, false).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?datasets"? WHERE .*workspace_id IN.*created_by =`).
+		WithArgs("ws-1", "acc-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	stats := svc.getActivityStats(context.Background(), "org-1", "acc-1", model.DashboardWorkspaceScopes{
+		WorkspaceIDs: []string{"ws-1"},
+	})
+
+	require.Equal(t, int64(1), stats.DirectConversations)
+	require.Equal(t, int64(1), stats.CreatedAgents)
+	require.Equal(t, int64(1), stats.CreatedDatasets)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardServiceActivityStatsCountsOrganizationDirectChatWithoutWorkspace(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["chat_runtime_conversations"] = true
+
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?chat_runtime_conversations"? WHERE .*organization_id =.*account_id =.*source =.*caller_type =.*conversation_type =.*dialogue_count > 0.*workspace_id IS NULL`).
+		WithArgs("org-1", "acc-1", "console", "aichat", "chat").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	stats := svc.getActivityStats(context.Background(), "org-1", "acc-1", model.DashboardWorkspaceScopes{})
+
+	require.Equal(t, int64(1), stats.DirectConversations)
+	require.Zero(t, stats.CreatedAgents)
+	require.Zero(t, stats.CreatedDatasets)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardServiceStatsRefreshesOnboardingActivityBetweenRequests(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["llm_models"] = false
+	svc.tableCache["chat_runtime_conversations"] = true
+	svc.tableCache["agents"] = false
+	svc.tableCache["datasets"] = false
+
+	query := `(?s)SELECT count\(\*\) FROM "?chat_runtime_conversations"? WHERE .*organization_id =.*account_id =.*source =.*caller_type =.*conversation_type =.*dialogue_count > 0.*workspace_id IN.*workspace_id IS NULL`
+	mock.ExpectQuery(query).
+		WithArgs("org-1", "acc-1", "console", "aichat", "chat", "ws-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(query).
+		WithArgs("org-1", "acc-1", "console", "aichat", "chat", "ws-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+
+	scopes := model.DashboardWorkspaceScopes{WorkspaceIDs: []string{"ws-1"}}
+	first, err := svc.GetDashboardStats(context.Background(), "org-1", "acc-1", scopes)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), first.Activity.DirectConversations)
+
+	second, err := svc.GetDashboardStats(context.Background(), "org-1", "acc-1", scopes)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), second.Activity.DirectConversations)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

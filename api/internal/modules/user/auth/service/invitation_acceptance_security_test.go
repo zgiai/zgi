@@ -318,6 +318,48 @@ func TestRegisterActivateDatabaseFailureReleasesInvitation(t *testing.T) {
 	require.NoError(t, tokenMgr.ReleaseInvitationReservation(t.Context(), token, reservation))
 }
 
+func TestWorkspaceInvitationActivationSetsTargetAccountContext(t *testing.T) {
+	tokenMgr := newInvitationTestTokenManager(t)
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:invite-activation-context-%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&auth_model.Account{},
+		&auth_model.AccountContext{},
+		&workspace_model.Workspace{},
+		&workspace_model.WorkspaceMember{},
+	))
+	organizationID := "organization-context"
+	workspaceID := "workspace-context"
+	account := &auth_model.Account{ID: "invitee-context", Email: "context@example.com", Status: auth_model.AccountStatusPending}
+	workspace := &workspace_model.Workspace{ID: workspaceID, Name: "Invited", Status: workspace_model.WorkspaceStatusNormal, OrganizationID: &organizationID}
+	require.NoError(t, db.Create(account).Error)
+	require.NoError(t, db.Create(workspace).Error)
+	require.NoError(t, db.Create(&workspace_model.WorkspaceMember{
+		ID: "member-context", WorkspaceID: workspaceID, AccountID: account.ID,
+		Role: workspace_model.WorkspaceRoleMember, Current: false,
+	}).Error)
+	const token = "workspace-context-token"
+	require.NoError(t, tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
+		AccountID: account.ID, Email: account.Email, OrganizationID: organizationID,
+		WorkspaceID: workspaceID, Role: string(workspace_model.WorkspaceRoleMember),
+	}, token, 1))
+	service := &RegisterServiceImpl{
+		db: db, accountRepo: auth_repo.NewAccountRepository(db),
+		tenantService: &invitationWorkspaceService{workspace: workspace}, tokenMgr: tokenMgr,
+	}
+
+	activated, err := service.Activate(t.Context(), workspaceID, account.Email, token, "Invitee", "Password1", "en-US", "UTC")
+	require.NoError(t, err)
+	require.Equal(t, auth_model.AccountStatusActive, activated.(*auth_model.Account).Status)
+	var accountContext auth_model.AccountContext
+	require.NoError(t, db.Where("account_id = ?", account.ID).First(&accountContext).Error)
+	require.Equal(t, organizationID, *accountContext.CurrentOrganizationID)
+	require.Equal(t, workspaceID, *accountContext.CurrentWorkspaceID)
+	var member workspace_model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, account.ID).First(&member).Error)
+	require.True(t, member.Current)
+}
+
 func TestJoinByInvitationConsumesOnlyAfterSuccessfulTransaction(t *testing.T) {
 	for _, testCase := range []struct {
 		name        string

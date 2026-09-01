@@ -9,7 +9,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
-	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // OrganizationServiceImpl implements interfaces.OrganizationService
@@ -35,17 +34,6 @@ func (s *OrganizationServiceImpl) CreateOrganization(ctx context.Context, name s
 
 	if err := s.db.WithContext(ctx).Create(organization).Error; err != nil {
 		return nil, fmt.Errorf("failed to create organization: %w", err)
-	}
-
-	// Async sync to Console-API (non-blocking, best-effort)
-	if s.consoleProvider != nil && s.consoleProvider.IsAvailable() {
-		if err := s.consoleProvider.RegisterOrganization(ctx, &console.RegisterOrganizationRequest{
-			OrganizationID: organization.ID,
-			Name:           organization.Name,
-			CreatedAt:      organization.CreatedAt,
-		}); err != nil {
-			logger.Warn("Failed to sync organization to console: %v", err)
-		}
 	}
 
 	return organization, nil

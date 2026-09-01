@@ -13,6 +13,8 @@ import (
 	workspaceRepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	workspaceService "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	helper "github.com/zgiai/zgi/api/internal/util"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"gorm.io/gorm"
 )
 
@@ -26,6 +28,7 @@ type UserRouteDeps struct {
 	OrganizationService        interfaces.OrganizationService
 	DepartmentService          workspaceService.DepartmentService
 	ConsoleWebURL              string
+	ApplicationErrorCatalog    *appcatalog.Catalog
 }
 
 // RegisterUserRoutes registers user-related routes
@@ -51,6 +54,13 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 	if deps.DepartmentService == nil {
 		panic("user routes require department service")
 	}
+	if deps.ApplicationErrorCatalog == nil {
+		panic("user routes require application error catalog")
+	}
+	errorProjector, err := apptransport.NewProjector(deps.ApplicationErrorCatalog)
+	if err != nil {
+		panic(err)
+	}
 
 	workspaceRepository := workspaceRepo.NewWorkspaceRepository(deps.DB)
 	workspaceServiceImpl := workspaceService.NewWorkspaceService(workspaceRepository)
@@ -72,7 +82,8 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 			MasterVerificationCode: config.Current().Auth.MasterVerificationCode,
 		},
 	)
-	phoneAuthHandler := authHandler.NewPhoneAuthHandler(phoneAuthService)
+	phoneAuthService.SetRegistrationInvitationGateway(deps.OrganizationService)
+	phoneAuthHandler := authHandler.NewPhoneAuthHandler(phoneAuthService, errorProjector)
 	emailRegistrationService := authService.NewEmailRegistrationService(
 		deps.AccountService,
 		tokenMgr,
@@ -84,7 +95,8 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 			MaxCodeAttempts:             5,
 		},
 	)
-	emailRegistrationHandler := authHandler.NewEmailRegistrationHandler(emailRegistrationService)
+	emailRegistrationService.SetRegistrationInvitationGateway(deps.OrganizationService)
+	emailRegistrationHandler := authHandler.NewEmailRegistrationHandler(emailRegistrationService, errorProjector)
 	emailCodeLoginService := authService.NewEmailCodeLoginService(
 		deps.AccountService,
 		tokenMgr,

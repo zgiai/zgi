@@ -12,6 +12,11 @@ import (
 
 var ErrCatalogRequired = errors.New("application error catalog is required")
 
+// HeaderApplicationErrorCode carries a cataloged, language-neutral application
+// error identity alongside a legacy response body. Protocol adapters may set
+// it only after a successful projection; legacy numeric codes remain unchanged.
+const HeaderApplicationErrorCode = "X-ZGI-App-Error-Code"
+
 // Resolution explains whether a public presentation came from the requested
 // application error or from the catalog's safe fallback. It is diagnostic
 // metadata and must not replace the original error in logs or tracing.

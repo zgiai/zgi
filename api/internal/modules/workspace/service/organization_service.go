@@ -155,52 +155,7 @@ func (s *organizationService) GetInviteLinkByToken(ctx context.Context, token st
 
 // AcceptInviteByToken handles invite acceptance
 func (s *organizationService) AcceptInviteByToken(ctx context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error) {
-	link, err := s.organizationRepo.GetInviteLinkByToken(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	if link == nil {
-		return nil, fmt.Errorf("invalid invite token")
-	}
-
-	if link.Status != "active" {
-		return nil, fmt.Errorf("invite link is not active")
-	}
-	if link.ExpiresAt != nil && link.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("invite link expired")
-	}
-
-	// Organization membership is handled by the approval flow.
-	// Note: We are not checking department membership here because of dependency limits.
-	// The caller or subsequent logic should handle "already in department" gracefully.
-
-	// If auto-approve is enabled (RequireApproval=false), we still create a request record but mark it approved
-	status := model.OrganizationJoinRequestStatusPending
-	if !link.RequireApproval {
-		status = model.OrganizationJoinRequestStatusApproved
-	}
-
-	req := &model.OrganizationJoinRequest{
-		OrganizationID:          link.OrganizationID,
-		InviteLinkID:            &link.ID,
-		AccountID:               accountID,
-		DepartmentID:            link.DepartmentID,
-		WorkspaceID:             link.WorkspaceID,
-		DefaultOrganizationRole: link.DefaultOrganizationRole,
-		DefaultWorkspaceRole:    link.DefaultWorkspaceRole,
-		Status:                  status,
-		Name:                    name,
-	}
-
-	// If not member of organization, we should probably add them implicitly?
-	// But let's stick to creating the request. If approved, the approval logic adds them.
-	// If auto-approved, the caller should add them.
-
-	if err := s.organizationRepo.CreateJoinRequest(ctx, req); err != nil {
-		return nil, err
-	}
-
-	return req, nil
+	return s.acceptInviteByTokenTransaction(ctx, token, accountID, name)
 }
 
 // ListDepartmentJoinRequests lists requests.
@@ -350,28 +305,7 @@ func (s *organizationService) RejectDepartmentJoinRequest(ctx context.Context, o
 
 // ApproveDepartmentJoinRequest approves request.
 func (s *organizationService) ApproveDepartmentJoinRequest(ctx context.Context, organizationID, joinRequestID, reviewerAccountID string) (*model.OrganizationJoinRequest, error) {
-	req, err := s.organizationRepo.GetJoinRequestByID(ctx, joinRequestID)
-	if err != nil {
-		return nil, err
-	}
-	if req.OrganizationID != organizationID {
-		return nil, fmt.Errorf("invalid organization id")
-	}
-	if req.Status != model.OrganizationJoinRequestStatusPending {
-		return nil, fmt.Errorf("request is not pending")
-	}
-
-	// Update status
-	req.Status = model.OrganizationJoinRequestStatusApproved
-	req.ReviewerID = &reviewerAccountID
-	now := time.Now()
-	req.ReviewedAt = &now
-
-	if err := s.organizationRepo.UpdateJoinRequest(ctx, req); err != nil {
-		return nil, err
-	}
-
-	return req, nil
+	return s.approveInviteRequestTransaction(ctx, organizationID, joinRequestID, reviewerAccountID)
 }
 
 // organizationService implements the OrganizationService interface
@@ -1499,45 +1433,65 @@ func markWorkspaceRoleReplacementRolledBack(response *shared_dto.ReplaceWorkspac
 }
 
 func (s *organizationService) UpdateMemberInfo(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error {
+	if req == nil {
+		return fmt.Errorf("organization member update request is required")
+	}
 	if req.Role != nil {
 		return ErrOrganizationMemberRoleUpdateUnsupported
 	}
 
-	// 1. Verify organization exists
-	_, err := s.organizationRepo.GetByID(ctx, req.OrganizationID)
-	if err != nil {
-		return fmt.Errorf("organization not found: %w", err)
+	organizationID := strings.TrimSpace(req.OrganizationID)
+	accountID := strings.TrimSpace(req.AccountID)
+	if organizationID == "" || accountID == "" {
+		return fmt.Errorf("organization and account are required")
 	}
+	name := normalizeOrganizationMemberName(req.Name)
 
-	// 2. Verify member exists
-	member, err := s.organizationRepo.GetAccountJoin(ctx, req.OrganizationID, req.AccountID)
-	if err != nil {
-		return fmt.Errorf("member not found: %w", err)
-	}
+	err := s.organizationRepo.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockOrganizationMemberNamesTx(ctx, tx, organizationID); err != nil {
+			return err
+		}
 
-	// 3. Update fields
-	updates := map[string]interface{}{}
-	if req.Name != nil && *req.Name != "" {
-		// Check if name exists
-		exists, err := s.organizationRepo.ExistsMemberByName(ctx, req.OrganizationID, *req.Name, req.AccountID)
+		var member model.OrganizationMember
+		if err := tx.WithContext(ctx).
+			Where("organization_id = ? AND account_id = ?", organizationID, accountID).
+			First(&member).Error; err != nil {
+			return fmt.Errorf("member not found: %w", err)
+		}
+		if name == nil {
+			return nil
+		}
+		exists, err := organizationMemberNameExistsTx(ctx, tx, organizationID, *name, accountID)
 		if err != nil {
 			return fmt.Errorf("failed to check member name: %w", err)
 		}
 		if exists {
 			return ErrMemberNameExists
 		}
-		updates["name"] = *req.Name
-	}
-
-	if len(updates) == 0 {
+		if err := tx.WithContext(ctx).Model(&member).Update("name", *name).Error; err != nil {
+			return fmt.Errorf("failed to update member info: %w", err)
+		}
 		return nil
+	})
+	if err != nil {
+		return err
 	}
+	s.invalidateOrganizationContext(ctx, organizationID, accountID)
+	return nil
+}
 
-	// 4. Save updates
-	if err := s.organizationRepo.GetDB().WithContext(ctx).Model(member).Updates(updates).Error; err != nil {
-		return fmt.Errorf("failed to update member info: %w", err)
+func lockOrganizationMemberNamesTx(ctx context.Context, tx *gorm.DB, organizationID string) error {
+	var locked struct {
+		ID string
 	}
-
+	if err := tx.WithContext(ctx).
+		Table("organizations").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("id").
+		Where("id = ?", strings.TrimSpace(organizationID)).
+		Take(&locked).Error; err != nil {
+		return fmt.Errorf("failed to lock organization member names: %w", err)
+	}
 	return nil
 }
 
@@ -2290,38 +2244,60 @@ func (s *organizationService) RemoveWorkspace(ctx context.Context, organizationI
 
 // AddMember adds a new member to an organization with specified role
 func (s *organizationService) AddMember(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error {
-	_, err := s.organizationRepo.GetByID(ctx, req.OrganizationID)
-	if err != nil {
-		return fmt.Errorf("organization not found: %w", err)
+	if req == nil {
+		return fmt.Errorf("organization member request is required")
 	}
-
-	_, err = s.accountService.GetAccountByID(ctx, req.AccountID)
+	organizationID := strings.TrimSpace(req.OrganizationID)
+	accountID := strings.TrimSpace(req.AccountID)
+	if organizationID == "" || accountID == "" {
+		return fmt.Errorf("organization and account are required")
+	}
+	_, err := s.accountService.GetAccountByID(ctx, accountID)
 	if err != nil {
 		return fmt.Errorf("account not found: %w", err)
 	}
-
-	join, err := s.organizationRepo.GetAccountJoin(ctx, req.OrganizationID, req.AccountID)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("failed to check account existence: %w", err)
+	name := normalizeOrganizationMemberName(req.Name)
+	err = s.organizationRepo.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockOrganizationMemberNamesTx(ctx, tx, organizationID); err != nil {
+			return fmt.Errorf("organization not found: %w", err)
+		}
+		var existing model.OrganizationMember
+		err := tx.WithContext(ctx).
+			Where("organization_id = ? AND account_id = ?", organizationID, accountID).
+			First(&existing).Error
+		if err == nil {
+			return errors.New("account already exists in organization")
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to check account existence: %w", err)
+		}
+		if name != nil {
+			exists, err := organizationMemberNameExistsTx(ctx, tx, organizationID, *name, accountID)
+			if err != nil {
+				return fmt.Errorf("failed to check member name: %w", err)
+			}
+			if exists {
+				return ErrMemberNameExists
+			}
+		}
+		join := &model.OrganizationMember{
+			OrganizationID: organizationID,
+			AccountID:      accountID,
+			Role:           req.Role,
+			Name:           name,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		}
+		if err := tx.WithContext(ctx).Create(join).Error; err != nil {
+			return fmt.Errorf("failed to add member to organization: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	if join != nil {
-		return errors.New("account already exists in organization")
-	}
 
-	join = &model.OrganizationMember{
-		OrganizationID: req.OrganizationID,
-		AccountID:      req.AccountID,
-		Role:           req.Role,
-		Name:           req.Name, // Map nickname from request
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-	}
-
-	if err := s.organizationRepo.CreateAccountJoin(ctx, join); err != nil {
-		return fmt.Errorf("failed to add member to organization: %w", err)
-	}
-
-	s.invalidateOrganizationContext(ctx, req.OrganizationID, req.AccountID)
+	s.invalidateOrganizationContext(ctx, organizationID, accountID)
 	return nil
 }
 

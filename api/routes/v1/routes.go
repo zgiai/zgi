@@ -51,6 +51,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		OrganizationService:        serviceContainer.GetOrganizationService(),
 		DepartmentService:          serviceContainer.GetDepartmentService(),
 		ConsoleWebURL:              config.GlobalConfig.Email.ConsoleWebURL,
+		ApplicationErrorCatalog:    applicationErrorCatalog,
 	})
 
 	// ---------- Workspace / Tenant ----------

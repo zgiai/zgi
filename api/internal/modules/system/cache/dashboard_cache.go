@@ -42,6 +42,12 @@ func (c *DashboardCache) SetStats(ctx context.Context, organizationID, accountID
 	setJSON(ctx, statsKey(organizationID, accountID, scopeKey), value)
 }
 
+// SetStatsWithTTL stores dashboard stats for a caller-selected bounded period.
+// It is used for short negative caching while asynchronous provisioning catches up.
+func (c *DashboardCache) SetStatsWithTTL(ctx context.Context, organizationID, accountID, scopeKey string, value *model.DashboardStatsResponse, ttl time.Duration) {
+	setJSONWithTTL(ctx, statsKey(organizationID, accountID, scopeKey), value, ttl)
+}
+
 func (c *DashboardCache) GetRecentWork(ctx context.Context, organizationID, accountID string, limit int, scopeKey string) (*model.RecentWorkResponse, bool) {
 	var value model.RecentWorkResponse
 	if !getJSON(ctx, recentWorkKey(organizationID, accountID, limit, scopeKey), &value) {
@@ -79,8 +85,12 @@ func getJSON(ctx context.Context, key string, value any) bool {
 }
 
 func setJSON(ctx context.Context, key string, value any) {
+	setJSONWithTTL(ctx, key, value, entryTTL)
+}
+
+func setJSONWithTTL(ctx context.Context, key string, value any, ttl time.Duration) {
 	client := redisutil.GetClient()
-	if client == nil || key == "" || value == nil {
+	if client == nil || key == "" || value == nil || ttl <= 0 {
 		return
 	}
 
@@ -91,5 +101,5 @@ func setJSON(ctx context.Context, key string, value any) {
 
 	redisCtx, cancel := context.WithTimeout(ctx, redisOpTimeout)
 	defer cancel()
-	_ = client.SetEx(redisCtx, key, payload, entryTTL).Err()
+	_ = client.SetEx(redisCtx, key, payload, ttl).Err()
 }

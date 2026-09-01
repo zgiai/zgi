@@ -14,6 +14,10 @@ import { usePhoneCheck, usePhoneCode, useStartRegister, useSystemFeatures } from
 import { cn } from '@/lib/utils';
 import { isPhoneRegisterEnabled } from '@/lib/features/notification-sms';
 import { isValidPhoneNumber } from '@/utils/validation';
+import {
+  appendInviteRegistrationContext,
+  readInviteRegistrationContext,
+} from '@/utils/invite-registration';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -56,8 +60,8 @@ const registerTabTriggerClassName =
 export function RegisterForm({ className }: RegisterFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirect = searchParams.get('redirect');
-  const loginHref = redirect ? `/login?redirect=${encodeURIComponent(redirect)}` : '/login';
+  const registrationContext = readInviteRegistrationContext(searchParams);
+  const loginHref = appendInviteRegistrationContext('/login', registrationContext);
   const t = useT('auth');
   const tCommon = useT('common');
   const { locale } = useLocale();
@@ -125,14 +129,6 @@ export function RegisterForm({ className }: RegisterFormProps) {
     }
   };
 
-  const appendRedirect = (url: string): string => {
-    if (!redirect) {
-      return url;
-    }
-
-    return `${url}&redirect=${encodeURIComponent(redirect)}`;
-  };
-
   const onEmailSubmit = async (data: EmailRegisterFormData) => {
     try {
       const response = await startRegisterMutation.mutateAsync({
@@ -142,8 +138,9 @@ export function RegisterForm({ className }: RegisterFormProps) {
 
       if (response.result === 'success') {
         setRegisterStep('verifying');
-        const verifyUrl = appendRedirect(
-          `/verify?email=${encodeURIComponent(data.email)}&token=${response.token}&type=register`
+        const verifyUrl = appendInviteRegistrationContext(
+          `/verify?email=${encodeURIComponent(data.email)}&token=${response.token}&type=register`,
+          registrationContext
         );
         router.push(verifyUrl);
       }
@@ -181,9 +178,10 @@ export function RegisterForm({ className }: RegisterFormProps) {
         scene: 'register',
       });
 
-      const verifyUrl = appendRedirect(
+      const verifyUrl = appendInviteRegistrationContext(
         `/verify?method=phone&type=register&phone=${encodeURIComponent(data.phone)}` +
-          `&country_code=${encodeURIComponent(countryCode)}&token=${encodeURIComponent(response.token)}`
+          `&country_code=${encodeURIComponent(countryCode)}&token=${encodeURIComponent(response.token)}`,
+        registrationContext
       );
       router.push(verifyUrl);
     } catch (err) {
@@ -223,10 +221,7 @@ export function RegisterForm({ className }: RegisterFormProps) {
   const emailRegisterContent = (
     <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-6">
       <div className="space-y-2">
-        <Label
-          htmlFor="email"
-          className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-        >
+        <Label htmlFor="email" className="ml-1 text-sm font-semibold text-[var(--text-primary)]">
           {t('emailAddress')}
         </Label>
         <Input
@@ -258,10 +253,7 @@ export function RegisterForm({ className }: RegisterFormProps) {
   const phoneRegisterContent = (
     <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-6">
       <div className="space-y-2">
-        <Label
-          htmlFor="phone"
-          className="ml-1 text-sm font-semibold text-[var(--text-primary)]"
-        >
+        <Label htmlFor="phone" className="ml-1 text-sm font-semibold text-[var(--text-primary)]">
           {t('phone')}
         </Label>
         <Input

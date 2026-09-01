@@ -376,6 +376,7 @@ func (c *ServiceContainer) GetAccountServiceImpl() *auth_service.AccountService 
 			&SimpleEventBus{},
 			c.GetConsoleProvider(),
 		)
+		c.accountServiceImpl.SetRegistrationSetupScopeResolver(c.GetBootstrapService())
 		c.accountServiceImpl.SetOfficialRouteBootstrapper(c.GetOfficialRouteBootstrapper())
 	}
 	return c.accountServiceImpl
@@ -584,6 +585,10 @@ func (c *ServiceContainer) GetBootstrapService() *system_service.BootstrapServic
 			c.GetTenantService(),
 			c.GetEnterpriseGroupService(),
 			system_service.NewSystemConfigService(),
+			func(ctx context.Context, tx *gorm.DB, accountID, organizationID string) error {
+				_, err := auth_service.EnqueueRegistrationProvisioningOutbox(ctx, tx, accountID, organizationID)
+				return err
+			},
 		)
 	}
 

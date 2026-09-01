@@ -68,42 +68,99 @@ func NewRemote(baseURL string, internalAPIKey string) *Remote {
 	}
 }
 
-// RegisterOrganization registers organization to Console-API (async).
+// RegisterOrganization preserves the legacy asynchronous best-effort behavior.
 func (r *Remote) RegisterOrganization(ctx context.Context, req *RegisterOrganizationRequest) error {
+	if req == nil {
+		return nil
+	}
+	requestCopy := *req
 	go func() {
-		syncCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		syncCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-
-		reqBody, err := json.Marshal(req)
-		if err != nil {
-			return
-		}
-
-		url := r.baseURL + apiPrefix + pathOrgRegister
-		httpReq, err := http.NewRequestWithContext(syncCtx, "POST", url, bytes.NewReader(reqBody))
-		if err != nil {
-			return
-		}
-
-		httpReq.Header.Set("Content-Type", "application/json")
-		r.signRequest(httpReq)
-		resp, err := r.httpClient.Do(httpReq)
-		if err != nil {
-			return
-		}
-		defer resp.Body.Close()
+		_ = r.RegisterOrganizationSync(syncCtx, &requestCopy)
 	}()
-
 	return nil
+}
+
+// RegisterOrganizationSync synchronously registers an organization with
+// Console-API. The stable idempotency key makes retries safe when supported.
+func (r *Remote) RegisterOrganizationSync(ctx context.Context, req *RegisterOrganizationRequest) error {
+	if req == nil || strings.TrimSpace(req.OrganizationID) == "" {
+		return fmt.Errorf("organization registration request is incomplete")
+	}
+	syncCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("failed to marshal organization registration: %w", err)
+	}
+
+	requestURL := r.baseURL + apiPrefix + pathOrgRegister
+	httpReq, err := http.NewRequestWithContext(syncCtx, http.MethodPost, requestURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return fmt.Errorf("failed to create organization registration request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Idempotency-Key", "registration-organization:"+req.OrganizationID)
+	r.signRequest(httpReq)
+
+	resp, err := r.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("failed to register organization with Console-API: %w", err)
+	}
+	defer resp.Body.Close()
+	rawBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("failed to read organization registration response: %w", readErr)
+	}
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		return nil
+	}
+	if resp.StatusCode == http.StatusConflict && organizationAlreadyRegistered(rawBody) {
+		return nil
+	}
+	return consoleAPIErrorFromResponse(resp.StatusCode, rawBody)
+}
+
+func organizationAlreadyRegistered(rawBody []byte) bool {
+	var response struct {
+		Code    interface{} `json:"code"`
+		Message string      `json:"message"`
+	}
+	_ = json.Unmarshal(rawBody, &response)
+	code := strings.ToLower(strings.TrimSpace(fmt.Sprint(response.Code)))
+	for _, knownCode := range []string{"organization_already_exists", "organization_already_registered"} {
+		if code == knownCode {
+			return true
+		}
+	}
+	return false
+}
+
+func consoleAPIErrorFromResponse(statusCode int, rawBody []byte) error {
+	message := strings.TrimSpace(string(rawBody))
+	var apiErr struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(rawBody, &apiErr) == nil && apiErr.Message != "" {
+		message = apiErr.Message
+	}
+	return &ConsoleAPIError{StatusCode: statusCode, Message: message}
 }
 
 // NotifyOfficialSignup tells Console-API a cloud signup completed.
 func (r *Remote) NotifyOfficialSignup(ctx context.Context, req *NotifyOfficialSignupRequest) (*NotifyOfficialSignupResponse, error) {
+	if req == nil || strings.TrimSpace(req.OrganizationID) == "" || strings.TrimSpace(req.AccountID) == "" {
+		return nil, fmt.Errorf("official signup notification request is incomplete")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
 	var out NotifyOfficialSignupResponse
-	if err := r.doJSON(ctx, http.MethodPost, pathSignupGift, nil, req, "application/json", &out); err != nil {
+	headers := http.Header{}
+	headers.Set("Idempotency-Key", "registration-signup:"+req.OrganizationID+":"+req.AccountID)
+	if err := r.doJSONWithHeaders(ctx, http.MethodPost, pathSignupGift, nil, req, "application/json", headers, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -632,6 +689,19 @@ func (r *Remote) doJSON(
 	contentType string,
 	out interface{},
 ) error {
+	return r.doJSONWithHeaders(ctx, method, path, query, payload, contentType, nil, out)
+}
+
+func (r *Remote) doJSONWithHeaders(
+	ctx context.Context,
+	method string,
+	path string,
+	query url.Values,
+	payload interface{},
+	contentType string,
+	headers http.Header,
+	out interface{},
+) error {
 	var body io.Reader
 	if payload != nil {
 		raw, err := json.Marshal(payload)
@@ -654,6 +724,11 @@ func (r *Remote) doJSON(
 		contentType = "application/json"
 	}
 	req.Header.Set("Content-Type", contentType)
+	for name, values := range headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
 	r.signRequest(req)
 
 	resp, err := r.httpClient.Do(req)

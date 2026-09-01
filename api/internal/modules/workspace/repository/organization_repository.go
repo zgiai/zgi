@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -137,7 +138,14 @@ func (r *organizationRepository) GetAccountJoin(ctx context.Context, organizatio
 
 func (r *organizationRepository) UpdateAccountJoin(ctx context.Context, join *model.OrganizationMember) error {
 	join.UpdatedAt = time.Now()
-	return r.db.WithContext(ctx).Save(join).Error
+	return r.db.WithContext(ctx).
+		Model(&model.OrganizationMember{}).
+		Where("organization_id = ? AND account_id = ?", join.OrganizationID, join.AccountID).
+		Updates(map[string]interface{}{
+			"role":       join.Role,
+			"status":     join.Status,
+			"updated_at": join.UpdatedAt,
+		}).Error
 }
 
 func (r *organizationRepository) DeleteAccountJoin(ctx context.Context, organizationID, accountID string) error {
@@ -151,16 +159,31 @@ func (r *organizationRepository) GetAccountsByOrganizationID(ctx context.Context
 }
 
 func (r *organizationRepository) ExistsMemberByName(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error) {
-	var count int64
-	query := r.db.WithContext(ctx).Model(&model.OrganizationMember{}).
-		Where("organization_id = ? AND name = ?", organizationID, name)
+	targetName := strings.TrimSpace(name)
+	if targetName == "" {
+		return false, nil
+	}
+	var members []struct {
+		AccountID string
+		Name      *string
+	}
+	query := r.db.WithContext(ctx).
+		Table("members").
+		Select("account_id, name").
+		Where("organization_id = ? AND name IS NOT NULL", organizationID)
 
 	if excludeAccountID != "" {
 		query = query.Where("account_id != ?", excludeAccountID)
 	}
-
-	err := query.Count(&count).Error
-	return count > 0, err
+	if err := query.Find(&members).Error; err != nil {
+		return false, err
+	}
+	for _, member := range members {
+		if member.Name != nil && strings.TrimSpace(*member.Name) == targetName {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *organizationRepository) AddWorkspaceToOrganization(ctx context.Context, organizationID, workspaceID string) error {
@@ -325,7 +348,23 @@ func (r *organizationRepository) CreateInviteLink(ctx context.Context, link *mod
 	if link.ID == "" {
 		link.ID = uuid.New().String()
 	}
-	return r.db.WithContext(ctx).Create(link).Error
+	// Use an explicit column map so a false RequireApproval value is persisted
+	// rather than replaced by GORM with the model's database default (true).
+	return r.db.WithContext(ctx).Table(link.TableName()).Create(map[string]interface{}{
+		"id":                  link.ID,
+		"group_id":            link.OrganizationID,
+		"department_id":       link.DepartmentID,
+		"tenant_id":           link.WorkspaceID,
+		"token":               link.Token,
+		"status":              link.Status,
+		"require_approval":    link.RequireApproval,
+		"default_group_role":  link.DefaultOrganizationRole,
+		"default_tenant_role": link.DefaultWorkspaceRole,
+		"expires_at":          link.ExpiresAt,
+		"created_by":          link.CreatedBy,
+		"created_at":          link.CreatedAt,
+		"updated_at":          link.UpdatedAt,
+	}).Error
 }
 
 func (r *organizationRepository) UpdateInviteLink(ctx context.Context, link *model.OrganizationInviteLink) error {

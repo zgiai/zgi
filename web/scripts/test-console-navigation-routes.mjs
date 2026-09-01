@@ -3,8 +3,11 @@ import {
   ZGI_CONSOLE_SITE_MAP,
   getAccessibleZGIConsoleSiteMap,
   getZGIConsoleNavigationAccess,
+  getZGIConsoleNavigationDisplayState,
+  getZGIConsoleNavigationTarget,
   normalizeZGIConsoleNavigationHref,
 } from '../src/routes/console-navigation.ts';
+import { getRecentWorkNavigationHref } from '../src/utils/console-recent-work.ts';
 
 const siteMapRoutes = new Set(ZGI_CONSOLE_SITE_MAP.map(route => route.href));
 
@@ -24,10 +27,7 @@ for (const href of [
   assert.equal(normalizeZGIConsoleNavigationHref(href), href, `${href} must be navigable`);
 }
 
-for (const href of [
-  '/console/agents/agent-1/api',
-  '/console/workflows/workflow-1/api',
-]) {
+for (const href of ['/console/agents/agent-1/api', '/console/workflows/workflow-1/api']) {
   assert.equal(
     normalizeZGIConsoleNavigationHref(href),
     `${href}/keys`,
@@ -60,6 +60,28 @@ assert.equal(
   'allowed',
   'organization routes must remain available without a workspace'
 );
+
+const loadingAccess = getZGIConsoleNavigationAccess('/console/workflows', {
+  ...readyContext,
+  permissionsSettled: false,
+});
+assert.equal(getZGIConsoleNavigationDisplayState(loadingAccess), 'loading');
+assert.equal(getZGIConsoleNavigationDisplayState(loadingAccess, true), 'error');
+assert.equal(
+  getZGIConsoleNavigationDisplayState(
+    getZGIConsoleNavigationAccess('/console/workflows', {
+      ...readyContext,
+      workspaceStatus: 'workspace_required',
+    })
+  ),
+  'setup_required'
+);
+assert.equal(
+  getZGIConsoleNavigationDisplayState(
+    getZGIConsoleNavigationAccess('/console/workflows', readyContext)
+  ),
+  'forbidden'
+);
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', {
     ...readyContext,
@@ -68,11 +90,77 @@ assert.equal(
   'workspace_required'
 );
 assert.equal(
+  getZGIConsoleNavigationTarget('/console/workflows', 'setup_required'),
+  '/console/workspace',
+  'setup-required feature links must open the workspace selection and creation surface'
+);
+assert.equal(
+  getZGIConsoleNavigationTarget('/console/workflows', 'available'),
+  '/console/workflows',
+  'available feature links must retain their original destination'
+);
+assert.equal(
+  getRecentWorkNavigationHref(false, 'agent', 'agent-1'),
+  null,
+  'recent workspace assets must not produce unusable detail links without an active workspace'
+);
+assert.equal(
+  getRecentWorkNavigationHref(true, 'agent', 'agent-1'),
+  '/console/agents/agent-1',
+  'recent workspace assets must retain detail links in an active workspace'
+);
+assert.equal(
+  getRecentWorkNavigationHref(false, 'conversation', 'conversation-org-1'),
+  '/console/work/chat?convId=conversation-org-1',
+  'organization-scoped direct chats must remain navigable without a workspace'
+);
+assert.equal(
+  getRecentWorkNavigationHref(
+    false,
+    'conversation',
+    'conversation-workspace-1',
+    undefined,
+    'workspace-1'
+  ),
+  null,
+  'workspace-scoped direct chats must remain disabled without an active workspace'
+);
+assert.equal(
+  getRecentWorkNavigationHref(false, 'conversation', 'conversation-agent-1', 'agent-1'),
+  null,
+  'agent conversations must remain disabled without an active workspace'
+);
+assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', {
     ...readyContext,
     permissionsSettled: false,
   }).status,
   'permissions_loading'
+);
+for (const href of ['/console/workspace', '/console/files', '/console/prompts']) {
+  const access = getZGIConsoleNavigationAccess(href, {
+    ...readyContext,
+    permissionsSettled: false,
+  });
+  assert.equal(
+    access.status,
+    'allowed',
+    `${href} must remain available when the route does not require feature permissions`
+  );
+  assert.equal(
+    getZGIConsoleNavigationDisplayState(access, true),
+    'available',
+    `${href} must not surface an unrelated permissions query failure`
+  );
+}
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/workflows', {
+    ...readyContext,
+    permissionsSettled: false,
+    organizationRole: 'admin',
+  }).status,
+  'permissions_loading',
+  'role-based permission bypasses must wait for the current permission query to settle'
 );
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', readyContext).status,
@@ -119,6 +207,23 @@ assert.equal(
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workspace/members', readyContext).status,
   'permission_denied'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/workspace/members', {
+    ...readyContext,
+    permissionsSettled: false,
+  }).status,
+  'permissions_loading',
+  'manager-only routes must not reject users before workspace roles finish loading'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/workspace/members', {
+    ...readyContext,
+    permissionsSettled: false,
+    workspaceRole: 'admin',
+  }).status,
+  'permissions_loading',
+  'manager-only routes must not trust cached roles after a permission query failure'
 );
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workspace/members', {

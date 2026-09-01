@@ -27,6 +27,7 @@ import (
 	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
@@ -108,23 +109,27 @@ func accountLoginStatusError(status auth_model.AccountStatus) error {
 // This is a simplified implementation that provides basic account operations
 // More complex features can be added incrementally
 type AccountService struct {
-	accountRepo                   auth_repo.AccountRepository
-	db                            *gorm.DB
-	tokenMgr                      *helper.TokenManager
-	workspaceManagementService    interfaces.WorkspaceManagementService
-	billingService                interfaces.BillingService
-	registerService               interfaces.RegisterService
-	organizationManagementService interfaces.OrganizationManagementService
-	organizationService           interfaces.OrganizationService
-	officialRouteBootstrapper     interfaces.OfficialRouteBootstrapper
-	systemConfigService           system_service.SystemConfigService
-	eventBus                      interfaces.EventBus
-	officialSignupRegistration    *officialSignupRegistrationService
-	profileCacheMu                sync.RWMutex
-	profileCache                  map[string]*accountProfileCacheEntry
-	profileCacheGeneration        map[string]uint64
-	profileCacheGroup             singleflight.Group
-	accountContextGroup           singleflight.Group
+	accountRepo                    auth_repo.AccountRepository
+	db                             *gorm.DB
+	tokenMgr                       *helper.TokenManager
+	workspaceManagementService     interfaces.WorkspaceManagementService
+	billingService                 interfaces.BillingService
+	registerService                interfaces.RegisterService
+	organizationManagementService  interfaces.OrganizationManagementService
+	organizationService            interfaces.OrganizationService
+	officialRouteBootstrapper      interfaces.OfficialRouteBootstrapper
+	systemConfigService            system_service.SystemConfigService
+	eventBus                       interfaces.EventBus
+	officialSignupRegistration     *officialSignupRegistrationService
+	consoleProvider                platformconsole.ConsoleProvider
+	registrationProvisioner        registrationAccountProvisioner
+	registrationSetupScopeResolver RegistrationSetupScopeResolver
+	registrationOutboxDispatcher   func(context.Context, string) error
+	profileCacheMu                 sync.RWMutex
+	profileCache                   map[string]*accountProfileCacheEntry
+	profileCacheGeneration         map[string]uint64
+	profileCacheGroup              singleflight.Group
+	accountContextGroup            singleflight.Group
 }
 
 const (
@@ -171,6 +176,7 @@ func NewAccountService(
 		systemConfigService:           systemConfigService,
 		eventBus:                      eventBus,
 		officialSignupRegistration:    newOfficialSignupRegistrationService(enterpriseService, consoleProvider),
+		consoleProvider:               consoleProvider,
 		profileCache:                  make(map[string]*accountProfileCacheEntry),
 		profileCacheGeneration:        make(map[string]uint64),
 	}
@@ -1240,8 +1246,8 @@ func (s *AccountService) registerExWithMobile(
 	mobileE164 string,
 ) (*auth_model.Account, error) {
 	var account *auth_model.Account
-	var defaultOrganizationID string
-	var defaultWorkspaceID string
+	var provisioningResult *RegistrationProvisioningResult
+	var registrationOutboxID string
 
 	err := s.accountRepo.ExecuteInTransaction(ctx, func(tx *gorm.DB) error {
 		accountRepository := s.accountRepo.WithTx(tx)
@@ -1271,51 +1277,30 @@ func (s *AccountService) registerExWithMobile(
 			return fmt.Errorf("failed to create account: %w", err)
 		}
 
-		createWorkspace := createWorkspaceRequired == nil || *createWorkspaceRequired
-		if !createWorkspace {
-			return nil
-		}
-		groupService := s.organizationManagementService.WithTx(tx)
-		tenantService := s.workspaceManagementService.WithTx(tx)
-
-		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
+		provisioner := s.registrationProvisioningService()
+		provisioningResult, err = provisioner.Provision(ctx, tx, account, createWorkspaceRequired)
 		if err != nil {
-			return fmt.Errorf("failed to prepare group name: %w", err)
+			return fmt.Errorf("failed to provision registration account: %w", err)
 		}
-		group, err := groupService.CreateOrganization(ctx, groupName)
-		if err != nil {
-			return fmt.Errorf("failed to create group: %w", err)
+		if provisioningResult == nil {
+			return fmt.Errorf("failed to provision registration account: empty result")
 		}
-
-		if err := groupService.UpsertOrganizationRole(ctx, group.ID, account.ID, workspace_model.OrganizationRoleOwner); err != nil {
-			return fmt.Errorf("failed to upsert group role: %w", err)
-		}
-
-		// Create default workspace
-		defaultTenant, err := tenantService.CreateWorkspace(ctx, fmt.Sprintf("%s's Workspace", account.Name), true)
-		if err != nil {
-			return fmt.Errorf("failed to create default tenant: %w", err)
+		if provisioningResult.RequiresCloudOutbox {
+			outbox, err := EnqueueRegistrationProvisioningOutbox(ctx, tx, account.ID, provisioningResult.OrganizationID)
+			if err != nil {
+				return err
+			}
+			registrationOutboxID = outbox.ID
 		}
 
-		// Add tenant to group
-		if err := groupService.AddWorkspace(ctx, group.ID, defaultTenant.ID); err != nil {
-			return fmt.Errorf("failed to add tenant to group: %w", err)
-		}
-
-		if err := workspacebootstrap.EnsureOwnerWorkspaceMember(ctx, tenantService, account.ID, defaultTenant.ID); err != nil {
-			return fmt.Errorf("failed to initialize default workspace state: %w", err)
-		}
-		defaultOrganizationID = group.ID
-		defaultWorkspaceID = defaultTenant.ID
-
-		if s.systemConfigService != nil {
-			if err := s.systemConfigService.ConfigDefaultPluginAndConfig(ctx, group.ID, account); err != nil {
+		if provisioningResult.CreatedWorkspace != nil && s.systemConfigService != nil {
+			if err := s.systemConfigService.ConfigDefaultPluginAndConfig(ctx, provisioningResult.OrganizationID, account); err != nil {
 				return fmt.Errorf("failed to configure default plugins: %w", err)
 			}
 		}
 
-		if s.eventBus != nil {
-			if err := s.eventBus.Publish(ctx, "tenant.created", defaultTenant); err != nil {
+		if provisioningResult.CreatedWorkspace != nil && s.eventBus != nil {
+			if err := s.eventBus.Publish(ctx, "tenant.created", provisioningResult.CreatedWorkspace); err != nil {
 				return fmt.Errorf("failed to publish tenant created event: %w", err)
 			}
 		}
@@ -1327,16 +1312,26 @@ func (s *AccountService) registerExWithMobile(
 		return nil, err
 	}
 
-	if err := s.initializeAccountWorkspaceContext(ctx, account.ID, defaultOrganizationID, defaultWorkspaceID); err != nil {
-		return nil, err
-	}
-	s.bootstrapOfficialRoute(ctx, defaultOrganizationID)
-
-	if defaultOrganizationID != "" {
-		s.notifyOfficialSignupRegistration(ctx, account)
+	if registrationOutboxID != "" && s.registrationOutboxDispatcher != nil {
+		dispatchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		if err := s.registrationOutboxDispatcher(dispatchCtx, registrationOutboxID); err != nil {
+			logger.Warn("Immediate registration provisioning outbox processing failed: %v", err)
+		}
 	}
 
 	return account, nil
+}
+
+func (s *AccountService) registrationProvisioningService() registrationAccountProvisioner {
+	if s.registrationProvisioner != nil {
+		return s.registrationProvisioner
+	}
+	return NewRegistrationProvisioner(
+		s.organizationManagementService,
+		s.workspaceManagementService,
+		s.registrationSetupScopeResolver,
+	)
 }
 
 type CreatedOrganizationInfo struct {
@@ -1425,6 +1420,9 @@ func (s *AccountService) createWorkspaceForExistingAccount(ctx context.Context, 
 		return nil, err
 	}
 	s.bootstrapOfficialRoute(ctx, defaultOrganizationID)
+	if createdInfo != nil && createdInfo.Organization != nil {
+		s.registerOrganizationBestEffort(ctx, createdInfo.Organization, account.Email)
+	}
 
 	return createdInfo, nil
 }
@@ -1442,6 +1440,20 @@ func (s *AccountService) bootstrapOfficialRoute(ctx context.Context, organizatio
 
 	if err := s.officialRouteBootstrapper.InitOfficialChannel(ctx, organizationUUID); err != nil {
 		logger.Warn("Failed to bootstrap official route after organization creation: %v", err)
+	}
+}
+
+func (s *AccountService) registerOrganizationBestEffort(ctx context.Context, organization *workspace_model.Organization, ownerEmail string) {
+	if s == nil || organization == nil || s.consoleProvider == nil || !s.consoleProvider.IsAvailable() {
+		return
+	}
+	if err := s.consoleProvider.RegisterOrganization(ctx, &platformconsole.RegisterOrganizationRequest{
+		OrganizationID: organization.ID,
+		Name:           organization.Name,
+		OwnerEmail:     ownerEmail,
+		CreatedAt:      organization.CreatedAt,
+	}); err != nil {
+		logger.Warn("Failed to sync organization to console after commit: %v", err)
 	}
 }
 
@@ -1846,6 +1858,16 @@ func (s *AccountService) SetOfficialRouteBootstrapper(bootstrapper interfaces.Of
 	s.officialRouteBootstrapper = bootstrapper
 }
 
+func (s *AccountService) SetRegistrationSetupScopeResolver(resolver RegistrationSetupScopeResolver) {
+	s.registrationSetupScopeResolver = resolver
+}
+
+// SetRegistrationProvisioningOutboxDispatcher installs the post-commit fast
+// path. The durable scheduler remains authoritative when this attempt fails.
+func (s *AccountService) SetRegistrationProvisioningOutboxDispatcher(dispatcher func(context.Context, string) error) {
+	s.registrationOutboxDispatcher = dispatcher
+}
+
 // ///////////////////////////////////////////////////////////////////
 // CheckRegisterValidity implements the CheckRegisterValidity method
 func (s *AccountService) CheckRegisterValidity(ctx context.Context, email, code, token string) (bool, error) {
@@ -2128,6 +2150,78 @@ func updateAccountExtensions(account *auth_model.Account, mobile, wechat, addres
 // DeleteAccountPermanently implements the DeleteAccountPermanently method
 func (s *AccountService) DeleteAccountPermanently(ctx context.Context, account *auth_model.Account) error {
 	return s.accountRepo.GetDB().WithContext(ctx).Unscoped().Where("id = ?", account.ID).Delete(&auth_model.Account{}).Error
+}
+
+// DeleteUnboundAccountPermanently removes a just-created registration account
+// only while it still has no organization or workspace affiliation. The row
+// lock and in-transaction binding checks prevent a compensation race from
+// removing an account that another request has already attached to a scope.
+func (s *AccountService) DeleteUnboundAccountPermanently(ctx context.Context, account *auth_model.Account) (bool, error) {
+	if account == nil || strings.TrimSpace(account.ID) == "" {
+		return false, nil
+	}
+	if s == nil || s.accountRepo == nil || s.accountRepo.GetDB() == nil {
+		return false, fmt.Errorf("account repository is unavailable")
+	}
+
+	deleted := false
+	err := s.accountRepo.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedAccount auth_model.Account
+		if err := tx.WithContext(ctx).
+			Unscoped().
+			Select("id").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND deleted_at IS NULL", account.ID).
+			Take(&lockedAccount).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return fmt.Errorf("lock registration account: %w", err)
+		}
+
+		for _, binding := range []struct {
+			table string
+			label string
+		}{
+			{table: "members", label: "organization memberships"},
+			{table: "workspace_members", label: "workspace memberships"},
+			{table: "account_contexts", label: "account contexts"},
+			{table: "organization_join_requests", label: "organization join requests"},
+		} {
+			var count int64
+			if err := tx.WithContext(ctx).
+				Table(binding.table).
+				Where("account_id = ?", account.ID).
+				Count(&count).Error; err != nil {
+				return fmt.Errorf("check registration account %s: %w", binding.label, err)
+			}
+			if count > 0 {
+				return nil
+			}
+		}
+
+		result := tx.WithContext(ctx).
+			Unscoped().
+			Where("id = ? AND deleted_at IS NULL", account.ID).
+			Delete(&auth_model.Account{})
+		if result.Error != nil {
+			return fmt.Errorf("delete registration account: %w", result.Error)
+		}
+		deleted = result.RowsAffected == 1
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("delete unbound registration account: %w", err)
+	}
+	if !deleted {
+		logger.WarnContext(ctx, "Skipped registration account compensation because the account is absent or has tenant state", "account_id", account.ID)
+		return false, nil
+	}
+
+	s.InvalidateAccountProfileCache(account.ID)
+	statuscache.InvalidateAccountStatus(ctx, account.ID)
+	workspacecache.InvalidateAccount(ctx, account.ID)
+	return true, nil
 }
 
 // SetAccountRole implements the SetAccountRole method
