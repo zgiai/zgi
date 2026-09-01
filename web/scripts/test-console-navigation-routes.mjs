@@ -138,8 +138,8 @@ assert.equal(
     permissionsSettled: false,
     organizationRole: 'admin',
   }).status,
-  'allowed',
-  'organization administrators must not depend on a redundant workspace permission query'
+  'permissions_loading',
+  'role-based permission bypasses must wait for the current permission query to settle'
 );
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', readyContext).status,
@@ -186,6 +186,23 @@ assert.equal(
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workspace/members', readyContext).status,
   'permission_denied'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/workspace/members', {
+    ...readyContext,
+    permissionsSettled: false,
+  }).status,
+  'permissions_loading',
+  'manager-only routes must not reject users before workspace roles finish loading'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/workspace/members', {
+    ...readyContext,
+    permissionsSettled: false,
+    workspaceRole: 'admin',
+  }).status,
+  'permissions_loading',
+  'manager-only routes must not trust cached roles after a permission query failure'
 );
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workspace/members', {

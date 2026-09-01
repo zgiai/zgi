@@ -538,13 +538,16 @@ export function getZGIConsoleNavigationAccess(
       route
     );
   }
+  if (route.permissions.length === 0 && !route.workspaceManagerOnly) {
+    return accessResult('allowed', route);
+  }
+  if (!context.permissionsSettled) return accessResult('permissions_loading', route);
   if (route.workspaceManagerOnly && !isWorkspaceManager(context)) {
     return accessResult('permission_denied', route);
   }
   if (route.permissions.length === 0 || isOrganizationAdmin(context)) {
     return accessResult('allowed', route);
   }
-  if (!context.permissionsSettled) return accessResult('permissions_loading', route);
 
   const grantedPermissions = new Set(context.permissions);
   return accessResult(
