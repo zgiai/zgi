@@ -286,32 +286,40 @@ func resolveSetupScope(ctx context.Context, tx *gorm.DB, setupStatus *model.Setu
 	}
 
 	constraints := setupScope{OrganizationID: organizationID, WorkspaceID: workspaceID}
-	// A legacy marker's missing IDs must not be inferred from account_contexts:
-	// an administrator can switch that context long after setup. Only persisted
-	// setup constraints that identify one active scope are safe to backfill.
-	scope, found, err := resolveUniqueSetupScope(ctx, tx, constraints)
+	// A legacy marker's missing IDs must not be inferred from account_contexts or
+	// from the currently active tenant set: both can change long after setup. The
+	// setup timestamp is immutable and bootstrap refused pre-existing workspaces,
+	// so only a unique scope created no later than setup is safe to backfill.
+	scope, found, err := resolveSetupEraScope(ctx, tx, setupStatus.SetupAt, constraints)
 	if err != nil {
 		return setupScope{}, false, err
 	}
 	if !found {
 		return setupScope{}, false, ErrSetupScopeUnavailable
 	}
+	if err := validateSetupScope(ctx, tx, scope); err != nil {
+		return setupScope{}, false, err
+	}
 	return scope, true, nil
 }
 
-func resolveUniqueSetupScope(ctx context.Context, tx *gorm.DB, constraints setupScope) (setupScope, bool, error) {
+func resolveSetupEraScope(ctx context.Context, tx *gorm.DB, setupAt time.Time, constraints setupScope) (setupScope, bool, error) {
+	if setupAt.IsZero() {
+		return setupScope{}, false, nil
+	}
+
 	query := tx.WithContext(ctx).
 		Table("workspaces AS w").
 		Distinct("w.organization_id AS organization_id, w.id AS workspace_id").
 		Joins("JOIN organizations AS o ON o.id = w.organization_id").
-		Where("o.status = ?", workspace_model.OrganizationStatusActive).
-		Where("w.status = ?", workspace_model.WorkspaceStatusNormal).
+		Where("o.created_at <= ?", setupAt).
+		Where("w.created_at <= ?", setupAt).
 		Where("w.organization_id IS NOT NULL")
 	query = constrainSetupScopeQuery(query, "w.organization_id", "w.id", constraints)
 
 	scopes, err := loadSetupScopeCandidates(query)
 	if err != nil {
-		return setupScope{}, false, fmt.Errorf("resolve unique setup scope: %w", err)
+		return setupScope{}, false, fmt.Errorf("resolve setup-era scope: %w", err)
 	}
 	switch len(scopes) {
 	case 0:

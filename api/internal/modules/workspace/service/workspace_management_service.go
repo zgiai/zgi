@@ -441,7 +441,7 @@ func (s *WorkspaceManagementServiceImpl) CreateRegistrationWorkspaceMember(
 		WorkspaceID: workspaceID,
 		AccountID:   accountID,
 		Role:        model.WorkspaceMemberRole(role),
-		Current:     false,
+		Current:     true,
 	}
 	if err := txService.applyWorkspaceMemberPermissionTemplate(ctx, join); err != nil {
 		return err

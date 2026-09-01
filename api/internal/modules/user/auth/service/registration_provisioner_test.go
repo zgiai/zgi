@@ -192,6 +192,7 @@ func TestRegistrationProvisionerUsesCallerTransactionWithSingleConnection(t *tes
 			var member workspace_model.WorkspaceMember
 			require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", result.WorkspaceID, account.ID).Take(&member).Error)
 			require.Equal(t, tt.role, member.Role)
+			require.True(t, member.Current, "registration membership must match the current account context")
 			assertRegistrationAccountContext(t, db, account.ID, result.OrganizationID, result.WorkspaceID)
 			var seatUsageCount int64
 			require.NoError(t, db.Model(&quota_model.QuotaUsageHistory{}).

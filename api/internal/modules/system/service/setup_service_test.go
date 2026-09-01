@@ -52,12 +52,14 @@ func newSetupScopeTestService(t *testing.T) (*gorm.DB, *BootstrapService) {
 		)`,
 		`CREATE TABLE organizations (
 			id TEXT PRIMARY KEY,
-			status TEXT NOT NULL
+			status TEXT NOT NULL,
+			created_at DATETIME NOT NULL
 		)`,
 		`CREATE TABLE workspaces (
 			id TEXT PRIMARY KEY,
 			organization_id TEXT NULL,
-			status TEXT NOT NULL
+			status TEXT NOT NULL,
+			created_at DATETIME NOT NULL
 		)`,
 	}
 	for _, statement := range statements {
@@ -87,18 +89,38 @@ func seedLegacySetup(t *testing.T, db *gorm.DB, organizationID, workspaceID any)
 
 func seedUsableSetupScope(t *testing.T, db *gorm.DB, organizationID, workspaceID string) {
 	t.Helper()
-	if err := db.Exec(
-		`INSERT INTO organizations (id, status) VALUES (?, ?)`,
+	seedSetupScopeAt(
+		t,
+		db,
 		organizationID,
+		workspaceID,
 		"active",
+		"normal",
+		time.Now().UTC().Add(-time.Hour),
+	)
+}
+
+func seedSetupScopeAt(
+	t *testing.T,
+	db *gorm.DB,
+	organizationID, workspaceID, organizationStatus, workspaceStatus string,
+	createdAt time.Time,
+) {
+	t.Helper()
+	if err := db.Exec(
+		`INSERT INTO organizations (id, status, created_at) VALUES (?, ?, ?)`,
+		organizationID,
+		organizationStatus,
+		createdAt,
 	).Error; err != nil {
 		t.Fatalf("seed organization: %v", err)
 	}
 	if err := db.Exec(
-		`INSERT INTO workspaces (id, organization_id, status) VALUES (?, ?, ?)`,
+		`INSERT INTO workspaces (id, organization_id, status, created_at) VALUES (?, ?, ?, ?)`,
 		workspaceID,
 		organizationID,
-		"normal",
+		workspaceStatus,
+		createdAt,
 	).Error; err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
@@ -265,7 +287,7 @@ func TestResolveDefaultScope_RejectsAmbiguousSuperAdminContexts(t *testing.T) {
 	}
 }
 
-func TestResolveDefaultScope_RejectsAmbiguousUniqueFallback(t *testing.T) {
+func TestResolveDefaultScope_RejectsAmbiguousSetupEraScopes(t *testing.T) {
 	db, service := newSetupScopeTestService(t)
 	seedLegacySetup(t, db, nil, nil)
 	seedUsableSetupScope(t, db, "org-1", "workspace-1")
@@ -278,6 +300,57 @@ func TestResolveDefaultScope_RejectsAmbiguousUniqueFallback(t *testing.T) {
 	persistedOrganizationID, persistedWorkspaceID := readPersistedSetupScope(t, db)
 	if persistedOrganizationID.Valid || persistedWorkspaceID.Valid {
 		t.Fatalf("ambiguous fallback changed setup scope: %+v, %+v", persistedOrganizationID, persistedWorkspaceID)
+	}
+}
+
+func TestResolveDefaultScope_DoesNotDriftFromArchivedSetupScopeToLaterActiveScope(t *testing.T) {
+	db, service := newSetupScopeTestService(t)
+	seedLegacySetup(t, db, nil, nil)
+	seedSetupScopeAt(
+		t,
+		db,
+		"org-setup",
+		"workspace-setup",
+		"active",
+		"archived",
+		time.Now().UTC().Add(-time.Hour),
+	)
+	seedSetupScopeAt(
+		t,
+		db,
+		"org-later",
+		"workspace-later",
+		"active",
+		"normal",
+		time.Now().UTC().Add(time.Hour),
+	)
+
+	_, _, err := service.ResolveDefaultScope(context.Background())
+	if !errors.Is(err, ErrSetupScopeInvalid) {
+		t.Fatalf("ResolveDefaultScope() error = %v, want ErrSetupScopeInvalid", err)
+	}
+	persistedOrganizationID, persistedWorkspaceID := readPersistedSetupScope(t, db)
+	if persistedOrganizationID.Valid || persistedWorkspaceID.Valid {
+		t.Fatalf("archived setup scope drifted to a later tenant: %+v, %+v", persistedOrganizationID, persistedWorkspaceID)
+	}
+}
+
+func TestResolveDefaultScope_RejectsLaterScopeWithoutSetupEraCandidate(t *testing.T) {
+	db, service := newSetupScopeTestService(t)
+	seedLegacySetup(t, db, nil, nil)
+	seedSetupScopeAt(
+		t,
+		db,
+		"org-later",
+		"workspace-later",
+		"active",
+		"normal",
+		time.Now().UTC().Add(time.Hour),
+	)
+
+	_, _, err := service.ResolveDefaultScope(context.Background())
+	if !errors.Is(err, ErrSetupScopeUnavailable) {
+		t.Fatalf("ResolveDefaultScope() error = %v, want ErrSetupScopeUnavailable", err)
 	}
 }
 
