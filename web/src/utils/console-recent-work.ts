@@ -6,8 +6,11 @@ export function getRecentWorkHref(
   parentId?: string
 ) {
   if (type === 'conversation') {
+    if (!parentId) {
+      return `/console/work/chat?convId=${encodeURIComponent(resourceId)}`;
+    }
     const query = `conversation_id=${encodeURIComponent(resourceId)}`;
-    return parentId ? `/console/agents/${parentId}/logs?${query}` : `/console/agents?${query}`;
+    return `/console/agents/${parentId}/logs?${query}`;
   }
 
   if (type === 'workflow') {
@@ -23,4 +26,13 @@ export function getRecentWorkHref(
   }
 
   return `/console/db/${resourceId}`;
+}
+
+export function getRecentWorkNavigationHref(
+  hasWorkspace: boolean,
+  type: DashboardRecentWorkType,
+  resourceId: string,
+  parentId?: string
+): string | null {
+  return hasWorkspace ? getRecentWorkHref(type, resourceId, parentId) : null;
 }

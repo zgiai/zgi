@@ -21,6 +21,10 @@ import {
   PlugZap,
   Workflow,
   LayoutGrid,
+  House,
+  CircleAlert,
+  LoaderCircle,
+  LockKeyhole,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
@@ -29,24 +33,41 @@ import { Button } from '@/components/ui/button';
 import { WorkspaceSwitcher } from './team-switcher';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkspaceStore } from '@/store/workspace-store';
-import type { PermissionCode } from '@/constants/permissions';
 import { withBasePathIfInternal } from '@/lib/config';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
 import { useSystemFeatures } from '@/hooks/auth/use-system-features';
-import { resolveZGIConsoleNavigationRoute } from '@/routes/console-navigation';
+import {
+  getZGIConsoleNavigationAccess,
+  getZGIConsoleNavigationDisplayState,
+  getZGIConsoleNavigationTarget,
+  type ZGIConsoleNavigationDisplayState,
+  type ZGIConsoleNavigationAccessContext,
+} from '@/routes/console-navigation';
+
+type NavAccessState = ZGIConsoleNavigationDisplayState;
 
 interface NavItem {
   title: string;
   href: string;
   icon: React.ElementType;
+  forcedAccessState?: NavAccessState;
+  blockedReason?: string;
+}
+
+interface ResolvedNavItem extends NavItem {
+  accessState: NavAccessState;
 }
 
 interface NavGroup {
   key: string;
   title: string;
   items: NavItem[];
+}
+
+interface ResolvedNavGroup extends Omit<NavGroup, 'items'> {
+  items: ResolvedNavItem[];
 }
 
 interface RootRouteItem {
@@ -91,32 +112,22 @@ function isRootRouteItemActive(pathname: string, item: RootRouteItem): boolean {
   });
 }
 
-type HasAnyPermission = (permissions: readonly PermissionCode[]) => boolean;
-
-function shouldShowConsoleNavItem(
-  item: NavItem,
-  isWorkspaceRequired: boolean,
-  hasAnyPermission: HasAnyPermission
-) {
-  const navigationRoute = resolveZGIConsoleNavigationRoute(item.href);
-  if (!navigationRoute) return false;
-  if (isWorkspaceRequired) return navigationRoute.scope === 'organization';
-  if (navigationRoute.scope === 'organization' || navigationRoute.permissions.length === 0) {
-    return true;
-  }
-  return hasAnyPermission(navigationRoute.permissions);
-}
-
-function filterConsoleNavGroups(
+function resolveConsoleNavGroups(
   groups: NavGroup[],
-  isWorkspaceRequired: boolean,
-  hasAnyPermission: HasAnyPermission
-) {
+  context: ZGIConsoleNavigationAccessContext,
+  permissionsFailed: boolean
+): ResolvedNavGroup[] {
   return groups
     .map(group => {
-      const items = group.items.filter(item =>
-        shouldShowConsoleNavItem(item, isWorkspaceRequired, hasAnyPermission)
-      );
+      const items = group.items.flatMap(item => {
+        const access = getZGIConsoleNavigationAccess(item.href, context);
+        if (access.status === 'unsupported') return [];
+
+        const accessState: NavAccessState =
+          item.forcedAccessState ?? getZGIConsoleNavigationDisplayState(access, permissionsFailed);
+
+        return [{ ...item, accessState }];
+      });
 
       return { ...group, items };
     })
@@ -139,11 +150,25 @@ export function ConsoleSidebar({
   const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
 
   // Permission checking
-  const { hasAnyPermission } = useAccountPermissions();
+  const {
+    permissions,
+    organizationRole,
+    workspaceRole,
+    isLoading: isPermissionsLoading,
+    error: permissionsError,
+  } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
-  const isWorkspaceRequired = contextStatus === 'workspace_required';
   const systemFeatures = useSystemFeatures();
-  const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
+  const externalIntegrationsAccessState: NavAccessState | undefined =
+    systemFeatures.data !== undefined
+      ? systemFeatures.data?.enable_external_integrations
+        ? undefined
+        : 'forbidden'
+      : systemFeatures.isLoading
+        ? 'loading'
+        : systemFeatures.error
+          ? 'error'
+          : 'forbidden';
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
@@ -264,15 +289,14 @@ export function ConsoleSidebar({
         key: 'tools',
         title: t('tools'),
         items: [
-          ...(externalIntegrationsEnabled
-            ? [
-                {
-                  title: t('integrations'),
-                  href: '/console/integrations',
-                  icon: PlugZap,
-                },
-              ]
-            : []),
+          {
+            title: t('integrations'),
+            href: '/console/integrations',
+            icon: PlugZap,
+            forcedAccessState: externalIntegrationsAccessState,
+            blockedReason:
+              externalIntegrationsAccessState === 'forbidden' ? t('featureDisabled') : undefined,
+          },
           {
             title: t('skills'),
             href: '/console/skills',
@@ -292,13 +316,35 @@ export function ConsoleSidebar({
         ],
       },
     ],
-    [externalIntegrationsEnabled, t]
+    [externalIntegrationsAccessState, t]
   );
 
-  // Filter groups and items
+  const navigationAccessContext = React.useMemo<ZGIConsoleNavigationAccessContext>(
+    () => ({
+      workspaceStatus: contextStatus,
+      permissionsSettled: !isPermissionsLoading && permissionsError === null,
+      organizationRole,
+      workspaceRole,
+      permissions,
+    }),
+    [
+      contextStatus,
+      isPermissionsLoading,
+      organizationRole,
+      permissions,
+      permissionsError,
+      workspaceRole,
+    ]
+  );
+
+  // Keep the product map discoverable and represent blocked states explicitly.
   const navGroups = React.useMemo(() => {
-    return filterConsoleNavGroups(allNavGroups, isWorkspaceRequired, hasAnyPermission);
-  }, [isWorkspaceRequired, hasAnyPermission, allNavGroups]);
+    return resolveConsoleNavGroups(
+      allNavGroups,
+      navigationAccessContext,
+      permissionsError !== null
+    );
+  }, [allNavGroups, navigationAccessContext, permissionsError]);
 
   const rootRouteItems = React.useMemo(
     (): RootRouteItem[] => [
@@ -312,7 +358,32 @@ export function ConsoleSidebar({
     [t]
   );
 
-  const homeNavLink = (
+  const workspaceHomeNavLink = (
+    <Link
+      href="/console"
+      className={cn(
+        'flex items-center gap-2 rounded-md py-1.5 text-[13px] transition-colors shrink-0 w-full',
+        isCollapsed ? 'justify-center px-0 w-8' : 'justify-start px-2',
+        'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
+        pathname === '/console' && 'bg-muted/80 text-foreground'
+      )}
+    >
+      <House
+        size={16}
+        className={cn('shrink-0 text-foreground/65', pathname === '/console' && 'text-foreground')}
+      />
+      <span
+        className={cn(
+          'truncate transition-all duration-300 opacity-100 font-normal',
+          isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+        )}
+      >
+        {t('home')}
+      </span>
+    </Link>
+  );
+
+  const chatNavLink = (
     <Link
       href="/console/work/chat"
       className={cn(
@@ -361,9 +432,14 @@ export function ConsoleSidebar({
         )}
       >
         {isCollapsed ? (
-          <CollapsedNavTooltip label={t('chat')}>{homeNavLink}</CollapsedNavTooltip>
+          <CollapsedNavTooltip label={t('home')}>{workspaceHomeNavLink}</CollapsedNavTooltip>
         ) : (
-          homeNavLink
+          workspaceHomeNavLink
+        )}
+        {isCollapsed ? (
+          <CollapsedNavTooltip label={t('chat')}>{chatNavLink}</CollapsedNavTooltip>
+        ) : (
+          chatNavLink
         )}
 
         {navGroups.map(group => {
@@ -404,26 +480,33 @@ export function ConsoleSidebar({
                 <div className={cn('space-y-0.5', isCollapsed ? 'mt-0' : 'mt-1')}>
                   {group.items.map(item => {
                     const Icon = item.icon;
-                    const isActive = isItemActive(activePathname, item.href);
-                    const navLink = (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        className={cn(
-                          'flex h-8 items-center rounded-md py-1.5 text-[13px]',
-                          'transition-[width,padding,background-color,color,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
-                          'active:scale-[0.98]',
-                          isCollapsed ? 'w-8 justify-center px-0' : 'w-full justify-start px-2',
-                          isActive
-                            ? 'bg-muted/80 text-foreground'
-                            : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
-                        )}
-                      >
+                    const isForbidden = item.accessState === 'forbidden';
+                    const isLoading = item.accessState === 'loading';
+                    const hasAccessError = item.accessState === 'error';
+                    const isBlocked = isForbidden || isLoading || hasAccessError;
+                    const needsSetup = item.accessState === 'setup_required';
+                    const navigationTarget = getZGIConsoleNavigationTarget(
+                      item.href,
+                      item.accessState
+                    );
+                    const isActive = !isBlocked && isItemActive(activePathname, item.href);
+                    const accessLabel = isForbidden
+                      ? item.blockedReason || t('permissionRequired')
+                      : isLoading
+                        ? t('checkingAccess')
+                        : hasAccessError
+                          ? t('accessCheckFailed')
+                          : needsSetup
+                            ? t('setupRequired')
+                            : item.title;
+                    const navContent = (
+                      <>
                         <Icon
                           size={16}
                           className={cn(
                             'shrink-0 text-foreground/60',
-                            isActive && 'text-foreground'
+                            isActive && 'text-foreground',
+                            isBlocked && 'text-foreground/30'
                           )}
                         />
                         <span
@@ -436,15 +519,63 @@ export function ConsoleSidebar({
                         >
                           {item.title}
                         </span>
+                        {!isCollapsed && isForbidden ? (
+                          <LockKeyhole className="ml-auto size-3 shrink-0 text-muted-foreground/60" />
+                        ) : null}
+                        {!isCollapsed && isLoading ? (
+                          <LoaderCircle className="ml-auto size-3 shrink-0 animate-spin text-muted-foreground/60" />
+                        ) : null}
+                        {!isCollapsed && hasAccessError ? (
+                          <CircleAlert className="ml-auto size-3 shrink-0 text-muted-foreground/60" />
+                        ) : null}
+                        {!isCollapsed && needsSetup ? (
+                          <span className="ml-auto size-1.5 shrink-0 rounded-full bg-warning" />
+                        ) : null}
+                      </>
+                    );
+                    const navClassName = cn(
+                      'flex h-8 items-center rounded-md py-1.5 text-[13px]',
+                      'transition-[width,padding,background-color,color,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                      !isBlocked && 'active:scale-[0.98]',
+                      isCollapsed ? 'w-8 justify-center px-0' : 'w-full justify-start px-2',
+                      isBlocked
+                        ? 'cursor-not-allowed text-foreground/35'
+                        : isActive
+                          ? 'bg-muted/80 text-foreground'
+                          : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
+                    );
+                    const navLink = isBlocked ? (
+                      <button
+                        type="button"
+                        className={navClassName}
+                        aria-disabled="true"
+                        title={`${item.title} · ${accessLabel}`}
+                      >
+                        {navContent}
+                      </button>
+                    ) : (
+                      <Link
+                        href={navigationTarget}
+                        className={navClassName}
+                        title={needsSetup ? `${item.title} · ${accessLabel}` : undefined}
+                      >
+                        {navContent}
                       </Link>
                     );
 
                     return isCollapsed ? (
-                      <CollapsedNavTooltip key={item.href} label={item.title}>
+                      <CollapsedNavTooltip
+                        key={item.href}
+                        label={
+                          item.accessState === 'available'
+                            ? item.title
+                            : `${item.title} · ${accessLabel}`
+                        }
+                      >
                         {navLink}
                       </CollapsedNavTooltip>
                     ) : (
-                      navLink
+                      <React.Fragment key={item.href}>{navLink}</React.Fragment>
                     );
                   })}
                 </div>
@@ -510,9 +641,7 @@ export function ConsoleSidebar({
     return null;
   }
   return (
-    <aside
-      className={cn('relative hidden shrink-0 md:block', layoutIsCollapsed ? 'w-12' : 'w-44')}
-    >
+    <aside className={cn('relative hidden shrink-0 md:block', layoutIsCollapsed ? 'w-12' : 'w-44')}>
       <div
         className={cn(
           'absolute inset-y-0 left-0 z-40 flex flex-col overflow-hidden border-r border-border/60 bg-background text-sidebar-foreground',
@@ -569,11 +698,25 @@ export function ConsoleMobileSidebar({
   const t = useT('navigation');
   const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
   const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
-  const { hasAnyPermission } = useAccountPermissions();
+  const {
+    permissions,
+    organizationRole,
+    workspaceRole,
+    isLoading: isPermissionsLoading,
+    error: permissionsError,
+  } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
-  const isWorkspaceRequired = contextStatus === 'workspace_required';
   const systemFeatures = useSystemFeatures();
-  const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
+  const externalIntegrationsAccessState: NavAccessState | undefined =
+    systemFeatures.data !== undefined
+      ? systemFeatures.data?.enable_external_integrations
+        ? undefined
+        : 'forbidden'
+      : systemFeatures.isLoading
+        ? 'loading'
+        : systemFeatures.error
+          ? 'error'
+          : 'forbidden';
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
     work: true,
     resources: true,
@@ -581,7 +724,25 @@ export function ConsoleMobileSidebar({
     management: true,
   });
 
-  const navGroups = React.useMemo<NavGroup[]>(() => {
+  const navigationAccessContext = React.useMemo<ZGIConsoleNavigationAccessContext>(
+    () => ({
+      workspaceStatus: contextStatus,
+      permissionsSettled: !isPermissionsLoading && permissionsError === null,
+      organizationRole,
+      workspaceRole,
+      permissions,
+    }),
+    [
+      contextStatus,
+      isPermissionsLoading,
+      organizationRole,
+      permissions,
+      permissionsError,
+      workspaceRole,
+    ]
+  );
+
+  const navGroups = React.useMemo<ResolvedNavGroup[]>(() => {
     const groups: NavGroup[] = [
       {
         key: 'work',
@@ -654,15 +815,14 @@ export function ConsoleMobileSidebar({
         key: 'tools',
         title: t('tools'),
         items: [
-          ...(externalIntegrationsEnabled
-            ? [
-                {
-                  title: t('integrations'),
-                  href: '/console/integrations',
-                  icon: PlugZap,
-                },
-              ]
-            : []),
+          {
+            title: t('integrations'),
+            href: '/console/integrations',
+            icon: PlugZap,
+            forcedAccessState: externalIntegrationsAccessState,
+            blockedReason:
+              externalIntegrationsAccessState === 'forbidden' ? t('featureDisabled') : undefined,
+          },
           {
             title: t('skills'),
             href: '/console/skills',
@@ -683,8 +843,8 @@ export function ConsoleMobileSidebar({
       },
     ];
 
-    return filterConsoleNavGroups(groups, isWorkspaceRequired, hasAnyPermission);
-  }, [externalIntegrationsEnabled, hasAnyPermission, isWorkspaceRequired, t]);
+    return resolveConsoleNavGroups(groups, navigationAccessContext, permissionsError !== null);
+  }, [externalIntegrationsAccessState, navigationAccessContext, permissionsError, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
@@ -699,6 +859,25 @@ export function ConsoleMobileSidebar({
           </div>
 
           <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+            <Link
+              href="/console"
+              onClick={closeSidebar}
+              className={cn(
+                'flex items-center gap-2 rounded-md px-2 py-2 text-[13px] transition-colors',
+                pathname === '/console'
+                  ? 'bg-muted/80 text-foreground'
+                  : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
+              )}
+            >
+              <House
+                size={16}
+                className={cn(
+                  'shrink-0 text-foreground/60',
+                  pathname === '/console' && 'text-foreground'
+                )}
+              />
+              <span className="truncate font-medium">{t('home')}</span>
+            </Link>
             <Link
               href="/console/work/chat"
               onClick={closeSidebar}
@@ -741,27 +920,79 @@ export function ConsoleMobileSidebar({
                     <div className="mt-1 space-y-0.5">
                       {group.items.map(item => {
                         const Icon = item.icon;
-                        const isActive = isItemActive(activePathname, item.href);
-                        return (
-                          <Link
-                            key={item.href}
-                            href={item.href}
-                            onClick={closeSidebar}
-                            className={cn(
-                              'flex items-center gap-2 rounded-md px-2 py-2 text-[13px] transition-colors',
-                              isActive
-                                ? 'bg-muted/80 text-foreground'
-                                : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
-                            )}
-                          >
+                        const isForbidden = item.accessState === 'forbidden';
+                        const isLoading = item.accessState === 'loading';
+                        const hasAccessError = item.accessState === 'error';
+                        const isBlocked = isForbidden || isLoading || hasAccessError;
+                        const needsSetup = item.accessState === 'setup_required';
+                        const navigationTarget = getZGIConsoleNavigationTarget(
+                          item.href,
+                          item.accessState
+                        );
+                        const isActive = !isBlocked && isItemActive(activePathname, item.href);
+                        const itemContent = (
+                          <>
                             <Icon
                               size={16}
                               className={cn(
                                 'shrink-0 text-foreground/60',
-                                isActive && 'text-foreground'
+                                isActive && 'text-foreground',
+                                isBlocked && 'text-foreground/30'
                               )}
                             />
                             <span className="truncate font-medium">{item.title}</span>
+                            {isForbidden ? (
+                              <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <LockKeyhole className="size-3" />
+                                {item.blockedReason || t('permissionRequired')}
+                              </span>
+                            ) : null}
+                            {isLoading ? (
+                              <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <LoaderCircle className="size-3 animate-spin" />
+                                {t('checkingAccess')}
+                              </span>
+                            ) : null}
+                            {hasAccessError ? (
+                              <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <CircleAlert className="size-3" />
+                                {t('accessCheckFailed')}
+                              </span>
+                            ) : null}
+                            {needsSetup ? (
+                              <span className="ml-auto text-[10px] text-warning">
+                                {t('setupRequired')}
+                              </span>
+                            ) : null}
+                          </>
+                        );
+                        const itemClassName = cn(
+                          'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[13px] transition-colors',
+                          isBlocked
+                            ? 'cursor-not-allowed text-foreground/35'
+                            : isActive
+                              ? 'bg-muted/80 text-foreground'
+                              : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
+                        );
+
+                        return isBlocked ? (
+                          <button
+                            key={item.href}
+                            type="button"
+                            className={itemClassName}
+                            aria-disabled="true"
+                          >
+                            {itemContent}
+                          </button>
+                        ) : (
+                          <Link
+                            key={item.href}
+                            href={navigationTarget}
+                            onClick={closeSidebar}
+                            className={itemClassName}
+                            title={needsSetup ? `${item.title} · ${t('setupRequired')}` : undefined}
+                          >
+                            {itemContent}
                           </Link>
                         );
                       })}

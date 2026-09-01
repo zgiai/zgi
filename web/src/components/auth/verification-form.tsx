@@ -25,6 +25,10 @@ import {
   isPhonePasswordResetEnabled,
   isPhoneRegisterEnabled,
 } from '@/lib/features/notification-sms';
+import {
+  appendInviteRegistrationContext,
+  readInviteRegistrationContext,
+} from '@/utils/invite-registration';
 
 const verificationSchema = z.object({
   code: z
@@ -191,6 +195,10 @@ export function VerificationForm({ className }: VerificationFormProps) {
     verifyForgotPasswordMutation.isPending ||
     phoneVerifyMutation.isPending;
   const { locale } = useLocale();
+  const registrationContext = useMemo(
+    () => readInviteRegistrationContext(searchParams),
+    [searchParams]
+  );
   const resendCooldownKey = useMemo(() => {
     if (!destination || !token) {
       return null;
@@ -206,13 +214,12 @@ export function VerificationForm({ className }: VerificationFormProps) {
 
     if (missingEmailParams || missingPhoneParams || phoneFlowUnavailable) {
       let redirectPath = type === 'reset' ? '/forgot-password' : '/register';
-      const redirect = searchParams.get('redirect');
-      if (redirect && type !== 'reset') {
-        redirectPath += `?redirect=${encodeURIComponent(redirect)}`;
+      if (type !== 'reset') {
+        redirectPath = appendInviteRegistrationContext(redirectPath, registrationContext);
       }
       router.push(redirectPath);
     }
-  }, [email, isPhoneFlow, phone, phoneFlowUnavailable, router, searchParams, token, type]);
+  }, [email, isPhoneFlow, phone, phoneFlowUnavailable, registrationContext, router, token, type]);
 
   useEffect(() => {
     if (!resendCooldownKey) {
@@ -298,10 +305,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
               `/register/complete?method=phone&phone=${encodeURIComponent(phone || '')}` +
               `&country_code=${encodeURIComponent(normalizedCountryCode)}` +
               `&verified_token=${encodeURIComponent(res.verified_token)}`;
-            const redirect = searchParams.get('redirect');
-            if (redirect) {
-              completeUrl += `&redirect=${encodeURIComponent(redirect)}`;
-            }
+            completeUrl = appendInviteRegistrationContext(completeUrl, registrationContext);
             router.push(completeUrl);
           } else {
             router.push(
@@ -339,10 +343,7 @@ export function VerificationForm({ className }: VerificationFormProps) {
           );
         } else {
           let completeUrl = `/register/complete?token=${encodeURIComponent(verifiedRegistrationToken)}&email=${encodeURIComponent(email || '')}`;
-          const redirect = searchParams.get('redirect');
-          if (redirect) {
-            completeUrl += `&redirect=${encodeURIComponent(redirect)}`;
-          }
+          completeUrl = appendInviteRegistrationContext(completeUrl, registrationContext);
           router.push(completeUrl);
         }
       }

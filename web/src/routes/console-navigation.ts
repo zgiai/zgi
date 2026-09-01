@@ -7,6 +7,12 @@ export type ZGIConsoleNavigationAccessStatus =
   | 'workspace_required'
   | 'permissions_loading'
   | 'permission_denied';
+export type ZGIConsoleNavigationDisplayState =
+  | 'available'
+  | 'setup_required'
+  | 'forbidden'
+  | 'loading'
+  | 'error';
 
 export interface ZGIConsoleNavigationAccessContext {
   workspaceStatus: 'loading' | 'ready' | 'workspace_required';
@@ -547,6 +553,25 @@ export function getZGIConsoleNavigationAccess(
       : 'permission_denied',
     route
   );
+}
+
+export function getZGIConsoleNavigationDisplayState(
+  access: ZGIConsoleNavigationAccessResult,
+  permissionsFailed = false
+): ZGIConsoleNavigationDisplayState {
+  if (access.allowed) return 'available';
+  if (access.status === 'workspace_required') return 'setup_required';
+  if (access.status === 'permissions_loading') {
+    return permissionsFailed ? 'error' : 'loading';
+  }
+  return 'forbidden';
+}
+
+export function getZGIConsoleNavigationTarget(
+  href: string,
+  displayState: ZGIConsoleNavigationDisplayState
+): string {
+  return displayState === 'setup_required' ? '/console/workspace' : href;
 }
 
 export function getAccessibleZGIConsoleSiteMap(

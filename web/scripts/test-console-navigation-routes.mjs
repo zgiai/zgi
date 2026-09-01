@@ -3,8 +3,11 @@ import {
   ZGI_CONSOLE_SITE_MAP,
   getAccessibleZGIConsoleSiteMap,
   getZGIConsoleNavigationAccess,
+  getZGIConsoleNavigationDisplayState,
+  getZGIConsoleNavigationTarget,
   normalizeZGIConsoleNavigationHref,
 } from '../src/routes/console-navigation.ts';
+import { getRecentWorkNavigationHref } from '../src/utils/console-recent-work.ts';
 
 const siteMapRoutes = new Set(ZGI_CONSOLE_SITE_MAP.map(route => route.href));
 
@@ -24,10 +27,7 @@ for (const href of [
   assert.equal(normalizeZGIConsoleNavigationHref(href), href, `${href} must be navigable`);
 }
 
-for (const href of [
-  '/console/agents/agent-1/api',
-  '/console/workflows/workflow-1/api',
-]) {
+for (const href of ['/console/agents/agent-1/api', '/console/workflows/workflow-1/api']) {
   assert.equal(
     normalizeZGIConsoleNavigationHref(href),
     `${href}/keys`,
@@ -60,12 +60,54 @@ assert.equal(
   'allowed',
   'organization routes must remain available without a workspace'
 );
+
+const loadingAccess = getZGIConsoleNavigationAccess('/console/workflows', {
+  ...readyContext,
+  permissionsSettled: false,
+});
+assert.equal(getZGIConsoleNavigationDisplayState(loadingAccess), 'loading');
+assert.equal(getZGIConsoleNavigationDisplayState(loadingAccess, true), 'error');
+assert.equal(
+  getZGIConsoleNavigationDisplayState(
+    getZGIConsoleNavigationAccess('/console/workflows', {
+      ...readyContext,
+      workspaceStatus: 'workspace_required',
+    })
+  ),
+  'setup_required'
+);
+assert.equal(
+  getZGIConsoleNavigationDisplayState(
+    getZGIConsoleNavigationAccess('/console/workflows', readyContext)
+  ),
+  'forbidden'
+);
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', {
     ...readyContext,
     workspaceStatus: 'workspace_required',
   }).status,
   'workspace_required'
+);
+assert.equal(
+  getZGIConsoleNavigationTarget('/console/workflows', 'setup_required'),
+  '/console/workspace',
+  'setup-required feature links must open the workspace selection and creation surface'
+);
+assert.equal(
+  getZGIConsoleNavigationTarget('/console/workflows', 'available'),
+  '/console/workflows',
+  'available feature links must retain their original destination'
+);
+assert.equal(
+  getRecentWorkNavigationHref(false, 'agent', 'agent-1'),
+  null,
+  'recent workspace assets must not produce unusable detail links without an active workspace'
+);
+assert.equal(
+  getRecentWorkNavigationHref(true, 'agent', 'agent-1'),
+  '/console/agents/agent-1',
+  'recent workspace assets must retain detail links in an active workspace'
 );
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', {

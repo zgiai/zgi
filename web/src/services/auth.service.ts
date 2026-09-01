@@ -29,6 +29,7 @@ import type {
   EmailCodeLoginSendRequest,
   EmailCodeLoginVerifyRequest,
   EmailCodeLoginSendResponse,
+  RegistrationInvitation,
 } from './types/auth';
 import type { User, SystemFeatures, SetupStatus } from '@/services/types/auth';
 import type { ApiResponseData, BusinessError } from './types/common';
@@ -461,14 +462,18 @@ export class AuthenticationService extends BaseService {
   }
 
   // Finish registration
-  async finishRegister(
-    data: RegisterFinishRequest
-  ): Promise<{ access_token: string; refresh_token?: string; account?: Account }> {
+  async finishRegister(data: RegisterFinishRequest): Promise<{
+    access_token: string;
+    refresh_token?: string;
+    account?: Account;
+    invitation?: RegistrationInvitation;
+  }> {
     interface FinishPayload {
       data: {
         access_token: string;
         refresh_token?: string;
         account?: Account;
+        invitation?: RegistrationInvitation;
       };
       result: string;
     }
@@ -650,7 +655,12 @@ export class AuthenticationService extends BaseService {
     interface_language: string;
     timezone: string;
   }): Promise<ActivationResponse> {
-    const response = await this.request<ApiResponseData<ActivationResponse>>('post', '/activate', data, { skipAuth: true });
+    const response = await this.request<ApiResponseData<ActivationResponse>>(
+      'post',
+      '/activate',
+      data,
+      { skipAuth: true }
+    );
     this.persistTokens(response.data.data.access_token, response.data.data.refresh_token);
     return response.data;
   }
@@ -786,9 +796,12 @@ export class AuthenticationService extends BaseService {
     return response.data;
   }
 
-  async phoneRegister(
-    data: PhoneRegisterRequest
-  ): Promise<{ access_token: string; refresh_token?: string; account?: Account }> {
+  async phoneRegister(data: PhoneRegisterRequest): Promise<{
+    access_token: string;
+    refresh_token?: string;
+    account?: Account;
+    invitation?: RegistrationInvitation;
+  }> {
     const response = await this.request<ApiResponseData<LoginResponse>>(
       'post',
       '/phone/register',
@@ -806,12 +819,13 @@ export class AuthenticationService extends BaseService {
     const access_token = response.data?.data?.access_token;
     const refresh_token = response.data?.data?.refresh_token;
     const account = response.data?.data?.account;
+    const invitation = response.data?.data?.invitation;
 
     if (!access_token) {
       throw new Error('Invalid phone registration response structure');
     }
     this.persistTokens(access_token, refresh_token);
-    return { access_token, refresh_token, account };
+    return { access_token, refresh_token, account, invitation };
   }
 
   async phoneLogin(
@@ -940,8 +954,7 @@ export const authService = {
     password: string;
     interface_language: string;
     timezone: string;
-  }) =>
-    authenticationService.activate(data),
+  }) => authenticationService.activate(data),
 
   // New methods
   startRegister: (data: { email: string; language: string }) =>
