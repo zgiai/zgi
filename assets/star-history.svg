@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="460" viewBox="0 0 900 460" role="img" aria-labelledby="title description">
+  <title id="title">zgiai/zgi Star History</title>
+  <desc id="description">GitHub star history for zgiai/zgi. Current total: 322.</desc>
+  <defs>
+    <linearGradient id="star-area-light" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#54aeff" stop-opacity="0.34" />
+      <stop offset="100%" stop-color="#54aeff" stop-opacity="0.04" />
+    </linearGradient>
+  </defs>
+  <rect x="0.5" y="0.5" width="899" height="459" rx="16" fill="#ffffff" stroke="#d0d7de" />
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="32" y="42" fill="#24292f" font-size="24" font-weight="700">Star History</text>
+    <text x="32" y="68" fill="#57606a" font-size="14">zgiai/zgi</text>
+    <text x="868" y="42" text-anchor="end" fill="#0969da" font-size="20" font-weight="700">322 stars</text>
+    <text x="868" y="67" text-anchor="end" fill="#57606a" font-size="12">Updated 2026-09-01 UTC</text>
+
+      <line x1="72" y1="398.00" x2="868" y2="398.00" stroke="#d8dee4" stroke-width="1" />
+      <text x="58" y="402" text-anchor="end" fill="#57606a" font-size="12">0</text>
+      <line x1="72" y1="339.20" x2="868" y2="339.20" stroke="#d8dee4" stroke-width="1" />
+      <text x="58" y="343.2" text-anchor="end" fill="#57606a" font-size="12">100</text>
+      <line x1="72" y1="280.40" x2="868" y2="280.40" stroke="#d8dee4" stroke-width="1" />
+      <text x="58" y="284.4" text-anchor="end" fill="#57606a" font-size="12">200</text>
+      <line x1="72" y1="221.60" x2="868" y2="221.60" stroke="#d8dee4" stroke-width="1" />
+      <text x="58" y="225.6" text-anchor="end" fill="#57606a" font-size="12">300</text>
+      <line x1="72" y1="162.80" x2="868" y2="162.80" stroke="#d8dee4" stroke-width="1" />
+      <text x="58" y="166.8" text-anchor="end" fill="#57606a" font-size="12">400</text>
+      <line x1="72" y1="104.00" x2="868" y2="104.00" stroke="#d8dee4" stroke-width="1" />
+      <text x="58" y="108" text-anchor="end" fill="#57606a" font-size="12">500</text>
+
+      <line x1="72.00" y1="104" x2="72.00" y2="398" stroke="#d8dee4" stroke-width="1" stroke-dasharray="3 5" />
+      <text x="72.00" y="426" text-anchor="start" fill="#57606a" font-size="12">2024-08-18</text>
+      <line x1="271.00" y1="104" x2="271.00" y2="398" stroke="#d8dee4" stroke-width="1" stroke-dasharray="3 5" />
+      <text x="271.00" y="426" text-anchor="middle" fill="#57606a" font-size="12">2025-02-20</text>
+      <line x1="470.00" y1="104" x2="470.00" y2="398" stroke="#d8dee4" stroke-width="1" stroke-dasharray="3 5" />
+      <text x="470.00" y="426" text-anchor="middle" fill="#57606a" font-size="12">2025-08-25</text>
+      <line x1="669.00" y1="104" x2="669.00" y2="398" stroke="#d8dee4" stroke-width="1" stroke-dasharray="3 5" />
+      <text x="669.00" y="426" text-anchor="middle" fill="#57606a" font-size="12">2026-02-27</text>
+      <line x1="868.00" y1="104" x2="868.00" y2="398" stroke="#d8dee4" stroke-width="1" stroke-dasharray="3 5" />
+      <text x="868.00" y="426" text-anchor="end" fill="#57606a" font-size="12">2026-09-01</text>
+    <path d="M 72.00 398.00 H 180.31 V 396.82 H 181.38 V 395.06 H 184.59 V 393.88 H 189.93 V 393.30 H 194.21 V 392.71 H 197.42 V 392.12 H 201.70 V 391.53 H 202.77 V 390.94 H 218.81 V 390.36 H 231.64 V 389.77 H 271.22 V 389.18 H 277.63 V 388.59 H 280.84 V 388.00 H 292.61 V 386.83 H 295.81 V 386.24 H 296.88 V 385.65 H 302.23 V 384.48 H 424.16 V 383.89 H 594.21 V 383.30 H 602.76 V 382.71 H 604.90 V 382.12 H 619.87 V 381.54 H 691.53 V 380.95 H 710.78 V 380.36 H 724.69 V 379.77 H 728.96 V 379.18 H 741.80 V 378.60 H 752.49 V 378.01 H 782.44 V 377.42 H 802.76 V 330.97 H 803.83 V 312.15 H 804.90 V 310.98 H 807.04 V 310.39 H 809.18 V 308.62 H 811.32 V 296.86 H 812.39 V 266.29 H 813.46 V 228.66 H 814.52 V 222.19 H 815.59 V 221.01 H 829.50 V 219.84 H 830.57 V 218.66 H 831.64 V 218.07 H 834.85 V 216.90 H 835.91 V 216.31 H 840.19 V 213.96 H 842.33 V 213.37 H 846.61 V 212.19 H 849.82 V 211.60 H 861.58 V 211.02 H 862.65 V 210.43 H 865.86 V 208.66 H 868.00 V 208.66 L 868 398 L 72 398 Z" fill="url(#star-area-light)" />
+    <path d="M 72.00 398.00 H 180.31 V 396.82 H 181.38 V 395.06 H 184.59 V 393.88 H 189.93 V 393.30 H 194.21 V 392.71 H 197.42 V 392.12 H 201.70 V 391.53 H 202.77 V 390.94 H 218.81 V 390.36 H 231.64 V 389.77 H 271.22 V 389.18 H 277.63 V 388.59 H 280.84 V 388.00 H 292.61 V 386.83 H 295.81 V 386.24 H 296.88 V 385.65 H 302.23 V 384.48 H 424.16 V 383.89 H 594.21 V 383.30 H 602.76 V 382.71 H 604.90 V 382.12 H 619.87 V 381.54 H 691.53 V 380.95 H 710.78 V 380.36 H 724.69 V 379.77 H 728.96 V 379.18 H 741.80 V 378.60 H 752.49 V 378.01 H 782.44 V 377.42 H 802.76 V 330.97 H 803.83 V 312.15 H 804.90 V 310.98 H 807.04 V 310.39 H 809.18 V 308.62 H 811.32 V 296.86 H 812.39 V 266.29 H 813.46 V 228.66 H 814.52 V 222.19 H 815.59 V 221.01 H 829.50 V 219.84 H 830.57 V 218.66 H 831.64 V 218.07 H 834.85 V 216.90 H 835.91 V 216.31 H 840.19 V 213.96 H 842.33 V 213.37 H 846.61 V 212.19 H 849.82 V 211.60 H 861.58 V 211.02 H 862.65 V 210.43 H 865.86 V 208.66 H 868.00 V 208.66" fill="none" stroke="#0969da" stroke-width="3" stroke-linejoin="round" />
+
+  </g>
+</svg>
