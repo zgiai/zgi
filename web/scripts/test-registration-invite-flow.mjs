@@ -8,6 +8,7 @@ import {
   readRegistrationStatusHint,
   removeRegistrationStatusHint,
   resolveRegistrationHintStatus,
+  shouldLockLegacyInviteAccount,
   shouldVerifyRegistrationStatusHint,
 } from '../src/utils/invite-registration.ts';
 
@@ -40,6 +41,20 @@ assert.equal(
   getLegacyLoginInviteToken({ inviteToken: 'legacy-invitation-code' }),
   'legacy-invitation-code'
 );
+assert.equal(shouldLockLegacyInviteAccount(context, ''), false);
+assert.equal(shouldLockLegacyInviteAccount(context, 'invited@example.com'), false);
+assert.equal(
+  shouldLockLegacyInviteAccount({ inviteToken: 'legacy-invitation-code' }, ''),
+  false
+);
+assert.equal(
+  shouldLockLegacyInviteAccount(
+    { inviteToken: 'legacy-invitation-code' },
+    'invited@example.com'
+  ),
+  true
+);
+assert.equal(shouldLockLegacyInviteAccount({}, 'invited@example.com'), false);
 assert.equal(appendInviteRegistrationContext('/login', {}), '/login');
 
 assert.equal(readRegistrationStatusHint(new URLSearchParams('registration_status=pending')), 'pending');

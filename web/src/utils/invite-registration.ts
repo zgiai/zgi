@@ -50,6 +50,13 @@ export function getLegacyLoginInviteToken(
   return context.inviteToken || undefined;
 }
 
+export function shouldLockLegacyInviteAccount(
+  context: InviteRegistrationContext,
+  accountPrefill: string
+): boolean {
+  return Boolean(getLegacyLoginInviteToken(context) && accountPrefill.trim());
+}
+
 export function readRegistrationStatusHint(
   searchParams: Pick<URLSearchParams, 'get'>
 ): RegistrationStatusHint | null {
