@@ -32,7 +32,11 @@ export function getRecentWorkNavigationHref(
   hasWorkspace: boolean,
   type: DashboardRecentWorkType,
   resourceId: string,
-  parentId?: string
+  parentId?: string,
+  workspaceId?: string
 ): string | null {
-  return hasWorkspace ? getRecentWorkHref(type, resourceId, parentId) : null;
+  const isOrganizationConversation = type === 'conversation' && !parentId && !workspaceId;
+  return hasWorkspace || isOrganizationConversation
+    ? getRecentWorkHref(type, resourceId, parentId)
+    : null;
 }

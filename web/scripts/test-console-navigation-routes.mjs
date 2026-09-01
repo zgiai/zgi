@@ -110,6 +110,27 @@ assert.equal(
   'recent workspace assets must retain detail links in an active workspace'
 );
 assert.equal(
+  getRecentWorkNavigationHref(false, 'conversation', 'conversation-org-1'),
+  '/console/work/chat?convId=conversation-org-1',
+  'organization-scoped direct chats must remain navigable without a workspace'
+);
+assert.equal(
+  getRecentWorkNavigationHref(
+    false,
+    'conversation',
+    'conversation-workspace-1',
+    undefined,
+    'workspace-1'
+  ),
+  null,
+  'workspace-scoped direct chats must remain disabled without an active workspace'
+);
+assert.equal(
+  getRecentWorkNavigationHref(false, 'conversation', 'conversation-agent-1', 'agent-1'),
+  null,
+  'agent conversations must remain disabled without an active workspace'
+);
+assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', {
     ...readyContext,
     permissionsSettled: false,

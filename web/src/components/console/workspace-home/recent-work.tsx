@@ -56,6 +56,18 @@ export function WorkspaceRecentWork({
   hasWorkspace: boolean;
 }) {
   const t = useT('dashboard');
+  const hasUnavailableItems =
+    !hasWorkspace &&
+    items.some(
+      item =>
+        !getRecentWorkNavigationHref(
+          hasWorkspace,
+          item.type,
+          item.resource_id,
+          item.parent_id,
+          item.workspace_id
+        )
+    );
 
   return (
     <Card className="border-border/80 shadow-sm">
@@ -77,7 +89,7 @@ export function WorkspaceRecentWork({
         </div>
       </CardHeader>
       <CardContent>
-        {!hasWorkspace && !isLoading && !hasError && items.length > 0 ? (
+        {hasUnavailableItems && !isLoading && !hasError ? (
           <div className="mb-3 flex items-start gap-2 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2.5 text-xs leading-5 text-warning">
             <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
             <span>{t('stats.consoleHome.noWorkspaceHint')}</span>
@@ -114,7 +126,8 @@ export function WorkspaceRecentWork({
                 hasWorkspace,
                 item.type,
                 item.resource_id,
-                item.parent_id
+                item.parent_id,
+                item.workspace_id
               );
               const content = (
                 <>
@@ -126,7 +139,7 @@ export function WorkspaceRecentWork({
                       <span className="truncate text-sm font-medium text-foreground">
                         {item.title}
                       </span>
-                      {hasWorkspace ? (
+                      {navigationHref ? (
                         <ArrowRight className="ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                       ) : null}
                     </span>
