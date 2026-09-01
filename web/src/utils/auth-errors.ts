@@ -54,6 +54,11 @@ interface AuthBusinessErrorDescriptionOptions {
   context?: AuthBusinessErrorContext;
 }
 
+export interface RegistrationErrorDescription {
+  key?: AuthBusinessErrorDescriptionKey;
+  message?: string;
+}
+
 const AUTH_BUSINESS_ERROR_DESCRIPTION_KEYS: Record<string, AuthBusinessErrorDescriptionKey> = {
   account_not_found: 'businessErrors.accountNotFound',
   '199001': 'businessErrors.invalidParameter',
@@ -152,4 +157,26 @@ export function getAuthBusinessErrorDescriptionKey(
     : undefined;
 
   return contextKey ?? AUTH_BUSINESS_ERROR_DESCRIPTION_KEYS[code];
+}
+
+// Invited registration has more specific server-side rejection reasons while
+// retaining the same legacy numeric codes as ordinary registration. Prefer the
+// server's catalog-projected message only for that flow; ordinary registration
+// keeps the existing client-side code-to-i18n behavior.
+export function getRegistrationErrorDescription(
+  error: unknown,
+  inviteToken?: string
+): RegistrationErrorDescription {
+  const code = getAuthBusinessErrorCode(error);
+  const backendMessage = getAuthBusinessErrorMessage(error)?.trim();
+  const isProjectedInviteRejection = code === '401002' || code === '199001';
+  if (inviteToken?.trim() && isProjectedInviteRejection && backendMessage) {
+    return { message: backendMessage };
+  }
+
+  const key = getAuthBusinessErrorDescriptionKey(error, { context: 'register' });
+  if (key) {
+    return { key };
+  }
+  return { message: backendMessage };
 }

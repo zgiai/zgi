@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -32,6 +33,70 @@ func TestValidateOrganizationInviteTargetSerializesOrganizationEffects(t *testin
 	require.NoError(t, err)
 	require.Nil(t, workspaceID)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateRegistrationInviteClassifiesExpectedUnavailableStates(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    string
+		expiresAt *time.Time
+		lookup    string
+		orgStatus model.OrganizationStatus
+	}{
+		{
+			name:      "token removed or reset",
+			status:    "active",
+			lookup:    "old-reset-token",
+			orgStatus: model.OrganizationStatusActive,
+		},
+		{
+			name:      "link deactivated",
+			status:    "inactive",
+			lookup:    "registration-invite",
+			orgStatus: model.OrganizationStatusActive,
+		},
+		{
+			name:      "link expired",
+			status:    "active",
+			expiresAt: inviteTimePointer(time.Now().Add(-time.Minute)),
+			lookup:    "registration-invite",
+			orgStatus: model.OrganizationStatusActive,
+		},
+		{
+			name:      "organization deactivated",
+			status:    "active",
+			lookup:    "registration-invite",
+			orgStatus: model.OrganizationStatusInactive,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := newOrganizationInviteAcceptanceDB(t)
+			organizationID := uuid.NewString()
+			require.NoError(t, db.Create(&model.Organization{
+				ID: organizationID, Name: "Target", Status: test.orgStatus,
+			}).Error)
+			link := &model.OrganizationInviteLink{
+				OrganizationID: organizationID,
+				Token:          "registration-invite",
+				Status:         test.status,
+				ExpiresAt:      test.expiresAt,
+				CreatedBy:      uuid.NewString(),
+			}
+			repository := workspace_repo.NewOrganizationRepository(db)
+			require.NoError(t, repository.CreateInviteLink(t.Context(), link))
+			service := &organizationService{db: db, organizationRepo: repository}
+
+			_, err := service.ValidateInviteLinkForRegistration(t.Context(), test.lookup)
+
+			require.ErrorIs(t, err, ErrOrganizationInviteUnavailable)
+		})
+	}
+}
+
+func inviteTimePointer(value time.Time) *time.Time {
+	return &value
 }
 
 func TestAcceptInviteByTokenCreatesTargetScopeTransactionally(t *testing.T) {
@@ -388,6 +453,7 @@ func TestApproveInviteRevalidatesActiveTargetInsideTransaction(t *testing.T) {
 
 			_, err = service.ApproveDepartmentJoinRequest(t.Context(), organizationID, pending.ID, uuid.NewString())
 
+			require.ErrorIs(t, err, ErrOrganizationInviteUnavailable)
 			require.ErrorContains(t, err, tt.wantError)
 			var persisted model.OrganizationJoinRequest
 			require.NoError(t, db.Where("id = ?", pending.ID).First(&persisted).Error)

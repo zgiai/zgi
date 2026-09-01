@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/dto"
 	auth_service "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -21,11 +22,15 @@ type phoneAuthService interface {
 }
 
 type PhoneAuthHandler struct {
-	service phoneAuthService
+	service        phoneAuthService
+	errorProjector *apptransport.Projector
 }
 
-func NewPhoneAuthHandler(service phoneAuthService) *PhoneAuthHandler {
-	return &PhoneAuthHandler{service: service}
+func NewPhoneAuthHandler(service phoneAuthService, errorProjector *apptransport.Projector) *PhoneAuthHandler {
+	if errorProjector == nil {
+		panic("phone auth handler requires application error projector")
+	}
+	return &PhoneAuthHandler{service: service, errorProjector: errorProjector}
 }
 
 func (h *PhoneAuthHandler) CheckPhone(c *gin.Context) {
@@ -144,6 +149,9 @@ func (h *PhoneAuthHandler) RegisterRoutes(v1 *gin.RouterGroup) {
 }
 
 func (h *PhoneAuthHandler) respondPhoneAuthError(c *gin.Context, err error) {
+	if projectRegistrationApplicationError(c, h.errorProjector, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, auth_service.ErrPhoneRegistrationDisabled):
 		response.Fail(c, response.ErrRegisterNotAllowed)

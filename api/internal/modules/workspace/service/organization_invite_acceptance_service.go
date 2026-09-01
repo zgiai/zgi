@@ -16,6 +16,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// ErrOrganizationInviteUnavailable identifies an invitation that can no
+// longer be used because its token or target was removed, reset, expired, or
+// deactivated. Callers may safely map this sentinel to a public retry-with-a-
+// new-link response while keeping infrastructure failures private.
+var ErrOrganizationInviteUnavailable = errors.New("organization invitation is unavailable")
+
 func (s *organizationService) ValidateInviteLinkForRegistration(ctx context.Context, token string) (*model.OrganizationInviteLink, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("organization invite service is unavailable")
@@ -23,7 +29,7 @@ func (s *organizationService) ValidateInviteLinkForRegistration(ctx context.Cont
 	var link model.OrganizationInviteLink
 	if err := s.db.WithContext(ctx).Where("token = ?", strings.TrimSpace(token)).First(&link).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("invalid invite token")
+			return nil, fmt.Errorf("%w: invite token was not found", ErrOrganizationInviteUnavailable)
 		}
 		return nil, fmt.Errorf("get invite link: %w", err)
 	}
@@ -53,7 +59,7 @@ func (s *organizationService) acceptInviteByTokenTransaction(ctx context.Context
 			Where("token = ?", token).
 			First(&link).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("invalid invite token")
+				return fmt.Errorf("%w: invite token was not found", ErrOrganizationInviteUnavailable)
 			}
 			return fmt.Errorf("get invite link: %w", err)
 		}
@@ -177,7 +183,7 @@ func (s *organizationService) approveInviteRequestTransaction(ctx context.Contex
 
 func validateOrganizationJoinRequestTargetTx(ctx context.Context, tx *gorm.DB, req *model.OrganizationJoinRequest) error {
 	if req == nil || req.InviteLinkID == nil || strings.TrimSpace(*req.InviteLinkID) == "" {
-		return fmt.Errorf("invite link is unavailable")
+		return fmt.Errorf("%w: invite link is unavailable", ErrOrganizationInviteUnavailable)
 	}
 
 	var link model.OrganizationInviteLink
@@ -185,11 +191,14 @@ func validateOrganizationJoinRequestTargetTx(ctx context.Context, tx *gorm.DB, r
 		Clauses(clause.Locking{Strength: "SHARE"}).
 		Where("id = ?", strings.TrimSpace(*req.InviteLinkID)).
 		First(&link).Error; err != nil {
-		return fmt.Errorf("invite link is unavailable: %w", err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: invite link was removed or reset", ErrOrganizationInviteUnavailable)
+		}
+		return fmt.Errorf("get invite link for pending request: %w", err)
 	}
 	if link.OrganizationID != req.OrganizationID ||
 		trimOptionalInviteString(link.DepartmentID) != trimOptionalInviteString(req.DepartmentID) {
-		return fmt.Errorf("invite target no longer matches the pending request")
+		return fmt.Errorf("%w: invite target no longer matches the pending request", ErrOrganizationInviteUnavailable)
 	}
 
 	workspaceID, err := validateOrganizationInviteTargetTx(ctx, tx, &link)
@@ -197,20 +206,20 @@ func validateOrganizationJoinRequestTargetTx(ctx context.Context, tx *gorm.DB, r
 		return err
 	}
 	if trimOptionalInviteString(workspaceID) != trimOptionalInviteString(req.WorkspaceID) {
-		return fmt.Errorf("invite target no longer matches the pending request")
+		return fmt.Errorf("%w: invite target no longer matches the pending request", ErrOrganizationInviteUnavailable)
 	}
 	return nil
 }
 
 func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *model.OrganizationInviteLink) (*string, error) {
 	if link == nil || strings.TrimSpace(link.OrganizationID) == "" {
-		return nil, fmt.Errorf("invite link organization is required")
+		return nil, fmt.Errorf("%w: invite link organization is missing", ErrOrganizationInviteUnavailable)
 	}
 	if link.Status != "active" {
-		return nil, fmt.Errorf("invite link is not active")
+		return nil, fmt.Errorf("%w: invite link is not active", ErrOrganizationInviteUnavailable)
 	}
 	if link.ExpiresAt != nil && link.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("invite link expired")
+		return nil, fmt.Errorf("%w: invite link expired", ErrOrganizationInviteUnavailable)
 	}
 	var organization model.Organization
 	if err := tx.WithContext(ctx).
@@ -220,10 +229,13 @@ func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("id = ?", link.OrganizationID).
 		First(&organization).Error; err != nil {
-		return nil, fmt.Errorf("invited organization is unavailable: %w", err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: invited organization is unavailable", ErrOrganizationInviteUnavailable)
+		}
+		return nil, fmt.Errorf("get invited organization: %w", err)
 	}
 	if !organization.IsActive() {
-		return nil, fmt.Errorf("invited organization is unavailable")
+		return nil, fmt.Errorf("%w: invited organization is unavailable", ErrOrganizationInviteUnavailable)
 	}
 	if link.DepartmentID != nil && strings.TrimSpace(*link.DepartmentID) != "" {
 		var department model.Department
@@ -231,7 +243,10 @@ func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *
 			Clauses(clause.Locking{Strength: "SHARE"}).
 			Where("id = ? AND group_id = ? AND status = ?", strings.TrimSpace(*link.DepartmentID), link.OrganizationID, model.DepartmentStatusActive).
 			First(&department).Error; err != nil {
-			return nil, fmt.Errorf("invited department is unavailable: %w", err)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("%w: invited department is unavailable", ErrOrganizationInviteUnavailable)
+			}
+			return nil, fmt.Errorf("get invited department: %w", err)
 		}
 	}
 
@@ -242,7 +257,10 @@ func validateOrganizationInviteTargetTx(ctx context.Context, tx *gorm.DB, link *
 			Clauses(clause.Locking{Strength: "SHARE"}).
 			Where("id = ? AND organization_id = ? AND status = ?", workspaceID, link.OrganizationID, model.WorkspaceStatusNormal).
 			First(&workspace).Error; err != nil {
-			return nil, fmt.Errorf("invited workspace is unavailable: %w", err)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("%w: invited workspace is unavailable", ErrOrganizationInviteUnavailable)
+			}
+			return nil, fmt.Errorf("get invited workspace: %w", err)
 		}
 		return &workspaceID, nil
 	}

@@ -11,6 +11,7 @@ import {
   shouldLockLegacyInviteAccount,
   shouldVerifyRegistrationStatusHint,
 } from '../src/utils/invite-registration.ts';
+import { getRegistrationErrorDescription } from '../src/utils/auth-errors.ts';
 
 const token = 'invite/token with spaces';
 const registrationHref = buildInviteRegistrationHref(token);
@@ -86,6 +87,50 @@ assert.equal(
     new URLSearchParams('registration_status=pending&source=registration')
   ),
   '/invite/token?source=registration'
+);
+
+const inviteUnavailableError = {
+  businessError: {
+    code: '401002',
+    message: 'This invitation is no longer available. Ask for a new link.',
+  },
+};
+assert.deepEqual(getRegistrationErrorDescription(inviteUnavailableError, 'organization-invite'), {
+  message: 'This invitation is no longer available. Ask for a new link.',
+});
+assert.deepEqual(getRegistrationErrorDescription(inviteUnavailableError), {
+  key: 'businessErrors.registerTokenExpired',
+});
+
+const memberNameConflictError = {
+  businessError: {
+    code: '199001',
+    message: 'This member name is already in use. Choose another name.',
+  },
+};
+assert.deepEqual(getRegistrationErrorDescription(memberNameConflictError, 'organization-invite'), {
+  message: 'This member name is already in use. Choose another name.',
+});
+assert.deepEqual(getRegistrationErrorDescription(memberNameConflictError, '   '), {
+  key: 'businessErrors.invalidParameter',
+});
+assert.deepEqual(
+  getRegistrationErrorDescription(
+    { businessError: { code: '199001', message: '   ' } },
+    'organization-invite'
+  ),
+  { key: 'businessErrors.invalidParameter' }
+);
+
+const unrelatedRegistrationError = {
+  businessError: {
+    code: '201008',
+    message: 'Backend rate-limit detail that must not replace client i18n.',
+  },
+};
+assert.deepEqual(
+  getRegistrationErrorDescription(unrelatedRegistrationError, 'organization-invite'),
+  { key: 'businessErrors.sendCodeTooManyAttempts' }
 );
 
 console.log('Registration invitation context and server-verification policy checks passed.');

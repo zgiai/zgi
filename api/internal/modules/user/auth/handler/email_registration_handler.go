@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
 	auth_service "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -28,11 +29,15 @@ type emailRegistrationService interface {
 }
 
 type EmailRegistrationHandler struct {
-	service emailRegistrationService
+	service        emailRegistrationService
+	errorProjector *apptransport.Projector
 }
 
-func NewEmailRegistrationHandler(service emailRegistrationService) *EmailRegistrationHandler {
-	return &EmailRegistrationHandler{service: service}
+func NewEmailRegistrationHandler(service emailRegistrationService, errorProjector *apptransport.Projector) *EmailRegistrationHandler {
+	if errorProjector == nil {
+		panic("email registration handler requires application error projector")
+	}
+	return &EmailRegistrationHandler{service: service, errorProjector: errorProjector}
 }
 
 func (h *EmailRegistrationHandler) SendCode(c *gin.Context) {
@@ -90,6 +95,9 @@ func (h *EmailRegistrationHandler) RegisterRoutes(v1 *gin.RouterGroup) {
 }
 
 func (h *EmailRegistrationHandler) respondError(c *gin.Context, err error) {
+	if projectRegistrationApplicationError(c, h.errorProjector, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, auth_service.ErrEmailRegistrationDisabled):
 		response.Fail(c, response.ErrRegisterNotAllowed)
