@@ -116,6 +116,31 @@ assert.equal(
   }).status,
   'permissions_loading'
 );
+for (const href of ['/console/workspace', '/console/files', '/console/prompts']) {
+  const access = getZGIConsoleNavigationAccess(href, {
+    ...readyContext,
+    permissionsSettled: false,
+  });
+  assert.equal(
+    access.status,
+    'allowed',
+    `${href} must remain available when the route does not require feature permissions`
+  );
+  assert.equal(
+    getZGIConsoleNavigationDisplayState(access, true),
+    'available',
+    `${href} must not surface an unrelated permissions query failure`
+  );
+}
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/workflows', {
+    ...readyContext,
+    permissionsSettled: false,
+    organizationRole: 'admin',
+  }).status,
+  'allowed',
+  'organization administrators must not depend on a redundant workspace permission query'
+);
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', readyContext).status,
   'permission_denied'
