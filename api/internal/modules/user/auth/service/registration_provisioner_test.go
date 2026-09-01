@@ -237,32 +237,37 @@ func TestRegisterExRollsBackAccountWhenProvisioningFails(t *testing.T) {
 	require.Zero(t, auditCount)
 }
 
-func TestRegisterExBootstrapsOfficialRouteOnlyForNewPersonalOrganization(t *testing.T) {
+func TestRegisterExQueuesPostCommitProvisioningOnlyForNewPersonalOrganization(t *testing.T) {
 	tests := []struct {
 		name                string
 		createdOrganization bool
-		wantBootstrapCalls  int
+		wantDispatchCalls   int
 	}{
-		{name: "cloud personal scope", createdOrganization: true, wantBootstrapCalls: 1},
-		{name: "self-hosted shared scope", createdOrganization: false, wantBootstrapCalls: 0},
+		{name: "cloud personal scope", createdOrganization: true, wantDispatchCalls: 1},
+		{name: "self-hosted shared scope", createdOrganization: false, wantDispatchCalls: 0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 			require.NoError(t, err)
-			require.NoError(t, db.AutoMigrate(&auth_model.Account{}))
+			require.NoError(t, db.AutoMigrate(&auth_model.Account{}, &RegistrationProvisioningOutbox{}))
 
 			organizationID := uuid.NewString()
-			bootstrapper := &registrationOfficialRouteBootstrapper{db: db}
+			var dispatched []string
+			var accountCountAtDispatch int64
 			service := &AccountService{
 				accountRepo: auth_repo.NewAccountRepository(db),
 				registrationProvisioner: &staticRegistrationAccountProvisioner{result: &RegistrationProvisioningResult{
 					OrganizationID:      organizationID,
 					WorkspaceID:         uuid.NewString(),
 					CreatedOrganization: tt.createdOrganization,
+					RequiresCloudOutbox: tt.createdOrganization,
 				}},
-				officialRouteBootstrapper: bootstrapper,
+				registrationOutboxDispatcher: func(_ context.Context, id string) error {
+					dispatched = append(dispatched, id)
+					return db.Model(&auth_model.Account{}).Count(&accountCountAtDispatch).Error
+				},
 			}
 			required := true
 
@@ -281,10 +286,17 @@ func TestRegisterExBootstrapsOfficialRouteOnlyForNewPersonalOrganization(t *test
 
 			require.NoError(t, err)
 			require.NotNil(t, account)
-			require.Len(t, bootstrapper.organizationIDs, tt.wantBootstrapCalls)
-			if tt.wantBootstrapCalls == 1 {
-				require.Equal(t, organizationID, bootstrapper.organizationIDs[0].String())
-				require.EqualValues(t, 1, bootstrapper.accountCountAtCall, "official route bootstrap must run after account commit")
+			require.Len(t, dispatched, tt.wantDispatchCalls)
+			if tt.wantDispatchCalls == 1 {
+				require.EqualValues(t, 1, accountCountAtDispatch, "outbox dispatch must run after account commit")
+				var outbox RegistrationProvisioningOutbox
+				require.NoError(t, db.First(&outbox, "id = ?", dispatched[0]).Error)
+				require.Equal(t, organizationID, outbox.OrganizationID)
+				require.Equal(t, account.ID, outbox.AccountID)
+			} else {
+				var count int64
+				require.NoError(t, db.Model(&RegistrationProvisioningOutbox{}).Count(&count).Error)
+				require.Zero(t, count)
 			}
 		})
 	}

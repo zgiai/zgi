@@ -382,6 +382,15 @@ type AccountServiceAdapter struct {
 	registerService interfaces.RegisterService
 }
 
+// SetRegistrationProvisioningOutboxDispatcher forwards the optional durable
+// registration post-commit dispatcher without widening the shared account API.
+func (a *AccountServiceAdapter) SetRegistrationProvisioningOutboxDispatcher(dispatcher func(context.Context, string) error) {
+	if a == nil || a.accountService == nil {
+		return
+	}
+	a.accountService.SetRegistrationProvisioningOutboxDispatcher(dispatcher)
+}
+
 func NewAccountServiceAdapter(accountService *auth_service.AccountService, registerService interfaces.RegisterService) interfaces.AccountService {
 	return &AccountServiceAdapter{
 		accountService:  accountService,

@@ -10,7 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	systemmodel "github.com/zgiai/zgi/api/internal/modules/system/model"
 	"github.com/zgiai/zgi/api/internal/modules/system/repository"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	authrepo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -391,5 +396,184 @@ func TestResolveDefaultScope_RejectsCancelledContext(t *testing.T) {
 	_, _, err := service.ResolveDefaultScope(ctx)
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "context canceled") {
 		t.Fatalf("ResolveDefaultScope() error = %v, want context cancellation", err)
+	}
+}
+
+type bootstrapWorkspaceManagementFake struct {
+	interfaces.WorkspaceManagementService
+	db *gorm.DB
+}
+
+func (s *bootstrapWorkspaceManagementFake) WithTx(tx *gorm.DB) interfaces.WorkspaceManagementService {
+	return &bootstrapWorkspaceManagementFake{db: tx}
+}
+
+func (s *bootstrapWorkspaceManagementFake) CreateWorkspace(ctx context.Context, name string, _ bool) (*workspacemodel.Workspace, error) {
+	workspace := &workspacemodel.Workspace{
+		ID: uuid.NewString(), Name: name, Plan: "basic", Status: workspacemodel.WorkspaceStatusNormal,
+	}
+	if err := s.db.WithContext(ctx).Create(workspace).Error; err != nil {
+		return nil, err
+	}
+	return workspace, nil
+}
+
+func (s *bootstrapWorkspaceManagementFake) CreateWorkspaceMember(ctx context.Context, workspaceID, accountID, role string) error {
+	return s.db.WithContext(ctx).Create(&workspacemodel.WorkspaceMember{
+		ID: uuid.NewString(), WorkspaceID: workspaceID, AccountID: accountID,
+		Role: workspacemodel.WorkspaceMemberRole(role), Permissions: []string{},
+		PermissionSource: workspacemodel.WorkspaceMemberPermissionSourceOwner,
+	}).Error
+}
+
+type bootstrapOrganizationManagementFake struct {
+	interfaces.OrganizationManagementService
+	db *gorm.DB
+}
+
+func (s *bootstrapOrganizationManagementFake) WithTx(tx *gorm.DB) interfaces.OrganizationManagementService {
+	return &bootstrapOrganizationManagementFake{db: tx}
+}
+
+func (s *bootstrapOrganizationManagementFake) CreateOrganization(ctx context.Context, name string) (*workspacemodel.Organization, error) {
+	organization := &workspacemodel.Organization{Name: name, Status: workspacemodel.OrganizationStatusActive}
+	if err := s.db.WithContext(ctx).Create(organization).Error; err != nil {
+		return nil, err
+	}
+	return organization, nil
+}
+
+func (s *bootstrapOrganizationManagementFake) AddWorkspace(ctx context.Context, organizationID, workspaceID string) error {
+	return s.db.WithContext(ctx).Model(&workspacemodel.Workspace{}).
+		Where("id = ?", workspaceID).Update("organization_id", organizationID).Error
+}
+
+func (s *bootstrapOrganizationManagementFake) UpsertOrganizationRole(ctx context.Context, organizationID, accountID string, role workspacemodel.OrganizationRole) error {
+	return s.db.WithContext(ctx).Create(&workspacemodel.OrganizationMember{
+		OrganizationID: organizationID, AccountID: accountID, Role: role,
+		Status: workspacemodel.OrganizationMemberStatusActive,
+	}).Error
+}
+
+type bootstrapOutboxRow struct {
+	ID             string `gorm:"column:id"`
+	OrganizationID string `gorm:"column:organization_id"`
+	AccountID      string `gorm:"column:account_id"`
+}
+
+func (bootstrapOutboxRow) TableName() string { return "registration_provisioning_outbox" }
+
+func newCloudBootstrapOutboxTestService(
+	t *testing.T,
+	enqueuer RegistrationProvisioningOutboxEnqueuer,
+) (*gorm.DB, *BootstrapService) {
+	t.Helper()
+	dsn := fmt.Sprintf("file:bootstrap-outbox-%s?mode=memory&cache=shared", uuid.NewString())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open bootstrap outbox test database: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get bootstrap outbox test sql database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	if err := db.AutoMigrate(
+		&systemmodel.Setup{},
+		&systemmodel.BootstrapLock{},
+		&authmodel.Account{},
+		&authmodel.AccountContext{},
+		&workspacemodel.Organization{},
+		&workspacemodel.Workspace{},
+		&workspacemodel.WorkspaceMember{},
+		&workspacemodel.OrganizationMember{},
+		&bootstrapOutboxRow{},
+	); err != nil {
+		t.Fatalf("migrate bootstrap outbox test schema: %v", err)
+	}
+
+	service := NewBootstrapService(
+		repository.NewSetupRepository(db),
+		repository.NewBootstrapLockRepository(db),
+		authrepo.NewAccountRepository(db),
+		db,
+		&bootstrapWorkspaceManagementFake{db: db},
+		&bootstrapOrganizationManagementFake{db: db},
+		nil,
+		enqueuer,
+	)
+	return db, service
+}
+
+func insertBootstrapOutbox(ctx context.Context, tx *gorm.DB, accountID, organizationID string) error {
+	return tx.WithContext(ctx).Create(&bootstrapOutboxRow{
+		ID: uuid.NewString(), OrganizationID: organizationID, AccountID: accountID,
+	}).Error
+}
+
+func cloudBootstrapParams() BootstrapParams {
+	return BootstrapParams{
+		AdminEmail: "cloud-admin@example.com", AdminName: "Cloud Admin", AdminPassword: "Password123",
+		Language: "en-US", Source: BootstrapSourceCloudEnv,
+	}
+}
+
+func TestCloudBootstrapEnqueuesRegistrationProvisioningInTransaction(t *testing.T) {
+	db, service := newCloudBootstrapOutboxTestService(t, insertBootstrapOutbox)
+
+	if err := service.Bootstrap(t.Context(), cloudBootstrapParams()); err != nil {
+		t.Fatalf("Bootstrap() error = %v", err)
+	}
+
+	var outbox bootstrapOutboxRow
+	if err := db.First(&outbox).Error; err != nil {
+		t.Fatalf("load bootstrap outbox: %v", err)
+	}
+	var account authmodel.Account
+	if err := db.First(&account, "id = ?", outbox.AccountID).Error; err != nil {
+		t.Fatalf("load bootstrap account: %v", err)
+	}
+	var organization workspacemodel.Organization
+	if err := db.First(&organization, "id = ?", outbox.OrganizationID).Error; err != nil {
+		t.Fatalf("load bootstrap organization: %v", err)
+	}
+}
+
+func TestCloudBootstrapRollsBackWhenRegistrationProvisioningEnqueueFails(t *testing.T) {
+	wantErr := errors.New("outbox unavailable")
+	db, service := newCloudBootstrapOutboxTestService(t, func(ctx context.Context, tx *gorm.DB, accountID, organizationID string) error {
+		if err := insertBootstrapOutbox(ctx, tx, accountID, organizationID); err != nil {
+			return err
+		}
+		return wantErr
+	})
+
+	err := service.Bootstrap(t.Context(), cloudBootstrapParams())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Bootstrap() error = %v, want %v", err, wantErr)
+	}
+	for table, target := range map[string]any{
+		"accounts":                         &authmodel.Account{},
+		"organizations":                    &workspacemodel.Organization{},
+		"registration_provisioning_outbox": &bootstrapOutboxRow{},
+	} {
+		var count int64
+		if err := db.Model(target).Count(&count).Error; err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("%s count = %d, want transaction rollback", table, count)
+		}
+	}
+}
+
+func TestCloudBootstrapFailsClosedWithoutRegistrationProvisioningEnqueuer(t *testing.T) {
+	_, service := newCloudBootstrapOutboxTestService(t, nil)
+
+	err := service.Bootstrap(t.Context(), cloudBootstrapParams())
+	if err == nil || !strings.Contains(err.Error(), "requires registration provisioning outbox") {
+		t.Fatalf("Bootstrap() error = %v, want missing outbox failure", err)
 	}
 }

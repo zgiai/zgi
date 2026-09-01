@@ -585,6 +585,10 @@ func (c *ServiceContainer) GetBootstrapService() *system_service.BootstrapServic
 			c.GetTenantService(),
 			c.GetEnterpriseGroupService(),
 			system_service.NewSystemConfigService(),
+			func(ctx context.Context, tx *gorm.DB, accountID, organizationID string) error {
+				_, err := auth_service.EnqueueRegistrationProvisioningOutbox(ctx, tx, accountID, organizationID)
+				return err
+			},
 		)
 	}
 

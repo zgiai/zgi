@@ -30,6 +30,7 @@ type RegistrationProvisioningResult struct {
 	OrganizationID      string
 	WorkspaceID         string
 	CreatedOrganization bool
+	RequiresCloudOutbox bool
 	CreatedWorkspace    *workspace_model.Workspace
 }
 
@@ -185,6 +186,7 @@ func (p *RegistrationProvisioner) provisionPersonalScope(
 		OrganizationID:      organization.ID,
 		WorkspaceID:         workspace.ID,
 		CreatedOrganization: true,
+		RequiresCloudOutbox: true,
 		CreatedWorkspace:    workspace,
 	}, nil
 }

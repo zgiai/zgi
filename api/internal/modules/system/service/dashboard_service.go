@@ -43,8 +43,9 @@ type dashboardService struct {
 }
 
 const (
-	dashboardAgentTypeAgent = "AGENT"
-	dashboardLoadTimeout    = 5 * time.Second
+	dashboardAgentTypeAgent    = "AGENT"
+	dashboardLoadTimeout       = 5 * time.Second
+	dashboardZeroModelCacheTTL = 2 * time.Second
 )
 
 var dashboardWorkflowAgentTypes = []string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW"}
@@ -159,7 +160,13 @@ func (s *dashboardService) GetDashboardStats(ctx context.Context, organizationID
 		if modelsHealthy && resourcesHealthy {
 			// Cache only stable model/resource data. Personal activity drives the
 			// onboarding checklist and must be refreshed on every request.
-			s.dashboardCache.SetStats(loadCtx, organizationID, accountID, scopeKey, &stats)
+			if stats.Models.Total == 0 {
+				// A legitimate zero is useful to cache, but cloud provisioning may make
+				// models visible moments later, so keep the negative cache deliberately short.
+				s.dashboardCache.SetStatsWithTTL(loadCtx, organizationID, accountID, scopeKey, &stats, dashboardZeroModelCacheTTL)
+			} else {
+				s.dashboardCache.SetStats(loadCtx, organizationID, accountID, scopeKey, &stats)
+			}
 		}
 		stats.Activity = s.getActivityStats(loadCtx, organizationID, accountID, scopes)
 		return &stats, nil

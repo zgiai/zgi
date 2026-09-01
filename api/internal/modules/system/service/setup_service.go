@@ -43,15 +43,20 @@ type BootstrapParams struct {
 	Source        BootstrapSource
 }
 
+// RegistrationProvisioningOutboxEnqueuer records cloud bootstrap provisioning
+// in the bootstrap transaction without coupling the system module to auth.
+type RegistrationProvisioningOutboxEnqueuer func(ctx context.Context, tx *gorm.DB, accountID, organizationID string) error
+
 // BootstrapService owns first-time business initialization.
 type BootstrapService struct {
-	repo            repository.SetupRepository
-	lockRepo        *repository.BootstrapLockRepository
-	accountRepo     auth_repo.AccountRepository
-	db              *gorm.DB
-	tenantSvc       interfaces.WorkspaceManagementService
-	groupSvc        interfaces.OrganizationManagementService
-	systemConfigSvc SystemConfigService
+	repo                                   repository.SetupRepository
+	lockRepo                               *repository.BootstrapLockRepository
+	accountRepo                            auth_repo.AccountRepository
+	db                                     *gorm.DB
+	tenantSvc                              interfaces.WorkspaceManagementService
+	groupSvc                               interfaces.OrganizationManagementService
+	systemConfigSvc                        SystemConfigService
+	registrationProvisioningOutboxEnqueuer RegistrationProvisioningOutboxEnqueuer
 }
 
 // NewBootstrapService creates a bootstrap service with concrete dependencies.
@@ -63,15 +68,17 @@ func NewBootstrapService(
 	tenantSvc interfaces.WorkspaceManagementService,
 	groupSvc interfaces.OrganizationManagementService,
 	systemConfigSvc SystemConfigService,
+	registrationProvisioningOutboxEnqueuer RegistrationProvisioningOutboxEnqueuer,
 ) *BootstrapService {
 	return &BootstrapService{
-		repo:            repo,
-		lockRepo:        lockRepo,
-		accountRepo:     accountRepo,
-		db:              db,
-		tenantSvc:       tenantSvc,
-		groupSvc:        groupSvc,
-		systemConfigSvc: systemConfigSvc,
+		repo:                                   repo,
+		lockRepo:                               lockRepo,
+		accountRepo:                            accountRepo,
+		db:                                     db,
+		tenantSvc:                              tenantSvc,
+		groupSvc:                               groupSvc,
+		systemConfigSvc:                        systemConfigSvc,
+		registrationProvisioningOutboxEnqueuer: registrationProvisioningOutboxEnqueuer,
 	}
 }
 
@@ -154,6 +161,9 @@ func (s *BootstrapService) Bootstrap(ctx context.Context, params BootstrapParams
 	if err := ValidatePassword(params.AdminPassword); err != nil {
 		return err
 	}
+	if params.Source == BootstrapSourceCloudEnv && s.registrationProvisioningOutboxEnqueuer == nil {
+		return fmt.Errorf("cloud bootstrap requires registration provisioning outbox")
+	}
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txSetupRepo := repository.NewSetupRepository(tx)
@@ -181,6 +191,11 @@ func (s *BootstrapService) Bootstrap(ctx context.Context, params BootstrapParams
 		organization, err := txGroupSvc.CreateOrganization(ctx, defaultOrganizationNameForLanguage(params.Language))
 		if err != nil {
 			return fmt.Errorf("create default organization: %w", err)
+		}
+		if params.Source == BootstrapSourceCloudEnv {
+			if err := s.registrationProvisioningOutboxEnqueuer(ctx, tx, account.ID, organization.ID); err != nil {
+				return fmt.Errorf("enqueue cloud bootstrap provisioning: %w", err)
+			}
 		}
 
 		workspace, err := txTenantSvc.CreateWorkspace(ctx, defaultWorkspaceName, true)

@@ -121,8 +121,10 @@ type AccountService struct {
 	systemConfigService            system_service.SystemConfigService
 	eventBus                       interfaces.EventBus
 	officialSignupRegistration     *officialSignupRegistrationService
+	consoleProvider                platformconsole.ConsoleProvider
 	registrationProvisioner        registrationAccountProvisioner
 	registrationSetupScopeResolver RegistrationSetupScopeResolver
+	registrationOutboxDispatcher   func(context.Context, string) error
 	profileCacheMu                 sync.RWMutex
 	profileCache                   map[string]*accountProfileCacheEntry
 	profileCacheGeneration         map[string]uint64
@@ -174,6 +176,7 @@ func NewAccountService(
 		systemConfigService:           systemConfigService,
 		eventBus:                      eventBus,
 		officialSignupRegistration:    newOfficialSignupRegistrationService(enterpriseService, consoleProvider),
+		consoleProvider:               consoleProvider,
 		profileCache:                  make(map[string]*accountProfileCacheEntry),
 		profileCacheGeneration:        make(map[string]uint64),
 	}
@@ -1244,6 +1247,7 @@ func (s *AccountService) registerExWithMobile(
 ) (*auth_model.Account, error) {
 	var account *auth_model.Account
 	var provisioningResult *RegistrationProvisioningResult
+	var registrationOutboxID string
 
 	err := s.accountRepo.ExecuteInTransaction(ctx, func(tx *gorm.DB) error {
 		accountRepository := s.accountRepo.WithTx(tx)
@@ -1281,6 +1285,13 @@ func (s *AccountService) registerExWithMobile(
 		if provisioningResult == nil {
 			return fmt.Errorf("failed to provision registration account: empty result")
 		}
+		if provisioningResult.RequiresCloudOutbox {
+			outbox, err := EnqueueRegistrationProvisioningOutbox(ctx, tx, account.ID, provisioningResult.OrganizationID)
+			if err != nil {
+				return err
+			}
+			registrationOutboxID = outbox.ID
+		}
 
 		if provisioningResult.CreatedWorkspace != nil && s.systemConfigService != nil {
 			if err := s.systemConfigService.ConfigDefaultPluginAndConfig(ctx, provisioningResult.OrganizationID, account); err != nil {
@@ -1301,9 +1312,12 @@ func (s *AccountService) registerExWithMobile(
 		return nil, err
 	}
 
-	if provisioningResult.CreatedOrganization {
-		s.bootstrapOfficialRoute(ctx, provisioningResult.OrganizationID)
-		s.notifyOfficialSignupRegistration(ctx, account)
+	if registrationOutboxID != "" && s.registrationOutboxDispatcher != nil {
+		dispatchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		if err := s.registrationOutboxDispatcher(dispatchCtx, registrationOutboxID); err != nil {
+			logger.Warn("Immediate registration provisioning outbox processing failed: %v", err)
+		}
 	}
 
 	return account, nil
@@ -1406,6 +1420,9 @@ func (s *AccountService) createWorkspaceForExistingAccount(ctx context.Context, 
 		return nil, err
 	}
 	s.bootstrapOfficialRoute(ctx, defaultOrganizationID)
+	if createdInfo != nil && createdInfo.Organization != nil {
+		s.registerOrganizationBestEffort(ctx, createdInfo.Organization, account.Email)
+	}
 
 	return createdInfo, nil
 }
@@ -1423,6 +1440,20 @@ func (s *AccountService) bootstrapOfficialRoute(ctx context.Context, organizatio
 
 	if err := s.officialRouteBootstrapper.InitOfficialChannel(ctx, organizationUUID); err != nil {
 		logger.Warn("Failed to bootstrap official route after organization creation: %v", err)
+	}
+}
+
+func (s *AccountService) registerOrganizationBestEffort(ctx context.Context, organization *workspace_model.Organization, ownerEmail string) {
+	if s == nil || organization == nil || s.consoleProvider == nil || !s.consoleProvider.IsAvailable() {
+		return
+	}
+	if err := s.consoleProvider.RegisterOrganization(ctx, &platformconsole.RegisterOrganizationRequest{
+		OrganizationID: organization.ID,
+		Name:           organization.Name,
+		OwnerEmail:     ownerEmail,
+		CreatedAt:      organization.CreatedAt,
+	}); err != nil {
+		logger.Warn("Failed to sync organization to console after commit: %v", err)
 	}
 }
 
@@ -1829,6 +1860,12 @@ func (s *AccountService) SetOfficialRouteBootstrapper(bootstrapper interfaces.Of
 
 func (s *AccountService) SetRegistrationSetupScopeResolver(resolver RegistrationSetupScopeResolver) {
 	s.registrationSetupScopeResolver = resolver
+}
+
+// SetRegistrationProvisioningOutboxDispatcher installs the post-commit fast
+// path. The durable scheduler remains authoritative when this attempt fails.
+func (s *AccountService) SetRegistrationProvisioningOutboxDispatcher(dispatcher func(context.Context, string) error) {
+	s.registrationOutboxDispatcher = dispatcher
 }
 
 // ///////////////////////////////////////////////////////////////////
