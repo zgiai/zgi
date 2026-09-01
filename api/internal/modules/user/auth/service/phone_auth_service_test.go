@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -10,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/gorm"
@@ -56,9 +58,103 @@ func TestPhoneAuthRegistrationFlow(t *testing.T) {
 	require.Equal(t, "+8613800138000", derefString(accounts.accountByMobile.MobileE164))
 	require.Equal(t, "Phone User", accounts.accountByMobile.Name)
 	require.Equal(t, "127.0.0.1", accounts.lastLoginIP)
+	require.NotNil(t, accounts.createWorkspaceRequired)
+	require.True(t, *accounts.createWorkspaceRequired)
 
 	_, err = tokenManager.GetTokenData(verifyResponse.VerifiedToken, PhoneVerifiedTokenType)
 	require.Error(t, err)
+}
+
+func TestPhoneRegistrationAcceptsValidatedInviteWithoutPersonalWorkspace(t *testing.T) {
+	tokenManager := newTestPhoneTokenManager(t)
+	accounts := &fakePhoneAuthAccounts{}
+	sender := &fakePhoneCodeSender{}
+	invitation := &fakeRegistrationInvitationGateway{link: &workspace_model.OrganizationInviteLink{
+		ID: "phone-link", OrganizationID: "organization-phone", Token: "phone-invite", Status: "active",
+	}}
+	service := NewPhoneAuthService(accounts, tokenManager, sender, PhoneAuthOptions{AllowRegister: true})
+	service.SetRegistrationInvitationGateway(invitation)
+
+	sent, err := service.SendCode(t.Context(), PhoneCodeSendRequest{Phone: "13800138000", CountryCode: "CN", Scene: PhoneSceneRegister})
+	require.NoError(t, err)
+	verified, err := service.VerifyCode(t.Context(), PhoneCodeVerifyRequest{
+		Phone: "13800138000", CountryCode: "CN", Scene: PhoneSceneRegister, Token: sent.Token, Code: sender.code,
+	})
+	require.NoError(t, err)
+	password := "secret123"
+	result, err := service.RegisterByPhone(t.Context(), PhoneRegisterRequest{
+		Phone: "13800138000", CountryCode: "CN", VerifiedToken: verified.VerifiedToken,
+		Name: "Invited Phone", Password: &password, InviteToken: "phone-invite",
+	}, "127.0.0.1")
+
+	require.NoError(t, err)
+	require.NotNil(t, accounts.createWorkspaceRequired)
+	require.False(t, *accounts.createWorkspaceRequired)
+	require.Equal(t, "new-account", invitation.acceptedAccountID)
+	require.NotNil(t, result.Invitation)
+	require.Equal(t, "approved", result.Invitation.Status)
+}
+
+func TestPhoneInviteRegistrationRejectsUnboundExistingAccount(t *testing.T) {
+	tokenManager := newTestPhoneTokenManager(t)
+	mobile := "+8613800138000"
+	accounts := &fakePhoneAuthAccounts{accountByMobile: &auth_model.Account{
+		ID: "pre-existing-account", MobileE164: &mobile, Status: auth_model.AccountStatusActive,
+	}}
+	invitation := &fakeRegistrationInvitationGateway{link: &workspace_model.OrganizationInviteLink{
+		ID: "existing-link", OrganizationID: "organization-phone", Token: "phone-invite", Status: "active",
+	}}
+	service := NewPhoneAuthService(accounts, tokenManager, &fakePhoneCodeSender{}, PhoneAuthOptions{AllowRegister: true})
+	service.SetRegistrationInvitationGateway(invitation)
+	verifiedToken, err := tokenManager.GenerateDataToken(t.Context(), PhoneVerifiedTokenType, map[string]interface{}{
+		"phone_e164": mobile,
+		"scene":      PhoneSceneRegister,
+	})
+	require.NoError(t, err)
+
+	_, err = service.RegisterByPhone(t.Context(), PhoneRegisterRequest{
+		Phone: "13800138000", CountryCode: "CN", VerifiedToken: verifiedToken, InviteToken: "phone-invite",
+	}, "127.0.0.1")
+
+	require.ErrorIs(t, err, ErrPhoneAccountExists)
+	require.Empty(t, accounts.lastLoginIP)
+	require.Empty(t, invitation.acceptedAccountID)
+}
+
+func TestPhoneInviteRegistrationRetryRequiresBoundCreatedAccount(t *testing.T) {
+	tokenManager := newTestPhoneTokenManager(t)
+	accounts := &fakePhoneAuthAccounts{}
+	invitation := &fakeRegistrationInvitationGateway{
+		link: &workspace_model.OrganizationInviteLink{
+			ID: "retry-link", OrganizationID: "organization-phone", Token: "phone-invite", Status: "active",
+		},
+		acceptErr: errors.New("database unavailable"),
+	}
+	service := NewPhoneAuthService(accounts, tokenManager, &fakePhoneCodeSender{}, PhoneAuthOptions{AllowRegister: true})
+	service.SetRegistrationInvitationGateway(invitation)
+	verifiedToken, err := tokenManager.GenerateDataToken(t.Context(), PhoneVerifiedTokenType, map[string]interface{}{
+		"phone_e164": "+8613800138000",
+		"scene":      PhoneSceneRegister,
+	})
+	require.NoError(t, err)
+	req := PhoneRegisterRequest{
+		Phone: "13800138000", CountryCode: "CN", VerifiedToken: verifiedToken,
+		Name: "Retry Phone", InviteToken: "phone-invite",
+	}
+
+	_, err = service.RegisterByPhone(t.Context(), req, "127.0.0.1")
+	require.ErrorIs(t, err, ErrRegistrationInvitationAcceptance)
+	require.Equal(t, 1, accounts.registerCalls)
+	bound, err := tokenManager.GetTokenData(verifiedToken, PhoneVerifiedTokenType)
+	require.NoError(t, err)
+	require.NotNil(t, bound.AccountID)
+	require.Equal(t, "new-account", *bound.AccountID)
+
+	invitation.acceptErr = nil
+	result, err := service.RegisterByPhone(t.Context(), req, "127.0.0.1")
+	require.NoError(t, err)
+	require.Equal(t, 1, accounts.registerCalls, "retry must reuse only the account bound to this verified token")
+	require.NotNil(t, result.Invitation)
 }
 
 func TestPhoneAuthRegistrationDisabled(t *testing.T) {
@@ -159,8 +255,10 @@ func (f *fakePhoneCodeSender) SendVerificationCode(_ context.Context, phoneE164 
 }
 
 type fakePhoneAuthAccounts struct {
-	accountByMobile *auth_model.Account
-	lastLoginIP     string
+	accountByMobile         *auth_model.Account
+	lastLoginIP             string
+	createWorkspaceRequired *bool
+	registerCalls           int
 }
 
 func (f *fakePhoneAuthAccounts) FindByPhone(_ context.Context, _ string) (*auth_model.Account, error) {
@@ -170,7 +268,12 @@ func (f *fakePhoneAuthAccounts) FindByPhone(_ context.Context, _ string) (*auth_
 	return f.accountByMobile, nil
 }
 
-func (f *fakePhoneAuthAccounts) RegisterByPhone(_ context.Context, phoneE164 string, name string, password *string) (*auth_model.Account, error) {
+func (f *fakePhoneAuthAccounts) RegisterByPhone(_ context.Context, phoneE164 string, name string, password *string, createWorkspaceRequired *bool) (*auth_model.Account, error) {
+	f.registerCalls++
+	if createWorkspaceRequired != nil {
+		value := *createWorkspaceRequired
+		f.createWorkspaceRequired = &value
+	}
 	account := &auth_model.Account{
 		ID:         "new-account",
 		Name:       name,

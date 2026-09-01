@@ -155,52 +155,7 @@ func (s *organizationService) GetInviteLinkByToken(ctx context.Context, token st
 
 // AcceptInviteByToken handles invite acceptance
 func (s *organizationService) AcceptInviteByToken(ctx context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error) {
-	link, err := s.organizationRepo.GetInviteLinkByToken(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	if link == nil {
-		return nil, fmt.Errorf("invalid invite token")
-	}
-
-	if link.Status != "active" {
-		return nil, fmt.Errorf("invite link is not active")
-	}
-	if link.ExpiresAt != nil && link.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("invite link expired")
-	}
-
-	// Organization membership is handled by the approval flow.
-	// Note: We are not checking department membership here because of dependency limits.
-	// The caller or subsequent logic should handle "already in department" gracefully.
-
-	// If auto-approve is enabled (RequireApproval=false), we still create a request record but mark it approved
-	status := model.OrganizationJoinRequestStatusPending
-	if !link.RequireApproval {
-		status = model.OrganizationJoinRequestStatusApproved
-	}
-
-	req := &model.OrganizationJoinRequest{
-		OrganizationID:          link.OrganizationID,
-		InviteLinkID:            &link.ID,
-		AccountID:               accountID,
-		DepartmentID:            link.DepartmentID,
-		WorkspaceID:             link.WorkspaceID,
-		DefaultOrganizationRole: link.DefaultOrganizationRole,
-		DefaultWorkspaceRole:    link.DefaultWorkspaceRole,
-		Status:                  status,
-		Name:                    name,
-	}
-
-	// If not member of organization, we should probably add them implicitly?
-	// But let's stick to creating the request. If approved, the approval logic adds them.
-	// If auto-approved, the caller should add them.
-
-	if err := s.organizationRepo.CreateJoinRequest(ctx, req); err != nil {
-		return nil, err
-	}
-
-	return req, nil
+	return s.acceptInviteByTokenTransaction(ctx, token, accountID, name)
 }
 
 // ListDepartmentJoinRequests lists requests.
@@ -350,28 +305,7 @@ func (s *organizationService) RejectDepartmentJoinRequest(ctx context.Context, o
 
 // ApproveDepartmentJoinRequest approves request.
 func (s *organizationService) ApproveDepartmentJoinRequest(ctx context.Context, organizationID, joinRequestID, reviewerAccountID string) (*model.OrganizationJoinRequest, error) {
-	req, err := s.organizationRepo.GetJoinRequestByID(ctx, joinRequestID)
-	if err != nil {
-		return nil, err
-	}
-	if req.OrganizationID != organizationID {
-		return nil, fmt.Errorf("invalid organization id")
-	}
-	if req.Status != model.OrganizationJoinRequestStatusPending {
-		return nil, fmt.Errorf("request is not pending")
-	}
-
-	// Update status
-	req.Status = model.OrganizationJoinRequestStatusApproved
-	req.ReviewerID = &reviewerAccountID
-	now := time.Now()
-	req.ReviewedAt = &now
-
-	if err := s.organizationRepo.UpdateJoinRequest(ctx, req); err != nil {
-		return nil, err
-	}
-
-	return req, nil
+	return s.approveInviteRequestTransaction(ctx, organizationID, joinRequestID, reviewerAccountID)
 }
 
 // organizationService implements the OrganizationService interface

@@ -108,23 +108,25 @@ func accountLoginStatusError(status auth_model.AccountStatus) error {
 // This is a simplified implementation that provides basic account operations
 // More complex features can be added incrementally
 type AccountService struct {
-	accountRepo                   auth_repo.AccountRepository
-	db                            *gorm.DB
-	tokenMgr                      *helper.TokenManager
-	workspaceManagementService    interfaces.WorkspaceManagementService
-	billingService                interfaces.BillingService
-	registerService               interfaces.RegisterService
-	organizationManagementService interfaces.OrganizationManagementService
-	organizationService           interfaces.OrganizationService
-	officialRouteBootstrapper     interfaces.OfficialRouteBootstrapper
-	systemConfigService           system_service.SystemConfigService
-	eventBus                      interfaces.EventBus
-	officialSignupRegistration    *officialSignupRegistrationService
-	profileCacheMu                sync.RWMutex
-	profileCache                  map[string]*accountProfileCacheEntry
-	profileCacheGeneration        map[string]uint64
-	profileCacheGroup             singleflight.Group
-	accountContextGroup           singleflight.Group
+	accountRepo                    auth_repo.AccountRepository
+	db                             *gorm.DB
+	tokenMgr                       *helper.TokenManager
+	workspaceManagementService     interfaces.WorkspaceManagementService
+	billingService                 interfaces.BillingService
+	registerService                interfaces.RegisterService
+	organizationManagementService  interfaces.OrganizationManagementService
+	organizationService            interfaces.OrganizationService
+	officialRouteBootstrapper      interfaces.OfficialRouteBootstrapper
+	systemConfigService            system_service.SystemConfigService
+	eventBus                       interfaces.EventBus
+	officialSignupRegistration     *officialSignupRegistrationService
+	registrationProvisioner        registrationAccountProvisioner
+	registrationSetupScopeResolver RegistrationSetupScopeResolver
+	profileCacheMu                 sync.RWMutex
+	profileCache                   map[string]*accountProfileCacheEntry
+	profileCacheGeneration         map[string]uint64
+	profileCacheGroup              singleflight.Group
+	accountContextGroup            singleflight.Group
 }
 
 const (
@@ -1240,8 +1242,7 @@ func (s *AccountService) registerExWithMobile(
 	mobileE164 string,
 ) (*auth_model.Account, error) {
 	var account *auth_model.Account
-	var defaultOrganizationID string
-	var defaultWorkspaceID string
+	var provisioningResult *RegistrationProvisioningResult
 
 	err := s.accountRepo.ExecuteInTransaction(ctx, func(tx *gorm.DB) error {
 		accountRepository := s.accountRepo.WithTx(tx)
@@ -1271,51 +1272,23 @@ func (s *AccountService) registerExWithMobile(
 			return fmt.Errorf("failed to create account: %w", err)
 		}
 
-		createWorkspace := createWorkspaceRequired == nil || *createWorkspaceRequired
-		if !createWorkspace {
-			return nil
-		}
-		groupService := s.organizationManagementService.WithTx(tx)
-		tenantService := s.workspaceManagementService.WithTx(tx)
-
-		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
+		provisioner := s.registrationProvisioningService()
+		provisioningResult, err = provisioner.Provision(ctx, tx, account, createWorkspaceRequired)
 		if err != nil {
-			return fmt.Errorf("failed to prepare group name: %w", err)
+			return fmt.Errorf("failed to provision registration account: %w", err)
 		}
-		group, err := groupService.CreateOrganization(ctx, groupName)
-		if err != nil {
-			return fmt.Errorf("failed to create group: %w", err)
-		}
-
-		if err := groupService.UpsertOrganizationRole(ctx, group.ID, account.ID, workspace_model.OrganizationRoleOwner); err != nil {
-			return fmt.Errorf("failed to upsert group role: %w", err)
+		if provisioningResult == nil {
+			return fmt.Errorf("failed to provision registration account: empty result")
 		}
 
-		// Create default workspace
-		defaultTenant, err := tenantService.CreateWorkspace(ctx, fmt.Sprintf("%s's Workspace", account.Name), true)
-		if err != nil {
-			return fmt.Errorf("failed to create default tenant: %w", err)
-		}
-
-		// Add tenant to group
-		if err := groupService.AddWorkspace(ctx, group.ID, defaultTenant.ID); err != nil {
-			return fmt.Errorf("failed to add tenant to group: %w", err)
-		}
-
-		if err := workspacebootstrap.EnsureOwnerWorkspaceMember(ctx, tenantService, account.ID, defaultTenant.ID); err != nil {
-			return fmt.Errorf("failed to initialize default workspace state: %w", err)
-		}
-		defaultOrganizationID = group.ID
-		defaultWorkspaceID = defaultTenant.ID
-
-		if s.systemConfigService != nil {
-			if err := s.systemConfigService.ConfigDefaultPluginAndConfig(ctx, group.ID, account); err != nil {
+		if provisioningResult.CreatedWorkspace != nil && s.systemConfigService != nil {
+			if err := s.systemConfigService.ConfigDefaultPluginAndConfig(ctx, provisioningResult.OrganizationID, account); err != nil {
 				return fmt.Errorf("failed to configure default plugins: %w", err)
 			}
 		}
 
-		if s.eventBus != nil {
-			if err := s.eventBus.Publish(ctx, "tenant.created", defaultTenant); err != nil {
+		if provisioningResult.CreatedWorkspace != nil && s.eventBus != nil {
+			if err := s.eventBus.Publish(ctx, "tenant.created", provisioningResult.CreatedWorkspace); err != nil {
 				return fmt.Errorf("failed to publish tenant created event: %w", err)
 			}
 		}
@@ -1327,16 +1300,23 @@ func (s *AccountService) registerExWithMobile(
 		return nil, err
 	}
 
-	if err := s.initializeAccountWorkspaceContext(ctx, account.ID, defaultOrganizationID, defaultWorkspaceID); err != nil {
-		return nil, err
-	}
-	s.bootstrapOfficialRoute(ctx, defaultOrganizationID)
-
-	if defaultOrganizationID != "" {
+	if provisioningResult.CreatedOrganization {
+		s.bootstrapOfficialRoute(ctx, provisioningResult.OrganizationID)
 		s.notifyOfficialSignupRegistration(ctx, account)
 	}
 
 	return account, nil
+}
+
+func (s *AccountService) registrationProvisioningService() registrationAccountProvisioner {
+	if s.registrationProvisioner != nil {
+		return s.registrationProvisioner
+	}
+	return NewRegistrationProvisioner(
+		s.organizationManagementService,
+		s.workspaceManagementService,
+		s.registrationSetupScopeResolver,
+	)
 }
 
 type CreatedOrganizationInfo struct {
@@ -1844,6 +1824,10 @@ func (s *AccountService) SetOrganizationService(organizationService interfaces.O
 
 func (s *AccountService) SetOfficialRouteBootstrapper(bootstrapper interfaces.OfficialRouteBootstrapper) {
 	s.officialRouteBootstrapper = bootstrapper
+}
+
+func (s *AccountService) SetRegistrationSetupScopeResolver(resolver RegistrationSetupScopeResolver) {
+	s.registrationSetupScopeResolver = resolver
 }
 
 // ///////////////////////////////////////////////////////////////////

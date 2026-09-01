@@ -67,6 +67,7 @@ type EmailRegistrationFinishRequest struct {
 	Name            string `json:"name" binding:"required"`
 	Password        string `json:"password" binding:"required,min=8"`
 	PasswordConfirm string `json:"password_confirm" binding:"required,min=8"`
+	InviteToken     string `json:"invite_token,omitempty"`
 }
 
 type EmailRegistrationAccountGateway interface {
@@ -105,6 +106,11 @@ type EmailRegistrationService struct {
 	codeSender  EmailRegistrationCodeSender
 	rateLimiter *RedisEmailRegistrationRateLimiter
 	options     EmailRegistrationOptions
+	invitations registrationInvitationGateway
+}
+
+func (s *EmailRegistrationService) SetRegistrationInvitationGateway(gateway registrationInvitationGateway) {
+	s.invitations = gateway
 }
 
 func NewEmailRegistrationService(
@@ -321,7 +327,11 @@ func (s *EmailRegistrationService) Finish(
 		name = strings.Split(emailAddress, "@")[0]
 	}
 	language := normalizeRegistrationLanguage(tokenExtraString(tokenData.Extra, "language"))
-	createWorkspace := false
+	inviteToken, err := validateRegistrationInvitation(ctx, s.invitations, req.InviteToken)
+	if err != nil {
+		return nil, err
+	}
+	createWorkspace := inviteToken == ""
 	exists, err := s.accounts.ExistsByEmail(ctx, emailAddress)
 	if err != nil {
 		return nil, fmt.Errorf("check registration account before finish: %w", err)
@@ -354,6 +364,19 @@ func (s *EmailRegistrationService) Finish(
 	_, loginErr, loginResp, _ := s.accounts.Login(ctx, loginReq)
 	if loginErr != nil {
 		return nil, fmt.Errorf("login after email registration: %w", loginErr)
+	}
+	if inviteToken != "" {
+		if loginResp.Account == nil || strings.TrimSpace(loginResp.Account.ID) == "" {
+			return nil, fmt.Errorf("%w: login response account is missing", ErrRegistrationInvitationAcceptance)
+		}
+		invitation, invitationErr := acceptRegistrationInvitation(ctx, s.invitations, inviteToken, loginResp.Account.ID, name)
+		if invitationErr != nil {
+			if loginResp.RefreshToken != "" {
+				_ = s.tokenMgr.RevokeToken(loginResp.RefreshToken, "refresh")
+			}
+			return nil, invitationErr
+		}
+		loginResp.Invitation = invitation
 	}
 	if _, err := s.tokenMgr.ConsumeTokenData(ctx, req.Token, EmailRegistrationVerifiedTokenType); err != nil {
 		if loginResp.RefreshToken != "" {

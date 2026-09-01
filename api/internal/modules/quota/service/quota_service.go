@@ -38,6 +38,34 @@ func (s *quotaService) CheckQuota(ctx context.Context, groupID uuid.UUID, resour
 	return true, currentUsage, -1, nil
 }
 
+// CheckQuotaInTx is the transaction-aware counterpart used by registration
+// provisioning while the account and workspace may still be uncommitted. It is
+// intentionally an optional concrete capability rather than part of the public
+// QuotaService interface.
+func (s *quotaService) CheckQuotaInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	groupID uuid.UUID,
+	resourceType quota_model.ResourceType,
+	amount int64,
+) (bool, int64, int64, error) {
+	if tx == nil {
+		return false, 0, 0, fmt.Errorf("quota transaction is required")
+	}
+
+	var currentUsage int64
+	if err := tx.WithContext(ctx).
+		Model(&quota_model.QuotaUsageHistory{}).
+		Select("COALESCE(SUM(delta), 0)").
+		Where("group_id = ? AND resource_type = ?", groupID, resourceType).
+		Scan(&currentUsage).Error; err != nil {
+		return false, 0, 0, fmt.Errorf("failed to calculate current usage: %w", err)
+	}
+
+	LogQuotaCheck(groupID.String(), resourceType, amount, currentUsage, -1, true)
+	return true, currentUsage, -1, nil
+}
+
 // GetCurrentUsage Get current usage
 func (s *quotaService) GetCurrentUsage(ctx context.Context, groupID uuid.UUID, resourceType quota_model.ResourceType) (int64, error) {
 	return s.repo.GetCurrentUsage(ctx, groupID, resourceType)

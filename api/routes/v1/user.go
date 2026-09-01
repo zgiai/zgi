@@ -72,6 +72,7 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 			MasterVerificationCode: config.Current().Auth.MasterVerificationCode,
 		},
 	)
+	phoneAuthService.SetRegistrationInvitationGateway(deps.OrganizationService)
 	phoneAuthHandler := authHandler.NewPhoneAuthHandler(phoneAuthService)
 	emailRegistrationService := authService.NewEmailRegistrationService(
 		deps.AccountService,
@@ -84,6 +85,7 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 			MaxCodeAttempts:             5,
 		},
 	)
+	emailRegistrationService.SetRegistrationInvitationGateway(deps.OrganizationService)
 	emailRegistrationHandler := authHandler.NewEmailRegistrationHandler(emailRegistrationService)
 	emailCodeLoginService := authService.NewEmailCodeLoginService(
 		deps.AccountService,

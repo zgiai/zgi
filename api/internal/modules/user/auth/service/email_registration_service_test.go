@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	redisUtil "github.com/zgiai/zgi/api/pkg/redis"
 )
@@ -76,7 +77,7 @@ func TestEmailRegistrationRequiresVerifiedOneTimeToken(t *testing.T) {
 	require.Equal(t, 1, accounts.registerCalls)
 	require.Equal(t, "user@example.com", accounts.registeredEmail)
 	require.NotNil(t, accounts.createWorkspaceRequired)
-	require.False(t, *accounts.createWorkspaceRequired)
+	require.True(t, *accounts.createWorkspaceRequired)
 	require.Equal(t, "127.0.0.1", accounts.loginIP)
 
 	_, err = service.Finish(t.Context(), EmailRegistrationFinishRequest{
@@ -87,6 +88,76 @@ func TestEmailRegistrationRequiresVerifiedOneTimeToken(t *testing.T) {
 	}, "127.0.0.1")
 	require.ErrorIs(t, err, ErrEmailRegistrationTokenInvalid)
 	require.Equal(t, 1, accounts.registerCalls)
+}
+
+func TestEmailRegistrationAcceptsValidatedInviteWithoutPersonalWorkspace(t *testing.T) {
+	tokenManager := newTestEmailRegistrationTokenManager(t)
+	accounts := &fakeEmailRegistrationAccounts{}
+	sender := &fakeEmailRegistrationSender{}
+	invitation := &fakeRegistrationInvitationGateway{link: &workspace_model.OrganizationInviteLink{
+		ID: "link-1", OrganizationID: "organization-1", Token: "invite-1", Status: "active",
+	}}
+	service := NewEmailRegistrationService(accounts, tokenManager, sender, EmailRegistrationOptions{AllowRegister: true})
+	service.SetRegistrationInvitationGateway(invitation)
+
+	sent, err := service.SendCode(t.Context(), EmailRegistrationSendRequest{Email: "invited@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+	verified, err := service.VerifyCode(t.Context(), EmailRegistrationVerifyRequest{
+		Email: "invited@example.com", Code: sender.code, Token: sent.Token,
+	})
+	require.NoError(t, err)
+	result, err := service.Finish(t.Context(), EmailRegistrationFinishRequest{
+		Email:           "invited@example.com",
+		Token:           verified.Token,
+		Name:            "Invited",
+		Password:        "secret123",
+		PasswordConfirm: "secret123",
+		InviteToken:     "invite-1",
+	}, "127.0.0.1")
+
+	require.NoError(t, err)
+	require.NotNil(t, accounts.createWorkspaceRequired)
+	require.False(t, *accounts.createWorkspaceRequired)
+	require.Equal(t, "account-1", invitation.acceptedAccountID)
+	require.NotNil(t, result.Invitation)
+	require.Equal(t, "approved", result.Invitation.Status)
+	require.Equal(t, "organization-1", result.Invitation.OrganizationID)
+}
+
+func TestEmailInvitationAcceptanceFailureKeepsRegistrationRetryable(t *testing.T) {
+	tokenManager := newTestEmailRegistrationTokenManager(t)
+	accounts := &fakeEmailRegistrationAccounts{}
+	sender := &fakeEmailRegistrationSender{}
+	invitation := &fakeRegistrationInvitationGateway{
+		link: &workspace_model.OrganizationInviteLink{
+			ID: "link-retry", OrganizationID: "organization-retry", Token: "invite-retry", Status: "active",
+		},
+		acceptErr: errors.New("database unavailable"),
+	}
+	service := NewEmailRegistrationService(accounts, tokenManager, sender, EmailRegistrationOptions{AllowRegister: true})
+	service.SetRegistrationInvitationGateway(invitation)
+	sent, err := service.SendCode(t.Context(), EmailRegistrationSendRequest{Email: "retry@example.com"}, "127.0.0.1")
+	require.NoError(t, err)
+	verified, err := service.VerifyCode(t.Context(), EmailRegistrationVerifyRequest{
+		Email: "retry@example.com", Code: sender.code, Token: sent.Token,
+	})
+	require.NoError(t, err)
+	req := EmailRegistrationFinishRequest{
+		Email: "retry@example.com", Token: verified.Token, Name: "Retry",
+		Password: "secret123", PasswordConfirm: "secret123", InviteToken: "invite-retry",
+	}
+
+	_, err = service.Finish(t.Context(), req, "127.0.0.1")
+	require.ErrorIs(t, err, ErrRegistrationInvitationAcceptance)
+	require.Equal(t, 1, accounts.registerCalls)
+	require.False(t, *accounts.createWorkspaceRequired)
+
+	invitation.acceptErr = nil
+	result, err := service.Finish(t.Context(), req, "127.0.0.1")
+	require.NoError(t, err)
+	require.Equal(t, 1, accounts.registerCalls, "retry must reuse the scope-less account")
+	require.NotNil(t, result.Invitation)
+	require.Equal(t, "approved", result.Invitation.Status)
 }
 
 func TestEmailRegistrationLocksChallengeAfterMaximumAttempts(t *testing.T) {
@@ -449,5 +520,39 @@ func (f *fakeEmailRegistrationAccounts) Login(
 	}
 	return &auth_model.TokenPair{AccessToken: "access-token"}, nil, shared_dto.LoginResponse{
 		AccessToken: "access-token",
+		Account:     &shared_dto.AccountProfileResponse{ID: "account-1", Email: req.Email},
 	}, helper.ErrorResponse{}
+}
+
+type fakeRegistrationInvitationGateway struct {
+	link              *workspace_model.OrganizationInviteLink
+	validateErr       error
+	acceptErr         error
+	acceptedAccountID string
+}
+
+func (f *fakeRegistrationInvitationGateway) ValidateInviteLinkForRegistration(_ context.Context, token string) (*workspace_model.OrganizationInviteLink, error) {
+	if f.validateErr != nil {
+		return nil, f.validateErr
+	}
+	if f.link == nil || f.link.Token != token {
+		return nil, errors.New("invalid invite")
+	}
+	return f.link, nil
+}
+
+func (f *fakeRegistrationInvitationGateway) AcceptInviteByToken(_ context.Context, token, accountID string, _ *string) (*workspace_model.OrganizationJoinRequest, error) {
+	if f.acceptErr != nil {
+		return nil, f.acceptErr
+	}
+	if f.link == nil || f.link.Token != token {
+		return nil, errors.New("invalid invite")
+	}
+	f.acceptedAccountID = accountID
+	return &workspace_model.OrganizationJoinRequest{
+		OrganizationID: f.link.OrganizationID,
+		WorkspaceID:    f.link.WorkspaceID,
+		AccountID:      accountID,
+		Status:         workspace_model.OrganizationJoinRequestStatusApproved,
+	}, nil
 }

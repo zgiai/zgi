@@ -376,6 +376,7 @@ func (c *ServiceContainer) GetAccountServiceImpl() *auth_service.AccountService 
 			&SimpleEventBus{},
 			c.GetConsoleProvider(),
 		)
+		c.accountServiceImpl.SetRegistrationSetupScopeResolver(c.GetBootstrapService())
 		c.accountServiceImpl.SetOfficialRouteBootstrapper(c.GetOfficialRouteBootstrapper())
 	}
 	return c.accountServiceImpl

@@ -4502,30 +4502,6 @@ func (h *OrganizationHandler) AcceptInviteLink(c *gin.Context) {
 		return
 	}
 
-	// Check if already member
-	isMember, err := h.organizationService.IsOrganizationMember(c.Request.Context(), link.OrganizationID, accountID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-	if isMember {
-		response.Fail(c, response.ErrMemberAlreadyInOrganization)
-		return
-	}
-
-	// Check for pending join request if approval required
-	if link.RequireApproval {
-		pendingReq, err := h.organizationService.GetPendingJoinRequest(c.Request.Context(), link.OrganizationID, accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if pendingReq != nil {
-			response.Fail(c, response.ErrJoinRequestPending)
-			return
-		}
-	}
-
 	if reqBody.Name != nil && *reqBody.Name != "" {
 		// Case 1: Name provided by user - Strict uniqueness check
 		exists, err := h.organizationService.ExistsMemberByName(c.Request.Context(), link.OrganizationID, *reqBody.Name, accountID)

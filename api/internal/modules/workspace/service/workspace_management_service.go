@@ -370,6 +370,126 @@ func (s *WorkspaceManagementServiceImpl) CreateWorkspaceMember(ctx context.Conte
 	return nil
 }
 
+type registrationQuotaTxChecker interface {
+	CheckQuotaInTx(
+		ctx context.Context,
+		tx *gorm.DB,
+		groupID uuid.UUID,
+		resourceType quota_model.ResourceType,
+		amount int64,
+	) (canProceed bool, currentUsage int64, limit int64, err error)
+}
+
+// CreateRegistrationWorkspaceMember creates the initial member for a newly
+// registered account using the registration transaction exclusively. The
+// ordinary CreateWorkspaceMember path keeps its existing behavior for all
+// non-registration callers.
+func (s *WorkspaceManagementServiceImpl) CreateRegistrationWorkspaceMember(
+	ctx context.Context,
+	tx *gorm.DB,
+	workspaceID string,
+	accountID string,
+	role string,
+) error {
+	if tx == nil {
+		return fmt.Errorf("registration workspace member transaction is required")
+	}
+
+	txService := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
+	organizationID, err := txService.workspaceRepo.GetWorkspaceOrganizationID(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve registration workspace organization: %w", err)
+	}
+
+	var organizationUUID *uuid.UUID
+	if parsed, parseErr := uuid.Parse(strings.TrimSpace(organizationID)); parseErr == nil {
+		organizationUUID = &parsed
+	}
+	if organizationUUID != nil && txService.quotaService != nil {
+		quotaChecker, ok := txService.quotaService.(registrationQuotaTxChecker)
+		if !ok {
+			return fmt.Errorf("transaction-aware registration seat quota check is unavailable")
+		}
+		canProceed, currentUsage, limit, err := quotaChecker.CheckQuotaInTx(
+			ctx,
+			tx,
+			*organizationUUID,
+			quota_model.ResourceTypeSeats,
+			1,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to check registration seat quota: %w", err)
+		}
+		if !canProceed {
+			return fmt.Errorf("seats quota exceeded: current=%d limit=%d attempted=1", currentUsage, limit)
+		}
+	}
+
+	var account auth_model.Account
+	accountAvailable := false
+	if err := tx.WithContext(ctx).
+		Select("id", "name", "email").
+		First(&account, "id = ?", accountID).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to load registration account metadata: %w", err)
+		}
+	} else {
+		accountAvailable = true
+	}
+
+	join := &model.WorkspaceMember{
+		WorkspaceID: workspaceID,
+		AccountID:   accountID,
+		Role:        model.WorkspaceMemberRole(role),
+		Current:     false,
+	}
+	if err := txService.applyWorkspaceMemberPermissionTemplate(ctx, join); err != nil {
+		return err
+	}
+	if err := txService.workspaceMemberRepo.Create(ctx, join); err != nil {
+		return fmt.Errorf("failed to create registration workspace member: %w", err)
+	}
+
+	if organizationUUID == nil || txService.quotaService == nil {
+		return nil
+	}
+
+	accountUUID, err := uuid.Parse(accountID)
+	if err != nil {
+		return fmt.Errorf("failed to parse account ID: %w", err)
+	}
+	workspaceUUID, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return fmt.Errorf("failed to parse workspace ID: %w", err)
+	}
+	metadata := quota_model.JSONMap{
+		"member_id": accountID,
+		"role":      role,
+	}
+	if accountAvailable {
+		metadata["member_name"] = account.Name
+		metadata["member_email"] = account.Email
+	}
+	usageRecord := &quota_model.QuotaUsageHistory{
+		ID:           uuid.New().String(),
+		GroupID:      *organizationUUID,
+		AccountID:    accountUUID,
+		TenantID:     &workspaceUUID,
+		ResourceType: quota_model.ResourceTypeSeats,
+		Delta:        1,
+		ResourceID:   &accountID,
+		Metadata:     &metadata,
+	}
+	if accountAvailable {
+		usageRecord.ResourceName = &account.Name
+	}
+	if err := txService.quotaService.RecordUsageInTx(ctx, tx, usageRecord); err != nil {
+		return fmt.Errorf("failed to record registration seat quota usage: %w", err)
+	}
+
+	return nil
+}
+
 // GetWorkspaceByID Get workspace by ID
 func (s *WorkspaceManagementServiceImpl) GetWorkspaceByID(ctx context.Context, id string) (*model.Workspace, error) {
 	return s.workspaceRepo.GetByID(ctx, id)

@@ -97,6 +97,10 @@ func (h *EmailRegistrationHandler) respondError(c *gin.Context, err error) {
 		response.Fail(c, response.ErrUserExists)
 	case errors.Is(err, auth_service.ErrEmailRegistrationTokenInvalid):
 		response.Fail(c, response.ErrTokenInvalid)
+	case errors.Is(err, auth_service.ErrRegistrationInvitationInvalid):
+		response.Fail(c, response.ErrTokenInvalid)
+	case errors.Is(err, auth_service.ErrRegistrationInvitationAcceptance):
+		response.Fail(c, response.ErrSystemError)
 	case errors.Is(err, auth_service.ErrEmailRegistrationCodeInvalid):
 		response.Fail(c, response.ErrInvalidCode)
 	case errors.Is(err, auth_service.ErrEmailRegistrationRateLimited):

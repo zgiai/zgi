@@ -325,7 +325,23 @@ func (r *organizationRepository) CreateInviteLink(ctx context.Context, link *mod
 	if link.ID == "" {
 		link.ID = uuid.New().String()
 	}
-	return r.db.WithContext(ctx).Create(link).Error
+	// Use an explicit column map so a false RequireApproval value is persisted
+	// rather than replaced by GORM with the model's database default (true).
+	return r.db.WithContext(ctx).Table(link.TableName()).Create(map[string]interface{}{
+		"id":                  link.ID,
+		"group_id":            link.OrganizationID,
+		"department_id":       link.DepartmentID,
+		"tenant_id":           link.WorkspaceID,
+		"token":               link.Token,
+		"status":              link.Status,
+		"require_approval":    link.RequireApproval,
+		"default_group_role":  link.DefaultOrganizationRole,
+		"default_tenant_role": link.DefaultWorkspaceRole,
+		"expires_at":          link.ExpiresAt,
+		"created_by":          link.CreatedBy,
+		"created_at":          link.CreatedAt,
+		"updated_at":          link.UpdatedAt,
+	}).Error
 }
 
 func (r *organizationRepository) UpdateInviteLink(ctx context.Context, link *model.OrganizationInviteLink) error {

@@ -80,6 +80,53 @@ func (s *BootstrapService) GetSetupStatus() (*model.Setup, error) {
 	return s.repo.GetSetupStatus()
 }
 
+// ResolveDefaultScope returns the default organization and workspace recorded by setup.
+// Legacy setup markers are resolved and backfilled before the scope is returned.
+func (s *BootstrapService) ResolveDefaultScope(ctx context.Context) (string, string, error) {
+	if s.db == nil {
+		return "", "", fmt.Errorf("resolve setup scope: database is required")
+	}
+
+	var setupStatus *model.Setup
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var resolveErr error
+		setupStatus, resolveErr = s.resolveAndBackfillSetupScope(ctx, tx)
+		return resolveErr
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return resolvedSetupScopeIDs(setupStatus)
+}
+
+// ResolveDefaultScopeInTx resolves the setup scope using the caller's
+// transaction. Registration uses this path so it does not acquire a second
+// database connection while its account transaction is still open.
+func (s *BootstrapService) ResolveDefaultScopeInTx(ctx context.Context, tx *gorm.DB) (string, string, error) {
+	if tx == nil {
+		return "", "", fmt.Errorf("resolve setup scope: transaction is required")
+	}
+
+	setupStatus, err := s.resolveAndBackfillSetupScope(ctx, tx)
+	if err != nil {
+		return "", "", err
+	}
+	return resolvedSetupScopeIDs(setupStatus)
+}
+
+func resolvedSetupScopeIDs(setupStatus *model.Setup) (string, string, error) {
+	if setupStatus == nil {
+		return "", "", ErrSetupScopeUnavailable
+	}
+
+	organizationID := normalizedStringPointer(setupStatus.OrganizationID)
+	workspaceID := normalizedStringPointer(setupStatus.WorkspaceID)
+	if organizationID == "" || workspaceID == "" {
+		return "", "", ErrSetupScopeUnavailable
+	}
+	return organizationID, workspaceID, nil
+}
+
 // GetTenantCount returns the number of workspaces used to detect partial initialization.
 func (s *BootstrapService) GetTenantCount() (int64, error) {
 	return s.repo.GetTenantCount()
@@ -167,12 +214,197 @@ func (s *BootstrapService) Bootstrap(ctx context.Context, params BootstrapParams
 			}
 		}
 
-		if err := txSetupRepo.CreateSetup(); err != nil {
+		if err := txSetupRepo.CreateSetup(organization.ID, workspace.ID); err != nil {
 			return fmt.Errorf("create setup marker: %w", err)
 		}
 
 		return nil
 	})
+}
+
+type setupScope struct {
+	OrganizationID string `gorm:"column:organization_id"`
+	WorkspaceID    string `gorm:"column:workspace_id"`
+}
+
+func (s *BootstrapService) resolveAndBackfillSetupScope(ctx context.Context, tx *gorm.DB) (*model.Setup, error) {
+	txSetupRepo := repository.NewSetupRepository(tx.WithContext(ctx))
+	setupStatus, err := txSetupRepo.GetSetupStatus()
+	if err != nil {
+		return nil, fmt.Errorf("get setup status for scope resolution: %w", err)
+	}
+	if setupStatus == nil {
+		return nil, nil
+	}
+
+	// Complete setup markers are immutable and only need validation. Legacy
+	// markers require a row lock so only one transaction may choose and persist
+	// their default scope.
+	if normalizedStringPointer(setupStatus.OrganizationID) == "" ||
+		normalizedStringPointer(setupStatus.WorkspaceID) == "" {
+		version := setupStatus.Version
+		setupStatus, err = txSetupRepo.GetSetupStatusForUpdate()
+		if err != nil {
+			return nil, fmt.Errorf("lock setup status for scope resolution: %w", err)
+		}
+		if setupStatus == nil {
+			return nil, nil
+		}
+		if setupStatus.Version != version {
+			return nil, fmt.Errorf("setup marker changed during scope resolution")
+		}
+	}
+
+	scope, needsBackfill, err := resolveSetupScope(ctx, tx, setupStatus)
+	if err != nil {
+		return nil, err
+	}
+	if needsBackfill {
+		if err := txSetupRepo.UpdateSetupScope(setupStatus.Version, scope.OrganizationID, scope.WorkspaceID); err != nil {
+			return nil, fmt.Errorf("backfill setup scope: %w", err)
+		}
+	}
+
+	setupStatus.OrganizationID = stringPointer(scope.OrganizationID)
+	setupStatus.WorkspaceID = stringPointer(scope.WorkspaceID)
+	return setupStatus, nil
+}
+
+func resolveSetupScope(ctx context.Context, tx *gorm.DB, setupStatus *model.Setup) (setupScope, bool, error) {
+	if setupStatus == nil {
+		return setupScope{}, false, ErrSetupScopeUnavailable
+	}
+
+	organizationID := normalizedStringPointer(setupStatus.OrganizationID)
+	workspaceID := normalizedStringPointer(setupStatus.WorkspaceID)
+	if organizationID != "" && workspaceID != "" {
+		scope := setupScope{OrganizationID: organizationID, WorkspaceID: workspaceID}
+		if err := validateSetupScope(ctx, tx, scope); err != nil {
+			return setupScope{}, false, err
+		}
+		return scope, false, nil
+	}
+
+	constraints := setupScope{OrganizationID: organizationID, WorkspaceID: workspaceID}
+	if scope, found, err := resolveSuperAdminSetupScope(ctx, tx, constraints); err != nil {
+		return setupScope{}, false, err
+	} else if found {
+		return scope, true, nil
+	}
+
+	scope, found, err := resolveUniqueSetupScope(ctx, tx, constraints)
+	if err != nil {
+		return setupScope{}, false, err
+	}
+	if !found {
+		return setupScope{}, false, ErrSetupScopeUnavailable
+	}
+	return scope, true, nil
+}
+
+func resolveSuperAdminSetupScope(ctx context.Context, tx *gorm.DB, constraints setupScope) (setupScope, bool, error) {
+	query := tx.WithContext(ctx).
+		Table("account_contexts AS ac").
+		Distinct("ac.current_organization_id AS organization_id, ac.current_workspace_id AS workspace_id").
+		Joins("JOIN accounts AS a ON a.id = ac.account_id").
+		Joins("JOIN organizations AS o ON o.id = ac.current_organization_id").
+		Joins("JOIN workspaces AS w ON w.id = ac.current_workspace_id AND w.organization_id = ac.current_organization_id").
+		Where("a.is_super_admin = ?", true).
+		Where("a.deleted_at IS NULL").
+		Where("o.status = ?", workspace_model.OrganizationStatusActive).
+		Where("w.status = ?", workspace_model.WorkspaceStatusNormal).
+		Where("ac.current_organization_id IS NOT NULL").
+		Where("ac.current_workspace_id IS NOT NULL")
+	query = constrainSetupScopeQuery(query, "ac.current_organization_id", "ac.current_workspace_id", constraints)
+
+	scopes, err := loadSetupScopeCandidates(query)
+	if err != nil {
+		return setupScope{}, false, fmt.Errorf("resolve setup scope from super administrator context: %w", err)
+	}
+	switch len(scopes) {
+	case 0:
+		return setupScope{}, false, nil
+	case 1:
+		return scopes[0], true, nil
+	default:
+		return setupScope{}, false, fmt.Errorf("%w: multiple super administrator contexts reference different scopes", ErrSetupScopeAmbiguous)
+	}
+}
+
+func resolveUniqueSetupScope(ctx context.Context, tx *gorm.DB, constraints setupScope) (setupScope, bool, error) {
+	query := tx.WithContext(ctx).
+		Table("workspaces AS w").
+		Distinct("w.organization_id AS organization_id, w.id AS workspace_id").
+		Joins("JOIN organizations AS o ON o.id = w.organization_id").
+		Where("o.status = ?", workspace_model.OrganizationStatusActive).
+		Where("w.status = ?", workspace_model.WorkspaceStatusNormal).
+		Where("w.organization_id IS NOT NULL")
+	query = constrainSetupScopeQuery(query, "w.organization_id", "w.id", constraints)
+
+	scopes, err := loadSetupScopeCandidates(query)
+	if err != nil {
+		return setupScope{}, false, fmt.Errorf("resolve unique setup scope: %w", err)
+	}
+	switch len(scopes) {
+	case 0:
+		return setupScope{}, false, nil
+	case 1:
+		return scopes[0], true, nil
+	default:
+		return setupScope{}, false, fmt.Errorf("%w: multiple organization/workspace pairs exist", ErrSetupScopeAmbiguous)
+	}
+}
+
+func constrainSetupScopeQuery(query *gorm.DB, organizationColumn, workspaceColumn string, constraints setupScope) *gorm.DB {
+	if constraints.OrganizationID != "" {
+		query = query.Where(organizationColumn+" = ?", constraints.OrganizationID)
+	}
+	if constraints.WorkspaceID != "" {
+		query = query.Where(workspaceColumn+" = ?", constraints.WorkspaceID)
+	}
+	return query
+}
+
+func loadSetupScopeCandidates(query *gorm.DB) ([]setupScope, error) {
+	var scopes []setupScope
+	err := query.
+		Order("organization_id ASC, workspace_id ASC").
+		Limit(2).
+		Scan(&scopes).Error
+	return scopes, err
+}
+
+func validateSetupScope(ctx context.Context, tx *gorm.DB, scope setupScope) error {
+	var count int64
+	err := tx.WithContext(ctx).
+		Table("workspaces AS w").
+		Joins("JOIN organizations AS o ON o.id = w.organization_id").
+		Where("w.id = ? AND w.organization_id = ?", scope.WorkspaceID, scope.OrganizationID).
+		Where("o.status = ?", workspace_model.OrganizationStatusActive).
+		Where("w.status = ?", workspace_model.WorkspaceStatusNormal).
+		Count(&count).Error
+	if err != nil {
+		return fmt.Errorf("validate setup scope: %w", err)
+	}
+	if count != 1 {
+		return fmt.Errorf("%w: organization %q and workspace %q are not an active setup scope", ErrSetupScopeInvalid, scope.OrganizationID, scope.WorkspaceID)
+	}
+	return nil
+}
+
+func normalizedStringPointer(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func stringPointer(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func (s *BootstrapService) ensureBootstrapReady(repo repository.SetupRepository) error {
