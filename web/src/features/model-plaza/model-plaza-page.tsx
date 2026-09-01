@@ -22,6 +22,7 @@ import { getModelPriceDisplay } from '@/utils/model-price';
 import { useOrganizationStore } from '@/store/organization-store';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
 import { useT } from '@/i18n';
+import { getModelExperienceHref } from './experience-route';
 import { useLocale } from '@/hooks/use-locale';
 
 const USE_CASE_VALUES: ModelUseCase[] = [
@@ -190,14 +191,6 @@ async function fetchAllProviderModels(
 
 function isModelRecord(value: unknown): value is ModelItem {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function getExperienceHref(model: ModelItem): string {
-  const params = `provider=${encodeURIComponent(model.provider)}&model=${encodeURIComponent(model.model)}`;
-  const basePath = model.use_cases?.includes('image-gen')
-    ? '/console/work/image'
-    : '/console/work/chat';
-  return `${basePath}?${params}`;
 }
 
 export function ModelPlazaPage() {
@@ -651,7 +644,7 @@ function ModelCard({
   const displayName = modelDisplayName(model);
   const manufacturer = modelManufacturer(model, locale);
   const displayManufacturer = manufacturerLabel ?? manufacturer.label;
-  const experienceHref = getExperienceHref(model);
+  const experienceHref = getModelExperienceHref(model);
   const priceItems = getModelPriceDisplay({
     inputPrice: model.input_price,
     outputPrice: model.output_price,

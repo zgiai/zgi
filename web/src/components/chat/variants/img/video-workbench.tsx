@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Image from 'next/image';
+import { useSearchParams } from 'next/navigation';
 import {
   CalendarClock,
   CheckCircle2,
@@ -155,6 +156,7 @@ const DEFAULT_VIDEO_GENERATION_OPTIONS: VideoGenerationOptions = {
 
 export function VideoWorkbench() {
   const t = useT('webapp');
+  const searchParams = useSearchParams();
   const { models, isLoading, error } = useAvailableModels({
     use_case: 'video-gen',
   });
@@ -174,10 +176,12 @@ export function VideoWorkbench() {
   const generateMutation = useGenerateVideoTask();
   const deleteTaskMutation = useDeleteVideoTask();
   const prefetchTaskDetail = usePrefetchVideoRuntimeTask();
-  const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>({
-    provider: '',
-    model: '',
-  });
+  const requestedProvider = searchParams.get('provider')?.trim() ?? '';
+  const requestedModel = searchParams.get('model')?.trim() ?? '';
+  const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>(() => ({
+    provider: requestedProvider,
+    model: requestedModel,
+  }));
   const [prompt, setPrompt] = React.useState('');
   const [settings, setSettings] = React.useState<VideoGenerationSettings>(DEFAULT_VIDEO_SETTINGS);
   const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(null);
