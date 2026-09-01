@@ -137,25 +137,21 @@ func readPersistedSetupScope(t *testing.T, db *gorm.DB) (sql.NullString, sql.Nul
 	return row.OrganizationID, row.WorkspaceID
 }
 
-func TestResolveDefaultScope_PrefersSuperAdminContextAndBackfills(t *testing.T) {
+func TestResolveDefaultScope_IgnoresMutableSuperAdminContextWhenScopeIsAmbiguous(t *testing.T) {
 	db, service := newSetupScopeTestService(t)
 	seedLegacySetup(t, db, nil, nil)
 	seedUsableSetupScope(t, db, "org-1", "workspace-1")
 	seedUsableSetupScope(t, db, "org-2", "workspace-2")
 	seedSuperAdminContext(t, db, "admin-1", "org-2", "workspace-2")
 
-	organizationID, workspaceID, err := service.ResolveDefaultScope(context.Background())
-	if err != nil {
-		t.Fatalf("ResolveDefaultScope() error = %v, want nil", err)
-	}
-	if organizationID != "org-2" || workspaceID != "workspace-2" {
-		t.Fatalf("ResolveDefaultScope() = %q, %q, want org-2, workspace-2", organizationID, workspaceID)
+	_, _, err := service.ResolveDefaultScope(context.Background())
+	if !errors.Is(err, ErrSetupScopeAmbiguous) {
+		t.Fatalf("ResolveDefaultScope() error = %v, want ErrSetupScopeAmbiguous", err)
 	}
 
 	persistedOrganizationID, persistedWorkspaceID := readPersistedSetupScope(t, db)
-	if !persistedOrganizationID.Valid || persistedOrganizationID.String != organizationID ||
-		!persistedWorkspaceID.Valid || persistedWorkspaceID.String != workspaceID {
-		t.Fatalf("persisted scope = %+v, %+v, want resolved scope", persistedOrganizationID, persistedWorkspaceID)
+	if persistedOrganizationID.Valid || persistedWorkspaceID.Valid {
+		t.Fatalf("mutable administrator context changed setup scope: %+v, %+v", persistedOrganizationID, persistedWorkspaceID)
 	}
 }
 

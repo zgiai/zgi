@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
@@ -20,6 +21,8 @@ const (
 	PhoneSceneRegister      = "register"
 	PhoneSceneLogin         = "login"
 	PhoneSceneResetPassword = "reset_password"
+
+	phoneRegistrationCompensationTimeout = 2 * time.Second
 )
 
 var (
@@ -101,6 +104,7 @@ type PhoneResetPasswordRequest struct {
 type PhoneAuthAccountGateway interface {
 	FindByPhone(ctx context.Context, phoneE164 string) (*auth_model.Account, error)
 	RegisterByPhone(ctx context.Context, phoneE164 string, name string, password *string, createWorkspaceRequired *bool) (*auth_model.Account, error)
+	DeleteAccountPermanently(ctx context.Context, account *auth_model.Account) error
 	LoginByAccount(ctx context.Context, account *auth_model.Account, ipAddress string) (*dto.LoginResponse, error)
 	UpdatePhonePassword(ctx context.Context, account *auth_model.Account, password string) error
 }
@@ -294,6 +298,14 @@ func (s *PhoneAuthService) RegisterByPhone(ctx context.Context, req PhoneRegiste
 		}
 		if inviteToken != "" {
 			if err := s.tokenMgr.BindTokenToAccount(ctx, req.VerifiedToken, PhoneVerifiedTokenType, account.ID); err != nil {
+				compensationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), phoneRegistrationCompensationTimeout)
+				defer cancel()
+				if compensationErr := s.accounts.DeleteAccountPermanently(compensationCtx, account); compensationErr != nil {
+					return nil, fmt.Errorf(
+						"bind invited phone registration retry: %w",
+						errors.Join(err, fmt.Errorf("remove unbound phone registration account: %w", compensationErr)),
+					)
+				}
 				return nil, fmt.Errorf("bind invited phone registration retry: %w", err)
 			}
 		}

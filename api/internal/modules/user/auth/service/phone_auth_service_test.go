@@ -157,6 +157,41 @@ func TestPhoneInviteRegistrationRetryRequiresBoundCreatedAccount(t *testing.T) {
 	require.NotNil(t, result.Invitation)
 }
 
+func TestPhoneInviteRegistrationCompensatesAccountWhenRetryBindingFails(t *testing.T) {
+	tokenManager := newTestPhoneTokenManager(t)
+	requestContext, cancelRequest := context.WithCancel(t.Context())
+	accounts := &fakePhoneAuthAccounts{}
+	invitation := &fakeRegistrationInvitationGateway{link: &workspace_model.OrganizationInviteLink{
+		ID: "compensation-link", OrganizationID: "organization-phone", Token: "phone-invite", Status: "active",
+	}}
+	service := NewPhoneAuthService(accounts, tokenManager, &fakePhoneCodeSender{}, PhoneAuthOptions{AllowRegister: true})
+	service.SetRegistrationInvitationGateway(invitation)
+	verifiedToken, err := tokenManager.GenerateDataToken(t.Context(), PhoneVerifiedTokenType, map[string]interface{}{
+		"phone_e164": "+8613800138000",
+		"scene":      PhoneSceneRegister,
+	})
+	require.NoError(t, err)
+	accounts.afterRegister = func() {
+		require.NoError(t, tokenManager.RevokeToken(verifiedToken, PhoneVerifiedTokenType))
+		cancelRequest()
+	}
+
+	_, err = service.RegisterByPhone(requestContext, PhoneRegisterRequest{
+		Phone: "13800138000", CountryCode: "CN", VerifiedToken: verifiedToken,
+		Name: "Compensated Phone", InviteToken: "phone-invite",
+	}, "127.0.0.1")
+
+	require.ErrorContains(t, err, "bind invited phone registration retry")
+	require.Equal(t, 1, accounts.deleteCalls)
+	require.NoError(t, accounts.deleteContextErr, "compensation must outlive a canceled request")
+	require.Nil(t, accounts.accountByMobile, "failed token binding must not strand the registered phone")
+
+	_, err = service.SendCode(t.Context(), PhoneCodeSendRequest{
+		Phone: "13800138000", CountryCode: "CN", Scene: PhoneSceneRegister,
+	})
+	require.NoError(t, err, "the compensated phone must be able to start registration again")
+}
+
 func TestPhoneAuthRegistrationDisabled(t *testing.T) {
 	service := NewPhoneAuthService(
 		&fakePhoneAuthAccounts{},
@@ -259,6 +294,10 @@ type fakePhoneAuthAccounts struct {
 	lastLoginIP             string
 	createWorkspaceRequired *bool
 	registerCalls           int
+	deleteCalls             int
+	deleteContextErr        error
+	deleteErr               error
+	afterRegister           func()
 }
 
 func (f *fakePhoneAuthAccounts) FindByPhone(_ context.Context, _ string) (*auth_model.Account, error) {
@@ -289,7 +328,25 @@ func (f *fakePhoneAuthAccounts) RegisterByPhone(_ context.Context, phoneE164 str
 		account.PasswordSalt = &salt
 	}
 	f.accountByMobile = account
+	if f.afterRegister != nil {
+		f.afterRegister()
+	}
 	return account, nil
+}
+
+func (f *fakePhoneAuthAccounts) DeleteAccountPermanently(ctx context.Context, account *auth_model.Account) error {
+	f.deleteCalls++
+	f.deleteContextErr = ctx.Err()
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if f.accountByMobile != nil && account != nil && f.accountByMobile.ID == account.ID {
+		f.accountByMobile = nil
+	}
+	return nil
 }
 
 func (f *fakePhoneAuthAccounts) LoginByAccount(_ context.Context, account *auth_model.Account, ipAddress string) (*dto.LoginResponse, error) {

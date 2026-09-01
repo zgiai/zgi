@@ -15,6 +15,7 @@ import { buildSsoStartUrl } from '@/utils/auth-sso';
 import { getAuthBusinessErrorCode, getAuthBusinessErrorData } from '@/utils/auth-errors';
 import {
   appendInviteRegistrationContext,
+  getLegacyLoginInviteToken,
   readInviteRegistrationContext,
 } from '@/utils/invite-registration';
 import { Button } from '@/components/ui/button';
@@ -94,6 +95,7 @@ export function LoginForm({ className }: LoginFormProps) {
   const searchParams = useSearchParams();
   const registrationContext = readInviteRegistrationContext(searchParams);
   const inviteToken = registrationContext.inviteToken;
+  const legacyLoginInviteToken = getLegacyLoginInviteToken(registrationContext);
   const redirect = registrationContext.redirect;
   const emailFromParams = decodeURIComponent(searchParams.get('email') || '');
   const registerHref = appendInviteRegistrationContext('/register', registrationContext);
@@ -260,7 +262,7 @@ export function LoginForm({ className }: LoginFormProps) {
       const formData = {
         email: account,
         password: data.password,
-        invite_token: inviteToken || undefined,
+        invite_token: legacyLoginInviteToken,
       };
       await loginMutation.mutateAsync(formData);
       navigateAfterLogin();

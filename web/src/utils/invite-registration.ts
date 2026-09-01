@@ -1,6 +1,7 @@
 export interface InviteRegistrationContext {
   redirect?: string | null;
   inviteToken?: string | null;
+  inviteContract?: 'organization' | null;
 }
 
 export type RegistrationStatusHint = 'pending';
@@ -13,6 +14,8 @@ export function readInviteRegistrationContext(
   return {
     redirect: searchParams.get('redirect'),
     inviteToken: searchParams.get('invite_token'),
+    inviteContract:
+      searchParams.get('invite_contract') === 'organization' ? 'organization' : null,
   };
 }
 
@@ -23,6 +26,7 @@ export function appendInviteRegistrationContext(
   const params = new URLSearchParams();
   if (context.redirect) params.set('redirect', context.redirect);
   if (context.inviteToken) params.set('invite_token', context.inviteToken);
+  if (context.inviteContract) params.set('invite_contract', context.inviteContract);
   if (params.size === 0) return href;
 
   const separator = href.includes('?') ? '&' : '?';
@@ -33,7 +37,17 @@ export function buildInviteRegistrationHref(token: string): string {
   return appendInviteRegistrationContext('/register', {
     inviteToken: token,
     redirect: `/invite/${token}`,
+    inviteContract: 'organization',
   });
+}
+
+export function getLegacyLoginInviteToken(
+  context: InviteRegistrationContext
+): string | undefined {
+  // Organization invite tokens are accepted after authentication by /invite/[token].
+  // The legacy login API validates a different token store, so never mix contracts.
+  if (context.inviteContract === 'organization') return undefined;
+  return context.inviteToken || undefined;
 }
 
 export function readRegistrationStatusHint(

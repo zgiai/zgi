@@ -3,6 +3,7 @@ import { URL, URLSearchParams } from 'node:url';
 import {
   appendInviteRegistrationContext,
   buildInviteRegistrationHref,
+  getLegacyLoginInviteToken,
   readInviteRegistrationContext,
   readRegistrationStatusHint,
   removeRegistrationStatusHint,
@@ -16,10 +17,12 @@ const registrationUrl = new URL(registrationHref, 'https://zgi.test');
 assert.equal(registrationUrl.pathname, '/register');
 assert.equal(registrationUrl.searchParams.get('invite_token'), token);
 assert.equal(registrationUrl.searchParams.get('redirect'), `/invite/${token}`);
+assert.equal(registrationUrl.searchParams.get('invite_contract'), 'organization');
 
 const contextParams = new URLSearchParams({
   invite_token: token,
   redirect: '/invite/source?from=email',
+  invite_contract: 'organization',
 });
 const context = readInviteRegistrationContext(contextParams);
 const verificationHref = appendInviteRegistrationContext(
@@ -31,6 +34,12 @@ assert.equal(verificationUrl.searchParams.get('email'), 'user@example.com');
 assert.equal(verificationUrl.searchParams.get('type'), 'register');
 assert.equal(verificationUrl.searchParams.get('invite_token'), token);
 assert.equal(verificationUrl.searchParams.get('redirect'), '/invite/source?from=email');
+assert.equal(verificationUrl.searchParams.get('invite_contract'), 'organization');
+assert.equal(getLegacyLoginInviteToken(context), undefined);
+assert.equal(
+  getLegacyLoginInviteToken({ inviteToken: 'legacy-invitation-code' }),
+  'legacy-invitation-code'
+);
 assert.equal(appendInviteRegistrationContext('/login', {}), '/login');
 
 assert.equal(readRegistrationStatusHint(new URLSearchParams('registration_status=pending')), 'pending');

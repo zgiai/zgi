@@ -286,12 +286,9 @@ func resolveSetupScope(ctx context.Context, tx *gorm.DB, setupStatus *model.Setu
 	}
 
 	constraints := setupScope{OrganizationID: organizationID, WorkspaceID: workspaceID}
-	if scope, found, err := resolveSuperAdminSetupScope(ctx, tx, constraints); err != nil {
-		return setupScope{}, false, err
-	} else if found {
-		return scope, true, nil
-	}
-
+	// A legacy marker's missing IDs must not be inferred from account_contexts:
+	// an administrator can switch that context long after setup. Only persisted
+	// setup constraints that identify one active scope are safe to backfill.
 	scope, found, err := resolveUniqueSetupScope(ctx, tx, constraints)
 	if err != nil {
 		return setupScope{}, false, err
@@ -300,35 +297,6 @@ func resolveSetupScope(ctx context.Context, tx *gorm.DB, setupStatus *model.Setu
 		return setupScope{}, false, ErrSetupScopeUnavailable
 	}
 	return scope, true, nil
-}
-
-func resolveSuperAdminSetupScope(ctx context.Context, tx *gorm.DB, constraints setupScope) (setupScope, bool, error) {
-	query := tx.WithContext(ctx).
-		Table("account_contexts AS ac").
-		Distinct("ac.current_organization_id AS organization_id, ac.current_workspace_id AS workspace_id").
-		Joins("JOIN accounts AS a ON a.id = ac.account_id").
-		Joins("JOIN organizations AS o ON o.id = ac.current_organization_id").
-		Joins("JOIN workspaces AS w ON w.id = ac.current_workspace_id AND w.organization_id = ac.current_organization_id").
-		Where("a.is_super_admin = ?", true).
-		Where("a.deleted_at IS NULL").
-		Where("o.status = ?", workspace_model.OrganizationStatusActive).
-		Where("w.status = ?", workspace_model.WorkspaceStatusNormal).
-		Where("ac.current_organization_id IS NOT NULL").
-		Where("ac.current_workspace_id IS NOT NULL")
-	query = constrainSetupScopeQuery(query, "ac.current_organization_id", "ac.current_workspace_id", constraints)
-
-	scopes, err := loadSetupScopeCandidates(query)
-	if err != nil {
-		return setupScope{}, false, fmt.Errorf("resolve setup scope from super administrator context: %w", err)
-	}
-	switch len(scopes) {
-	case 0:
-		return setupScope{}, false, nil
-	case 1:
-		return scopes[0], true, nil
-	default:
-		return setupScope{}, false, fmt.Errorf("%w: multiple super administrator contexts reference different scopes", ErrSetupScopeAmbiguous)
-	}
 }
 
 func resolveUniqueSetupScope(ctx context.Context, tx *gorm.DB, constraints setupScope) (setupScope, bool, error) {
