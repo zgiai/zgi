@@ -17,6 +17,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (
@@ -68,6 +69,7 @@ type ChannelService struct {
 	adapters    *channelruntime.Registry
 	credentials ChannelCredentialResolver
 	transient   ChannelTransientDispatcher
+	markers     ChannelProcessingMarkerStore
 	artifacts   channelArtifactLinker
 	receivers   interface {
 		Status(uuid.UUID) channelruntime.ReceiverStatus
@@ -89,12 +91,14 @@ func NewChannelService(store ChannelStore, subjects ChannelSubjectStore, runtime
 	if store == nil || subjects == nil || runtime == nil || adapters == nil || credentials == nil || transient == nil {
 		panic("channel service requires store, subjects, runtime, adapters, credentials, and transient dispatcher")
 	}
-	return &ChannelService{
+	service := &ChannelService{
 		store: store, subjects: subjects, runtime: runtime, adapters: adapters, credentials: credentials,
 		transient: transient,
 		artifacts: toolFileChannelArtifactLinker{},
 		now:       func() time.Time { return time.Now().UTC() },
 	}
+	service.markers, _ = store.(ChannelProcessingMarkerStore)
+	return service
 }
 
 // WithAPIBaseURL configures the externally reachable ZGI API base URL used in
@@ -1010,14 +1014,56 @@ func (service *ChannelService) submitChannelInvocation(
 	}
 	policy := channelResponsePolicyFromRun(run)
 	if policy.AcknowledgementEnabled {
-		// Acknowledgements are UX-only and intentionally bypass the durable
-		// delivery outbox. Their switch is independent from progress messages.
-		_ = service.transient.EnqueueTransient(ctx, ChannelTransientDeliveryRequest{
-			RunID: run.ID, Kind: channelruntime.DeliveryKindAcknowledgement,
-			DeliveryKey: "accepted", Text: channelAcknowledgementText,
-		})
+		adapter, resolveErr := service.adapters.Resolve(installation.Provider)
+		_, supportsMarker := adapter.(channelruntime.ProcessingMarkerAdapter)
+		if resolveErr == nil && adapter.Capabilities().ProcessingMarker && supportsMarker && service.markers != nil {
+			service.scheduleProcessingMarker(ctx, installation, route, stored, run.ID, now)
+		} else {
+			// Providers without a native processing marker retain the existing
+			// best-effort acknowledgement message.
+			_ = service.transient.EnqueueTransient(ctx, ChannelTransientDeliveryRequest{
+				RunID: run.ID, Kind: channelruntime.DeliveryKindAcknowledgement,
+				DeliveryKey: "accepted", Text: channelAcknowledgementText,
+			})
+		}
 	}
 	return &ChannelWebhookResult{Accepted: true, Duplicate: duplicate, EventID: stored.ID, RunID: &run.ID}, nil
+}
+
+func (service *ChannelService) scheduleProcessingMarker(
+	ctx context.Context,
+	installation *channelruntime.Installation,
+	route *ChannelRoute,
+	inbound *channelruntime.InboundEvent,
+	runID uuid.UUID,
+	now time.Time,
+) {
+	if service == nil || service.markers == nil || installation == nil || route == nil || route.Binding == nil || inbound == nil {
+		return
+	}
+	marker := &channelruntime.ProcessingMarker{
+		ID: processingMarkerID(inbound.ID), OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID,
+		InstallationID: installation.ID, InboundEventID: inbound.ID, RunID: runID,
+		Provider: strings.ToLower(strings.TrimSpace(installation.Provider)), ConnectionID: installation.ConnectionID,
+		ActorID: installation.CreatedBy, SubjectType: route.Binding.SubjectType, SubjectID: route.Binding.SubjectID,
+		ProviderMessageID: strings.TrimSpace(inbound.ProviderMessageID), Status: channelruntime.ProcessingMarkerPendingAdd,
+		AvailableAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	created, err := service.markers.CreateProcessingMarker(ctx, marker)
+	if err != nil {
+		logger.WarnContext(ctx, "DigitalHuman processing marker could not be scheduled", "run_id", runID.String(), err)
+		return
+	}
+	if !created {
+		return
+	}
+	if dispatcher, ok := service.transient.(ChannelProcessingMarkerDispatcher); ok {
+		if err := dispatcher.EnqueueProcessingMarker(ctx, marker.ID); err != nil {
+			// The durable sweep will pick the row up even when the low-latency
+			// queue notification cannot be published.
+			logger.WarnContext(ctx, "DigitalHuman processing marker wake-up was delayed", "run_id", runID.String(), err)
+		}
+	}
 }
 
 func channelMessagePreview(message *channelruntime.InboundMessage) string {
@@ -1197,10 +1243,85 @@ func safeDeliveryAttemptError(persistErr error) error {
 
 func (service *ChannelService) ReconcileDeliveries(ctx context.Context) error {
 	now := service.now()
+	var markerRecovery error
+	if service.markers != nil {
+		markerRecovery = service.markers.RecoverStaleProcessingMarkers(ctx, now.Add(-defaultDeliveryLease), now)
+	}
 	return errors.Join(
 		service.store.MarkStaleDeliveriesUnknown(ctx, now.Add(-defaultDeliveryLease), now),
+		markerRecovery,
 		service.DispatchDeliveries(ctx, defaultDeliveryBatch),
+		service.DispatchProcessingMarkers(ctx, defaultDeliveryBatch),
 	)
+}
+
+// DispatchProcessingMarkers reconciles provider-native working indicators. A
+// failed add is never retried because the provider write is non-idempotent; an
+// empty marker ID is later reconciled by the provider using app ownership.
+func (service *ChannelService) DispatchProcessingMarkers(ctx context.Context, limit int) error {
+	if service == nil || service.markers == nil {
+		return nil
+	}
+	if limit <= 0 {
+		limit = defaultDeliveryBatch
+	}
+	items, err := service.markers.ClaimProcessingMarkerBatch(ctx, limit, service.now())
+	if err != nil {
+		return err
+	}
+	var combined error
+	for _, marker := range items {
+		adapter, resolveErr := service.adapters.Resolve(marker.Provider)
+		provider, supported := adapter.(channelruntime.ProcessingMarkerAdapter)
+		if resolveErr != nil || !supported {
+			if resolveErr == nil {
+				resolveErr = channelruntime.ErrUnsupportedEvent
+			}
+			combined = errors.Join(combined, service.markers.FailProcessingMarker(
+				ctx, marker.ID, channelErrorCode(resolveErr), safeChannelErrorMessage(resolveErr), service.now(),
+			))
+			continue
+		}
+		request := channelruntime.ProcessingMarkerRequest{
+			OrganizationID: marker.OrganizationID, WorkspaceID: marker.WorkspaceID,
+			InstallationID: marker.InstallationID, ConnectionID: marker.ConnectionID,
+			RunID: marker.RunID, InboundMessageID: marker.ProviderMessageID,
+		}
+		switch marker.Status {
+		case channelruntime.ProcessingMarkerAdding:
+			receipt, addErr := provider.AddProcessingMarker(ctx, request)
+			providerMarkerID, providerRequestID := "", ""
+			if receipt != nil {
+				providerMarkerID = strings.TrimSpace(receipt.ProviderMarkerID)
+				providerRequestID = strings.TrimSpace(receipt.ProviderRequestID)
+			}
+			// A write timeout may still have created the reaction. Move to active
+			// even on error so cleanup can list and remove an app-owned Typing.
+			if persistErr := service.markers.ActivateProcessingMarker(ctx, marker.ID, providerMarkerID, providerRequestID, service.now()); persistErr != nil {
+				combined = errors.Join(combined, persistErr)
+			}
+			if addErr != nil {
+				logger.WarnContext(ctx, "DigitalHuman processing marker was not confirmed", "run_id", marker.RunID.String(), addErr)
+			}
+		case channelruntime.ProcessingMarkerRemoving:
+			removeErr := provider.RemoveProcessingMarker(ctx, request, marker.ProviderMarkerID)
+			if removeErr == nil {
+				combined = errors.Join(combined, service.markers.RemoveProcessingMarker(ctx, marker.ID, service.now()))
+				continue
+			}
+			if channelDeliveryRetryable(removeErr) && marker.AttemptCount < maxDeliveryAttempts {
+				combined = errors.Join(combined, service.markers.RetryProcessingMarkerRemoval(
+					ctx, marker.ID, service.now().Add(deliveryBackoff(marker.AttemptCount)),
+					channelErrorCode(removeErr), safeChannelErrorMessage(removeErr),
+				))
+				continue
+			}
+			combined = errors.Join(combined, service.markers.FailProcessingMarker(
+				ctx, marker.ID, channelErrorCode(removeErr), safeChannelErrorMessage(removeErr), service.now(),
+			))
+		}
+	}
+	return combined
 }
 
 func shouldWakeChannel(route *ChannelRoute, message *channelruntime.InboundMessage) bool {

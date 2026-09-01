@@ -246,6 +246,71 @@ func TestDirectChannelAdapterDeliversWithCredentialOnlyConnection(t *testing.T) 
 	}
 }
 
+func TestDirectChannelAdapterAddsAndRemovesTypingReaction(t *testing.T) {
+	var added, listed, removed bool
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("X-Tt-Logid", "request-reaction")
+		switch {
+		case request.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","tenant_access_token":"tenant-token","expire":7200}`))
+		case request.URL.Path == "/open-apis/im/v1/messages/om_inbound/reactions" && request.Method == http.MethodPost:
+			var body struct {
+				ReactionType struct {
+					EmojiType string `json:"emoji_type"`
+				} `json:"reaction_type"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body.ReactionType.EmojiType != feishuProcessingEmoji {
+				t.Errorf("reaction body = %#v, err = %v", body, err)
+			}
+			added = true
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","data":{"reaction_id":"reaction-1","operator":{"operator_id":"cli_direct","operator_type":"app"},"reaction_type":{"emoji_type":"Typing"}}}`))
+		case request.URL.Path == "/open-apis/im/v1/messages/om_inbound/reactions" && request.Method == http.MethodGet:
+			if request.URL.Query().Get("reaction_type") != feishuProcessingEmoji {
+				t.Errorf("reaction query = %s", request.URL.RawQuery)
+			}
+			listed = true
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","data":{"items":[` +
+				`{"reaction_id":"reaction-other","operator":{"operator_id":"cli_other","operator_type":"app"},"reaction_type":{"emoji_type":"Typing"}},` +
+				`{"reaction_id":"reaction-1","operator":{"operator_id":"cli_direct","operator_type":"app"},"reaction_type":{"emoji_type":"Typing"}}` +
+				`],"has_more":false,"page_token":""}}`))
+		case request.URL.Path == "/open-apis/im/v1/messages/om_inbound/reactions/reaction-1" && request.Method == http.MethodDelete:
+			removed = true
+			_, _ = writer.Write([]byte(`{"code":0,"msg":"success","data":{"reaction_id":"reaction-1"}}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	connectionID := uuid.New()
+	resolver := &channelConnectionResolverStub{connection: directChannelConnection(connectionID)}
+	adapter, err := NewDirectChannelAdapter(newTestAdapter(t, server), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adapter.Capabilities().ProcessingMarker {
+		t.Fatal("direct Feishu channel adapter must declare processing marker support")
+	}
+	request := channelruntime.ProcessingMarkerRequest{
+		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), InstallationID: uuid.New(),
+		ConnectionID: connectionID, RunID: uuid.New(), InboundMessageID: "om_inbound",
+	}
+	receipt, err := adapter.AddProcessingMarker(t.Context(), request)
+	if err != nil {
+		t.Fatalf("AddProcessingMarker() error = %v", err)
+	}
+	if receipt.ProviderMarkerID != "reaction-1" || receipt.ProviderRequestID != "request-reaction" {
+		t.Fatalf("receipt = %#v", receipt)
+	}
+	if err := adapter.RemoveProcessingMarker(t.Context(), request, receipt.ProviderMarkerID); err != nil {
+		t.Fatalf("RemoveProcessingMarker() error = %v", err)
+	}
+	if !added || !listed || !removed {
+		t.Fatalf("reaction lifecycle added=%t listed=%t removed=%t", added, listed, removed)
+	}
+}
+
 func TestChannelAdapterReadsBoundedAttributedContext(t *testing.T) {
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
 	after := now.Add(-30 * time.Second)

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,12 +75,114 @@ func NewDirectChannelAdapter(provider *Adapter, connections integrations.Connect
 
 func (*ChannelAdapter) Provider() string { return IntegrationID }
 
-func (*ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
+func (adapter *ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
 	return channelruntime.ProviderCapabilities{
 		ContextRead:                true,
+		ProcessingMarker:           adapter.directProviderAvailable(),
 		MessageRoundTripTest:       true,
 		ConversationCapabilityTest: true,
 	}
+}
+
+const feishuProcessingEmoji = "Typing"
+
+type feishuMessageReaction struct {
+	ReactionID string `json:"reaction_id"`
+	Operator   struct {
+		OperatorID   string `json:"operator_id"`
+		OperatorType string `json:"operator_type"`
+	} `json:"operator"`
+	ReactionType struct {
+		EmojiType string `json:"emoji_type"`
+	} `json:"reaction_type"`
+}
+
+func (adapter *ChannelAdapter) AddProcessingMarker(ctx context.Context, request channelruntime.ProcessingMarkerRequest) (*channelruntime.ProcessingMarkerReceipt, error) {
+	if !adapter.directProviderAvailable() || request.OrganizationID == uuid.Nil || request.ConnectionID == uuid.Nil ||
+		request.RunID == uuid.Nil || strings.TrimSpace(request.InboundMessageID) == "" {
+		return nil, channelruntime.ErrInvalidWebhook
+	}
+	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.ConnectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	region, err := feishuRegion(connection)
+	if err != nil {
+		return nil, err
+	}
+	token, tokenMeta, err := adapter.provider.tenantAccessToken(ctx, connection, region)
+	if err != nil {
+		return nil, err
+	}
+	var reaction feishuMessageReaction
+	meta, err := adapter.provider.client.addMessageReaction(ctx, region, token, strings.TrimSpace(request.InboundMessageID), map[string]any{
+		"reaction_type": map[string]string{"emoji_type": feishuProcessingEmoji},
+	}, &reaction)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(reaction.ReactionID) == "" {
+		return nil, integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu reaction response is incomplete", nil)
+	}
+	return &channelruntime.ProcessingMarkerReceipt{
+		ProviderMarkerID:  strings.TrimSpace(reaction.ReactionID),
+		ProviderRequestID: firstNonEmpty(meta.RequestID, tokenMeta.RequestID),
+	}, nil
+}
+
+func (adapter *ChannelAdapter) RemoveProcessingMarker(ctx context.Context, request channelruntime.ProcessingMarkerRequest, providerMarkerID string) error {
+	if !adapter.directProviderAvailable() || request.OrganizationID == uuid.Nil || request.ConnectionID == uuid.Nil ||
+		request.RunID == uuid.Nil || strings.TrimSpace(request.InboundMessageID) == "" {
+		return channelruntime.ErrInvalidWebhook
+	}
+	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.ConnectionID)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	region, err := feishuRegion(connection)
+	if err != nil {
+		return err
+	}
+	token, _, err := adapter.provider.tenantAccessToken(ctx, connection, region)
+	if err != nil {
+		return err
+	}
+	appID := feishuConnectionAppID(connection)
+	pageToken := ""
+	for page := 0; page < 10; page++ {
+		query := url.Values{"reaction_type": []string{feishuProcessingEmoji}, "page_size": []string{"50"}}
+		if pageToken != "" {
+			query.Set("page_token", pageToken)
+		}
+		var response struct {
+			Items     []feishuMessageReaction `json:"items"`
+			HasMore   bool                    `json:"has_more"`
+			PageToken string                  `json:"page_token"`
+		}
+		if _, err := adapter.provider.client.listMessageReactions(ctx, region, token, strings.TrimSpace(request.InboundMessageID), query, &response); err != nil {
+			return err
+		}
+		for _, reaction := range response.Items {
+			ownedByApp := strings.EqualFold(strings.TrimSpace(reaction.Operator.OperatorType), "app") &&
+				strings.TrimSpace(reaction.Operator.OperatorID) == appID
+			matchesSavedID := strings.TrimSpace(providerMarkerID) != "" && strings.TrimSpace(reaction.ReactionID) == strings.TrimSpace(providerMarkerID)
+			if !matchesSavedID && !ownedByApp {
+				continue
+			}
+			if _, err := adapter.provider.client.deleteMessageReaction(
+				ctx, region, token, strings.TrimSpace(request.InboundMessageID), strings.TrimSpace(reaction.ReactionID), nil,
+			); err != nil {
+				return err
+			}
+		}
+		if !response.HasMore || strings.TrimSpace(response.PageToken) == "" {
+			return nil
+		}
+		pageToken = strings.TrimSpace(response.PageToken)
+	}
+	return integrations.NewError(integrations.ErrorCodeResponseInvalid, "Feishu reaction pagination did not terminate", nil)
 }
 
 func (*ChannelAdapter) ConnectionSpec() channelruntime.ConnectionSpec {

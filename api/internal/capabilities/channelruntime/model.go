@@ -125,6 +125,48 @@ type InboundEvent struct {
 
 func (InboundEvent) TableName() string { return "channel_inbound_events" }
 
+type ProcessingMarkerStatus string
+
+const (
+	ProcessingMarkerPendingAdd ProcessingMarkerStatus = "pending_add"
+	ProcessingMarkerAdding     ProcessingMarkerStatus = "adding"
+	ProcessingMarkerActive     ProcessingMarkerStatus = "active"
+	ProcessingMarkerRemoving   ProcessingMarkerStatus = "removing"
+	ProcessingMarkerRemoved    ProcessingMarkerStatus = "removed"
+	ProcessingMarkerFailed     ProcessingMarkerStatus = "failed"
+)
+
+// ProcessingMarker is the durable lifecycle record for a provider-native
+// "working" indicator attached to an inbound message. It contains identifiers
+// only; no message body or credential is persisted here.
+type ProcessingMarker struct {
+	ID                uuid.UUID                   `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID    uuid.UUID                   `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID       uuid.UUID                   `gorm:"type:uuid;not null" json:"workspace_id"`
+	InstallationID    uuid.UUID                   `gorm:"type:uuid;not null" json:"installation_id"`
+	InboundEventID    uuid.UUID                   `gorm:"type:uuid;not null;uniqueIndex" json:"inbound_event_id"`
+	RunID             uuid.UUID                   `gorm:"type:uuid;not null;index" json:"run_id"`
+	Provider          string                      `gorm:"type:varchar(32);not null" json:"provider"`
+	ConnectionID      uuid.UUID                   `gorm:"type:uuid;not null" json:"connection_id"`
+	ActorID           uuid.UUID                   `gorm:"type:uuid;not null" json:"actor_id"`
+	SubjectType       runtimeidentity.SubjectType `gorm:"type:varchar(32);not null" json:"subject_type"`
+	SubjectID         uuid.UUID                   `gorm:"type:uuid;not null" json:"subject_id"`
+	ProviderMessageID string                      `gorm:"type:varchar(255);not null" json:"provider_message_id"`
+	ProviderMarkerID  string                      `gorm:"type:varchar(255);not null" json:"provider_marker_id,omitempty"`
+	ProviderRequestID string                      `gorm:"type:varchar(128);not null" json:"provider_request_id,omitempty"`
+	Status            ProcessingMarkerStatus      `gorm:"type:varchar(16);not null" json:"status"`
+	AttemptCount      int                         `gorm:"not null" json:"attempt_count"`
+	AvailableAt       time.Time                   `gorm:"not null" json:"available_at"`
+	ClaimedAt         *time.Time                  `json:"claimed_at,omitempty"`
+	RemovedAt         *time.Time                  `json:"removed_at,omitempty"`
+	ErrorCode         string                      `gorm:"type:varchar(128);not null" json:"error_code,omitempty"`
+	ErrorMessage      string                      `gorm:"type:text;not null" json:"error_message,omitempty"`
+	CreatedAt         time.Time                   `gorm:"not null" json:"created_at"`
+	UpdatedAt         time.Time                   `gorm:"not null" json:"updated_at"`
+}
+
+func (ProcessingMarker) TableName() string { return "channel_processing_markers" }
+
 type DeliveryStatus string
 
 const (

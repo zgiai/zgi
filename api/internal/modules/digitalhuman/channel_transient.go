@@ -20,6 +20,7 @@ import (
 
 const (
 	ChannelTransientDeliveryTaskType = "digital_human:channel_transient_delivery"
+	ChannelProcessingMarkerTaskType  = "digital_human:channel_processing_marker"
 	channelTransientTaskTimeout      = 20 * time.Second
 	channelTransientTaskLifetime     = 2 * time.Minute
 )
@@ -37,6 +38,13 @@ type ChannelTransientDeliveryRequest struct {
 
 type ChannelTransientDispatcher interface {
 	EnqueueTransient(context.Context, ChannelTransientDeliveryRequest) error
+}
+
+// ChannelProcessingMarkerDispatcher is an optional low-latency wake-up for a
+// marker already persisted by ChannelService. Correctness comes from the
+// durable sweep, so losing this queue task only delays the visual indicator.
+type ChannelProcessingMarkerDispatcher interface {
+	EnqueueProcessingMarker(context.Context, uuid.UUID) error
 }
 
 type AsynqChannelTransientDispatcher struct {
@@ -57,6 +65,10 @@ type channelTransientTaskPayload struct {
 	DeliveryKey string                      `json:"delivery_key"`
 	Sequence    int64                       `json:"sequence"`
 	Text        string                      `json:"text"`
+}
+
+type channelProcessingMarkerTaskPayload struct {
+	MarkerID string `json:"marker_id"`
 }
 
 func (dispatcher *AsynqChannelTransientDispatcher) EnqueueTransient(_ context.Context, request ChannelTransientDeliveryRequest) error {
@@ -96,6 +108,26 @@ func channelTransientTaskID(runID uuid.UUID, kind channelruntime.DeliveryKind, k
 	return "digital-human-channel-transient-" + channelDeliveryStageID(runID, kind, key).String()
 }
 
+func (dispatcher *AsynqChannelTransientDispatcher) EnqueueProcessingMarker(_ context.Context, markerID uuid.UUID) error {
+	if markerID == uuid.Nil {
+		return ErrInvalidRequest
+	}
+	payload, err := json.Marshal(channelProcessingMarkerTaskPayload{MarkerID: markerID.String()})
+	if err != nil {
+		return fmt.Errorf("encode DigitalHuman processing marker task: %w", err)
+	}
+	task := asynq.NewTask(dispatcher.tasks.GetTaskTypeWithPrefix(ChannelProcessingMarkerTaskType), payload)
+	_, err = dispatcher.tasks.GetClient().Enqueue(task,
+		asynq.Queue(runQueueName), asynq.MaxRetry(0), asynq.Timeout(channelTransientTaskTimeout),
+		asynq.Deadline(dispatcher.now().Add(channelTransientTaskLifetime)), asynq.Retention(0),
+		asynq.TaskID("digital-human-channel-processing-marker-"+markerID.String()),
+	)
+	if err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
+		return fmt.Errorf("enqueue DigitalHuman processing marker task: %w", err)
+	}
+	return nil
+}
+
 func RegisterChannelTransientTaskHandler(
 	registry RunTaskRegistry,
 	prefixer interface{ GetTaskTypeWithPrefix(string) string },
@@ -120,6 +152,27 @@ func RegisterChannelTransientTaskHandler(
 		return nil
 	}) {
 		panic("DigitalHuman transient channel task handler is already registered")
+	}
+	markerTaskType := prefixer.GetTaskTypeWithPrefix(ChannelProcessingMarkerTaskType)
+	if !registry.Register(markerTaskType, func(ctx context.Context, task *asynq.Task) error {
+		var payload channelProcessingMarkerTaskPayload
+		decoder := json.NewDecoder(strings.NewReader(string(task.Payload())))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&payload); err != nil {
+			logger.WarnContext(ctx, "discarding invalid DigitalHuman processing marker task", err)
+			return nil
+		}
+		markerID, err := uuid.Parse(strings.TrimSpace(payload.MarkerID))
+		if err != nil || markerID == uuid.Nil {
+			logger.WarnContext(ctx, "discarding invalid DigitalHuman processing marker identity", err)
+			return nil
+		}
+		if err := service.DispatchProcessingMarkers(ctx, defaultDeliveryBatch); err != nil {
+			logger.WarnContext(ctx, "DigitalHuman processing marker wake-up failed", "marker_id", markerID.String(), err)
+		}
+		return nil
+	}) {
+		panic("DigitalHuman processing marker task handler is already registered")
 	}
 }
 

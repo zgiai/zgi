@@ -137,6 +137,23 @@ func (c *client) sendMessage(ctx context.Context, region, accessToken, receiveID
 	return c.doEnvelope(ctx, region, http.MethodPost, "/open-apis/im/v1/messages", query, body, accessToken, false, target)
 }
 
+func (c *client) addMessageReaction(ctx context.Context, region, accessToken, messageID string, body interface{}, target interface{}) (responseMeta, error) {
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID) + "/reactions"
+	// Reaction creation is a non-idempotent write. Ambiguous outcomes are
+	// reconciled by listing app-owned Typing reactions before cleanup.
+	return c.doEnvelope(ctx, region, http.MethodPost, path, nil, body, accessToken, false, target)
+}
+
+func (c *client) listMessageReactions(ctx context.Context, region, accessToken, messageID string, query url.Values, target interface{}) (responseMeta, error) {
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID) + "/reactions"
+	return c.doEnvelope(ctx, region, http.MethodGet, path, query, nil, accessToken, true, target)
+}
+
+func (c *client) deleteMessageReaction(ctx context.Context, region, accessToken, messageID, reactionID string, target interface{}) (responseMeta, error) {
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID) + "/reactions/" + url.PathEscape(reactionID)
+	return c.doEnvelope(ctx, region, http.MethodDelete, path, nil, nil, accessToken, false, target)
+}
+
 func (c *client) tenantAccessToken(ctx context.Context, region, appID, appSecret string) (string, responseMeta, error) {
 	var response struct {
 		Code              int    `json:"code"`

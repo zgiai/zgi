@@ -141,6 +141,46 @@ func TestChannelWebhookSkipsAcknowledgementWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestChannelWebhookUsesProviderProcessingMarkerUntilRunCompletes(t *testing.T) {
+	service, store, _, adapter, scope, digitalHumanID := newChannelTestService(t)
+	adapter.processingMarker = true
+	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
+	adapter.message = &channelruntime.InboundMessage{
+		Provider: "feishu", ProviderEventID: "event-marker", ProviderMessageID: "om-marker",
+		ExternalTenantID: "tenant-1", ExternalConversationID: binding.Mapping.ExternalConversationID,
+		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_sender", Text: "请处理",
+		OccurredAt: time.Now().UTC(),
+	}
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)})
+	if err != nil || result == nil || result.RunID == nil {
+		t.Fatalf("HandleWebhook() = %#v, %v", result, err)
+	}
+	if requests := service.transient.(*channelTransientDispatcherStub).requests; len(requests) != 0 {
+		t.Fatalf("text acknowledgements = %#v, want provider marker", requests)
+	}
+	if len(store.markers) != 1 {
+		t.Fatalf("processing markers = %#v", store.markers)
+	}
+	if err := service.DispatchProcessingMarkers(t.Context(), 1); err != nil {
+		t.Fatalf("add processing marker: %v", err)
+	}
+	if adapter.markerAddCalls != 1 {
+		t.Fatalf("marker add calls = %d, want 1", adapter.markerAddCalls)
+	}
+	store.terminalMarkerRuns[*result.RunID] = true
+	if err := service.DispatchProcessingMarkers(t.Context(), 1); err != nil {
+		t.Fatalf("remove processing marker: %v", err)
+	}
+	if adapter.markerRemoveCalls != 1 {
+		t.Fatalf("marker remove calls = %d, want 1", adapter.markerRemoveCalls)
+	}
+	for _, marker := range store.markers {
+		if marker.Status != channelruntime.ProcessingMarkerRemoved {
+			t.Fatalf("marker status = %s, want removed", marker.Status)
+		}
+	}
+}
+
 func TestChannelTransientDeliveryBypassesDurableOutbox(t *testing.T) {
 	service, store, _, adapter, scope, digitalHumanID := newChannelTestService(t)
 	runID := uuid.New()
@@ -1258,14 +1298,17 @@ func (stub failingChannelCredentialStub) ResolveIdentity(context.Context, *chann
 }
 
 type channelAdapterStub struct {
-	provider         string
-	message          *channelruntime.InboundMessage
-	receipt          *channelruntime.DeliveryReceipt
-	deliveryErr      error
-	deliveryCalls    int
-	lastDelivery     channelruntime.DeliveryRequest
-	capabilityChecks []channelruntime.ConversationCapabilityCheck
-	capabilityCalls  int
+	provider          string
+	message           *channelruntime.InboundMessage
+	receipt           *channelruntime.DeliveryReceipt
+	deliveryErr       error
+	deliveryCalls     int
+	lastDelivery      channelruntime.DeliveryRequest
+	capabilityChecks  []channelruntime.ConversationCapabilityCheck
+	capabilityCalls   int
+	processingMarker  bool
+	markerAddCalls    int
+	markerRemoveCalls int
 }
 
 func (adapter *channelAdapterStub) Provider() string {
@@ -1274,10 +1317,21 @@ func (adapter *channelAdapterStub) Provider() string {
 	}
 	return "feishu"
 }
-func (*channelAdapterStub) Capabilities() channelruntime.ProviderCapabilities {
+func (adapter *channelAdapterStub) Capabilities() channelruntime.ProviderCapabilities {
 	return channelruntime.ProviderCapabilities{
-		ContextRead: true, MessageRoundTripTest: true, ConversationCapabilityTest: true,
+		ContextRead: true, ProcessingMarker: adapter.processingMarker,
+		MessageRoundTripTest: true, ConversationCapabilityTest: true,
 	}
+}
+
+func (adapter *channelAdapterStub) AddProcessingMarker(context.Context, channelruntime.ProcessingMarkerRequest) (*channelruntime.ProcessingMarkerReceipt, error) {
+	adapter.markerAddCalls++
+	return &channelruntime.ProcessingMarkerReceipt{ProviderMarkerID: "reaction-1", ProviderRequestID: "request-1"}, nil
+}
+
+func (adapter *channelAdapterStub) RemoveProcessingMarker(context.Context, channelruntime.ProcessingMarkerRequest, string) error {
+	adapter.markerRemoveCalls++
+	return nil
 }
 
 func (adapter *channelAdapterStub) TestConversationCapabilities(
@@ -1338,12 +1392,14 @@ func (channelProvisionerStub) ConnectionSpec() channelruntime.ConnectionSpec {
 }
 
 type channelStoreStub struct {
-	installations   map[uuid.UUID]*channelruntime.Installation
-	mappings        map[uuid.UUID]*channelruntime.ConversationMapping
-	bindings        map[uuid.UUID]*channelruntime.Binding
-	events          map[string]*channelruntime.InboundEvent
-	deliveries      map[uuid.UUID]*channelruntime.Delivery
-	transientTarget *ChannelTransientTarget
+	installations      map[uuid.UUID]*channelruntime.Installation
+	mappings           map[uuid.UUID]*channelruntime.ConversationMapping
+	bindings           map[uuid.UUID]*channelruntime.Binding
+	events             map[string]*channelruntime.InboundEvent
+	deliveries         map[uuid.UUID]*channelruntime.Delivery
+	transientTarget    *ChannelTransientTarget
+	markers            map[uuid.UUID]*channelruntime.ProcessingMarker
+	terminalMarkerRuns map[uuid.UUID]bool
 }
 
 func newChannelStoreStub() *channelStoreStub {
@@ -1351,6 +1407,7 @@ func newChannelStoreStub() *channelStoreStub {
 		installations: make(map[uuid.UUID]*channelruntime.Installation), mappings: make(map[uuid.UUID]*channelruntime.ConversationMapping),
 		bindings: make(map[uuid.UUID]*channelruntime.Binding), events: make(map[string]*channelruntime.InboundEvent),
 		deliveries: make(map[uuid.UUID]*channelruntime.Delivery),
+		markers:    make(map[uuid.UUID]*channelruntime.ProcessingMarker), terminalMarkerRuns: make(map[uuid.UUID]bool),
 	}
 }
 
@@ -1591,6 +1648,78 @@ func (store *channelStoreStub) MarkStaleDeliveriesUnknown(_ context.Context, cla
 			delivery.Status, delivery.ClaimedAt = channelruntime.DeliveryUnknown, nil
 		}
 	}
+	return nil
+}
+
+func (store *channelStoreStub) CreateProcessingMarker(_ context.Context, marker *channelruntime.ProcessingMarker) (bool, error) {
+	if _, exists := store.markers[marker.ID]; exists {
+		return false, nil
+	}
+	copy := *marker
+	store.markers[marker.ID] = &copy
+	return true, nil
+}
+
+func (store *channelStoreStub) ClaimProcessingMarkerBatch(_ context.Context, limit int, now time.Time) ([]*channelruntime.ProcessingMarker, error) {
+	items := make([]*channelruntime.ProcessingMarker, 0, limit)
+	for _, marker := range store.markers {
+		if len(items) >= limit || marker.AvailableAt.After(now) {
+			continue
+		}
+		switch {
+		case marker.Status == channelruntime.ProcessingMarkerPendingAdd:
+			marker.Status = channelruntime.ProcessingMarkerAdding
+		case marker.Status == channelruntime.ProcessingMarkerActive && store.terminalMarkerRuns[marker.RunID]:
+			marker.Status = channelruntime.ProcessingMarkerRemoving
+		default:
+			continue
+		}
+		marker.AttemptCount++
+		marker.ClaimedAt = &now
+		items = append(items, marker)
+	}
+	return items, nil
+}
+
+func (store *channelStoreStub) ActivateProcessingMarker(_ context.Context, id uuid.UUID, markerID, requestID string, now time.Time) error {
+	marker := store.markers[id]
+	if marker == nil || marker.Status != channelruntime.ProcessingMarkerAdding {
+		return ErrChannelDeliveryConflict
+	}
+	marker.Status, marker.ProviderMarkerID, marker.ProviderRequestID = channelruntime.ProcessingMarkerActive, markerID, requestID
+	marker.AvailableAt, marker.ClaimedAt = now, nil
+	return nil
+}
+
+func (store *channelStoreStub) RemoveProcessingMarker(_ context.Context, id uuid.UUID, now time.Time) error {
+	marker := store.markers[id]
+	if marker == nil || marker.Status != channelruntime.ProcessingMarkerRemoving {
+		return ErrChannelDeliveryConflict
+	}
+	marker.Status, marker.ClaimedAt, marker.RemovedAt = channelruntime.ProcessingMarkerRemoved, nil, &now
+	return nil
+}
+
+func (store *channelStoreStub) RetryProcessingMarkerRemoval(_ context.Context, id uuid.UUID, availableAt time.Time, code, message string) error {
+	marker := store.markers[id]
+	if marker == nil || marker.Status != channelruntime.ProcessingMarkerRemoving {
+		return ErrChannelDeliveryConflict
+	}
+	marker.Status, marker.AvailableAt, marker.ClaimedAt = channelruntime.ProcessingMarkerActive, availableAt, nil
+	marker.ErrorCode, marker.ErrorMessage = code, message
+	return nil
+}
+
+func (store *channelStoreStub) FailProcessingMarker(_ context.Context, id uuid.UUID, code, message string, _ time.Time) error {
+	marker := store.markers[id]
+	if marker == nil {
+		return ErrChannelDeliveryConflict
+	}
+	marker.Status, marker.ClaimedAt, marker.ErrorCode, marker.ErrorMessage = channelruntime.ProcessingMarkerFailed, nil, code, message
+	return nil
+}
+
+func (*channelStoreStub) RecoverStaleProcessingMarkers(context.Context, time.Time, time.Time) error {
 	return nil
 }
 

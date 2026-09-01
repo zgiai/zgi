@@ -475,7 +475,7 @@ func cleanupChannelPostgresFixture(db *gorm.DB, organizationID, actorID uuid.UUI
 		return
 	}
 	for _, table := range []string{
-		"channel_delivery_outbox", "channel_inbound_events", "channel_bindings", "external_conversation_mappings", "channel_installations",
+		"channel_processing_markers", "channel_delivery_outbox", "channel_inbound_events", "channel_bindings", "external_conversation_mappings", "channel_installations",
 		"digital_human_run_outbox", "digital_human_memory_jobs", "digital_human_action_ledger", "digital_human_memory_undo_records",
 		"digital_human_memory_events", "digital_human_memories", "digital_human_memory_states", "digital_human_resource_bindings",
 		"digital_human_runs", "digital_human_versions", "digital_humans", "integration_connections", "workspaces", "organizations",

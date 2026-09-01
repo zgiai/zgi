@@ -53,6 +53,7 @@ const FEISHU_CREDENTIAL_KEYS = [
 const FEISHU_PERMISSION_BUNDLE = [
   'tenant:tenant:readonly',
   'im:message.p2p_msg:readonly',
+  'im:message',
   'im:message:readonly',
   'im:message.group_msg',
   'im:chat.members:read',

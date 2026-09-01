@@ -519,10 +519,10 @@ func feishuTenantAppSetupGuide() *integrations.AuthSetupGuideDefinition {
 					integrations.LocaleEnglishUS:         "Enable only the required app permissions",
 					integrations.LocaleSimplifiedChinese: "仅开通所需应用身份权限",
 				},
-				Description: "For the application identity, enable tenant:tenant:readonly, im:message.p2p_msg:readonly, im:message:readonly, im:message.group_msg, im:chat.members:read, and im:message:send_as_bot. After Feishu shows them as enabled, return to ZGI and test again; permission-only changes do not require a new app version.",
+				Description: "For the application identity, enable tenant:tenant:readonly, im:message.p2p_msg:readonly, im:message, im:message:readonly, im:message.group_msg, im:chat.members:read, and im:message:send_as_bot. The im:message scope lets the robot display and clear the working reaction on an inbound message. After Feishu shows them as enabled, return to ZGI and test again; permission-only changes do not require a new app version.",
 				DescriptionI18n: integrations.LocalizedText{
-					integrations.LocaleEnglishUS:         "For the application identity, enable tenant:tenant:readonly, im:message.p2p_msg:readonly, im:message:readonly, im:message.group_msg, im:chat.members:read, and im:message:send_as_bot. After Feishu shows them as enabled, return to ZGI and test again; permission-only changes do not require a new app version.",
-					integrations.LocaleSimplifiedChinese: "请为应用身份一次性开通 tenant:tenant:readonly、im:message.p2p_msg:readonly、im:message:readonly、im:message.group_msg、im:chat.members:read 与 im:message:send_as_bot。飞书显示权限已开通后，返回 ZGI 重新测试即可；仅修改权限无需发布新版本。",
+					integrations.LocaleEnglishUS:         "For the application identity, enable tenant:tenant:readonly, im:message.p2p_msg:readonly, im:message, im:message:readonly, im:message.group_msg, im:chat.members:read, and im:message:send_as_bot. The im:message scope lets the robot display and clear the working reaction on an inbound message. After Feishu shows them as enabled, return to ZGI and test again; permission-only changes do not require a new app version.",
+					integrations.LocaleSimplifiedChinese: "请为应用身份一次性开通 tenant:tenant:readonly、im:message.p2p_msg:readonly、im:message、im:message:readonly、im:message.group_msg、im:chat.members:read 与 im:message:send_as_bot。其中 im:message 用于在收到的消息上显示并清除“处理中”表情。飞书显示权限已开通后，返回 ZGI 重新测试即可；仅修改权限无需发布新版本。",
 				},
 			},
 			{

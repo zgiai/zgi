@@ -290,6 +290,7 @@ type ProviderCapabilities struct {
 	ContextRead                bool
 	Edit                       bool
 	Retract                    bool
+	ProcessingMarker           bool
 	MessageRoundTripTest       bool
 	ConversationCapabilityTest bool
 }
@@ -369,6 +370,33 @@ type DeliveryReceipt struct {
 	ProviderMessageID string
 	ProviderRequestID string
 	Replayed          bool
+}
+
+// ProcessingMarkerRequest identifies the trusted inbound provider message
+// whose processing state should be reflected in the channel UI. The provider
+// message ID always comes from a verified callback, never model output.
+type ProcessingMarkerRequest struct {
+	OrganizationID   uuid.UUID
+	WorkspaceID      uuid.UUID
+	InstallationID   uuid.UUID
+	ConnectionID     uuid.UUID
+	RunID            uuid.UUID
+	InboundMessageID string
+}
+
+// ProcessingMarkerReceipt contains the provider record needed to remove a
+// marker after the run and its final delivery reach a terminal state.
+type ProcessingMarkerReceipt struct {
+	ProviderMarkerID  string
+	ProviderRequestID string
+}
+
+// ProcessingMarkerAdapter is an optional provider capability. It intentionally
+// stays outside Adapter so providers without native message reactions keep
+// their existing acknowledgement behavior.
+type ProcessingMarkerAdapter interface {
+	AddProcessingMarker(context.Context, ProcessingMarkerRequest) (*ProcessingMarkerReceipt, error)
+	RemoveProcessingMarker(context.Context, ProcessingMarkerRequest, string) error
 }
 
 // Adapter is the provider boundary for authenticated inbound callbacks and
