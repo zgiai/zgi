@@ -143,18 +143,19 @@ type CreatedKey struct {
 }
 
 type MeView struct {
-	WorkspaceID    string                             `json:"workspace_id"`
-	OrganizationID string                             `json:"organization_id"`
-	PrincipalType  string                             `json:"principal_type"`
-	PrincipalID    string                             `json:"principal_id"`
-	Role           workspacemodel.WorkspaceMemberRole `json:"role"`
-	CanManage      bool                               `json:"can_manage"`
-	CanCreateKey   bool                               `json:"can_create_key"`
-	Mode           string                             `json:"mode"`
-	Policy         *accessmodel.Policy                `json:"policy"`
-	Grant          *accessmodel.Grant                 `json:"grant,omitempty"`
-	PendingRequest *accessmodel.AccessRequest         `json:"pending_request,omitempty"`
-	ActiveKeyCount int64                              `json:"active_key_count"`
+	WorkspaceID      string                             `json:"workspace_id"`
+	OrganizationID   string                             `json:"organization_id"`
+	PrincipalType    string                             `json:"principal_type"`
+	PrincipalID      string                             `json:"principal_id"`
+	Role             workspacemodel.WorkspaceMemberRole `json:"role"`
+	CanManage        bool                               `json:"can_manage"`
+	CanCreateKey     bool                               `json:"can_create_key"`
+	CanRequestAccess bool                               `json:"can_request_access"`
+	Mode             string                             `json:"mode"`
+	Policy           *accessmodel.Policy                `json:"policy"`
+	Grant            *accessmodel.Grant                 `json:"grant,omitempty"`
+	PendingRequest   *accessmodel.AccessRequest         `json:"pending_request,omitempty"`
+	ActiveKeyCount   int64                              `json:"active_key_count"`
 }
 
 type workspaceScope struct {
@@ -279,7 +280,12 @@ func (s *Service) GetMe(ctx context.Context, workspaceID, accountID string) (*Me
 	// management entitlement may administer the workspace, but it must not mint
 	// a user key that runtime membership validation would immediately reject.
 	view.CanCreateKey = scope.Member != nil && policy.Mode != accessmodel.AccessModeDisabled && (scope.CanManage || (view.Grant != nil && view.Grant.IsActive(s.now())) || policy.Mode == accessmodel.AccessModeSelfService)
+	view.CanRequestAccess = canRequestDeveloperAccess(scope, policy, view.CanCreateKey, view.PendingRequest != nil)
 	return view, nil
+}
+
+func canRequestDeveloperAccess(scope *workspaceScope, policy *accessmodel.Policy, canCreateKey, hasPendingRequest bool) bool {
+	return scope.Member != nil && !canCreateKey && !hasPendingRequest && policy.Mode == accessmodel.AccessModeApprovalRequired
 }
 
 func activePersonalKeysQuery(db *gorm.DB, now time.Time) *gorm.DB {
@@ -647,12 +653,17 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 		if grant.IsActive(s.now()) {
 			return &grant, nil
 		}
-		if policy.Mode != accessmodel.AccessModeSelfService || grant.Status != accessmodel.GrantStatusActive || grant.ExpiresAt == nil || grant.ExpiresAt.After(s.now()) {
+		canRenew := policy.Mode == accessmodel.AccessModeSelfService || scope.CanManage
+		if !canRenew || grant.Status != accessmodel.GrantStatusActive || grant.ExpiresAt == nil || grant.ExpiresAt.After(s.now()) {
 			return nil, ErrApprovalNeeded
 		}
-		// Expiry ends one self-service budget period. Renew the same principal
-		// atomically, reset its period usage, and bump authorization so old keys
-		// remain stale until the member explicitly creates a replacement.
+		source := "self_service"
+		if scope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
+			source = "workspace_admin"
+		}
+		// Expiry ends one budget period. Renew an eligible self-service or
+		// workspace-manager principal atomically, reset period usage, and bump
+		// authorization so old keys remain stale until a replacement is created.
 		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var locked accessmodel.Grant
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", grant.ID).First(&locked).Error; err != nil {
@@ -665,7 +676,7 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 				return ErrApprovalNeeded
 			}
 			now := s.now()
-			locked.Source = "self_service"
+			locked.Source = source
 			locked.QuotaLimit = policy.DefaultQuota
 			locked.UsedQuota = 0
 			locked.RemainQuota = 0
@@ -683,7 +694,7 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 			return revokePrincipalKeys(tx, scope.Workspace.ID, accountID, accountID, "grant_renewed", now)
 		})
 		if err != nil {
-			return nil, fmt.Errorf("renew self-service grant: %w", err)
+			return nil, fmt.Errorf("renew developer access grant: %w", err)
 		}
 		if err := s.db.WithContext(ctx).First(&grant, "id = ?", grant.ID).Error; err != nil {
 			return nil, err

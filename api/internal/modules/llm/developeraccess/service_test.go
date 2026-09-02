@@ -94,6 +94,51 @@ func TestSelfServiceRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	}
 }
 
+func TestApprovalManagerRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, _ := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	quota, ttl := int64(700), int64(3600)
+	if _, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
+		Mode: accessmodel.AccessModeApprovalRequired, DefaultQuota: &quota, MaxKeys: 2, DefaultTTLSeconds: &ttl,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().Add(-time.Minute)
+	oldQuota := int64(300)
+	grant := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
+		PrincipalID: ownerID, Source: "workspace_admin", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &oldQuota, UsedQuota: oldQuota, MaxKeys: 1, ExpiresAt: &expiredAt, AuthorizationVersion: 2,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateKey(context.Background(), workspaceID, ownerID, CreateKeyInput{Name: "manager renewal"}); err != nil {
+		t.Fatalf("manager should renew without self-approval: %v", err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.Source != "workspace_admin" || grant.QuotaLimit == nil || *grant.QuotaLimit != quota || grant.UsedQuota != 0 || grant.RemainQuota != quota || grant.MaxKeys != 2 || grant.AuthorizationVersion != 3 {
+		t.Fatalf("unexpected renewed manager grant: %#v", grant)
+	}
+}
+
+func TestDeveloperAccessRequestCapabilityIsExplicit(t *testing.T) {
+	policy := &accessmodel.Policy{Mode: accessmodel.AccessModeApprovalRequired}
+	member := &workspacemodel.WorkspaceMember{}
+	if canRequestDeveloperAccess(&workspaceScope{Member: nil, CanManage: true}, policy, false, false) {
+		t.Fatal("management-only principal must not be offered an impossible access request")
+	}
+	if !canRequestDeveloperAccess(&workspaceScope{Member: member}, policy, false, false) {
+		t.Fatal("workspace member without a grant should be able to request access")
+	}
+	if canRequestDeveloperAccess(&workspaceScope{Member: member}, policy, false, true) {
+		t.Fatal("member with a pending request must not be offered another request")
+	}
+}
+
 func TestManagerKeyListIncludesPrincipalIdentity(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)

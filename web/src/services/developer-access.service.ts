@@ -54,6 +54,7 @@ export interface DeveloperAccessMe {
   role: string;
   can_manage: boolean;
   can_create_key: boolean;
+  can_request_access: boolean;
   mode: DeveloperAccessMode;
   policy: DeveloperAccessPolicy;
   grant?: DeveloperAccessGrant | null;

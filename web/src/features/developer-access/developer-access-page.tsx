@@ -420,7 +420,12 @@ export function DeveloperAccessPage() {
   const personalKeys = (keys.data ?? []).filter(item => item.principal_id === access?.principal_id);
   const memberKeys = (keys.data ?? []).filter(item => item.principal_id !== access?.principal_id);
   const canCreate = Boolean(access?.can_create_key);
-  const primaryAction = canCreate ? () => setCreateOpen(true) : () => setRequestOpen(true);
+  const canRequest = Boolean(access?.can_request_access);
+  const primaryAction = canCreate
+    ? () => setCreateOpen(true)
+    : canRequest
+      ? () => setRequestOpen(true)
+      : null;
   const primaryLabel = canCreate ? t('createKey') : t('requestAccess');
 
   const copySecret = async () => {
@@ -447,13 +452,12 @@ export function DeveloperAccessPage() {
               {t('configure')}
             </Button>
           ) : null}
-          <Button
-            onClick={primaryAction}
-            disabled={Boolean(access?.pending_request) || access?.mode === 'disabled'}
-          >
-            <Plus className="mr-2 size-4" />
-            {primaryLabel}
-          </Button>
+          {primaryAction ? (
+            <Button onClick={primaryAction}>
+              <Plus className="mr-2 size-4" />
+              {primaryLabel}
+            </Button>
+          ) : null}
         </div>
       </header>
 
