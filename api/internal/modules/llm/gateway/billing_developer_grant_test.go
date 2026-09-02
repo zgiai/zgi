@@ -151,3 +151,55 @@ func TestDeveloperGrantSettlementUsesLimitWhenStoredRemainIsInconsistent(t *test
 		t.Fatalf("inconsistent grant settlement = %#v, charged=%v", grant, charged.QuotaChargedCredits)
 	}
 }
+
+func TestDeveloperGrantZeroCreditReservationHonorsBoundedExhaustion(t *testing.T) {
+	tests := []struct {
+		name        string
+		quotaLimit  *int64
+		usedQuota   int64
+		remainQuota int64
+		wantErr     bool
+	}{
+		{name: "exhausted bounded grant", quotaLimit: int64Ptr(100), usedQuota: 100, remainQuota: 0, wantErr: true},
+		{name: "bounded grant with balance", quotaLimit: int64Ptr(100), usedQuota: 90, remainQuota: 10},
+		{name: "unlimited grant", quotaLimit: nil, usedQuota: 0, remainQuota: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+				t.Fatal(err)
+			}
+			grant := accessmodel.Grant{
+				OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+				PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+				Source: "approved_request", Status: accessmodel.GrantStatusActive,
+				QuotaLimit: test.quotaLimit, UsedQuota: test.usedQuota, RemainQuota: test.remainQuota,
+				MaxKeys: 1, AllowedModels: []string{}, AuthorizationVersion: 1,
+			}
+			if err := db.Create(&grant).Error; err != nil {
+				t.Fatal(err)
+			}
+			billing := &BillingContext{
+				OrganizationID: grant.OrganizationID, AccessGrantID: grant.ID,
+				QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+				EstimatedCredits: 0,
+			}
+			service := &BillingService{db: db}
+			err = db.Transaction(func(tx *gorm.DB) error {
+				return service.preDeductSubjectQuota(context.Background(), tx, billing, nil)
+			})
+			if test.wantErr && err != ErrInsufficientQuota {
+				t.Fatalf("pre-deduct error = %v, want %v", err, ErrInsufficientQuota)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("pre-deduct zero estimate: %v", err)
+			}
+		})
+	}
+}
+
+func int64Ptr(value int64) *int64 { return &value }

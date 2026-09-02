@@ -442,7 +442,10 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if availableQuota > remainingByLimit {
 		availableQuota = remainingByLimit
 	}
-	if availableQuota < bc.EstimatedCredits {
+	// Platform-priced routes may not have a local token quote and therefore
+	// reserve zero credits. A bounded grant at zero must still be terminal;
+	// otherwise every later request would reach the provider at organization cost.
+	if availableQuota <= 0 || availableQuota < bc.EstimatedCredits {
 		return ErrInsufficientQuota
 	}
 	grant.RemainQuota = availableQuota - bc.EstimatedCredits
