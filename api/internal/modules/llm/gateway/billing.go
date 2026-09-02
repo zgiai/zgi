@@ -12,6 +12,7 @@ import (
 	"github.com/shopspring/decimal"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	paymentModel "github.com/zgiai/zgi/api/internal/modules/payment/model"
@@ -50,6 +51,10 @@ type BillingContext struct {
 	QuotaSubjectType     string
 	QuotaSubjectID       string
 	AccountID            *uuid.UUID // Internal user ID when using models
+	PrincipalType        string
+	PrincipalID          string
+	AccessGrantID        string
+	AuthMethod           string
 	GroupID              *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
 	WorkspaceID          string
 	AppID                *uuid.UUID // App ID (agent or dataset)
@@ -397,6 +402,9 @@ func (b *BillingService) preDeductSubjectQuota(
 		}
 		return b.preDeductAPIKeyQuota(ctx, tx, bc, apiKey)
 	}
+	if subjectType == quotaSubjectTypeAccessGrant {
+		return b.preDeductAccessGrantQuota(ctx, tx, bc)
+	}
 	if subjectType == quotaSubjectTypeWorkspace {
 		return b.preDeductWorkspaceQuota(ctx, tx, bc)
 	}
@@ -404,6 +412,29 @@ func (b *BillingService) preDeductSubjectQuota(
 		return nil
 	}
 	return fmt.Errorf("unsupported quota subject type: %s", subjectType)
+}
+
+func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm.DB, bc *BillingContext) error {
+	grantID := strings.TrimSpace(bc.QuotaSubjectID)
+	if grantID == "" || strings.TrimSpace(bc.AccessGrantID) != grantID {
+		return ErrInvalidRequest
+	}
+	var grant accessmodel.Grant
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND organization_id = ?", grantID, bc.OrganizationID).First(&grant).Error; err != nil {
+		return err
+	}
+	if !grant.IsActive(time.Now()) {
+		return ErrAPIKeyInactive
+	}
+	if grant.QuotaLimit == nil {
+		return nil
+	}
+	if grant.RemainQuota < bc.EstimatedCredits {
+		return ErrInsufficientQuota
+	}
+	grant.RemainQuota -= bc.EstimatedCredits
+	return tx.WithContext(ctx).Save(&grant).Error
 }
 
 func (b *BillingService) preDeductAPIKeyQuota(
@@ -485,6 +516,9 @@ func (b *BillingService) settleSubjectQuota(
 		}
 		return b.settleAPIKeyQuota(ctx, tx, bc)
 	}
+	if subjectType == quotaSubjectTypeAccessGrant {
+		return b.settleAccessGrantQuota(ctx, tx, bc)
+	}
 	if subjectType == quotaSubjectTypeWorkspace {
 		return b.settleWorkspaceQuota(ctx, tx, bc)
 	}
@@ -492,6 +526,26 @@ func (b *BillingService) settleSubjectQuota(
 		return nil
 	}
 	return fmt.Errorf("unsupported quota subject type: %s", subjectType)
+}
+
+func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB, bc *BillingContext) error {
+	grantID := strings.TrimSpace(bc.QuotaSubjectID)
+	if grantID == "" || strings.TrimSpace(bc.AccessGrantID) != grantID {
+		return ErrInvalidRequest
+	}
+	var grant accessmodel.Grant
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND organization_id = ?", grantID, bc.OrganizationID).First(&grant).Error; err != nil {
+		return err
+	}
+	if grant.QuotaLimit == nil {
+		grant.UsedQuota += bc.ActualCredits
+		return tx.WithContext(ctx).Save(&grant).Error
+	}
+	diff := bc.EstimatedCredits - bc.ActualCredits
+	grant.RemainQuota = clampQuotaRemainAtZero(grant.RemainQuota + diff)
+	grant.UsedQuota += bc.ActualCredits
+	return tx.WithContext(ctx).Save(&grant).Error
 }
 
 func (b *BillingService) settleWorkspaceQuota(

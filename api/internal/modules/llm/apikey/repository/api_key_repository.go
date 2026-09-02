@@ -3,10 +3,12 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/gorm"
@@ -96,6 +98,53 @@ func (r *apiKeyRepositoryImpl) GetByKeyHash(ctx context.Context, keyHash string)
 	}
 
 	return &apiKey, nil
+}
+
+// ValidatePrincipalAccess performs the dynamic checks that must not be trusted
+// from the API-key cache. Legacy organization keys have no principal and keep
+// their existing behavior.
+func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiKey *model.TenantAPIKey) error {
+	if apiKey == nil {
+		return gorm.ErrRecordNotFound
+	}
+	if apiKey.PrincipalType == nil && apiKey.PrincipalID == nil {
+		return nil
+	}
+	if apiKey.PrincipalType == nil || apiKey.PrincipalID == nil || apiKey.WorkspaceID == nil || apiKey.AccessGrantID == nil {
+		return fmt.Errorf("personal API key has incomplete principal scope")
+	}
+	var grant accessmodel.Grant
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ? AND workspace_id = ? AND principal_type = ? AND principal_id = ?", *apiKey.AccessGrantID, apiKey.OrganizationID, *apiKey.WorkspaceID, *apiKey.PrincipalType, *apiKey.PrincipalID).
+		First(&grant).Error
+	if err != nil {
+		return err
+	}
+	if !grant.IsActive(time.Now()) || grant.AuthorizationVersion != apiKey.AuthorizationVersion {
+		return errors.New("developer access grant is inactive or stale")
+	}
+	var policy accessmodel.Policy
+	policyErr := r.db.WithContext(ctx).
+		Where("workspace_id = ?", *apiKey.WorkspaceID).
+		First(&policy).Error
+	if policyErr != nil && !errors.Is(policyErr, gorm.ErrRecordNotFound) {
+		return policyErr
+	}
+	if policyErr == nil && policy.Mode == accessmodel.AccessModeDisabled {
+		return errors.New("developer access is disabled for the workspace")
+	}
+	if *apiKey.PrincipalType == accessmodel.PrincipalTypeUser {
+		var count int64
+		if err := r.db.WithContext(ctx).Table("workspace_members").
+			Where("workspace_id = ? AND account_id = ?", *apiKey.WorkspaceID, *apiKey.PrincipalID).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			return errors.New("API key principal is no longer a workspace member")
+		}
+	}
+	return nil
 }
 
 // List lists API keys with filters and pagination

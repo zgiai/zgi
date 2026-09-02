@@ -25,6 +25,7 @@ import {
   CircleAlert,
   LoaderCircle,
   LockKeyhole,
+  KeyRound,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
@@ -353,6 +354,12 @@ export function ConsoleSidebar({
         title: t('modelPlaza'),
         href: '/console/model',
         icon: LayoutGrid,
+      },
+      {
+        key: 'api-keys',
+        title: t('apiKeys'),
+        href: '/console/api-keys',
+        icon: KeyRound,
       },
     ],
     [t]

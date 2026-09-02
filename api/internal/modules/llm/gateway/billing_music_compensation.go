@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -198,6 +199,21 @@ func refundPrivateMusicSubject(ctx context.Context, tx *gorm.DB, attempt Billing
 		}
 		quota.UpdatedAt = time.Now()
 		return tx.WithContext(ctx).Save(&quota).Error
+	case quotaSubjectTypeAccessGrant:
+		var grant accessmodel.Grant
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND organization_id = ?", attempt.QuotaSubjectID, attempt.OrganizationID).
+			First(&grant).Error; err != nil {
+			return fmt.Errorf("load developer grant for music compensation: %w", err)
+		}
+		if grant.UsedQuota < amount {
+			return fmt.Errorf("developer grant used quota is smaller than music refund")
+		}
+		grant.UsedQuota -= amount
+		if grant.QuotaLimit != nil {
+			grant.RemainQuota += amount
+		}
+		return tx.WithContext(ctx).Save(&grant).Error
 	case quotaSubjectTypeOrganization:
 		return nil
 	default:

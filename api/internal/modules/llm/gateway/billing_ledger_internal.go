@@ -52,7 +52,7 @@ func (b *BillingService) upsertAttemptInit(ctx context.Context, tx *gorm.DB, bc 
 	if subjectType == "" {
 		return fmt.Errorf("missing quota_subject_type for billing ledger (attempt_id=%s request_id=%s)", attemptID, strings.TrimSpace(bc.RequestID))
 	}
-	if subjectType != quotaSubjectTypeAPIKey && subjectType != quotaSubjectTypeWorkspace && subjectType != quotaSubjectTypeOrganization {
+	if subjectType != quotaSubjectTypeAPIKey && subjectType != quotaSubjectTypeAccessGrant && subjectType != quotaSubjectTypeWorkspace && subjectType != quotaSubjectTypeOrganization {
 		return fmt.Errorf("unsupported quota_subject_type for billing ledger: %s (attempt_id=%s request_id=%s)", subjectType, attemptID, strings.TrimSpace(bc.RequestID))
 	}
 	subjectID := strings.TrimSpace(bc.QuotaSubjectID)
@@ -126,7 +126,9 @@ func (b *BillingService) upsertAttemptBaseEntries(
 	estimated := bc.EstimatedCredits
 
 	subjectLedgerType := billingLedgerTypeAPIKeyQuota
-	if subjectType != quotaSubjectTypeAPIKey {
+	if subjectType == quotaSubjectTypeAccessGrant {
+		subjectLedgerType = billingLedgerTypeGrantQuota
+	} else if subjectType != quotaSubjectTypeAPIKey {
 		subjectLedgerType = subjectType + "_quota"
 	}
 	subjectEntry := &BillingAttemptEntry{

@@ -207,6 +207,20 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		RequestCreatedAt:     requestCreatedAt,
 		AttemptID:            attemptID,
 	}
+	if apiKey.AccessGrantID != nil && apiKey.PrincipalType != nil && apiKey.PrincipalID != nil && apiKey.WorkspaceID != nil {
+		billingCtx.QuotaSubjectType = quotaSubjectTypeAccessGrant
+		billingCtx.QuotaSubjectID = *apiKey.AccessGrantID
+		billingCtx.AccessGrantID = *apiKey.AccessGrantID
+		billingCtx.PrincipalType = *apiKey.PrincipalType
+		billingCtx.PrincipalID = *apiKey.PrincipalID
+		billingCtx.WorkspaceID = *apiKey.WorkspaceID
+		billingCtx.AuthMethod = "personal_api_key"
+		if accountID, parseErr := uuid.Parse(*apiKey.PrincipalID); parseErr == nil {
+			billingCtx.AccountID = &accountID
+		}
+	} else {
+		billingCtx.AuthMethod = "legacy_api_key"
+	}
 	if appCtx != nil {
 		billingCtx.AppID = appCtx.AppID
 		billingCtx.AppType = appCtx.AppType

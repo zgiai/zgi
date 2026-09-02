@@ -186,6 +186,9 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 	if attempt.QuotaSubjectType == quotaSubjectTypeAPIKey {
 		bc.APIKeyID = attempt.QuotaSubjectID
 	}
+	if attempt.QuotaSubjectType == quotaSubjectTypeAccessGrant {
+		bc.AccessGrantID = attempt.QuotaSubjectID
+	}
 	if attempt.QuotaSubjectType == quotaSubjectTypeWorkspace {
 		bc.WorkspaceID = attempt.QuotaSubjectID
 	}

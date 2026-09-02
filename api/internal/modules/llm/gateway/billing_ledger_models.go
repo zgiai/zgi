@@ -9,6 +9,7 @@ import (
 
 const (
 	quotaSubjectTypeAPIKey       = "key"
+	quotaSubjectTypeAccessGrant  = "developer_grant"
 	quotaSubjectTypeWorkspace    = "workspace"
 	quotaSubjectTypeOrganization = "organization"
 
@@ -28,6 +29,7 @@ const (
 	billingEntryTypeFund    = "fund"
 
 	billingLedgerTypeAPIKeyQuota   = "key_quota"
+	billingLedgerTypeGrantQuota    = "developer_grant_quota"
 	billingLedgerTypeOrgFunds      = "org_funds"
 	billingLedgerTypeChannelWallet = "channel_wallet"
 

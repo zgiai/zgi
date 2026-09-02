@@ -26,6 +26,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel"
 	defaultmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/handler"
 	defaultmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/developeraccess"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	llmmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/handler"
@@ -100,20 +101,22 @@ type LLMModule struct {
 	PricingFallbackHandler *gateway.PricingFallbackHandler
 
 	// Modules (for convenience)
-	ProviderModule       *provider.Module
-	LLMModelModule       *llmmodel.Module
-	DefaultModelModule   *defaultmodel.Module
-	CredentialModule     *credential.Module
-	APIKeyModule         *apikey.Module
-	StatisticsModule     *statistics.Module
-	WorkspaceQuotaModule *workspacequota.Module
-	AvailabilityModule   *availability.Module
+	ProviderModule        *provider.Module
+	LLMModelModule        *llmmodel.Module
+	DefaultModelModule    *defaultmodel.Module
+	CredentialModule      *credential.Module
+	APIKeyModule          *apikey.Module
+	StatisticsModule      *statistics.Module
+	WorkspaceQuotaModule  *workspacequota.Module
+	AvailabilityModule    *availability.Module
+	DeveloperAccessModule *developeraccess.Module
 
 	// Handlers for new modules
-	StatisticsHandler     *statisticshandler.StatisticsHandler
-	WorkspaceQuotaHandler *workspacequotahandler.WorkspaceQuotaHandler
-	AvailabilityHandler   *availhandler.AvailabilityHandler
-	ModelMetaHandler      *modelmeta.Handler
+	StatisticsHandler      *statisticshandler.StatisticsHandler
+	WorkspaceQuotaHandler  *workspacequotahandler.WorkspaceQuotaHandler
+	AvailabilityHandler    *availhandler.AvailabilityHandler
+	ModelMetaHandler       *modelmeta.Handler
+	DeveloperAccessHandler *developeraccess.Handler
 }
 
 // NewLLMModule creates a new LLM module with all dependencies wired
@@ -173,6 +176,8 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 		m.APIKeyRepo = m.APIKeyModule.Repository
 		m.APIKeySvc = m.APIKeyModule.Service
 		m.APIKeyHandler = m.APIKeyModule.Handler
+		m.DeveloperAccessModule = developeraccess.NewModule(db, m.APIKeyRepo, enterpriseService)
+		m.DeveloperAccessHandler = m.DeveloperAccessModule.Handler
 	}
 
 	// Initialize Statistics Module

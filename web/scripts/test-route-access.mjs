@@ -1394,6 +1394,7 @@ const expectedWorkspaceConsolePageRoutes = [
   '/console/agents/:agentId/batch-test/batches/new',
   '/console/agents/:agentId/logs',
   '/console/agents/:agentId/workflow',
+  '/console/api-keys',
   '/console/dataset',
   '/console/dataset/:datasetId',
   '/console/dataset/:datasetId/batch-testing',

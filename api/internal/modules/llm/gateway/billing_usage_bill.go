@@ -18,6 +18,11 @@ var usageBillUpsertColumns = []string{
 	"app_id",
 	"app_type",
 	"workspace_id",
+	"account_id",
+	"principal_type",
+	"principal_id",
+	"access_grant_id",
+	"auth_method",
 	"api_key_id",
 	"quota_subject_type",
 	"quota_subject_id",
@@ -94,6 +99,16 @@ func (b *BillingService) buildUsageBill(
 
 	appID, appType := normalizedAppUsagePair(bc.AppID, bc.AppType)
 	workspaceID := normalizedTextPtr(bc.WorkspaceID)
+	principalType := normalizedTextPtr(bc.PrincipalType)
+	principalID := normalizedTextPtr(bc.PrincipalID)
+	var accessGrantID *uuid.UUID
+	if parsed, parseErr := uuid.Parse(strings.TrimSpace(bc.AccessGrantID)); parseErr == nil {
+		accessGrantID = &parsed
+	}
+	authMethod := strings.TrimSpace(bc.AuthMethod)
+	if authMethod == "" {
+		authMethod = "legacy_api_key"
+	}
 	quotaSubjectType := normalizedTextPtr(bc.QuotaSubjectType)
 	quotaSubjectID := normalizedTextPtr(bc.QuotaSubjectID)
 	billingLane, err := normalizeUsageBillingLane(bc.BillingLane, bc.UseSystemProvider)
@@ -127,6 +142,11 @@ func (b *BillingService) buildUsageBill(
 		AppType:           appType,
 		InvocationSource:  normalizeInvocationSource(bc.InvocationSource),
 		WorkspaceID:       workspaceID,
+		AccountID:         bc.AccountID,
+		PrincipalType:     principalType,
+		PrincipalID:       principalID,
+		AccessGrantID:     accessGrantID,
+		AuthMethod:        authMethod,
 		APIKeyID:          strings.TrimSpace(bc.APIKeyID),
 		QuotaSubjectType:  quotaSubjectType,
 		QuotaSubjectID:    quotaSubjectID,

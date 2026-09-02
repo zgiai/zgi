@@ -7,9 +7,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
+
+type principalAccessValidator interface {
+	ValidatePrincipalAccess(ctx context.Context, apiKey *apikeymodel.TenantAPIKey) error
+}
 
 // LLMAPIKeyAuthMiddleware validates LLM API keys
 func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.HandlerFunc {
@@ -39,6 +44,13 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.Handler
 			abortWithProtocolError(c, invalidAPIKeyProtocolError("API key is inactive or expired"))
 			return
 		}
+		if keyInfo.PrincipalType != nil {
+			validator, supported := apiKeyRepo.(principalAccessValidator)
+			if !supported || validator.ValidatePrincipalAccess(c.Request.Context(), keyInfo) != nil {
+				abortWithProtocolError(c, invalidAPIKeyProtocolError("API key access has been revoked"))
+				return
+			}
+		}
 
 		// 6. Check if API key has quota
 		if !keyInfo.HasQuota() {
@@ -50,6 +62,18 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.Handler
 		c.Set("llm_api_key", keyInfo)
 		c.Set("organization_id", keyInfo.OrganizationID)
 		c.Set("api_key_id", keyInfo.ID)
+		if keyInfo.WorkspaceID != nil {
+			c.Set("workspace_id", *keyInfo.WorkspaceID)
+		}
+		if keyInfo.PrincipalType != nil {
+			c.Set("principal_type", *keyInfo.PrincipalType)
+		}
+		if keyInfo.PrincipalID != nil {
+			c.Set("principal_id", *keyInfo.PrincipalID)
+		}
+		if keyInfo.AccessGrantID != nil {
+			c.Set("access_grant_id", *keyInfo.AccessGrantID)
+		}
 
 		// 8. Update last accessed time asynchronously
 		go func(apiKeyID string) {

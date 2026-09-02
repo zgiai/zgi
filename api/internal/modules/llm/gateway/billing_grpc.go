@@ -533,6 +533,9 @@ func (s *RemoteBilling) reconcileAttempt(ctx context.Context, attemptID string) 
 	if attempt.QuotaSubjectType == quotaSubjectTypeAPIKey && strings.TrimSpace(attempt.QuotaSubjectID) != "" {
 		bc.APIKeyID = strings.TrimSpace(attempt.QuotaSubjectID)
 	}
+	if attempt.QuotaSubjectType == quotaSubjectTypeAccessGrant && strings.TrimSpace(attempt.QuotaSubjectID) != "" {
+		bc.AccessGrantID = strings.TrimSpace(attempt.QuotaSubjectID)
+	}
 	if attempt.QuotaSubjectType == quotaSubjectTypeWorkspace && strings.TrimSpace(attempt.QuotaSubjectID) != "" {
 		bc.WorkspaceID = strings.TrimSpace(attempt.QuotaSubjectID)
 	}
@@ -682,6 +685,12 @@ func (s *RemoteBilling) preDeductLocalSubjectQuota(ctx context.Context, bc *Bill
 				return ErrAPIKeyInactive
 			}
 			return s.localService.preDeductSubjectQuota(ctx, tx, bc, &apiKey)
+
+		case quotaSubjectTypeAccessGrant:
+			if strings.TrimSpace(bc.QuotaSubjectID) == "" || strings.TrimSpace(bc.AccessGrantID) != strings.TrimSpace(bc.QuotaSubjectID) {
+				return fmt.Errorf("missing or mismatched developer grant subject")
+			}
+			return s.localService.preDeductSubjectQuota(ctx, tx, bc, nil)
 
 		case quotaSubjectTypeWorkspace:
 			if strings.TrimSpace(bc.QuotaSubjectID) == "" {
