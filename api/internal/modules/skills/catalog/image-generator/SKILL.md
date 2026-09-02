@@ -8,7 +8,7 @@ runtime_type: tool
 tools:
   - generate_image
   - edit_image
-max_calls_per_turn: 5
+max_calls_per_turn: 15
 timeout_seconds: 120
 display:
   icon: image-plus
