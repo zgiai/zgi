@@ -132,6 +132,15 @@ func TestPublishedModelCapabilityMapping(t *testing.T) {
 	})
 }
 
+func TestWatchStartVersionReplaysCatalogAfterProcessStart(t *testing.T) {
+	syncer := &Synchronizer{}
+
+	require.Zero(t, syncer.watchStartVersion(12))
+
+	syncer.catalogLoaded.Store(true)
+	require.Equal(t, int64(12), syncer.watchStartVersion(12))
+}
+
 func TestCatalogFromResponseIncludesVendorDirectory(t *testing.T) {
 	resp := &pb.GetPublishedCatalogResponse{
 		Vendors: []*pb.CatalogVendor{{
