@@ -208,3 +208,26 @@ func TestPrincipalValidationFailsWhenWorkspaceDeveloperAccessIsDisabled(t *testi
 		t.Fatal("expected workspace developer access kill switch to reject the key")
 	}
 }
+
+func TestReenableCannotBypassGrantMaximumActiveKeys(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	created := make([]*CreatedKey, 0, 3)
+	for _, name := range []string{"first", "second", "third"} {
+		key, err := service.CreateKey(context.Background(), workspaceID, ownerID, CreateKeyInput{Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		created = append(created, key)
+	}
+	if _, err := service.SetKeyStatus(context.Background(), workspaceID, ownerID, created[0].ID, "inactive", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateKey(context.Background(), workspaceID, ownerID, CreateKeyInput{Name: "replacement"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetKeyStatus(context.Background(), workspaceID, ownerID, created[0].ID, "active", ""); !errors.Is(err, ErrConflict) {
+		t.Fatalf("SetKeyStatus error = %v, want active-key limit conflict", err)
+	}
+}

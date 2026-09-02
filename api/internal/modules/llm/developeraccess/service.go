@@ -657,11 +657,18 @@ func (s *Service) CreateKey(ctx context.Context, workspaceID, accountID string, 
 		AuthorizationVersion: grant.AuthorizationVersion,
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedGrant accessmodel.Grant
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", grant.ID).First(&lockedGrant).Error; err != nil {
+			return err
+		}
+		if !lockedGrant.IsActive(s.now()) || lockedGrant.AuthorizationVersion != grant.AuthorizationVersion {
+			return ErrApprovalNeeded
+		}
 		var active int64
 		if err := tx.Model(&apikeymodel.TenantAPIKey{}).Where("workspace_id = ? AND principal_type = ? AND principal_id = ? AND status = ?", workspaceID, principalType, accountID, "active").Count(&active).Error; err != nil {
 			return err
 		}
-		if active >= int64(grant.MaxKeys) {
+		if active >= int64(lockedGrant.MaxKeys) {
 			return ErrConflict
 		}
 		return tx.Create(key).Error
@@ -753,35 +760,62 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 	if err != nil {
 		return nil, err
 	}
-	key, err := s.ownedKey(ctx, scope, accountID, keyID)
+	var key apikeymodel.TenantAPIKey
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND workspace_id = ? AND principal_type = ?", keyID, scope.Workspace.ID, accessmodel.PrincipalTypeUser)
+		if !scope.CanManage {
+			query = query.Where("principal_id = ?", accountID)
+		}
+		if err := query.First(&key).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if key.Status == "revoked" {
+			return ErrConflict
+		}
+		if status == "active" {
+			if key.ExpiresAt != nil && !key.ExpiresAt.After(s.now()) {
+				return ErrConflict
+			}
+			if key.AccessGrantID == nil {
+				return ErrApprovalNeeded
+			}
+			var grant accessmodel.Grant
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *key.AccessGrantID).First(&grant).Error; err != nil || !grant.IsActive(s.now()) || grant.AuthorizationVersion != key.AuthorizationVersion {
+				return ErrApprovalNeeded
+			}
+			var active int64
+			if err := tx.Model(&apikeymodel.TenantAPIKey{}).
+				Where("access_grant_id = ? AND status = ? AND id <> ?", grant.ID, "active", key.ID).
+				Count(&active).Error; err != nil {
+				return err
+			}
+			if active >= int64(grant.MaxKeys) {
+				return ErrConflict
+			}
+		}
+		key.Status = status
+		if status == "revoked" {
+			now := s.now()
+			reason = strings.TrimSpace(reason)
+			key.RevokedAt, key.RevokedByID = &now, &accountID
+			if reason != "" {
+				key.RevokedReason = &reason
+			}
+		}
+		return tx.Save(&key).Error
+	})
 	if err != nil {
 		return nil, err
 	}
-	if key.Status == "revoked" {
-		return nil, ErrConflict
+	if invalidator, ok := s.keys.(interface {
+		InvalidateKeyCache(context.Context, string)
+	}); ok {
+		invalidator.InvalidateKeyCache(ctx, key.KeyHash)
 	}
-	if status == "active" {
-		if key.ExpiresAt != nil && !key.ExpiresAt.After(s.now()) {
-			return nil, ErrConflict
-		}
-		var grant accessmodel.Grant
-		if key.AccessGrantID == nil || s.db.WithContext(ctx).Where("id = ?", *key.AccessGrantID).First(&grant).Error != nil || !grant.IsActive(s.now()) {
-			return nil, ErrApprovalNeeded
-		}
-	}
-	key.Status = status
-	if status == "revoked" {
-		now := s.now()
-		reason = strings.TrimSpace(reason)
-		key.RevokedAt, key.RevokedByID = &now, &accountID
-		if reason != "" {
-			key.RevokedReason = &reason
-		}
-	}
-	if err := s.keys.Update(ctx, key); err != nil {
-		return nil, err
-	}
-	view := keyToView(key)
+	view := keyToView(&key)
 	return &view, nil
 }
 

@@ -280,3 +280,9 @@ func (r *apiKeyRepositoryImpl) invalidateAPIKeyCache(ctx context.Context, keyHas
 
 	_ = client.Del(ctx, apiKeyCacheKey(keyHash)).Err()
 }
+
+// InvalidateKeyCache allows transactional domain services to invalidate a key
+// only after their transaction commits.
+func (r *apiKeyRepositoryImpl) InvalidateKeyCache(ctx context.Context, keyHash string) {
+	r.invalidateAPIKeyCache(ctx, keyHash)
+}
