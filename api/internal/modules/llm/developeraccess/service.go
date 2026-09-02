@@ -196,6 +196,9 @@ func (s *Service) scope(ctx context.Context, workspaceID, accountID string) (*wo
 	if workspace.OrganizationID == nil || strings.TrimSpace(*workspace.OrganizationID) == "" {
 		return nil, ErrForbidden
 	}
+	if !workspace.IsNormal() {
+		return nil, ErrForbidden
+	}
 	member, err := s.members.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("load workspace member: %w", err)
@@ -589,7 +592,7 @@ func (s *Service) ReviewRequest(ctx context.Context, workspaceID, accountID, req
 		if expiresAt != nil && policy.MaxTTLSeconds != nil && expiresAt.After(now.Add(time.Duration(*policy.MaxTTLSeconds)*time.Second)) {
 			return ErrInvalid
 		}
-		if err := upsertGrant(tx, scope, request.RequesterAccountID, accountID, "approved_request", quota, maxKeys, models, expiresAt); err != nil {
+		if err := upsertGrant(tx, scope, request.RequesterAccountID, accountID, "approved_request", quota, maxKeys, models, expiresAt, now); err != nil {
 			return err
 		}
 		if err := revokePrincipalKeys(tx, workspaceID, request.RequesterAccountID, accountID, "grant_updated", now); err != nil {
@@ -607,18 +610,22 @@ func (s *Service) ReviewRequest(ctx context.Context, workspaceID, accountID, req
 	return &request, nil
 }
 
-func upsertGrant(tx *gorm.DB, scope *workspaceScope, principalID, actorID, source string, quota *int64, maxKeys int, models []string, expiresAt *time.Time) error {
+func upsertGrant(tx *gorm.DB, scope *workspaceScope, principalID, actorID, source string, quota *int64, maxKeys int, models []string, expiresAt *time.Time, now time.Time) error {
 	var grant accessmodel.Grant
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("workspace_id = ? AND principal_type = ? AND principal_id = ?", scope.Workspace.ID, accessmodel.PrincipalTypeUser, principalID).First(&grant).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
+	startsNewPeriod := errors.Is(err, gorm.ErrRecordNotFound) || !grant.IsActive(now)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		grant = accessmodel.Grant{OrganizationID: *scope.Workspace.OrganizationID, WorkspaceID: scope.Workspace.ID, PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID, Source: source, Status: accessmodel.GrantStatusActive, MaxKeys: maxKeys, AllowedModels: unique(models), ExpiresAt: expiresAt, CreatedByAccountID: &actorID, UpdatedByAccountID: &actorID, AuthorizationVersion: 1}
 	} else {
 		grant.Source, grant.Status, grant.MaxKeys, grant.AllowedModels, grant.ExpiresAt = source, accessmodel.GrantStatusActive, maxKeys, unique(models), expiresAt
 		grant.UpdatedByAccountID = &actorID
 		grant.AuthorizationVersion++
+	}
+	if startsNewPeriod {
+		grant.UsedQuota = 0
 	}
 	grant.QuotaLimit = quota
 	if quota == nil {
@@ -711,8 +718,9 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 	if scope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
 		source = "workspace_admin"
 	}
+	now := s.now()
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return upsertGrant(tx, scope, accountID, accountID, source, policy.DefaultQuota, policy.MaxKeys, policy.AllowedModels, ttlExpiry(s.now(), policy.DefaultTTLSeconds))
+		return upsertGrant(tx, scope, accountID, accountID, source, policy.DefaultQuota, policy.MaxKeys, policy.AllowedModels, ttlExpiry(now, policy.DefaultTTLSeconds), now)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create self-service grant: %w", err)

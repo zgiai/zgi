@@ -9,6 +9,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/gorm"
@@ -112,6 +113,29 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 	}
 	if apiKey.PrincipalType == nil || apiKey.PrincipalID == nil || apiKey.WorkspaceID == nil || apiKey.AccessGrantID == nil {
 		return fmt.Errorf("personal API key has incomplete principal scope")
+	}
+	// A personal key may have been served from Redis before a lifecycle update.
+	// Re-read it here so disable, revoke, expiry, or deletion is authoritative
+	// even when best-effort cache invalidation failed.
+	var persisted model.TenantAPIKey
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND key_hash = ?", apiKey.ID, apiKey.KeyHash).
+		First(&persisted).Error; err != nil {
+		return err
+	}
+	if !persisted.IsActive() {
+		return errors.New("personal API key is inactive or expired")
+	}
+	*apiKey = persisted
+
+	var workspace workspacemodel.Workspace
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ?", *apiKey.WorkspaceID, apiKey.OrganizationID).
+		First(&workspace).Error; err != nil {
+		return err
+	}
+	if !workspace.IsNormal() {
+		return errors.New("API key workspace is archived")
 	}
 	var grant accessmodel.Grant
 	err := r.db.WithContext(ctx).

@@ -125,6 +125,77 @@ func TestApprovalManagerRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	}
 }
 
+func TestApprovalOfExpiredGrantStartsNewBudgetPeriod(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	oldQuota := int64(300)
+	first, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Initial access", RequestedQuota: &oldQuota})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReviewRequest(context.Background(), workspaceID, ownerID, first.ID, true, ReviewRequestInput{}); err != nil {
+		t.Fatal(err)
+	}
+	var grant accessmodel.Grant
+	if err := db.Where("workspace_id = ? AND principal_id = ?", workspaceID, memberID).First(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().Add(-time.Minute)
+	if err := db.Model(&grant).Updates(map[string]interface{}{"used_quota": oldQuota, "remain_quota": 0, "expires_at": expiredAt}).Error; err != nil {
+		t.Fatal(err)
+	}
+	newQuota := int64(800)
+	second, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Renew access", RequestedQuota: &newQuota})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReviewRequest(context.Background(), workspaceID, ownerID, second.ID, true, ReviewRequestInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.QuotaLimit == nil || *grant.QuotaLimit != newQuota || grant.UsedQuota != 0 || grant.RemainQuota != newQuota {
+		t.Fatalf("renewed approval inherited the previous budget: %#v", grant)
+	}
+}
+
+func TestApprovalUpdateOfActiveGrantPreservesUsage(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	oldQuota := int64(300)
+	first, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Initial access", RequestedQuota: &oldQuota})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReviewRequest(context.Background(), workspaceID, ownerID, first.ID, true, ReviewRequestInput{}); err != nil {
+		t.Fatal(err)
+	}
+	var grant accessmodel.Grant
+	if err := db.Where("workspace_id = ? AND principal_id = ?", workspaceID, memberID).First(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&grant).Updates(map[string]interface{}{"used_quota": int64(100), "remain_quota": int64(200)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	newQuota := int64(500)
+	second, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Expand active access", RequestedQuota: &newQuota})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReviewRequest(context.Background(), workspaceID, ownerID, second.ID, true, ReviewRequestInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 100 || grant.RemainQuota != 400 {
+		t.Fatalf("active approval update reset usage unexpectedly: %#v", grant)
+	}
+}
+
 func TestDeveloperAccessRequestCapabilityIsExplicit(t *testing.T) {
 	policy := &accessmodel.Policy{Mode: accessmodel.AccessModeApprovalRequired}
 	member := &workspacemodel.WorkspaceMember{}
@@ -390,6 +461,65 @@ func TestPrincipalValidationFailsWhenWorkspaceDeveloperAccessIsDisabled(t *testi
 		ValidatePrincipalAccess(context.Context, *apikeymodel.TenantAPIKey) error
 	}).ValidatePrincipalAccess(context.Background(), &key); err == nil {
 		t.Fatal("expected workspace developer access kill switch to reject the key")
+	}
+}
+
+func TestPrincipalValidationRechecksPersistedKeyStatus(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
+	repo := apikeyrepo.NewAPIKeyRepository(db)
+	service := NewService(db, repo, nil)
+	created, err := service.CreateKey(context.Background(), workspaceID, ownerID, CreateKeyInput{Name: "cached key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stale apikeymodel.TenantAPIKey
+	if err := db.First(&stale, "id = ?", created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&apikeymodel.TenantAPIKey{}).Where("id = ?", created.ID).Update("status", "inactive").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.(interface {
+		ValidatePrincipalAccess(context.Context, *apikeymodel.TenantAPIKey) error
+	}).ValidatePrincipalAccess(context.Background(), &stale); err == nil {
+		t.Fatal("expected persisted inactive status to override stale cached key")
+	}
+	past := time.Now().Add(-time.Minute)
+	if err := db.Model(&apikeymodel.TenantAPIKey{}).Where("id = ?", created.ID).
+		Updates(map[string]interface{}{"status": "active", "expires_at": past}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.(interface {
+		ValidatePrincipalAccess(context.Context, *apikeymodel.TenantAPIKey) error
+	}).ValidatePrincipalAccess(context.Background(), &stale); err == nil {
+		t.Fatal("expected persisted expiration to override stale cached key")
+	}
+}
+
+func TestArchivedWorkspaceRejectsDeveloperAccessAndPersonalKeys(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
+	repo := apikeyrepo.NewAPIKeyRepository(db)
+	service := NewService(db, repo, nil)
+	created, err := service.CreateKey(context.Background(), workspaceID, ownerID, CreateKeyInput{Name: "archived workspace key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var key apikeymodel.TenantAPIKey
+	if err := db.First(&key, "id = ?", created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&workspacemodel.Workspace{}).Where("id = ?", workspaceID).Update("status", workspacemodel.WorkspaceStatusArchived).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.GetMe(context.Background(), workspaceID, ownerID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("GetMe error = %v, want forbidden for archived workspace", err)
+	}
+	if err := repo.(interface {
+		ValidatePrincipalAccess(context.Context, *apikeymodel.TenantAPIKey) error
+	}).ValidatePrincipalAccess(context.Background(), &key); err == nil {
+		t.Fatal("expected archived workspace to reject personal key")
 	}
 }
 
