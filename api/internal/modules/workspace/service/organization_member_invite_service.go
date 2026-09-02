@@ -70,6 +70,9 @@ func (s *organizationService) InviteCurrentOrganizationMember(ctx context.Contex
 		if !isOrganizationAdminRole(operatorRole) {
 			return ErrOrganizationInvitePermissionDenied
 		}
+		if err := lockOrganizationMemberNamesTx(ctx, tx, organizationID); err != nil {
+			return err
+		}
 
 		var workspace *model.Workspace
 		if workspaceID != "" {
@@ -97,6 +100,13 @@ func (s *organizationService) InviteCurrentOrganizationMember(ctx context.Contex
 			return err
 		}
 		if !alreadyMember {
+			nameExists, err := organizationMemberNameExistsTx(ctx, tx, organizationID, name, account.ID)
+			if err != nil {
+				return err
+			}
+			if nameExists {
+				return ErrMemberNameExists
+			}
 			memberName := name
 			join := &model.OrganizationMember{
 				OrganizationID: organizationID,
@@ -208,6 +218,9 @@ func (s *organizationService) DirectAddOrganizationMember(ctx context.Context, r
 		}
 		if !isOrganizationAdminRole(operatorRole) {
 			return ErrOrganizationInvitePermissionDenied
+		}
+		if err := lockOrganizationMemberNamesTx(ctx, tx, organizationID); err != nil {
+			return err
 		}
 
 		var workspace *model.Workspace
@@ -491,17 +504,30 @@ func getDirectAddDepartmentTx(ctx context.Context, tx *gorm.DB, organizationID, 
 }
 
 func organizationMemberNameExistsTx(ctx context.Context, tx *gorm.DB, organizationID, name, excludeAccountID string) (bool, error) {
-	var count int64
+	targetName := strings.TrimSpace(name)
+	if targetName == "" {
+		return false, nil
+	}
+	var members []struct {
+		AccountID string
+		Name      *string
+	}
 	query := tx.WithContext(ctx).
-		Model(&model.OrganizationMember{}).
-		Where("organization_id = ? AND name = ?", organizationID, name)
+		Table("members").
+		Select("account_id, name").
+		Where("organization_id = ? AND name IS NOT NULL", organizationID)
 	if excludeAccountID != "" {
 		query = query.Where("account_id != ?", excludeAccountID)
 	}
-	if err := query.Count(&count).Error; err != nil {
+	if err := query.Find(&members).Error; err != nil {
 		return false, fmt.Errorf("failed to check organization member name: %w", err)
 	}
-	return count > 0, nil
+	for _, member := range members {
+		if member.Name != nil && strings.TrimSpace(*member.Name) == targetName {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func getOrCreateDirectAddAccountTx(ctx context.Context, tx *gorm.DB, email, name, hashedPassword, salt string) (*auth_model.Account, bool, error) {

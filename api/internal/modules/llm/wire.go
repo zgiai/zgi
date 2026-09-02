@@ -5,6 +5,7 @@ import (
 
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
+	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	pconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey"
 	apikeyhandler "github.com/zgiai/zgi/api/internal/modules/llm/apikey/handler"
@@ -197,7 +198,14 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 	// Inject PlatformContainer for official channels (Cloud mode)
 	platformContainer, err := platform.NewContainer(db)
 	if err == nil && platformContainer != nil {
-		m.GatewayRouter.SetChannelProvider(platformContainer.Channel)
+		if _, cloudMode := platformContainer.Channel.(*platformchannel.Cloud); cloudMode {
+			m.GatewayRouter.SetChannelProvider(platformContainer.Channel)
+			if setter, ok := m.LLMModelModule.AvailableModelsSvc.(interface {
+				SetChannelProvider(platformchannel.ChannelProvider)
+			}); ok {
+				setter.SetChannelProvider(platformContainer.Channel)
+			}
+		}
 	}
 
 	appCfg := config.Current()

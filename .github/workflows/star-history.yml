@@ -1,0 +1,59 @@
+name: Update Star History
+
+on:
+  schedule:
+    - cron: "30 4 * * 1"
+  watch:
+    types: [started]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: star-history-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  update:
+    if: github.repository == 'zgiai/zgi'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Generate Star History charts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/update-star-history.mjs
+
+      - name: Commit updated charts
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if git diff --quiet -- assets/star-history.svg assets/star-history-dark.svg; then
+            echo "Star History charts are unchanged."
+            exit 0
+          fi
+
+          git fetch origin "$DEFAULT_BRANCH"
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$DEFAULT_BRANCH")" ]; then
+            echo "The default branch changed while charts were generated; retry the workflow."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/star-history.svg assets/star-history-dark.svg
+          git commit -m "chore: update star history [skip ci]"
+          git push origin "HEAD:$DEFAULT_BRANCH"

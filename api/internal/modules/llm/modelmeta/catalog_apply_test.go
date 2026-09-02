@@ -630,6 +630,23 @@ func newCatalogApplyTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func TestResolvePublishedTokenPricesUsesStructuredCachePrices(t *testing.T) {
+	zero := 0.0
+	model := PublishedModel{
+		Pricing:        json.RawMessage(`{"token_tiers":[{"min_input_tokens":0,"input_price_per_million":2,"output_price_per_million":8,"cached_input_price_per_million":0,"cache_write_price_per_million":3}]}`),
+		CacheReadPrice: &zero,
+	}
+	input, output, cacheRead, cacheWrite, inputConfigured, outputConfigured := resolvePublishedTokenPrices(model)
+	require.Equal(t, 2.0, input)
+	require.Equal(t, 8.0, output)
+	require.True(t, inputConfigured)
+	require.True(t, outputConfigured)
+	require.NotNil(t, cacheRead)
+	require.Zero(t, *cacheRead)
+	require.NotNil(t, cacheWrite)
+	require.Equal(t, 3.0, *cacheWrite)
+}
+
 func insertCatalogApplyProvider(t *testing.T, db *gorm.DB, provider string, deleted bool) {
 	t.Helper()
 	var deletedAt interface{}

@@ -120,30 +120,77 @@ func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, 
 		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 	}
 
-	// Validate account and tenant association (using existing method)
-	invitationDataMap := map[string]string{
-		"email": invitationData.Email,
+	account, err := s.activateWorkspaceInvitationAccount(ctx, invitationData, tenant, name, password, lang, timezone)
+	if err != nil {
+		return nil, err
 	}
-	tenantAccount, err := s.accountRepo.SelectAccountAndTenantAccountJoin(ctx, invitationDataMap, *tenant)
+
+	releaseReservation = false
+	consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
+	defer cancel()
+	if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, token, reservation); err != nil {
+		return nil, fmt.Errorf("failed to revoke token: %w", err)
+	}
+
+	return account, nil
+}
+
+func (s *RegisterServiceImpl) activateWorkspaceInvitationAccount(
+	ctx context.Context,
+	invitationData *util.InvitationData,
+	tenant *workspace_model.Workspace,
+	name, password, lang, timezone string,
+) (*auth_model.Account, error) {
+	if s.db == nil {
+		return s.activateWorkspaceInvitationAccountWithRepo(ctx, s.accountRepo, invitationData, tenant, name, password, lang, timezone, nil)
+	}
+
+	var account *auth_model.Account
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		account, err = s.activateWorkspaceInvitationAccountWithRepo(
+			ctx,
+			s.accountRepo.WithTx(tx),
+			invitationData,
+			tenant,
+			name,
+			password,
+			lang,
+			timezone,
+			tx,
+		)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	workspacecache.InvalidateAccount(ctx, account.ID)
+	return account, nil
+}
+
+func (s *RegisterServiceImpl) activateWorkspaceInvitationAccountWithRepo(
+	ctx context.Context,
+	repo auth_repo.AccountRepository,
+	invitationData *util.InvitationData,
+	tenant *workspace_model.Workspace,
+	name, password, lang, timezone string,
+	tx *gorm.DB,
+) (*auth_model.Account, error) {
+	invitationDataMap := map[string]string{"email": invitationData.Email}
+	tenantAccount, err := repo.SelectAccountAndTenantAccountJoin(ctx, invitationDataMap, *tenant)
 	if err != nil || tenantAccount == nil {
 		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 	}
-
 	account := &tenantAccount.Account
-
-	// Validate account ID match
-	if invitationData.AccountID != account.ID {
-		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
-	}
-	if account.Status != auth_model.AccountStatusPending {
+	if invitationData.AccountID != account.ID || account.Status != auth_model.AccountStatusPending {
 		return nil, errors.New("Auth Token is invalid or account already activated, please check again.")
 	}
 
 	account.Name = name
 	if password != "" {
-		hashedPassword, salt, err := util.HashPasswordPBKDF2(password)
-		if err != nil {
-			return nil, fmt.Errorf("failed to hash password: %w", err)
+		hashedPassword, salt, hashErr := util.HashPasswordPBKDF2(password)
+		if hashErr != nil {
+			return nil, fmt.Errorf("failed to hash password: %w", hashErr)
 		}
 		account.Password = &hashedPassword
 		account.PasswordSalt = &salt
@@ -157,24 +204,66 @@ func (s *RegisterServiceImpl) Activate(ctx context.Context, workspaceID, email, 
 	theme := "light"
 	account.InterfaceTheme = &theme
 	account.Status = auth_model.AccountStatusActive
-
-	// Set initialization time
 	now := time.Now().UTC()
 	account.InitializedAt = &now
-
-	// Update account
-	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+	if err := repo.UpdateAccount(ctx, account); err != nil {
 		return nil, fmt.Errorf("failed to update account: %w", err)
 	}
 
-	releaseReservation = false
-	consumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationCompensationTimeout)
-	defer cancel()
-	if err := s.tokenMgr.ConsumeInvitationReservation(consumeCtx, token, reservation); err != nil {
-		return nil, fmt.Errorf("failed to revoke token: %w", err)
+	if tx != nil {
+		organizationID := invitationData.OrganizationID
+		if organizationID == "" && tenant.OrganizationID != nil {
+			organizationID = *tenant.OrganizationID
+		}
+		if organizationID != "" {
+			if err := setActivatedWorkspaceInvitationContextTx(ctx, tx, account.ID, organizationID, tenant.ID); err != nil {
+				return nil, err
+			}
+		}
 	}
-
 	return account, nil
+}
+
+func setActivatedWorkspaceInvitationContextTx(ctx context.Context, tx *gorm.DB, accountID, organizationID, workspaceID string) error {
+	var ctxModel auth_model.AccountContext
+	err := tx.WithContext(ctx).Where("account_id = ?", accountID).First(&ctxModel).Error
+	now := time.Now()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		ctxModel = auth_model.AccountContext{
+			AccountID:             accountID,
+			CurrentOrganizationID: &organizationID,
+			CurrentWorkspaceID:    &workspaceID,
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		}
+		if err := tx.WithContext(ctx).Create(&ctxModel).Error; err != nil {
+			return fmt.Errorf("create invited account context: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("get invited account context: %w", err)
+	} else {
+		ctxModel.CurrentOrganizationID = &organizationID
+		ctxModel.CurrentWorkspaceID = &workspaceID
+		ctxModel.UpdatedAt = now
+		if err := tx.WithContext(ctx).Save(&ctxModel).Error; err != nil {
+			return fmt.Errorf("update invited account context: %w", err)
+		}
+	}
+	if err := tx.WithContext(ctx).Model(&workspace_model.WorkspaceMember{}).
+		Where("account_id = ?", accountID).
+		Update("current", false).Error; err != nil {
+		return fmt.Errorf("clear invited current workspace: %w", err)
+	}
+	result := tx.WithContext(ctx).Model(&workspace_model.WorkspaceMember{}).
+		Where("account_id = ? AND workspace_id = ?", accountID, workspaceID).
+		Update("current", true)
+	if result.Error != nil {
+		return fmt.Errorf("set invited current workspace: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("invited workspace membership is unavailable")
+	}
+	return nil
 }
 
 // isPublicDeployment checks if public deployment mode is enabled

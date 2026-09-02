@@ -196,6 +196,12 @@ const messages = {
             'Connect native DashScope capabilities for Qwen text, vision, image, rerank, and multimodal models.',
           capabilities: 'Text, vision, image, rerank',
         },
+        minimax: {
+          label: 'MiniMax',
+          description:
+            'Connect MiniMax official models for text, vision, image, and music generation.',
+          capabilities: 'Text, vision, image, music',
+        },
         doubao: {
           label: 'Volcengine Doubao',
           description:
@@ -379,6 +385,7 @@ const messages = {
       mistral: 'Mistral AI',
       cohere: 'Cohere',
       openrouter: 'OpenRouter',
+      siliconflow: 'SiliconFlow',
       anthropic: 'Anthropic',
       qwen: 'Alibaba Cloud (Qwen)',
       moonshotaiCn: 'Moonshot AI (Kimi)',

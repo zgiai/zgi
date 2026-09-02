@@ -13,6 +13,12 @@ import { cn } from '@/lib/utils';
 import { withBasePathIfInternal } from '@/lib/config';
 import { buildSsoStartUrl } from '@/utils/auth-sso';
 import { getAuthBusinessErrorCode, getAuthBusinessErrorData } from '@/utils/auth-errors';
+import {
+  appendInviteRegistrationContext,
+  getLegacyLoginInviteToken,
+  readInviteRegistrationContext,
+  shouldLockLegacyInviteAccount,
+} from '@/utils/invite-registration';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import { Input, PasswordInput } from '@/components/ui/input';
@@ -88,12 +94,16 @@ function normalizePhoneAccount(value: string): string | null {
 export function LoginForm({ className }: LoginFormProps) {
   const t = useT('auth');
   const searchParams = useSearchParams();
-  const inviteToken = searchParams.get('invite_token');
-  const redirect = searchParams.get('redirect');
+  const registrationContext = readInviteRegistrationContext(searchParams);
+  const inviteToken = registrationContext.inviteToken;
+  const legacyLoginInviteToken = getLegacyLoginInviteToken(registrationContext);
+  const redirect = registrationContext.redirect;
   const emailFromParams = decodeURIComponent(searchParams.get('email') || '');
-  const registerHref = redirect
-    ? `/register?redirect=${encodeURIComponent(redirect)}`
-    : '/register';
+  const lockLegacyInviteAccount = shouldLockLegacyInviteAccount(
+    registrationContext,
+    emailFromParams
+  );
+  const registerHref = appendInviteRegistrationContext('/register', registrationContext);
 
   const [mounted, setMounted] = useState(false);
   const [emailCodeMode, setEmailCodeMode] = useState(false);
@@ -210,9 +220,7 @@ export function LoginForm({ className }: LoginFormProps) {
 
   const navigateAfterLogin = () => {
     const urlParams = new URLSearchParams(window.location.search);
-    const redirectUrl = withBasePathIfInternal(
-      urlParams.get('redirect') || '/onboarding/organization'
-    );
+    const redirectUrl = withBasePathIfInternal(urlParams.get('redirect') || '/console');
     window.location.href = redirectUrl;
   };
 
@@ -259,7 +267,7 @@ export function LoginForm({ className }: LoginFormProps) {
       const formData = {
         email: account,
         password: data.password,
-        invite_token: inviteToken || undefined,
+        invite_token: legacyLoginInviteToken,
       };
       await loginMutation.mutateAsync(formData);
       navigateAfterLogin();
@@ -288,7 +296,7 @@ export function LoginForm({ className }: LoginFormProps) {
   };
 
   const onSsoLogin = () => {
-    const redirectTarget = withBasePathIfInternal(redirect || '/onboarding/organization');
+    const redirectTarget = withBasePathIfInternal(redirect || '/console');
     window.location.href = buildSsoStartUrl('casdoor', redirectTarget);
   };
 
@@ -374,7 +382,7 @@ export function LoginForm({ className }: LoginFormProps) {
                     : t('enterEmailOrPhone')
                 }
                 autoComplete="username"
-                disabled={formLoading || Boolean(inviteToken) || Boolean(emailCodeToken)}
+                disabled={formLoading || lockLegacyInviteAccount || Boolean(emailCodeToken)}
                 {...loginForm.register('account')}
                 aria-invalid={loginForm.formState.errors.account ? 'true' : 'false'}
                 errorText={loginForm.formState.errors.account?.message}

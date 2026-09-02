@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useMusicModels } from '@/hooks/music/use-music-models';
@@ -31,10 +32,13 @@ const PAGE_SIZE = 20;
 
 export function MusicWorkbench() {
   const t = useT('music');
+  const searchParams = useSearchParams();
   const workspaceId = useCurrentWorkspace()?.id;
   const modelsQuery = useMusicModels();
   const models = modelsQuery.models;
-  const [model, setModel] = React.useState('');
+  const requestedProvider = searchParams.get('provider')?.trim() ?? '';
+  const requestedModel = searchParams.get('model')?.trim() ?? '';
+  const [model, setModel] = React.useState(requestedModel);
   const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(null);
   const [page, setPage] = React.useState(1);
   const [searchInput, setSearchInput] = React.useState('');
@@ -77,9 +81,21 @@ export function MusicWorkbench() {
   const deleteTaskMutation = useDeleteMusicTask();
 
   React.useEffect(() => {
-    if (models.some(item => item.model === model)) return;
+    if (modelsQuery.isLoading) return;
+
+    const requestedModelIsAvailable = models.some(
+      item =>
+        item.model === requestedModel &&
+        (!requestedProvider || item.provider === requestedProvider)
+    );
+    if (
+      models.some(item => item.model === model) &&
+      (model !== requestedModel || requestedModelIsAvailable)
+    ) {
+      return;
+    }
     setModel(models[0]?.model ?? '');
-  }, [model, models]);
+  }, [model, models, modelsQuery.isLoading, requestedModel, requestedProvider]);
 
   React.useEffect(() => {
     setSelectedTaskId(null);

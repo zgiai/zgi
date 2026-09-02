@@ -84,6 +84,7 @@ type OrganizationService interface {
 	UpdateDepartmentInviteLinkStatus(ctx context.Context, organizationID, departmentID, accountID, status string) (*model.OrganizationInviteLink, error)
 
 	GetInviteLinkByToken(ctx context.Context, token string) (*model.OrganizationInviteLink, error)
+	ValidateInviteLinkForRegistration(ctx context.Context, token string) (*model.OrganizationInviteLink, error)
 	GetPendingJoinRequest(ctx context.Context, organizationID, accountID string) (*model.OrganizationJoinRequest, error)
 	AcceptInviteByToken(ctx context.Context, token, accountID string, name *string) (*model.OrganizationJoinRequest, error)
 

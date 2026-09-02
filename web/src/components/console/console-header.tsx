@@ -41,7 +41,10 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
 
   const pageTitle = useMemo(() => {
     const routeTitles: Array<{ match: (path: string) => boolean; title: string }> = [
-      { match: path => path === '/console', title: tNav('personalSpace') },
+      {
+        match: path => path === '/console',
+        title: currentWorkspace?.name || tNav('personalSpace'),
+      },
       { match: path => path.startsWith('/console/workflows'), title: tNav('workflows') },
       { match: path => path.startsWith('/console/agents'), title: tNav('agents') },
       { match: path => path.startsWith('/console/dataset'), title: tNav('datasets') },
@@ -114,7 +117,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
       routeTitles.find(route => route.match(effectivePathname))?.title ??
       (isDashboardRoute ? tDash('items.dashboard') : tNav('console'))
     );
-  }, [effectivePathname, isDashboardRoute, tDash, tNav]);
+  }, [currentWorkspace?.name, effectivePathname, isDashboardRoute, tDash, tNav]);
 
   const sectionLabel = isDashboardRoute ? tNav('dashboard') : tNav('console');
   const workspaceContextLabel =

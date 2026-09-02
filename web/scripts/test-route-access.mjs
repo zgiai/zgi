@@ -1370,6 +1370,7 @@ const expectedOrganizationConsolePageRoutes = [
   '/console',
   '/console/integrations',
   '/console/integrations/oauth/result',
+  '/console/model',
   '/console/skills',
   '/console/work',
   '/console/work/app',
@@ -1494,6 +1495,7 @@ assert.deepEqual(
     '/console',
     '/console/skills',
     '/console/integrations',
+    '/console/model',
     '/console/work',
     '/console/work/chat',
     '/console/work/image',
@@ -3843,10 +3845,25 @@ assert.doesNotMatch(
   /\$\{name\}\s*\(\$\{member\.email\}\)/,
   'runtime audience picker should not append email to member display names'
 );
+assert.doesNotMatch(
+  runtimeAudiencePickerSource,
+  /useCurrentOrganizationMember\b/,
+  'runtime audience chips should not use the administrator-only member detail endpoint'
+);
 assert.match(
   runtimeAudiencePickerSource,
-  /useCurrentOrganizationMember/,
-  'runtime audience chips should hydrate saved account grants when possible'
+  /subject_detail:\s*\{\s*display_name:/,
+  'runtime audience selections should retain display details without a second lookup'
+);
+assert.match(
+  publishSettingsDialogSource,
+  /subject_detail:\s*grant\.subject_detail/,
+  'saved runtime audience grants should use display details returned with the authorization response'
+);
+assert.doesNotMatch(
+  runtimeAudiencePickerSource,
+  /function RuntimeAudienceChip\([\s\S]*use(Departments|Workspaces|CurrentOrganizationMembers)/,
+  'runtime audience chips should render embedded subject details without lookup hooks'
 );
 assert.match(
   agentRuntimeHeaderSource,

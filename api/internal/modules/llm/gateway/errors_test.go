@@ -60,6 +60,15 @@ func TestReportedProviderFailureErrorPreservesIdentity(t *testing.T) {
 	}
 }
 
+func TestClientIOErrorPreservesIdentity(t *testing.T) {
+	cause := errors.New("client disconnected")
+	err := NewClientIOError(cause)
+
+	if !IsClientIOError(err) || !errors.Is(err, cause) {
+		t.Fatalf("error = %v, want client I/O marker with original cause", err)
+	}
+}
+
 func TestNewNoProviderAvailableErrorPreservesTypedCauseAndContext(t *testing.T) {
 	err := NewNoProviderAvailableError("qwen-plus", "org-1")
 	if !errors.Is(err, ErrNoProviderAvailable) {

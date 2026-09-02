@@ -273,6 +273,7 @@ const messages = {
       description: 'Select a provider from the left to view its models',
     },
     loadError: 'Failed to load models: {error}',
+    loadErrorDescription: 'The model list could not be loaded. Retry without leaving this page.',
     searchPlaceholder: 'Search models...',
     features: {
       // Model features (from API features object)
@@ -373,7 +374,7 @@ const messages = {
     actions: {
       enable: 'Enable',
       disable: 'Disable',
-      edit: 'Edit',
+      edit: 'Edit model',
       delete: 'Delete',
       enableSelected: 'Allow Selected',
       disableSelected: 'Close Selected',
@@ -423,6 +424,9 @@ const messages = {
       cancel: 'Cancel',
       save: 'Save',
       saving: 'Saving...',
+      syncedPrices:
+        'Upstream prices (USD/1M): input {input}, output {output}, cache read {cacheRead}, cache write {cacheWrite}',
+      notProvided: 'not provided',
     },
     table: {
       model: 'Model',
@@ -475,6 +479,8 @@ const messages = {
       tagline: 'Tagline',
       inputPrice: 'Input Price',
       outputPrice: 'Output Price',
+      cacheReadPrice: 'Cache Read Price',
+      cacheWritePrice: 'Cache Write Price',
       priceConfiguredHint: 'Leave blank for not configured. Enter 0 for free.',
       cachedPrice: 'Cached Input',
       contextWindow: 'Max Context Window',

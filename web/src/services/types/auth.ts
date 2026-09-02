@@ -82,8 +82,15 @@ export interface LoginResponse {
     access_token: string;
     refresh_token: string;
     account: Account;
+    invitation?: RegistrationInvitation;
   };
   result: string;
+}
+
+export interface RegistrationInvitation {
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  organization_id: string;
+  workspace_id?: string;
 }
 
 export interface CasdoorConsumeTicketRequest {
@@ -123,6 +130,7 @@ export interface RegisterFinishRequest {
   email: string;
   interface_language?: string;
   timezone?: string;
+  invite_token?: string;
 }
 
 export interface VerifyRequest {
@@ -344,6 +352,7 @@ export interface PhoneRegisterRequest {
   verified_token: string;
   name: string;
   password: string;
+  invite_token?: string;
 }
 
 export interface PhoneLoginRequest {

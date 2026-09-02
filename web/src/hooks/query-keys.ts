@@ -422,9 +422,16 @@ export const CHANNEL_KEYS = {
 // 17. Dashboard Related
 export const DASHBOARD_KEYS = {
   all: ['dashboard'] as const,
-  stats: () => [...DASHBOARD_KEYS.all, 'stats'] as const,
-  recentWork: (scope: 'overview' | 'workspace', workspaceId?: string | null) =>
-    [...DASHBOARD_KEYS.all, 'recent-work', scope, workspaceId || 'all'] as const,
+  stats: (scope: 'overview' | 'workspace' = 'overview', workspaceId?: string | null) =>
+    [...DASHBOARD_KEYS.all, 'stats', scope, workspaceId || 'all'] as const,
+  recentWork: (scope: 'overview' | 'workspace', workspaceId?: string | null, limit?: number) =>
+    [
+      ...DASHBOARD_KEYS.all,
+      'recent-work',
+      scope,
+      workspaceId || 'all',
+      limit || 'default',
+    ] as const,
 } as const;
 
 // 18. Payment Related

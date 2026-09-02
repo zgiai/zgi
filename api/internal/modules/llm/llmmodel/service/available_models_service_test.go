@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodeldto "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -31,6 +32,16 @@ type availableModelRepoFake struct {
 	listAvailableByNames  int
 	listAvailableFiltered int
 	lastUseCase           string
+}
+
+type availablePlatformChannelProviderFake struct {
+	channels  []*platformchannel.OfficialChannel
+	callCount int
+}
+
+func (f *availablePlatformChannelProviderFake) ListChannels(context.Context, string) ([]*platformchannel.OfficialChannel, error) {
+	f.callCount++
+	return f.channels, nil
 }
 
 func (f *availableModelRepoFake) Create(context.Context, *llmmodel.LLMModel) error {
@@ -327,6 +338,35 @@ func TestAvailableModels_ReturnsMusicGenerationCapability(t *testing.T) {
 	}
 	if !models[0].Endpoints.MusicGeneration {
 		t.Fatal("Endpoints.MusicGeneration = false, want true")
+	}
+}
+
+func TestAvailableModels_CloudOfficialRouteUsesPlatformChannelCatalog(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "gpt-cloud"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID: uuid.New(), Provider: "openai", Model: modelName, ModelName: "GPT Cloud",
+		IsActive: true, UseCases: types.StringArray{"text-chat"},
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type: shared.RouteTypeZGICloud, IsOfficial: true, IsEnabled: true,
+		Models: []string{}, OfficialProviderModels: []channelmodel.ProviderModel{},
+	}}}
+	platformProvider := &availablePlatformChannelProviderFake{channels: []*platformchannel.OfficialChannel{{
+		Provider: "openai", Models: []string{modelName},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
+	svc.(*availableModelsService).SetChannelProvider(platformProvider)
+
+	models, err := svc.ListAvailable(t.Context(), organizationID, "", "text-chat")
+	if err != nil {
+		t.Fatalf("ListAvailable() error = %v", err)
+	}
+	if len(models) != 1 || models[0].Provider != "openai" || models[0].Name != modelName {
+		t.Fatalf("available models = %#v, want openai/%s", models, modelName)
+	}
+	if platformProvider.callCount != 1 {
+		t.Fatalf("platform ListChannels calls = %d, want 1", platformProvider.callCount)
 	}
 }
 
@@ -942,17 +982,27 @@ func TestCreateCustomInvalidatesAvailableModelsCache(t *testing.T) {
 	}
 
 	created, err := svc.CreateCustom(context.Background(), organizationID, &llmmodeldto.CreateCustomModelRequest{
-		Provider:    "custom-openai",
-		ProviderID:  &providerID,
-		Name:        "custom-model",
-		DisplayName: "Custom Model",
-		UseCases:    []string{"chat"},
+		Provider:        "custom-openai",
+		ProviderID:      &providerID,
+		Name:            "custom-model",
+		DisplayName:     "Custom Model",
+		UseCases:        []string{"chat"},
+		InputPrice:      "1",
+		OutputPrice:     "2",
+		CacheReadPrice:  "0.25",
+		CacheWritePrice: "1.25",
 	})
 	if err != nil {
 		t.Fatalf("CreateCustom returned error: %v", err)
 	}
 	if containsUseCase(types.StringArray(created.UseCases), "workflow") {
 		t.Fatalf("private model use_cases = %v, want no workflow projection", created.UseCases)
+	}
+	if !created.CostCacheRead.Equal(decimal.RequireFromString("0.25")) || !created.CacheReadPriceConfigured {
+		t.Fatalf("cache read price = %s configured=%v, want 0.25 configured", created.CostCacheRead, created.CacheReadPriceConfigured)
+	}
+	if !created.CostCacheWrite.Equal(decimal.RequireFromString("1.25")) || !created.CacheWritePriceConfigured {
+		t.Fatalf("cache write price = %s configured=%v, want 1.25 configured", created.CostCacheWrite, created.CacheWritePriceConfigured)
 	}
 	if len(availableSvc.invalidated) != 1 || availableSvc.invalidated[0] != organizationID {
 		t.Fatalf("invalidated tenants = %v, want [%s]", availableSvc.invalidated, organizationID)
@@ -1021,14 +1071,24 @@ func TestUpdateCustomInvalidatesAvailableModelsCache(t *testing.T) {
 	}
 
 	displayName := "Renamed Model"
-	_, err := svc.UpdateCustom(context.Background(), organizationID, modelID, &llmmodeldto.UpdateCustomModelRequest{
-		DisplayName: &displayName,
+	cacheReadPrice := "0"
+	cacheWritePrice := ""
+	updated, err := svc.UpdateCustom(context.Background(), organizationID, modelID, &llmmodeldto.UpdateCustomModelRequest{
+		DisplayName:     &displayName,
+		CacheReadPrice:  &cacheReadPrice,
+		CacheWritePrice: &cacheWritePrice,
 	})
 	if err != nil {
 		t.Fatalf("UpdateCustom returned error: %v", err)
 	}
 	if len(availableSvc.invalidated) != 1 || availableSvc.invalidated[0] != organizationID {
 		t.Fatalf("invalidated tenants = %v, want [%s]", availableSvc.invalidated, organizationID)
+	}
+	if !updated.CostCacheRead.IsZero() || !updated.CacheReadPriceConfigured {
+		t.Fatalf("cache read price = %s configured=%v, want explicit free price", updated.CostCacheRead, updated.CacheReadPriceConfigured)
+	}
+	if !updated.CostCacheWrite.IsZero() || updated.CacheWritePriceConfigured {
+		t.Fatalf("cache write price = %s configured=%v, want unconfigured", updated.CostCacheWrite, updated.CacheWritePriceConfigured)
 	}
 }
 
@@ -1058,15 +1118,19 @@ func TestBatchToggleModelsPreservesPriceOverrides(t *testing.T) {
 	modelID := uuid.New()
 	inputPrice := decimal.RequireFromString("1.23")
 	outputPrice := decimal.RequireFromString("4.56")
+	cacheReadPrice := decimal.RequireFromString("0.12")
+	cacheWritePrice := decimal.RequireFromString("0.78")
 	configRepo := &availableConfigRepoFake{
 		configs: map[uuid.UUID]*llmmodel.ModelConfig{
 			modelID: {
-				OrganizationID:      organizationID,
-				ModelID:             modelID,
-				IsEnabled:           true,
-				AccessScope:         llmmodel.AccessScopeAll,
-				InputPriceOverride:  &inputPrice,
-				OutputPriceOverride: &outputPrice,
+				OrganizationID:          organizationID,
+				ModelID:                 modelID,
+				IsEnabled:               true,
+				AccessScope:             llmmodel.AccessScopeAll,
+				InputPriceOverride:      &inputPrice,
+				OutputPriceOverride:     &outputPrice,
+				CacheReadPriceOverride:  &cacheReadPrice,
+				CacheWritePriceOverride: &cacheWritePrice,
 			},
 		},
 	}
@@ -1092,8 +1156,39 @@ func TestBatchToggleModelsPreservesPriceOverrides(t *testing.T) {
 	if got.OutputPriceOverride == nil || !got.OutputPriceOverride.Equal(outputPrice) {
 		t.Fatalf("output override = %v, want %s", got.OutputPriceOverride, outputPrice)
 	}
+	if got.CacheReadPriceOverride == nil || !got.CacheReadPriceOverride.Equal(cacheReadPrice) {
+		t.Fatalf("cache read override = %v, want %s", got.CacheReadPriceOverride, cacheReadPrice)
+	}
+	if got.CacheWritePriceOverride == nil || !got.CacheWritePriceOverride.Equal(cacheWritePrice) {
+		t.Fatalf("cache write override = %v, want %s", got.CacheWritePriceOverride, cacheWritePrice)
+	}
 	if len(availableSvc.invalidated) != 1 || availableSvc.invalidated[0] != organizationID {
 		t.Fatalf("invalidated tenants = %v, want [%s]", availableSvc.invalidated, organizationID)
+	}
+}
+
+func TestConfigureModelCacheOverridesDistinguishEmptyAndZero(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	zero := "0"
+	empty := ""
+	configRepo := &availableConfigRepoFake{}
+	svc := &modelService{
+		globalRepo: &availableModelRepoFake{models: []*llmmodel.LLMModel{{ID: modelID}}},
+		configRepo: configRepo,
+	}
+
+	configured, err := svc.ConfigureModel(context.Background(), organizationID, &llmmodeldto.ConfigureModelRequest{
+		ModelID: modelID, CacheReadPriceOverride: &zero, CacheWritePriceOverride: &empty,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configured.CacheReadPriceOverride == nil || !configured.CacheReadPriceOverride.IsZero() {
+		t.Fatalf("cache read override = %v, want explicit zero", configured.CacheReadPriceOverride)
+	}
+	if configured.CacheWritePriceOverride != nil {
+		t.Fatalf("cache write override = %v, want nil", configured.CacheWritePriceOverride)
 	}
 }
 

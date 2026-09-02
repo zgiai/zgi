@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
@@ -20,6 +21,8 @@ const (
 	PhoneSceneRegister      = "register"
 	PhoneSceneLogin         = "login"
 	PhoneSceneResetPassword = "reset_password"
+
+	phoneRegistrationCompensationTimeout = 2 * time.Second
 )
 
 var (
@@ -76,6 +79,7 @@ type PhoneRegisterRequest struct {
 	VerifiedToken string  `json:"verified_token" binding:"required"`
 	Name          string  `json:"name"`
 	Password      *string `json:"password,omitempty" binding:"omitempty,min=8"`
+	InviteToken   string  `json:"invite_token,omitempty"`
 }
 
 type PhoneLoginRequest struct {
@@ -99,7 +103,8 @@ type PhoneResetPasswordRequest struct {
 
 type PhoneAuthAccountGateway interface {
 	FindByPhone(ctx context.Context, phoneE164 string) (*auth_model.Account, error)
-	RegisterByPhone(ctx context.Context, phoneE164 string, name string, password *string) (*auth_model.Account, error)
+	RegisterByPhone(ctx context.Context, phoneE164 string, name string, password *string, createWorkspaceRequired *bool) (*auth_model.Account, error)
+	DeleteUnboundAccountPermanently(ctx context.Context, account *auth_model.Account) (bool, error)
 	LoginByAccount(ctx context.Context, account *auth_model.Account, ipAddress string) (*dto.LoginResponse, error)
 	UpdatePhonePassword(ctx context.Context, account *auth_model.Account, password string) error
 }
@@ -119,10 +124,15 @@ type PhoneAuthOptions struct {
 }
 
 type PhoneAuthService struct {
-	accounts   PhoneAuthAccountGateway
-	tokenMgr   *helper.TokenManager
-	codeSender PhoneCodeSender
-	options    PhoneAuthOptions
+	accounts    PhoneAuthAccountGateway
+	tokenMgr    *helper.TokenManager
+	codeSender  PhoneCodeSender
+	options     PhoneAuthOptions
+	invitations registrationInvitationGateway
+}
+
+func (s *PhoneAuthService) SetRegistrationInvitationGateway(gateway registrationInvitationGateway) {
+	s.invitations = gateway
 }
 
 func NewPhoneAuthService(accounts PhoneAuthAccountGateway, tokenMgr *helper.TokenManager, codeSender PhoneCodeSender, options PhoneAuthOptions) *PhoneAuthService {
@@ -250,30 +260,122 @@ func (s *PhoneAuthService) RegisterByPhone(ctx context.Context, req PhoneRegiste
 		return nil, ErrPhoneRegistrationDisabled
 	}
 
-	phoneE164, err := s.consumeVerifiedToken(req.Phone, req.CountryCode, req.VerifiedToken, PhoneSceneRegister)
+	phoneE164, verifiedTokenData, err := s.verifiedPhoneToken(req.Phone, req.CountryCode, req.VerifiedToken, PhoneSceneRegister)
 	if err != nil {
 		return nil, err
 	}
 
+	inviteToken, err := validateRegistrationInvitation(ctx, s.invitations, req.InviteToken)
+	if err != nil {
+		return nil, err
+	}
 	account, err := s.accounts.FindByPhone(ctx, phoneE164)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("find account by phone: %w", err)
 	}
 	if account != nil {
-		return nil, ErrPhoneAccountExists
+		boundAccountID := ""
+		if verifiedTokenData.AccountID != nil {
+			boundAccountID = strings.TrimSpace(*verifiedTokenData.AccountID)
+		}
+		if inviteToken == "" || boundAccountID == "" || boundAccountID != account.ID {
+			return nil, ErrPhoneAccountExists
+		}
+		if account.Status != "" && account.Status != auth_model.AccountStatusActive {
+			return nil, ErrPhoneAccountInactive
+		}
 	}
 
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = defaultPhoneAccountName(phoneE164)
 	}
-	account, err = s.accounts.RegisterByPhone(ctx, phoneE164, name, req.Password)
+	createdAccount := false
+	if account == nil {
+		createWorkspace := inviteToken == ""
+		account, err = s.accounts.RegisterByPhone(ctx, phoneE164, name, req.Password, &createWorkspace)
+		if err != nil {
+			return nil, fmt.Errorf("register account by phone: %w", err)
+		}
+		createdAccount = true
+		if inviteToken != "" {
+			if err := s.tokenMgr.BindTokenToAccount(ctx, req.VerifiedToken, PhoneVerifiedTokenType, account.ID); err != nil {
+				return nil, fmt.Errorf(
+					"bind invited phone registration retry: %w",
+					s.cleanupCreatedInvitedPhoneAccount(ctx, req.VerifiedToken, "", account, err),
+				)
+			}
+		}
+	}
+	loginResp, err := s.accounts.LoginByAccount(ctx, account, ipAddress)
 	if err != nil {
-		return nil, fmt.Errorf("register account by phone: %w", err)
+		if createdAccount && inviteToken != "" {
+			err = s.cleanupCreatedInvitedPhoneAccount(ctx, req.VerifiedToken, "", account, err)
+		}
+		return nil, err
+	}
+	if inviteToken != "" {
+		invitation, invitationErr := acceptRegistrationInvitation(ctx, s.invitations, inviteToken, account.ID, name)
+		if invitationErr != nil {
+			if createdAccount {
+				invitationErr = s.cleanupCreatedInvitedPhoneAccount(
+					ctx,
+					req.VerifiedToken,
+					loginResp.RefreshToken,
+					account,
+					invitationErr,
+				)
+			} else if revokeErr := s.revokePhoneRegistrationRefreshToken(loginResp.RefreshToken); revokeErr != nil {
+				invitationErr = errors.Join(invitationErr, revokeErr)
+			}
+			return nil, invitationErr
+		}
+		loginResp.Invitation = invitation
+	}
+	_ = s.tokenMgr.RevokeToken(req.VerifiedToken, PhoneVerifiedTokenType)
+	return loginResp, nil
+}
+
+func (s *PhoneAuthService) cleanupCreatedInvitedPhoneAccount(
+	ctx context.Context,
+	verifiedToken string,
+	refreshToken string,
+	account *auth_model.Account,
+	cause error,
+) error {
+	compensationCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		phoneRegistrationCompensationTimeout,
+	)
+	defer cancel()
+
+	var cleanupErr error
+	deleted, err := s.accounts.DeleteUnboundAccountPermanently(compensationCtx, account)
+	if err != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove unbound phone registration account: %w", err))
+	} else if !deleted {
+		cleanupErr = errors.Join(cleanupErr, errors.New("remove unbound phone registration account: account is no longer unbound"))
 	}
 
-	_ = s.tokenMgr.RevokeToken(req.VerifiedToken, PhoneVerifiedTokenType)
-	return s.accounts.LoginByAccount(ctx, account, ipAddress)
+	if err := s.revokePhoneRegistrationRefreshToken(refreshToken); err != nil {
+		cleanupErr = errors.Join(cleanupErr, err)
+	}
+	if deleted {
+		if err := s.tokenMgr.RevokeToken(verifiedToken, PhoneVerifiedTokenType); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("revoke phone registration verification token: %w", err))
+		}
+	}
+	return errors.Join(cause, cleanupErr)
+}
+
+func (s *PhoneAuthService) revokePhoneRegistrationRefreshToken(refreshToken string) error {
+	if strings.TrimSpace(refreshToken) == "" {
+		return nil
+	}
+	if err := s.tokenMgr.RevokeToken(refreshToken, "refresh"); err != nil {
+		return fmt.Errorf("revoke phone registration refresh token: %w", err)
+	}
+	return nil
 }
 
 func (s *PhoneAuthService) LoginByPhone(ctx context.Context, req PhoneLoginRequest, ipAddress string) (*dto.LoginResponse, error) {
@@ -350,20 +452,25 @@ func (s *PhoneAuthService) activePhoneAccount(ctx context.Context, phoneE164 str
 }
 
 func (s *PhoneAuthService) consumeVerifiedToken(phone, countryCode, token, scene string) (string, error) {
+	phoneE164, _, err := s.verifiedPhoneToken(phone, countryCode, token, scene)
+	return phoneE164, err
+}
+
+func (s *PhoneAuthService) verifiedPhoneToken(phone, countryCode, token, scene string) (string, *helper.TokenData, error) {
 	phoneE164, err := normalizePhoneRequest(phone, countryCode)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	tokenData, err := s.tokenMgr.GetTokenData(token, PhoneVerifiedTokenType)
 	if err != nil || tokenData == nil {
-		return "", ErrPhoneTokenInvalid
+		return "", nil, ErrPhoneTokenInvalid
 	}
 	if tokenExtraString(tokenData.Extra, "phone_e164") != phoneE164 ||
 		tokenExtraString(tokenData.Extra, "scene") != scene {
-		return "", ErrPhoneTokenInvalid
+		return "", nil, ErrPhoneTokenInvalid
 	}
-	return phoneE164, nil
+	return phoneE164, tokenData, nil
 }
 
 func normalizePhoneRequest(phone, countryCode string) (string, error) {
@@ -452,10 +559,9 @@ func (s *AccountService) FindByPhone(ctx context.Context, phoneE164 string) (*au
 	return s.accountRepo.GetAccountByNormalizedMobile(ctx, phoneE164)
 }
 
-func (s *AccountService) RegisterByPhone(ctx context.Context, phoneE164 string, name string, password *string) (*auth_model.Account, error) {
+func (s *AccountService) RegisterByPhone(ctx context.Context, phoneE164 string, name string, password *string, createWorkspaceRequired *bool) (*auth_model.Account, error) {
 	language := "zh-Hans"
-	createWorkspace := false
-	return s.registerExWithMobile(ctx, "", name, password, nil, nil, &language, nil, nil, &createWorkspace, phoneE164)
+	return s.registerExWithMobile(ctx, "", name, password, nil, nil, &language, nil, nil, createWorkspaceRequired, phoneE164)
 }
 
 func (s *AccountService) LoginByAccount(_ context.Context, account *auth_model.Account, ipAddress string) (*dto.LoginResponse, error) {

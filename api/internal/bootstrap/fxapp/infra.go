@@ -19,6 +19,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/observability"
 	"github.com/zgiai/zgi/api/middleware"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	redispkg "github.com/zgiai/zgi/api/pkg/redis"
@@ -217,6 +218,7 @@ func provideGinEngine(cfg *config.Config, reporter *observability.ZGIReporter, o
 		ExposeHeaders: []string{
 			"Content-Length",
 			"X-Request-ID",
+			apptransport.HeaderApplicationErrorCode,
 			"X-ZGI-Conversation-ID",
 			"X-ZGI-Message-ID",
 		},

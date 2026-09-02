@@ -21,6 +21,11 @@ func (s *Standalone) RegisterOrganization(ctx context.Context, req *RegisterOrga
 	return nil
 }
 
+// RegisterOrganizationSync does nothing in Self-Hosted mode.
+func (s *Standalone) RegisterOrganizationSync(ctx context.Context, req *RegisterOrganizationRequest) error {
+	return nil
+}
+
 // NotifyOfficialSignup does nothing in Self-Hosted mode.
 func (s *Standalone) NotifyOfficialSignup(ctx context.Context, req *NotifyOfficialSignupRequest) (*NotifyOfficialSignupResponse, error) {
 	return &NotifyOfficialSignupResponse{}, nil

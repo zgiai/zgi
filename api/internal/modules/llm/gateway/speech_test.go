@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -19,6 +20,22 @@ import (
 )
 
 const speechTestModel = "seed-tts-2.0"
+
+var errSpeechClientDisconnected = errors.New("speech client disconnected")
+
+type failingSpeechWriter struct{}
+
+func (failingSpeechWriter) Write([]byte) (int, error) {
+	return 0, errSpeechClientDisconnected
+}
+
+func TestClientWriteTrackerCapturesDestinationFailure(t *testing.T) {
+	tracker := &clientWriteTracker{dst: failingSpeechWriter{}}
+	_, err := tracker.Write([]byte("audio"))
+	if !errors.Is(err, errSpeechClientDisconnected) || !errors.Is(tracker.writeErr, errSpeechClientDisconnected) {
+		t.Fatalf("write error = %v, tracked = %v, want client disconnect", err, tracker.writeErr)
+	}
+}
 
 func TestGenerateSpeechUsesOfficialHTTPRouteAndStreamsMP3(t *testing.T) {
 	organizationID := uuid.New()

@@ -4,6 +4,7 @@ import type {
   DashboardRecentWork,
   DashboardRecentWorkParams,
   DashboardStats,
+  DashboardStatsParams,
 } from './types/dashboard';
 
 class DashboardService extends BaseService {
@@ -18,8 +19,9 @@ class DashboardService extends BaseService {
    * Get dashboard statistics
    * GET /console/api/dashboard/stats
    */
-  getDashboardStats(): Promise<ApiResponseData<DashboardStats>> {
+  getDashboardStats(params?: DashboardStatsParams): Promise<ApiResponseData<DashboardStats>> {
     return this.request('get', '/dashboard/stats', undefined, {
+      params,
       headers: { 'Content-Type': 'application/json' },
     });
   }

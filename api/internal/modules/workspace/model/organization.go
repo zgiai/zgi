@@ -902,6 +902,14 @@ func (om *OrganizationMember) IsAdmin() bool {
 
 // BeforeCreate hook to set timestamps
 func (om *OrganizationMember) BeforeCreate(tx *gorm.DB) error {
+	if om.Name != nil {
+		normalizedName := strings.TrimSpace(*om.Name)
+		if normalizedName == "" {
+			om.Name = nil
+		} else {
+			om.Name = &normalizedName
+		}
+	}
 	now := time.Now()
 	if om.CreatedAt.IsZero() {
 		om.CreatedAt = now

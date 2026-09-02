@@ -23,9 +23,24 @@ export interface DashboardStats {
     data_sources: number;
     files: number;
   };
+  activity?: {
+    direct_conversations: number;
+    created_agents: number;
+    created_datasets: number;
+  };
 }
 
-export type DashboardRecentWorkType = 'conversation' | 'agent' | 'workflow' | 'dataset' | 'database';
+export interface DashboardStatsParams {
+  scope?: DashboardRecentWorkScope;
+  workspace_id?: string;
+}
+
+export type DashboardRecentWorkType =
+  | 'conversation'
+  | 'agent'
+  | 'workflow'
+  | 'dataset'
+  | 'database';
 
 export type DashboardRecentWorkScope = 'overview' | 'workspace';
 

@@ -120,41 +120,54 @@ export function CompleteRegistrationForm({ className }: CompleteRegistrationForm
 
   const onSubmit = async (data: CompleteRegistrationFormData) => {
     try {
+      const inviteToken = searchParams.get('invite_token');
+      let invitationStatus: 'pending' | 'approved' | 'rejected' | 'expired' | undefined;
       if (isPhoneRegisterFlow) {
         if (!phone || !verifiedToken || phoneRegisterUnavailable) {
           return;
         }
 
-        await phoneRegisterMutation.mutateAsync({
+        const result = await phoneRegisterMutation.mutateAsync({
           phone,
           country_code: normalizeCountryCode(countryCode),
           verified_token: verifiedToken,
           name: data.name,
           password: data.password,
+          invite_token: inviteToken || undefined,
         });
+        invitationStatus = result.invitation?.status;
       } else {
         if (!email || !token) {
           return;
         }
 
-        await finishRegisterMutation.mutateAsync({
+        const result = await finishRegisterMutation.mutateAsync({
           email,
           name: data.name,
           password: data.password,
           password_confirm: data.confirmPassword,
           token,
+          invite_token: inviteToken || undefined,
         });
+        invitationStatus = result.invitation?.status;
       }
 
       setIsSuccess(true);
       setTimeout(() => {
-        const redirectUrl = withBasePathIfInternal(
-          searchParams.get('redirect') || '/onboarding/organization'
-        );
+        if (inviteToken && invitationStatus === 'approved') {
+          window.location.href = withBasePathIfInternal('/console');
+          return;
+        }
+        let target = searchParams.get('redirect') || '/console';
+        if (inviteToken && invitationStatus === 'pending') {
+          const separator = target.includes('?') ? '&' : '?';
+          target = `${target}${separator}registration_status=pending`;
+        }
+        const redirectUrl = withBasePathIfInternal(target);
         window.location.href = redirectUrl;
       }, 2000);
-    } catch (err) {
-      console.error('Registration completion failed:', err);
+    } catch {
+      return;
     }
   };
 

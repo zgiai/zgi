@@ -1,6 +1,10 @@
 package v1
 
 import (
+	"context"
+	"fmt"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
@@ -14,6 +18,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	authservice "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
@@ -37,6 +42,7 @@ func RegisterLLMRoutes(router *gin.RouterGroup, deps LLMRouteDeps) *llm.LLMModul
 	// ========== Initialize V2 Module ==========
 	cryptoService, err := shared.DefaultCryptoService()
 	if err != nil {
+		failCloudLLMInitialization(deps.ConsoleProvider, "LLM crypto service", err)
 		logger.Error("failed to create LLM crypto service", err)
 		return nil
 	}
@@ -49,6 +55,7 @@ func RegisterLLMRoutes(router *gin.RouterGroup, deps LLMRouteDeps) *llm.LLMModul
 		deps.ConsoleProvider,
 	)
 	registerLLMUpstreamPolling(deps.Scheduler, llmV2Module)
+	registerRegistrationProvisioningOutbox(deps, llmV2Module)
 
 	// ========== Initialize Internal AI Service (for workflows/knowledge base) ==========
 	llmAPIKeyRepo := apikeyrepo.NewAPIKeyRepository(deps.DB)
@@ -107,6 +114,66 @@ func RegisterLLMRoutes(router *gin.RouterGroup, deps LLMRouteDeps) *llm.LLMModul
 
 	logger.Info("LLM legacy internal routes registered", "path", "/llm/*")
 	return llmV2Module
+}
+
+func registerRegistrationProvisioningOutbox(deps LLMRouteDeps, module *llm.LLMModule) {
+	if deps.ConsoleProvider == nil || !deps.ConsoleProvider.IsAvailable() ||
+		!strings.EqualFold(deps.ConsoleProvider.GetMode(), "CLOUD") {
+		return
+	}
+	if module == nil || module.ChannelSvc == nil {
+		panic("cloud registration provisioning outbox requires the LLM channel service")
+	}
+	processor := authservice.NewRegistrationProvisioningOutboxProcessor(
+		deps.DB,
+		module.ChannelSvc,
+		deps.ConsoleProvider,
+	)
+	if setter, ok := deps.AccountService.(interface {
+		SetRegistrationProvisioningOutboxDispatcher(func(context.Context, string) error)
+	}); ok {
+		setter.SetRegistrationProvisioningOutboxDispatcher(processor.ProcessOne)
+	}
+	if deps.Scheduler == nil {
+		panic("cloud registration provisioning outbox requires the scheduler")
+	}
+	if err := processor.ValidateConfiguration(); err != nil {
+		panic(fmt.Sprintf("cloud registration provisioning outbox is invalid: %v", err))
+	}
+	task := &authservice.RegistrationProvisioningOutboxTask{}
+	mustRegisterRegistrationProvisioningOutboxTask(
+		deps.Scheduler,
+		task,
+		authservice.NewRegistrationProvisioningOutboxHandler(processor, 25),
+	)
+	logger.Info("Registration provisioning outbox task registered", map[string]interface{}{
+		"interval": task.Interval().String(),
+	})
+}
+
+type registrationProvisioningTaskRegistrar interface {
+	RegisterTask(pkgscheduler.ScheduledTask, pkgscheduler.TaskHandler) error
+}
+
+func mustRegisterRegistrationProvisioningOutboxTask(
+	scheduler registrationProvisioningTaskRegistrar,
+	task pkgscheduler.ScheduledTask,
+	handler pkgscheduler.TaskHandler,
+) {
+	if scheduler == nil || task == nil || handler == nil {
+		panic("cloud registration provisioning outbox scheduler is not configured")
+	}
+	if err := scheduler.RegisterTask(task, handler); err != nil {
+		panic(fmt.Sprintf("failed to register registration provisioning outbox task: %v", err))
+	}
+}
+
+func failCloudLLMInitialization(consoleProvider pconsole.ConsoleProvider, component string, err error) {
+	if err == nil || consoleProvider == nil || !consoleProvider.IsAvailable() ||
+		!strings.EqualFold(consoleProvider.GetMode(), "CLOUD") {
+		return
+	}
+	panic(fmt.Sprintf("cloud registration provisioning requires %s: %v", component, err))
 }
 
 func registerLLMUpstreamPolling(scheduler *pkgscheduler.Scheduler, module *llm.LLMModule) {

@@ -18,7 +18,7 @@ type ConsoleProvider interface {
 	// GetBaseURL returns the Console-API base URL (e.g. "http://localhost:2625")
 	GetBaseURL() string
 
-	// RegisterOrganization registers a new organization to Console-API (async)
+	// RegisterOrganization preserves the legacy asynchronous best-effort behavior.
 	RegisterOrganization(ctx context.Context, req *RegisterOrganizationRequest) error
 
 	// NotifyOfficialSignup tells Console-API that a cloud signup completed.
@@ -83,6 +83,14 @@ type ConsoleProvider interface {
 
 	// GetBankTransferVoucher loads voucher binary from console.
 	GetBankTransferVoucher(ctx context.Context, key string) (*BankTransferVoucherFile, error)
+}
+
+// OrganizationRegistrationSyncer is the narrow, synchronous organization
+// registration capability required by durable registration provisioning. It is
+// intentionally separate from ConsoleProvider so legacy best-effort callers do
+// not accidentally depend on synchronous remote behavior.
+type OrganizationRegistrationSyncer interface {
+	RegisterOrganizationSync(ctx context.Context, req *RegisterOrganizationRequest) error
 }
 
 // RegisterOrganizationRequest represents organization registration request.
@@ -273,14 +281,20 @@ type ListPaymentPurchaseRecordsRequest struct {
 
 // PaymentPurchaseRecord represents a purchase/refund billing view row.
 type PaymentPurchaseRecord struct {
-	ID                 string    `json:"id"`
-	BatchID            string    `json:"batch_id"`
-	TransactionType    string    `json:"transaction_type"`
-	DetailText         string    `json:"detail_text"`
-	RechargeAmount     float64   `json:"recharge_amount"`
-	WalletChangeAmount float64   `json:"wallet_change_amount"`
-	BalanceAfter       float64   `json:"balance_after"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                   string    `json:"id"`
+	BatchID              string    `json:"batch_id"`
+	TransactionType      string    `json:"transaction_type"`
+	DetailText           string    `json:"detail_text"`
+	RechargeAmount       float64   `json:"recharge_amount"`
+	RechargeAmountCNY    float64   `json:"recharge_amount_cny"`
+	RechargeAmountUSD    float64   `json:"recharge_amount_usd"`
+	AmountExchangeRate   float64   `json:"amount_exchange_rate"`
+	AmountCurrencyStatus string    `json:"amount_currency_status"`
+	RechargeCurrency     string    `json:"recharge_currency"`
+	WalletChangeAmount   float64   `json:"wallet_change_amount"`
+	BalanceAfter         float64   `json:"balance_after"`
+	WalletCurrency       string    `json:"wallet_currency"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 // ListPaymentPurchaseRecordsResponse represents paginated purchase records.

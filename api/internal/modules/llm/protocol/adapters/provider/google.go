@@ -50,9 +50,10 @@ type googleGeminiCandidate struct {
 }
 
 type googleGeminiUsage struct {
-	PromptTokenCount     int `json:"promptTokenCount"`
-	CandidatesTokenCount int `json:"candidatesTokenCount"`
-	TotalTokenCount      int `json:"totalTokenCount"`
+	PromptTokenCount        int `json:"promptTokenCount"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount"`
+	TotalTokenCount         int `json:"totalTokenCount"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount"`
 }
 
 type googleGeminiResponse struct {
@@ -572,11 +573,14 @@ func googleUsageToAdapter(usage googleGeminiUsage) *adapter.Usage {
 	if total == 0 {
 		total = usage.PromptTokenCount + usage.CandidatesTokenCount
 	}
-	return &adapter.Usage{
+	result := &adapter.Usage{
 		PromptTokens:     usage.PromptTokenCount,
 		CompletionTokens: usage.CandidatesTokenCount,
 		TotalTokens:      total,
+		CacheReadTokens:  usage.CachedContentTokenCount,
 	}
+	result.NormalizeCacheTokens()
+	return result
 }
 
 func (a *GoogleAdapter) buildImagePayload(request *adapter.ImageRequest) map[string]interface{} {

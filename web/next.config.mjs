@@ -66,6 +66,17 @@ const turbopackMemoryLimitMb =
   readPositiveIntegerEnv('NEXT_TURBOPACK_MEMORY_LIMIT_MB') ?? defaultTurbopackMemoryLimitMb;
 const webpackMemoryOptimizations =
   readBooleanEnv('NEXT_WEBPACK_MEMORY_OPTIMIZATIONS') ?? true;
+const sensitiveAuthRoutes = [
+  '/activate',
+  '/forgot-password',
+  '/invite/:path*',
+  '/login',
+  '/register',
+  '/register/:path*',
+  '/reset-password',
+  '/sso/:path*',
+  '/verify',
+];
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -91,6 +102,12 @@ const nextConfig = {
     webpackMemoryOptimizations,
   },
   productionBrowserSourceMaps: false,
+  async headers() {
+    return sensitiveAuthRoutes.map(source => ({
+      source,
+      headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }],
+    }));
+  },
   pageExtensions: ['js', 'jsx', 'md', 'mdx', 'ts', 'tsx'],
   turbopack: {
     rules: {

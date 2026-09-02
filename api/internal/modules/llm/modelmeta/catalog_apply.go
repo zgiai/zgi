@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	"gorm.io/gorm"
@@ -25,6 +26,20 @@ type PublishedCatalog struct {
 	PublishedAt time.Time
 	Providers   []PublishedProvider
 	Models      []PublishedModel
+	Vendors     []PublishedVendor
+}
+
+type PublishedVendor struct {
+	Vendor      string
+	VendorName  string
+	CNName      string
+	ENName      string
+	Description string
+	Website     string
+	CountryCode string
+	Status      string
+	IsActive    bool
+	Metadata    map[string]interface{}
 }
 
 type PublishedProvider struct {
@@ -46,6 +61,7 @@ type PublishedProvider struct {
 
 type PublishedModel struct {
 	Provider               string
+	Vendor                 string
 	Model                  string
 	ModelName              string
 	Type                   string
@@ -66,6 +82,8 @@ type PublishedModel struct {
 	InputPrice             float64
 	OutputPrice            float64
 	CachedInputPrice       float64
+	CacheReadPrice         *float64
+	CacheWritePrice        *float64
 	Pricing                json.RawMessage
 	InputPriceConfigured   bool
 	OutputPriceConfigured  bool
@@ -138,6 +156,28 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 	if err != nil {
 		return err
 	}
+	vendors := make([]catalogvendor.Entry, 0, len(catalog.Models))
+	for _, catalogModel := range catalog.Models {
+		vendors = append(vendors, catalogvendor.Entry{
+			Provider: catalogModel.Provider,
+			Model:    catalogModel.Model,
+			Vendor:   catalogModel.Vendor,
+		})
+	}
+	catalogvendor.Replace(vendors)
+	vendorMetadata := make([]catalogvendor.Metadata, 0, len(catalog.Vendors))
+	for _, vendor := range catalog.Vendors {
+		vendorMetadata = append(vendorMetadata, catalogvendor.Metadata{
+			Vendor:      vendor.Vendor,
+			VendorName:  vendor.VendorName,
+			CNName:      vendor.CNName,
+			ENName:      vendor.ENName,
+			Description: vendor.Description,
+			Website:     vendor.Website,
+			CountryCode: vendor.CountryCode,
+		})
+	}
+	catalogvendor.ReplaceMetadata(vendorMetadata)
 	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
 		invalidator.InvalidateModelCache(ctx)
 	}
@@ -598,6 +638,7 @@ func normalizePublishedPrice(value float64) decimal.Decimal {
 }
 
 func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]interface{} {
+	inputPrice, outputPrice, cacheReadPrice, cacheWritePrice, inputConfigured, outputConfigured := resolvePublishedTokenPrices(model)
 	useCases := llmmodel.EnsureUseCases(model.UseCases, model.Endpoints)
 	values := map[string]interface{}{
 		"provider":           model.Provider,
@@ -617,9 +658,21 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 		"context_window":     model.ContextWindow,
 		"max_output_tokens":  model.MaxOutputTokens,
 		"knowledge_cutoff":   model.KnowledgeCutoff,
-		"input_price":        normalizePublishedPrice(model.InputPrice),
-		"output_price":       normalizePublishedPrice(model.OutputPrice),
-		"cached_input_price": normalizePublishedPrice(model.CachedInputPrice),
+		"input_price":        normalizePublishedPrice(inputPrice),
+		"output_price":       normalizePublishedPrice(outputPrice),
+		"cached_input_price": nullablePublishedPrice(cacheReadPrice),
+	}
+	if hasColumn(db, "llm_models", "cost_cache_read") {
+		values["cost_cache_read"] = nullablePublishedPrice(cacheReadPrice)
+	}
+	if hasColumn(db, "llm_models", "cost_cache_write") {
+		values["cost_cache_write"] = nullablePublishedPrice(cacheWritePrice)
+	}
+	if hasColumn(db, "llm_models", "cache_read_price_configured") {
+		values["cache_read_price_configured"] = cacheReadPrice != nil
+	}
+	if hasColumn(db, "llm_models", "cache_write_price_configured") {
+		values["cache_write_price_configured"] = cacheWritePrice != nil
 	}
 	if hasColumn(db, "llm_models", "is_active") {
 		values["is_active"] = model.IsActive
@@ -629,10 +682,10 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	}
 
 	if hasColumn(db, "llm_models", "input_price_configured") {
-		values["input_price_configured"] = model.InputPriceConfigured
+		values["input_price_configured"] = inputConfigured
 	}
 	if hasColumn(db, "llm_models", "output_price_configured") {
-		values["output_price_configured"] = model.OutputPriceConfigured
+		values["output_price_configured"] = outputConfigured
 	}
 	if hasColumn(db, "llm_models", "pricing") {
 		values["pricing"] = serializePricing(model.Pricing)
@@ -678,6 +731,55 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	}
 
 	return values
+}
+
+type publishedStructuredPricing struct {
+	TokenTiers []struct {
+		InputPricePerMillion       *float64 `json:"input_price_per_million"`
+		OutputPricePerMillion      *float64 `json:"output_price_per_million"`
+		CachedInputPricePerMillion *float64 `json:"cached_input_price_per_million"`
+		CacheReadPricePerMillion   *float64 `json:"cache_read_price_per_million"`
+		CacheWritePricePerMillion  *float64 `json:"cache_write_price_per_million"`
+	} `json:"token_tiers"`
+}
+
+func resolvePublishedTokenPrices(model PublishedModel) (float64, float64, *float64, *float64, bool, bool) {
+	inputPrice, outputPrice := model.InputPrice, model.OutputPrice
+	inputConfigured, outputConfigured := model.InputPriceConfigured, model.OutputPriceConfigured
+	cacheReadPrice, cacheWritePrice := model.CacheReadPrice, model.CacheWritePrice
+	var pricing publishedStructuredPricing
+	if len(model.Pricing) > 0 && json.Unmarshal(model.Pricing, &pricing) == nil && len(pricing.TokenTiers) > 0 {
+		tier := pricing.TokenTiers[0]
+		if !model.InputPriceConfigured && tier.InputPricePerMillion != nil {
+			inputPrice = *tier.InputPricePerMillion
+			inputConfigured = true
+		}
+		if !model.OutputPriceConfigured && tier.OutputPricePerMillion != nil {
+			outputPrice = *tier.OutputPricePerMillion
+			outputConfigured = true
+		}
+		if cacheReadPrice == nil {
+			cacheReadPrice = tier.CacheReadPricePerMillion
+			if cacheReadPrice == nil {
+				cacheReadPrice = tier.CachedInputPricePerMillion
+			}
+		}
+		if cacheWritePrice == nil {
+			cacheWritePrice = tier.CacheWritePricePerMillion
+		}
+	}
+	if cacheReadPrice == nil && model.CachedInputPrice != 0 {
+		value := model.CachedInputPrice
+		cacheReadPrice = &value
+	}
+	return inputPrice, outputPrice, cacheReadPrice, cacheWritePrice, inputConfigured, outputConfigured
+}
+
+func nullablePublishedPrice(value *float64) interface{} {
+	if value == nil {
+		return nil
+	}
+	return normalizePublishedPrice(*value)
 }
 
 func serializePricing(raw json.RawMessage) string {

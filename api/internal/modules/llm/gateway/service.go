@@ -459,6 +459,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 	// These were calculated during pre-deduct phase
 	totalPromptTokens := billingCtx.PromptTokens
 	totalCompletionTokens := billingCtx.CompletionTokens
+	var latestUsage *adapter.Usage
 	sawUsage := false
 	var settlement *adapter.SettlementResult
 	var lastError error
@@ -497,8 +498,10 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		}
 		// Extract token usage from response (usually in the last chunk with Done=true)
 		if response.Usage != nil {
+			response.Usage.NormalizeCacheTokens()
 			if hasBillableTokenUsage(response.Usage) {
 				sawUsage = true
+				latestUsage = response.Usage
 				totalPromptTokens = response.Usage.PromptTokens
 				totalCompletionTokens = response.Usage.CompletionTokens
 			}
@@ -554,6 +557,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		billingCtx.Status = billingContextStatusError
 		setBillingFailure(billingCtx, lastError)
 		billingCtx.PromptTokens = 0
+		billingCtx.CacheReadTokens = 0
+		billingCtx.CacheWriteTokens = 0
 		billingCtx.CompletionTokens = 0
 		billingCtx.TotalTokens = 0
 		billingCtx.ActualCredits = 0
@@ -601,6 +606,8 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			}
 			setBillingFailure(billingCtx, missingUsageErr)
 			billingCtx.PromptTokens = 0
+			billingCtx.CacheReadTokens = 0
+			billingCtx.CacheWriteTokens = 0
 			billingCtx.CompletionTokens = 0
 			billingCtx.TotalTokens = 0
 			billingCtx.ActualCredits = 0
@@ -651,15 +658,24 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		if useSystemProvider && !sawUsage {
 			clearBillingContextTokenUsage(billingCtx)
 		} else {
-			billingCtx.PromptTokens = totalPromptTokens
+			if latestUsage != nil {
+				billingCtx.PromptTokens = latestUsage.UncachedInputTokens
+				billingCtx.CacheReadTokens = latestUsage.CacheReadTokens
+				billingCtx.CacheWriteTokens = latestUsage.CacheWriteTokens
+			} else {
+				billingCtx.PromptTokens = totalPromptTokens
+			}
 			billingCtx.CompletionTokens = totalCompletionTokens
-			billingCtx.TotalTokens = totalPromptTokens + totalCompletionTokens
+			billingCtx.TotalTokens = billingCtx.PromptTokens + billingCtx.CacheReadTokens + billingCtx.CacheWriteTokens + totalCompletionTokens
 		}
 
 		billingCtx.Status = billingContextStatusSuccess
 
 		if !useSystemProvider {
-			quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), billingCtx.PromptTokens, billingCtx.CompletionTokens)
+			quote, err := s.quoteTokenPricingForSettlementUsage(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), TokenUsage{
+				InputTokens: billingCtx.PromptTokens, CacheReadTokens: billingCtx.CacheReadTokens,
+				CacheWriteTokens: billingCtx.CacheWriteTokens, OutputTokens: billingCtx.CompletionTokens,
+			})
 			if err != nil {
 				wrappedErr := wrapPricingCalculationError(err)
 				s.traceStreamingChatCompletion(ctx, req, collectedChunks.String(), startTime, time.Now(), billingCtx, totalPromptTokens, totalCompletionTokens, wrappedErr)

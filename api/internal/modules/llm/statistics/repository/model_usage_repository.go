@@ -29,6 +29,8 @@ type modelUsageSummaryRow struct {
 	FailedCount      int64 `gorm:"column:failed_count"`
 	PartialCount     int64 `gorm:"column:partial_count"`
 	PromptTokens     int64 `gorm:"column:prompt_tokens"`
+	CacheReadTokens  int64 `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens int64 `gorm:"column:cache_write_tokens"`
 	CompletionTokens int64 `gorm:"column:completion_tokens"`
 	TotalTokens      int64 `gorm:"column:total_tokens"`
 	OfficialPoints   int64 `gorm:"column:official_points"`
@@ -46,6 +48,8 @@ type modelUsageModelRow struct {
 	FailedCount      int64     `gorm:"column:failed_count"`
 	PartialCount     int64     `gorm:"column:partial_count"`
 	PromptTokens     int64     `gorm:"column:prompt_tokens"`
+	CacheReadTokens  int64     `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens int64     `gorm:"column:cache_write_tokens"`
 	CompletionTokens int64     `gorm:"column:completion_tokens"`
 	TotalTokens      int64     `gorm:"column:total_tokens"`
 	OfficialPoints   int64     `gorm:"column:official_points"`
@@ -60,6 +64,8 @@ type modelUsageAppTypeRow struct {
 	FailedCount      int64  `gorm:"column:failed_count"`
 	PartialCount     int64  `gorm:"column:partial_count"`
 	PromptTokens     int64  `gorm:"column:prompt_tokens"`
+	CacheReadTokens  int64  `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens int64  `gorm:"column:cache_write_tokens"`
 	CompletionTokens int64  `gorm:"column:completion_tokens"`
 	TotalTokens      int64  `gorm:"column:total_tokens"`
 	OfficialPoints   int64  `gorm:"column:official_points"`
@@ -74,6 +80,8 @@ type modelUsageDailyRow struct {
 	FailedCount      int64  `gorm:"column:failed_count"`
 	PartialCount     int64  `gorm:"column:partial_count"`
 	PromptTokens     int64  `gorm:"column:prompt_tokens"`
+	CacheReadTokens  int64  `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens int64  `gorm:"column:cache_write_tokens"`
 	CompletionTokens int64  `gorm:"column:completion_tokens"`
 	TotalTokens      int64  `gorm:"column:total_tokens"`
 	OfficialTokens   int64  `gorm:"column:official_tokens"`
@@ -137,6 +145,8 @@ func (r *statisticsRepositoryImpl) queryModelUsageSummary(ctx context.Context, f
 			COALESCE(SUM(CASE WHEN b.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count,
 			COALESCE(SUM(CASE WHEN b.status = 'partial' THEN 1 ELSE 0 END), 0) as partial_count,
 			COALESCE(SUM(b.prompt_tokens), 0) as prompt_tokens,
+			COALESCE(SUM(b.cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(b.cache_write_tokens), 0) as cache_write_tokens,
 			COALESCE(SUM(b.completion_tokens), 0) as completion_tokens,
 			COALESCE(SUM(b.total_tokens), 0) as total_tokens,
 			COALESCE(SUM(b.official_points), 0) as official_points,
@@ -154,6 +164,8 @@ func (r *statisticsRepositoryImpl) queryModelUsageSummary(ctx context.Context, f
 		FailedCount:      row.FailedCount,
 		PartialCount:     row.PartialCount,
 		PromptTokens:     row.PromptTokens,
+		CacheReadTokens:  row.CacheReadTokens,
+		CacheWriteTokens: row.CacheWriteTokens,
 		CompletionTokens: row.CompletionTokens,
 		TotalTokens:      row.TotalTokens,
 		OfficialPoints:   row.OfficialPoints,
@@ -176,6 +188,8 @@ func (r *statisticsRepositoryImpl) queryModelUsageByModel(ctx context.Context, f
 			COALESCE(SUM(CASE WHEN b.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count,
 			COALESCE(SUM(CASE WHEN b.status = 'partial' THEN 1 ELSE 0 END), 0) as partial_count,
 			COALESCE(SUM(b.prompt_tokens), 0) as prompt_tokens,
+			COALESCE(SUM(b.cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(b.cache_write_tokens), 0) as cache_write_tokens,
 			COALESCE(SUM(b.completion_tokens), 0) as completion_tokens,
 			COALESCE(SUM(b.total_tokens), 0) as total_tokens,
 			COALESCE(SUM(b.official_points), 0) as official_points,
@@ -204,6 +218,8 @@ func (r *statisticsRepositoryImpl) queryModelUsageByAppType(ctx context.Context,
 			COALESCE(SUM(CASE WHEN b.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count,
 			COALESCE(SUM(CASE WHEN b.status = 'partial' THEN 1 ELSE 0 END), 0) as partial_count,
 			COALESCE(SUM(b.prompt_tokens), 0) as prompt_tokens,
+			COALESCE(SUM(b.cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(b.cache_write_tokens), 0) as cache_write_tokens,
 			COALESCE(SUM(b.completion_tokens), 0) as completion_tokens,
 			COALESCE(SUM(b.total_tokens), 0) as total_tokens,
 			COALESCE(SUM(b.official_points), 0) as official_points,
@@ -231,6 +247,8 @@ func (r *statisticsRepositoryImpl) queryModelUsageDailyTrend(ctx context.Context
 			COALESCE(SUM(CASE WHEN b.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count,
 			COALESCE(SUM(CASE WHEN b.status = 'partial' THEN 1 ELSE 0 END), 0) as partial_count,
 			COALESCE(SUM(b.prompt_tokens), 0) as prompt_tokens,
+			COALESCE(SUM(b.cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(b.cache_write_tokens), 0) as cache_write_tokens,
 			COALESCE(SUM(b.completion_tokens), 0) as completion_tokens,
 			COALESCE(SUM(b.total_tokens), 0) as total_tokens,
 			COALESCE(SUM(CASE WHEN b.billing_lane = 'platform' THEN b.total_tokens ELSE 0 END), 0) as official_tokens,
@@ -294,6 +312,8 @@ func buildModelUsageByModelItems(rows []modelUsageModelRow, totalPoints int64) [
 			FailedCount:      row.FailedCount,
 			PartialCount:     row.PartialCount,
 			PromptTokens:     row.PromptTokens,
+			CacheReadTokens:  row.CacheReadTokens,
+			CacheWriteTokens: row.CacheWriteTokens,
 			CompletionTokens: row.CompletionTokens,
 			TotalTokens:      row.TotalTokens,
 			OfficialPoints:   row.OfficialPoints,
@@ -315,6 +335,8 @@ func buildModelUsageByAppTypeItems(rows []modelUsageAppTypeRow, totalPoints int6
 			FailedCount:      row.FailedCount,
 			PartialCount:     row.PartialCount,
 			PromptTokens:     row.PromptTokens,
+			CacheReadTokens:  row.CacheReadTokens,
+			CacheWriteTokens: row.CacheWriteTokens,
 			CompletionTokens: row.CompletionTokens,
 			TotalTokens:      row.TotalTokens,
 			OfficialPoints:   row.OfficialPoints,
@@ -336,6 +358,8 @@ func buildModelUsageDailyItems(rows []modelUsageDailyRow) []dto.ModelUsageDailyI
 			FailedCount:      row.FailedCount,
 			PartialCount:     row.PartialCount,
 			PromptTokens:     row.PromptTokens,
+			CacheReadTokens:  row.CacheReadTokens,
+			CacheWriteTokens: row.CacheWriteTokens,
 			CompletionTokens: row.CompletionTokens,
 			TotalTokens:      row.TotalTokens,
 			OfficialTokens:   row.OfficialTokens,

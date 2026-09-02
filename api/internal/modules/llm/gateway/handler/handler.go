@@ -311,6 +311,9 @@ func recordServiceError(c *gin.Context, err error) {
 }
 
 func serviceFailureReportHint(err error) observability.FailureReportHint {
+	if gateway.IsClientIOError(err) {
+		return observability.FailureReportHint{Suppress: true}
+	}
 	if gateway.IsProviderFailureReported(err) {
 		return observability.FailureReportHint{Suppress: true}
 	}
@@ -404,6 +407,9 @@ func recordStreamServiceError(c *gin.Context, err error) {
 }
 
 func streamFailureReportHint(err error) observability.FailureReportHint {
+	if gateway.IsClientIOError(err) {
+		return observability.FailureReportHint{Suppress: true}
+	}
 	if adapter.IsDeterministicRejection(err) {
 		return observability.FailureReportHint{Suppress: true}
 	}

@@ -39,7 +39,7 @@ func hasBillableTokenUsage(usage *adapter.Usage) bool {
 	if usage == nil {
 		return false
 	}
-	return usage.PromptTokens > 0 || usage.CompletionTokens > 0
+	return usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.CacheReadTokens > 0 || usage.CacheWriteTokens > 0
 }
 
 func missingTokenUsageError(providerName, modelName string) error {
@@ -486,6 +486,8 @@ func (s *llmGatewayServiceImpl) handleProviderError(
 	billingCtx.ResponseTime = responseTime
 	billingCtx.ActualCredits = 0
 	billingCtx.PromptTokens = 0
+	billingCtx.CacheReadTokens = 0
+	billingCtx.CacheWriteTokens = 0
 	billingCtx.CompletionTokens = 0
 	billingCtx.TotalTokens = 0
 	billingCtx.TotalCost = decimal.Zero
@@ -546,6 +548,9 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	settlement *adapter.SettlementResult,
 	responseTime int64,
 ) error {
+	if usage != nil {
+		usage.NormalizeCacheTokens()
+	}
 	s.recordUpstreamProviderSuccess(ctx, providerSelection, billingCtx)
 	decision, laneErr := s.resolveBillingDecision(providerSelection, billingCtx)
 	if laneErr != nil {
@@ -564,9 +569,11 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 
 	if decision.UseSystemProvider {
 		if hasBillableTokenUsage(usage) {
-			billingCtx.PromptTokens = usage.PromptTokens
+			billingCtx.PromptTokens = usage.UncachedInputTokens
+			billingCtx.CacheReadTokens = usage.CacheReadTokens
+			billingCtx.CacheWriteTokens = usage.CacheWriteTokens
 			billingCtx.CompletionTokens = usage.CompletionTokens
-			billingCtx.TotalTokens = usage.TotalTokens
+			billingCtx.TotalTokens = usage.UncachedInputTokens + usage.CacheReadTokens + usage.CacheWriteTokens + usage.CompletionTokens
 		} else {
 			clearBillingContextTokenUsage(billingCtx)
 		}
@@ -594,10 +601,13 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 		return err
 	}
 
-	actualPromptTokens := usage.PromptTokens
+	actualPromptTokens := usage.UncachedInputTokens
 	actualCompletionTokens := usage.CompletionTokens
 
-	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), actualPromptTokens, actualCompletionTokens)
+	quote, err := s.quoteTokenPricingForSettlementUsage(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), TokenUsage{
+		InputTokens: actualPromptTokens, CacheReadTokens: usage.CacheReadTokens,
+		CacheWriteTokens: usage.CacheWriteTokens, OutputTokens: actualCompletionTokens,
+	})
 	if err != nil {
 		return wrapPricingCalculationError(err)
 	}
@@ -605,8 +615,10 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	billingCtx.ActualCredits = quote.TotalCredits
 
 	billingCtx.PromptTokens = actualPromptTokens
+	billingCtx.CacheReadTokens = usage.CacheReadTokens
+	billingCtx.CacheWriteTokens = usage.CacheWriteTokens
 	billingCtx.CompletionTokens = actualCompletionTokens
-	billingCtx.TotalTokens = usage.TotalTokens
+	billingCtx.TotalTokens = actualPromptTokens + usage.CacheReadTokens + usage.CacheWriteTokens + actualCompletionTokens
 
 	applyPricingQuoteToBillingContext(billingCtx, quote)
 
@@ -653,6 +665,8 @@ func clearBillingContextTokenUsage(billingCtx *BillingContext) {
 		return
 	}
 	billingCtx.PromptTokens = 0
+	billingCtx.CacheReadTokens = 0
+	billingCtx.CacheWriteTokens = 0
 	billingCtx.CompletionTokens = 0
 	billingCtx.TotalTokens = 0
 }

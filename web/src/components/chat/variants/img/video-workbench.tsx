@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Image from 'next/image';
+import { useSearchParams } from 'next/navigation';
 import {
   CalendarClock,
   CheckCircle2,
@@ -155,6 +156,7 @@ const DEFAULT_VIDEO_GENERATION_OPTIONS: VideoGenerationOptions = {
 
 export function VideoWorkbench() {
   const t = useT('webapp');
+  const searchParams = useSearchParams();
   const { models, isLoading, error } = useAvailableModels({
     use_case: 'video-gen',
   });
@@ -174,10 +176,12 @@ export function VideoWorkbench() {
   const generateMutation = useGenerateVideoTask();
   const deleteTaskMutation = useDeleteVideoTask();
   const prefetchTaskDetail = usePrefetchVideoRuntimeTask();
-  const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>({
-    provider: '',
-    model: '',
-  });
+  const requestedProvider = searchParams.get('provider')?.trim() ?? '';
+  const requestedModel = searchParams.get('model')?.trim() ?? '';
+  const [selectedModel, setSelectedModel] = React.useState<ModelSelectorValue>(() => ({
+    provider: requestedProvider,
+    model: requestedModel,
+  }));
   const [prompt, setPrompt] = React.useState('');
   const [settings, setSettings] = React.useState<VideoGenerationSettings>(DEFAULT_VIDEO_SETTINGS);
   const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(null);
@@ -280,6 +284,8 @@ export function VideoWorkbench() {
   }, []);
 
   React.useEffect(() => {
+    if (isLoading) return;
+
     if (selectedModel.model) {
       const stillAvailable = models.some(
         model => model.provider === selectedModel.provider && model.model === selectedModel.model
@@ -296,7 +302,7 @@ export function VideoWorkbench() {
     }
 
     setSelectedModel({ provider: fallback.provider, model: fallback.model });
-  }, [models, selectedModel.model, selectedModel.provider]);
+  }, [isLoading, models, selectedModel.model, selectedModel.provider]);
 
   const handleGenerate = React.useCallback(async () => {
     if (submitLockRef.current) return;
@@ -2008,7 +2014,7 @@ function ReferenceMaterialButton({
         type="button"
         disabled={disabled}
         className={cn(
-          'flex size-[90px] shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border bg-muted/20 text-muted-foreground transition',
+          'flex h-[90px] min-w-[90px] max-w-full shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border bg-muted/20 px-2 text-muted-foreground transition sm:w-auto',
           disabled
             ? 'cursor-not-allowed opacity-50'
             : 'hover:border-border-strong hover:bg-muted/30 hover:text-foreground'
@@ -2016,7 +2022,9 @@ function ReferenceMaterialButton({
         onClick={() => inputRef.current?.click()}
       >
         <ImagePlus className="h-4 w-4" />
-        <span className="text-[11px] font-medium leading-none">{referenceLabel}</span>
+        <span className="max-w-full text-center text-[11px] font-medium leading-tight break-words">
+          {referenceLabel}
+        </span>
       </button>
 
       {files.length > 0 ? (

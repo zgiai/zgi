@@ -22,6 +22,7 @@ const (
 	billingAttemptStatusPartial         = "PARTIAL_SETTLED"
 	billingAttemptStatusPredeductFailed = "PREDEDUCT_FAILED"
 	billingAttemptStatusDeadLetter      = "DEAD_LETTER"
+	billingAttemptStatusCompensated     = "COMPENSATED"
 
 	billingEntryTypeSubject = "subject"
 	billingEntryTypeFund    = "fund"
@@ -30,10 +31,11 @@ const (
 	billingLedgerTypeOrgFunds      = "org_funds"
 	billingLedgerTypeChannelWallet = "channel_wallet"
 
-	billingEntryStatusPending = "PENDING"
-	billingEntryStatusSettled = "SETTLED"
-	billingEntryStatusRolled  = "ROLLED_BACK"
-	billingEntryStatusFailed  = "FAILED"
+	billingEntryStatusPending  = "PENDING"
+	billingEntryStatusSettled  = "SETTLED"
+	billingEntryStatusRolled   = "ROLLED_BACK"
+	billingEntryStatusFailed   = "FAILED"
+	billingEntryStatusRefunded = "REFUNDED"
 
 	channelWalletStatusActive = "ACTIVE"
 	channelWalletStatusDebt   = "DEBT"
@@ -43,9 +45,16 @@ const (
 	channelWalletTxTypeRefund           = "refund"
 	channelWalletTxTypeRollback         = "rollback"
 
-	billingPhasePreDeduct = "prededuct"
-	billingPhaseSettle    = "settle"
+	billingPhasePreDeduct  = "prededuct"
+	billingPhaseSettle     = "settle"
+	billingPhaseCompensate = "compensate"
 )
+
+func billingAttemptStatusIsFinalized(status string) bool {
+	return status == billingAttemptStatusSettled ||
+		status == billingAttemptStatusRolledBack ||
+		status == billingAttemptStatusCompensated
+}
 
 type BillingAttempt struct {
 	AttemptID         string           `gorm:"column:attempt_id;primaryKey;size:120"`

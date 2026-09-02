@@ -134,7 +134,7 @@ func TestClaudeAdapterChatCompletionStream_EmitsToolCallsAndUsage(t *testing.T) 
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "event: message_start\n")
-		fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-0\",\"usage\":{\"input_tokens\":28,\"output_tokens\":0}}}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-0\",\"usage\":{\"input_tokens\":28,\"cache_read_input_tokens\":18,\"cache_creation_input_tokens\":10,\"output_tokens\":0}}}\n\n")
 		fmt.Fprint(w, "event: content_block_start\n")
 		fmt.Fprint(w, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup_weather\",\"input\":{}}}\n\n")
 		fmt.Fprint(w, "event: content_block_delta\n")
@@ -142,7 +142,7 @@ func TestClaudeAdapterChatCompletionStream_EmitsToolCallsAndUsage(t *testing.T) 
 		fmt.Fprint(w, "event: content_block_delta\n")
 		fmt.Fprint(w, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"hai\\\"}\"}}\n\n")
 		fmt.Fprint(w, "event: message_delta\n")
-		fmt.Fprint(w, "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"input_tokens\":28,\"output_tokens\":52}}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":52}}\n\n")
 		fmt.Fprint(w, "event: message_stop\n")
 		fmt.Fprint(w, "data: {\"type\":\"message_stop\"}\n\n")
 		flusher.Flush()
@@ -204,8 +204,8 @@ func TestClaudeAdapterChatCompletionStream_EmitsToolCallsAndUsage(t *testing.T) 
 	if !finalDoneSeen {
 		t.Fatal("expected final done chunk")
 	}
-	if finalUsage == nil || finalUsage.PromptTokens != 28 || finalUsage.CompletionTokens != 52 || finalUsage.TotalTokens != 80 {
-		t.Fatalf("usage = %+v, want prompt=28 completion=52 total=80", finalUsage)
+	if finalUsage == nil || finalUsage.PromptTokens != 56 || finalUsage.UncachedInputTokens != 28 || finalUsage.CacheReadTokens != 18 || finalUsage.CacheWriteTokens != 10 || finalUsage.CompletionTokens != 52 || finalUsage.TotalTokens != 108 {
+		t.Fatalf("usage = %+v, want uncached=28 cache_read=18 cache_write=10 completion=52 total=108", finalUsage)
 	}
 }
 
@@ -240,7 +240,7 @@ func TestClaudeAdapterCreateAnthropicMessage_UsesMessagesEndpointAndRawBody(t *t
 			"content":[{"type":"text","text":"ok"}],
 			"stop_reason":"end_turn",
 			"stop_sequence":null,
-			"usage":{"input_tokens":8,"output_tokens":5}
+			"usage":{"input_tokens":30,"cache_read_input_tokens":20,"cache_creation_input_tokens":10,"output_tokens":5}
 		}`)
 	}))
 	defer server.Close()
@@ -279,8 +279,8 @@ func TestClaudeAdapterCreateAnthropicMessage_UsesMessagesEndpointAndRawBody(t *t
 	if gotPayload["model"] != "claude-sonnet-4-0" || gotPayload["max_tokens"] != float64(64) {
 		t.Fatalf("payload = %#v, want raw messages body", gotPayload)
 	}
-	if resp.Usage == nil || resp.Usage.PromptTokens != 8 || resp.Usage.CompletionTokens != 5 || resp.Usage.TotalTokens != 13 {
-		t.Fatalf("usage = %+v, want prompt=8 completion=5 total=13", resp.Usage)
+	if resp.Usage == nil || resp.Usage.PromptTokens != 60 || resp.Usage.UncachedInputTokens != 30 || resp.Usage.CacheReadTokens != 20 || resp.Usage.CacheWriteTokens != 10 || resp.Usage.CompletionTokens != 5 || resp.Usage.TotalTokens != 65 {
+		t.Fatalf("usage = %+v, want uncached=30 cache_read=20 cache_write=10 completion=5 total=65", resp.Usage)
 	}
 }
 
@@ -304,7 +304,7 @@ func TestClaudeAdapterCreateAnthropicMessageStream_EmitsNativeMessagesEvents(t *
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "event: message_start\n")
-		fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-0\",\"usage\":{\"input_tokens\":9,\"output_tokens\":0}}}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-0\",\"usage\":{\"input_tokens\":30,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":10,\"output_tokens\":0}}}\n\n")
 		fmt.Fprint(w, "event: content_block_start\n")
 		fmt.Fprint(w, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
 		fmt.Fprint(w, "event: content_block_delta\n")
@@ -365,8 +365,8 @@ func TestClaudeAdapterCreateAnthropicMessageStream_EmitsNativeMessagesEvents(t *
 	if strings.Join(events, ",") != strings.Join(wantEvents, ",") {
 		t.Fatalf("events = %#v, want %#v", events, wantEvents)
 	}
-	if usage == nil || usage.PromptTokens != 9 || usage.CompletionTokens != 4 || usage.TotalTokens != 13 {
-		t.Fatalf("usage = %+v, want prompt=9 completion=4 total=13", usage)
+	if usage == nil || usage.PromptTokens != 60 || usage.UncachedInputTokens != 30 || usage.CacheReadTokens != 20 || usage.CacheWriteTokens != 10 || usage.CompletionTokens != 4 || usage.TotalTokens != 64 {
+		t.Fatalf("usage = %+v, want uncached=30 cache_read=20 cache_write=10 completion=4 total=64", usage)
 	}
 }
 

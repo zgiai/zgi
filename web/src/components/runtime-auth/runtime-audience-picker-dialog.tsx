@@ -18,20 +18,21 @@ import {
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useCurrentOrganizationMember } from '@/hooks/organization/use-current-organization-member';
 import { useCurrentOrganizationMembers } from '@/hooks/organization/use-current-organization-members';
 import { useDepartments } from '@/hooks/organization/use-departments';
 import { useWorkspaces } from '@/hooks/workspace/use-workspaces';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { Department, Member } from '@/services/types/organization';
-import type { WorkspaceManagement } from '@/services/types/workspace';
 
 export type RuntimeAudienceSubjectType = 'organization' | 'department' | 'workspace' | 'account';
 
 export interface RuntimeAudienceGrant {
   subject_type: RuntimeAudienceSubjectType;
   subject_id: string;
+  subject_detail?: {
+    display_name: string;
+  };
 }
 
 interface RuntimeAudiencePickerDialogProps {
@@ -85,6 +86,7 @@ export function dedupeRuntimeAudienceGrants(
     normalized.push({
       subject_type: grant.subject_type,
       subject_id: subjectId,
+      subject_detail: grant.subject_detail,
     });
   }
 
@@ -96,15 +98,6 @@ function flattenDepartments(departments: Department[], depth = 0): DepartmentRow
     { department, depth },
     ...flattenDepartments(department.children ?? [], depth + 1),
   ]);
-}
-
-function buildDepartmentMap(departments: Department[]): Map<string, Department> {
-  const rows = flattenDepartments(departments);
-  return new Map(rows.map(row => [row.department.id, row.department]));
-}
-
-function buildWorkspaceMap(workspaces: WorkspaceManagement[]): Map<string, WorkspaceManagement> {
-  return new Map(workspaces.map(workspace => [workspace.id, workspace]));
 }
 
 function workspaceDisplayName(name: string, defaultWorkspaceLabel: string): string {
@@ -244,6 +237,7 @@ export function RuntimeAudiencePickerDialog({
                             const grant: RuntimeAudienceGrant = {
                               subject_type: 'department',
                               subject_id: row.department.id,
+                              subject_detail: { display_name: row.department.name },
                             };
                             const key = grantKey(grant);
                             const checked = selectedKeys.has(key);
@@ -322,6 +316,7 @@ export function RuntimeAudiencePickerDialog({
                             const grant: RuntimeAudienceGrant = {
                               subject_type: 'workspace',
                               subject_id: workspace.id,
+                              subject_detail: { display_name: workspace.name },
                             };
                             const key = grantKey(grant);
                             const checked = selectedKeys.has(key);
@@ -397,6 +392,9 @@ export function RuntimeAudiencePickerDialog({
                               const grant: RuntimeAudienceGrant = {
                                 subject_type: 'account',
                                 subject_id: member.id,
+                                subject_detail: {
+                                  display_name: getRuntimeAudienceMemberLabel(member),
+                                },
                               };
                               const key = grantKey(grant);
                               const checked = selectedKeys.has(key);
@@ -480,7 +478,6 @@ export function RuntimeAudiencePickerDialog({
                 value={draft}
                 disabled={disabled}
                 emptyText={t('picker.emptySelected')}
-                lookupEnabled={open}
                 onRemove={removeGrant}
               />
             </div>
@@ -505,7 +502,6 @@ interface RuntimeAudienceChipListProps {
   disabled?: boolean;
   emptyText: string;
   className?: string;
-  lookupEnabled?: boolean;
   onRemove?: (grant: RuntimeAudienceGrant) => void;
 }
 
@@ -514,30 +510,9 @@ export function RuntimeAudienceChipList({
   disabled = false,
   emptyText,
   className,
-  lookupEnabled = true,
   onRemove,
 }: RuntimeAudienceChipListProps) {
   const normalized = useMemo(() => dedupeRuntimeAudienceGrants(value), [value]);
-  const shouldLookupDepartments =
-    lookupEnabled && normalized.some(grant => grant.subject_type === 'department');
-  const shouldLookupWorkspaces =
-    lookupEnabled && normalized.some(grant => grant.subject_type === 'workspace');
-  const { departments, isLoading, isFetching, error } = useDepartments({
-    enabled: shouldLookupDepartments,
-  });
-  const {
-    workspaces,
-    isLoading: isWorkspacesLoading,
-    isFetching: isWorkspacesFetching,
-    error: workspacesError,
-  } = useWorkspaces('', 1, 1000, {
-    keepPreviousData: true,
-    enabled: shouldLookupWorkspaces,
-  });
-  const departmentById = useMemo(() => buildDepartmentMap(departments), [departments]);
-  const workspaceById = useMemo(() => buildWorkspaceMap(workspaces), [workspaces]);
-  const isDepartmentLookupLoading = isLoading || isFetching;
-  const isWorkspaceLookupLoading = isWorkspacesLoading || isWorkspacesFetching;
 
   if (normalized.length === 0) {
     return (
@@ -554,12 +529,6 @@ export function RuntimeAudienceChipList({
           key={grantKey(grant)}
           grant={grant}
           disabled={disabled}
-          departmentById={departmentById}
-          workspaceById={workspaceById}
-          isDepartmentLookupLoading={isDepartmentLookupLoading}
-          isWorkspaceLookupLoading={isWorkspaceLookupLoading}
-          departmentLookupError={error}
-          workspaceLookupError={workspacesError}
           onRemove={onRemove}
         />
       ))}
@@ -570,83 +539,25 @@ export function RuntimeAudienceChipList({
 function RuntimeAudienceChip({
   grant,
   disabled,
-  departmentById,
-  workspaceById,
-  isDepartmentLookupLoading,
-  isWorkspaceLookupLoading,
-  departmentLookupError,
-  workspaceLookupError,
   onRemove,
 }: {
   grant: RuntimeAudienceGrant;
   disabled: boolean;
-  departmentById: Map<string, Department>;
-  workspaceById: Map<string, WorkspaceManagement>;
-  isDepartmentLookupLoading: boolean;
-  isWorkspaceLookupLoading: boolean;
-  departmentLookupError: string | null;
-  workspaceLookupError: string | null;
   onRemove?: (grant: RuntimeAudienceGrant) => void;
 }) {
   const t = useT('agents.runtimeAccess');
   const tNavigation = useT('navigation');
   const normalizedSubjectId = grant.subject_id.trim();
-  const {
-    member,
-    isLoading: isAccountLoading,
-    isFetching: isAccountFetching,
-    error: accountLookupError,
-  } = useCurrentOrganizationMember(normalizedSubjectId, {
-    enabled: grant.subject_type === 'account' && Boolean(normalizedSubjectId),
-  });
-  const accountLoading = isAccountLoading || isAccountFetching;
-  const department =
-    grant.subject_type === 'department' ? departmentById.get(normalizedSubjectId) : null;
-  const workspace =
-    grant.subject_type === 'workspace' ? workspaceById.get(normalizedSubjectId) : null;
+  const displayName = grant.subject_detail?.display_name.trim();
   const missingSelection = grant.subject_type !== 'organization' && !normalizedSubjectId;
-  const accountLookupFailed =
-    grant.subject_type === 'account' &&
-    Boolean(normalizedSubjectId) &&
-    Boolean(accountLookupError) &&
-    !member &&
-    !accountLoading;
   const accountUnresolved =
-    grant.subject_type === 'account' &&
-    Boolean(normalizedSubjectId) &&
-    !accountLookupError &&
-    !member &&
-    !accountLoading;
-  const departmentLookupFailed =
-    grant.subject_type === 'department' &&
-    Boolean(normalizedSubjectId) &&
-    !isDepartmentLookupLoading &&
-    Boolean(departmentLookupError);
+    grant.subject_type === 'account' && Boolean(normalizedSubjectId) && !displayName;
   const departmentUnresolved =
-    grant.subject_type === 'department' &&
-    Boolean(normalizedSubjectId) &&
-    !isDepartmentLookupLoading &&
-    !departmentLookupError &&
-    !department;
-  const workspaceLookupFailed =
-    grant.subject_type === 'workspace' &&
-    Boolean(normalizedSubjectId) &&
-    !isWorkspaceLookupLoading &&
-    Boolean(workspaceLookupError);
+    grant.subject_type === 'department' && Boolean(normalizedSubjectId) && !displayName;
   const workspaceUnresolved =
-    grant.subject_type === 'workspace' &&
-    Boolean(normalizedSubjectId) &&
-    !isWorkspaceLookupLoading &&
-    !workspaceLookupError &&
-    !workspace;
+    grant.subject_type === 'workspace' && Boolean(normalizedSubjectId) && !displayName;
   const needsAttention =
-    missingSelection ||
-    accountLookupFailed ||
-    accountUnresolved ||
-    departmentLookupFailed ||
-    departmentUnresolved ||
-    workspaceLookupFailed ||
-    workspaceUnresolved;
+    missingSelection || accountUnresolved || departmentUnresolved || workspaceUnresolved;
   const icon =
     grant.subject_type === 'organization' ? (
       <Users className="h-4 w-4" />
@@ -661,28 +572,18 @@ function RuntimeAudienceChip({
     grant.subject_type === 'organization'
       ? t('grants.organizationWide')
       : grant.subject_type === 'department'
-        ? departmentLookupFailed
-          ? `${t('grants.departmentLookupFailed')}: ${normalizedSubjectId}`
-          : departmentUnresolved
-            ? `${t('grants.unresolvedDepartment')}: ${normalizedSubjectId}`
-            : department?.name || normalizedSubjectId || t('grants.departmentPlaceholder')
+        ? departmentUnresolved
+          ? `${t('grants.unresolvedDepartment')}: ${normalizedSubjectId}`
+          : displayName || normalizedSubjectId || t('grants.departmentPlaceholder')
         : grant.subject_type === 'workspace'
-          ? workspaceLookupFailed
-            ? `${t('grants.workspaceLookupFailed')}: ${normalizedSubjectId}`
-            : workspaceUnresolved
-              ? `${t('grants.unresolvedWorkspace')}: ${normalizedSubjectId}`
-              : workspace
-                ? workspaceDisplayName(workspace.name, tNavigation('defaultWorkspace'))
-                : normalizedSubjectId || t('grants.workspacePlaceholder')
-          : accountLoading && !member
-            ? t('grants.resolvingAccount')
-            : accountLookupFailed
-              ? `${t('grants.accountLookupFailed')}: ${normalizedSubjectId}`
-              : accountUnresolved
-                ? `${t('grants.unresolvedAccount')}: ${normalizedSubjectId}`
-                : member
-                  ? getRuntimeAudienceMemberLabel(member)
-                  : normalizedSubjectId || t('grants.accountPlaceholder');
+          ? workspaceUnresolved
+            ? `${t('grants.unresolvedWorkspace')}: ${normalizedSubjectId}`
+            : displayName
+              ? workspaceDisplayName(displayName, tNavigation('defaultWorkspace'))
+              : normalizedSubjectId || t('grants.workspacePlaceholder')
+          : accountUnresolved
+            ? `${t('grants.unresolvedAccount')}: ${normalizedSubjectId}`
+            : displayName || normalizedSubjectId || t('grants.accountPlaceholder');
 
   return (
     <Badge

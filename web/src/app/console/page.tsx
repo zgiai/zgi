@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation';
+import { WorkspaceHome } from '@/components/console/workspace-home';
 
-export default function ConsolePage() {
-  redirect('/console/work/chat');
+export default function ConsoleHomePage() {
+  return <WorkspaceHome />;
 }

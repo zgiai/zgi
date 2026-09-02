@@ -33,13 +33,209 @@ func TestMiniMaxAdapterGetProviderInfo_UsesDocumentedCapabilities(t *testing.T) 
 	if !containsMiniMaxValue(info.Capabilities, "chat") ||
 		!containsMiniMaxValue(info.Capabilities, "stream") ||
 		!containsMiniMaxValue(info.Capabilities, "image") ||
+		!containsMiniMaxValue(info.Capabilities, "music") ||
+		!containsMiniMaxValue(info.Capabilities, "lyrics") ||
 		!containsMiniMaxValue(info.Capabilities, "model_listing") {
-		t.Fatalf("Capabilities = %#v, want chat+stream+image+model_listing", info.Capabilities)
+		t.Fatalf("Capabilities = %#v, want chat+stream+image+music+lyrics+model_listing", info.Capabilities)
 	}
 	if containsMiniMaxValue(info.Capabilities, "embedding") ||
 		containsMiniMaxValue(info.Capabilities, "rerank") ||
 		containsMiniMaxValue(info.Capabilities, "completion") {
 		t.Fatalf("Capabilities = %#v, should not advertise undocumented capabilities", info.Capabilities)
+	}
+}
+
+func TestMiniMaxAdapterGenerateMusic_MapsModesAndCompletesStream(t *testing.T) {
+	tests := []struct {
+		name             string
+		request          adapter.MusicRequest
+		wantLyrics       string
+		wantInstrumental bool
+		wantOptimizer    bool
+	}{
+		{
+			name: "vocal",
+			request: adapter.MusicRequest{
+				Model:          "music-2.0",
+				Mode:           adapter.MusicModeVocal,
+				Lyrics:         "[Verse]\nhello",
+				ResponseFormat: "mp3",
+			},
+			wantLyrics: "[Verse]\nhello",
+		},
+		{
+			name: "automatic lyrics",
+			request: adapter.MusicRequest{
+				Model:          "music-2.0",
+				Mode:           adapter.MusicModeAutoLyrics,
+				Prompt:         "warm folk",
+				ResponseFormat: "mp3",
+			},
+			wantOptimizer: true,
+		},
+		{
+			name: "instrumental",
+			request: adapter.MusicRequest{
+				Model:          "music-2.0",
+				Mode:           adapter.MusicModeInstrumental,
+				Prompt:         "warm piano",
+				ResponseFormat: "mp3",
+			},
+			wantInstrumental: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var payload map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got, want := r.URL.Path, "/music_generation"; got != want {
+					t.Fatalf("path = %q, want %q", got, want)
+				}
+				if got, want := r.Header.Get("Authorization"), "Bearer config-key"; got != want {
+					t.Fatalf("Authorization = %q, want %q", got, want)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+				fmt.Fprint(w, "data: {\"data\":{\"audio\":\"4d5033\",\"status\":1},\"base_resp\":{\"status_code\":0}}\n\n")
+				fmt.Fprint(w, "data: {\"data\":{\"status\":2},\"base_resp\":{\"status_code\":0}}\n\n")
+			}))
+			defer server.Close()
+
+			a, err := NewMiniMaxAdapter(&adapter.AdapterConfig{APIKey: "config-key", BaseURL: server.URL})
+			if err != nil {
+				t.Fatalf("NewMiniMaxAdapter() error = %v", err)
+			}
+			var audio strings.Builder
+			if err := a.GenerateMusic(t.Context(), &tt.request, &audio); err != nil {
+				t.Fatalf("GenerateMusic() error = %v", err)
+			}
+			if got, want := audio.String(), "MP3"; got != want {
+				t.Fatalf("audio = %q, want %q", got, want)
+			}
+			if got := payload["lyrics"]; got != nil && got != tt.wantLyrics {
+				t.Fatalf("lyrics = %#v, want %q or omitted", got, tt.wantLyrics)
+			}
+			if got, _ := payload["is_instrumental"].(bool); got != tt.wantInstrumental {
+				t.Fatalf("is_instrumental = %v, want %v", got, tt.wantInstrumental)
+			}
+			if got, _ := payload["lyrics_optimizer"].(bool); got != tt.wantOptimizer {
+				t.Fatalf("lyrics_optimizer = %v, want %v", got, tt.wantOptimizer)
+			}
+			if payload["stream"] != true || payload["output_format"] != "hex" {
+				t.Fatalf("stream payload = %#v, want stream=true and output_format=hex", payload)
+			}
+		})
+	}
+}
+
+func TestMiniMaxAdapterGenerateMusic_RejectsIncompleteStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"data\":{\"audio\":\"4d5033\",\"status\":1},\"base_resp\":{\"status_code\":0}}\n\n")
+	}))
+	defer server.Close()
+
+	a, err := NewMiniMaxAdapter(&adapter.AdapterConfig{APIKey: "config-key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("NewMiniMaxAdapter() error = %v", err)
+	}
+	err = a.GenerateMusic(t.Context(), &adapter.MusicRequest{
+		Model:          "music-2.0",
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         "warm piano",
+		ResponseFormat: "mp3",
+	}, &strings.Builder{})
+	if !errors.Is(err, adapter.ErrMusicStreamIncomplete) {
+		t.Fatalf("GenerateMusic() error = %v, want ErrMusicStreamIncomplete", err)
+	}
+}
+
+func TestMiniMaxAdapterGenerateLyrics_UsesNativeEndpoint(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/lyrics_generation"; got != want {
+			t.Fatalf("path = %q, want %q", got, want)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		fmt.Fprint(w, `{"song_title":"After Rain","style_tags":"Folk, Acoustic","lyrics":"[Verse]\nhello","base_resp":{"status_code":0,"status_msg":"success"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewMiniMaxAdapter(&adapter.AdapterConfig{APIKey: "config-key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("NewMiniMaxAdapter() error = %v", err)
+	}
+	result, err := a.GenerateLyrics(t.Context(), &adapter.LyricsRequest{Model: "music-2.0", Prompt: "warm folk"})
+	if err != nil {
+		t.Fatalf("GenerateLyrics() error = %v", err)
+	}
+	if payload["mode"] != "write_full_song" || payload["prompt"] != "warm folk" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if result.Title != "After Rain" || result.Lyrics == "" || len(result.StyleTags) != 2 {
+		t.Fatalf("GenerateLyrics() result = %#v", result)
+	}
+}
+
+func TestMiniMaxAdapterGenerateMusic_DoesNotFollowRedirect(t *testing.T) {
+	var redirectedCalls int
+	redirected := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectedCalls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"data\":{\"audio\":\"4d5033\",\"status\":2},\"base_resp\":{\"status_code\":0}}\n\n")
+	}))
+	defer redirected.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirected.URL+"/music_generation", http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	a, err := NewMiniMaxAdapter(&adapter.AdapterConfig{APIKey: "config-key", BaseURL: origin.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = a.GenerateMusic(t.Context(), &adapter.MusicRequest{
+		Model:          "music-3.0",
+		Mode:           adapter.MusicModeInstrumental,
+		Prompt:         "warm piano",
+		ResponseFormat: "mp3",
+	}, &strings.Builder{})
+	if err == nil {
+		t.Fatal("GenerateMusic() error = nil, want redirect rejection")
+	}
+	if redirectedCalls != 0 {
+		t.Fatalf("redirected calls = %d, want 0", redirectedCalls)
+	}
+}
+
+func TestMiniMaxAdapterGenerateLyrics_DoesNotRetryAfterDispatch(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"base_resp":{"status_code":1000,"status_msg":"failed"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"song_title":"duplicate","lyrics":"duplicate","base_resp":{"status_code":0}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewMiniMaxAdapter(&adapter.AdapterConfig{APIKey: "config-key", BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.GenerateLyrics(t.Context(), &adapter.LyricsRequest{Model: "music-3.0", Prompt: "warm folk"})
+	if err == nil {
+		t.Fatal("GenerateLyrics() error = nil, want first dispatch failure")
+	}
+	if calls != 1 {
+		t.Fatalf("lyrics calls = %d, want 1", calls)
 	}
 }
 
