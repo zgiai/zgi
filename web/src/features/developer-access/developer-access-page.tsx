@@ -180,11 +180,19 @@ function AuditList({
   loading,
   error,
   showPrincipal,
+  total,
+  page,
+  pageSize,
+  onPageChange,
 }: {
   items: DeveloperAccessAuditItem[];
   loading: boolean;
   error: boolean;
   showPrincipal: boolean;
+  total: number;
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
 }) {
   const t = useT('apikeys.developerAccess');
   if (error) {
@@ -193,76 +201,108 @@ function AuditList({
   if (loading) {
     return <Skeleton className="h-56 w-full" />;
   }
-  if (!items.length) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (!items.length && page <= 1) {
     return <EmptyState title={t('audit.empty')} description={t('audit.emptyDescription')} />;
   }
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          {showPrincipal ? <TableHead>{t('audit.member')}</TableHead> : null}
-          <TableHead>{t('audit.key')}</TableHead>
-          <TableHead>{t('audit.model')}</TableHead>
-          <TableHead>{t('audit.status')}</TableHead>
-          <TableHead>{t('audit.tokens')}</TableHead>
-          <TableHead>{t('audit.points')}</TableHead>
-          <TableHead>{t('audit.time')}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {items.map(item => (
-          <TableRow key={item.attempt_id}>
-            {showPrincipal ? (
-              <TableCell>
-                <div className="max-w-48">
-                  <p className="truncate font-medium">
-                    {item.principal_name || item.principal_id.slice(0, 8)}
-                  </p>
-                  {item.principal_email ? (
-                    <p className="truncate text-muted-foreground">{item.principal_email}</p>
+    <>
+      {items.length ? (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {showPrincipal ? <TableHead>{t('audit.member')}</TableHead> : null}
+              <TableHead>{t('audit.key')}</TableHead>
+              <TableHead>{t('audit.model')}</TableHead>
+              <TableHead>{t('audit.status')}</TableHead>
+              <TableHead>{t('audit.tokens')}</TableHead>
+              <TableHead>{t('audit.points')}</TableHead>
+              <TableHead>{t('audit.time')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map(item => (
+              <TableRow key={item.attempt_id}>
+                {showPrincipal ? (
+                  <TableCell>
+                    <div className="max-w-48">
+                      <p className="truncate font-medium">
+                        {item.principal_name || item.principal_id.slice(0, 8)}
+                      </p>
+                      {item.principal_email ? (
+                        <p className="truncate text-muted-foreground">{item.principal_email}</p>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                ) : null}
+                <TableCell>
+                  <div className="max-w-44">
+                    <p className="truncate font-medium">
+                      {item.api_key_name || item.api_key_id.slice(0, 8)}
+                    </p>
+                    <code className="text-[11px] text-muted-foreground">
+                      {item.api_key_masked || '—'}
+                    </code>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="max-w-40">
+                    <p className="truncate font-medium">{item.model_name}</p>
+                    <p className="truncate text-muted-foreground">{item.provider_name}</p>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge variant={statusVariant(item.status)}>{t(`statuses.${item.status}`)}</Badge>
+                  {item.error_code ? (
+                    <p className="mt-1 max-w-32 truncate text-destructive">{item.error_code}</p>
                   ) : null}
-                </div>
-              </TableCell>
-            ) : null}
-            <TableCell>
-              <div className="max-w-44">
-                <p className="truncate font-medium">
-                  {item.api_key_name || item.api_key_id.slice(0, 8)}
-                </p>
-                <code className="text-[11px] text-muted-foreground">
-                  {item.api_key_masked || '—'}
-                </code>
-              </div>
-            </TableCell>
-            <TableCell>
-              <div className="max-w-40">
-                <p className="truncate font-medium">{item.model_name}</p>
-                <p className="truncate text-muted-foreground">{item.provider_name}</p>
-              </div>
-            </TableCell>
-            <TableCell>
-              <Badge variant={statusVariant(item.status)}>{t(`statuses.${item.status}`)}</Badge>
-              {item.error_code ? (
-                <p className="mt-1 max-w-32 truncate text-destructive">{item.error_code}</p>
-              ) : null}
-            </TableCell>
-            <TableCell>{item.total_tokens.toLocaleString()}</TableCell>
-            <TableCell>
-              <p>{item.total_points.toLocaleString()}</p>
-              {item.quota_overage_points > 0 ? (
-                <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                  {t('audit.quotaBreakdown', {
-                    charged: item.quota_charged_points.toLocaleString(),
-                    overage: item.quota_overage_points.toLocaleString(),
-                  })}
-                </p>
-              ) : null}
-            </TableCell>
-            <TableCell>{formatDate(item.created_at)}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+                </TableCell>
+                <TableCell>{item.total_tokens.toLocaleString()}</TableCell>
+                <TableCell>
+                  <p>{item.total_points.toLocaleString()}</p>
+                  {item.quota_overage_points > 0 ? (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                      {t('audit.quotaBreakdown', {
+                        charged: item.quota_charged_points.toLocaleString(),
+                        overage: item.quota_overage_points.toLocaleString(),
+                      })}
+                    </p>
+                  ) : null}
+                </TableCell>
+                <TableCell>{formatDate(item.created_at)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      ) : (
+        <EmptyState title={t('audit.empty')} description={t('audit.emptyDescription')} />
+      )}
+      {totalPages > 1 || page > 1 ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <p className="text-sm text-muted-foreground">
+            {t('audit.pagination', { page, totalPages, total })}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1}
+              onClick={() => onPageChange(page - 1)}
+            >
+              {t('audit.previous')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= totalPages}
+              onClick={() => onPageChange(page + 1)}
+            >
+              {t('audit.next')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -318,7 +358,9 @@ export function DeveloperAccessPage() {
   const workspace = useCurrentWorkspace();
   const workspaceStatus = useWorkspaceContextStatus();
   const workspaceId = workspace?.id;
-  const { me, keys, requests, audit } = useDeveloperAccess(workspaceId);
+  const [auditPage, setAuditPage] = React.useState(1);
+  const auditPageSize = 50;
+  const { me, keys, requests, audit } = useDeveloperAccess(workspaceId, auditPage, auditPageSize);
   const actions = useDeveloperAccessActions(workspaceId);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [requestOpen, setRequestOpen] = React.useState(false);
@@ -331,6 +373,8 @@ export function DeveloperAccessPage() {
     decision: 'approve' | 'reject';
   } | null>(null);
   const [copied, setCopied] = React.useState(false);
+
+  React.useEffect(() => setAuditPage(1), [workspaceId]);
 
   if (workspaceStatus === 'loading' || (workspaceId && me.isLoading)) {
     return (
@@ -619,6 +663,10 @@ export function DeveloperAccessPage() {
                 loading={audit.isLoading}
                 error={audit.isError}
                 showPrincipal={Boolean(access?.can_manage)}
+                total={audit.data?.total ?? 0}
+                page={audit.data?.page ?? auditPage}
+                pageSize={audit.data?.page_size ?? auditPageSize}
+                onPageChange={setAuditPage}
               />
             </TabsContent>
           </Tabs>

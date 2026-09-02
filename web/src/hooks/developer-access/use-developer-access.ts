@@ -21,8 +21,8 @@ export const DEVELOPER_ACCESS_KEYS = {
   requests: (workspaceId: string, status?: AccessRequestStatus) =>
     [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'requests', status ?? 'all'] as const,
   keys: (workspaceId: string) => [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'keys'] as const,
-  audit: (workspaceId: string) =>
-    [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'audit'] as const,
+  audit: (workspaceId: string, page: number, pageSize: number) =>
+    [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'audit', page, pageSize] as const,
 };
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -50,7 +50,7 @@ function useWorkspaceMutation<TInput, TResult>(
   });
 }
 
-export function useDeveloperAccess(workspaceId?: string) {
+export function useDeveloperAccess(workspaceId?: string, auditPage = 1, auditPageSize = 50) {
   const enabled = Boolean(workspaceId);
   const me = useQuery({
     queryKey: DEVELOPER_ACCESS_KEYS.me(workspaceId ?? ''),
@@ -71,9 +71,14 @@ export function useDeveloperAccess(workspaceId?: string) {
     staleTime: 15_000,
   });
   const audit = useQuery({
-    queryKey: DEVELOPER_ACCESS_KEYS.audit(workspaceId ?? ''),
+    queryKey: DEVELOPER_ACCESS_KEYS.audit(workspaceId ?? '', auditPage, auditPageSize),
     queryFn: async () =>
-      (await developerAccessService.listAudit(workspaceId ?? '', { page: 1, page_size: 50 })).data,
+      (
+        await developerAccessService.listAudit(workspaceId ?? '', {
+          page: auditPage,
+          page_size: auditPageSize,
+        })
+      ).data,
     enabled,
     staleTime: 15_000,
   });

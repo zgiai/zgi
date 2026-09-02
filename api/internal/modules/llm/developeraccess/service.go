@@ -256,7 +256,9 @@ func (s *Service) GetMe(ctx context.Context, workspaceID, accountID string) (*Me
 		return nil, fmt.Errorf("load pending access request: %w", pendingErr)
 	}
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&apikeymodel.TenantAPIKey{}).Where("workspace_id = ? AND principal_type = ? AND principal_id = ? AND status = ?", workspaceID, accessmodel.PrincipalTypeUser, accountID, "active").Count(&count).Error; err != nil {
+	if err := activePersonalKeysQuery(s.db.WithContext(ctx), s.now()).
+		Where("workspace_id = ? AND principal_type = ? AND principal_id = ?", workspaceID, accessmodel.PrincipalTypeUser, accountID).
+		Count(&count).Error; err != nil {
 		return nil, fmt.Errorf("count active keys: %w", err)
 	}
 	view := &MeView{
@@ -278,6 +280,12 @@ func (s *Service) GetMe(ctx context.Context, workspaceID, accountID string) (*Me
 	// a user key that runtime membership validation would immediately reject.
 	view.CanCreateKey = scope.Member != nil && policy.Mode != accessmodel.AccessModeDisabled && (scope.CanManage || (view.Grant != nil && view.Grant.IsActive(s.now())) || policy.Mode == accessmodel.AccessModeSelfService)
 	return view, nil
+}
+
+func activePersonalKeysQuery(db *gorm.DB, now time.Time) *gorm.DB {
+	return db.Model(&apikeymodel.TenantAPIKey{}).
+		Where("status = ?", "active").
+		Where("(expires_at IS NULL OR expires_at > ?)", now)
 }
 
 func (s *Service) GetPolicy(ctx context.Context, workspaceID, accountID string) (*accessmodel.Policy, error) {
@@ -789,7 +797,9 @@ func (s *Service) CreateKey(ctx context.Context, workspaceID, accountID string, 
 			return ErrApprovalNeeded
 		}
 		var active int64
-		if err := tx.Model(&apikeymodel.TenantAPIKey{}).Where("workspace_id = ? AND principal_type = ? AND principal_id = ? AND status = ?", workspaceID, principalType, accountID, "active").Count(&active).Error; err != nil {
+		if err := activePersonalKeysQuery(tx, s.now()).
+			Where("workspace_id = ? AND principal_type = ? AND principal_id = ?", workspaceID, principalType, accountID).
+			Count(&active).Error; err != nil {
 			return err
 		}
 		if active >= int64(lockedGrant.MaxKeys) {
@@ -1081,8 +1091,8 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 				return ErrApprovalNeeded
 			}
 			var active int64
-			if err := tx.Model(&apikeymodel.TenantAPIKey{}).
-				Where("access_grant_id = ? AND status = ? AND id <> ?", grant.ID, "active", key.ID).
+			if err := activePersonalKeysQuery(tx, s.now()).
+				Where("access_grant_id = ? AND id <> ?", grant.ID, key.ID).
 				Count(&active).Error; err != nil {
 				return err
 			}
@@ -1162,8 +1172,8 @@ func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID s
 			return ErrInvalid
 		}
 		var active int64
-		if err := tx.Model(&apikeymodel.TenantAPIKey{}).
-			Where("access_grant_id = ? AND status = ? AND id <> ?", grant.ID, "active", current.ID).
+		if err := activePersonalKeysQuery(tx, s.now()).
+			Where("access_grant_id = ? AND id <> ?", grant.ID, current.ID).
 			Count(&active).Error; err != nil {
 			return err
 		}

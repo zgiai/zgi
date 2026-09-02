@@ -27,7 +27,7 @@ const rollbackBillingAttemptPrincipalAttributionSQL = `
 		DROP CONSTRAINT IF EXISTS fk_llm_api_keys_access_grant;
 	ALTER TABLE public.llm_organization_api_keys
 		ADD CONSTRAINT fk_llm_api_keys_access_grant
-		FOREIGN KEY (access_grant_id) REFERENCES public.llm_developer_access_grants(id) ON DELETE RESTRICT;
+		FOREIGN KEY (access_grant_id) REFERENCES public.llm_developer_access_grants(id) ON DELETE CASCADE;
 	DROP INDEX IF EXISTS public.idx_billing_attempts_workspace_principal;
 	ALTER TABLE public.billing_attempts
 		DROP COLUMN IF EXISTS auth_method,

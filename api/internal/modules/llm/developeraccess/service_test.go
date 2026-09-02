@@ -445,3 +445,35 @@ func TestMemberCanRotateOnlyOwnKey(t *testing.T) {
 		t.Fatalf("rotation linkage invalid: previous=%#v replacement=%#v", previous, stored)
 	}
 }
+
+func TestExpiredActiveKeyDoesNotConsumeGrantSlot(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	request, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Replace expired key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxKeys := 1
+	if _, err := service.ReviewRequest(context.Background(), workspaceID, ownerID, request.ID, true, ReviewRequestInput{MaxKeys: &maxKeys}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := service.CreateKey(context.Background(), workspaceID, memberID, CreateKeyInput{Name: "short lived"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().Add(-time.Minute)
+	if err := db.Model(&apikeymodel.TenantAPIKey{}).Where("id = ?", key.ID).Update("expires_at", expiredAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	me, err := service.GetMe(context.Background(), workspaceID, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if me.ActiveKeyCount != 0 {
+		t.Fatalf("active key count = %d, want 0 for expired key", me.ActiveKeyCount)
+	}
+	if _, err := service.CreateKey(context.Background(), workspaceID, memberID, CreateKeyInput{Name: "replacement"}); err != nil {
+		t.Fatalf("create replacement after expiry: %v", err)
+	}
+}
