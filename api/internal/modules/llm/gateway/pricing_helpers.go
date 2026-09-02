@@ -10,6 +10,14 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
+const (
+	// Reasoning providers may report hidden reasoning tokens beyond a small
+	// requested max_tokens value. These floors keep pre-deduction conservative
+	// without reserving a model's entire output window.
+	reasoningPromptReservationFloor     = 64
+	reasoningCompletionReservationFloor = 32
+)
+
 func (s *llmGatewayServiceImpl) pricing() PricingEngine {
 	if s.pricingEngine != nil {
 		return s.pricingEngine
@@ -52,7 +60,21 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSelection(
 	if lane == UsageBillingLanePlatform {
 		return PricingQuote{}, nil
 	}
+	promptTokens, completionTokens = conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
 	return s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
+}
+
+func conservativeReasoningReservationTokens(selection *ProviderSelection, promptTokens, completionTokens int) (int, int) {
+	if selection == nil || !selection.Model.SupportsReasoning {
+		return promptTokens, completionTokens
+	}
+	if promptTokens > 0 && promptTokens < reasoningPromptReservationFloor {
+		promptTokens = reasoningPromptReservationFloor
+	}
+	if completionTokens > 0 && completionTokens < reasoningCompletionReservationFloor {
+		completionTokens = reasoningCompletionReservationFloor
+	}
+	return promptTokens, completionTokens
 }
 
 func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlement(

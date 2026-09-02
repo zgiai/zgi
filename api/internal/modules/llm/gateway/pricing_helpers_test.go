@@ -125,6 +125,41 @@ func TestQuoteTokenPricingForSelectionRequiresLocalPricingForPrivateRoute(t *tes
 	}
 }
 
+func TestQuoteTokenPricingForSelectionUsesConservativeReasoningReservation(t *testing.T) {
+	engine := &fakePricingEngine{}
+	svc := &llmGatewayServiceImpl{pricingEngine: engine}
+	selection := &ProviderSelection{
+		BillingLane: UsageBillingLanePrivate,
+		Model:       llmmodel.LLMModel{SupportsReasoning: true},
+	}
+
+	if _, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "qwen", Model: "qwen-reasoning"},
+		12,
+		8,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if engine.lastPromptTokens != reasoningPromptReservationFloor || engine.lastCompletionTokens != reasoningCompletionReservationFloor {
+		t.Fatalf("quoted tokens = (%d, %d), want (%d, %d)", engine.lastPromptTokens, engine.lastCompletionTokens, reasoningPromptReservationFloor, reasoningCompletionReservationFloor)
+	}
+
+	if _, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "qwen", Model: "qwen-reasoning"},
+		100,
+		0,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if engine.lastPromptTokens != 100 || engine.lastCompletionTokens != 0 {
+		t.Fatalf("non-generation quote tokens = (%d, %d), want (100, 0)", engine.lastPromptTokens, engine.lastCompletionTokens)
+	}
+}
+
 func TestQuoteImagePricingForSelectionSkipsLocalPricingForOfficialRoute(t *testing.T) {
 	svc := &llmGatewayServiceImpl{pricingEngine: &fakePricingEngine{imageErr: ErrPricingNotConfigured}}
 	selection := &ProviderSelection{

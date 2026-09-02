@@ -140,6 +140,11 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec(`CREATE TABLE billing_attempt_entries (
+		attempt_id TEXT, entry_type TEXT, actual_amount INTEGER
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Exec(`INSERT INTO llm_usage_bills
 		(attempt_id, request_id, organization_id, workspace_id, principal_type, principal_id, auth_method,
 		 api_key_id, model_name, provider_name, status, prompt_tokens, completion_tokens, total_tokens,
@@ -149,11 +154,15 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		"personal_api_key", key.ID, "qwen-test", "qwen", "success", 10, 5, 15, 20, 100, time.Now()).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, actual_amount)
+		VALUES (?, ?, ?)`, "attempt-1", "subject", 15).Error; err != nil {
+		t.Fatal(err)
+	}
 	adminPage, err := service.ListAudit(context.Background(), workspaceID, ownerID, AuditQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adminPage.Total != 1 || len(adminPage.Items) != 1 || adminPage.Items[0].PrincipalEmail != "member@example.test" || adminPage.Items[0].APIKeyName != "audited key" {
+	if adminPage.Total != 1 || len(adminPage.Items) != 1 || adminPage.Items[0].PrincipalEmail != "member@example.test" || adminPage.Items[0].APIKeyName != "audited key" || adminPage.Items[0].QuotaChargedPoints != 15 || adminPage.Items[0].QuotaOveragePoints != 5 {
 		t.Fatalf("unexpected admin audit page: %#v", adminPage)
 	}
 	memberPage, err := service.ListAudit(context.Background(), workspaceID, memberID, AuditQuery{PrincipalID: ownerID})

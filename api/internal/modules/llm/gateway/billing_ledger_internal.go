@@ -278,6 +278,20 @@ func (b *BillingService) updateAttemptStatus(
 	if res.RowsAffected != 1 {
 		return fmt.Errorf("update billing attempt status affected %d rows (attempt_id=%s)", res.RowsAffected, attemptID)
 	}
+	if status == billingAttemptStatusPredeductFailed {
+		entryRes := tx.WithContext(ctx).
+			Model(&BillingAttemptEntry{}).
+			Where("attempt_id = ? AND status = ?", attemptID, billingEntryStatusPending).
+			Updates(map[string]interface{}{
+				"status":        billingEntryStatusFailed,
+				"error_code":    errCode,
+				"error_message": errMsg,
+				"updated_at":    time.Now(),
+			})
+		if entryRes.Error != nil {
+			return fmt.Errorf("close failed pre-deduct entries: %w", entryRes.Error)
+		}
+	}
 	return nil
 }
 
@@ -300,9 +314,17 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 		)
 	}
 
-	refunded := bc.EstimatedCredits - bc.ActualCredits
-	if refunded < 0 {
-		refunded = 0
+	subjectActual := bc.ActualCredits
+	if bc.QuotaChargedCredits != nil {
+		subjectActual = *bc.QuotaChargedCredits
+	}
+	subjectRefunded := bc.EstimatedCredits - subjectActual
+	if subjectRefunded < 0 {
+		subjectRefunded = 0
+	}
+	fundRefunded := bc.EstimatedCredits - bc.ActualCredits
+	if fundRefunded < 0 {
+		fundRefunded = 0
 	}
 	entryStatus := billingEntryStatusSettled
 	if !billingContextStatusIsSuccess(bc.Status) {
@@ -313,8 +335,8 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 		Model(&BillingAttemptEntry{}).
 		Where("attempt_id = ? AND entry_type = ?", attemptID, billingEntryTypeSubject).
 		Updates(map[string]interface{}{
-			"actual_amount":   bc.ActualCredits,
-			"refunded_amount": refunded,
+			"actual_amount":   subjectActual,
+			"refunded_amount": subjectRefunded,
 			"status":          entryStatus,
 			"updated_at":      time.Now(),
 		})
@@ -330,7 +352,7 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 		Where("attempt_id = ? AND entry_type = ? AND ledger_type = ? AND ledger_ref_id = ?", attemptID, billingEntryTypeFund, fundLedgerType, fundLedgerRefID).
 		Updates(map[string]interface{}{
 			"actual_amount":   bc.ActualCredits,
-			"refunded_amount": refunded,
+			"refunded_amount": fundRefunded,
 			"status":          entryStatus,
 			"updated_at":      time.Now(),
 		})

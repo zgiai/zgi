@@ -304,6 +304,7 @@ const messages = {
       status: 'Status',
       tokens: 'Tokens',
       points: 'Points',
+      quotaBreakdown: 'Quota charged {charged} · overage {overage}',
       time: 'Time',
     },
   },

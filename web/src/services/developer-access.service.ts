@@ -93,6 +93,8 @@ export interface DeveloperAccessAuditItem {
   completion_tokens: number;
   total_tokens: number;
   total_points: number;
+  quota_charged_points: number;
+  quota_overage_points: number;
   response_time_ms: number;
   error_code?: string;
   created_at: string;

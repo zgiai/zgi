@@ -82,37 +82,41 @@ type BillingContext struct {
 	AccountProviderID    *uint // Deprecated, kept for compatibility
 	EstimatedCredits     int64 // Estimated credits to deduct
 	ActualCredits        int64 // Actual credits used
-	PromptTokens         int
-	CacheReadTokens      int
-	CacheWriteTokens     int
-	CacheWrite5mTokens   int
-	CacheWrite1hTokens   int
-	CompletionTokens     int
-	TotalTokens          int
-	InputCost            decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
-	OutputCost           decimal.Decimal // Legacy: output credits consumed for logging/RPC compatibility
-	TotalCost            decimal.Decimal // Legacy: total credits consumed for logging/RPC compatibility
-	InputUSD             decimal.Decimal
-	OutputUSD            decimal.Decimal
-	TotalUSD             decimal.Decimal
-	DisplayCurrency      string
-	USDToCNYRate         decimal.Decimal
-	PricingSource        PricingSource
-	UsageSource          UsageSource
-	PricingSnapshot      datatypes.JSON
-	LockedTokenQuote     *PricingQuote
-	BillingLane          UsageBillingLane
-	UseSystemProvider    bool
-	IsStreaming          bool
-	RequestID            string
-	RequestCreatedAt     time.Time
-	SettledAt            time.Time
-	ResponseTime         int64 // milliseconds
-	Status               string
-	ErrorCode            string
-	ErrorMessage         string
-	IPAddress            string
-	UserAgent            string
+	// QuotaChargedCredits is the amount charged to the quota subject after
+	// applying its hard limit. Nil means the subject charge equals ActualCredits.
+	// It is runtime-only; the subject ledger entry persists the final value.
+	QuotaChargedCredits *int64
+	PromptTokens        int
+	CacheReadTokens     int
+	CacheWriteTokens    int
+	CacheWrite5mTokens  int
+	CacheWrite1hTokens  int
+	CompletionTokens    int
+	TotalTokens         int
+	InputCost           decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
+	OutputCost          decimal.Decimal // Legacy: output credits consumed for logging/RPC compatibility
+	TotalCost           decimal.Decimal // Legacy: total credits consumed for logging/RPC compatibility
+	InputUSD            decimal.Decimal
+	OutputUSD           decimal.Decimal
+	TotalUSD            decimal.Decimal
+	DisplayCurrency     string
+	USDToCNYRate        decimal.Decimal
+	PricingSource       PricingSource
+	UsageSource         UsageSource
+	PricingSnapshot     datatypes.JSON
+	LockedTokenQuote    *PricingQuote
+	BillingLane         UsageBillingLane
+	UseSystemProvider   bool
+	IsStreaming         bool
+	RequestID           string
+	RequestCreatedAt    time.Time
+	SettledAt           time.Time
+	ResponseTime        int64 // milliseconds
+	Status              string
+	ErrorCode           string
+	ErrorMessage        string
+	IPAddress           string
+	UserAgent           string
 }
 
 // NewBillingService creates a new billing service
@@ -430,10 +434,18 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if grant.QuotaLimit == nil {
 		return nil
 	}
-	if grant.RemainQuota < bc.EstimatedCredits {
+	availableQuota := grant.RemainQuota
+	remainingByLimit := *grant.QuotaLimit - grant.UsedQuota
+	if remainingByLimit < 0 {
+		remainingByLimit = 0
+	}
+	if availableQuota > remainingByLimit {
+		availableQuota = remainingByLimit
+	}
+	if availableQuota < bc.EstimatedCredits {
 		return ErrInsufficientQuota
 	}
-	grant.RemainQuota -= bc.EstimatedCredits
+	grant.RemainQuota = availableQuota - bc.EstimatedCredits
 	return tx.WithContext(ctx).Save(&grant).Error
 }
 
@@ -540,11 +552,39 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 	}
 	if grant.QuotaLimit == nil {
 		grant.UsedQuota += bc.ActualCredits
+		charged := bc.ActualCredits
+		bc.QuotaChargedCredits = &charged
 		return tx.WithContext(ctx).Save(&grant).Error
 	}
-	diff := bc.EstimatedCredits - bc.ActualCredits
+	// The reservation has already been removed from RemainQuota. The largest
+	// amount this attempt may charge is therefore the post-reservation balance
+	// plus its own reservation. Provider usage can exceed an estimate (notably
+	// hidden reasoning tokens), but a member grant must remain a hard boundary.
+	availableForAttempt := grant.RemainQuota + bc.EstimatedCredits
+	if availableForAttempt < 0 {
+		availableForAttempt = 0
+	}
+	remainingByLimit := *grant.QuotaLimit - grant.UsedQuota
+	if remainingByLimit < 0 {
+		remainingByLimit = 0
+	}
+	if availableForAttempt > remainingByLimit {
+		availableForAttempt = remainingByLimit
+	}
+	charged := bc.ActualCredits
+	if charged > availableForAttempt {
+		charged = availableForAttempt
+	}
+	if charged < 0 {
+		charged = 0
+	}
+	bc.QuotaChargedCredits = &charged
+	diff := bc.EstimatedCredits - charged
 	grant.RemainQuota = clampQuotaRemainAtZero(grant.RemainQuota + diff)
-	grant.UsedQuota += bc.ActualCredits
+	grant.UsedQuota += charged
+	if grant.QuotaLimit != nil && grant.UsedQuota > *grant.QuotaLimit {
+		grant.UsedQuota = *grant.QuotaLimit
+	}
 	return tx.WithContext(ctx).Save(&grant).Error
 }
 

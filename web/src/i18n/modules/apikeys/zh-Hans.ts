@@ -298,6 +298,7 @@ const messages: ApikeysMessages = {
       status: '状态',
       tokens: 'Token',
       points: '点数',
+      quotaBreakdown: '额度扣除 {charged} · 超额 {overage}',
       time: '调用时间',
     },
   },

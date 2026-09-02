@@ -137,23 +137,27 @@ func (f *fakeBillingProvider) CheckPrivateChannelBalance(ctx context.Context, or
 }
 
 type fakePricingEngine struct {
-	tokenQuote       PricingQuote
-	imageQuote       PricingQuote
-	meteredQuote     PricingQuote
-	tokenErr         error
-	imageErr         error
-	meteredErr       error
-	meteredQuoteFunc func(MeteredUsage) (PricingQuote, error)
-	lastModel        PricingModelRef
-	lastMeteredUsage MeteredUsage
-	meteredUsages    []MeteredUsage
-	tokenCalls       int
-	meteredCalls     int
+	tokenQuote           PricingQuote
+	imageQuote           PricingQuote
+	meteredQuote         PricingQuote
+	tokenErr             error
+	imageErr             error
+	meteredErr           error
+	meteredQuoteFunc     func(MeteredUsage) (PricingQuote, error)
+	lastModel            PricingModelRef
+	lastPromptTokens     int
+	lastCompletionTokens int
+	lastMeteredUsage     MeteredUsage
+	meteredUsages        []MeteredUsage
+	tokenCalls           int
+	meteredCalls         int
 }
 
 func (f *fakePricingEngine) QuoteTokens(ctx context.Context, model PricingModelRef, promptTokens, completionTokens int) (PricingQuote, error) {
 	f.tokenCalls++
 	f.lastModel = model
+	f.lastPromptTokens = promptTokens
+	f.lastCompletionTokens = completionTokens
 	if f.tokenErr != nil {
 		return PricingQuote{}, f.tokenErr
 	}

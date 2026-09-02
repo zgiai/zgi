@@ -247,7 +247,17 @@ function AuditList({
               ) : null}
             </TableCell>
             <TableCell>{item.total_tokens.toLocaleString()}</TableCell>
-            <TableCell>{item.total_points.toLocaleString()}</TableCell>
+            <TableCell>
+              <p>{item.total_points.toLocaleString()}</p>
+              {item.quota_overage_points > 0 ? (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  {t('audit.quotaBreakdown', {
+                    charged: item.quota_charged_points.toLocaleString(),
+                    overage: item.quota_overage_points.toLocaleString(),
+                  })}
+                </p>
+              ) : null}
+            </TableCell>
             <TableCell>{formatDate(item.created_at)}</TableCell>
           </TableRow>
         ))}

@@ -55,6 +55,7 @@ const (
 func billingAttemptStatusIsFinalized(status string) bool {
 	return status == billingAttemptStatusSettled ||
 		status == billingAttemptStatusRolledBack ||
+		status == billingAttemptStatusPredeductFailed ||
 		status == billingAttemptStatusCompensated
 }
 

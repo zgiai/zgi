@@ -108,24 +108,26 @@ type AuditQuery struct {
 }
 
 type AuditItem struct {
-	AttemptID        string    `json:"attempt_id"`
-	RequestID        string    `json:"request_id"`
-	PrincipalID      string    `json:"principal_id"`
-	PrincipalName    string    `json:"principal_name,omitempty"`
-	PrincipalEmail   string    `json:"principal_email,omitempty"`
-	APIKeyID         string    `json:"api_key_id"`
-	APIKeyName       string    `json:"api_key_name,omitempty"`
-	APIKeyMasked     string    `json:"api_key_masked,omitempty"`
-	ModelName        string    `json:"model_name"`
-	ProviderName     string    `json:"provider_name"`
-	Status           string    `json:"status"`
-	PromptTokens     int64     `json:"prompt_tokens"`
-	CompletionTokens int64     `json:"completion_tokens"`
-	TotalTokens      int64     `json:"total_tokens"`
-	TotalPoints      int64     `json:"total_points"`
-	ResponseTimeMS   int64     `json:"response_time_ms"`
-	ErrorCode        *string   `json:"error_code,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
+	AttemptID          string    `json:"attempt_id"`
+	RequestID          string    `json:"request_id"`
+	PrincipalID        string    `json:"principal_id"`
+	PrincipalName      string    `json:"principal_name,omitempty"`
+	PrincipalEmail     string    `json:"principal_email,omitempty"`
+	APIKeyID           string    `json:"api_key_id"`
+	APIKeyName         string    `json:"api_key_name,omitempty"`
+	APIKeyMasked       string    `json:"api_key_masked,omitempty"`
+	ModelName          string    `json:"model_name"`
+	ProviderName       string    `json:"provider_name"`
+	Status             string    `json:"status"`
+	PromptTokens       int64     `json:"prompt_tokens"`
+	CompletionTokens   int64     `json:"completion_tokens"`
+	TotalTokens        int64     `json:"total_tokens"`
+	TotalPoints        int64     `json:"total_points"`
+	QuotaChargedPoints int64     `json:"quota_charged_points"`
+	QuotaOveragePoints int64     `json:"quota_overage_points"`
+	ResponseTimeMS     int64     `json:"response_time_ms"`
+	ErrorCode          *string   `json:"error_code,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type AuditPage struct {
@@ -959,11 +961,41 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, 
 	for i := range keys {
 		keysByID[keys[i].ID] = keyToView(&keys[i])
 	}
+	type subjectCharge struct {
+		AttemptID    string `gorm:"column:attempt_id"`
+		ActualAmount int64  `gorm:"column:actual_amount"`
+	}
+	attemptIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.AttemptID != "" {
+			attemptIDs = append(attemptIDs, item.AttemptID)
+		}
+	}
+	chargesByAttempt := make(map[string]int64, len(attemptIDs))
+	if len(attemptIDs) > 0 {
+		var charges []subjectCharge
+		if err := s.db.WithContext(ctx).Table("billing_attempt_entries").
+			Select("attempt_id", "actual_amount").
+			Where("attempt_id IN ? AND entry_type = ?", unique(attemptIDs), "subject").
+			Scan(&charges).Error; err != nil {
+			return nil, fmt.Errorf("load developer access quota charges: %w", err)
+		}
+		for _, charge := range charges {
+			chargesByAttempt[charge.AttemptID] = charge.ActualAmount
+		}
+	}
 	for i := range items {
 		identity := identityByID[items[i].PrincipalID]
 		key := keysByID[items[i].APIKeyID]
 		items[i].PrincipalName, items[i].PrincipalEmail = identity.PrincipalName, identity.PrincipalEmail
 		items[i].APIKeyName, items[i].APIKeyMasked = key.Name, key.KeyMasked
+		items[i].QuotaChargedPoints = items[i].TotalPoints
+		if charged, ok := chargesByAttempt[items[i].AttemptID]; ok {
+			items[i].QuotaChargedPoints = charged
+		}
+		if overage := items[i].TotalPoints - items[i].QuotaChargedPoints; overage > 0 {
+			items[i].QuotaOveragePoints = overage
+		}
 	}
 	return &AuditPage{Items: items, Total: total, Page: input.Page, PageSize: input.PageSize}, nil
 }
