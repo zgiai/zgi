@@ -32,6 +32,12 @@ func openDeveloperAccessTestDB(t *testing.T) *gorm.DB {
 	); err != nil {
 		t.Fatalf("migrate database: %v", err)
 	}
+	// Match the production partial unique index on the legacy plaintext
+	// column. Hash-only personal keys must write NULL, not an empty string.
+	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_tenant_api_keys_key
+		ON llm_organization_api_keys (key) WHERE deleted_at IS NULL`).Error; err != nil {
+		t.Fatalf("create legacy key index: %v", err)
+	}
 	return db
 }
 

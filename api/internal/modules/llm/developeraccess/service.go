@@ -671,7 +671,10 @@ func (s *Service) CreateKey(ctx context.Context, workspaceID, accountID string, 
 		if active >= int64(lockedGrant.MaxKeys) {
 			return ErrConflict
 		}
-		return tx.Create(key).Error
+		// Personal keys are hash-only. Omit the legacy plaintext column so
+		// PostgreSQL stores NULL; an empty string would collide with the
+		// existing partial unique index after the first personal key.
+		return tx.Omit("Key").Create(key).Error
 	})
 	if err != nil {
 		return nil, err
