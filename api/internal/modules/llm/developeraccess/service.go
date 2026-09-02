@@ -748,8 +748,18 @@ func (s *Service) UpdateKey(ctx context.Context, workspaceID, accountID, keyID s
 		return nil, err
 	}
 	key.Name = input.Name
-	if err := s.keys.Update(ctx, key); err != nil {
+	// Update only the mutable field. Loading a NULL legacy plaintext key into
+	// the string model yields ""; saving the whole row would write that value
+	// back and can collide with the legacy partial unique index.
+	if err := s.db.WithContext(ctx).Model(&apikeymodel.TenantAPIKey{}).
+		Where("id = ?", key.ID).
+		Update("name", input.Name).Error; err != nil {
 		return nil, err
+	}
+	if invalidator, ok := s.keys.(interface {
+		InvalidateKeyCache(context.Context, string)
+	}); ok {
+		invalidator.InvalidateKeyCache(ctx, key.KeyHash)
 	}
 	view := keyToView(key)
 	return &view, nil
@@ -808,7 +818,7 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 				key.RevokedReason = &reason
 			}
 		}
-		return tx.Save(&key).Error
+		return tx.Omit("Key").Save(&key).Error
 	})
 	if err != nil {
 		return nil, err

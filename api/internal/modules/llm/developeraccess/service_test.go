@@ -237,3 +237,40 @@ func TestReenableCannotBypassGrantMaximumActiveKeys(t *testing.T) {
 		t.Fatalf("SetKeyStatus error = %v, want active-key limit conflict", err)
 	}
 }
+
+func TestPersonalKeyMutationsPreserveNullLegacyKey(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+
+	first, err := service.CreateKey(context.Background(), workspaceID, ownerID, CreateKeyInput{Name: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.CreateKey(context.Background(), workspaceID, ownerID, CreateKeyInput{Name: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UpdateKey(context.Background(), workspaceID, ownerID, first.ID, UpdateKeyInput{Name: "first renamed"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UpdateKey(context.Background(), workspaceID, ownerID, second.ID, UpdateKeyInput{Name: "second renamed"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetKeyStatus(context.Background(), workspaceID, ownerID, first.ID, "inactive", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetKeyStatus(context.Background(), workspaceID, ownerID, second.ID, "revoked", "regression complete"); err != nil {
+		t.Fatal(err)
+	}
+
+	var nonNullLegacyKeys int64
+	if err := db.Model(&apikeymodel.TenantAPIKey{}).
+		Where("id IN ? AND key IS NOT NULL", []string{first.ID, second.ID}).
+		Count(&nonNullLegacyKeys).Error; err != nil {
+		t.Fatal(err)
+	}
+	if nonNullLegacyKeys != 0 {
+		t.Fatalf("personal key mutation wrote %d legacy plaintext values", nonNullLegacyKeys)
+	}
+}
