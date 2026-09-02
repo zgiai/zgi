@@ -198,6 +198,9 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		return nil, err
 	}
 	lockTokenPricingQuote(billingCtx, quote)
+	billingCtx.RoutingStrategy = normalizeConsoleRoutingStrategy(req.RoutingStrategy)
+	billingCtx.EstimatedInputTokens = promptTokens
+	billingCtx.EstimatedOutputTokens = completionTokens
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat")
 	ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -444,6 +447,9 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		return nil, err
 	}
 	lockTokenPricingQuote(billingCtx, quote)
+	billingCtx.RoutingStrategy = normalizeConsoleRoutingStrategy(req.RoutingStrategy)
+	billingCtx.EstimatedInputTokens = promptTokens
+	billingCtx.EstimatedOutputTokens = completionTokens
 	billingCtx.PromptTokens = promptTokens
 	billingCtx.CompletionTokens = completionTokens
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat.stream")
@@ -501,4 +507,13 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	go s.handleStreamBilling(billingBgCtx, streamChan, outputChan, billingCtx, traceReq, &providerSelection.Model, startTime, channelID)
 
 	return outputChan, nil
+}
+
+func normalizeConsoleRoutingStrategy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "speed", "price", "stability":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "balanced"
+	}
 }

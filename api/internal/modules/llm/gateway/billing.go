@@ -45,43 +45,46 @@ type BillingService struct {
 
 // BillingContext contains billing-related information for a request
 type BillingContext struct {
-	APIKeyID             string
-	OrganizationID       string
-	DeductionID          string
-	AttemptID            string
-	QuotaSubjectType     string
-	QuotaSubjectID       string
-	AccountID            *uuid.UUID // Internal user ID when using models
-	PrincipalType        string
-	PrincipalID          string
-	AccessGrantID        string
-	AuthMethod           string
-	GroupID              *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
-	WorkspaceID          string
-	AppID                *uuid.UUID // App ID (agent or dataset)
-	AppType              *string    // App type: 'agent' or 'dataset'
-	InvocationSource     InvocationSource
-	SessionID            string
-	ConversationID       string
-	WorkflowID           string
-	WorkflowRunID        string
-	NodeID               string
-	NodeType             string
-	ModelID              uuid.UUID
-	ModelSource          PricingModelSource
-	PricingOperation     PricingOperation
-	ModelName            string // Model name for logging
-	ProviderID           uuid.UUID
-	ProviderName         string     // Provider name for logging
-	RouteID              *uuid.UUID // Selected route ID when the request is routed
-	ChannelID            *uuid.UUID // Tenant channel ID, nil if using system provider
-	CredentialID         uuid.UUID
-	CredentialGeneration int64
-	ChannelProvider      string
-	UpstreamWouldGuard   bool
-	UpstreamHalfOpen     bool
-	AccountProviderID    *uint // Deprecated, kept for compatibility
-	EstimatedCredits     int64 // Estimated credits to deduct
+	APIKeyID              string
+	OrganizationID        string
+	DeductionID           string
+	AttemptID             string
+	QuotaSubjectType      string
+	QuotaSubjectID        string
+	AccountID             *uuid.UUID // Internal user ID when using models
+	PrincipalType         string
+	PrincipalID           string
+	AccessGrantID         string
+	AuthMethod            string
+	GroupID               *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
+	WorkspaceID           string
+	AppID                 *uuid.UUID // App ID (agent or dataset)
+	AppType               *string    // App type: 'agent' or 'dataset'
+	InvocationSource      InvocationSource
+	SessionID             string
+	ConversationID        string
+	WorkflowID            string
+	WorkflowRunID         string
+	NodeID                string
+	NodeType              string
+	ModelID               uuid.UUID
+	ModelSource           PricingModelSource
+	PricingOperation      PricingOperation
+	ModelName             string // Model name for logging
+	ProviderID            uuid.UUID
+	ProviderName          string // Provider name for logging
+	RoutingStrategy       string
+	EstimatedInputTokens  int
+	EstimatedOutputTokens int
+	RouteID               *uuid.UUID // Selected route ID when the request is routed
+	ChannelID             *uuid.UUID // Tenant channel ID, nil if using system provider
+	CredentialID          uuid.UUID
+	CredentialGeneration  int64
+	ChannelProvider       string
+	UpstreamWouldGuard    bool
+	UpstreamHalfOpen      bool
+	AccountProviderID     *uint // Deprecated, kept for compatibility
+	EstimatedCredits      int64 // Estimated credits to deduct
 	// SubjectReservedCredits is the amount reserved from the quota subject.
 	// It can differ from EstimatedCredits when a platform-priced request has no
 	// local quote: a bounded developer grant reserves its remaining allowance to

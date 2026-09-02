@@ -32,7 +32,7 @@ export interface ModelRowItemProps {
 // Model row item component with optional tooltip
 export const ModelRowItem = memo(function ModelRowItem({
   model,
-  providerId,
+  providerId: _providerId,
   contextLabel,
   deprecatedUnavailableLabel,
   featuresLabel,
@@ -53,7 +53,7 @@ export const ModelRowItem = memo(function ModelRowItem({
 
   const itemNode = (
     <SelectItem
-      value={serializeValue({ provider: providerId, model: model.model })}
+      value={serializeValue({ provider: model.provider, model: model.model })}
       className="h-9 cursor-pointer group"
       onMouseDown={e => {
         e.preventDefault();

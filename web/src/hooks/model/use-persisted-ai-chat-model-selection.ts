@@ -31,7 +31,21 @@ function isModelAvailable(
   candidate: Pick<AIChatModelValue, 'provider' | 'model'> | null | undefined,
   models: ModelItem[]
 ) {
-  return models.some(model => modelMatches(candidate, model));
+  if (models.some(model => modelMatches(candidate, model))) return true;
+  if (!candidate?.provider || !candidate.model) return false;
+  const equivalents = models.filter(
+    model =>
+      !model.is_custom &&
+      model.model === candidate.model &&
+      (model.vendor === candidate.provider || model.provider === candidate.provider)
+  );
+  if (equivalents.length > 0) return true;
+  const vendors = new Set(
+    models
+      .filter(model => !model.is_custom && model.model === candidate.model)
+      .map(model => model.vendor || model.provider)
+  );
+  return vendors.size === 1;
 }
 
 function toAIChatModelValue(value: DefaultModelValue): AIChatModelValue {
@@ -72,7 +86,14 @@ export function usePersistedAIChatModelSelection({
   const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
     if (!accountId) return EMPTY_MODEL_VALUE;
     const saved = getLastSelectedAiModel(accountId, scope);
-    return saved ? { provider: saved.provider, model: saved.model, params: {} } : EMPTY_MODEL_VALUE;
+    return saved
+      ? {
+          provider: saved.provider,
+          model: saved.model,
+          routing_strategy: saved.routing_strategy ?? 'balanced',
+          params: {},
+        }
+      : EMPTY_MODEL_VALUE;
   });
   const [isInitialModelResolved, setIsInitialModelResolved] = useState(false);
   const availableModels = useAvailableModels({ use_case: availabilityUseCase ?? useCase });
@@ -138,6 +159,7 @@ export function usePersistedAIChatModelSelection({
         setModelSelectorValue({
           provider: saved.provider,
           model: saved.model,
+          routing_strategy: saved.routing_strategy ?? 'balanced',
           params: {},
         });
         setIsInitialModelResolved(true);
@@ -157,6 +179,7 @@ export function usePersistedAIChatModelSelection({
       const next: AIChatModelValue = {
         provider: legacySaved.provider,
         model: legacySaved.model,
+        routing_strategy: legacySaved.routing_strategy ?? 'balanced',
         params: {},
       };
       saveLastSelectedAiModel(accountId, scope, {
@@ -212,21 +235,25 @@ export function usePersistedAIChatModelSelection({
 
   const handleModelChange = useCallback(
     (value: ModelSelectorValue) => {
+      const routingStrategy =
+        value.routing_strategy ?? modelSelectorValue.routing_strategy ?? 'balanced';
       setModelSelectorValue(previous => ({
         ...previous,
         provider: value.provider,
         model: value.model,
+        routing_strategy: routingStrategy,
       }));
 
       if (accountId) {
         saveLastSelectedAiModel(accountId, scope, {
           provider: value.provider,
           model: value.model,
+          routing_strategy: routingStrategy,
         });
       }
       setIsInitialModelResolved(true);
     },
-    [accountId, scope]
+    [accountId, modelSelectorValue.routing_strategy, scope]
   );
 
   return useMemo(

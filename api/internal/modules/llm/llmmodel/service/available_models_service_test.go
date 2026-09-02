@@ -365,6 +365,9 @@ func TestAvailableModels_CloudOfficialRouteUsesPlatformChannelCatalog(t *testing
 	if len(models) != 1 || models[0].Provider != "openai" || models[0].Name != modelName {
 		t.Fatalf("available models = %#v, want openai/%s", models, modelName)
 	}
+	if models[0].Vendor != "openai" || models[0].VendorName == "" {
+		t.Fatalf("platform vendor = %q/%q, want openai metadata", models[0].Vendor, models[0].VendorName)
+	}
 	if platformProvider.callCount != 1 {
 		t.Fatalf("platform ListChannels calls = %d, want 1", platformProvider.callCount)
 	}
@@ -577,6 +580,9 @@ func TestAvailableModels_AgentCustomModelRequiresTagEnabledRouteButNotAdapterWhi
 	}
 	if len(models) != 1 || models[0].Name != "custom-agent" {
 		t.Fatalf("agent models = %#v, want only custom-agent", models)
+	}
+	if !models[0].IsCustom {
+		t.Fatal("custom model must remain marked as custom")
 	}
 }
 

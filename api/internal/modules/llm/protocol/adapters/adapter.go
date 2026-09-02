@@ -87,6 +87,7 @@ type LLMProviderAdapter interface {
 // ChatRequest platform standard chat request format
 type ChatRequest struct {
 	Provider         string             `json:"-"`
+	RoutingStrategy  string             `json:"-"`
 	Model            string             `json:"model"`
 	Messages         []Message          `json:"messages"`
 	Temperature      *float64           `json:"temperature,omitempty"`

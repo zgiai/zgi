@@ -457,6 +457,15 @@ const messages = {
     notAvailable: 'Chat service is not available',
     modelConfig: 'Model',
     modelRequired: 'Please select a model first',
+    routingStrategy: {
+      label: 'Routing strategy',
+      options: {
+        balanced: 'Balanced',
+        speed: 'Fastest',
+        price: 'Lowest cost',
+        stability: 'Most stable',
+      },
+    },
     modelUnavailable:
       'This model is no longer available for AI Chat. Select another model. The previous configuration is preserved.',
     modelUnavailableAdminDescription:

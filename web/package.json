@@ -33,6 +33,7 @@
     "test:workflow-end-fixed-output": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-workflow-end-fixed-output.mjs",
     "test:code-node-validation": "node scripts/test-code-node-validation.mjs",
     "test:model-selector-restrictions": "node scripts/test-model-selector-restrictions.mjs",
+    "test:model-selector-platform-aggregation": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/test/model-selector-platform-aggregation.test.ts",
     "test:console-model-loading-policy": "node scripts/test-console-model-loading-policy.mjs",
     "test:organization-background-refresh": "node scripts/test-organization-background-refresh.mjs",
     "test:file-management-upload-policy": "node scripts/test-file-management-upload-policy.mjs",

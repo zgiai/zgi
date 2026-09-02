@@ -22,7 +22,13 @@ import type {
   FlatRow,
   FeatureLabels,
 } from './types';
-import { deserializeValue, prioritizeModelsByUseCase, serializeValue } from './utils';
+import {
+  aggregatePlatformModels,
+  deserializeValue,
+  modelDisplayVendor,
+  prioritizeModelsByUseCase,
+  serializeValue,
+} from './utils';
 import {
   LoadingSkeleton,
   EmptyState,
@@ -229,19 +235,26 @@ export function ModelSelector({
     });
   }, [models, capabilityFilter]);
 
-  // Group models by provider
+  const displayModels = useMemo(
+    () => aggregatePlatformModels(filteredModelsByCapability),
+    [filteredModelsByCapability]
+  );
+
+  // Platform models are grouped by their actual model vendor. Custom models
+  // retain their existing provider grouping and selection values.
   const providerGroups = useMemo<ProviderGroup[]>(() => {
     const groupMap = new Map<string, ModelItem[]>();
-    filteredModelsByCapability.forEach(model => {
-      const existing = groupMap.get(model.provider) || [];
+    displayModels.forEach(model => {
+      const displayProvider = modelDisplayVendor(model);
+      const existing = groupMap.get(displayProvider) || [];
       existing.push(model);
-      groupMap.set(model.provider, existing);
+      groupMap.set(displayProvider, existing);
     });
     return Array.from(groupMap.entries()).map(([provider, items]) => ({
       provider,
       models: prioritizeModelsByUseCase(items, preferredUseCase),
     }));
-  }, [filteredModelsByCapability, preferredUseCase]);
+  }, [displayModels, preferredUseCase]);
 
   // Clear search when dropdown closes or component unmounts
   useEffect(() => {
@@ -439,16 +452,32 @@ export function ModelSelector({
     setCollapsedProviders(new Set(allProviderIds));
   }, [filteredProviders]);
 
-  // Build index for fast display lookup
-  const modelIndex = useMemo(() => {
-    const byProvider = new Map<string, Map<string, ModelItem>>();
-    providerGroups.forEach(p => {
-      const inner = new Map<string, ModelItem>();
-      p.models.forEach(m => inner.set(m.model, m));
-      byProvider.set(p.provider, inner);
-    });
-    return byProvider;
-  }, [providerGroups]);
+  // Selection remains provider + model for backwards compatibility even
+  // though platform grouping is vendor + model.
+  const selectionIndex = useMemo(() => {
+    const index = new Map<string, ModelItem>();
+    displayModels.forEach(model => index.set(serializeValue(model), model));
+    return index;
+  }, [displayModels]);
+
+  const resolveSelectedModel = useCallback(
+    (selected: ModelSelectorValue): ModelItem | null => {
+      const exact = selectionIndex.get(serializeValue(selected));
+      if (exact) return exact;
+      const equivalents = displayModels.filter(
+        model =>
+          !model.is_custom &&
+          model.model === selected.model &&
+          (modelDisplayVendor(model) === selected.provider || model.provider === selected.provider)
+      );
+      if (equivalents.length === 1) return equivalents[0];
+      const sameLogicalModel = displayModels.filter(
+        model => !model.is_custom && model.model === selected.model
+      );
+      return sameLogicalModel.length === 1 ? sameLogicalModel[0] : null;
+    },
+    [displayModels, selectionIndex]
+  );
 
   const emitModelPropsChange = useCallback(
     (props: ModelSelectorModelProps | null) => {
@@ -474,7 +503,7 @@ export function ModelSelector({
         if (value === undefined && modelProps === undefined) {
           setInternalSelected(parsed);
         }
-        const item = modelIndex.get(parsed.provider)?.get(parsed.model);
+        const item = resolveSelectedModel(parsed);
         if (item) {
           emitModelPropsChange(item);
         } else {
@@ -484,7 +513,7 @@ export function ModelSelector({
         emitModelPropsChange(null);
       }
     },
-    [emitModelPropsChange, onChange, modelIndex, value, modelProps]
+    [emitModelPropsChange, onChange, resolveSelectedModel, value, modelProps]
   );
 
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -537,16 +566,16 @@ export function ModelSelector({
       return;
     }
 
-    emitModelPropsChange(modelIndex.get(selected.provider)?.get(selected.model) ?? null);
+    emitModelPropsChange(resolveSelectedModel(selected));
   }, [
     emitModelPropsChange,
     internalSelected,
     isControlledByModelProps,
     isControlledByValue,
-    modelIndex,
     modelProps,
     onModelPropsChange,
     value,
+    resolveSelectedModel,
   ]);
 
   useEffect(() => {
@@ -566,8 +595,7 @@ export function ModelSelector({
     } else selected = internalSelected;
 
     if (!selected || !selected.model) return null;
-    const p = modelIndex.get(selected.provider);
-    const m = p?.get(selected.model);
+    const m = resolveSelectedModel(selected);
     const label = m ? getModelDisplayName(m, locale) : selected.model;
     const features = m
       ? Object.entries(m.features || {})
@@ -583,7 +611,7 @@ export function ModelSelector({
     modelProps,
     internalSelected,
     locale,
-    modelIndex,
+    resolveSelectedModel,
   ]);
 
   return (
@@ -763,4 +791,9 @@ export function ModelSelector({
   );
 }
 
-export type { ModelSelectorValue, ModelSelectorModelProps, FeatureLabels } from './types';
+export type {
+  ModelSelectorValue,
+  ModelSelectorModelProps,
+  FeatureLabels,
+  RoutingStrategy,
+} from './types';

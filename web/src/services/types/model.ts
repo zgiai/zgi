@@ -158,6 +158,8 @@ export interface ModelItem {
   vendor_name?: string;
   vendor_cn_name?: string;
   vendor_en_name?: string;
+  is_custom?: boolean;
+  source_channel?: string;
   model: string; // Renamed from name (used in API)
   model_name: string; // Renamed from display_name
   slug?: string; // App-internal

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	llmcache "github.com/zgiai/zgi/api/internal/modules/llm/cache"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
@@ -43,10 +44,14 @@ const AgentRuntimeUseCase = "agent-runtime"
 // Aligned with ModelHub structure for consistency
 type AvailableModel struct {
 	// Basic info
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"model"`
-	DisplayName string    `json:"model_name"`
-	Provider    string    `json:"provider"`
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"model"`
+	DisplayName  string    `json:"model_name"`
+	Provider     string    `json:"provider"`
+	Vendor       string    `json:"vendor,omitempty"`
+	VendorName   string    `json:"vendor_name,omitempty"`
+	VendorCNName string    `json:"vendor_cn_name,omitempty"`
+	VendorENName string    `json:"vendor_en_name,omitempty"`
 
 	// Pricing
 	Currency                    string          `json:"currency"`
@@ -467,6 +472,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Name:            m.Model,
 			DisplayName:     m.ModelName,
 			Provider:        m.Provider,
+			Vendor:          catalogvendor.Lookup(m.Provider, m.Model),
 			ContextWindow:   m.ContextWindow,
 			MaxOutputTokens: m.MaxOutputTokens,
 			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),
@@ -558,6 +564,18 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Capabilities:        capabilities,
 			Video:               videoFromCapabilities(capabilities),
 		}
+		if strings.TrimSpace(am.Vendor) == "" {
+			am.Vendor = strings.ToLower(strings.TrimSpace(m.Provider))
+		}
+		if metadata, ok := catalogvendor.LookupMetadata(am.Vendor); ok {
+			am.VendorName = metadata.VendorName
+			am.VendorCNName = metadata.CNName
+			am.VendorENName = metadata.ENName
+		} else {
+			am.VendorName = m.Provider
+			am.VendorCNName = m.Provider
+			am.VendorENName = m.Provider
+		}
 
 		// Apply tenant custom display name if set
 		if cfg, ok := tenantEntry.configs[m.ID]; ok && cfg.CustomDisplayName != "" {
@@ -648,6 +666,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Name:            m.Name,
 			DisplayName:     m.DisplayName,
 			Provider:        m.Provider,
+			IsCustom:        true,
 			ContextWindow:   m.ContextWindow,
 			MaxOutputTokens: m.MaxOutputTokens,
 			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),

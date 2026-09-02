@@ -26,6 +26,7 @@ import type {
   AIChatWorkflowQuestionAnswerInputs,
 } from '@/services/types/aichat';
 import type { AIChatModelProcessingState } from './model-processing';
+import type { RoutingStrategy } from '@/components/common/model-selector';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type { ConversationSearchResult } from '@/components/chat/controllers/types';
 import type { NodeInfo, RunStatus } from '@/components/chat/types';
@@ -34,6 +35,7 @@ import type { StoreApi } from 'zustand/vanilla';
 export interface AIChatModelSelection {
   provider?: string;
   model: string;
+  routingStrategy?: RoutingStrategy;
   parameters?: Record<string, number | string | boolean | string[]>;
 }
 

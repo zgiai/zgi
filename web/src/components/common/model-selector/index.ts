@@ -5,6 +5,7 @@ export type {
   ModelSelectorProps,
   ModelSelectorValue,
   ModelSelectorModelProps,
+  RoutingStrategy,
 } from './model-selector';
 
 export type {

@@ -390,6 +390,7 @@ export function useChatRuntimeMessageActions({
             surface: runtimeSurface,
             model: model.model,
             provider: model.provider,
+            routing_strategy: model.routingStrategy,
             ...(files.length > 0 ? { file_ids: files.map(file => file.id) } : {}),
             response_mode: 'streaming',
             parameters: toAIChatParameters(model.parameters),
@@ -896,6 +897,7 @@ export function useChatRuntimeMessageActions({
             operation_context: operationContext,
             model: model?.model,
             provider: model?.provider,
+            routing_strategy: model?.routingStrategy,
             parameters: toAIChatParameters(model?.parameters),
           },
           {

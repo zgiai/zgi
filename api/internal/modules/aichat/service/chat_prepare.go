@@ -451,6 +451,7 @@ func normalizeChatRequest(req aichatdto.ChatRequest) (*chatRequestParts, error) 
 		ModelName:           modelName,
 		Provider:            provider,
 		ProviderPtr:         providerPtr,
+		RoutingStrategy:     normalizeRoutingStrategy(req.RoutingStrategy),
 		Parameters:          params,
 		UseMemory:           req.UseMemory,
 	}, nil
@@ -504,6 +505,10 @@ func normalizeRegenerateRequest(req aichatdto.RegenerateMessageRequest, message 
 	if provider != "" {
 		providerPtr = &provider
 	}
+	routingStrategy := "balanced"
+	if req.RoutingStrategy != nil {
+		routingStrategy = normalizeRoutingStrategy(*req.RoutingStrategy)
+	}
 
 	useMemory := boolMetadata(message.Metadata, "use_memory")
 	if req.UseMemory != nil {
@@ -511,12 +516,13 @@ func normalizeRegenerateRequest(req aichatdto.RegenerateMessageRequest, message 
 	}
 
 	return &chatRequestParts{
-		Query:       query,
-		ModelName:   modelName,
-		Provider:    provider,
-		ProviderPtr: providerPtr,
-		Parameters:  params,
-		UseMemory:   useMemory,
+		Query:           query,
+		ModelName:       modelName,
+		Provider:        provider,
+		ProviderPtr:     providerPtr,
+		RoutingStrategy: routingStrategy,
+		Parameters:      params,
+		UseMemory:       useMemory,
 	}, nil
 }
 
@@ -656,13 +662,23 @@ func mergeUserMemoryMetadata(metadata map[string]interface{}, memoryMetadata map
 
 func newLLMChatRequest(parts *chatRequestParts, messages []adapter.Message) *adapter.ChatRequest {
 	req := &adapter.ChatRequest{
-		Provider: parts.Provider,
-		Model:    parts.ModelName,
-		Messages: messages,
-		Stream:   true,
+		Provider:        parts.Provider,
+		RoutingStrategy: parts.RoutingStrategy,
+		Model:           parts.ModelName,
+		Messages:        messages,
+		Stream:          true,
 	}
 	applyModelParameters(req, parts.Parameters)
 	return req
+}
+
+func normalizeRoutingStrategy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "speed", "price", "stability":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "balanced"
+	}
 }
 
 func normalizeModelParameters(input map[string]interface{}) (map[string]interface{}, error) {

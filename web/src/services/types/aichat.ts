@@ -607,6 +607,7 @@ export interface AIChatChatRequest {
   operation_context?: unknown;
   model: string;
   provider?: string;
+  routing_strategy?: 'balanced' | 'speed' | 'price' | 'stability';
   file_ids?: string[];
   response_mode: 'streaming';
   parameters?: AIChatModelParameters;
@@ -626,6 +627,7 @@ export interface AIChatRegenerateMessageRequest {
   operation_context?: unknown;
   model?: string;
   provider?: string;
+  routing_strategy?: 'balanced' | 'speed' | 'price' | 'stability';
   parameters?: AIChatModelParameters;
 }
 
