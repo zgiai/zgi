@@ -108,6 +108,15 @@ export const CHANNEL_PROVIDER_OPTIONS: ChannelProviderOption[] = [
     apiKeyPlaceholder: 'sk-or-xxx',
   },
   {
+    value: 'siliconflow',
+    labelKey: 'dialog.protocolOptions.siliconflow',
+    icon: 'siliconflow',
+    provider: 'siliconflow',
+    category: 'aggregator',
+    defaultApiBaseUrl: 'https://api.siliconflow.com/v1',
+    apiKeyPlaceholder: 'sk-xxx',
+  },
+  {
     value: 'anthropic',
     labelKey: 'dialog.protocolOptions.anthropic',
     icon: 'anthropic',
