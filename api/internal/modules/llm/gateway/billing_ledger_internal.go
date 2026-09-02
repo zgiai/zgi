@@ -71,9 +71,32 @@ func (b *BillingService) upsertAttemptInit(ctx context.Context, tx *gorm.DB, bc 
 		InvocationSource: normalizeInvocationSource(bc.InvocationSource),
 		QuotaSubjectType: subjectType,
 		QuotaSubjectID:   subjectID,
+		AuthMethod:       strings.TrimSpace(bc.AuthMethod),
 		Status:           billingAttemptStatusInit,
 		CreatedAt:        now,
 		UpdatedAt:        now,
+	}
+	if attempt.AuthMethod == "" {
+		attempt.AuthMethod = "legacy_api_key"
+	}
+	if value, parseErr := uuid.Parse(strings.TrimSpace(bc.APIKeyID)); parseErr == nil {
+		attempt.APIKeyID = &value
+	}
+	if value, parseErr := uuid.Parse(strings.TrimSpace(bc.WorkspaceID)); parseErr == nil {
+		attempt.WorkspaceID = &value
+	}
+	if bc.AccountID != nil {
+		value := *bc.AccountID
+		attempt.AccountID = &value
+	}
+	if value := strings.TrimSpace(bc.PrincipalType); value != "" {
+		attempt.PrincipalType = &value
+	}
+	if value := strings.TrimSpace(bc.PrincipalID); value != "" {
+		attempt.PrincipalID = &value
+	}
+	if value, parseErr := uuid.Parse(strings.TrimSpace(bc.AccessGrantID)); parseErr == nil {
+		attempt.AccessGrantID = &value
 	}
 	if bc.ChannelID != nil {
 		attempt.RouteID = bc.ChannelID
@@ -100,6 +123,13 @@ func (b *BillingService) upsertAttemptInit(ctx context.Context, tx *gorm.DB, bc 
 				"invocation_source":  attempt.InvocationSource,
 				"quota_subject_type": attempt.QuotaSubjectType,
 				"quota_subject_id":   attempt.QuotaSubjectID,
+				"api_key_id":         attempt.APIKeyID,
+				"workspace_id":       attempt.WorkspaceID,
+				"account_id":         attempt.AccountID,
+				"principal_type":     attempt.PrincipalType,
+				"principal_id":       attempt.PrincipalID,
+				"access_grant_id":    attempt.AccessGrantID,
+				"auth_method":        attempt.AuthMethod,
 				"updated_at":         now,
 			}),
 		}).

@@ -76,6 +76,16 @@ func TestBillingAttemptRecoveryPreservesInvocationSource(t *testing.T) {
 	bc := testUsageBillContext(time.Now().Add(-time.Second), time.Now())
 	bc.InvocationSource = InvocationSourceAPI
 	bc.EstimatedCredits = 11
+	apiKeyID, workspaceID, accountID, grantID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	bc.APIKeyID = apiKeyID.String()
+	bc.WorkspaceID = workspaceID.String()
+	bc.AccountID = &accountID
+	bc.PrincipalType = "user"
+	bc.PrincipalID = accountID.String()
+	bc.AccessGrantID = grantID.String()
+	bc.AuthMethod = "personal_api_key"
+	bc.QuotaSubjectType = quotaSubjectTypeAccessGrant
+	bc.QuotaSubjectID = grantID.String()
 
 	if err := db.Transaction(func(tx *gorm.DB) error {
 		return service.upsertAttemptInit(context.Background(), tx, bc)
@@ -90,6 +100,12 @@ func TestBillingAttemptRecoveryPreservesInvocationSource(t *testing.T) {
 	if attempt.InvocationSource != InvocationSourceAPI {
 		t.Fatalf("persisted invocation source = %q, want %q", attempt.InvocationSource, InvocationSourceAPI)
 	}
+	if attempt.APIKeyID == nil || *attempt.APIKeyID != apiKeyID || attempt.WorkspaceID == nil || *attempt.WorkspaceID != workspaceID ||
+		attempt.AccountID == nil || *attempt.AccountID != accountID || attempt.AccessGrantID == nil || *attempt.AccessGrantID != grantID ||
+		attempt.PrincipalType == nil || *attempt.PrincipalType != "user" || attempt.PrincipalID == nil || *attempt.PrincipalID != accountID.String() ||
+		attempt.AuthMethod != "personal_api_key" {
+		t.Fatalf("persisted principal attribution is incomplete: %#v", attempt)
+	}
 
 	recovered, err := service.buildLocalRecoveryBillingContext(context.Background(), bc.AttemptID)
 	if err != nil {
@@ -97,6 +113,10 @@ func TestBillingAttemptRecoveryPreservesInvocationSource(t *testing.T) {
 	}
 	if recovered.InvocationSource != InvocationSourceAPI {
 		t.Fatalf("recovered invocation source = %q, want %q", recovered.InvocationSource, InvocationSourceAPI)
+	}
+	if recovered.APIKeyID != apiKeyID.String() || recovered.WorkspaceID != workspaceID.String() || recovered.AccountID == nil || *recovered.AccountID != accountID ||
+		recovered.PrincipalType != "user" || recovered.PrincipalID != accountID.String() || recovered.AccessGrantID != grantID.String() || recovered.AuthMethod != "personal_api_key" {
+		t.Fatalf("recovered principal attribution is incomplete: %#v", recovered)
 	}
 }
 
@@ -107,14 +127,23 @@ func TestRemoteBillingRecoveryPreservesInvocationSourceInPartialUsageBill(t *tes
 	deductionID := uuid.NewString()
 	invocationResult := "success"
 	now := time.Now().UTC()
+	apiKeyID, workspaceID, accountID, grantID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	principalType, principalID := "user", accountID.String()
 	attempt := BillingAttempt{
 		AttemptID:        attemptID,
 		RequestID:        uuid.NewString(),
 		OrganizationID:   organizationID,
 		Lane:             billingAttemptLaneRemote,
 		InvocationSource: InvocationSourceAPI,
-		QuotaSubjectType: quotaSubjectTypeOrganization,
-		QuotaSubjectID:   organizationID.String(),
+		QuotaSubjectType: quotaSubjectTypeAccessGrant,
+		QuotaSubjectID:   grantID.String(),
+		APIKeyID:         &apiKeyID,
+		WorkspaceID:      &workspaceID,
+		AccountID:        &accountID,
+		PrincipalType:    &principalType,
+		PrincipalID:      &principalID,
+		AccessGrantID:    &grantID,
+		AuthMethod:       "personal_api_key",
 		Status:           billingAttemptStatusSettlePending,
 		InvocationResult: &invocationResult,
 		CreatedAt:        now,
@@ -123,7 +152,7 @@ func TestRemoteBillingRecoveryPreservesInvocationSourceInPartialUsageBill(t *tes
 	entries := []BillingAttemptEntry{
 		{
 			AttemptID: attemptID, EntryType: billingEntryTypeSubject,
-			LedgerType: quotaSubjectTypeOrganization + "_quota", LedgerRefID: organizationID.String(),
+			LedgerType: billingLedgerTypeGrantQuota, LedgerRefID: grantID.String(),
 			ReservedAmount: 7, ActualAmount: 7, Status: billingEntryStatusPending,
 			CreatedAt: now, UpdatedAt: now,
 		},
@@ -155,5 +184,11 @@ func TestRemoteBillingRecoveryPreservesInvocationSourceInPartialUsageBill(t *tes
 	}
 	if bill.InvocationSource != InvocationSourceAPI {
 		t.Fatalf("partial usage bill invocation source = %q, want %q", bill.InvocationSource, InvocationSourceAPI)
+	}
+	if bill.APIKeyID != apiKeyID.String() || bill.WorkspaceID == nil || *bill.WorkspaceID != workspaceID.String() ||
+		bill.AccountID == nil || *bill.AccountID != accountID || bill.PrincipalType == nil || *bill.PrincipalType != principalType ||
+		bill.PrincipalID == nil || *bill.PrincipalID != principalID || bill.AccessGrantID == nil || *bill.AccessGrantID != grantID ||
+		bill.AuthMethod != "personal_api_key" {
+		t.Fatalf("partial usage bill lost principal attribution: %#v", bill)
 	}
 }

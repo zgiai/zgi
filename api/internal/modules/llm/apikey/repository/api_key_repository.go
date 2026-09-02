@@ -53,7 +53,7 @@ func (r *apiKeyRepositoryImpl) GetByIDInOrganizations(ctx context.Context, id st
 
 	var apiKey model.TenantAPIKey
 	err := r.db.WithContext(ctx).
-		Where("id = ? AND organization_id IN ? AND is_internal = ?", id, organizationIDs, false).
+		Where("id = ? AND organization_id IN ? AND is_internal = ? AND principal_type IS NULL", id, organizationIDs, false).
 		First(&apiKey).Error
 	if err != nil {
 		return nil, err
@@ -199,13 +199,13 @@ func (r *apiKeyRepositoryImpl) Delete(ctx context.Context, id, organizationID st
 	var apiKey model.TenantAPIKey
 	if err := r.db.WithContext(ctx).
 		Select("id", "key_hash").
-		Where("id = ? AND organization_id = ? AND is_internal = ?", id, organizationID, false).
+		Where("id = ? AND organization_id = ? AND is_internal = ? AND principal_type IS NULL", id, organizationID, false).
 		First(&apiKey).Error; err != nil {
 		return err
 	}
 
 	if err := r.db.WithContext(ctx).
-		Where("id = ? AND organization_id = ? AND is_internal = ?", id, organizationID, false).
+		Where("id = ? AND organization_id = ? AND is_internal = ? AND principal_type IS NULL", id, organizationID, false).
 		Delete(&model.TenantAPIKey{}).Error; err != nil {
 		return err
 	}

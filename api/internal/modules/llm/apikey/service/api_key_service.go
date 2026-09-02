@@ -291,7 +291,7 @@ func (s *apiKeyServiceImpl) ListAPIKeys(ctx context.Context, req *dto.ListAPIKey
 	var total int64
 
 	query := s.db.WithContext(ctx).Model(&model.TenantAPIKey{}).
-		Where("is_internal = ?", false)
+		Where("is_internal = ? AND principal_type IS NULL", false)
 
 	// Filter by multiple tenant IDs (for group-level queries)
 	if len(req.OrganizationIDs) > 0 {

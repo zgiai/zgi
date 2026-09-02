@@ -69,6 +69,13 @@ type BillingAttempt struct {
 	InvocationSource  InvocationSource `gorm:"column:invocation_source;size:20;not null;default:'unknown'"`
 	QuotaSubjectType  string           `gorm:"column:quota_subject_type;size:20;not null"`
 	QuotaSubjectID    string           `gorm:"column:quota_subject_id;size:64;not null"`
+	APIKeyID          *uuid.UUID       `gorm:"column:api_key_id;type:uuid"`
+	WorkspaceID       *uuid.UUID       `gorm:"column:workspace_id;type:uuid"`
+	AccountID         *uuid.UUID       `gorm:"column:account_id;type:uuid"`
+	PrincipalType     *string          `gorm:"column:principal_type;size:32"`
+	PrincipalID       *string          `gorm:"column:principal_id;size:255"`
+	AccessGrantID     *uuid.UUID       `gorm:"column:access_grant_id;type:uuid"`
+	AuthMethod        string           `gorm:"column:auth_method;size:32;not null;default:'legacy_api_key'"`
 	Status            string           `gorm:"column:status;size:30;not null;index"`
 	InvocationResult  *string          `gorm:"column:invocation_result;size:20"`
 	ErrorCode         *string          `gorm:"column:error_code;size:100"`
@@ -78,6 +85,32 @@ type BillingAttempt struct {
 	LastReconcileAt   *time.Time       `gorm:"column:last_reconcile_at"`
 	CreatedAt         time.Time        `gorm:"column:created_at;not null"`
 	UpdatedAt         time.Time        `gorm:"column:updated_at;not null"`
+}
+
+func restoreBillingContextAttribution(bc *BillingContext, attempt *BillingAttempt) {
+	if bc == nil || attempt == nil {
+		return
+	}
+	if attempt.APIKeyID != nil {
+		bc.APIKeyID = attempt.APIKeyID.String()
+	}
+	if attempt.WorkspaceID != nil {
+		bc.WorkspaceID = attempt.WorkspaceID.String()
+	}
+	if attempt.AccountID != nil {
+		accountID := *attempt.AccountID
+		bc.AccountID = &accountID
+	}
+	if attempt.PrincipalType != nil {
+		bc.PrincipalType = *attempt.PrincipalType
+	}
+	if attempt.PrincipalID != nil {
+		bc.PrincipalID = *attempt.PrincipalID
+	}
+	if attempt.AccessGrantID != nil {
+		bc.AccessGrantID = attempt.AccessGrantID.String()
+	}
+	bc.AuthMethod = attempt.AuthMethod
 }
 
 func (BillingAttempt) TableName() string {

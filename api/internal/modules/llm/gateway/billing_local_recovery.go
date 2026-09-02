@@ -183,6 +183,7 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 		Status:            "error",
 		ErrorMessage:      "stale local pre-deduct auto rollback",
 	}
+	restoreBillingContextAttribution(bc, &attempt)
 	if attempt.QuotaSubjectType == quotaSubjectTypeAPIKey {
 		bc.APIKeyID = attempt.QuotaSubjectID
 	}

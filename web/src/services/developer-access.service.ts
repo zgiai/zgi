@@ -67,12 +67,53 @@ export interface PersonalApiKey {
   status: 'active' | 'inactive' | 'revoked';
   key_masked: string;
   principal_id: string;
+  principal_name?: string;
+  principal_email?: string;
   environment: 'development' | 'production';
   model_names: string[];
   created_at: string;
   accessed_at?: string | null;
   expires_at?: string | null;
   revoked_at?: string | null;
+}
+
+export interface DeveloperAccessAuditItem {
+  attempt_id: string;
+  request_id: string;
+  principal_id: string;
+  principal_name?: string;
+  principal_email?: string;
+  api_key_id: string;
+  api_key_name?: string;
+  api_key_masked?: string;
+  model_name: string;
+  provider_name: string;
+  status: 'success' | 'failed' | 'partial';
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  total_points: number;
+  response_time_ms: number;
+  error_code?: string;
+  created_at: string;
+}
+
+export interface DeveloperAccessAuditPage {
+  items: DeveloperAccessAuditItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DeveloperAccessAuditParams {
+  principal_id?: string;
+  api_key_id?: string;
+  model_name?: string;
+  status?: 'success' | 'failed' | 'partial';
+  start_time?: number;
+  end_time?: number;
+  page?: number;
+  page_size?: number;
 }
 
 export interface CreatedPersonalApiKey extends PersonalApiKey {
@@ -170,6 +211,18 @@ class DeveloperAccessService extends BaseService {
     return this.request('get', this.workspacePath(workspaceId, '/api-keys'));
   }
 
+  listAudit(
+    workspaceId: string,
+    params?: DeveloperAccessAuditParams
+  ): Promise<ApiResponseData<DeveloperAccessAuditPage>> {
+    return this.request(
+      'get',
+      this.workspacePath(workspaceId, '/developer-access/audit'),
+      undefined,
+      { params }
+    );
+  }
+
   createKey(
     workspaceId: string,
     input: CreatePersonalApiKeyInput
@@ -196,6 +249,16 @@ class DeveloperAccessService extends BaseService {
       this.workspacePath(workspaceId, `/api-keys/${keyId}/${action}`),
       action === 'revoke' ? { reason: reason ?? '' } : {}
     );
+  }
+
+  rotateKey(
+    workspaceId: string,
+    keyId: string,
+    name?: string
+  ): Promise<ApiResponseData<CreatedPersonalApiKey>> {
+    return this.request('post', this.workspacePath(workspaceId, `/api-keys/${keyId}/rotate`), {
+      name,
+    });
   }
 }
 

@@ -44,7 +44,7 @@ func TestNewLLMModule_StartsOfficialModelSynchronizerInCloudMode(t *testing.T) {
 		ensureLocalModelMetaSyncStarted = previousLocal
 	})
 
-	NewLLMModule(db, nil, nil, nil, nil, pconsole.NewStandalone())
+	NewLLMModule(db, nil, nil, nil, nil, pconsole.NewStandalone(), nil)
 
 	require.NotNil(t, got)
 	require.Equal(t, "CLOUD", got.edition)
@@ -79,7 +79,7 @@ func TestNewLLMModule_StrictSyncModeDoesNotAffectSynchronizerStartup(t *testing.
 		ensureLocalModelMetaSyncStarted = previousLocal
 	})
 
-	NewLLMModule(db, nil, nil, nil, nil, pconsole.NewStandalone())
+	NewLLMModule(db, nil, nil, nil, nil, pconsole.NewStandalone(), nil)
 
 	require.True(t, started)
 	require.True(t, catalogStarted)
@@ -113,7 +113,7 @@ func TestNewLLMModule_StartsLocalModelMetaSynchronizerOutsideCloudMode(t *testin
 		ensureLocalModelMetaSyncStarted = previousLocal
 	})
 
-	NewLLMModule(db, nil, nil, nil, nil, pconsole.NewStandalone())
+	NewLLMModule(db, nil, nil, nil, nil, pconsole.NewStandalone(), nil)
 
 	require.Equal(t, "LOCAL", localEdition)
 	require.False(t, officialStarted)

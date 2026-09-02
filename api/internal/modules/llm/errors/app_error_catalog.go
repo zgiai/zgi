@@ -27,6 +27,9 @@ var (
 	AppCodeNoProviderAvailable       = apperror.MustCode("llm.provider.none_available")
 	AppCodePrivateChannelUnavailable = apperror.MustCode("llm.channel.private_unavailable")
 	AppCodeInvocationFailed          = apperror.MustCode("llm.invocation.failed")
+	AppCodeDeveloperAccessDisabled   = apperror.MustCode("llm.developer_access.disabled")
+	AppCodeDeveloperApprovalNeeded   = apperror.MustCode("llm.developer_access.approval_required")
+	AppCodeDeveloperAccessConflict   = apperror.MustCode("llm.developer_access.conflict")
 )
 
 // CatalogDefinitions returns fresh LLM-owned definitions for composition into
@@ -111,6 +114,18 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The model request could not be completed. Try again or choose another model.",
 			"大模型调用未完成，请重试或选择其他模型。",
 			"llm.domain:40505"),
+		llmDefinition(AppCodeDeveloperAccessDisabled, appcatalog.CategoryAuthorization, 403, false,
+			"Developer API access is disabled for this workspace.",
+			"此工作空间已停用开发者 API 访问。",
+			"llm.developer_access.disabled:403003"),
+		llmDefinition(AppCodeDeveloperApprovalNeeded, appcatalog.CategoryAuthorization, 403, false,
+			"Developer API access approval is required.",
+			"需要管理员批准开发者 API 访问。",
+			"llm.developer_access.approval_required:403003"),
+		llmDefinition(AppCodeDeveloperAccessConflict, appcatalog.CategoryConflict, 409, false,
+			"The requested operation conflicts with the current developer access state.",
+			"当前开发者访问状态不允许执行此操作。",
+			"llm.developer_access.conflict:403003"),
 	}
 }
 

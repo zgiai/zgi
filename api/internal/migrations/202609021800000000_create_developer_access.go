@@ -116,7 +116,7 @@ const createDeveloperAccessSQL = `
 
 	ALTER TABLE public.llm_organization_api_keys
 		ADD CONSTRAINT fk_llm_api_keys_access_grant FOREIGN KEY (access_grant_id)
-		REFERENCES public.llm_developer_access_grants(id) ON DELETE RESTRICT;
+		REFERENCES public.llm_developer_access_grants(id) ON DELETE CASCADE;
 
 	ALTER TABLE public.llm_usage_bills
 		ADD COLUMN IF NOT EXISTS account_id uuid,

@@ -21,6 +21,8 @@ export const DEVELOPER_ACCESS_KEYS = {
   requests: (workspaceId: string, status?: AccessRequestStatus) =>
     [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'requests', status ?? 'all'] as const,
   keys: (workspaceId: string) => [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'keys'] as const,
+  audit: (workspaceId: string) =>
+    [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'audit'] as const,
 };
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -68,7 +70,14 @@ export function useDeveloperAccess(workspaceId?: string) {
     enabled,
     staleTime: 15_000,
   });
-  return { me, keys, requests };
+  const audit = useQuery({
+    queryKey: DEVELOPER_ACCESS_KEYS.audit(workspaceId ?? ''),
+    queryFn: async () =>
+      (await developerAccessService.listAudit(workspaceId ?? '', { page: 1, page_size: 50 })).data,
+    enabled,
+    staleTime: 15_000,
+  });
+  return { me, keys, requests, audit };
 }
 
 export function useDeveloperAccessActions(workspaceId?: string) {
@@ -92,6 +101,13 @@ export function useDeveloperAccessActions(workspaceId?: string) {
         )
       ).data,
     t('keyUpdated'),
+    t('requestFailed')
+  );
+  const rotateKey = useWorkspaceMutation(
+    workspaceId,
+    async (input: { keyId: string; name?: string }) =>
+      (await developerAccessService.rotateKey(workspaceId ?? '', input.keyId, input.name)).data,
+    t('keyRotated'),
     t('requestFailed')
   );
   const createRequest = useWorkspaceMutation(
@@ -128,5 +144,5 @@ export function useDeveloperAccessActions(workspaceId?: string) {
     t('requestFailed')
   );
 
-  return { createKey, setKeyStatus, createRequest, reviewRequest, updatePolicy };
+  return { createKey, setKeyStatus, rotateKey, createRequest, reviewRequest, updatePolicy };
 }

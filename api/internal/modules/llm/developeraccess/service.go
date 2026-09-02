@@ -16,19 +16,21 @@ import (
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	workspacerepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 )
 
 var (
 	ErrForbidden      = errors.New("developer access forbidden")
 	ErrNotFound       = errors.New("developer access resource not found")
 	ErrInvalid        = errors.New("invalid developer access request")
-	ErrAccessDisabled = errors.New("developer access is disabled")
-	ErrApprovalNeeded = errors.New("developer access approval is required")
-	ErrConflict       = errors.New("developer access state conflict")
+	ErrAccessDisabled = apperror.New(llmerrors.AppCodeDeveloperAccessDisabled)
+	ErrApprovalNeeded = apperror.New(llmerrors.AppCodeDeveloperApprovalNeeded)
+	ErrConflict       = apperror.New(llmerrors.AppCodeDeveloperAccessConflict)
 	ErrQuotaExceeded  = errors.New("developer access quota exceeded")
 )
 
@@ -73,18 +75,64 @@ type RevokeKeyInput struct {
 	Reason string `json:"reason" binding:"max=500"`
 }
 
+type RotateKeyInput struct {
+	Name      string     `json:"name" binding:"omitempty,max=255"`
+	ExpiresAt *time.Time `json:"expires_at"`
+}
+
 type KeyView struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Status      string     `json:"status"`
-	KeyMasked   string     `json:"key_masked"`
-	PrincipalID string     `json:"principal_id"`
-	Environment string     `json:"environment"`
-	ModelNames  []string   `json:"model_names"`
-	CreatedAt   time.Time  `json:"created_at"`
-	AccessedAt  *time.Time `json:"accessed_at,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	Status         string     `json:"status"`
+	KeyMasked      string     `json:"key_masked"`
+	PrincipalID    string     `json:"principal_id"`
+	PrincipalName  string     `json:"principal_name,omitempty"`
+	PrincipalEmail string     `json:"principal_email,omitempty"`
+	Environment    string     `json:"environment"`
+	ModelNames     []string   `json:"model_names"`
+	CreatedAt      time.Time  `json:"created_at"`
+	AccessedAt     *time.Time `json:"accessed_at,omitempty"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+}
+
+type AuditQuery struct {
+	PrincipalID string `form:"principal_id"`
+	APIKeyID    string `form:"api_key_id"`
+	ModelName   string `form:"model_name"`
+	Status      string `form:"status"`
+	StartTime   int64  `form:"start_time"`
+	EndTime     int64  `form:"end_time"`
+	Page        int    `form:"page"`
+	PageSize    int    `form:"page_size"`
+}
+
+type AuditItem struct {
+	AttemptID        string    `json:"attempt_id"`
+	RequestID        string    `json:"request_id"`
+	PrincipalID      string    `json:"principal_id"`
+	PrincipalName    string    `json:"principal_name,omitempty"`
+	PrincipalEmail   string    `json:"principal_email,omitempty"`
+	APIKeyID         string    `json:"api_key_id"`
+	APIKeyName       string    `json:"api_key_name,omitempty"`
+	APIKeyMasked     string    `json:"api_key_masked,omitempty"`
+	ModelName        string    `json:"model_name"`
+	ProviderName     string    `json:"provider_name"`
+	Status           string    `json:"status"`
+	PromptTokens     int64     `json:"prompt_tokens"`
+	CompletionTokens int64     `json:"completion_tokens"`
+	TotalTokens      int64     `json:"total_tokens"`
+	TotalPoints      int64     `json:"total_points"`
+	ResponseTimeMS   int64     `json:"response_time_ms"`
+	ErrorCode        *string   `json:"error_code,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type AuditPage struct {
+	Items    []AuditItem `json:"items"`
+	Total    int64       `json:"total"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"page_size"`
 }
 
 type CreatedKey struct {
@@ -223,7 +271,10 @@ func (s *Service) GetMe(ctx context.Context, workspaceID, accountID string) (*Me
 	if pendingErr == nil {
 		view.PendingRequest = &pending
 	}
-	view.CanCreateKey = policy.Mode != accessmodel.AccessModeDisabled && (scope.CanManage || (view.Grant != nil && view.Grant.IsActive(s.now())) || policy.Mode == accessmodel.AccessModeSelfService)
+	// Personal keys always belong to a workspace member. A broader organization
+	// management entitlement may administer the workspace, but it must not mint
+	// a user key that runtime membership validation would immediately reject.
+	view.CanCreateKey = scope.Member != nil && policy.Mode != accessmodel.AccessModeDisabled && (scope.CanManage || (view.Grant != nil && view.Grant.IsActive(s.now())) || policy.Mode == accessmodel.AccessModeSelfService)
 	return view, nil
 }
 
@@ -388,6 +439,9 @@ func (s *Service) CreateRequest(ctx context.Context, workspaceID, accountID stri
 	if err != nil {
 		return nil, err
 	}
+	if scope.Member == nil {
+		return nil, ErrForbidden
+	}
 	policy, err := s.policy(ctx, scope)
 	if err != nil {
 		return nil, err
@@ -465,6 +519,9 @@ func (s *Service) ReviewRequest(ctx context.Context, workspaceID, accountID, req
 		if request.Status != accessmodel.RequestStatusPending {
 			return ErrConflict
 		}
+		if request.RequesterAccountID == accountID {
+			return ErrForbidden
+		}
 		now := s.now()
 		request.ReviewerAccountID, request.ReviewedAt = &accountID, &now
 		reason := strings.TrimSpace(input.Reason)
@@ -493,7 +550,7 @@ func (s *Service) ReviewRequest(ctx context.Context, workspaceID, accountID, req
 			return ErrInvalid
 		}
 		models := input.AllowedModels
-		if len(models) == 0 {
+		if input.AllowedModels == nil {
 			models = request.RequestedModels
 		}
 		if len(models) == 0 {
@@ -507,10 +564,19 @@ func (s *Service) ReviewRequest(ctx context.Context, workspaceID, accountID, req
 			value := now.Add(time.Duration(*request.RequestedTTLSeconds) * time.Second)
 			expiresAt = &value
 		}
+		if expiresAt == nil {
+			expiresAt = ttlExpiry(now, policy.DefaultTTLSeconds)
+		}
+		if expiresAt != nil && !expiresAt.After(now) {
+			return ErrInvalid
+		}
 		if expiresAt != nil && policy.MaxTTLSeconds != nil && expiresAt.After(now.Add(time.Duration(*policy.MaxTTLSeconds)*time.Second)) {
 			return ErrInvalid
 		}
 		if err := upsertGrant(tx, scope, request.RequesterAccountID, accountID, "approved_request", quota, maxKeys, models, expiresAt); err != nil {
+			return err
+		}
+		if err := revokePrincipalKeys(tx, workspaceID, request.RequesterAccountID, accountID, "grant_updated", now); err != nil {
 			return err
 		}
 		request.Status = accessmodel.RequestStatusApproved
@@ -552,12 +618,65 @@ func upsertGrant(tx *gorm.DB, scope *workspaceScope, principalID, actorID, sourc
 	return tx.Save(&grant).Error
 }
 
+func revokePrincipalKeys(tx *gorm.DB, workspaceID, principalID, actorID, reason string, now time.Time) error {
+	return tx.Model(&apikeymodel.TenantAPIKey{}).
+		Where("workspace_id = ? AND principal_type = ? AND principal_id = ? AND status <> ?", workspaceID, accessmodel.PrincipalTypeUser, principalID, "revoked").
+		Updates(map[string]interface{}{
+			"status":                "revoked",
+			"revoked_at":            now,
+			"revoked_by_account_id": actorID,
+			"revoked_reason":        reason,
+			"updated_at":            now,
+		}).Error
+}
+
 func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accountID string, policy *accessmodel.Policy) (*accessmodel.Grant, error) {
 	var grant accessmodel.Grant
 	err := s.db.WithContext(ctx).Where("workspace_id = ? AND principal_type = ? AND principal_id = ?", scope.Workspace.ID, accessmodel.PrincipalTypeUser, accountID).First(&grant).Error
 	if err == nil {
-		if !grant.IsActive(s.now()) {
+		if grant.IsActive(s.now()) {
+			return &grant, nil
+		}
+		if policy.Mode != accessmodel.AccessModeSelfService || grant.Status != accessmodel.GrantStatusActive || grant.ExpiresAt == nil || grant.ExpiresAt.After(s.now()) {
 			return nil, ErrApprovalNeeded
+		}
+		// Expiry ends one self-service budget period. Renew the same principal
+		// atomically, reset its period usage, and bump authorization so old keys
+		// remain stale until the member explicitly creates a replacement.
+		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var locked accessmodel.Grant
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", grant.ID).First(&locked).Error; err != nil {
+				return err
+			}
+			if locked.IsActive(s.now()) {
+				return nil
+			}
+			if locked.Status != accessmodel.GrantStatusActive || locked.ExpiresAt == nil || locked.ExpiresAt.After(s.now()) {
+				return ErrApprovalNeeded
+			}
+			now := s.now()
+			locked.Source = "self_service"
+			locked.QuotaLimit = policy.DefaultQuota
+			locked.UsedQuota = 0
+			locked.RemainQuota = 0
+			if policy.DefaultQuota != nil {
+				locked.RemainQuota = *policy.DefaultQuota
+			}
+			locked.MaxKeys = policy.MaxKeys
+			locked.AllowedModels = unique(policy.AllowedModels)
+			locked.ExpiresAt = ttlExpiry(now, policy.DefaultTTLSeconds)
+			locked.UpdatedByAccountID = &accountID
+			locked.AuthorizationVersion++
+			if err := tx.Save(&locked).Error; err != nil {
+				return err
+			}
+			return revokePrincipalKeys(tx, scope.Workspace.ID, accountID, accountID, "grant_renewed", now)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("renew self-service grant: %w", err)
+		}
+		if err := s.db.WithContext(ctx).First(&grant, "id = ?", grant.ID).Error; err != nil {
+			return nil, err
 		}
 		return &grant, nil
 	}
@@ -611,6 +730,9 @@ func (s *Service) CreateKey(ctx context.Context, workspaceID, accountID string, 
 	scope, err := s.scope(ctx, workspaceID, accountID)
 	if err != nil {
 		return nil, err
+	}
+	if scope.Member == nil {
+		return nil, ErrForbidden
 	}
 	policy, err := s.policy(ctx, scope)
 	if err != nil {
@@ -716,7 +838,134 @@ func (s *Service) ListKeys(ctx context.Context, workspaceID, accountID string) (
 	for i := range rows {
 		views = append(views, keyToView(&rows[i]))
 	}
+	if err := s.hydrateKeyPrincipals(ctx, views); err != nil {
+		return nil, err
+	}
 	return views, nil
+}
+
+func (s *Service) hydrateKeyPrincipals(ctx context.Context, items []KeyView) error {
+	ids := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if item.PrincipalID == "" {
+			continue
+		}
+		if _, ok := seen[item.PrincipalID]; ok {
+			continue
+		}
+		seen[item.PrincipalID] = struct{}{}
+		ids = append(ids, item.PrincipalID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	type identity struct{ ID, Name, Email string }
+	var identities []identity
+	if err := s.db.WithContext(ctx).Table("accounts").Select("id", "name", "email").Where("id IN ?", ids).Scan(&identities).Error; err != nil {
+		return fmt.Errorf("load API key principals: %w", err)
+	}
+	byID := make(map[string]identity, len(identities))
+	for _, item := range identities {
+		byID[item.ID] = item
+	}
+	for i := range items {
+		items[i].PrincipalName = byID[items[i].PrincipalID].Name
+		items[i].PrincipalEmail = byID[items[i].PrincipalID].Email
+	}
+	return nil
+}
+
+func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, input AuditQuery) (*AuditPage, error) {
+	scope, err := s.scope(ctx, workspaceID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if input.Page <= 0 {
+		input.Page = 1
+	}
+	if input.PageSize <= 0 {
+		input.PageSize = 20
+	}
+	if input.PageSize > 100 || input.StartTime < 0 || input.EndTime < 0 || (input.StartTime > 0 && input.EndTime > 0 && input.EndTime < input.StartTime) {
+		return nil, ErrInvalid
+	}
+	if input.Status != "" && input.Status != "success" && input.Status != "failed" && input.Status != "partial" {
+		return nil, ErrInvalid
+	}
+
+	query := s.db.WithContext(ctx).Table("llm_usage_bills").
+		Where("workspace_id = ? AND principal_type = ? AND auth_method = ?", workspaceID, accessmodel.PrincipalTypeUser, "personal_api_key")
+	if !scope.CanManage {
+		query = query.Where("principal_id = ?", accountID)
+	} else if principalID := strings.TrimSpace(input.PrincipalID); principalID != "" {
+		query = query.Where("principal_id = ?", principalID)
+	}
+	if keyID := strings.TrimSpace(input.APIKeyID); keyID != "" {
+		query = query.Where("api_key_id = ?", keyID)
+	}
+	if modelName := strings.TrimSpace(input.ModelName); modelName != "" {
+		query = query.Where("model_name = ?", modelName)
+	}
+	if input.Status != "" {
+		query = query.Where("status = ?", input.Status)
+	}
+	if input.StartTime > 0 {
+		query = query.Where("request_created_at >= ?", time.Unix(input.StartTime, 0).UTC())
+	}
+	if input.EndTime > 0 {
+		query = query.Where("request_created_at < ?", time.Unix(input.EndTime, 0).UTC().Add(time.Second))
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, fmt.Errorf("count developer access audit: %w", err)
+	}
+	items := make([]AuditItem, 0, input.PageSize)
+	if err := query.Select(`attempt_id, request_id, principal_id, api_key_id, model_name, provider_name,
+		status, prompt_tokens, completion_tokens, total_tokens, total_points, response_time_ms,
+		error_code, request_created_at AS created_at`).
+		Order("request_created_at DESC").
+		Limit(input.PageSize).
+		Offset((input.Page - 1) * input.PageSize).
+		Scan(&items).Error; err != nil {
+		return nil, fmt.Errorf("list developer access audit: %w", err)
+	}
+
+	identities := make([]KeyView, 0, len(items))
+	for _, item := range items {
+		identities = append(identities, KeyView{PrincipalID: item.PrincipalID})
+	}
+	if err := s.hydrateKeyPrincipals(ctx, identities); err != nil {
+		return nil, err
+	}
+	identityByID := make(map[string]KeyView, len(identities))
+	for _, item := range identities {
+		identityByID[item.PrincipalID] = item
+	}
+	keyIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.APIKeyID != "" {
+			keyIDs = append(keyIDs, item.APIKeyID)
+		}
+	}
+	var keys []apikeymodel.TenantAPIKey
+	if len(keyIDs) > 0 {
+		if err := s.db.WithContext(ctx).Unscoped().Where("id IN ?", unique(keyIDs)).Find(&keys).Error; err != nil {
+			return nil, fmt.Errorf("load audited API keys: %w", err)
+		}
+	}
+	keysByID := make(map[string]KeyView, len(keys))
+	for i := range keys {
+		keysByID[keys[i].ID] = keyToView(&keys[i])
+	}
+	for i := range items {
+		identity := identityByID[items[i].PrincipalID]
+		key := keysByID[items[i].APIKeyID]
+		items[i].PrincipalName, items[i].PrincipalEmail = identity.PrincipalName, identity.PrincipalEmail
+		items[i].APIKeyName, items[i].APIKeyMasked = key.Name, key.KeyMasked
+	}
+	return &AuditPage{Items: items, Total: total, Page: input.Page, PageSize: input.PageSize}, nil
 }
 
 func (s *Service) ownedKey(ctx context.Context, scope *workspaceScope, accountID, keyID string) (*apikeymodel.TenantAPIKey, error) {
@@ -830,6 +1079,98 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 	}
 	view := keyToView(&key)
 	return &view, nil
+}
+
+func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID string, input RotateKeyInput) (*CreatedKey, error) {
+	scope, err := s.scope(ctx, workspaceID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if scope.Member == nil {
+		return nil, ErrForbidden
+	}
+	secret, err := generateSecret()
+	if err != nil {
+		return nil, fmt.Errorf("generate rotated API key: %w", err)
+	}
+	var replacement apikeymodel.TenantAPIKey
+	var oldHash string
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current apikeymodel.TenantAPIKey
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND workspace_id = ? AND principal_type = ? AND principal_id = ?", keyID, workspaceID, accessmodel.PrincipalTypeUser, accountID).
+			First(&current).Error; err != nil {
+			return err
+		}
+		if current.Status == "revoked" || current.AccessGrantID == nil {
+			return ErrConflict
+		}
+		var grant accessmodel.Grant
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *current.AccessGrantID).First(&grant).Error; err != nil {
+			return err
+		}
+		if !grant.IsActive(s.now()) || grant.AuthorizationVersion != current.AuthorizationVersion {
+			return ErrApprovalNeeded
+		}
+		expiresAt := input.ExpiresAt
+		if expiresAt == nil {
+			expiresAt = current.ExpiresAt
+		}
+		if expiresAt != nil && !expiresAt.After(s.now()) {
+			return ErrInvalid
+		}
+		if grant.ExpiresAt != nil && (expiresAt == nil || expiresAt.After(*grant.ExpiresAt)) {
+			expiresAt = grant.ExpiresAt
+		}
+		name := strings.TrimSpace(input.Name)
+		if name == "" {
+			name = current.Name
+		}
+		if len(name) > 255 {
+			return ErrInvalid
+		}
+		var active int64
+		if err := tx.Model(&apikeymodel.TenantAPIKey{}).
+			Where("access_grant_id = ? AND status = ? AND id <> ?", grant.ID, "active", current.ID).
+			Count(&active).Error; err != nil {
+			return err
+		}
+		if active >= int64(grant.MaxKeys) {
+			return ErrConflict
+		}
+		now := s.now()
+		oldHash = current.KeyHash
+		current.Status = "revoked"
+		current.RevokedAt, current.RevokedByID = &now, &accountID
+		reason := "rotated"
+		current.RevokedReason = &reason
+		if err := tx.Omit("Key").Save(&current).Error; err != nil {
+			return err
+		}
+		principalType := accessmodel.PrincipalTypeUser
+		replacement = apikeymodel.TenantAPIKey{
+			OrganizationID: current.OrganizationID, WorkspaceID: &workspaceID,
+			PrincipalType: &principalType, PrincipalID: &accountID, AccessGrantID: &grant.ID, CreatedByID: &accountID,
+			Key: "", KeyHash: util.HashAPIKey(secret), KeyPrefix: secret[:8], KeySuffix: secret[len(secret)-4:], SecretVersion: 2,
+			Name: name, Status: "active", Environment: current.Environment, ExpiresAt: expiresAt,
+			ModelLimitsEnabled: current.ModelLimitsEnabled, ModelLimits: current.ModelLimits, AllowIPs: current.AllowIPs,
+			AuthorizationVersion: grant.AuthorizationVersion, RotatedFromID: &current.ID,
+		}
+		return tx.Omit("Key").Create(&replacement).Error
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if invalidator, ok := s.keys.(interface {
+		InvalidateKeyCache(context.Context, string)
+	}); ok {
+		invalidator.InvalidateKeyCache(ctx, oldHash)
+	}
+	view := keyToView(&replacement)
+	return &CreatedKey{KeyView: view, Secret: secret}, nil
 }
 
 func unique(values []string) []string {

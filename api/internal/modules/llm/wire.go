@@ -44,6 +44,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/workspacequota"
 	workspacequotahandler "github.com/zgiai/zgi/api/internal/modules/llm/workspacequota/handler"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"gorm.io/gorm"
 )
 
@@ -120,7 +121,7 @@ type LLMModule struct {
 }
 
 // NewLLMModule creates a new LLM module with all dependencies wired
-func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, enterpriseService interfaces.OrganizationService, cp pconsole.ConsoleProvider) *LLMModule {
+func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interfaces.WorkspaceManagementService, accountService interfaces.AccountService, enterpriseService interfaces.OrganizationService, cp pconsole.ConsoleProvider, errorProjector *apptransport.Projector) *LLMModule {
 	m := &LLMModule{
 		DB: db,
 	}
@@ -176,7 +177,7 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 		m.APIKeyRepo = m.APIKeyModule.Repository
 		m.APIKeySvc = m.APIKeyModule.Service
 		m.APIKeyHandler = m.APIKeyModule.Handler
-		m.DeveloperAccessModule = developeraccess.NewModule(db, m.APIKeyRepo, enterpriseService)
+		m.DeveloperAccessModule = developeraccess.NewModule(db, m.APIKeyRepo, enterpriseService, errorProjector)
 		m.DeveloperAccessHandler = m.DeveloperAccessModule.Handler
 	}
 

@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import {
+  Activity,
   Check,
   Clipboard,
   Clock3,
@@ -11,6 +12,7 @@ import {
   Plus,
   Settings2,
   ShieldCheck,
+  UsersRound,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { API_URL } from '@/lib/config';
@@ -23,6 +25,7 @@ import type {
   CreatedPersonalApiKey,
   DeveloperAccessMode,
   DeveloperAccessRequest,
+  DeveloperAccessAuditItem,
   PersonalApiKey,
   ReviewAccessRequestInput,
 } from '@/services/developer-access.service';
@@ -49,6 +52,14 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 function formatDate(value?: string | null): string {
   if (!value) return '—';
@@ -60,8 +71,24 @@ function formatDate(value?: string | null): string {
 function statusVariant(status: string): 'success' | 'warning' | 'subtle' | 'destructive' {
   if (status === 'active' || status === 'approved') return 'success';
   if (status === 'pending') return 'warning';
-  if (status === 'revoked' || status === 'rejected') return 'destructive';
+  if (status === 'revoked' || status === 'rejected' || status === 'failed') return 'destructive';
   return 'subtle';
+}
+
+function splitModels(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean)
+    ),
+  ];
+}
+
+function toDateTimeLocal(value: Date): string {
+  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 function EmptyState({ title, description }: { title: string; description?: string }) {
@@ -81,9 +108,13 @@ function EmptyState({ title, description }: { title: string; description?: strin
 function KeyRow({
   item,
   onStatus,
+  showPrincipal = false,
+  canRotate = true,
 }: {
   item: PersonalApiKey;
-  onStatus: (action: 'enable' | 'disable' | 'revoke') => void;
+  onStatus: (action: 'enable' | 'disable' | 'revoke' | 'rotate') => void;
+  showPrincipal?: boolean;
+  canRotate?: boolean;
 }) {
   const t = useT('apikeys.developerAccess');
   return (
@@ -97,6 +128,12 @@ function KeyRow({
           </Badge>
         </div>
         <code className="mt-1 block truncate text-xs text-muted-foreground">{item.key_masked}</code>
+        {showPrincipal ? (
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {item.principal_name || item.principal_id.slice(0, 8)}
+            {item.principal_email ? ` · ${item.principal_email}` : ''}
+          </p>
+        ) : null}
       </div>
       <div className="text-xs text-muted-foreground">
         <p>
@@ -113,6 +150,11 @@ function KeyRow({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {canRotate && item.status !== 'revoked' ? (
+            <DropdownMenuItem onClick={() => onStatus('rotate')}>
+              {t('actions.rotate')}
+            </DropdownMenuItem>
+          ) : null}
           {item.status === 'active' ? (
             <DropdownMenuItem onClick={() => onStatus('disable')}>
               {t('actions.disable')}
@@ -130,6 +172,87 @@ function KeyRow({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+  );
+}
+
+function AuditList({
+  items,
+  loading,
+  error,
+  showPrincipal,
+}: {
+  items: DeveloperAccessAuditItem[];
+  loading: boolean;
+  error: boolean;
+  showPrincipal: boolean;
+}) {
+  const t = useT('apikeys.developerAccess');
+  if (error) {
+    return <EmptyState title={t('loadError')} description={t('loadErrorDescription')} />;
+  }
+  if (loading) {
+    return <Skeleton className="h-56 w-full" />;
+  }
+  if (!items.length) {
+    return <EmptyState title={t('audit.empty')} description={t('audit.emptyDescription')} />;
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          {showPrincipal ? <TableHead>{t('audit.member')}</TableHead> : null}
+          <TableHead>{t('audit.key')}</TableHead>
+          <TableHead>{t('audit.model')}</TableHead>
+          <TableHead>{t('audit.status')}</TableHead>
+          <TableHead>{t('audit.tokens')}</TableHead>
+          <TableHead>{t('audit.points')}</TableHead>
+          <TableHead>{t('audit.time')}</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {items.map(item => (
+          <TableRow key={item.attempt_id}>
+            {showPrincipal ? (
+              <TableCell>
+                <div className="max-w-48">
+                  <p className="truncate font-medium">
+                    {item.principal_name || item.principal_id.slice(0, 8)}
+                  </p>
+                  {item.principal_email ? (
+                    <p className="truncate text-muted-foreground">{item.principal_email}</p>
+                  ) : null}
+                </div>
+              </TableCell>
+            ) : null}
+            <TableCell>
+              <div className="max-w-44">
+                <p className="truncate font-medium">
+                  {item.api_key_name || item.api_key_id.slice(0, 8)}
+                </p>
+                <code className="text-[11px] text-muted-foreground">
+                  {item.api_key_masked || '—'}
+                </code>
+              </div>
+            </TableCell>
+            <TableCell>
+              <div className="max-w-40">
+                <p className="truncate font-medium">{item.model_name}</p>
+                <p className="truncate text-muted-foreground">{item.provider_name}</p>
+              </div>
+            </TableCell>
+            <TableCell>
+              <Badge variant={statusVariant(item.status)}>{t(`statuses.${item.status}`)}</Badge>
+              {item.error_code ? (
+                <p className="mt-1 max-w-32 truncate text-destructive">{item.error_code}</p>
+              ) : null}
+            </TableCell>
+            <TableCell>{item.total_tokens.toLocaleString()}</TableCell>
+            <TableCell>{item.total_points.toLocaleString()}</TableCell>
+            <TableCell>{formatDate(item.created_at)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -185,13 +308,14 @@ export function DeveloperAccessPage() {
   const workspace = useCurrentWorkspace();
   const workspaceStatus = useWorkspaceContextStatus();
   const workspaceId = workspace?.id;
-  const { me, keys, requests } = useDeveloperAccess(workspaceId);
+  const { me, keys, requests, audit } = useDeveloperAccess(workspaceId);
   const actions = useDeveloperAccessActions(workspaceId);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [requestOpen, setRequestOpen] = React.useState(false);
   const [policyOpen, setPolicyOpen] = React.useState(false);
   const [createdKey, setCreatedKey] = React.useState<CreatedPersonalApiKey | null>(null);
   const [keyToRevoke, setKeyToRevoke] = React.useState<PersonalApiKey | null>(null);
+  const [keyToRotate, setKeyToRotate] = React.useState<PersonalApiKey | null>(null);
   const [reviewTarget, setReviewTarget] = React.useState<{
     request: DeveloperAccessRequest;
     decision: 'approve' | 'reject';
@@ -240,6 +364,7 @@ export function DeveloperAccessPage() {
     item => item.requester_account_id === access?.principal_id
   );
   const personalKeys = (keys.data ?? []).filter(item => item.principal_id === access?.principal_id);
+  const memberKeys = (keys.data ?? []).filter(item => item.principal_id !== access?.principal_id);
   const canCreate = Boolean(access?.can_create_key);
   const primaryAction = canCreate ? () => setCreateOpen(true) : () => setRequestOpen(true);
   const primaryLabel = canCreate ? t('createKey') : t('requestAccess');
@@ -349,8 +474,19 @@ export function DeveloperAccessPage() {
       <Card>
         <CardContent className="pt-6">
           <Tabs defaultValue="keys">
-            <TabsList>
+            <TabsList className="h-auto flex-wrap justify-start">
               <TabsTrigger value="keys">{t('tabs.keys')}</TabsTrigger>
+              {access?.can_manage ? (
+                <TabsTrigger value="memberKeys">
+                  <UsersRound className="mr-2 size-4" />
+                  {t('tabs.memberKeys')}
+                  {memberKeys.length ? (
+                    <Badge className="ml-2" variant="subtle">
+                      {memberKeys.length}
+                    </Badge>
+                  ) : null}
+                </TabsTrigger>
+              ) : null}
               <TabsTrigger value="requests">{t('tabs.requests')}</TabsTrigger>
               {access?.can_manage ? (
                 <TabsTrigger value="approvals">
@@ -362,6 +498,10 @@ export function DeveloperAccessPage() {
                   ) : null}
                 </TabsTrigger>
               ) : null}
+              <TabsTrigger value="audit">
+                <Activity className="mr-2 size-4" />
+                {t('tabs.audit')}
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="keys" className="mt-5">
               {keys.isError ? (
@@ -377,6 +517,10 @@ export function DeveloperAccessPage() {
                       key={item.id}
                       item={item}
                       onStatus={action => {
+                        if (action === 'rotate') {
+                          setKeyToRotate(item);
+                          return;
+                        }
                         if (action === 'revoke') {
                           setKeyToRevoke(item);
                           return;
@@ -388,6 +532,39 @@ export function DeveloperAccessPage() {
                 </div>
               )}
             </TabsContent>
+            {access?.can_manage ? (
+              <TabsContent value="memberKeys" className="mt-5">
+                {keys.isError ? (
+                  <EmptyState title={t('loadError')} description={t('loadErrorDescription')} />
+                ) : keys.isLoading ? (
+                  <Skeleton className="h-48 w-full" />
+                ) : memberKeys.length === 0 ? (
+                  <EmptyState
+                    title={t('emptyMemberKeys')}
+                    description={t('emptyMemberKeysDescription')}
+                  />
+                ) : (
+                  <div>
+                    {memberKeys.map(item => (
+                      <KeyRow
+                        key={item.id}
+                        item={item}
+                        showPrincipal
+                        canRotate={false}
+                        onStatus={action => {
+                          if (action === 'rotate') return;
+                          if (action === 'revoke') {
+                            setKeyToRevoke(item);
+                            return;
+                          }
+                          actions.setKeyStatus.mutate({ keyId: item.id, action });
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+            ) : null}
             <TabsContent value="requests" className="mt-5">
               {requests.isError ? (
                 <EmptyState title={t('loadError')} description={t('loadErrorDescription')} />
@@ -410,15 +587,15 @@ export function DeveloperAccessPage() {
               <TabsContent value="approvals" className="mt-5">
                 {requests.isError ? (
                   <EmptyState title={t('loadError')} description={t('loadErrorDescription')} />
-                ) : pendingApprovals.length === 0 ? (
+                ) : (requests.data ?? []).length === 0 ? (
                   <EmptyState title={t('emptyApprovals')} />
                 ) : (
                   <div>
-                    {pendingApprovals.map(item => (
+                    {(requests.data ?? []).map(item => (
                       <AccessRequestRow
                         key={item.id}
                         item={item}
-                        canReview
+                        canReview={item.requester_account_id !== access?.principal_id}
                         onReview={decision => setReviewTarget({ request: item, decision })}
                       />
                     ))}
@@ -426,6 +603,14 @@ export function DeveloperAccessPage() {
                 )}
               </TabsContent>
             ) : null}
+            <TabsContent value="audit" className="mt-5">
+              <AuditList
+                items={audit.data?.items ?? []}
+                loading={audit.isLoading}
+                error={audit.isError}
+                showPrincipal={Boolean(access?.can_manage)}
+              />
+            </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
@@ -463,8 +648,7 @@ export function DeveloperAccessPage() {
       ) : null}
       <ReviewAccessDialog
         target={reviewTarget}
-        defaultQuota={access?.policy.default_quota}
-        maxQuota={access?.policy.max_quota}
+        policy={access?.policy}
         pending={actions.reviewRequest.isPending}
         onOpenChange={open => {
           if (!open) setReviewTarget(null);
@@ -542,6 +726,41 @@ export function DeveloperAccessPage() {
               }}
             >
               {t('actions.confirmRevoke')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(keyToRotate)}
+        onOpenChange={open => {
+          if (!open) setKeyToRotate(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('rotateTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('rotateDescription', { name: keyToRotate?.name ?? '' })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setKeyToRotate(null)}>
+              {t('actions.cancel')}
+            </Button>
+            <Button
+              disabled={actions.rotateKey.isPending}
+              onClick={async () => {
+                if (!keyToRotate) return;
+                const result = await actions.rotateKey.mutateAsync({
+                  keyId: keyToRotate.id,
+                  name: keyToRotate.name,
+                });
+                setKeyToRotate(null);
+                setCreatedKey(result);
+              }}
+            >
+              {t('actions.confirmRotate')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -624,15 +843,24 @@ function RequestAccessDialog({
     purpose: string;
     environment: 'development' | 'production';
     requested_quota?: number;
+    requested_models?: string[];
+    requested_ttl_seconds?: number;
   }) => Promise<void>;
 }) {
   const t = useT('apikeys.developerAccess');
   const [purpose, setPurpose] = React.useState('');
   const [quota, setQuota] = React.useState('');
+  const [models, setModels] = React.useState('');
+  const [ttlHours, setTTLHours] = React.useState('');
   const [environment, setEnvironment] = React.useState<'development' | 'production'>('development');
+  const quotaValue = quota === '' ? undefined : Number(quota);
+  const ttlHoursValue = ttlHours === '' ? undefined : Number(ttlHours);
+  const requestInvalid =
+    (quotaValue !== undefined && (!Number.isFinite(quotaValue) || quotaValue < 0)) ||
+    (ttlHoursValue !== undefined && (!Number.isFinite(ttlHoursValue) || ttlHoursValue <= 0));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>{t('requestAccess')}</DialogTitle>
           <DialogDescription>{t('pendingDescription')}</DialogDescription>
@@ -646,6 +874,28 @@ function RequestAccessDialog({
               onChange={event => setPurpose(event.target.value)}
               placeholder={t('placeholders.purpose')}
             />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="access-models">{t('labels.requestedModels')}</Label>
+              <Input
+                id="access-models"
+                value={models}
+                onChange={event => setModels(event.target.value)}
+                placeholder={t('placeholders.models')}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="access-ttl">{t('labels.requestedTTL')}</Label>
+              <Input
+                id="access-ttl"
+                type="number"
+                min={1}
+                value={ttlHours}
+                onChange={event => setTTLHours(event.target.value)}
+                placeholder={t('placeholders.ttlHours')}
+              />
+            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="access-env">{t('labels.environment')}</Label>
@@ -676,12 +926,15 @@ function RequestAccessDialog({
             {t('actions.close')}
           </Button>
           <Button
-            disabled={!purpose.trim() || pending}
+            disabled={!purpose.trim() || pending || requestInvalid}
             onClick={() =>
               onSubmit({
                 purpose: purpose.trim(),
                 environment,
-                requested_quota: quota ? Number(quota) : undefined,
+                requested_quota: quotaValue,
+                requested_models: splitModels(models),
+                requested_ttl_seconds:
+                  ttlHoursValue === undefined ? undefined : ttlHoursValue * 3600,
               })
             }
           >
@@ -695,37 +948,71 @@ function RequestAccessDialog({
 
 function ReviewAccessDialog({
   target,
-  defaultQuota,
-  maxQuota,
+  policy,
   pending,
   onOpenChange,
   onSubmit,
 }: {
   target: { request: DeveloperAccessRequest; decision: 'approve' | 'reject' } | null;
-  defaultQuota?: number | null;
-  maxQuota?: number | null;
+  policy?: {
+    default_quota?: number | null;
+    max_quota?: number | null;
+    max_keys: number;
+    default_ttl_seconds?: number | null;
+    max_ttl_seconds?: number | null;
+    allowed_models: string[];
+  };
   pending: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (input: ReviewAccessRequestInput) => Promise<void>;
 }) {
   const t = useT('apikeys.developerAccess');
   const [quota, setQuota] = React.useState('');
+  const [maxKeys, setMaxKeys] = React.useState('1');
+  const [models, setModels] = React.useState('');
+  const [expiresAt, setExpiresAt] = React.useState('');
   const [reason, setReason] = React.useState('');
   React.useEffect(() => {
-    if (!target) return;
-    const initialQuota = target.request.requested_quota ?? defaultQuota;
+    if (!target || !policy) return;
+    const initialQuota = target.request.requested_quota ?? policy.default_quota;
     setQuota(initialQuota == null ? '' : initialQuota.toString());
+    setMaxKeys(policy.max_keys.toString());
+    setModels(
+      (target.request.requested_models.length
+        ? target.request.requested_models
+        : policy.allowed_models
+      ).join(', ')
+    );
+    const ttl = target.request.requested_ttl_seconds ?? policy.default_ttl_seconds;
+    setExpiresAt(ttl ? toDateTimeLocal(new Date(Date.now() + ttl * 1000)) : '');
     setReason('');
-  }, [defaultQuota, target]);
+  }, [policy, target]);
   const approving = target?.decision === 'approve';
   const quotaValue = quota === '' ? undefined : Number(quota);
   const quotaInvalid =
     approving &&
     quotaValue !== undefined &&
-    (!Number.isFinite(quotaValue) || quotaValue < 0 || (maxQuota != null && quotaValue > maxQuota));
+    (!Number.isFinite(quotaValue) ||
+      quotaValue < 0 ||
+      (policy?.max_quota != null && quotaValue > policy.max_quota));
+  const maxKeysValue = Number(maxKeys);
+  const expiryValue = expiresAt ? new Date(expiresAt) : undefined;
+  const approvalInvalid =
+    approving &&
+    (quotaInvalid ||
+      !Number.isInteger(maxKeysValue) ||
+      maxKeysValue < 1 ||
+      maxKeysValue > (policy?.max_keys ?? 1) ||
+      Boolean(expiryValue && !Number.isFinite(expiryValue.getTime())) ||
+      Boolean(expiryValue && expiryValue.getTime() <= Date.now()) ||
+      Boolean(
+        expiryValue &&
+          policy?.max_ttl_seconds &&
+          expiryValue.getTime() > Date.now() + policy.max_ttl_seconds * 1000
+      ));
   return (
     <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>
             {approving ? t('review.approveTitle') : t('review.rejectTitle')}
@@ -748,16 +1035,56 @@ function ReviewAccessDialog({
                 id="review-quota"
                 type="number"
                 min={0}
-                max={maxQuota ?? undefined}
+                max={policy?.max_quota ?? undefined}
                 value={quota}
                 onChange={event => setQuota(event.target.value)}
                 placeholder={t('placeholders.quota')}
               />
-              {maxQuota != null ? (
+              {policy?.max_quota != null ? (
                 <p className="text-xs text-muted-foreground">
-                  {t('review.maxQuota', { max: maxQuota })}
+                  {t('review.maxQuota', { max: policy.max_quota })}
                 </p>
               ) : null}
+            </div>
+          ) : null}
+          {approving ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="review-max-keys">{t('labels.maxKeys')}</Label>
+                <Input
+                  id="review-max-keys"
+                  type="number"
+                  min={1}
+                  max={policy?.max_keys}
+                  value={maxKeys}
+                  onChange={event => setMaxKeys(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('review.maxKeys', { max: policy?.max_keys ?? 1 })}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="review-expires">{t('labels.expires')}</Label>
+                <Input
+                  id="review-expires"
+                  type="datetime-local"
+                  value={expiresAt}
+                  onChange={event => setExpiresAt(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">{t('review.expiryHint')}</p>
+              </div>
+            </div>
+          ) : null}
+          {approving ? (
+            <div className="space-y-2">
+              <Label htmlFor="review-models">{t('labels.allowedModelNames')}</Label>
+              <Input
+                id="review-models"
+                value={models}
+                onChange={event => setModels(event.target.value)}
+                placeholder={t('placeholders.models')}
+              />
+              <p className="text-xs text-muted-foreground">{t('review.modelsHint')}</p>
             </div>
           ) : null}
           <div className="space-y-2">
@@ -776,10 +1103,13 @@ function ReviewAccessDialog({
           </Button>
           <Button
             variant={approving ? 'default' : 'destructive'}
-            disabled={pending || quotaInvalid}
+            disabled={pending || approvalInvalid}
             onClick={() =>
               onSubmit({
                 quota_limit: approving ? quotaValue : undefined,
+                max_keys: approving ? maxKeysValue : undefined,
+                allowed_models: approving ? splitModels(models) : undefined,
+                expires_at: approving && expiryValue ? expiryValue.toISOString() : undefined,
                 reason: reason.trim() || undefined,
               })
             }
@@ -824,17 +1154,50 @@ function PolicyDialog({
   const t = useT('apikeys.developerAccess');
   const [mode, setMode] = React.useState<DeveloperAccessMode>(policy.mode);
   const [defaultQuota, setDefaultQuota] = React.useState(policy.default_quota?.toString() ?? '');
+  const [maxQuota, setMaxQuota] = React.useState(policy.max_quota?.toString() ?? '');
   const [maxKeys, setMaxKeys] = React.useState(policy.max_keys.toString());
+  const [defaultTTLHours, setDefaultTTLHours] = React.useState(
+    policy.default_ttl_seconds ? (policy.default_ttl_seconds / 3600).toString() : ''
+  );
+  const [maxTTLHours, setMaxTTLHours] = React.useState(
+    policy.max_ttl_seconds ? (policy.max_ttl_seconds / 3600).toString() : ''
+  );
+  const [models, setModels] = React.useState(policy.allowed_models.join(', '));
   React.useEffect(() => {
     if (open) {
       setMode(policy.mode);
       setDefaultQuota(policy.default_quota?.toString() ?? '');
+      setMaxQuota(policy.max_quota?.toString() ?? '');
       setMaxKeys(policy.max_keys.toString());
+      setDefaultTTLHours(
+        policy.default_ttl_seconds ? (policy.default_ttl_seconds / 3600).toString() : ''
+      );
+      setMaxTTLHours(policy.max_ttl_seconds ? (policy.max_ttl_seconds / 3600).toString() : '');
+      setModels(policy.allowed_models.join(', '));
     }
   }, [open, policy]);
+  const defaultQuotaValue = defaultQuota === '' ? undefined : Number(defaultQuota);
+  const maxQuotaValue = maxQuota === '' ? undefined : Number(maxQuota);
+  const maxKeysValue = Number(maxKeys);
+  const defaultTTLValue = defaultTTLHours === '' ? undefined : Number(defaultTTLHours);
+  const maxTTLValue = maxTTLHours === '' ? undefined : Number(maxTTLHours);
+  const policyInvalid =
+    !Number.isInteger(maxKeysValue) ||
+    maxKeysValue < 1 ||
+    maxKeysValue > 100 ||
+    (defaultQuotaValue !== undefined &&
+      (!Number.isFinite(defaultQuotaValue) || defaultQuotaValue < 0)) ||
+    (maxQuotaValue !== undefined && (!Number.isFinite(maxQuotaValue) || maxQuotaValue < 0)) ||
+    (defaultQuotaValue !== undefined &&
+      maxQuotaValue !== undefined &&
+      defaultQuotaValue > maxQuotaValue) ||
+    (defaultTTLValue !== undefined &&
+      (!Number.isFinite(defaultTTLValue) || defaultTTLValue <= 0)) ||
+    (maxTTLValue !== undefined && (!Number.isFinite(maxTTLValue) || maxTTLValue <= 0)) ||
+    (defaultTTLValue !== undefined && maxTTLValue !== undefined && defaultTTLValue > maxTTLValue);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>{t('policy')}</DialogTitle>
           <DialogDescription>{t('policyDescription')}</DialogDescription>
@@ -865,6 +1228,16 @@ function PolicyDialog({
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="policy-max-quota">{t('labels.maxQuota')}</Label>
+              <Input
+                id="policy-max-quota"
+                type="number"
+                min={0}
+                value={maxQuota}
+                onChange={event => setMaxQuota(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="policy-max-keys">{t('labels.maxKeys')}</Label>
               <Input
                 id="policy-max-keys"
@@ -876,19 +1249,57 @@ function PolicyDialog({
               />
             </div>
           </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="policy-default-ttl">{t('labels.defaultTTL')}</Label>
+              <Input
+                id="policy-default-ttl"
+                type="number"
+                min={1}
+                value={defaultTTLHours}
+                onChange={event => setDefaultTTLHours(event.target.value)}
+                placeholder={t('placeholders.ttlHours')}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="policy-max-ttl">{t('labels.maxTTL')}</Label>
+              <Input
+                id="policy-max-ttl"
+                type="number"
+                min={1}
+                value={maxTTLHours}
+                onChange={event => setMaxTTLHours(event.target.value)}
+                placeholder={t('placeholders.ttlHours')}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="policy-models">{t('labels.allowedModelNames')}</Label>
+            <Input
+              id="policy-models"
+              value={models}
+              onChange={event => setModels(event.target.value)}
+              placeholder={t('placeholders.models')}
+            />
+            <p className="text-xs text-muted-foreground">{t('review.modelsHint')}</p>
+          </div>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('actions.close')}
           </Button>
           <Button
-            disabled={pending || Number(maxKeys) < 1}
+            disabled={pending || policyInvalid}
             onClick={() =>
               onSubmit({
                 ...policy,
                 mode,
-                default_quota: defaultQuota ? Number(defaultQuota) : null,
-                max_keys: Number(maxKeys),
+                default_quota: defaultQuotaValue ?? null,
+                max_quota: maxQuotaValue ?? null,
+                max_keys: maxKeysValue,
+                default_ttl_seconds: defaultTTLValue ? defaultTTLValue * 3600 : null,
+                max_ttl_seconds: maxTTLValue ? maxTTLValue * 3600 : null,
+                allowed_models: splitModels(models),
               })
             }
           >

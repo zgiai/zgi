@@ -530,11 +530,14 @@ func (s *RemoteBilling) reconcileAttempt(ctx context.Context, attemptID string) 
 		UseSystemProvider: true,
 		Status:            settleStatus,
 	}
+	restoreBillingContextAttribution(bc, &attempt)
 	if attempt.QuotaSubjectType == quotaSubjectTypeAPIKey && strings.TrimSpace(attempt.QuotaSubjectID) != "" {
 		bc.APIKeyID = strings.TrimSpace(attempt.QuotaSubjectID)
 	}
 	if attempt.QuotaSubjectType == quotaSubjectTypeAccessGrant && strings.TrimSpace(attempt.QuotaSubjectID) != "" {
-		bc.AccessGrantID = strings.TrimSpace(attempt.QuotaSubjectID)
+		if strings.TrimSpace(bc.AccessGrantID) == "" {
+			bc.AccessGrantID = strings.TrimSpace(attempt.QuotaSubjectID)
+		}
 	}
 	if attempt.QuotaSubjectType == quotaSubjectTypeWorkspace && strings.TrimSpace(attempt.QuotaSubjectID) != "" {
 		bc.WorkspaceID = strings.TrimSpace(attempt.QuotaSubjectID)

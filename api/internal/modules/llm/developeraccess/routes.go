@@ -7,6 +7,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler) {
 	workspaces.GET("/developer-access/me", h.GetMe)
 	workspaces.GET("/developer-access/policy", h.GetPolicy)
 	workspaces.PUT("/developer-access/policy", h.PutPolicy)
+	workspaces.GET("/developer-access/audit", h.ListAudit)
 
 	requests := workspaces.Group("/access-requests")
 	requests.GET("", h.ListRequests)
@@ -22,4 +23,5 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler) {
 	keys.POST("/:key_id/disable", h.DisableKey)
 	keys.POST("/:key_id/enable", h.EnableKey)
 	keys.POST("/:key_id/revoke", h.RevokeKey)
+	keys.POST("/:key_id/rotate", h.RotateKey)
 }
