@@ -9,7 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	integrations "github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	"github.com/zgiai/zgi/api/middleware"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"

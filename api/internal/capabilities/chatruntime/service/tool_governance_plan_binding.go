@@ -308,7 +308,7 @@ func completeBoundGovernedInvocationOperationPlan(metadata map[string]interface{
 	operationPlanAdvanceNextPendingPhase(phases)
 	plan["phases"] = mapsToInterfaceSlice(phases)
 	operationPlanMarkEvidenceCurrent(plan)
-	terminal := operationPlanPhasesTerminal(phases)
+	terminal := operationPlanPhasesTerminal(plan, phases)
 	if terminal {
 		plan["status"] = operationPlanStatusCompleted
 		plan["pending_next_action"] = "none"
@@ -478,11 +478,14 @@ func governedInvocationPlanBindingMatches(binding map[string]interface{}, frozen
 	return false
 }
 
-func operationPlanPhasesTerminal(phases []map[string]interface{}) bool {
+func operationPlanPhasesTerminal(plan map[string]interface{}, phases []map[string]interface{}) bool {
 	if len(phases) == 0 {
 		return false
 	}
 	for _, phase := range phases {
+		if !operationPlanPhaseBlocksTerminal(plan, phase) {
+			continue
+		}
 		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
 		case operationPlanStepStatusCompleted, "skipped":
 		default:
@@ -490,4 +493,57 @@ func operationPlanPhasesTerminal(phases []map[string]interface{}) bool {
 		}
 	}
 	return true
+}
+
+func operationPlanPhaseBlocksTerminal(plan map[string]interface{}, phase map[string]interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(phase[operationPlanPhaseSourceKey]))) {
+	case operationPlanPhaseSourceModelAdvisory:
+		return false
+	case operationPlanPhaseSourceServerOutcome:
+		// The source label is not an attestation. Only a phase linked to an
+		// Outcome currently present in the server-owned plan may block terminal
+		// completion, and the Outcome owns the required/optional decision.
+		outcome := operationPlanPhaseLinkedOutcome(plan, phase)
+		if len(outcome) == 0 {
+			return false
+		}
+		if required, exists := outcome["required"]; exists {
+			return operationPlanBoolValue(required)
+		}
+		return true
+	case operationPlanPhaseSourceServerPreparation:
+		// No persisted service-side phase currently carries a verifiable
+		// PreparationHint attestation. A source string, projected Action marker,
+		// or model-supplied expected_action is insufficient. Until such an
+		// attestation is persisted and verified against the server Action catalog,
+		// preparation phases remain advisory at this boundary.
+		return false
+	default:
+		// Historical phases predate phase_source. Preserve a valid Outcome link
+		// first, then fall back to their explicit required flag. New model phases
+		// are normalized with model_advisory before reaching persistence.
+		if outcome := operationPlanPhaseLinkedOutcome(plan, phase); len(outcome) > 0 {
+			if required, exists := outcome["required"]; exists {
+				return operationPlanBoolValue(required)
+			}
+			return true
+		}
+		if required, exists := phase["required"]; exists {
+			return operationPlanBoolValue(required)
+		}
+		return true
+	}
+}
+
+func operationPlanPhaseLinkedOutcome(plan map[string]interface{}, phase map[string]interface{}) map[string]interface{} {
+	outcomeID := strings.TrimSpace(stringFromAny(phase["outcome_id"]))
+	if outcomeID == "" {
+		return nil
+	}
+	for _, outcome := range mapSliceFromAny(plan[operationPlanOutcomesKey]) {
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(outcome["id"])), outcomeID) {
+			return outcome
+		}
+	}
+	return nil
 }

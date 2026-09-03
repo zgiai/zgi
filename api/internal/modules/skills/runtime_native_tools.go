@@ -142,7 +142,11 @@ type NativeToolSet struct {
 	ExternalActionCandidates    []NativeExternalActionCandidate `json:"external_action_candidates,omitempty"`
 }
 
-const DefaultMaxNativeToolProjections = 24
+// DefaultMaxNativeToolProjections matches the largest request-scoped Action
+// catalog the integrations projector can return. Provider-native tools already
+// present in the set consume the same capacity; schema character and token
+// budgets remain the stricter boundary when configured.
+const DefaultMaxNativeToolProjections = 128
 
 type NativeToolSetOptions struct {
 	TenantID              string
@@ -344,6 +348,10 @@ func AppendNativeToolProjections(
 	if maxTools <= 0 || maxTools > DefaultMaxNativeToolProjections {
 		maxTools = DefaultMaxNativeToolProjections
 	}
+	remainingProviderToolCapacity := max(0, DefaultMaxNativeToolProjections-len(toolSet.ProviderTools))
+	if maxTools > remainingProviderToolCapacity {
+		maxTools = remainingProviderToolCapacity
+	}
 	projections = dependencyOrderedNativeToolProjections(projections, maxTools)
 	reservedNames := nativeControlToolNames()
 	for _, name := range options.ReservedToolNames {
@@ -458,9 +466,9 @@ func AppendNativeToolProjections(
 
 // dependencyOrderedNativeToolProjections emits every eligible preparation
 // Action before the target Action that declares it. Therefore any prefix cut by
-// the direct-alias limit is dependency-closed: a target can never consume one
-// of the 24 slots while its authorized same-connection preparation Action is
-// displaced by an unrelated projection.
+	// the direct-alias limit is dependency-closed: a target can never consume a
+	// slot while its authorized same-connection preparation Action is displaced by
+	// an unrelated projection.
 func dependencyOrderedNativeToolProjections(projections []NativeToolProjection, limit int) []NativeToolProjection {
 	if len(projections) < 2 {
 		return append([]NativeToolProjection(nil), projections...)

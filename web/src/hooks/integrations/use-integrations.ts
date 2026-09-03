@@ -10,10 +10,12 @@ import type { ApiResponseData } from '@/services/types/common';
 import type {
   AcknowledgeIntegrationOAuthRecoveryRequest,
   CreateIntegrationConnectionRequest,
+  DetachIntegrationConnectionReferencesRequest,
   GetIntegrationExecutionsParams,
   IntegrationActionPolicy,
   IntegrationCatalogItem,
   IntegrationConnection,
+  IntegrationConnectionDeleteImpact,
   IntegrationConnectionGrant,
   IntegrationConnectionHealthEvent,
   IntegrationConnectionTestResult,
@@ -126,6 +128,21 @@ export function useAllIntegrationConnections(
   return useQuery({
     queryKey: INTEGRATION_KEYS.connectionList({ ...params, all: true }),
     queryFn: () => integrationService.getAllConnections(params),
+    staleTime: 30_000,
+    retry: false,
+    enabled,
+  });
+}
+
+export function useAllAvailableIntegrationConnections(
+  params?: {
+    integration_id?: string;
+  },
+  enabled = true
+) {
+  return useQuery({
+    queryKey: INTEGRATION_KEYS.availableConnections({ ...params, all: true }),
+    queryFn: () => integrationService.getAllAvailableConnections(params),
     staleTime: 30_000,
     retry: false,
     enabled,
@@ -336,7 +353,7 @@ export function useDeleteIntegrationOAuthClientConfig(
 
 function useConnectionMutation<TVariables, TData = unknown>(
   mutationFn: (variables: TVariables) => Promise<TData>,
-  successKey: 'created' | 'updated' | 'tested' | 'defaultSet' | 'deleted'
+  successKey: 'created' | 'updated' | 'tested' | 'defaultSet' | 'deleted' | 'referencesDetached'
 ) {
   const queryClient = useQueryClient();
   const t = useT('integrations');
@@ -355,6 +372,9 @@ function useConnectionMutation<TVariables, TData = unknown>(
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.catalog() });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.capabilityLists() });
       void queryClient.invalidateQueries({ queryKey: INTEGRATION_KEYS.executions() });
+      if (successKey === 'referencesDetached') {
+        void queryClient.invalidateQueries({ queryKey: AGENT_KEYS.all });
+      }
     },
     onError: error => {
       const key = integrationErrorTranslationKeyFromError(error, 'integrations');
@@ -461,6 +481,16 @@ export function useSetDefaultIntegrationConnection() {
 
 export function useDeleteIntegrationConnection() {
   return useConnectionMutation<string>(id => integrationService.deleteConnection(id), 'deleted');
+}
+
+export function useDetachIntegrationConnectionReferences() {
+  return useConnectionMutation<
+    { id: string; data: DetachIntegrationConnectionReferencesRequest },
+    ApiResponseData<IntegrationConnectionDeleteImpact>
+  >(
+    ({ id, data }) => integrationService.detachConnectionReferences(id, data),
+    'referencesDetached'
+  );
 }
 
 export function useDeleteMyIntegrationConnection() {

@@ -32,8 +32,17 @@ import WorkflowValueEditor, {
 import { useT } from '@/i18n';
 import ToolConfigDialog from './tool-config-dialog';
 import ValueSourceEditor from '../../../common/value-source-editor';
+import {
+  integrationConnectionItems,
+  useAllAvailableIntegrationConnections,
+} from '@/hooks/integrations/use-integrations';
 
-import { useNodeData, useNodeDataUpdate, useLocalNodeData, useNodeOutputVariables } from '../../../hooks';
+import {
+  useNodeData,
+  useNodeDataUpdate,
+  useLocalNodeData,
+  useNodeOutputVariables,
+} from '../../../hooks';
 
 interface ToolManagerProps {
   id: string;
@@ -50,6 +59,12 @@ const primitiveOfField = (t: ToolFormField['type']): WorkflowVariable['type'] =>
       return 'boolean';
     case 'file':
       return 'file';
+    case 'json':
+      return 'object';
+    case 'string-list':
+      return 'array[string]';
+    case 'date':
+    case 'date-time':
     case 'select':
     case 'secret':
     case 'text':
@@ -58,7 +73,39 @@ const primitiveOfField = (t: ToolFormField['type']): WorkflowVariable['type'] =>
   }
 };
 
-const paramsEqual = (a: any, b: any) => {
+const variableMatchesField = (
+  fieldType: ToolFormField['type'],
+  variableType: WorkflowVariable['type']
+) => {
+  if (fieldType === 'json') {
+    return (
+      variableType === 'object' || variableType === 'array' || variableType.startsWith('array[')
+    );
+  }
+  if (fieldType === 'string-list') {
+    return (
+      variableType === 'string' || variableType === 'array' || variableType === 'array[string]'
+    );
+  }
+  return variableType === primitiveOfField(fieldType);
+};
+
+const padDateTimePart = (value: number) => String(value).padStart(2, '0');
+
+const toDateTimeLocalValue = (value: unknown) => {
+  if (typeof value !== 'string' || value.trim() === '') return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return `${parsed.getFullYear()}-${padDateTimePart(parsed.getMonth() + 1)}-${padDateTimePart(parsed.getDate())}T${padDateTimePart(parsed.getHours())}:${padDateTimePart(parsed.getMinutes())}:${padDateTimePart(parsed.getSeconds())}`;
+};
+
+const fromDateTimeLocalValue = (value: string) => {
+  if (!value.trim()) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
+};
+
+const paramsEqual = (a: unknown, b: unknown) => {
   try {
     return JSON.stringify(a) === JSON.stringify(b);
   } catch {
@@ -86,36 +133,65 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
   const updateNodeData = useNodeDataUpdate<ToolNodeData>(nodeId);
   const outputs = useNodeOutputVariables(nodeId);
 
+  const providerDefinition = useMemo(() => {
+    const providerList = Array.isArray(tools) ? tools : [];
+    return providerList.find(
+      provider => provider.id === nodeData?.provider_id || provider.name === nodeData?.provider_id
+    );
+  }, [nodeData?.provider_id, tools]);
+  const isConnector =
+    nodeData?.provider_type === 'connector' || providerDefinition?.type === 'connector';
+  const connectionsQuery = useAllAvailableIntegrationConnections(
+    { integration_id: isConnector ? nodeData?.provider_id : undefined },
+    Boolean(isConnector && nodeData?.provider_id)
+  );
+  const connectorConnections = useMemo(
+    () =>
+      integrationConnectionItems(connectionsQuery.data?.data)
+        .filter(connection => connection.credential_source !== 'account')
+        .filter(connection => connection.status === 'active')
+        .sort((left, right) => Number(right.is_default) - Number(left.is_default)),
+    [connectionsQuery.data?.data]
+  );
+
   // Get provider icon URL from tools list
   const providerIcon = useMemo(() => {
     if (!nodeData?.provider_id) return undefined;
-    const providerList = Array.isArray(tools) ? tools : [];
-    const provider = providerList.find(
-      p => p.id === nodeData.provider_id || p.name === nodeData.provider_id
-    );
-    return provider?.icon;
-  }, [tools, nodeData?.provider_id]);
+    return providerDefinition?.icon;
+  }, [nodeData?.provider_id, providerDefinition?.icon]);
 
   // Compute form fields from provider declaration dynamically
   const formFields = useMemo(() => {
-    const providerList = Array.isArray(tools) ? tools : [];
-    const provider = providerList.find(
-      p => p.id === nodeData?.provider_id || p.name === nodeData?.provider_id
-    );
-    const toolList = provider?.tools ?? [];
+    const toolList = providerDefinition?.tools ?? [];
     const tool = toolList.find(t => t.name === nodeData?.tool_name);
     return tool ? mapParametersToFormFields(tool.parameters, locale) : [];
-  }, [tools, nodeData?.provider_id, nodeData?.tool_name, locale]);
+  }, [providerDefinition?.tools, nodeData?.tool_name, locale]);
 
   // Find tool definition for config_parameters
   const toolDefinition = useMemo(() => {
-    const providerList = Array.isArray(tools) ? tools : [];
-    const provider = providerList.find(
-      p => p.id === nodeData?.provider_id || p.name === nodeData?.provider_id
-    );
-    const toolList = provider?.tools ?? [];
+    const toolList = providerDefinition?.tools ?? [];
     return toolList.find(t => t.name === nodeData?.tool_name);
-  }, [tools, nodeData?.provider_id, nodeData?.tool_name]);
+  }, [providerDefinition?.tools, nodeData?.tool_name]);
+
+  React.useEffect(() => {
+    const providerList = Array.isArray(tools) ? tools : [];
+    if (providerList.length === 0) return;
+
+    const state = useWorkflowStore.getState();
+    for (const node of state.nodes) {
+      const data = node.data as Partial<ToolNodeData>;
+      if (data.type !== 'tools' || !data.provider_id || !data.tool_name) continue;
+      const provider = providerList.find(
+        item => item.id === data.provider_id || item.name === data.provider_id
+      );
+      const definition = provider?.tools?.find(item => item.name === data.tool_name);
+      if (!definition) continue;
+      const next = definition.workflow_outputs || [];
+      if (!paramsEqual(data.workflow_outputs || [], next)) {
+        state.updateNodeData(node.id, { workflow_outputs: next });
+      }
+    }
+  }, [tools]);
 
   const configParams = toolDefinition?.config_parameters;
   const hasConfig = !!(configParams && configParams.enable);
@@ -168,10 +244,18 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
   );
 
   const setVariable = useCallback(
-    (name: string, value: string[] | undefined) => {
-      updateBinding(name, { type: 'variable', value });
+    (name: string, value: string[] | undefined, variableType?: WorkflowVariable['type']) => {
+      const field = fieldsByName.get(name);
+      updateBinding(name, {
+        type: 'variable',
+        value,
+        coerce:
+          field?.type === 'string-list' && variableType === 'string'
+            ? 'singleton_array'
+            : undefined,
+      });
     },
-    [updateBinding]
+    [fieldsByName, updateBinding]
   );
   // Move tNodes declaration to top of component (already moved above)
 
@@ -258,6 +342,41 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
         )}
       </div>
 
+      {isConnector ? (
+        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+          <Label className="text-sm">
+            {t('nodes.tool.connection.label')}
+            <span className="ml-1 text-red-500">*</span>
+          </Label>
+          {connectionsQuery.isLoading ? (
+            <Skeleton className="h-9 w-full" />
+          ) : connectionsQuery.isError ? (
+            <p className="text-xs text-destructive">{t('nodes.tool.connection.loadFailed')}</p>
+          ) : connectorConnections.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{t('nodes.tool.connection.empty')}</p>
+          ) : (
+            <Select
+              value={nodeData?.connection_id || ''}
+              onValueChange={connectionId => updateNodeData({ connection_id: connectionId })}
+              disabled={readOnly}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={t('nodes.tool.connection.placeholder')} />
+              </SelectTrigger>
+              <SelectContent>
+                {connectorConnections.map(connection => (
+                  <SelectItem key={connection.id} value={connection.id}>
+                    {connection.name}
+                    {connection.display_name ? ` · ${connection.display_name}` : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <p className="text-xs text-muted-foreground">{t('nodes.tool.connection.hint')}</p>
+        </div>
+      ) : null}
+
       {/* Parameters editor */}
       <div className="space-y-4">
         {isLoading && formFields.length > 0
@@ -296,7 +415,11 @@ interface ToolParameterFieldProps {
   isFetching: boolean;
   updateBinding: (name: string, next: ToolParameterBinding) => void;
   setConstant: (name: string, raw: unknown) => void;
-  setVariable: (name: string, value: string[] | undefined) => void;
+  setVariable: (
+    name: string,
+    value: string[] | undefined,
+    variableType?: WorkflowVariable['type']
+  ) => void;
   getLatestParams: () => Record<string, ToolParameterBinding>;
 }
 
@@ -316,8 +439,6 @@ const ToolParameterField = React.memo<ToolParameterFieldProps>(
     const t = useT();
     const editorRef = React.useRef<WorkflowValueEditorHandle>(null);
     const disabled = readOnly || isLoading || isFetching;
-    const primitive = primitiveOfField(field.type);
-
     // Determine mode based on field type and current binding
     let mode: ToolParameterBindingType = binding?.type || 'constant';
 
@@ -326,6 +447,14 @@ const ToolParameterField = React.memo<ToolParameterFieldProps>(
     } else if (field.type === 'file') {
       mode = 'variable';
     } else if (field.type === 'secret' || field.type === 'checkbox') {
+      mode = 'constant';
+    } else if (
+      binding?.type === 'mixed' &&
+      (field.type === 'date' || field.type === 'date-time' || field.type === 'string-list')
+    ) {
+      // Older workflow drafts stored every string-like field as a mixed
+      // binding. Semantic inputs cannot embed template fragments, so migrate
+      // their editor mode in place while retaining the persisted value.
       mode = 'constant';
     }
 
@@ -370,6 +499,39 @@ const ToolParameterField = React.memo<ToolParameterFieldProps>(
             ))}
           </SelectContent>
         </Select>
+      ) : field.type === 'json' ? (
+        <JSONConstantEditor
+          value={binding?.type === 'constant' ? binding.value : undefined}
+          onChange={value => updateBinding(field.name, { type: 'constant', value })}
+          disabled={disabled}
+          invalidMessage={t('nodes.tool.form.invalidJson')}
+          placeholder={field.placeholder}
+        />
+      ) : field.type === 'string-list' ? (
+        <Textarea
+          value={Array.isArray(binding?.value) ? binding.value.join('\n') : ''}
+          onChange={event => setConstant(field.name, event.target.value)}
+          disabled={disabled}
+          className="min-h-[88px] max-h-[180px]"
+          placeholder={field.placeholder || t('nodes.tool.form.stringListPlaceholder')}
+        />
+      ) : field.type === 'date-time' ? (
+        <Input
+          type="datetime-local"
+          step={1}
+          value={toDateTimeLocalValue(binding?.value)}
+          onChange={event => setConstant(field.name, fromDateTimeLocalValue(event.target.value))}
+          disabled={disabled}
+          aria-label={field.label}
+        />
+      ) : field.type === 'date' ? (
+        <Input
+          type="date"
+          value={typeof binding?.value === 'string' ? binding.value : ''}
+          onChange={event => setConstant(field.name, event.target.value)}
+          disabled={disabled}
+          aria-label={field.label}
+        />
       ) : field.type === 'secret' ? (
         <Input
           type="password"
@@ -384,7 +546,7 @@ const ToolParameterField = React.memo<ToolParameterFieldProps>(
           onChange={e => setConstant(field.name, e.target.value)}
           disabled={disabled}
           className="min-h-[60px] max-h-[120px]"
-          placeholder={field.description}
+          placeholder={field.placeholder}
         />
       );
 
@@ -434,7 +596,7 @@ const ToolParameterField = React.memo<ToolParameterFieldProps>(
             nodeId={nodeId}
             value={typeof binding?.value === 'string' ? binding.value : ''}
             onChange={v => updateBinding(field.name, { type: 'mixed', value: v })}
-            placeholder={field.description}
+            placeholder={field.placeholder}
             editorClassName="min-h-[60px] max-h-[160px] text-sm"
             readOnly={disabled}
           />
@@ -448,7 +610,9 @@ const ToolParameterField = React.memo<ToolParameterFieldProps>(
                 type: nextMode,
                 value:
                   nextMode === 'variable'
-                    ? (Array.isArray(latest?.value) ? latest?.value : undefined)
+                    ? Array.isArray(latest?.value)
+                      ? latest?.value
+                      : undefined
                     : latest?.value,
               });
             }}
@@ -456,11 +620,15 @@ const ToolParameterField = React.memo<ToolParameterFieldProps>(
             variableValue={(() => {
               const val = binding?.value;
               if (!val) return undefined;
-              return Array.isArray(val) && val.length >= 2 ? val : undefined;
+              return Array.isArray(val) &&
+                val.length >= 2 &&
+                val.every(item => typeof item === 'string')
+                ? (val as string[])
+                : undefined;
             })()}
-            onVariableChange={val => setVariable(field.name, val.valuePath)}
-            variableTypeFilter={v => v === primitive}
-            variablePlaceholder={field.description}
+            onVariableChange={val => setVariable(field.name, val.valuePath, val.type)}
+            variableTypeFilter={v => variableMatchesField(field.type, v)}
+            variablePlaceholder={field.placeholder}
             disabled={disabled}
             density="compact"
             constantLabel={t('nodes.tool.form.constant')}
@@ -470,16 +638,20 @@ const ToolParameterField = React.memo<ToolParameterFieldProps>(
           <NodeValueSelector
             nodeId={nodeId}
             disabled={disabled}
-            typeFilter={v => v === primitive}
+            typeFilter={v => variableMatchesField(field.type, v)}
             value={(() => {
               const val = binding?.value;
               if (!val) return undefined;
-              if (Array.isArray(val) && val.length >= 2) {
-                return val;
+              if (
+                Array.isArray(val) &&
+                val.length >= 2 &&
+                val.every(item => typeof item === 'string')
+              ) {
+                return val as string[];
               }
               return undefined;
             })()}
-            onChange={val => setVariable(field.name, val.valuePath)}
+            onChange={val => setVariable(field.name, val.valuePath, val.type)}
           />
         ) : (
           constantEditor
@@ -488,5 +660,72 @@ const ToolParameterField = React.memo<ToolParameterFieldProps>(
     );
   }
 );
+
+ToolParameterField.displayName = 'ToolParameterField';
+
+interface JSONConstantEditorProps {
+  value: ToolParameterBinding['value'];
+  onChange: (value: Record<string, unknown> | unknown[] | undefined) => void;
+  disabled: boolean;
+  invalidMessage: string;
+  placeholder?: string;
+}
+
+const JSONConstantEditor: React.FC<JSONConstantEditorProps> = ({
+  value,
+  onChange,
+  disabled,
+  invalidMessage,
+  placeholder,
+}) => {
+  const serialize = React.useCallback((input: ToolParameterBinding['value']) => {
+    if (!input || typeof input !== 'object') return '';
+    try {
+      return JSON.stringify(input, null, 2);
+    } catch {
+      return '';
+    }
+  }, []);
+  const [text, setText] = React.useState(() => serialize(value));
+  const [invalid, setInvalid] = React.useState(false);
+
+  React.useEffect(() => {
+    setText(serialize(value));
+    setInvalid(false);
+  }, [serialize, value]);
+
+  return (
+    <div className="space-y-1.5">
+      <Textarea
+        value={text}
+        onChange={event => {
+          const next = event.target.value;
+          setText(next);
+          if (next.trim() === '') {
+            setInvalid(false);
+            onChange(undefined);
+            return;
+          }
+          try {
+            const parsed: unknown = JSON.parse(next);
+            if (!parsed || typeof parsed !== 'object') {
+              setInvalid(true);
+              return;
+            }
+            setInvalid(false);
+            onChange(parsed as Record<string, unknown> | unknown[]);
+          } catch {
+            setInvalid(true);
+          }
+        }}
+        disabled={disabled}
+        className="min-h-[120px] font-mono text-xs"
+        placeholder={placeholder}
+        aria-invalid={invalid}
+      />
+      {invalid ? <p className="text-xs text-destructive">{invalidMessage}</p> : null}
+    </div>
+  );
+};
 
 export default React.memo(ToolManager);

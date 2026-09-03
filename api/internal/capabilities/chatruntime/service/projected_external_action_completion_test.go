@@ -45,6 +45,42 @@ func TestProjectedExternalActionCompletionBridgeCompletesExactUnstructuredPhase(
 	}
 }
 
+func TestProjectedExternalActionCompletionBridgeUsesExecutionEvidenceKinds(t *testing.T) {
+	tests := []struct {
+		name         string
+		kind         string
+		wantComplete bool
+	}{
+		{name: "legacy empty kind", kind: "", wantComplete: true},
+		{name: "governance audit", kind: "tool_governance", wantComplete: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			metadata := projectedExternalActionCompletionMetadata(true, "Alice", "epoch-1")
+			invocation := projectedExternalActionCompletionInvocation("Alice", "epoch-1")
+			if test.kind == "" {
+				delete(invocation, "kind")
+			} else {
+				invocation["kind"] = test.kind
+			}
+
+			applyOperationPlanInvocationState(metadata, []map[string]interface{}{invocation})
+
+			plan := mapFromOperationContext(metadata["operation_plan"])
+			phase := mapSliceFromAny(plan["phases"])[0]
+			outcome := mapSliceFromAny(plan[operationPlanOutcomesKey])[0]
+			phaseCompleted := stringFromAny(phase["status"]) == operationPlanStepStatusCompleted
+			outcomeCompleted := stringFromAny(outcome["status"]) == operationPlanStepStatusCompleted
+			if phaseCompleted != test.wantComplete || outcomeCompleted != test.wantComplete {
+				t.Fatalf("phase=%#v outcome=%#v, want complete=%v", phase, outcome, test.wantComplete)
+			}
+			if effects := mapSliceFromAny(plan[operationPlanEffectLedgerKey]); (len(effects) > 0) != test.wantComplete {
+				t.Fatalf("effects=%#v, want complete=%v", effects, test.wantComplete)
+			}
+		})
+	}
+}
 func TestProjectedExternalActionAttemptStatusRequiresConfirmedProviderSuccess(t *testing.T) {
 	tests := []struct {
 		name            string

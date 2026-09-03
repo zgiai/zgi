@@ -91,7 +91,7 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"If a candidate skill is needed, call activate_skills with the smallest relevant set before doing the business work. Use search_skills only when the compact candidate directory omitted the needed capability.",
 		"Skill discovery and activation are internal. Do not name, narrate, summarize, or expose that mechanism to the user. A useful user-facing process note may accompany the same turn when it describes the actual task stage rather than the internal preparation.",
 		"When a business action is needed, call the exposed business function directly. Never call or invent load_skill, call_skill_tool, submit_intermediate_answer, or submit_final_answer.",
-		"Before the first projected external Action, call update_plan earlier in the same tool-call response. Keep every required outcome phase and give each tool phase an expected_action whose tool_name is the exact exposed business function name; do not guess a hidden skill_id. Include stable target values when known, using target_arguments keyed by the exact business-argument path for nested targets. The runtime binds that alias to its server-owned integration, Action identity, and allowed target paths. A read prerequisite may run only after the final expected Action is in this ledger. If multiple phases call the same projected Action for the same target, pass that phase's exact plan_phase_id to each direct call.",
+		"Call a projected external business function directly when it is needed. Do not call update_plan merely to prepare a single Action: the runtime creates the authoritative Outcome, phase, target binding, and execution ledger fields. Use update_plan only when the user's outcome structure genuinely changes; never invent or pass server-owned phase or binding fields.",
 		"For complex or multi-step work, before the first business stage include one brief user-visible process note in ordinary assistant content before the business function call. Add another note only after important evidence arrives, when the work changes stage, when the approach changes, or when recovering from an error.",
 		"A process note must use the language of the user's latest request and state the current judgment or evidence plus the result the next action will produce. Do not merely repeat the request.",
 		"Keep each process note concise, normally one to four short sentences and about 60 to 180 estimated tokens. Never exceed 384 estimated tokens for one note. Across one user task, produce at most eight notes and about 1920 estimated tokens total.",
@@ -450,7 +450,8 @@ func nativeCanonicalizeProjectedActionPlanCall(call adapter.ToolCall, toolSet *s
 		}
 		binding, providerName, exists := nativeToolBindingForCall(toolSet, requestedToolName)
 		integrationID, actionID, projected := nativeProjectedExternalActionIdentity(binding)
-		if !exists || !projected || strings.TrimSpace(binding.BindingFingerprint) == "" {
+		if !exists || !projected || strings.TrimSpace(binding.BindingFingerprint) == "" ||
+			!nativeProjectedActionPlanBindingIsServerAuthorized(toolSet, binding) {
 			continue
 		}
 		submittedTargetArguments := copyStringAnyMap(evidenceMapFromAny(expected["target_arguments"]))
@@ -467,8 +468,10 @@ func nativeCanonicalizeProjectedActionPlanCall(call adapter.ToolCall, toolSet *s
 		expected["tool_name"] = "execute_action"
 		expected["target"] = target
 		expected["projected_tool_name"] = providerName
-		expected[planExpectedActionServerProjectionKey] = providerName
-		expected[planExpectedActionServerBindingFingerprintKey] = strings.TrimSpace(binding.BindingFingerprint)
+		// Canonicalize only model-visible identity and targets here. A model plan
+		// is advisory and must never mint server projection authority. Exact
+		// persisted bindings are restored later by handleUpdatePlanCall using the
+		// baseline phase ID and server-owned runtime state.
 		targetArguments := map[string]interface{}{}
 		for _, path := range binding.TargetArgumentPaths {
 			value := operationPlanArgumentPathValue(target, path)
@@ -504,6 +507,55 @@ func nativeCanonicalizeProjectedActionPlanCall(call adapter.ToolCall, toolSet *s
 	return call
 }
 
+func nativeProjectedActionPlanBindingIsServerAuthorized(toolSet *skills.NativeToolSet, binding skills.NativeToolBinding) bool {
+	if toolSet == nil {
+		return false
+	}
+	if binding.IntentMatched || binding.Pinned {
+		return true
+	}
+	integrationID, actionID, projected := nativeProjectedExternalActionIdentity(binding)
+	if !projected {
+		return false
+	}
+	for _, candidate := range toolSet.ExternalActionCandidates {
+		if (!candidate.IntentMatched && !candidate.Pinned) ||
+			!strings.EqualFold(strings.TrimSpace(candidate.IntegrationID), integrationID) {
+			continue
+		}
+		if nativeExternalActionPreparationHintsContainAction(candidate.PreparationHints, actionID) {
+			return true
+		}
+	}
+	for _, parent := range toolSet.ToolBindings {
+		parentIntegrationID, _, parentProjected := nativeProjectedExternalActionIdentity(parent)
+		if !parentProjected || (!parent.IntentMatched && !parent.Pinned) ||
+			!strings.EqualFold(parentIntegrationID, integrationID) {
+			continue
+		}
+		if nativeExternalActionPreparationHintsContainAction(parent.PreparationHints, actionID) {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeExternalActionPreparationHintsContainAction(
+	hints []skills.NativeExternalActionPreparationHint,
+	actionID string,
+) bool {
+	actionID = strings.TrimSpace(actionID)
+	if actionID == "" {
+		return false
+	}
+	for _, hint := range hints {
+		if strings.EqualFold(strings.TrimSpace(hint.ActionID), actionID) &&
+			strings.TrimSpace(hint.Relation) != "" && len(hint.TargetArguments) > 0 && len(hint.ResultPaths) > 0 {
+			return true
+		}
+	}
+	return false
+}
 func nativeMaterializeProjectedActionDefaults(
 	arguments map[string]interface{},
 	defaults map[string]interface{},

@@ -121,6 +121,108 @@ func TestTerminalStateGuardAllowsExternalActionAfterLaterSuccess(t *testing.T) {
 	}
 }
 
+func TestTerminalStateGuardKeepsConfirmedExecutionAfterSameActionGovernanceRecord(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询今天的天气",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind": "tool_call", "skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{"integration_id": "web-search", "action_id": "web.search"},
+				"result": map[string]interface{}{
+					"integration_id": "web-search", "action_id": "web.search",
+					"operation_status": "succeeded", "provider_success_confirmed": true,
+				},
+			},
+			map[string]interface{}{
+				"kind": "tool_governance", "skill_id": "external-apps", "tool_name": "execute_action", "status": "allowed",
+				"arguments": map[string]interface{}{"integration_id": "web-search", "action_id": "web.search"},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "今天晴，最高气温 28°C。")
+	if decision.Path != terminalStateGuardAccepted || decision.FinalAnswer != "今天晴，最高气温 28°C。" {
+		t.Fatalf("governance audit replaced confirmed execution: %#v", decision)
+	}
+	if terminalStateGuardHasUnconfirmedExternalAction(evidence) {
+		t.Fatal("governance audit replaced the latest provider confirmation")
+	}
+}
+
+func TestTerminalStateGuardDoesNotTreatGovernanceRecordAsExecutionAttempt(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询今天的天气",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind": "tool_call", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "web-search", "action_id": "web.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"kind": "tool_governance", "skill_id": "external-apps", "tool_name": "execute_action", "status": "allowed",
+				"arguments": map[string]interface{}{"integration_id": "web-search", "action_id": "web.search"},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "今天晴，最高气温 28°C。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil ||
+		decision.PendingExternalAction.ActionID != "web.search" {
+		t.Fatalf("governance-only record satisfied pending execution: %#v", decision)
+	}
+	if terminalStateGuardHasUnconfirmedExternalAction(evidence) {
+		t.Fatal("governance-only record was classified as an unconfirmed execution")
+	}
+}
+
+func TestTerminalStateGuardAcceptsLegacyExecutionEvidenceWithoutKind(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询今天的天气",
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+				"result": map[string]interface{}{
+					"integration_id": "web-search", "action_id": "web.search", "can_execute": true,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{"integration_id": "web-search", "action_id": "web.search"},
+				"result": map[string]interface{}{
+					"integration_id": "web-search", "action_id": "web.search",
+					"operation_status": "completed", "provider_success_confirmed": true,
+				},
+			},
+		},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "天气查询完成。")
+	if decision.Path != terminalStateGuardAccepted || decision.FinalAnswer != "天气查询完成。" {
+		t.Fatalf("legacy empty-kind tool execution was not accepted: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardDoesNotConfirmOutcomeUnknownToolCall(t *testing.T) {
+	evidence := map[string]interface{}{
+		"latest_user_request": "查询今天的天气",
+		"skill_invocations": []interface{}{map[string]interface{}{
+			"kind": "tool_call", "skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+			"arguments": map[string]interface{}{"integration_id": "web-search", "action_id": "web.search"},
+			"result": map[string]interface{}{
+				"integration_id": "web-search", "action_id": "web.search",
+				"operation_status": "outcome_unknown", "provider_success_confirmed": false,
+			},
+		}},
+	}
+
+	decision := terminalStateGuardEvaluate(evidence, "天气查询成功。")
+	if decision.Path != terminalStateGuardAccepted || decision.FinalAnswer == "天气查询成功。" ||
+		!terminalStateGuardHasUnconfirmedExternalAction(evidence) {
+		t.Fatalf("outcome_unknown tool call was treated as confirmed success: %#v", decision)
+	}
+}
+
 func TestTerminalStateGuardTreatsReceiptFailureAsFailureEvenWithProviderPayload(t *testing.T) {
 	evidence := map[string]interface{}{
 		"user_request": "发送消息",
@@ -783,7 +885,7 @@ func TestTerminalStateGuardAllowsServerFinalAnswerOnlyOutcomeWithoutProjectedLed
 	evidence := projectedExternalActionPlanTestState([]interface{}{map[string]interface{}{
 		"id": "phase-explain", "outcome_id": "outcome-explain", "step": "Explain", "status": "in_progress",
 	}})
-	evidence[runtimeStateNativeExternalActionProjectionsKey].([]interface{})[0].(map[string]interface{})["intent_matched"] = true
+	evidence[runtimeStateNativeExternalActionCandidatesKey].([]interface{})[0].(map[string]interface{})["intent_matched"] = false
 	evidence["operation_plan"].(map[string]interface{})["outcomes"] = []interface{}{map[string]interface{}{
 		"id": "outcome-explain", "required": true, "verification_mode": "final_answer",
 	}}
@@ -799,6 +901,7 @@ func TestTerminalStateGuardDoesNotRequireExternalLedgerForUnmatchedInternalRunti
 	evidence := projectedExternalActionPlanTestState([]interface{}{map[string]interface{}{
 		"id": "phase-file", "outcome_id": "outcome-file", "step": "Generate file", "status": "in_progress",
 	}})
+	evidence[runtimeStateNativeExternalActionCandidatesKey].([]interface{})[0].(map[string]interface{})["intent_matched"] = false
 	evidence["operation_plan"].(map[string]interface{})["outcomes"] = []interface{}{map[string]interface{}{
 		"id": "outcome-file", "required": true, "verification_mode": "runtime_effects",
 	}}
@@ -1021,6 +1124,11 @@ func TestTerminalStateGuardProjectedDeclaredEmptyPrerequisiteWaivesSend(t *testi
 	evidence := projectedExternalActionPlanTestState([]interface{}{
 		projectedExternalActionPlanTestPhase("phase-send", "in_progress", "recipient_ref", "missing"),
 	})
+	evidence[runtimeStateNativeExternalActionCandidatesKey].([]interface{})[0].(map[string]interface{})["preparation_hints"] =
+		[]interface{}{map[string]interface{}{
+			"action_key": "wecom:wecom.contact.search", "relation": "resolve_target",
+			"target_arguments": []interface{}{"recipient_ref"}, "result_paths": []interface{}{"members[].recipient_ref"},
+		}}
 	evidence[runtimeStateNativeExternalActionProjectionsKey] = []interface{}{map[string]interface{}{
 		"tool_name": "wecom_send_message", "integration_id": "wecom", "action_id": "wecom.message.send",
 		"effect": "external_send", "target_argument_paths": []interface{}{"recipient_ref"},
@@ -1031,6 +1139,7 @@ func TestTerminalStateGuardProjectedDeclaredEmptyPrerequisiteWaivesSend(t *testi
 		"skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
 		"arguments": map[string]interface{}{
 			"integration_id": "wecom", "action_id": "wecom.contact.search", "plan_phase_id": "phase-send",
+			operationPlanServerProjectedLedgerEpochKey: "epoch-phase-send",
 		},
 		"result": map[string]interface{}{"result_count": 0, "operation_status": "completed"},
 	}}
@@ -1038,6 +1147,30 @@ func TestTerminalStateGuardProjectedDeclaredEmptyPrerequisiteWaivesSend(t *testi
 	decision := terminalStateGuardEvaluate(evidence, "没有找到联系人，因此未发送消息。")
 	if decision.Path != terminalStateGuardAccepted || decision.FinalAnswer != "没有找到联系人，因此未发送消息。" {
 		t.Fatalf("declared projected prerequisite was not honored: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardProjectedPreparationActionIDWithoutHintDoesNotWaiveSend(t *testing.T) {
+	evidence := projectedExternalActionPlanTestState([]interface{}{
+		projectedExternalActionPlanTestPhase("phase-send", "in_progress", "recipient_ref", "missing"),
+	})
+	evidence[runtimeStateNativeExternalActionCandidatesKey].([]interface{})[0].(map[string]interface{})["preparation_action_keys"] =
+		[]interface{}{"wecom:wecom.contact.search"}
+	evidence["latest_user_request"] = "查找联系人并发送消息"
+	evidence["skill_invocations"] = []interface{}{map[string]interface{}{
+		"kind": "tool_call", "skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+		"arguments": map[string]interface{}{
+			"integration_id": "wecom", "action_id": "wecom.contact.search", "plan_phase_id": "phase-send",
+			operationPlanServerProjectedLedgerEpochKey: "epoch-phase-send",
+		},
+		"result": map[string]interface{}{
+			"result_count": 0, "operation_status": "completed", "provider_success_confirmed": true,
+		},
+	}}
+
+	decision := terminalStateGuardEvaluate(evidence, "没有找到联系人，因此未发送消息。")
+	if decision.Path != terminalStateGuardBlocked || decision.PendingExternalAction == nil {
+		t.Fatalf("loose PreparationActionIDs acquired server waiver authority: %#v", decision)
 	}
 }
 
@@ -1276,6 +1409,72 @@ func TestTerminalStateGuardDoesNotClaimPartialExternalWriteCompleted(t *testing.
 	if decision.Path != terminalStateGuardAccepted || decision.PendingExternalAction != nil ||
 		!strings.Contains(decision.FinalAnswer, "不能视为已发送") {
 		t.Fatalf("partial external write was treated as complete or replayable: %#v", decision)
+	}
+}
+
+func TestTerminalStateGuardReportsConfirmedBatchPartialSuccessWithoutReplayingUnknownItems(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		request        string
+		candidate      string
+		failedSafe     int
+		outcomeUnknown int
+		executing      int
+		want           []string
+	}{
+		{
+			name: "safe failure", request: "批量发送企业微信消息", candidate: "全部消息均已发送。",
+			failedSafe: 1, want: []string{"部分完成", "已成功 1 项", "安全失败 1 项"},
+		},
+		{
+			name: "unknown outcome", request: "批量发送企业微信消息", candidate: "全部消息均已发送。",
+			outcomeUnknown: 1, want: []string{"部分完成", "已成功 1 项", "结果未知 1 项", "不会被自动重复执行"},
+		},
+		{
+			name: "executing", request: "Send the batch messages", candidate: "All messages were sent.",
+			executing: 1, want: []string{"partially completed", "1 item(s) succeeded", "1 are still executing", "will not be replayed automatically"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			evidence := map[string]interface{}{
+				"latest_user_request": test.request,
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind": "tool_call", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
+						"result": map[string]interface{}{
+							"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
+						},
+					},
+					map[string]interface{}{
+						"kind": "tool_call", "skill_id": "external-apps", "tool_name": "execute_action", "status": "success",
+						"arguments": map[string]interface{}{
+							"integration_id": "wecom", "action_id": "wecom.message.send",
+						},
+						"result": map[string]interface{}{
+							"integration_id": "wecom", "action_id": "wecom.message.send",
+							"operation_status": "partially_succeeded", "retry_safe": false,
+							"batch": map[string]interface{}{
+								"succeeded_count": 1, "failed_safe_count": test.failedSafe,
+								"outcome_unknown_count": test.outcomeUnknown, "executing_count": test.executing,
+							},
+						},
+					},
+				},
+			}
+
+			decision := terminalStateGuardEvaluate(evidence, test.candidate)
+			if decision.Path != terminalStateGuardAccepted || decision.PendingExternalAction != nil {
+				t.Fatalf("partial batch was treated as complete or replayable: %#v", decision)
+			}
+			for _, fragment := range test.want {
+				if !strings.Contains(decision.FinalAnswer, fragment) {
+					t.Fatalf("partial batch answer %q does not contain %q", decision.FinalAnswer, fragment)
+				}
+			}
+			if decision.FinalAnswer == test.candidate {
+				t.Fatalf("unsafe candidate answer was not replaced: %q", decision.FinalAnswer)
+			}
+		})
 	}
 }
 

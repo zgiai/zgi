@@ -3,6 +3,7 @@ package metatools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -10,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -385,6 +386,19 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 					"result_count": 0, "attempt_count": 0, "result": map[string]interface{}{},
 					"operation_status": status, "error_code": integrations.ErrorCode(err), "retry_safe": retrySafe,
 				}
+				var integrationError *integrations.Error
+				if errors.As(err, &integrationError) {
+					if reasonCode := strings.TrimSpace(integrationError.ReasonCode); reasonCode != "" {
+						output["reason_code"] = boundedString(reasonCode, 128)
+					}
+				}
+				diagnostics := integrations.ProviderDiagnosticsFromError(err)
+				if providerErrorCode := strings.TrimSpace(diagnostics.ErrorCode); providerErrorCode != "" {
+					output["provider_error_code"] = boundedString(providerErrorCode, 128)
+				}
+				if providerRequestID := strings.TrimSpace(diagnostics.RequestID); providerRequestID != "" {
+					output["provider_request_id"] = boundedString(providerRequestID, 512)
+				}
 				setExecuteActionDisplayMetadata(output, definition, action)
 				if displayName := safeConnectionDisplayName(selected.record); displayName != "" {
 					output["connection_display_name"] = displayName
@@ -408,20 +422,12 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 		"result_count": max(result.ResultCount, 0), "attempt_count": max(result.AttemptCount, 0), "result": safeResult,
 	}
 	annotateSuccessfulResultSemantics(output, action, result)
-	if result.Replayed {
-		output["operation_status"] = "already_completed"
-	} else {
-		// This field is server-owned evidence that the provider invocation
-		// completed without an error. It must be present for ordinary reads as
-		// well as guarded mutations; downstream orchestration must never infer
-		// success merely from a provider-defined payload shape.
-		output["operation_status"] = "completed"
-	}
+	output["operation_status"] = successfulOperationStatus(result)
 	setExecuteActionDisplayMetadata(output, definition, action)
 	if displayName := safeConnectionDisplayName(selected.record); displayName != "" {
 		output["connection_display_name"] = displayName
 	}
-	if requestID := strings.TrimSpace(result.ProviderRequestID); requestID != "" {
+	if requestID := integrations.ProviderDiagnosticsForResult(result, nil).RequestID; requestID != "" {
 		output["provider_request_id"] = boundedString(requestID, 512)
 	}
 	if result.CostUSD != nil && !math.IsNaN(*result.CostUSD) && !math.IsInf(*result.CostUSD, 0) && *result.CostUSD >= 0 {
@@ -442,6 +448,29 @@ func (t *Tool) executeAction(ctx context.Context, userID string, parameters map[
 		output["result_truncated"] = true
 	}
 	return output, nil
+}
+
+func successfulOperationStatus(result *integrations.ActionResult) string {
+	if result != nil && result.Output != nil {
+		// A provider adapter can confirm that the invocation completed while
+		// reporting that only part of the frozen target set was accepted. Keep
+		// that narrower outcome at the common facade: replacing it with
+		// completed/already_completed would let orchestration and the UI claim a
+		// full success that did not occur. Other provider-defined status strings
+		// are deliberately ignored; failures and unknown outcomes must use the
+		// executor error contract instead of self-declaring success semantics.
+		if status := strings.ToLower(strings.TrimSpace(stringValue(result.Output["operation_status"]))); status == "partially_succeeded" {
+			return status
+		}
+	}
+	if result != nil && result.Replayed {
+		return "already_completed"
+	}
+	// This field is server-owned evidence that the provider invocation
+	// completed without an error. It must be present for ordinary reads as well
+	// as guarded mutations; downstream orchestration must never infer success
+	// merely from an arbitrary provider payload shape.
+	return "completed"
 }
 
 func annotateSuccessfulResultSemantics(output map[string]interface{}, action integrations.ActionDefinition, result *integrations.ActionResult) {
@@ -502,6 +531,7 @@ func (t *Tool) executeActionBatch(
 	totalAttempts := 0
 	totalResults := 0
 	succeeded := 0
+	providerPartial := 0
 	failedSafe := 0
 	unknown := 0
 	executing := 0
@@ -549,6 +579,10 @@ func (t *Tool) executeActionBatch(
 				totalAttempts += outcome.attempts
 				totalResults += outcome.resultCount
 				succeeded++
+				if successfulOperationStatus(result) == "partially_succeeded" {
+					outcome.status = "partially_succeeded"
+					providerPartial++
+				}
 			}
 		}
 		outcomes = append(outcomes, outcome)
@@ -562,7 +596,7 @@ func (t *Tool) executeActionBatch(
 		batchStatus = "executing"
 	case succeeded == 0 && failedSafe > 0:
 		batchStatus = "failed"
-	case succeeded < len(items):
+	case succeeded < len(items) || providerPartial > 0:
 		batchStatus = "partially_succeeded"
 	}
 	itemViews := make([]interface{}, 0, len(outcomes))

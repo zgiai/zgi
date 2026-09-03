@@ -7,8 +7,8 @@ import (
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/aichat"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
+	integrationpreferences "github.com/zgiai/zgi/api/internal/modules/integrations/preferences"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
@@ -31,7 +31,7 @@ type AIChatRouteDeps struct {
 	AgentMemoryService           *agentmemory.Service
 	SkillRuntime                 *skills.Runtime
 	AccountService               interfaces.AccountService
-	IntegrationPreferences       *integrations.DefaultAIChatIntegrationPreferenceService
+	IntegrationPreferences       *integrationpreferences.DefaultAIChatIntegrationPreferenceService
 	IntegrationActionProjections integrationmetatools.ActionProjectionResolver
 }
 

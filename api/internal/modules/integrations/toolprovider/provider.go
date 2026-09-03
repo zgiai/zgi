@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
@@ -94,9 +94,11 @@ func newProvider(registration integrations.Registration, executor *integrations.
 					Label:    toolI18nText(action.Name, action.NameI18n),
 					Icon:     definition.Icon,
 				},
-				Description:  tools.ToolDescription{Human: toolI18nText(action.Description, action.DescriptionI18n), LLM: action.Description},
-				InputSchema:  action.InputSchema,
-				OutputSchema: action.OutputSchema,
+				Description:      tools.ToolDescription{Human: toolI18nText(action.Description, action.DescriptionI18n), LLM: action.Description},
+				InputSchema:      action.InputSchema,
+				OutputSchema:     action.OutputSchema,
+				WorkflowOutputs:  tools.CompileWorkflowOutputs(action.OutputSchema),
+				SupportedCallers: append([]tools.ToolInvokeFrom(nil), action.SupportedCallers...),
 				Governance: &tools.ToolGovernanceMetadata{
 					ToolID:               action.ID,
 					Effect:               string(action.Effect),

@@ -117,11 +117,15 @@ type ToolIdentity struct {
 type ToolParameterType string
 
 const (
-	ToolParameterTypeString  ToolParameterType = "string"
-	ToolParameterTypeNumber  ToolParameterType = "number"
-	ToolParameterTypeBoolean ToolParameterType = "boolean"
-	ToolParameterTypeSelect  ToolParameterType = "select"
-	ToolParameterTypeFile    ToolParameterType = "file"
+	ToolParameterTypeString     ToolParameterType = "string"
+	ToolParameterTypeNumber     ToolParameterType = "number"
+	ToolParameterTypeBoolean    ToolParameterType = "boolean"
+	ToolParameterTypeSelect     ToolParameterType = "select"
+	ToolParameterTypeFile       ToolParameterType = "file"
+	ToolParameterTypeJSON       ToolParameterType = "json"
+	ToolParameterTypeDate       ToolParameterType = "date"
+	ToolParameterTypeDateTime   ToolParameterType = "date-time"
+	ToolParameterTypeStringList ToolParameterType = "string-list"
 )
 
 // ToolParameterForm represents the form type of tool parameter
@@ -172,16 +176,29 @@ type ToolGovernanceMetadata struct {
 	SensitiveDataAllowed bool   `json:"sensitive_data_allowed"`
 }
 
+// ToolWorkflowOutput describes a stable, typed projection of a structured tool
+// result that can be published to the Workflow variable catalog. Path uses
+// "*" for array item traversal; the runtime materializes such projections as
+// typed arrays, so downstream nodes never need wildcard-aware variable paths.
+type ToolWorkflowOutput struct {
+	ID    string   `json:"id"`
+	Path  []string `json:"path"`
+	Type  string   `json:"type"`
+	Label I18nText `json:"label,omitempty"`
+}
+
 // ToolEntity represents the metadata of a tool
 type ToolEntity struct {
-	Identity     ToolIdentity            `json:"identity"`
-	Description  ToolDescription         `json:"description"`
-	Parameters   []ToolParameter         `json:"parameters,omitempty"`
-	InputSchema  map[string]interface{}  `json:"input_schema,omitempty"`
-	OutputSchema map[string]interface{}  `json:"output_schema,omitempty"`
-	Governance   *ToolGovernanceMetadata `json:"governance,omitempty"`
-	OutputType   string                  `json:"output_type,omitempty"`
-	Tags         []string                `json:"tags,omitempty"`
+	Identity         ToolIdentity            `json:"identity"`
+	Description      ToolDescription         `json:"description"`
+	Parameters       []ToolParameter         `json:"parameters,omitempty"`
+	InputSchema      map[string]interface{}  `json:"input_schema,omitempty"`
+	OutputSchema     map[string]interface{}  `json:"output_schema,omitempty"`
+	WorkflowOutputs  []ToolWorkflowOutput    `json:"workflow_outputs,omitempty"`
+	SupportedCallers []ToolInvokeFrom        `json:"supported_callers,omitempty"`
+	Governance       *ToolGovernanceMetadata `json:"governance,omitempty"`
+	OutputType       string                  `json:"output_type,omitempty"`
+	Tags             []string                `json:"tags,omitempty"`
 }
 
 // ============================================

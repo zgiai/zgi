@@ -74,34 +74,31 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 		)
 	}
 
+	// Select one concrete draft or published Workflow row before creating the
+	// run. Its graph and identity must stay together: a published graph must
+	// never execute with the draft row's authorization ledger.
+	workflowData, err := h.loadWorkflowStreamData(c.Request.Context(), workspaceID, appID, runType, isDraft)
+	if err != nil {
+		h.sendSSEError(c.Request.Context(), c.Writer, err.Error())
+		return
+	}
+	workflowID, err := requiredWorkflowDataID(workflowData)
+	if err != nil {
+		h.sendSSEError(c.Request.Context(), c.Writer, err.Error())
+		return
+	}
+	logger.DebugContext(c.Request.Context(), "workflow stream configuration selected",
+		zap.String("workflow_id", workflowID),
+		zap.String("agent_id", appID),
+		zap.Bool("is_draft", isDraft),
+	)
+
 	// Generate task ID (will be replaced with real workflow run ID from database)
 	taskID := fmt.Sprintf("task-%s-%d", appID, time.Now().UnixNano())
-
-	// Get the actual workflow ID from database (not agent_id)
-	workflowID := appID // fallback to appID if query fails
-	if ws, ok := h.workflowService.(*WorkflowService); ok {
-		if ws.repo != nil {
-			workflow, err := ws.repo.GetDraftWorkflow(c.Request.Context(), appID)
-			if err == nil && workflow != nil {
-				workflowID = workflow.ID
-				logger.DebugContext(c.Request.Context(), "workflow stream draft workflow id loaded",
-					zap.String("workflow_id", workflowID),
-					zap.String("agent_id", appID),
-				)
-			} else {
-				logger.WarnContext(c.Request.Context(), "failed to load workflow id, using agent id fallback",
-					zap.String("agent_id", appID),
-					zap.Error(err),
-				)
-			}
-		}
-	}
 
 	sequenceNumber := 1
 
 	// isDraft := (runType == "debugging")
-
-	// Note: don't fetch workflow here; let executor goroutine handle fetching and errors via channels to guarantee streaming path can emit workflow_finished
 
 	// Add req.Files to inputs for processing if provided
 	if req.Files != nil && len(req.Files) > 0 {
@@ -390,7 +387,7 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 	// Start workflow execution in goroutine
 	go func() {
 		defer close(doneChan)
-		h.executeWorkflowStream(execCtx, workspaceID, appID, req, accountID, taskID, workflowRunLogID, workflowID, systemInputs, sequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, triggeredFrom)
+		h.executeWorkflowStream(execCtx, workspaceID, appID, req, accountID, taskID, workflowRunLogID, workflowID, systemInputs, sequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, triggeredFrom, workflowData)
 	}()
 
 	sendTerminalFailure := func(err error) bool {

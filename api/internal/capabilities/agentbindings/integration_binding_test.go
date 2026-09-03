@@ -53,6 +53,25 @@ func TestBindingImpactRevisionIncludesIntegrationActionAllowlist(t *testing.T) {
 	}
 }
 
+func TestBindingImpactRevisionIncludesWorkspace(t *testing.T) {
+	binding := Binding{
+		AgentID:        uuid.New(),
+		ConsumerType:   ConsumerTypeAgent,
+		ConsumerID:     uuid.New(),
+		OrganizationID: uuid.New(),
+		WorkspaceID:    uuid.New(),
+		BindingScope:   ScopeDraft,
+		BindingType:    BindingTypeIntegrationConnection,
+		ResourceID:     uuid.NewString(),
+	}
+	before := bindingImpactRevision([]Binding{binding})
+	binding.WorkspaceID = uuid.New()
+	after := bindingImpactRevision([]Binding{binding})
+	if before == after {
+		t.Fatal("binding impact revision did not change when workspace changed")
+	}
+}
+
 func TestIntegrationBindingActionAllowlistIsNormalizedAndDenyByDefault(t *testing.T) {
 	binding := Binding{
 		BindingType: BindingTypeIntegrationConnection,
@@ -91,7 +110,7 @@ func TestRepositoryAllowsIntegrationActionUsesPersistedMetadata(t *testing.T) {
 		"binding_type", "resource_id", "parent_resource_id", "display_name", "access_mode", "metadata",
 		"authorized_by", "authorized_at", "created_at", "updated_at",
 	}
-	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE .*agent_id = \$1.*binding_type = \$3.*published_version_uuid IS NULL.*LIMIT \$6`).
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE .*agent_id = \$1.*consumer_type = \$2.*binding_type = \$4.*published_version_uuid IS NULL.*LIMIT \$7`).
 		WillReturnRows(sqlmock.NewRows(columns).AddRow(
 			uuid.New(), agentID, ScopeDraft, organizationID, workspaceID, nil,
 			BindingTypeIntegrationConnection, "connection-1", "web-search", "", "read", `{"allowed_action_ids":["web.search"]}`,

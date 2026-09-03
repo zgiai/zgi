@@ -10,7 +10,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/wecom"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/email/mail"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/websearch/exa"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -206,6 +209,127 @@ func TestActionProjectionIntentMatchRequiresSpecificExternalCapabilityEvidence(t
 	}
 	if !actionProjectionIntentMatched(prepareActionProjectionQuery("给 Alice 发送消息"), integrations.ProviderDefinition{Name: "WeCom"}, message) {
 		t.Fatal("action-specific send request without provider name was not classified as external intent")
+	}
+}
+
+func TestActionProjectionIntentUsesExplicitFieldsAndAliasesNotDescriptions(t *testing.T) {
+	provider := integrations.ProviderDefinition{
+		ID: "standard-mail", Name: "Standard Mail",
+		NameI18n: integrations.LocalizedText{integrations.LocaleSimplifiedChinese: "通用邮箱"},
+	}
+	action := integrations.ActionDefinition{
+		ID: "mail.account.get", ToolName: "get_mail_account", Name: "Get mail account",
+		Description: "Connect an external mailbox and inspect its protocol capabilities.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleSimplifiedChinese: "连接外部邮箱并检查协议能力。",
+		},
+	}
+	query := prepareActionProjectionQuery("用邮箱外部连接查看最近收件箱")
+	if actionProjectionIntentMatched(query, provider, action) {
+		t.Fatal("description-only generic connection words were treated as Action intent")
+	}
+	action.IntentAliases = []string{"最近收件箱"}
+	if !actionProjectionIntentMatched(query, provider, action) {
+		t.Fatal("explicit intent alias was not treated as Action intent")
+	}
+}
+
+func TestActionProjectionRankingDoesNotUseLongDescriptions(t *testing.T) {
+	provider := integrations.ProviderDefinition{
+		ID: "standard-mail", Name: "Standard Mail",
+		Description: "Connect external apps and inspect inbox capabilities.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleSimplifiedChinese: "连接外部应用并查看最近收件箱。",
+		},
+	}
+	action := integrations.ActionDefinition{
+		ID: "mail.account.get", ToolName: "get_mail_account", Name: "Get mail account",
+		Description: "Search recent inbox mail messages.",
+		DescriptionI18n: integrations.LocalizedText{
+			integrations.LocaleSimplifiedChinese: "搜索最近收件箱邮件。",
+		},
+	}
+	query := prepareActionProjectionQuery("最近收件箱")
+	if score := preparedActionProjectionScore(query, provider, action); score != 0 {
+		t.Fatalf("description-only generic words changed projection ranking: score=%d", score)
+	}
+	action.IntentAliases = []string{"最近收件箱"}
+	if score := preparedActionProjectionScore(query, provider, action); score == 0 {
+		t.Fatal("explicit intent alias did not change projection ranking")
+	}
+}
+
+func TestMailActionIntentAliasesDisambiguateSearchFromAccountIdentity(t *testing.T) {
+	definitions := mail.ProviderDefinitions()
+	if len(definitions) != 1 {
+		t.Fatalf("mail provider definitions = %d, want 1", len(definitions))
+	}
+	provider := definitions[0]
+	actions := make(map[string]integrations.ActionDefinition, len(provider.Actions))
+	for _, action := range provider.Actions {
+		actions[action.ID] = action
+	}
+	account := actions[mail.ActionAccountGet]
+	search := actions[mail.ActionMessageSearch]
+	if len(search.PreparationHints) != 0 {
+		t.Fatalf("mail.message.search preparation hints = %#v, want none", search.PreparationHints)
+	}
+
+	inboxQuery := prepareActionProjectionQuery("用邮箱外部连接查看最近收件箱")
+	if !actionProjectionIntentMatched(inboxQuery, provider, search) {
+		t.Fatal("recent inbox request did not match mail.message.search")
+	}
+	if actionProjectionIntentMatched(inboxQuery, provider, account) {
+		t.Fatal("recent inbox request incorrectly matched mail.account.get")
+	}
+
+	identityQuery := prepareActionProjectionQuery("查看当前邮箱账号身份")
+	if !actionProjectionIntentMatched(identityQuery, provider, account) {
+		t.Fatal("mailbox identity request did not match mail.account.get")
+	}
+	if actionProjectionIntentMatched(identityQuery, provider, search) {
+		t.Fatal("mailbox identity request incorrectly matched mail.message.search")
+	}
+
+	englishInboxQuery := prepareActionProjectionQuery("check my inbox")
+	if !actionProjectionIntentMatched(englishInboxQuery, provider, search) ||
+		actionProjectionIntentMatched(englishInboxQuery, provider, account) {
+		t.Fatal("English inbox alias did not select only mail.message.search")
+	}
+	englishIdentityQuery := prepareActionProjectionQuery("show current mailbox identity")
+	if !actionProjectionIntentMatched(englishIdentityQuery, provider, account) ||
+		actionProjectionIntentMatched(englishIdentityQuery, provider, search) {
+		t.Fatal("English mailbox identity alias did not select only mail.account.get")
+	}
+}
+
+func TestWeComIntentAliasRecognizesProviderAbbreviation(t *testing.T) {
+	provider := wecom.ProviderDefinition()
+	query := prepareActionProjectionQuery("给张三发一条企微消息")
+	matched := make([]string, 0)
+	for _, action := range provider.Actions {
+		if actionProjectionIntentMatched(query, provider, action) {
+			matched = append(matched, action.ID)
+		}
+	}
+	if !reflect.DeepEqual(matched, []string{wecom.ActionMessageSendUser}) {
+		t.Fatalf("WeCom abbreviation matched Actions = %#v, want only message send", matched)
+	}
+}
+
+func TestWebSearchIntentAliasesCoverWeatherWithoutMatchingFetch(t *testing.T) {
+	provider := exa.ProviderDefinition("auto")
+	for _, queryText := range []string{"北京天气怎么样", "weather in Beijing"} {
+		query := prepareActionProjectionQuery(queryText)
+		matched := make([]string, 0)
+		for _, action := range provider.Actions {
+			if actionProjectionIntentMatched(query, provider, action) {
+				matched = append(matched, action.ID)
+			}
+		}
+		if !reflect.DeepEqual(matched, []string{integrations.ActionWebSearch}) {
+			t.Fatalf("weather query %q matched Actions = %#v, want only web.search", queryText, matched)
+		}
 	}
 }
 

@@ -1,11 +1,22 @@
 export type IntegrationCredentialSource = 'platform' | 'organization' | 'account';
-export type IntegrationAuthType = 'platform' | 'api_key' | 'oauth' | 'oauth2' | (string & {});
+export type IntegrationAuthType =
+  | 'platform'
+  | 'api_key'
+  | 'oauth'
+  | 'oauth2'
+  | 'provider_install'
+  | (string & {});
 export type IntegrationAuthIdentityKind = 'user' | 'application' | 'channel' | 'service';
-export type IntegrationAuthAcquisitionStrategy = 'browser_redirect' | 'manual_form' | 'none';
+export type IntegrationAuthAcquisitionStrategy =
+  | 'browser_redirect'
+  | 'provider_install_redirect'
+  | 'manual_form'
+  | 'none';
 export type IntegrationAuthLifecycleStrategy =
   | 'static'
   | 'oauth_refresh'
   | 'exchange_on_demand'
+  | 'provider_exchange'
   | 'signed_request';
 export type IntegrationRequestAuthStrategy =
   | 'none'
@@ -724,7 +735,35 @@ export interface IntegrationConnectionTestResult {
 export interface IntegrationConnectionDeleteImpact {
   connection_id: string;
   bound_agent_count: number;
+  bound_workflow_count: number;
   can_delete: boolean;
+  impact_token?: string;
+  expires_at?: number;
+  references: IntegrationConnectionReference[];
+}
+
+export interface IntegrationConnectionReferenceNode {
+  node_id: string;
+  node_name: string;
+  action_id: string;
+  draft_referenced: boolean;
+  published_referenced: boolean;
+}
+
+export interface IntegrationConnectionReference {
+  asset_id: string;
+  asset_type: 'agent' | 'workflow';
+  name: string;
+  workspace_id: string;
+  workspace_name: string;
+  draft_referenced: boolean;
+  published_referenced: boolean;
+  actions: string[];
+  nodes?: IntegrationConnectionReferenceNode[];
+}
+
+export interface DetachIntegrationConnectionReferencesRequest {
+  impact_token: string;
 }
 
 export interface IntegrationActionPolicy {

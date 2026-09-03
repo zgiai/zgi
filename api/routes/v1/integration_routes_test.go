@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,10 +15,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
+	integrationpreferences "github.com/zgiai/zgi/api/internal/modules/integrations/preferences"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/util"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -50,6 +54,47 @@ func TestIntegrationRouteErrorReturnsSafeProviderDiagnostics(t *testing.T) {
 	}
 	if payload.Code != integrations.ErrorCodeProviderRejected || payload.Data.ProviderErrorCode != "60020" || payload.Data.ProviderRequestID != "request-1" || payload.Data.ProviderHTTPStatus != 200 {
 		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestIntegrationRouteErrorProjectsUnknownErrorsWithoutLeakingDiagnostics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	productCatalog, err := appcatalog.NewDefault()
+	if err != nil {
+		t.Fatalf("create application error catalog: %v", err)
+	}
+	projector, err := apptransport.NewProjector(productCatalog)
+	if err != nil {
+		t.Fatalf("create application error projector: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/console/api/integrations/oauth-recovery", nil)
+	ctx.Request.Header.Set("Accept-Language", "zh-CN")
+	ctx.Set(integrationErrorProjectorContextKey, projector)
+
+	integrationRouteError(ctx, errors.New("oauth recovery summary failed: SELECT * FROM integration_oauth_outbox; host=db.internal password=secret"))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Code != integrations.ErrorCodeUpstream {
+		t.Fatalf("code = %q, body = %s", payload.Code, recorder.Body.String())
+	}
+	if payload.Message != "服务暂时出现问题，请稍后重试；如持续发生，请联系管理员。" {
+		t.Fatalf("message = %q", payload.Message)
+	}
+	for _, forbidden := range []string{"SELECT", "integration_oauth_outbox", "db.internal", "password", "secret"} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("response leaked %q: %s", forbidden, recorder.Body.String())
+		}
 	}
 }
 
@@ -225,24 +270,24 @@ func (repository *integrationRouteGrantRepository) Delete(_ context.Context, _ u
 }
 
 type integrationRoutePreferenceRepository struct {
-	items          []integrations.AIChatIntegrationPreference
+	items          []integrationpreferences.AIChatIntegrationPreference
 	organizationID uuid.UUID
 	accountID      uuid.UUID
 	workspaceID    *uuid.UUID
 }
 
-func (repository *integrationRoutePreferenceRepository) List(_ context.Context, organizationID, accountID uuid.UUID, workspaceID *uuid.UUID) ([]integrations.AIChatIntegrationPreference, error) {
+func (repository *integrationRoutePreferenceRepository) List(_ context.Context, organizationID, accountID uuid.UUID, workspaceID *uuid.UUID) ([]integrationpreferences.AIChatIntegrationPreference, error) {
 	if repository.organizationID != organizationID || repository.accountID != accountID || !sameRouteUUIDPointer(repository.workspaceID, workspaceID) {
-		return []integrations.AIChatIntegrationPreference{}, nil
+		return []integrationpreferences.AIChatIntegrationPreference{}, nil
 	}
-	return append([]integrations.AIChatIntegrationPreference(nil), repository.items...), nil
+	return append([]integrationpreferences.AIChatIntegrationPreference(nil), repository.items...), nil
 }
 
-func (repository *integrationRoutePreferenceRepository) Replace(_ context.Context, organizationID, accountID uuid.UUID, workspaceID *uuid.UUID, preferences []integrations.AIChatIntegrationPreference) error {
+func (repository *integrationRoutePreferenceRepository) Replace(_ context.Context, organizationID, accountID uuid.UUID, workspaceID *uuid.UUID, preferences []integrationpreferences.AIChatIntegrationPreference) error {
 	repository.organizationID = organizationID
 	repository.accountID = accountID
 	repository.workspaceID = cloneRouteUUIDPointer(workspaceID)
-	repository.items = append([]integrations.AIChatIntegrationPreference(nil), preferences...)
+	repository.items = append([]integrationpreferences.AIChatIntegrationPreference(nil), preferences...)
 	for index := range repository.items {
 		repository.items[index].OrganizationID = organizationID
 		repository.items[index].AccountID = accountID
@@ -717,9 +762,15 @@ func TestIntegrationDeleteRefusesConnectionStillBoundToAgent(t *testing.T) {
 	}
 	organizationID := uuid.New()
 	connectionID := uuid.New()
-	mock.ExpectQuery(`SELECT COUNT\(DISTINCT\("agent_id"\)\) FROM "agent_resource_bindings"`).
+	agentID := uuid.New()
+	workspaceID := uuid.New()
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE organization_id = \$1 AND \(binding_type = \$2 AND resource_id = \$3\) ORDER BY agent_id ASC, binding_scope ASC, published_version_uuid ASC`).
 		WithArgs(organizationID, "integration_connection", connectionID.String()).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		WillReturnRows(sqlmock.NewRows([]string{
+			"agent_id", "consumer_type", "consumer_id", "binding_scope", "organization_id", "workspace_id", "binding_type", "resource_id",
+		}).AddRow(
+			agentID, "agent", agentID, "draft", organizationID, workspaceID, "integration_connection", connectionID.String(),
+		))
 	service := &integrationRouteConnectionService{getItem: integrations.ConnectionView{
 		ID: connectionID, OrganizationID: organizationID,
 		CredentialSource: integrations.ConnectionCredentialSourceOrganization,
@@ -861,7 +912,7 @@ func TestIntegrationReplaceAIChatPreferencesConvertsRouteDTOAndUsesAuthenticated
 	preferenceRepo := &integrationRoutePreferenceRepository{}
 	access := integrations.NewConnectionAccessService(connectionRepo, grantRepo)
 	handler := &integrationHandler{deps: IntegrationRouteDeps{
-		Preferences: integrations.NewAIChatIntegrationPreferenceService(preferenceRepo, connectionRepo, access),
+		Preferences: integrationpreferences.NewAIChatIntegrationPreferenceService(preferenceRepo, connectionRepo, access),
 	}}
 	body := `{"items":[{"integration_id":"github","selected_connection_ids":["` + connectionID.String() + `"],"preferred_connection_id":"` + connectionID.String() + `"}]}`
 	recorder := httptest.NewRecorder()
@@ -889,14 +940,14 @@ func TestIntegrationReplaceAIChatPreferencesConvertsRouteDTOAndUsesAuthenticated
 func TestIntegrationReplaceAIChatPreferencesAllowsExplicitEmptySelection(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	organizationID, accountID, workspaceID := uuid.New(), uuid.New(), uuid.New()
-	preferenceRepo := &integrationRoutePreferenceRepository{items: []integrations.AIChatIntegrationPreference{{
+	preferenceRepo := &integrationRoutePreferenceRepository{items: []integrationpreferences.AIChatIntegrationPreference{{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
 		WorkspaceID:    &workspaceID,
 		IntegrationID:  "github",
 	}}}
 	handler := &integrationHandler{deps: IntegrationRouteDeps{
-		Preferences: integrations.NewAIChatIntegrationPreferenceService(
+		Preferences: integrationpreferences.NewAIChatIntegrationPreferenceService(
 			preferenceRepo,
 			&integrationRouteConnectionRepository{items: map[uuid.UUID]*integrations.IntegrationConnection{}},
 			integrations.NewConnectionAccessService(
@@ -947,14 +998,14 @@ func TestIntegrationListAIChatPreferencesReturnsOnlyCurrentAuthorizedSelections(
 		organizationID: organizationID,
 		accountID:      accountID,
 		workspaceID:    &workspaceID,
-		items: []integrations.AIChatIntegrationPreference{{
+		items: []integrationpreferences.AIChatIntegrationPreference{{
 			ID: uuid.New(), OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &workspaceID,
 			IntegrationID: "github", SelectedConnectionIDs: []string{allowedID.String(), revokedID.String(), deletedID.String()},
 			PreferredConnectionID: &revokedID, Revision: 1,
 		}},
 	}
 	handler := &integrationHandler{deps: IntegrationRouteDeps{
-		Preferences: integrations.NewAIChatIntegrationPreferenceService(
+		Preferences: integrationpreferences.NewAIChatIntegrationPreferenceService(
 			preferenceRepo,
 			connectionRepo,
 			integrations.NewConnectionAccessService(connectionRepo, grantRepo),
@@ -984,7 +1035,7 @@ func TestIntegrationListAIChatPreferencesReturnsOnlyCurrentAuthorizedSelections(
 	}
 	var payload struct {
 		Data struct {
-			Items []integrations.AIChatIntegrationPreference `json:"items"`
+			Items []integrationpreferences.AIChatIntegrationPreference `json:"items"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
@@ -1513,9 +1564,9 @@ func TestIntegrationManagementRoutesHidePersonalConnectionsAndOwnerUsesMyConnect
 			t.Fatalf("test status=%d calls=%d body=%s", recorder.Code, service.testCalls, recorder.Body.String())
 		}
 
-		mock.ExpectQuery(`SELECT COUNT\(DISTINCT\("agent_id"\)\) FROM "agent_resource_bindings"`).
+		mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE organization_id = \$1 AND \(binding_type = \$2 AND resource_id = \$3\) ORDER BY agent_id ASC, binding_scope ASC, published_version_uuid ASC`).
 			WithArgs(organizationID, "integration_connection", personalID.String()).
-			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			WillReturnRows(sqlmock.NewRows([]string{"agent_id"}))
 		ctx, recorder = newContext(http.MethodDelete, "/my-connections/"+personalID.String(), "", ownerID)
 		handler.deleteMyConnection(ctx)
 		if recorder.Code != http.StatusOK || service.deleted != personalID {

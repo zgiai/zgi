@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -13,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -162,7 +163,6 @@ func TestAnnotateSuccessfulResultSemanticsMarksOnlyEmptyReads(t *testing.T) {
 	if readOutput["empty_result"] != true || readOutput["result_semantics"] != "provider_succeeded_no_matching_items" {
 		t.Fatalf("empty read semantics = %#v", readOutput)
 	}
-
 	writeOutput := map[string]interface{}{}
 	annotateSuccessfulResultSemantics(writeOutput, integrations.ActionDefinition{
 		Effect: toolgovernance.EffectExternalSend,
@@ -180,7 +180,7 @@ func TestAnnotateSuccessfulResultSemanticsMarksOnlyEmptyReads(t *testing.T) {
 	}
 }
 
-func TestExecuteActionInvokeAcceptsEmptyReadResultSemantics(t *testing.T) {
+func TestExecuteActionPublishesSchemaValidEmptyReadSemantics(t *testing.T) {
 	fixture := newAgentMetaToolFixture(t, toolgovernance.EffectRead, toolgovernance.ApprovalPolicyNeverAsk, true)
 	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
 	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
@@ -188,9 +188,7 @@ func TestExecuteActionInvokeAcceptsEmptyReadResultSemantics(t *testing.T) {
 		Output: map[string]interface{}{"messages": []interface{}{}}, ResultCount: 0, AttemptCount: 1,
 	}
 	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
-		"integration_selected_connection_ids": map[string][]string{
-			fixture.integrationID: {fixture.connectionOne.ID.String()},
-		},
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
 	})
 	messages, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
 		"integration_id": fixture.integrationID,
@@ -199,14 +197,18 @@ func TestExecuteActionInvokeAcceptsEmptyReadResultSemantics(t *testing.T) {
 		"arguments":      map[string]interface{}{},
 	}, nil, nil, nil)
 	if err != nil {
-		t.Fatalf("Invoke() empty read error = %v", err)
+		t.Fatalf("empty read Invoke() error = %v", err)
 	}
-	if len(messages) != 1 || messages[0].Data["operation_status"] != "completed" ||
-		messages[0].Data["empty_result"] != true || messages[0].Data["result_semantics"] != "provider_succeeded_no_matching_items" {
-		t.Fatalf("Invoke() empty read output = %#v", messages)
+	if len(messages) != 1 || len(fixture.executor.requests) != 1 {
+		t.Fatalf("empty read messages=%#v requests=%#v", messages, fixture.executor.requests)
 	}
-	if err := tools.ValidateJSONSchemaValue(tool.GetEntity().OutputSchema, messages[0].Data); err != nil {
-		t.Fatalf("execute_action empty read output schema error = %v", err)
+	output := messages[0].Data
+	if output["operation_status"] != "completed" ||
+		output["empty_result"] != true || output["result_semantics"] != "provider_succeeded_no_matching_items" {
+		t.Fatalf("empty read semantics=%#v", output)
+	}
+	if err := tools.ValidateJSONSchemaValue(tool.GetEntity().OutputSchema, output); err != nil {
+		t.Fatalf("empty read execute_action output schema: %v", err)
 	}
 }
 
@@ -234,6 +236,132 @@ func TestExecuteActionOrdinaryReadReturnsCompletedOperationStatus(t *testing.T) 
 	if result, ok := messages[0].Data["result"].(map[string]interface{}); !ok ||
 		!reflect.DeepEqual(result["messages"], []interface{}{"message-1"}) {
 		t.Fatalf("Invoke() ordinary read facade payload = %#v", messages)
+	}
+}
+
+func TestExecuteActionPreservesProviderPartialSuccessAcrossReplay(t *testing.T) {
+	for _, replayed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replayed_%t", replayed), func(t *testing.T) {
+			fixture := newAgentMetaToolFixture(t, toolgovernance.EffectExternalSend, toolgovernance.ApprovalPolicyAlwaysAsk, true)
+			fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+			fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+			fixture.executor.result = &integrations.ActionResult{
+				Output: map[string]interface{}{
+					"operation_status": "partially_succeeded",
+					"accepted_count":   1,
+					"rejected_count":   1,
+				},
+				ResultCount:  1,
+				AttemptCount: 1,
+				Replayed:     replayed,
+			}
+			tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+				"integration_selected_connection_ids": map[string][]string{
+					fixture.integrationID: {fixture.connectionOne.ID.String()},
+				},
+			})
+			messages, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+				"integration_id": fixture.integrationID,
+				"action_id":      fixture.actionID,
+				"connection_id":  fixture.connectionOne.ID.String(),
+				"arguments":      map[string]interface{}{},
+			}, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("Invoke() partial success error = %v", err)
+			}
+			if len(messages) != 1 || messages[0].Data["operation_status"] != "partially_succeeded" {
+				t.Fatalf("partial success facade output = %#v", messages)
+			}
+			if err := tools.ValidateJSONSchemaValue(tool.GetEntity().OutputSchema, messages[0].Data); err != nil {
+				t.Fatalf("partial success output schema: %v", err)
+			}
+		})
+	}
+}
+
+func TestExecuteActionBatchPreservesProviderPartialSuccess(t *testing.T) {
+	fixture := newMetaToolFixture(t)
+	enableFixtureSuccessGuard(t, fixture, "title")
+	fixture.executor.result.Output["operation_status"] = "partially_succeeded"
+	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+		"integration_selected_connection_ids": map[string][]string{fixture.integrationID: {fixture.connectionOne.ID.String()}},
+		"integration_connection_ids":          map[string]string{fixture.integrationID: fixture.connectionOne.ID.String()},
+	})
+	messageID := uuid.NewString()
+	parameters := map[string]interface{}{
+		"integration_id": fixture.integrationID,
+		"action_id":      fixture.actionID,
+		"connection_id":  fixture.connectionOne.ID.String(),
+		"batch_items": []interface{}{
+			map[string]interface{}{"title": "first"},
+			map[string]interface{}{"title": "second"},
+		},
+	}
+	if _, err := integrations.EnsureOperationBatchMetadata(
+		parameters, messageID, fixture.connectionOne.ID.String(), fixture.integrationID, fixture.actionID,
+	); err != nil {
+		t.Fatalf("EnsureOperationBatchMetadata() error = %v", err)
+	}
+	messages, err := tool.Invoke(context.Background(), fixture.accountID.String(), parameters, nil, nil, &messageID)
+	if err != nil {
+		t.Fatalf("batch partial success Invoke() error = %v", err)
+	}
+	if len(messages) != 1 || messages[0].Data["operation_status"] != "partially_succeeded" {
+		t.Fatalf("batch partial success facade output = %#v", messages)
+	}
+	batch, ok := messages[0].Data["batch"].(map[string]interface{})
+	if !ok || batch["status"] != "partially_succeeded" || batch["succeeded_count"] != 2 {
+		t.Fatalf("batch partial summary = %#v", messages[0].Data["batch"])
+	}
+	items, ok := batch["items"].([]interface{})
+	if !ok || len(items) != 2 {
+		t.Fatalf("batch partial items = %#v", batch["items"])
+	}
+	for _, itemValue := range items {
+		item, itemOK := itemValue.(map[string]interface{})
+		if !itemOK || item["status"] != "partially_succeeded" {
+			t.Fatalf("batch partial item = %#v", itemValue)
+		}
+	}
+	if err := tools.ValidateJSONSchemaValue(tool.GetEntity().OutputSchema, messages[0].Data); err != nil {
+		t.Fatalf("batch partial success output schema: %v", err)
+	}
+}
+
+func TestExecuteActionDropsUnsafeProviderRequestIDOnSuccess(t *testing.T) {
+	for _, requestID := range []string{
+		"request id with spaces",
+		"access_token=secret",
+		strings.Repeat("r", 129),
+	} {
+		t.Run(requestID[:min(len(requestID), 24)], func(t *testing.T) {
+			fixture := newAgentMetaToolFixture(t, toolgovernance.EffectRead, toolgovernance.ApprovalPolicyNeverAsk, true)
+			fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
+			fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
+			fixture.executor.result.ProviderRequestID = requestID
+			tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
+				"integration_selected_connection_ids": map[string][]string{
+					fixture.integrationID: {fixture.connectionOne.ID.String()},
+				},
+			})
+			messages, err := tool.Invoke(context.Background(), fixture.accountID.String(), map[string]interface{}{
+				"integration_id": fixture.integrationID,
+				"action_id":      fixture.actionID,
+				"connection_id":  fixture.connectionOne.ID.String(),
+				"arguments":      map[string]interface{}{},
+			}, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("Invoke() error = %v", err)
+			}
+			if len(messages) != 1 {
+				t.Fatalf("Invoke() messages = %#v", messages)
+			}
+			if _, found := messages[0].Data["provider_request_id"]; found {
+				t.Fatalf("unsafe provider request id was exposed: %#v", messages[0].Data)
+			}
+		})
 	}
 }
 
@@ -1114,7 +1242,13 @@ func TestExecuteActionBatchUsesDistinctFrozenItemsAndReturnsAggregateStatus(t *t
 func TestExecuteActionReturnsStructuredRetryStateForGuardedDefiniteFailure(t *testing.T) {
 	fixture := newMetaToolFixture(t)
 	enableFixtureSuccessGuard(t, fixture, "title")
-	fixture.executor.err = integrations.NewError(integrations.ErrorCodeProviderRejected, "rejected", nil)
+	fixture.executor.err = integrations.NewProviderErrorWithReason(
+		integrations.ErrorCodeProviderRejected,
+		"wecom_all_recipients_invalid_or_unauthorized",
+		"operator-only provider rejection",
+		nil,
+		integrations.ProviderDiagnostics{ErrorCode: "81013", RequestID: "request-safe-1", HTTPStatus: http.StatusOK},
+	)
 	fixture.access.preferenceAllowed[fixture.connectionOne.ID] = true
 	fixture.access.actionAllowed[fixture.connectionOne.ID.String()+"/"+fixture.actionID] = true
 	tool := fixture.runtimeTool(t, ToolExecuteAction, map[string]interface{}{
@@ -1132,6 +1266,21 @@ func TestExecuteActionReturnsStructuredRetryStateForGuardedDefiniteFailure(t *te
 	if len(messages) != 1 || messages[0].Data["operation_status"] != "failed_safe" ||
 		messages[0].Data["retry_safe"] != true || messages[0].Data["error_code"] != integrations.ErrorCodeProviderRejected {
 		t.Fatalf("guarded failure output = %#v", messages)
+	}
+	if messages[0].Data["reason_code"] != "wecom_all_recipients_invalid_or_unauthorized" ||
+		messages[0].Data["provider_error_code"] != "81013" ||
+		messages[0].Data["provider_request_id"] != "request-safe-1" {
+		t.Fatalf("guarded failure diagnostics = %#v", messages[0].Data)
+	}
+	encoded, marshalErr := json.Marshal(messages[0].Data)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if strings.Contains(string(encoded), "operator-only provider rejection") || strings.Contains(string(encoded), "errmsg") {
+		t.Fatalf("guarded failure leaked provider diagnostics: %s", encoded)
+	}
+	if err := tools.ValidateJSONSchemaValue(tool.GetEntity().OutputSchema, messages[0].Data); err != nil {
+		t.Fatalf("guarded failure output schema error = %v", err)
 	}
 }
 

@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -783,12 +783,10 @@ func preparedActionProjectionScore(query preparedActionProjectionQuery, definiti
 		action.ID,
 		action.ToolName,
 		action.Name,
-		action.Description,
 	}
+	fields = append(fields, action.IntentAliases...)
 	fields = append(fields, sortedLocalizedProjectionValues(definition.NameI18n)...)
-	fields = append(fields, sortedLocalizedProjectionValues(definition.DescriptionI18n)...)
 	fields = append(fields, sortedLocalizedProjectionValues(action.NameI18n)...)
-	fields = append(fields, sortedLocalizedProjectionValues(action.DescriptionI18n)...)
 	haystack := strings.ToLower(strings.Join(fields, " "))
 	score := 0
 	if strings.Contains(haystack, query.normalized) {
@@ -822,10 +820,16 @@ func actionProjectionIntentMatch(
 	providerFields := []string{definition.ID, definition.Name}
 	providerFields = append(providerFields, sortedLocalizedProjectionValues(definition.NameI18n)...)
 	providerHaystack := strings.ToLower(strings.Join(providerFields, " "))
-	actionFields := []string{action.Name, action.Description}
+	actionFields := []string{action.ID, action.ToolName, action.Name}
+	actionFields = append(actionFields, action.IntentAliases...)
 	actionFields = append(actionFields, sortedLocalizedProjectionValues(action.NameI18n)...)
-	actionFields = append(actionFields, sortedLocalizedProjectionValues(action.DescriptionI18n)...)
 	actionHaystack := strings.ToLower(strings.Join(actionFields, " "))
+	for _, alias := range action.IntentAliases {
+		alias = strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(alias))), " ")
+		if alias != "" && strings.Contains(strings.Join(strings.Fields(query.normalized), " "), alias) {
+			return true, []string{alias}
+		}
+	}
 	// An exact action phrase is sufficient. Otherwise require both a provider
 	// identity token and a distinct action-capability token. This prevents a
 	// generic internal request such as "create a file" from turning an available

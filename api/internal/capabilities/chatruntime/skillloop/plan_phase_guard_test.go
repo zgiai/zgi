@@ -4,12 +4,166 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
+
+// projectedExternalActionTestAuthorizePlan upgrades a hand-written test plan
+// to the same server-owned Outcome contract emitted by projected Action auto
+// binding. Tests that exercise server preparation evidence must not rely on a
+// model-authored required flag or fingerprint alone.
+func projectedExternalActionTestAuthorizePlan(state map[string]interface{}) map[string]interface{} {
+	plan := evidenceMapFromAny(state["operation_plan"])
+	if plan == nil {
+		plan = map[string]interface{}{}
+		state["operation_plan"] = plan
+	}
+	outcomes := append([]interface{}(nil), evidenceSliceFromAny(plan["outcomes"])...)
+	existingOutcomes := map[string]struct{}{}
+	for _, outcome := range evidenceMapsFromAny(outcomes) {
+		if id := strings.TrimSpace(evidenceStringFromAny(outcome["id"])); id != "" {
+			existingOutcomes[strings.ToLower(id)] = struct{}{}
+		}
+	}
+	for _, phase := range evidenceMapsFromAny(plan["phases"]) {
+		phaseID := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
+		if phaseID == "" {
+			continue
+		}
+		outcomeID := strings.TrimSpace(evidenceStringFromAny(phase["outcome_id"]))
+		if outcomeID == "" {
+			outcomeID = "outcome-" + strings.ToLower(phaseID)
+			phase["outcome_id"] = outcomeID
+		}
+		phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceServerOutcome
+		if _, exists := phase["required"].(bool); !exists {
+			phase["required"] = true
+		}
+		if strings.TrimSpace(evidenceStringFromAny(phase[operationPlanServerProjectedConnectionBindingKey])) == "" {
+			fingerprint := strings.TrimSpace(evidenceStringFromAny(
+				evidenceMapFromAny(phase["expected_action"])[planExpectedActionServerBindingFingerprintKey],
+			))
+			if candidate := projectedExternalActionCandidateByFingerprint(state, fingerprint); len(candidate) > 0 {
+				phase[operationPlanServerProjectedConnectionBindingKey] =
+					candidate[operationPlanServerProjectedConnectionBindingKey]
+			}
+		}
+		if _, exists := existingOutcomes[strings.ToLower(outcomeID)]; exists {
+			continue
+		}
+		existingOutcomes[strings.ToLower(outcomeID)] = struct{}{}
+		outcomes = append(outcomes, map[string]interface{}{
+			"id": outcomeID, "required": true, "verification_mode": "runtime_effects",
+			"capabilities": []interface{}{skills.SkillExternalApps},
+		})
+	}
+	plan["outcomes"] = outcomes
+	return state
+}
+
+func TestProjectedExternalActionSuccessfulExecutionKeysUseOnlyConfirmedToolCalls(t *testing.T) {
+	state := map[string]interface{}{
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind": "tool_call", "skill_id": skills.SkillExternalApps, "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{"integration_id": "web-search", "action_id": "web.search"},
+				"result": map[string]interface{}{
+					"operation_status": "succeeded", "provider_success_confirmed": true,
+				},
+			},
+			map[string]interface{}{
+				"kind": "tool_governance", "skill_id": skills.SkillExternalApps, "tool_name": "execute_action", "status": "allowed",
+				"arguments": map[string]interface{}{"integration_id": "web-search", "action_id": "web.search"},
+			},
+			map[string]interface{}{
+				"kind": "tool_call", "skill_id": skills.SkillExternalApps, "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{"integration_id": "standard-mail", "action_id": "mail.message.search"},
+				"result": map[string]interface{}{
+					"operation_status": "outcome_unknown", "provider_success_confirmed": false,
+				},
+			},
+			map[string]interface{}{
+				"skill_id": skills.SkillExternalApps, "tool_name": "execute_action", "status": "success",
+				"arguments": map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.contact.search"},
+				"result": map[string]interface{}{
+					"operation_status": "completed", "provider_success_confirmed": true,
+				},
+			},
+		},
+	}
+
+	keys := projectedExternalActionSuccessfulExecutionKeys(state)
+	for _, key := range []string{"web-search:web.search", "wecom:wecom.contact.search"} {
+		if _, ok := keys[key]; !ok {
+			t.Fatalf("confirmed execution %q missing from keys: %#v", key, keys)
+		}
+	}
+	if _, ok := keys["standard-mail:mail.message.search"]; ok {
+		t.Fatalf("outcome_unknown execution was treated as successful: %#v", keys)
+	}
+}
+
+func TestProjectedExternalActionObservedTargetValuesIgnoreGovernanceEvidence(t *testing.T) {
+	connectionBinding := skills.NativeExternalActionConnectionBindingHash("connection-wecom")
+	state := map[string]interface{}{
+		runtimeStateNativeExternalActionCandidatesKey: []interface{}{map[string]interface{}{
+			"integration_id": "wecom", "action_id": "wecom.message.send",
+			"binding_fingerprint": "binding-send", operationPlanServerProjectedConnectionBindingKey: connectionBinding,
+			"preparation_hints": []interface{}{map[string]interface{}{
+				"action_key": "wecom:wecom.contact.search", "relation": "resolve_target",
+				"target_arguments": []interface{}{"recipient_ref"},
+				"result_paths":     []interface{}{"contacts[].user_id"},
+			}},
+		}},
+		"operation_plan": map[string]interface{}{"phases": []interface{}{map[string]interface{}{
+			"id": "phase-send", operationPlanServerProjectedLedgerEpochKey: "ledger-1",
+		}}},
+	}
+	projectedExternalActionTestAuthorizePlan(state)
+	invocation := func(kind string, operationStatus string) map[string]interface{} {
+		record := map[string]interface{}{
+			"skill_id": skills.SkillExternalApps, "tool_name": "execute_action", "status": "success",
+			"arguments": map[string]interface{}{
+				"plan_phase_id": "phase-send", operationPlanServerProjectedLedgerEpochKey: "ledger-1",
+				planExpectedActionServerBindingFingerprintKey:    "binding-send",
+				operationPlanServerProjectedConnectionBindingKey: connectionBinding,
+			},
+			"result": map[string]interface{}{
+				"integration_id": "wecom", "action_id": "wecom.contact.search",
+				"operation_status": operationStatus, "provider_success_confirmed": operationStatus == "completed",
+				projectedExternalObservedPreparationTargetsKey: map[string]interface{}{
+					"recipient_ref": []interface{}{"wm-alice"},
+				},
+			},
+		}
+		if kind != "" {
+			record["kind"] = kind
+		}
+		return record
+	}
+
+	state["skill_invocations"] = []interface{}{invocation("tool_governance", "completed")}
+	if values := projectedExternalActionObservedTargetValues(state, "phase-send", "binding-send", "recipient_ref"); len(values) != 0 {
+		t.Fatalf("governance record produced preparation targets: %#v", values)
+	}
+
+	state["skill_invocations"] = []interface{}{invocation("tool_call", "outcome_unknown")}
+	if values := projectedExternalActionObservedTargetValues(state, "phase-send", "binding-send", "recipient_ref"); len(values) != 0 {
+		t.Fatalf("outcome_unknown tool call produced preparation targets: %#v", values)
+	}
+
+	for _, kind := range []string{"tool_call", ""} {
+		state["skill_invocations"] = []interface{}{invocation(kind, "completed")}
+		values := projectedExternalActionObservedTargetValues(state, "phase-send", "binding-send", "recipient_ref")
+		if !reflect.DeepEqual(values, []string{"wm-alice"}) {
+			t.Fatalf("confirmed %q execution targets = %#v", kind, values)
+		}
+	}
+}
 
 func TestProjectedPreparationUsesFirstNonEmptyServerResultPathForEquivalentFeishuIdentifiers(t *testing.T) {
 	values := projectedExternalPreparationObservedValuesForTarget(
@@ -70,6 +224,7 @@ func TestProjectedPreparationSelectsFeishuIdentifierByServerBoundRecipientType(t
 		},
 		"operation_plan": map[string]interface{}{"phases": []interface{}{phase}},
 	}
+	projectedExternalActionTestAuthorizePlan(state)
 	call := map[string]interface{}{
 		"integration_id": "feishu", "action_id": "feishu.contact.search", "connection_id": "connection-feishu",
 		"arguments": map[string]interface{}{"query": "Alice", "page_size": 10},
@@ -135,6 +290,7 @@ func TestProjectedPreparationExactScalarLookupDoesNotRequirePaginationMetadata(t
 			},
 		}}},
 	}
+	projectedExternalActionTestAuthorizePlan(state)
 	call := map[string]interface{}{
 		"integration_id": "x", "action_id": "x.user.get_by_username", "connection_id": "connection-x",
 		"arguments": map[string]interface{}{"username": "alice"},
@@ -221,6 +377,7 @@ func TestProjectedPreparationSplitsOneConfirmedGitHubRepositoryServerSide(t *tes
 			"expected_action": phaseExpected,
 		}}},
 	}
+	projectedExternalActionTestAuthorizePlan(state)
 	call := map[string]interface{}{
 		"integration_id": "github", "action_id": "github.repository.search", "connection_id": "connection-github",
 		"arguments": map[string]interface{}{"query": "zgi", "per_page": 10},
@@ -302,6 +459,7 @@ func TestProjectedPreparationObservationRejectsCrossResourceContext(t *testing.T
 			},
 		}}},
 	}
+	projectedExternalActionTestAuthorizePlan(state)
 	payload := map[string]interface{}{
 		"integration_id": "github", "action_id": "github.issue.list", "operation_status": "completed", "result_count": 1,
 		"result": map[string]interface{}{"issues": []interface{}{map[string]interface{}{"number": "42"}}},
@@ -343,6 +501,7 @@ func TestProjectedPreparationObservationRequiresConfirmedProviderSuccessAndExact
 			"target": map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.message.send"},
 		},
 	}}}}
+	projectedExternalActionTestAuthorizePlan(snapshot)
 	state := runtimeStateForRun(RunRequest{NativeToolSet: &toolSet, RuntimeStateSnapshot: func() map[string]interface{} { return snapshot }})
 	callArguments := map[string]interface{}{
 		"integration_id": "wecom", "action_id": "wecom.contact.search", "connection_id": "connection-wecom",
@@ -413,6 +572,7 @@ func TestProjectedPreparationObservationRejectsIncompleteOrPaginatedSingleRows(t
 			"target": map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.message.send"},
 		},
 	}}}}
+	projectedExternalActionTestAuthorizePlan(snapshot)
 	state := runtimeStateForRun(RunRequest{NativeToolSet: &toolSet, RuntimeStateSnapshot: func() map[string]interface{} { return snapshot }})
 	baseCall := map[string]interface{}{
 		"integration_id": "wecom", "action_id": "wecom.contact.search", "connection_id": "connection-wecom",
@@ -694,10 +854,10 @@ func TestProjectedExternalActionPlanIssueRequiresCompleteCanonicalLedger(t *test
 		t.Fatal("projectedExternalActionPlanIssue() = empty, want incomplete-ledger rejection")
 	}
 
-	state["operation_plan"] = map[string]interface{}{"phases": []interface{}{
+	state = projectedExternalActionPlanTestState([]interface{}{
 		projectedExternalActionPlanTestPhase("phase-a", "in_progress", "recipient_ref", "alice"),
 		projectedExternalActionPlanTestPhase("phase-b", "pending", "recipient_ref", "bob"),
-	}}
+	})
 	if issue := projectedExternalActionPlanIssue(state, "phase-a", skills.SkillExternalApps, "execute_action", arguments); issue != "" {
 		t.Fatalf("projectedExternalActionPlanIssue() = %q, want complete canonical ledger accepted", issue)
 	}
@@ -744,16 +904,18 @@ func TestProjectedExternalActionPlanIssueAllowsExplicitOptionalProjectedAction(t
 func TestValidateProjectedExternalActionPlanSnapshotRejectsUnexecutedTerminalPhase(t *testing.T) {
 	for _, status := range []string{"completed", "skipped", "failed"} {
 		t.Run(status, func(t *testing.T) {
-			state := projectedExternalActionPlanTestState(nil)
 			phase := projectedExternalActionPlanTestPhase("phase-new", status, "recipient_ref", "alice")
+			state := projectedExternalActionPlanTestState([]interface{}{phase})
+			state["operation_plan"].(map[string]interface{})["phases"] = nil
 			if err := validateProjectedExternalActionPlanSnapshot([]map[string]interface{}{phase}, state); err == nil {
 				t.Fatalf("new projected phase with status %q was accepted without runtime evidence", status)
 			}
 		})
 	}
 
-	state := projectedExternalActionPlanTestState(nil)
 	phase := projectedExternalActionPlanTestPhase("phase-new", "in_progress", "recipient_ref", "alice")
+	state := projectedExternalActionPlanTestState([]interface{}{phase})
+	state["operation_plan"].(map[string]interface{})["phases"] = nil
 	if err := validateProjectedExternalActionPlanSnapshot([]map[string]interface{}{phase}, state); err != nil {
 		t.Fatalf("new open projected phase was rejected: %v", err)
 	}
@@ -793,14 +955,150 @@ func TestServerExternalCapabilityRejectsUnrelatedModelSelectedActionWithoutInten
 	}
 }
 
+func TestOperationPlanPhaseRequiredByServerHonorsPhaseAuthority(t *testing.T) {
+	expectedPreparation := map[string]interface{}{
+		"skill_id": skills.SkillExternalApps, "tool_name": "execute_action",
+		"target": map[string]interface{}{"integration_id": "mail", "action_id": "mail.identity.resolve"},
+	}
+	state := map[string]interface{}{
+		runtimeStateNativeExternalActionCandidatesKey: []interface{}{map[string]interface{}{
+			"integration_id": "mail", "action_id": "mail.message.send", "intent_matched": true,
+			"binding_fingerprint": "binding-mail-send",
+			"preparation_hints": []interface{}{map[string]interface{}{
+				"action_key": "mail:mail.identity.resolve", "relation": "resolve_target",
+				"target_arguments": []interface{}{"recipient"}, "result_paths": []interface{}{"recipients[].id"},
+			}},
+		}},
+		"operation_plan": map[string]interface{}{"outcomes": []interface{}{
+			map[string]interface{}{"id": "outcome-required", "required": true},
+			map[string]interface{}{"id": "outcome-optional", "required": false},
+		}},
+	}
+	tests := []struct {
+		name  string
+		phase map[string]interface{}
+		want  bool
+	}{
+		{
+			name: "model advisory cannot block even when it claims required",
+			phase: map[string]interface{}{
+				"id": "model", "required": true, operationPlanPhaseSourceKey: operationPlanPhaseSourceModelAdvisory,
+			},
+		},
+		{
+			name: "server outcome blocks",
+			phase: map[string]interface{}{
+				"id": "required", "outcome_id": "outcome-required", operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
+			},
+			want: true,
+		},
+		{
+			name: "optional server outcome does not block",
+			phase: map[string]interface{}{
+				"id": "optional", "outcome_id": "outcome-optional", operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
+			},
+		},
+		{
+			name: "declared preparation hint blocks",
+			phase: map[string]interface{}{
+				"id": "prepare", "expected_action": expectedPreparation,
+				operationPlanPhaseSourceKey: operationPlanPhaseSourceServerPreparation,
+			},
+			want: true,
+		},
+		{
+			name: "fabricated preparation source does not block",
+			phase: map[string]interface{}{
+				"id": "fabricated", operationPlanPhaseSourceKey: operationPlanPhaseSourceServerPreparation,
+				"expected_action": map[string]interface{}{
+					"skill_id": skills.SkillExternalApps, "tool_name": "execute_action",
+					"target": map[string]interface{}{"integration_id": "mail", "action_id": "mail.account.get"},
+				},
+			},
+		},
+		{
+			name:  "unclassified model phase defaults advisory",
+			phase: map[string]interface{}{"id": "unclassified"},
+		},
+		{
+			name:  "legacy explicit required remains compatible",
+			phase: map[string]interface{}{"id": "legacy", "required": true},
+			want:  true,
+		},
+		{
+			name:  "legacy valid outcome remains authoritative",
+			phase: map[string]interface{}{"id": "legacy-outcome", "outcome_id": "outcome-required"},
+			want:  true,
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := operationPlanPhaseRequiredByServer(testCase.phase, state); got != testCase.want {
+				t.Fatalf("operationPlanPhaseRequiredByServer(%#v) = %v, want %v", testCase.phase, got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestProjectedExternalActionRequirementsIgnoreModelAdvisoryAlias(t *testing.T) {
+	state := map[string]interface{}{
+		runtimeStateNativeExternalActionCandidatesKey: []interface{}{map[string]interface{}{
+			"integration_id": "mail", "action_id": "mail.account.get", "intent_matched": false,
+			"intent_group": "mail-account-get", "intent_tokens": []interface{}{"mail", "account"},
+			"binding_fingerprint": "binding-mail-account",
+		}},
+	}
+	phases := []map[string]interface{}{map[string]interface{}{
+		"id": "prep_inbox", "step": "Inspect mailbox account", "status": "in_progress",
+		operationPlanPhaseSourceKey: operationPlanPhaseSourceModelAdvisory,
+		"expected_action": map[string]interface{}{
+			"skill_id": skills.SkillExternalApps, "tool_name": "execute_action",
+			planExpectedActionServerBindingFingerprintKey: "binding-mail-account",
+			"target": map[string]interface{}{"integration_id": "mail", "action_id": "mail.account.get"},
+		},
+	}}
+	if requirements := projectedExternalActionRequirementsForPhases(phases, state); len(requirements) != 0 {
+		t.Fatalf("model advisory alias produced server requirements: %#v", requirements)
+	}
+}
+
 func projectedExternalActionPlanTestState(phases []interface{}) map[string]interface{} {
+	outcomes := make([]interface{}, 0, len(phases))
+	for _, raw := range phases {
+		phase := evidenceMapFromAny(raw)
+		phaseID := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
+		if phaseID == "" {
+			continue
+		}
+		outcomeID := strings.TrimSpace(evidenceStringFromAny(phase["outcome_id"]))
+		if outcomeID == "" {
+			outcomeID = "outcome-" + phaseID
+		}
+		phase["outcome_id"] = outcomeID
+		phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceServerOutcome
+		phase[operationPlanServerProjectedLedgerEpochKey] = "epoch-" + phaseID
+		phase[operationPlanServerProjectedConnectionBindingKey] = skills.NativeExternalActionConnectionBindingHash("connection-wecom")
+		if expected := evidenceMapFromAny(phase["expected_action"]); len(expected) > 0 {
+			expected[planExpectedActionServerBindingFingerprintKey] = "binding-wecom-send"
+		}
+		outcomes = append(outcomes, map[string]interface{}{
+			"id": outcomeID, "required": true, "verification_mode": "runtime_effects",
+			"capabilities": []interface{}{skills.SkillExternalApps},
+		})
+	}
 	return map[string]interface{}{
 		runtimeStateNativeExternalActionProjectionsKey: []interface{}{map[string]interface{}{
 			"tool_name": "wecom_send_message", "integration_id": "wecom", "action_id": "wecom.message.send",
 			"effect": "external_send", "target_argument_paths": []interface{}{"recipient_ref"},
 			"preparation_action_keys": []interface{}{"wecom:wecom.contact.search"},
 		}},
-		"operation_plan": map[string]interface{}{"phases": phases},
+		runtimeStateNativeExternalActionCandidatesKey: []interface{}{map[string]interface{}{
+			"integration_id": "wecom", "action_id": "wecom.message.send", "intent_matched": true,
+			"intent_group": "message.send", "effect": "external_send", "binding_fingerprint": "binding-wecom-send",
+			"target_argument_paths":                          []interface{}{"recipient_ref"},
+			operationPlanServerProjectedConnectionBindingKey: skills.NativeExternalActionConnectionBindingHash("connection-wecom"),
+		}},
+		"operation_plan": map[string]interface{}{"phases": phases, "outcomes": outcomes},
 	}
 }
 

@@ -1260,6 +1260,33 @@ func loadExternalIntegrationsConfig(cfg *Config, source *envSource) error {
 		oauthWebBaseURL+"/console/integrations/oauth/result",
 		envIntegrationOAuthResultURL,
 	))
+	wecomInstallCallbackURL := strings.TrimSpace(source.string(
+		oauthAPIBaseURL+"/console/api/integrations/wecom/install/callback",
+		envIntegrationWeComInstallCallbackURL,
+	))
+	wecomSuiteEventsURL := strings.TrimSpace(source.string(
+		oauthAPIBaseURL+"/console/api/integrations/wecom/suite/events",
+		envIntegrationWeComSuiteEventsURL,
+	))
+	wecomResultURL := strings.TrimSpace(source.string(
+		oauthWebBaseURL+"/console/integrations?provider=wecom",
+		envIntegrationWeComResultURL,
+	))
+	wecomInstallAuthMode := strings.ToLower(strings.TrimSpace(source.string(
+		WeComInstallAuthModeFormal,
+		envIntegrationWeComInstallAuthMode,
+	)))
+	if wecomInstallAuthMode == "" {
+		wecomInstallAuthMode = WeComInstallAuthModeFormal
+	}
+	wecomCustomerContactEnabled, err := source.bool(false, envIntegrationWeComCustomerContactEnabled)
+	if err != nil {
+		return err
+	}
+	wecomCustomerMassMessageEnabled, err := source.bool(false, envIntegrationWeComCustomerMassMessageEnabled)
+	if err != nil {
+		return err
+	}
 	type rawOAuthClientConfig struct {
 		ClientID     string            `json:"client_id"`
 		ClientSecret string            `json:"client_secret"`
@@ -1327,6 +1354,20 @@ func loadExternalIntegrationsConfig(cfg *Config, source *envSource) error {
 			CallbackURL:          oauthCallbackURL,
 			ResultURL:            oauthResultURL,
 			Clients:              oauthClients,
+		},
+		WeCom: ExternalIntegrationWeComConfig{
+			SuiteID:                    strings.TrimSpace(source.string("", envIntegrationWeComSuiteID)),
+			ProviderCorpID:             strings.TrimSpace(source.string("", envIntegrationWeComProviderCorpID)),
+			ProviderSecret:             strings.TrimSpace(source.string("", envIntegrationWeComProviderSecret)),
+			CustomerContactEnabled:     wecomCustomerContactEnabled,
+			CustomerMassMessageEnabled: wecomCustomerMassMessageEnabled,
+			SuiteSecret:                strings.TrimSpace(source.string("", envIntegrationWeComSuiteSecret)),
+			CallbackToken:              strings.TrimSpace(source.string("", envIntegrationWeComCallbackToken)),
+			EncodingAESKey:             strings.TrimSpace(source.string("", envIntegrationWeComEncodingAESKey)),
+			InstallAuthMode:            wecomInstallAuthMode,
+			InstallCallbackURL:         wecomInstallCallbackURL,
+			SuiteEventsURL:             wecomSuiteEventsURL,
+			ResultURL:                  wecomResultURL,
 		},
 	}
 	return nil

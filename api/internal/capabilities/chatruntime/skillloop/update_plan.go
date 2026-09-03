@@ -36,6 +36,9 @@ func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}
 		err = fmt.Errorf("%w: update_plan requires outcomes, plan, or phase_updates", ErrInvalidInput)
 	}
 	if err == nil && len(phases) > 0 {
+		restoreOperationPlanServerPhaseAuthority(phases, evidence)
+	}
+	if err == nil && len(phases) > 0 {
 		resolvedTargetPhaseIDs, err = validateProjectedExternalActionObservedTargetBindings(phases, evidence)
 	}
 	if err == nil && len(phases) > 0 {
@@ -56,6 +59,10 @@ func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}
 			}
 		}
 		for _, phase := range phases {
+			if !operationPlanPhaseHasServerAuthority(phase, evidence) {
+				stripOperationPlanProjectedServerAttestation(phase)
+				continue
+			}
 			expected := evidenceMapFromAny(phase["expected_action"])
 			if _, external := projectedExternalActionKeyFromExpected(expected); !external ||
 				projectedExpectedActionServerBindingIssue(expected, evidence) != "" {
@@ -197,6 +204,143 @@ func mergePlanPhaseUpdates(evidence map[string]interface{}, updates []map[string
 	return out, nil
 }
 
+func restoreOperationPlanServerPhaseAuthority(phases []map[string]interface{}, evidence map[string]interface{}) {
+	baselineByID := map[string]map[string]interface{}{}
+	for _, baseline := range evidenceMapsFromAny(evidenceMapFromAny(evidence["operation_plan"])["phases"]) {
+		if id := strings.TrimSpace(evidenceStringFromAny(baseline["id"])); id != "" {
+			baselineByID[id] = baseline
+		}
+	}
+	for _, phase := range phases {
+		id := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
+		baseline := baselineByID[id]
+		if id == "" || len(baseline) == 0 {
+			stripOperationPlanProjectedServerAttestation(phase)
+			continue
+		}
+		if !operationPlanPhaseHasServerAuthority(baseline, evidence) {
+			stripOperationPlanProjectedServerAttestation(phase)
+			downgradeOperationPlanInvalidServerAuthority(phase)
+			continue
+		}
+		outcomeID := strings.TrimSpace(evidenceStringFromAny(baseline["outcome_id"]))
+		if outcomeID != "" {
+			phase["outcome_id"] = outcomeID
+		}
+		switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(baseline[operationPlanPhaseSourceKey]))) {
+		case operationPlanPhaseSourceServerOutcome:
+			phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceServerOutcome
+		case operationPlanPhaseSourceServerPreparation:
+			phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceServerPreparation
+		case operationPlanPhaseSourceModelAdvisory:
+			phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceModelAdvisory
+		default:
+			if outcomeID != "" {
+				// Legacy server Outcome phases predate phase_source. Their persisted
+				// Outcome linkage is enough to classify them during migration.
+				phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceServerOutcome
+			} else if _, legacyRequired := baseline["required"].(bool); legacyRequired {
+				// Preserve the explicit authority of a legacy phase without turning
+				// it into a new model_advisory item during the migration window.
+				delete(phase, operationPlanPhaseSourceKey)
+			}
+		}
+		if required, exists := baseline["required"].(bool); exists {
+			phase["required"] = required
+		}
+		restoreOperationPlanServerCompletionPolicy(phase, baseline, evidence)
+		restoreOperationPlanProjectedServerAttestation(phase, baseline)
+	}
+}
+
+func restoreOperationPlanServerCompletionPolicy(
+	phase map[string]interface{},
+	baseline map[string]interface{},
+	evidence map[string]interface{},
+) {
+	for _, key := range []string{"verification_mode", "completion_source"} {
+		if value, exists := baseline[key]; exists && value != nil {
+			phase[key] = value
+		} else {
+			delete(phase, key)
+		}
+	}
+	if outcome := operationPlanOutcomeForPhase(baseline, evidence); len(outcome) > 0 {
+		mode := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(outcome["verification_mode"])))
+		switch mode {
+		case "final_answer", "non_tool":
+			phase["completion_mode"] = mode
+		default:
+			delete(phase, "completion_mode")
+		}
+		return
+	}
+	if value, exists := baseline["completion_mode"]; exists && value != nil {
+		phase["completion_mode"] = value
+	} else {
+		delete(phase, "completion_mode")
+	}
+}
+
+func stripOperationPlanProjectedServerAttestation(phase map[string]interface{}) {
+	delete(phase, operationPlanServerProjectedLedgerEpochKey)
+	delete(phase, operationPlanServerProjectedConnectionBindingKey)
+	expected := evidenceMapFromAny(phase["expected_action"])
+	if len(expected) == 0 {
+		return
+	}
+	delete(expected, planExpectedActionServerProjectionKey)
+	delete(expected, planExpectedActionServerBindingFingerprintKey)
+}
+
+func downgradeOperationPlanInvalidServerAuthority(phase map[string]interface{}) {
+	switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(phase[operationPlanPhaseSourceKey]))) {
+	case operationPlanPhaseSourceServerOutcome, operationPlanPhaseSourceServerPreparation:
+		phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceModelAdvisory
+	}
+}
+
+func restoreOperationPlanProjectedServerAttestation(phase map[string]interface{}, baseline map[string]interface{}) {
+	baselineExpected := evidenceMapFromAny(baseline["expected_action"])
+	if _, external := projectedExternalActionKeyFromExpected(baselineExpected); !external {
+		stripOperationPlanProjectedServerAttestation(phase)
+		return
+	}
+	expected := evidenceMapFromAny(phase["expected_action"])
+	if expected == nil {
+		expected = map[string]interface{}{}
+	}
+	for _, key := range []string{
+		"skill_id", "tool_name", "projected_tool_name",
+		planExpectedActionServerProjectionKey,
+		planExpectedActionServerBindingFingerprintKey,
+	} {
+		if value, exists := baselineExpected[key]; exists && value != nil {
+			expected[key] = value
+		} else {
+			delete(expected, key)
+		}
+	}
+	if target := copyStringAnyMap(evidenceMapFromAny(baselineExpected["target"])); len(target) > 0 {
+		expected["target"] = target
+	}
+	if len(evidenceMapFromAny(expected["target_arguments"])) == 0 {
+		if targetArguments := copyStringAnyMap(evidenceMapFromAny(baselineExpected["target_arguments"])); len(targetArguments) > 0 {
+			expected["target_arguments"] = targetArguments
+		}
+	}
+	phase["expected_action"] = expected
+	for _, key := range []string{
+		operationPlanServerProjectedLedgerEpochKey,
+		operationPlanServerProjectedConnectionBindingKey,
+	} {
+		if value, exists := baseline[key]; exists && value != nil {
+			phase[key] = value
+		} else {
+			delete(phase, key)
+		}
+	}
+}
 func normalizeOutcomeSnapshot(value interface{}) ([]map[string]interface{}, error) {
 	raw := mapSliceFromAny(value)
 	if len(raw) == 0 {
@@ -306,7 +450,10 @@ func normalizePlanSnapshot(value interface{}) ([]map[string]interface{}, error) 
 		}
 		note := trimRunes(stringFromInterface(item["note"]), 500)
 		refs := compactPlanEvidenceRefs(evidenceStringSliceFromAny(item["evidence_refs"]), 12, 240)
-		phase := map[string]interface{}{"id": id, "step": step, "title": step, "status": status}
+		phase := map[string]interface{}{
+			"id": id, "step": step, "title": step, "status": status,
+			operationPlanPhaseSourceKey: operationPlanPhaseSourceModelAdvisory,
+		}
 		if completionMode := strings.ToLower(strings.TrimSpace(stringFromInterface(item["completion_mode"]))); completionMode != "" {
 			switch completionMode {
 			case "tool", "final_answer", "non_tool":
@@ -349,12 +496,8 @@ func normalizePlanExpectedAction(value interface{}) map[string]interface{} {
 	if projectedToolName := trimRunes(stringFromInterface(raw["projected_tool_name"]), 160); projectedToolName != "" {
 		action["projected_tool_name"] = projectedToolName
 	}
-	if serverProjection := trimRunes(stringFromInterface(raw[planExpectedActionServerProjectionKey]), 160); serverProjection != "" {
-		action[planExpectedActionServerProjectionKey] = serverProjection
-	}
-	if fingerprint := trimRunes(stringFromInterface(raw[planExpectedActionServerBindingFingerprintKey]), 160); fingerprint != "" {
-		action[planExpectedActionServerBindingFingerprintKey] = fingerprint
-	}
+	// _server_projected_* fields are never accepted from model input. Exact
+	// persisted values are restored from the baseline phase after normalization.
 	targetRaw := evidenceMapFromAny(raw["target"])
 	target := map[string]interface{}{}
 	for _, key := range []string{"integration_id", "action_id", "agent_id", "file_id", "asset_id", "resource_id", "dataset_id", "data_source_id", "table_id", "workflow_id", "binding_id", "href", "route"} {

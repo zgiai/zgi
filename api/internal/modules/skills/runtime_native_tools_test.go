@@ -468,6 +468,81 @@ func TestAppendNativeToolProjectionsUsesStableLimitAndRemainingBudget(t *testing
 	}
 }
 
+func TestAppendNativeToolProjectionsDefaultsToFullActionCatalogWithinProviderCapacity(t *testing.T) {
+	projection := func(index int) NativeToolProjection {
+		actionID := fmt.Sprintf("action.%03d", index)
+		return NativeToolProjection{
+			Name: fmt.Sprintf("action_%03d", index), NameScope: "catalog/" + actionID,
+			InputSchema: map[string]interface{}{
+				"type": "object", "properties": map[string]interface{}{}, "additionalProperties": false,
+			},
+			Binding: NativeToolBinding{
+				SkillID: SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
+				BindingFingerprint: fmt.Sprintf("fingerprint-%03d", index),
+				FixedArguments:     map[string]interface{}{"integration_id": "catalog", "action_id": actionID},
+			},
+		}
+	}
+	projections := make([]NativeToolProjection, DefaultMaxNativeToolProjections)
+	for index := range projections {
+		projections[index] = projection(index)
+	}
+	estimateTokens := func(_ []llmadapter.Message, tools []llmadapter.Tool) int {
+		return len(tools)
+	}
+
+	t.Run("default exposes all 128 candidates", func(t *testing.T) {
+		toolSet := NativeToolSet{
+			ToolBindings: map[string]NativeToolBinding{},
+			BudgetChars:  1_000_000,
+			BudgetTokens: 1_000_000,
+		}
+		added := AppendNativeToolProjections(&toolSet, projections, NativeToolProjectionOptions{
+			EstimateTokens: estimateTokens,
+		})
+		if added != DefaultMaxNativeToolProjections || len(toolSet.ProviderTools) != DefaultMaxNativeToolProjections {
+			t.Fatalf("added=%d provider tools=%d, want full %d-Action catalog", added, len(toolSet.ProviderTools), DefaultMaxNativeToolProjections)
+		}
+		if len(toolSet.SkippedTools) != 0 {
+			t.Fatalf("default catalog projection skipped tools: %#v", toolSet.SkippedTools)
+		}
+		if toolSet.SchemaChars <= 0 || toolSet.SchemaChars > toolSet.BudgetChars ||
+			toolSet.SchemaTokens != DefaultMaxNativeToolProjections || toolSet.SchemaTokens > toolSet.BudgetTokens {
+			t.Fatalf("schema usage chars=%d/%d tokens=%d/%d", toolSet.SchemaChars, toolSet.BudgetChars, toolSet.SchemaTokens, toolSet.BudgetTokens)
+		}
+	})
+
+	t.Run("existing provider tools consume shared capacity with diagnostics", func(t *testing.T) {
+		const existingTools = 4
+		toolSet := NativeToolSet{
+			ToolBindings:  map[string]NativeToolBinding{},
+			ProviderTools: make([]llmadapter.Tool, existingTools),
+			BudgetChars:   1_000_000,
+			BudgetTokens:  1_000_000,
+		}
+		for index := range toolSet.ProviderTools {
+			toolSet.ProviderTools[index] = llmadapter.Tool{Type: "function", Function: llmadapter.Function{
+				Name: fmt.Sprintf("existing_%d", index),
+			}}
+		}
+		added := AppendNativeToolProjections(&toolSet, projections, NativeToolProjectionOptions{
+			EstimateTokens: estimateTokens,
+		})
+		wantAdded := DefaultMaxNativeToolProjections - existingTools
+		if added != wantAdded || len(toolSet.ProviderTools) != DefaultMaxNativeToolProjections {
+			t.Fatalf("added=%d provider tools=%d, want added=%d total=%d", added, len(toolSet.ProviderTools), wantAdded, DefaultMaxNativeToolProjections)
+		}
+		if len(toolSet.SkippedTools) != existingTools {
+			t.Fatalf("skipped tools=%d, want %d capacity diagnostics: %#v", len(toolSet.SkippedTools), existingTools, toolSet.SkippedTools)
+		}
+		for _, skip := range toolSet.SkippedTools {
+			if skip.Reason != "tool_limit_exceeded" {
+				t.Fatalf("capacity skip=%#v, want tool_limit_exceeded", skip)
+			}
+		}
+	})
+}
+
 func TestAppendNativeToolProjectionsKeepsPreparationDependenciesInsideTwentyFourToolLimit(t *testing.T) {
 	projection := func(index int, connection string) NativeToolProjection {
 		actionID := fmt.Sprintf("action.%03d", index)

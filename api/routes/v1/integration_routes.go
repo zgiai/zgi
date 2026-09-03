@@ -5,44 +5,103 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/catalog"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
+	integrationpreferences "github.com/zgiai/zgi/api/internal/modules/integrations/preferences"
+	wecomintegration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/wecom"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
 
+const integrationErrorProjectorContextKey = "integration_application_error_projector"
+
 type IntegrationRouteDeps struct {
-	DB               *gorm.DB
-	Registry         *integrations.Registry
-	Connections      integrations.ConnectionService
-	ConnectionRepo   integrations.ConnectionRepository
-	Grants           integrations.ConnectionGrantRepository
-	Access           *integrations.DefaultConnectionAccessService
-	Preferences      *integrations.DefaultAIChatIntegrationPreferenceService
-	HealthEvents     integrations.ConnectionHealthEventRepository
-	Policies         integrations.ActionPolicyService
-	Executions       integrations.ExecutionQueryRepository
-	AccountService   interfaces.AccountService
-	OAuthFlows       *integrations.OAuthFlowService
-	OAuthClients     *integrations.OAuthClientConfigService
-	OAuthRecovery    integrations.OAuthRecoveryAdminRepository
-	OAuthCallbackURL string
-	OAuthResultURL   string
+	DB                      *gorm.DB
+	Registry                *integrations.Registry
+	Connections             integrations.ConnectionService
+	ConnectionRepo          integrations.ConnectionRepository
+	Grants                  integrations.ConnectionGrantRepository
+	Access                  *integrations.DefaultConnectionAccessService
+	Preferences             *integrationpreferences.DefaultAIChatIntegrationPreferenceService
+	HealthEvents            integrations.ConnectionHealthEventRepository
+	Policies                integrations.ActionPolicyService
+	Executions              integrations.ExecutionQueryRepository
+	AccountService          interfaces.AccountService
+	OAuthFlows              *integrations.OAuthFlowService
+	OAuthClients            *integrations.OAuthClientConfigService
+	OAuthRecovery           integrations.OAuthRecoveryAdminRepository
+	ProviderInstallFlows    *integrations.ProviderInstallFlowService
+	WeComCallbacks          *wecomintegration.Adapter
+	AgentBindings           *agentbindings.Repository
+	WorkflowReferences      workflowConnectionReferenceService
+	ApplicationErrorCatalog *appcatalog.Catalog
+	OAuthCallbackURL        string
+	OAuthResultURL          string
+	WeComInstallCallbackURL string
+	WeComResultURL          string
+}
+
+type workflowConnectionReferenceService interface {
+	EnsureConnectionReferenceIndexReady(context.Context, uuid.UUID) error
+	PreviewConnectionReferences(context.Context, uuid.UUID, uuid.UUID) ([]agentbindings.WorkflowConnectionReference, error)
+	DetachConnectionReferences(context.Context, *gorm.DB, uuid.UUID, uuid.UUID, uuid.UUID) ([]agentbindings.WorkflowConnectionReference, error)
 }
 
 type integrationHandler struct {
 	deps                   IntegrationRouteDeps
 	workspaceScopeResolver *aichatWorkspaceScopeResolver
+}
+
+const detachIntegrationConnectionReferencesOperation = "detach_integration_connection_references"
+
+type detachIntegrationConnectionReferencesRequest struct {
+	ImpactToken string `json:"impact_token" binding:"required"`
+}
+
+type integrationConnectionDeleteImpactResponse struct {
+	ConnectionID       uuid.UUID                        `json:"connection_id"`
+	BoundAgentCount    int                              `json:"bound_agent_count"`
+	BoundWorkflowCount int                              `json:"bound_workflow_count"`
+	CanDelete          bool                             `json:"can_delete"`
+	ImpactToken        string                           `json:"impact_token,omitempty"`
+	ExpiresAt          int64                            `json:"expires_at,omitempty"`
+	References         []integrationConnectionReference `json:"references"`
+}
+
+type integrationConnectionReference struct {
+	AssetID             uuid.UUID                            `json:"asset_id"`
+	AssetType           string                               `json:"asset_type"`
+	Name                string                               `json:"name"`
+	WorkspaceID         uuid.UUID                            `json:"workspace_id"`
+	WorkspaceName       string                               `json:"workspace_name"`
+	DraftReferenced     bool                                 `json:"draft_referenced"`
+	PublishedReferenced bool                                 `json:"published_referenced"`
+	Actions             []string                             `json:"actions"`
+	Nodes               []integrationConnectionReferenceNode `json:"nodes"`
+}
+
+type integrationConnectionReferenceNode struct {
+	NodeID              string `json:"node_id"`
+	NodeName            string `json:"node_name"`
+	ActionID            string `json:"action_id"`
+	DraftReferenced     bool   `json:"draft_referenced"`
+	PublishedReferenced bool   `json:"published_referenced"`
 }
 
 type createIntegrationConnectionRequest struct {
@@ -180,20 +239,31 @@ func connectionGrantResponse(
 }
 
 func RegisterIntegrationRoutes(router *gin.RouterGroup, deps IntegrationRouteDeps) {
-	if deps.DB == nil || deps.Registry == nil || deps.Connections == nil || deps.ConnectionRepo == nil || deps.Grants == nil || deps.Access == nil || deps.Preferences == nil || deps.HealthEvents == nil || deps.Policies == nil || deps.Executions == nil || deps.AccountService == nil || deps.OAuthFlows == nil || deps.OAuthClients == nil || deps.OAuthRecovery == nil || strings.TrimSpace(deps.OAuthCallbackURL) == "" || strings.TrimSpace(deps.OAuthResultURL) == "" {
+	if deps.DB == nil || deps.Registry == nil || deps.Connections == nil || deps.ConnectionRepo == nil || deps.Grants == nil || deps.Access == nil || deps.Preferences == nil || deps.HealthEvents == nil || deps.Policies == nil || deps.Executions == nil || deps.AccountService == nil || deps.OAuthFlows == nil || deps.OAuthClients == nil || deps.OAuthRecovery == nil || deps.ProviderInstallFlows == nil || deps.WeComCallbacks == nil || deps.AgentBindings == nil || deps.WorkflowReferences == nil || deps.ApplicationErrorCatalog == nil || strings.TrimSpace(deps.OAuthCallbackURL) == "" || strings.TrimSpace(deps.OAuthResultURL) == "" || strings.TrimSpace(deps.WeComInstallCallbackURL) == "" || strings.TrimSpace(deps.WeComResultURL) == "" {
 		panic("integration routes require complete dependencies")
+	}
+	errorProjector, err := apptransport.NewProjector(deps.ApplicationErrorCatalog)
+	if err != nil {
+		panic("integration routes require application error catalog")
 	}
 	workspaceScopeResolver := &aichatWorkspaceScopeResolver{
 		workspaces: gormAIChatWorkspaceProvider{db: deps.DB},
 		accounts:   deps.AccountService,
 	}
 	handler := &integrationHandler{deps: deps, workspaceScopeResolver: workspaceScopeResolver}
-	// Provider callbacks cannot require the console JWT because the browser is
-	// returning from a third-party origin. The single-use, server-stored OAuth
-	// state is the authorization boundary for this one public route.
-	router.GET("/integrations/oauth/callback", middleware.SetupRequired(), handler.oauthCallback)
+	errorProjection := integrationErrorProjectorMiddleware(errorProjector)
+	// Provider callbacks cannot require the console JWT. OAuth callbacks use
+	// single-use server state; encrypted WeCom callbacks authenticate with their
+	// signature, AES key, and the receiver identifier expected by each route.
+	router.GET("/integrations/oauth/callback", middleware.SetupRequired(), errorProjection, handler.oauthCallback)
+	router.GET("/integrations/wecom/install/callback", middleware.SetupRequired(), errorProjection, handler.wecomInstallCallback)
+	router.GET("/integrations/wecom/suite/events", middleware.SetupRequired(), errorProjection, handler.wecomCallbackVerification)
+	router.POST("/integrations/wecom/suite/events", middleware.SetupRequired(), errorProjection, handler.wecomSuiteEncryptedCallback)
+	router.GET("/integrations/wecom/data/events/:corp_id", middleware.SetupRequired(), errorProjection, handler.wecomDataCallbackVerification)
+	router.POST("/integrations/wecom/data/events/:corp_id", middleware.SetupRequired(), errorProjection, handler.wecomDataEncryptedCallback)
 	group := router.Group("/integrations")
 	group.Use(middleware.SetupRequired())
+	group.Use(integrationErrorProjectorMiddleware(errorProjector))
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
 
 	group.GET("/catalog", handler.catalog)
@@ -214,6 +284,9 @@ func RegisterIntegrationRoutes(router *gin.RouterGroup, deps IntegrationRouteDep
 	group.POST("/oauth/flows", handler.startOAuthFlow)
 	group.GET("/oauth/flows/:flow_id", handler.pollOAuthFlow)
 	group.POST("/oauth/flows/:flow_id/cancel", handler.cancelOAuthFlow)
+	group.POST("/provider-install/flows", handler.startProviderInstallFlow)
+	group.GET("/provider-install/flows/:flow_id", handler.pollProviderInstallFlow)
+	group.POST("/provider-install/flows/:flow_id/cancel", handler.cancelProviderInstallFlow)
 
 	management := group.Group("")
 	management.Use(middleware.EnterpriseAdminOrOwnerRequired())
@@ -230,6 +303,7 @@ func RegisterIntegrationRoutes(router *gin.RouterGroup, deps IntegrationRouteDep
 	management.DELETE("/connections/:id/grants/:grant_id", handler.deleteConnectionGrant)
 	management.GET("/connections/:id/health-events", handler.listConnectionHealthEvents)
 	management.GET("/connections/:id/delete-impact", handler.connectionDeleteImpact)
+	management.POST("/connections/:id/detach-references", handler.detachConnectionReferences)
 	management.DELETE("/connections/:id", handler.deleteConnection)
 	management.GET("/executions", handler.listExecutions)
 	management.GET("/oauth-recovery", handler.oauthRecoverySummary)
@@ -292,7 +366,7 @@ func (handler *integrationHandler) catalog(c *gin.Context) {
 			visible = append(visible, connection)
 		}
 	}
-	items := integrations.CatalogWithConnectionHealth(handler.deps.Registry.Catalog(), visible, time.Now().UTC())
+	items := catalog.WithConnectionHealth(handler.deps.Registry.Catalog(), visible, time.Now().UTC())
 	for itemIndex := range items {
 		handler.applyOAuthClientReadiness(c.Request.Context(), organizationID, items[itemIndex].ID, items[itemIndex].DriverID, items[itemIndex].Auth)
 	}
@@ -655,9 +729,9 @@ func (handler *integrationHandler) replaceAIChatPreferences(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParams)
 		return
 	}
-	inputs := make([]integrations.AIChatIntegrationPreferenceInput, 0, len(request.Items))
+	inputs := make([]integrationpreferences.AIChatIntegrationPreferenceInput, 0, len(request.Items))
 	for _, item := range request.Items {
-		inputs = append(inputs, integrations.AIChatIntegrationPreferenceInput{
+		inputs = append(inputs, integrationpreferences.AIChatIntegrationPreferenceInput{
 			IntegrationID: item.IntegrationID, SelectedConnectionIDs: item.SelectedConnectionIDs,
 			PreferredConnectionID: item.PreferredConnectionID,
 		})
@@ -790,13 +864,22 @@ func (handler *integrationHandler) deleteMyConnection(c *gin.Context) {
 	if !ok {
 		return
 	}
-	count, err := handler.boundAgentCount(c, organizationID, connectionID)
+	bindingsRepo := handler.agentBindingRepository()
+	if bindingsRepo == nil {
+		integrationRouteError(c, fmt.Errorf("integration connection binding repository is unavailable"))
+		return
+	}
+	bindings, err := bindingsRepo.ListImpact(c.Request.Context(), agentbindings.ResourceRef{
+		OrganizationID: organizationID,
+		BindingType:    agentbindings.BindingTypeIntegrationConnection,
+		ResourceID:     connectionID.String(),
+	})
 	if err != nil {
 		integrationRouteError(c, err)
 		return
 	}
-	if count > 0 {
-		c.JSON(http.StatusConflict, response.Response{Code: integrations.ErrorCodeConnectionInUse, Message: "connection is still bound to an Agent"})
+	if len(bindings) > 0 {
+		c.JSON(http.StatusConflict, response.Response{Code: integrations.ErrorCodeConnectionInUse, Message: "connection is still referenced by an Agent or Workflow"})
 		return
 	}
 	if actorAware, supported := handler.deps.Connections.(integrations.ActorAwareConnectionService); supported {
@@ -1369,12 +1452,118 @@ func (handler *integrationHandler) connectionDeleteImpact(c *gin.Context) {
 	if !ok {
 		return
 	}
-	count, err := handler.boundAgentCount(c, organizationID, connectionID)
+	_, actorID, ok := integrationActor(c)
+	if !ok {
+		return
+	}
+	if err := handler.ensureConnectionReferenceIndexReady(c.Request.Context(), organizationID); err != nil {
+		integrationRouteError(c, err)
+		return
+	}
+	impact, err := handler.buildConnectionDeleteImpact(
+		c.Request.Context(),
+		handler.deps.DB,
+		handler.agentBindingRepository(),
+		organizationID,
+		connectionID,
+		actorID,
+		time.Now().UTC(),
+	)
 	if err != nil {
 		integrationRouteError(c, err)
 		return
 	}
-	response.Success(c, map[string]interface{}{"connection_id": connectionID, "bound_agent_count": count, "can_delete": count == 0})
+	response.Success(c, impact)
+}
+
+func (handler *integrationHandler) detachConnectionReferences(c *gin.Context) {
+	organizationID, connectionID, _, ok := handler.integrationManagedConnection(c)
+	if !ok {
+		return
+	}
+	_, actorID, ok := integrationActor(c)
+	if !ok {
+		return
+	}
+	var request detachIntegrationConnectionReferencesRequest
+	if err := c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.ImpactToken) == "" {
+		response.Fail(c, response.ErrInvalidParams)
+		return
+	}
+	if handler.deps.DB == nil || handler.agentBindingRepository() == nil || handler.deps.WorkflowReferences == nil {
+		integrationRouteError(c, fmt.Errorf("integration connection reference management is unavailable"))
+		return
+	}
+	if err := handler.ensureConnectionReferenceIndexReady(c.Request.Context(), organizationID); err != nil {
+		integrationRouteError(c, err)
+		return
+	}
+
+	resource := agentbindings.ResourceRef{
+		OrganizationID: organizationID,
+		BindingType:    agentbindings.BindingTypeIntegrationConnection,
+		ResourceID:     connectionID.String(),
+	}
+	var detachedImpact integrationConnectionDeleteImpactResponse
+	verificationTime := time.Now().UTC()
+	err := handler.deps.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		bindings := handler.agentBindingRepository().WithTx(tx)
+		if err := bindings.LockResources(c.Request.Context(), tx, []agentbindings.ResourceRef{resource}); err != nil {
+			return err
+		}
+		if err := bindings.VerifyImpactToken(
+			c.Request.Context(),
+			resource,
+			detachIntegrationConnectionReferencesOperation,
+			actorID,
+			strings.TrimSpace(request.ImpactToken),
+			verificationTime,
+		); err != nil {
+			return err
+		}
+		if _, err := handler.deps.WorkflowReferences.DetachConnectionReferences(
+			c.Request.Context(), tx, organizationID, connectionID, actorID,
+		); err != nil {
+			return err
+		}
+		if _, err := bindings.RevokeAndPruneDrafts(c.Request.Context(), tx, resource, actorID); err != nil {
+			return err
+		}
+		impact, err := handler.buildConnectionDeleteImpact(
+			c.Request.Context(), tx, bindings, organizationID, connectionID, actorID, verificationTime,
+		)
+		if err != nil {
+			return err
+		}
+		detachedImpact = impact
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, agentbindings.ErrImpactTokenInvalid) || errors.Is(err, agentbindings.ErrImpactChanged) {
+			latest, latestErr := handler.buildConnectionDeleteImpact(
+				c.Request.Context(),
+				handler.deps.DB,
+				handler.agentBindingRepository(),
+				organizationID,
+				connectionID,
+				actorID,
+				time.Now().UTC(),
+			)
+			if latestErr != nil {
+				integrationRouteError(c, latestErr)
+				return
+			}
+			c.JSON(http.StatusConflict, response.Response{
+				Code:    "integration_connection_reference_impact_changed",
+				Message: "connection references changed or the confirmation expired; review the latest impact",
+				Data:    latest,
+			})
+			return
+		}
+		integrationRouteError(c, err)
+		return
+	}
+	response.Success(c, detachedImpact)
 }
 
 func (handler *integrationHandler) deleteConnection(c *gin.Context) {
@@ -1386,13 +1575,26 @@ func (handler *integrationHandler) deleteConnection(c *gin.Context) {
 	if !ok {
 		return
 	}
-	count, err := handler.boundAgentCount(c, organizationID, connectionID)
+	if err := handler.ensureConnectionReferenceIndexReady(c.Request.Context(), organizationID); err != nil {
+		integrationRouteError(c, err)
+		return
+	}
+	bindingsRepo := handler.agentBindingRepository()
+	if bindingsRepo == nil {
+		integrationRouteError(c, fmt.Errorf("integration connection binding repository is unavailable"))
+		return
+	}
+	bindings, err := bindingsRepo.ListImpact(c.Request.Context(), agentbindings.ResourceRef{
+		OrganizationID: organizationID,
+		BindingType:    agentbindings.BindingTypeIntegrationConnection,
+		ResourceID:     connectionID.String(),
+	})
 	if err != nil {
 		integrationRouteError(c, err)
 		return
 	}
-	if count > 0 {
-		c.JSON(http.StatusConflict, response.Response{Code: "integration_connection_in_use", Message: "connection is still bound to an Agent"})
+	if len(bindings) > 0 {
+		c.JSON(http.StatusConflict, response.Response{Code: "integration_connection_in_use", Message: "connection is still referenced by an Agent or Workflow"})
 		return
 	}
 	if actorAware, supported := handler.deps.Connections.(integrations.ActorAwareConnectionService); supported {
@@ -1407,12 +1609,237 @@ func (handler *integrationHandler) deleteConnection(c *gin.Context) {
 	response.Success(c, map[string]interface{}{"deleted": true, "id": connectionID})
 }
 
-func (handler *integrationHandler) boundAgentCount(c *gin.Context, organizationID, connectionID uuid.UUID) (int64, error) {
-	var count int64
-	err := handler.deps.DB.WithContext(c.Request.Context()).Table("agent_resource_bindings").
-		Where("organization_id = ? AND binding_type = ? AND resource_id = ?", organizationID, "integration_connection", connectionID.String()).
-		Distinct("agent_id").Count(&count).Error
-	return count, err
+func (handler *integrationHandler) ensureConnectionReferenceIndexReady(ctx context.Context, organizationID uuid.UUID) error {
+	if handler == nil || handler.deps.WorkflowReferences == nil {
+		// RegisterIntegrationRoutes requires this dependency. Focused handler tests
+		// may construct only the dependencies exercised by their scenario.
+		return nil
+	}
+	return handler.deps.WorkflowReferences.EnsureConnectionReferenceIndexReady(ctx, organizationID)
+}
+
+func (handler *integrationHandler) agentBindingRepository() *agentbindings.Repository {
+	if handler == nil {
+		return nil
+	}
+	if handler.deps.AgentBindings != nil {
+		return handler.deps.AgentBindings
+	}
+	if handler.deps.DB == nil {
+		return nil
+	}
+	return agentbindings.NewRepository(handler.deps.DB)
+}
+
+type integrationConnectionReferenceBuilder struct {
+	reference integrationConnectionReference
+	actions   map[string]struct{}
+	nodes     map[string]*integrationConnectionReferenceNode
+}
+
+func (handler *integrationHandler) buildConnectionDeleteImpact(
+	ctx context.Context,
+	db *gorm.DB,
+	bindingsRepo *agentbindings.Repository,
+	organizationID uuid.UUID,
+	connectionID uuid.UUID,
+	actorID uuid.UUID,
+	now time.Time,
+) (integrationConnectionDeleteImpactResponse, error) {
+	result := integrationConnectionDeleteImpactResponse{
+		ConnectionID: connectionID,
+		CanDelete:    true,
+		References:   []integrationConnectionReference{},
+	}
+	if db == nil || bindingsRepo == nil {
+		return result, fmt.Errorf("integration connection binding repository is unavailable")
+	}
+	resource := agentbindings.ResourceRef{
+		OrganizationID: organizationID,
+		BindingType:    agentbindings.BindingTypeIntegrationConnection,
+		ResourceID:     connectionID.String(),
+	}
+	preview, bindings, err := bindingsRepo.PreviewImpactSnapshot(
+		ctx,
+		resource,
+		detachIntegrationConnectionReferencesOperation,
+		actorID,
+		now,
+	)
+	if err != nil {
+		return result, err
+	}
+	if len(bindings) == 0 {
+		return result, nil
+	}
+	if preview == nil {
+		return result, agentbindings.ErrImpactChanged
+	}
+
+	assetIDs := make(map[uuid.UUID]struct{})
+	workspaceIDs := make(map[uuid.UUID]struct{})
+	for _, binding := range bindings {
+		if binding.AgentID != uuid.Nil {
+			assetIDs[binding.AgentID] = struct{}{}
+		}
+		if binding.WorkspaceID != uuid.Nil {
+			workspaceIDs[binding.WorkspaceID] = struct{}{}
+		}
+	}
+
+	assetNames := make(map[uuid.UUID]string, len(assetIDs))
+	if len(assetIDs) > 0 {
+		ids := make([]uuid.UUID, 0, len(assetIDs))
+		for id := range assetIDs {
+			ids = append(ids, id)
+		}
+		var rows []struct {
+			ID   uuid.UUID
+			Name string
+		}
+		if err := db.WithContext(ctx).
+			Table("agents AS asset").
+			Select("asset.id, asset.name").
+			Joins("JOIN workspaces AS workspace ON workspace.id = asset.tenant_id").
+			Where("asset.id IN ? AND workspace.organization_id = ?", ids, organizationID).
+			Scan(&rows).Error; err != nil {
+			return result, fmt.Errorf("load integration connection reference assets: %w", err)
+		}
+		for _, row := range rows {
+			assetNames[row.ID] = strings.TrimSpace(row.Name)
+		}
+	}
+
+	workspaceNames := make(map[uuid.UUID]string, len(workspaceIDs))
+	if len(workspaceIDs) > 0 {
+		ids := make([]uuid.UUID, 0, len(workspaceIDs))
+		for id := range workspaceIDs {
+			ids = append(ids, id)
+		}
+		var rows []struct {
+			ID   uuid.UUID
+			Name string
+		}
+		if err := db.WithContext(ctx).Table("workspaces").Select("id, name").Where("id IN ? AND organization_id = ?", ids, organizationID).Scan(&rows).Error; err != nil {
+			return result, fmt.Errorf("load integration connection reference workspaces: %w", err)
+		}
+		for _, row := range rows {
+			workspaceNames[row.ID] = strings.TrimSpace(row.Name)
+		}
+	}
+
+	referenceBuilders := make(map[string]*integrationConnectionReferenceBuilder)
+	agentAssets := make(map[uuid.UUID]struct{})
+	workflowAssets := make(map[uuid.UUID]struct{})
+	for _, binding := range bindings {
+		consumerType := binding.ConsumerType
+		if consumerType == "" {
+			consumerType = agentbindings.ConsumerTypeAgent
+		}
+		if consumerType != agentbindings.ConsumerTypeAgent && consumerType != agentbindings.ConsumerTypeWorkflow {
+			continue
+		}
+		assetID := binding.AgentID
+		if assetID == uuid.Nil {
+			continue
+		}
+		assetType := string(consumerType)
+		key := strings.Join([]string{assetType, assetID.String(), binding.WorkspaceID.String()}, "|")
+		builder, exists := referenceBuilders[key]
+		if !exists {
+			builder = &integrationConnectionReferenceBuilder{
+				reference: integrationConnectionReference{
+					AssetID:       assetID,
+					AssetType:     assetType,
+					Name:          assetNames[assetID],
+					WorkspaceID:   binding.WorkspaceID,
+					WorkspaceName: workspaceNames[binding.WorkspaceID],
+					Actions:       []string{},
+					Nodes:         []integrationConnectionReferenceNode{},
+				},
+				actions: make(map[string]struct{}),
+				nodes:   make(map[string]*integrationConnectionReferenceNode),
+			}
+			referenceBuilders[key] = builder
+		}
+		switch binding.BindingScope {
+		case agentbindings.ScopeDraft:
+			builder.reference.DraftReferenced = true
+		case agentbindings.ScopePublished:
+			builder.reference.PublishedReferenced = true
+		}
+		actionIDs := agentbindings.IntegrationAllowedActionIDs(binding)
+		for _, actionID := range actionIDs {
+			builder.actions[actionID] = struct{}{}
+		}
+		if consumerType == agentbindings.ConsumerTypeAgent {
+			agentAssets[assetID] = struct{}{}
+			continue
+		}
+		workflowAssets[assetID] = struct{}{}
+		nodeID := strings.TrimSpace(binding.BindingInstanceID)
+		if nodeID == "" {
+			continue
+		}
+		nodeActionIDs := actionIDs
+		if len(nodeActionIDs) == 0 {
+			nodeActionIDs = []string{""}
+		}
+		for _, actionID := range nodeActionIDs {
+			nodeKey := nodeID + "\x00" + actionID
+			node, exists := builder.nodes[nodeKey]
+			if !exists {
+				node = &integrationConnectionReferenceNode{
+					NodeID:   nodeID,
+					NodeName: strings.TrimSpace(binding.DisplayName),
+					ActionID: actionID,
+				}
+				builder.nodes[nodeKey] = node
+			}
+			if node.NodeName == "" {
+				node.NodeName = strings.TrimSpace(binding.DisplayName)
+			}
+			switch binding.BindingScope {
+			case agentbindings.ScopeDraft:
+				node.DraftReferenced = true
+			case agentbindings.ScopePublished:
+				node.PublishedReferenced = true
+			}
+		}
+	}
+
+	result.References = make([]integrationConnectionReference, 0, len(referenceBuilders))
+	for _, builder := range referenceBuilders {
+		for actionID := range builder.actions {
+			builder.reference.Actions = append(builder.reference.Actions, actionID)
+		}
+		sort.Strings(builder.reference.Actions)
+		for _, node := range builder.nodes {
+			builder.reference.Nodes = append(builder.reference.Nodes, *node)
+		}
+		sort.Slice(builder.reference.Nodes, func(i, j int) bool {
+			left := builder.reference.Nodes[i]
+			right := builder.reference.Nodes[j]
+			if left.NodeID != right.NodeID {
+				return left.NodeID < right.NodeID
+			}
+			return left.ActionID < right.ActionID
+		})
+		result.References = append(result.References, builder.reference)
+	}
+	sort.Slice(result.References, func(i, j int) bool {
+		left := result.References[i]
+		right := result.References[j]
+		leftKey := strings.Join([]string{strings.ToLower(left.WorkspaceName), left.WorkspaceID.String(), left.AssetType, strings.ToLower(left.Name), left.AssetID.String()}, "|")
+		rightKey := strings.Join([]string{strings.ToLower(right.WorkspaceName), right.WorkspaceID.String(), right.AssetType, strings.ToLower(right.Name), right.AssetID.String()}, "|")
+		return leftKey < rightKey
+	})
+	result.BoundAgentCount = len(agentAssets)
+	result.BoundWorkflowCount = len(workflowAssets)
+	result.CanDelete = false
+	result.ImpactToken = preview.ImpactToken
+	result.ExpiresAt = preview.ExpiresAt
+	return result, nil
 }
 
 func (handler *integrationHandler) listExecutions(c *gin.Context) {
@@ -1556,6 +1983,15 @@ func integrationRouteError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, response.Response{Code: integrations.ErrorCodeConnectionConflict, Message: "integration connection changed; reload and retry"})
 		return
 	}
+	var integrationError *integrations.Error
+	if !errors.As(err, &integrationError) {
+		logger.ErrorContext(c.Request.Context(), "integration route operation failed", err)
+		c.JSON(http.StatusServiceUnavailable, response.Response{
+			Code:    integrations.ErrorCodeUpstream,
+			Message: integrationProjectedErrorMessage(c, err),
+		})
+		return
+	}
 	code := integrations.ErrorCode(err)
 	switch code {
 	case integrations.ErrorCodeInvalidInput, integrations.ErrorCodeConnectionInvalid,
@@ -1592,6 +2028,24 @@ func integrationRouteError(c *gin.Context, err error) {
 		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 	}
+}
+
+func integrationErrorProjectorMiddleware(projector *apptransport.Projector) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(integrationErrorProjectorContextKey, projector)
+		c.Next()
+	}
+}
+
+func integrationProjectedErrorMessage(c *gin.Context, err error) string {
+	projectorValue, exists := c.Get(integrationErrorProjectorContextKey)
+	projector, valid := projectorValue.(*apptransport.Projector)
+	if !exists || !valid || projector == nil {
+		logger.ErrorContext(c.Request.Context(), "integration application error projector is unavailable")
+		return "The service encountered a problem. Try again later. If it continues, contact an administrator."
+	}
+	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+	return projector.Project(err, locale).Presentation.Message
 }
 
 func integrationProviderDiagnostics(err error) interface{} {

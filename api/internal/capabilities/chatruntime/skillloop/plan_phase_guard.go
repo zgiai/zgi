@@ -18,6 +18,10 @@ const projectedExternalObservedPreparationTargetsKey = "_server_observed_prepara
 const operationPlanServerTargetKey = "_server_operation_plan_target"
 const operationPlanServerProjectedLedgerEpochKey = "_server_projected_ledger_epoch"
 const operationPlanServerProjectedConnectionBindingKey = "_server_projected_connection_binding"
+const operationPlanPhaseSourceKey = "phase_source"
+const operationPlanPhaseSourceServerOutcome = "server_outcome"
+const operationPlanPhaseSourceServerPreparation = "server_preparation"
+const operationPlanPhaseSourceModelAdvisory = "model_advisory"
 
 func operationPlanProjectedLedgerEpoch(runtimeState map[string]interface{}, phaseID string) string {
 	phaseID = strings.TrimSpace(phaseID)
@@ -25,7 +29,8 @@ func operationPlanProjectedLedgerEpoch(runtimeState map[string]interface{}, phas
 		return ""
 	}
 	for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
-		if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(phase["id"])), phaseID) {
+		if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(phase["id"])), phaseID) &&
+			operationPlanPhaseHasServerAuthority(phase, runtimeState) {
 			return strings.TrimSpace(evidenceStringFromAny(phase[operationPlanServerProjectedLedgerEpochKey]))
 		}
 	}
@@ -38,7 +43,8 @@ func operationPlanProjectedBindingFingerprint(runtimeState map[string]interface{
 		return ""
 	}
 	for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
-		if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(phase["id"])), phaseID) {
+		if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(phase["id"])), phaseID) &&
+			operationPlanPhaseHasServerAuthority(phase, runtimeState) {
 			return strings.TrimSpace(evidenceStringFromAny(evidenceMapFromAny(phase["expected_action"])[planExpectedActionServerBindingFingerprintKey]))
 		}
 	}
@@ -63,6 +69,9 @@ func projectedExternalActionPhaseOperationItemID(
 	for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
 		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(phase["id"])), strings.TrimSpace(phaseID)) {
 			continue
+		}
+		if !operationPlanPhaseHasServerAuthority(phase, runtimeState) {
+			return ""
 		}
 		expected := evidenceMapFromAny(phase["expected_action"])
 		expectedKey, external := projectedExternalActionKeyFromExpected(expected)
@@ -234,6 +243,14 @@ func projectedExternalActionRequirementsForPhases(
 		}
 		eligible = append(eligible, phase)
 	}
+	// Intent-matched projections are execution candidates, not plan
+	// requirements by themselves. When the server has not created an
+	// authoritative Outcome/preparation phase yet, the model may keep advisory
+	// progress items without mapping or attesting an Action; a direct business
+	// call will establish the canonical server ledger instead.
+	if len(eligible) == 0 {
+		return nil
+	}
 	requirements := make([]projectedExternalActionRequirement, 0)
 	seen := map[string]struct{}{}
 	appendRequirement := func(phaseID string, group projectedExternalActionCandidateGroup) {
@@ -345,6 +362,9 @@ func projectedExternalActionPhaseHasPersistedFingerprint(phase map[string]interf
 		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(baseline["id"])), phaseID) {
 			continue
 		}
+		if !operationPlanPhaseHasServerAuthority(baseline, runtimeState) {
+			return false
+		}
 		return fingerprint == strings.TrimSpace(evidenceStringFromAny(
 			evidenceMapFromAny(baseline["expected_action"])[planExpectedActionServerBindingFingerprintKey],
 		))
@@ -410,12 +430,15 @@ func validateProjectedExternalActionCandidateContracts(phases []map[string]inter
 func projectedExternalActionSuccessfulExecutionKeys(runtimeState map[string]interface{}) map[string]struct{} {
 	latest := map[string]bool{}
 	for _, invocation := range terminalStateGuardExternalInvocations(runtimeState) {
+		if !terminalStateGuardInvocationIsExecutionEvidence(invocation) {
+			continue
+		}
 		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), skills.SkillExternalApps) ||
 			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])), "execute_action") {
 			continue
 		}
 		if actionKey := terminalStateGuardExternalActionKey(invocation); actionKey != "" {
-			latest[actionKey] = runtimeInvocationSucceeded(invocation)
+			latest[actionKey] = terminalStateGuardExternalActionProviderConfirmed(invocation)
 		}
 	}
 	out := map[string]struct{}{}
@@ -545,7 +568,7 @@ func projectedExternalActionPlanIssue(
 	phases := evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"])
 	openPhases := make([]map[string]interface{}, 0, len(phases))
 	for _, phase := range phases {
-		if !operationPlanPhaseOpenForToolCall(phase) {
+		if !operationPlanPhaseOpenForToolCall(phase) || !operationPlanPhaseHasServerAuthority(phase, runtimeState) {
 			continue
 		}
 		openPhases = append(openPhases, phase)
@@ -553,9 +576,12 @@ func projectedExternalActionPlanIssue(
 	if len(openPhases) == 0 {
 		return "a projected external Action requires a server-canonical expected_action ledger before its first execution"
 	}
-	if err := validateProjectedExternalActionCandidateContracts(phases, runtimeState); err != nil {
-		return strings.TrimPrefix(err.Error(), ErrInvalidInput.Error()+": ")
-	}
+	// Execution is authorized one business Action at a time. Requiring every
+	// intent group to be canonical before the first Provider call would turn a
+	// flat multi-Action request back into a model-managed planning protocol. The
+	// checks below still require the current call to match one exact, trusted
+	// server phase; update_plan validation and the terminal guard retain the
+	// whole-request contract so an omitted Action cannot be reported complete.
 	matches := 0
 	requestedMatch := false
 	projectedExpectedActions := 0
@@ -628,7 +654,7 @@ func projectedExternalActionPreparationPhaseMatches(runtimeState map[string]inte
 	}
 	out := make([]string, 0)
 	for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
-		if !operationPlanPhaseOpenForToolCall(phase) {
+		if !operationPlanPhaseOpenForToolCall(phase) || !operationPlanPhaseHasServerAuthority(phase, runtimeState) {
 			continue
 		}
 		expected := evidenceMapFromAny(phase["expected_action"])
@@ -637,8 +663,8 @@ func projectedExternalActionPreparationPhaseMatches(runtimeState map[string]inte
 		}
 		candidate := projectedExternalActionCandidateForExpected(expected, runtimeState)
 		if len(candidate) > 0 {
-			for _, preparationActionKey := range evidenceStringSliceFromAny(candidate["preparation_action_keys"]) {
-				if strings.EqualFold(strings.TrimSpace(preparationActionKey), prerequisiteActionKey) {
+			for preparationActionKey := range projectedExternalActionCompletePreparationHintKeys(candidate) {
+				if strings.EqualFold(preparationActionKey, prerequisiteActionKey) {
 					if phaseID := strings.TrimSpace(evidenceStringFromAny(phase["id"])); phaseID != "" {
 						out = append(out, phaseID)
 					}
@@ -665,6 +691,9 @@ func validateProjectedExternalActionPlanSnapshot(phases []map[string]interface{}
 	for _, phase := range phases {
 		expected := evidenceMapFromAny(phase["expected_action"])
 		if expectedKey, external := projectedExternalActionKeyFromExpected(expected); external {
+			if !operationPlanPhaseHasServerAuthority(phase, runtimeState) {
+				continue
+			}
 			if _, ok := trusted[expectedKey]; !ok {
 				return fmt.Errorf("%w: external expected_action is not a currently projected Action", ErrInvalidInput)
 			}
@@ -683,7 +712,8 @@ func validateProjectedExternalActionPlanSnapshot(phases []map[string]interface{}
 	baselineHasProjectedAction := false
 	for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
 		phaseID := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
-		if _, external := projectedExternalActionKeyFromExpected(evidenceMapFromAny(phase["expected_action"])); external && phaseID != "" {
+		if _, external := projectedExternalActionKeyFromExpected(evidenceMapFromAny(phase["expected_action"])); external &&
+			phaseID != "" && operationPlanPhaseHasServerAuthority(phase, runtimeState) {
 			baselineProjectedByID[phaseID] = phase
 			baselineHasProjectedAction = true
 		}
@@ -703,7 +733,8 @@ func validateProjectedExternalActionPlanSnapshot(phases []map[string]interface{}
 	}
 	for _, phase := range phases {
 		expected := evidenceMapFromAny(phase["expected_action"])
-		if _, external := projectedExternalActionKeyFromExpected(expected); !external {
+		if _, external := projectedExternalActionKeyFromExpected(expected); !external ||
+			!operationPlanPhaseHasServerAuthority(phase, runtimeState) {
 			continue
 		}
 		phaseID := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
@@ -821,6 +852,7 @@ func validatePersistedProjectedPhaseImmutability(phases []map[string]interface{}
 	for _, baseline := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
 		baselineExpected := evidenceMapFromAny(baseline["expected_action"])
 		if _, external := projectedExternalActionKeyFromExpected(baselineExpected); !external ||
+			!operationPlanPhaseHasServerAuthority(baseline, runtimeState) ||
 			(strings.TrimSpace(evidenceStringFromAny(baselineExpected[planExpectedActionServerBindingFingerprintKey])) == "" &&
 				strings.TrimSpace(evidenceStringFromAny(baselineExpected[planExpectedActionServerProjectionKey])) == "") {
 			continue
@@ -1010,7 +1042,8 @@ func projectedExternalActionObservedPreparationTargets(
 	var phaseExpected map[string]interface{}
 	for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
 		if strings.TrimSpace(evidenceStringFromAny(phase["id"])) != phaseID ||
-			strings.TrimSpace(evidenceStringFromAny(phase[operationPlanServerProjectedLedgerEpochKey])) != ledgerEpoch {
+			strings.TrimSpace(evidenceStringFromAny(phase[operationPlanServerProjectedLedgerEpochKey])) != ledgerEpoch ||
+			!operationPlanPhaseHasServerAuthority(phase, runtimeState) {
 			continue
 		}
 		expected := evidenceMapFromAny(phase["expected_action"])
@@ -1711,7 +1744,8 @@ func projectedExternalActionObservedTargetValues(
 	allowedPreparationKeys := map[string]struct{}{}
 	for _, hint := range evidenceMapsFromAny(candidate["preparation_hints"]) {
 		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(hint["relation"])), "resolve_target") ||
-			!projectedExternalPreparationHintTargetsPath(hint, targetPath) {
+			!projectedExternalPreparationHintTargetsPath(hint, targetPath) ||
+			len(evidenceStringSliceFromAny(hint["result_paths"])) == 0 {
 			continue
 		}
 		if key := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(hint["action_key"]))); key != "" {
@@ -1723,8 +1757,8 @@ func projectedExternalActionObservedTargetValues(
 	}
 	var latestValues []string
 	for _, invocation := range terminalStateGuardExternalInvocations(runtimeState) {
-		if !runtimeInvocationSucceeded(invocation) ||
-			!projectedExternalPreparationProviderStatusSucceeded(terminalStateGuardExternalActionStatus(invocation)) ||
+		if !terminalStateGuardInvocationIsExecutionEvidence(invocation) ||
+			!terminalStateGuardExternalActionProviderConfirmed(invocation) ||
 			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), skills.SkillExternalApps) ||
 			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])), "execute_action") {
 			continue
@@ -1813,6 +1847,7 @@ func operationPlanHasServerBoundProjectedPhase(runtimeState map[string]interface
 	for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
 		expected := evidenceMapFromAny(phase["expected_action"])
 		if _, external := projectedExternalActionKeyFromExpected(expected); external &&
+			operationPlanPhaseHasServerAuthority(phase, runtimeState) &&
 			(strings.TrimSpace(evidenceStringFromAny(expected[planExpectedActionServerBindingFingerprintKey])) != "" ||
 				strings.TrimSpace(evidenceStringFromAny(expected[planExpectedActionServerProjectionKey])) != "") {
 			return true
@@ -1826,7 +1861,8 @@ func projectedExternalActionLedgerMode(runtimeState map[string]interface{}) bool
 		return true
 	}
 	for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
-		if _, external := projectedExternalActionKeyFromExpected(evidenceMapFromAny(phase["expected_action"])); external {
+		if _, external := projectedExternalActionKeyFromExpected(evidenceMapFromAny(phase["expected_action"])); external &&
+			operationPlanPhaseHasServerAuthority(phase, runtimeState) {
 			return true
 		}
 	}
@@ -1845,12 +1881,22 @@ func projectedExternalActionRequiredPhaseIDs(runtimeState map[string]interface{}
 }
 
 func operationPlanPhaseServerClassifiedNonTool(phase map[string]interface{}, runtimeState map[string]interface{}) bool {
-	switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(phase["verification_mode"]))) {
-	case "final_answer", "non_tool":
-		return true
-	}
 	outcome := operationPlanOutcomeForPhase(phase, runtimeState)
-	switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(outcome["verification_mode"]))) {
+	if len(outcome) > 0 {
+		// A linked server Outcome owns its verification policy. Model-authored
+		// completion_mode/verification_mode values on the phase cannot reclassify
+		// a runtime-effect Outcome as final-answer-only.
+		switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(outcome["verification_mode"]))) {
+		case "final_answer", "non_tool":
+			return true
+		default:
+			return false
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+		phase["verification_mode"],
+		phase["completion_mode"],
+	))) {
 	case "final_answer", "non_tool":
 		return true
 	default:
@@ -1859,13 +1905,99 @@ func operationPlanPhaseServerClassifiedNonTool(phase map[string]interface{}, run
 }
 
 func operationPlanPhaseRequiredByServer(phase map[string]interface{}, runtimeState map[string]interface{}) bool {
+	source := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(phase[operationPlanPhaseSourceKey])))
+	switch source {
+	case operationPlanPhaseSourceModelAdvisory:
+		// A model-authored progress item is useful context, but it is not a
+		// server acceptance contract even if the model also supplied required.
+		return false
+	case operationPlanPhaseSourceServerPreparation:
+		// Preparation authority is derived exclusively from an Action's
+		// server-owned PreparationHints. A persisted or model-spoofed source
+		// marker without that contract must not become a terminal blocker.
+		if !operationPlanPhaseHasServerPreparationHint(phase, runtimeState) {
+			return false
+		}
+		if required, exists := phase["required"].(bool); exists {
+			return required
+		}
+		return true
+	case operationPlanPhaseSourceServerOutcome:
+		outcome := operationPlanOutcomeForPhase(phase, runtimeState)
+		if len(outcome) == 0 {
+			return false
+		}
+		if required, exists := outcome["required"].(bool); exists {
+			return required
+		}
+		return true
+	}
+
+	// Backward compatibility: an existing valid Outcome linkage or an
+	// explicitly classified legacy phase retains its historical authority.
+	// A new unclassified model phase no longer becomes required by omission.
+	if outcome := operationPlanOutcomeForPhase(phase, runtimeState); len(outcome) > 0 {
+		if required, exists := outcome["required"].(bool); exists {
+			return required
+		}
+		return true
+	}
 	if required, exists := phase["required"].(bool); exists {
 		return required
 	}
-	if required, exists := operationPlanOutcomeForPhase(phase, runtimeState)["required"].(bool); exists {
-		return required
+	return false
+}
+
+// operationPlanPhaseHasServerAuthority distinguishes a persisted server
+// acceptance contract from model-authored progress metadata. A phase_source
+// string or projected marker alone is never authority: server_outcome requires
+// a current Outcome linkage, while server_preparation requires a current,
+// server-projected PreparationHint. Legacy phases retain only valid Outcome
+// linkage compatibility.
+func operationPlanPhaseHasServerAuthority(phase map[string]interface{}, runtimeState map[string]interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(phase[operationPlanPhaseSourceKey]))) {
+	case operationPlanPhaseSourceModelAdvisory:
+		return false
+	case operationPlanPhaseSourceServerOutcome:
+		return len(operationPlanOutcomeForPhase(phase, runtimeState)) > 0
+	case operationPlanPhaseSourceServerPreparation:
+		return operationPlanPhaseHasServerPreparationHint(phase, runtimeState)
+	default:
+		return len(operationPlanOutcomeForPhase(phase, runtimeState)) > 0
 	}
-	return true
+}
+
+func operationPlanPhaseHasServerPreparationHint(phase map[string]interface{}, runtimeState map[string]interface{}) bool {
+	actionKey, external := projectedExternalActionKeyFromExpected(evidenceMapFromAny(phase["expected_action"]))
+	if !external || actionKey == "" {
+		return false
+	}
+	for _, candidate := range evidenceMapsFromAny(runtimeState[runtimeStateNativeExternalActionCandidatesKey]) {
+		intentMatched, _ := candidate["intent_matched"].(bool)
+		pinned, _ := candidate["pinned"].(bool)
+		if !intentMatched && !pinned {
+			continue
+		}
+		if _, declared := projectedExternalActionCompletePreparationHintKeys(candidate)[strings.ToLower(actionKey)]; declared {
+			return true
+		}
+	}
+	return false
+}
+
+func projectedExternalActionCompletePreparationHintKeys(candidate map[string]interface{}) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, hint := range evidenceMapsFromAny(candidate["preparation_hints"]) {
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(hint["relation"])), "resolve_target") ||
+			len(evidenceStringSliceFromAny(hint["target_arguments"])) == 0 ||
+			len(evidenceStringSliceFromAny(hint["result_paths"])) == 0 {
+			continue
+		}
+		if actionKey := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(hint["action_key"]))); actionKey != "" {
+			out[actionKey] = struct{}{}
+		}
+	}
+	return out
 }
 
 func operationPlanOutcomeForPhase(phase map[string]interface{}, runtimeState map[string]interface{}) map[string]interface{} {
@@ -1969,14 +2101,14 @@ func projectedExternalActionPlanIncompleteStep(callID string, issue string) skil
 	trace.Arguments = map[string]interface{}{
 		"code":      projectedExternalActionPlanIncompleteCode,
 		"call_id":   strings.TrimSpace(callID),
-		"next_step": "declare_complete_projected_action_plan",
+		"next_step": "retry_after_server_binding_refresh",
 	}
 	payload := map[string]interface{}{
 		"status":      "blocked",
 		"code":        projectedExternalActionPlanIncompleteCode,
 		"error":       err.Error(),
 		"recoverable": true,
-		"next_action": "Call update_plan first with every current required phase preserved. Give each phase an expected_action using the exact exposed business function name and stable target IDs, then retry the projected Action in the same response after the plan update.",
+		"next_action": "Retry the exposed business Action once after the runtime refreshes its server binding. Do not call update_plan merely to prepare the Action, and do not invent phase IDs, fingerprints, epochs, connection bindings, or hidden Action identities. If the same binding error repeats, report that the Action was not executed.",
 	}
 	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, payload), false, false)
 }
@@ -2056,6 +2188,10 @@ func operationPlanPhaseMismatchStep(callID string, skillID string, toolName stri
 		"error":       err.Error(),
 		"recoverable": true,
 		"next_action": "Use the current operation_plan phase whose expected_action exactly matches this skill, tool, and target. Pass its id as plan_phase_id; update the plan first if no unique phase matches.",
+	}
+	if strings.EqualFold(strings.TrimSpace(skillID), skills.SkillExternalApps) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "execute_action") {
+		payload["next_action"] = "Retry the exposed business Action after the runtime refreshes its server-owned binding. Do not invent or pass plan_phase_id, fingerprints, epochs, connection bindings, or hidden Action identities."
 	}
 	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, payload), false, false)
 }

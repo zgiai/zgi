@@ -59,6 +59,16 @@ func (h *WorkflowHandler) loadWorkflowStreamData(ctx context.Context, workspaceI
 	return workflowData, nil
 }
 
+func requiredWorkflowDataID(workflowData map[string]any) (string, error) {
+	workflowID, _ := workflowData["id"].(string)
+	workflowID = strings.TrimSpace(workflowID)
+	parsed, err := uuid.Parse(workflowID)
+	if err != nil || parsed == uuid.Nil {
+		return "", fmt.Errorf("workflow configuration has no valid id")
+	}
+	return parsed.String(), nil
+}
+
 func (h *WorkflowHandler) prepareWorkflowStreamRuntime(ctx context.Context, appID, workflowID, workflowRunID string) (workflowStreamRuntime, error) {
 	runtime := workflowStreamRuntime{
 		ElapsedTracker: newWorkflowElapsedTrackerFromNodeLogs(nil),

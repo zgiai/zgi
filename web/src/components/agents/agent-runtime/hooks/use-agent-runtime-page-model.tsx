@@ -409,6 +409,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const rollbackPreviewRequestRef = useRef(0);
   const lastSaveBindingHealthRef = useRef<AgentBindingHealth>();
   const bindingRevisionRef = useRef('');
+  const lastServerPayloadRef = useRef<UpdateAgentRuntimeConfigRequest | null>(null);
 
   const isAgentModelUnavailable = useMemo(() => {
     if (isAgentModelsLoading || agentModelsError || !modelValue.provider || !modelValue.model) {
@@ -644,34 +645,55 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, []);
 
   const payloadFromRuntimeConfig = useCallback(
-    (runtimeConfig: AgentRuntimeConfig): UpdateAgentRuntimeConfigRequest => ({
-      system_prompt: runtimeConfig.system_prompt ?? '',
-      model_provider: runtimeConfig.model_provider ?? '',
-      model: runtimeConfig.model ?? '',
-      model_parameters: toModelParams(runtimeConfig.model_parameters),
-      enabled_skill_ids: runtimeConfig.enabled_skill_ids ?? [],
-      use_memory: runtimeConfig.use_memory ?? false,
-      agent_memory_enabled: runtimeConfig.agent_memory_enabled ?? false,
-      agent_memory_auto_extraction_enabled:
-        runtimeConfig.agent_memory_auto_extraction_enabled ?? false,
-      agent_memory_slots: runtimeConfig.agent_memory_slots ?? [],
-      file_upload_enabled: runtimeConfig.file_upload_enabled ?? false,
-      home_title:
-        !runtimeConfig.home_title || runtimeConfig.home_title === 'title'
-          ? defaultHomeTitle
-          : runtimeConfig.home_title,
-      opening_statement: runtimeConfig.opening_statement ?? '',
-      input_placeholder: runtimeConfig.input_placeholder ?? defaultInputPlaceholder,
-      theme_color: 'default',
-      suggested_questions: runtimeConfig.suggested_questions ?? [],
-      knowledge_dataset_ids: runtimeConfig.knowledge_dataset_ids ?? [],
-      knowledge_retrieval_config: runtimeConfig.knowledge_retrieval_config ?? {},
-      database_bindings: normalizeAgentDatabaseBindings(runtimeConfig.database_bindings ?? []),
-      workflow_bindings: normalizeAgentWorkflowBindings(runtimeConfig.workflow_bindings ?? []),
-      integration_bindings: normalizeAgentIntegrationBindings(
-        runtimeConfig.integration_bindings ?? []
+    (
+      runtimeConfig: Partial<AgentRuntimeConfig>,
+      fallback?: UpdateAgentRuntimeConfigRequest
+    ): UpdateAgentRuntimeConfigRequest => ({
+      system_prompt: runtimeConfig.system_prompt ?? fallback?.system_prompt ?? '',
+      model_provider: runtimeConfig.model_provider ?? fallback?.model_provider ?? '',
+      model: runtimeConfig.model ?? fallback?.model ?? '',
+      model_parameters: toModelParams(
+        runtimeConfig.model_parameters ?? fallback?.model_parameters
       ),
-      binding_revision: runtimeConfig.binding_revision,
+      enabled_skill_ids: runtimeConfig.enabled_skill_ids ?? fallback?.enabled_skill_ids ?? [],
+      use_memory: runtimeConfig.use_memory ?? fallback?.use_memory ?? false,
+      agent_memory_enabled:
+        runtimeConfig.agent_memory_enabled ?? fallback?.agent_memory_enabled ?? false,
+      agent_memory_auto_extraction_enabled:
+        runtimeConfig.agent_memory_auto_extraction_enabled ??
+        fallback?.agent_memory_auto_extraction_enabled ??
+        false,
+      agent_memory_slots:
+        runtimeConfig.agent_memory_slots ?? fallback?.agent_memory_slots ?? [],
+      agent_memory_config_revision:
+        runtimeConfig.agent_memory_config_revision ?? fallback?.agent_memory_config_revision,
+      file_upload_enabled:
+        runtimeConfig.file_upload_enabled ?? fallback?.file_upload_enabled ?? false,
+      home_title:
+        runtimeConfig.home_title && runtimeConfig.home_title !== 'title'
+          ? runtimeConfig.home_title
+          : fallback?.home_title || defaultHomeTitle,
+      opening_statement:
+        runtimeConfig.opening_statement ?? fallback?.opening_statement ?? '',
+      input_placeholder:
+        runtimeConfig.input_placeholder ?? fallback?.input_placeholder ?? defaultInputPlaceholder,
+      theme_color: fallback?.theme_color ?? 'default',
+      suggested_questions:
+        runtimeConfig.suggested_questions ?? fallback?.suggested_questions ?? [],
+      knowledge_dataset_ids:
+        runtimeConfig.knowledge_dataset_ids ?? fallback?.knowledge_dataset_ids ?? [],
+      knowledge_retrieval_config:
+        runtimeConfig.knowledge_retrieval_config ?? fallback?.knowledge_retrieval_config ?? {},
+      database_bindings: normalizeAgentDatabaseBindings(
+        runtimeConfig.database_bindings ?? fallback?.database_bindings ?? []
+      ),
+      workflow_bindings: normalizeAgentWorkflowBindings(
+        runtimeConfig.workflow_bindings ?? fallback?.workflow_bindings ?? []
+      ),
+      integration_bindings: normalizeAgentIntegrationBindings(
+        runtimeConfig.integration_bindings ?? fallback?.integration_bindings ?? []
+      ),
+      binding_revision: runtimeConfig.binding_revision ?? fallback?.binding_revision,
     }),
     [defaultHomeTitle, defaultInputPlaceholder]
   );
@@ -741,19 +763,14 @@ export function useAgentRuntimePageModel(agentId: string) {
             })
           );
         }
-        configPayload = {
-          ...payload,
-          enabled_skill_ids: serverConfig.enabled_skill_ids ?? [],
-          knowledge_dataset_ids: serverConfig.knowledge_dataset_ids ?? [],
-          database_bindings: normalizeAgentDatabaseBindings(serverConfig.database_bindings ?? []),
-          workflow_bindings: normalizeAgentWorkflowBindings(serverConfig.workflow_bindings ?? []),
-          integration_bindings: normalizeAgentIntegrationBindings(
-            serverConfig.integration_bindings ?? []
-          ),
-          binding_revision: serverConfig.binding_revision,
-          agent_memory_config_revision:
-            serverConfig.agent_memory_config_revision ?? configPayload.agent_memory_config_revision,
-        };
+        const serverPayload = payloadFromRuntimeConfig(serverConfig, payload);
+        configPayload = mergeSupersededAgentRuntimePayload(
+          lastServerPayloadRef.current ?? payload,
+          payload,
+          serverPayload
+        );
+        configPayload.agent_memory_config_revision =
+          serverConfig.agent_memory_config_revision ?? configPayload.agent_memory_config_revision;
         wasBindingRevisionRebased = true;
         rebasedBindingHealth = conflict?.bindingHealth;
         response = await agentService.updateAgentConfig(agentId, configPayload);
@@ -790,7 +807,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         bindingHealth: response.data.binding_health ?? rebasedBindingHealth,
       };
     },
-    [agentId, agentMemoryConfigRevision, queryClient, t]
+    [agentId, agentMemoryConfigRevision, payloadFromRuntimeConfig, queryClient, t]
   );
 
   const {
@@ -815,6 +832,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
+      lastServerPayloadRef.current = result.savedPayload;
       if (result.bindingPayloadRebased) {
         applyServerBindingPayload(result.savedPayload, result.bindingHealth);
       } else {
@@ -824,6 +842,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
     },
     onSaveSuperseded: (result, submittedPayload, latestPayload) => {
+      lastServerPayloadRef.current = result.savedPayload;
       const mergedPayload = mergeSupersededAgentRuntimePayload(
         submittedPayload,
         latestPayload,
@@ -858,6 +877,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (!canApplyServerConfig) return;
 
     applyRuntimePayload(nextPayload);
+    lastServerPayloadRef.current = nextPayload;
     setAgentMemoryConfigRevision(config.agent_memory_config_revision ?? '');
     setBindingHealth(config.binding_health);
     setIsAbnormalSkillCleanupPending(false);
@@ -1116,6 +1136,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       });
       const nextPayload = payloadFromRuntimeConfig(response.data);
       applyRuntimePayload(nextPayload);
+      lastServerPayloadRef.current = nextPayload;
       setAgentMemoryConfigRevision(response.data.agent_memory_config_revision ?? '');
       markServerSaved(nextPayload, response.data.updated_at ?? Math.floor(Date.now() / 1000));
       setBindingHealth(response.data.binding_health);

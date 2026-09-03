@@ -624,12 +624,14 @@ func operationPlanPhasesFromOutcomeSnapshot(current []map[string]interface{}, ou
 			}
 		}
 		phase := map[string]interface{}{
-			"id":                phaseID,
-			"outcome_id":        outcomeID,
-			"step":              stringFromAny(outcome["goal"]),
-			"title":             stringFromAny(outcome["goal"]),
-			"status":            stringFromAny(outcome["status"]),
-			"completion_source": "runtime_effect_reconciliation",
+			"id":                        phaseID,
+			"outcome_id":                outcomeID,
+			"step":                      stringFromAny(outcome["goal"]),
+			"title":                     stringFromAny(outcome["goal"]),
+			"status":                    stringFromAny(outcome["status"]),
+			"completion_source":         "runtime_effect_reconciliation",
+			"required":                  operationPlanOutcomeRequired(outcome),
+			operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
 		}
 		if refs := stringSliceFromAny(outcome["effect_refs"]); len(refs) > 0 {
 			phase["effect_refs"] = refs
@@ -638,4 +640,11 @@ func operationPlanPhasesFromOutcomeSnapshot(current []map[string]interface{}, ou
 	}
 	operationPlanAdvanceNextPendingPhase(phases)
 	return phases
+}
+
+func operationPlanOutcomeRequired(outcome map[string]interface{}) bool {
+	if raw, exists := outcome["required"]; exists {
+		return operationPlanBoolValue(raw)
+	}
+	return true
 }

@@ -140,6 +140,9 @@ func terminalStateGuardPendingExternalExecution(evidence map[string]interface{},
 	attempts := make([]terminalStateGuardExternalExecutionAttempt, 0)
 	for index, record := range terminalStateGuardExternalInvocations(evidence) {
 		sequence := index + 1
+		if !terminalStateGuardInvocationIsExecutionEvidence(record) {
+			continue
+		}
 		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["skill_id"])), "external-apps") {
 			continue
 		}
@@ -501,6 +504,9 @@ func terminalStateGuardExternalBlockingPrerequisiteSequence(
 		if pending.GuideSequence > 0 && sequence >= pending.GuideSequence {
 			break
 		}
+		if !terminalStateGuardInvocationIsExecutionEvidence(record) {
+			continue
+		}
 		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["skill_id"])), "external-apps") ||
 			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["tool_name"])), "execute_action") {
 			continue
@@ -562,13 +568,7 @@ func terminalStateGuardProjectedActionEvidence(expected map[string]interface{}, 
 }
 
 func terminalStateGuardProjectionPreparationActionKeys(projection map[string]interface{}) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, key := range evidenceStringSliceFromAny(projection["preparation_action_keys"]) {
-		if key = strings.ToLower(strings.TrimSpace(key)); key != "" {
-			out[key] = struct{}{}
-		}
-	}
-	return out
+	return projectedExternalActionCompletePreparationHintKeys(projection)
 }
 
 func terminalStateGuardGuidePreparationActionKeys(integrationID string, result map[string]interface{}) map[string]struct{} {
@@ -730,6 +730,14 @@ func terminalStateGuardExternalInvocations(evidence map[string]interface{}) []ma
 	return nil
 }
 
+// terminalStateGuardInvocationIsExecutionEvidence keeps policy/audit records
+// out of execution-state decisions. Historical invocation records predate the
+// kind discriminator, so an empty kind remains valid compatibility evidence.
+func terminalStateGuardInvocationIsExecutionEvidence(record map[string]interface{}) bool {
+	kind := strings.TrimSpace(evidenceStringFromAny(record["kind"]))
+	return kind == "" || strings.EqualFold(kind, "tool_call")
+}
+
 func terminalStateGuardExternalActionKey(record map[string]interface{}) string {
 	integrationID, actionID := terminalStateGuardExternalActionIdentity(record)
 	if integrationID != "" && actionID != "" {
@@ -833,6 +841,9 @@ func terminalStateGuardExternalClarificationAnswer(answer string) bool {
 func terminalStateGuardLatestGuideRequiresArguments(evidence map[string]interface{}) bool {
 	var latest map[string]interface{}
 	for _, record := range terminalStateGuardExternalInvocations(evidence) {
+		if !terminalStateGuardInvocationIsExecutionEvidence(record) {
+			continue
+		}
 		if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["skill_id"])), "external-apps") &&
 			strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["tool_name"])), "get_action_guide") &&
 			!terminalStateGuardFailureStatus(terminalStateGuardExternalActionStatus(record)) {
@@ -871,7 +882,7 @@ func terminalStateGuardRequiresProjectedPlanLedgerRetry(decision terminalStateGu
 }
 
 func terminalStateGuardProjectedPlanLedgerRetryMessage() string {
-	return "The previous answer tried to finish an intent-matched external operation without a complete server-owned operation plan and server-canonical expected_action ledger. Do not claim that the external operation succeeded. First call update_plan and preserve every open required phase. Bind each tool phase to the exact exposed business function in expected_action; a server-classified final-answer-only phase may remain non-tool. In the same assistant turn, call the required projected business Action after update_plan when its arguments are known."
+	return "The previous answer tried to finish an intent-matched external operation without provider-confirmed execution evidence. Do not claim that the external operation succeeded. Call the exact exposed projected business Action directly with its business arguments; the runtime will create or refresh the server-owned Outcome, phase binding, ledger epoch, and connection binding. Do not call update_plan merely to prepare this Action, and do not invent or pass plan_phase_id, binding_fingerprint, ledger_epoch, or connection_binding. If the business Action cannot be called safely, explain that the external operation was not completed."
 }
 
 func terminalStateGuardCanRetryPendingExternalAction(
@@ -913,6 +924,9 @@ func terminalStateGuardExternalExecutionRetryMessage(pending *terminalStateGuard
 func terminalStateGuardHasUnconfirmedExternalAction(evidence map[string]interface{}) bool {
 	latestConfirmationByAction := map[string]bool{}
 	for _, record := range terminalStateGuardExternalInvocations(evidence) {
+		if !terminalStateGuardInvocationIsExecutionEvidence(record) {
+			continue
+		}
 		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["skill_id"])), "external-apps") ||
 			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["tool_name"])), "execute_action") {
 			continue
@@ -929,7 +943,8 @@ func terminalStateGuardHasUnconfirmedExternalAction(evidence map[string]interfac
 }
 
 func terminalStateGuardExternalActionProviderConfirmed(record map[string]interface{}) bool {
-	if terminalStateGuardFailureStatus(terminalStateGuardStatusFromMap(record)) ||
+	if !terminalStateGuardInvocationIsExecutionEvidence(record) ||
+		terminalStateGuardFailureStatus(terminalStateGuardStatusFromMap(record)) ||
 		strings.TrimSpace(evidenceStringFromAny(record["error"])) != "" {
 		return false
 	}
@@ -1020,7 +1035,40 @@ func terminalStateGuardFailureStatus(status string) bool {
 
 func terminalStateGuardExternalActionFailureAnswer(evidence map[string]interface{}, candidateAnswer string) string {
 	text := strings.TrimSpace(evidenceStringFromAny(evidence["user_request"])) + candidateAnswer
+	if succeeded, failedSafe, outcomeUnknown, executing, partial := terminalStateGuardLatestPartialBatch(evidence); partial {
+		return localizedExternalActionPartialBatchAnswer(text, succeeded, failedSafe, outcomeUnknown, executing)
+	}
 	return LocalizedExternalActionFailureAnswer(text, ExternalActionFailureSendOrOperation)
+}
+
+func terminalStateGuardLatestPartialBatch(evidence map[string]interface{}) (
+	succeeded int,
+	failedSafe int,
+	outcomeUnknown int,
+	executing int,
+	partial bool,
+) {
+	records := terminalStateGuardExternalInvocations(evidence)
+	for index := len(records) - 1; index >= 0; index-- {
+		record := records[index]
+		if !terminalStateGuardInvocationIsExecutionEvidence(record) ||
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["skill_id"])), "external-apps") ||
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["tool_name"])), "execute_action") {
+			continue
+		}
+		result := terminalStateGuardExternalActionResult(record)
+		batch := evidenceMapFromAny(result["batch"])
+		if len(batch) == 0 {
+			continue
+		}
+		succeeded = numericValue(batch["succeeded_count"])
+		failedSafe = numericValue(batch["failed_safe_count"])
+		outcomeUnknown = numericValue(batch["outcome_unknown_count"])
+		executing = numericValue(batch["executing_count"])
+		partial = succeeded > 0 && failedSafe+outcomeUnknown+executing > 0
+		return
+	}
+	return 0, 0, 0, 0, false
 }
 
 func terminalStateGuardCanStream(evidence map[string]interface{}) bool {

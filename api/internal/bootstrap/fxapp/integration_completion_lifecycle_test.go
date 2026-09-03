@@ -2,6 +2,7 @@ package fxapp
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -30,6 +31,80 @@ type integrationOAuthMaintenanceTestRunner struct {
 type integrationOAuthRecoveryTestRunner struct {
 	started chan struct{}
 	stopped chan struct{}
+}
+
+type workflowBindingBackfillTestRunner struct {
+	called bool
+	err    error
+}
+
+type workflowBindingBackfillIncompleteTestError struct {
+	err error
+}
+
+func (err *workflowBindingBackfillIncompleteTestError) Error() string {
+	return err.err.Error()
+}
+
+func (err *workflowBindingBackfillIncompleteTestError) Unwrap() error {
+	return err.err
+}
+
+func (*workflowBindingBackfillIncompleteTestError) WorkflowConnectorBindingBackfillIncomplete() bool {
+	return true
+}
+
+func (r *workflowBindingBackfillTestRunner) ReconcileWorkflowConnectorBindingBackfills(context.Context) error {
+	r.called = true
+	return r.err
+}
+
+func TestRegisterWorkflowConnectorBindingBackfillLifecycleRunsBeforeServing(t *testing.T) {
+	lifecycle := &integrationCompletionTestLifecycle{}
+	runner := &workflowBindingBackfillTestRunner{}
+	RegisterWorkflowConnectorBindingBackfillLifecycle(lifecycle, runner, zap.NewNop())
+	if len(lifecycle.hooks) != 1 {
+		t.Fatalf("hook count = %d, want 1", len(lifecycle.hooks))
+	}
+	if err := lifecycle.hooks[0].OnStart(context.Background()); err != nil {
+		t.Fatalf("OnStart() error = %v", err)
+	}
+	if !runner.called {
+		t.Fatal("workflow binding backfill was not called")
+	}
+}
+
+func TestRegisterWorkflowConnectorBindingBackfillLifecycleKeepsFailedItemsFailClosed(t *testing.T) {
+	lifecycle := &integrationCompletionTestLifecycle{}
+	runner := &workflowBindingBackfillTestRunner{err: &workflowBindingBackfillIncompleteTestError{err: errors.New("historical workflow is invalid")}}
+	RegisterWorkflowConnectorBindingBackfillLifecycle(lifecycle, runner, zap.NewNop())
+	if err := lifecycle.hooks[0].OnStart(context.Background()); err != nil {
+		t.Fatalf("OnStart() error = %v, want incomplete item retained without disabling unrelated routes", err)
+	}
+	if !runner.called {
+		t.Fatal("workflow binding backfill was not called")
+	}
+}
+
+func TestRegisterWorkflowConnectorBindingBackfillLifecycleRejectsMissingMigration(t *testing.T) {
+	lifecycle := &integrationCompletionTestLifecycle{}
+	runner := &workflowBindingBackfillTestRunner{err: errors.New(`ERROR: column "consumer_type" does not exist (SQLSTATE 42703)`)}
+	RegisterWorkflowConnectorBindingBackfillLifecycle(lifecycle, runner, zap.NewNop())
+	err := lifecycle.hooks[0].OnStart(context.Background())
+	if err == nil || !errors.Is(err, runner.err) {
+		t.Fatalf("OnStart() error = %v, want fatal schema initialization error", err)
+	}
+	if !runner.called {
+		t.Fatal("workflow binding backfill was not called")
+	}
+}
+
+func TestRegisterWorkflowConnectorBindingBackfillLifecycleIgnoresNilRunner(t *testing.T) {
+	lifecycle := &integrationCompletionTestLifecycle{}
+	RegisterWorkflowConnectorBindingBackfillLifecycle(lifecycle, nil, zap.NewNop())
+	if len(lifecycle.hooks) != 0 {
+		t.Fatalf("hook count = %d, want 0", len(lifecycle.hooks))
+	}
 }
 
 func (r *integrationOAuthRecoveryTestRunner) RunOAuthRecovery(ctx context.Context) {

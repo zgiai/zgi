@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -290,7 +291,7 @@ func (r *processTimelineRecorder) RecordTrace(traces []skills.SkillTrace, trace 
 	if r == nil || r.service == nil {
 		return
 	}
-	if nonVisibleTraceCarriesMetadata(trace) {
+	if nonVisibleTraceCarriesMetadata(trace) && !skillloop.IsProjectedActionAutoBindingTrace(trace) {
 		r.service.persistSkillTracesBestEffort(r.persistCtx, r.prepared, []skills.SkillTrace{trace})
 	}
 	if streamBackedTrace(trace) {

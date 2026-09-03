@@ -127,6 +127,12 @@ func SanitizeGraph(graph map[string]interface{}) {
 
 		delete(data, "api_key")
 		delete(data, "credential_id")
+		// Connection IDs are organization-local authorization handles, not
+		// portable workflow configuration. Keep unrelated node fields named
+		// connection_id intact; only connector nodes use it as an auth handle.
+		if strings.EqualFold(strings.TrimSpace(workflowString(data, "provider_type")), "connector") {
+			delete(data, "connection_id")
+		}
 		delete(data, "selected")
 		delete(nodeMap, "selected")
 

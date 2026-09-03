@@ -15,7 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	integrations "github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	"github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"

@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 )
 
 const (

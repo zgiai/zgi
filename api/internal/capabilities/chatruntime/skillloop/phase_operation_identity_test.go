@@ -27,6 +27,7 @@ func TestProjectedExternalActionPhaseOperationIdentityIsCanonicalAndPhaseBound(t
 			map[string]interface{}{"id": "phase-second", "status": "pending", operationPlanServerProjectedLedgerEpochKey: "epoch-second", "expected_action": expected()},
 		}},
 	}
+	projectedExternalActionTestAuthorizePlan(state)
 	arguments := map[string]interface{}{
 		"integration_id": "wecom", "action_id": "wecom.message.send", "connection_id": connectionID,
 		"arguments": map[string]interface{}{"recipient_ref": "alice", "content": "first"},

@@ -23,6 +23,7 @@ import {
 import { useT } from '@/i18n';
 import type { IntegrationOAuthUIState } from './oauth-flow-state';
 import { useIntegrationMetadata } from './metadata-i18n';
+import { ProviderDiagnosticsDetails } from './provider-diagnostics-details';
 
 interface IntegrationOAuthFlowDialogProps {
   state: IntegrationOAuthUIState;
@@ -60,6 +61,13 @@ export function IntegrationOAuthFlowDialog({
   const succeeded = state.status === 'succeeded';
   const retryable = ['failed', 'expired', 'timed_out'].includes(state.status);
   const popupNeedsAttention = state.popupBlocked || state.popupClosed;
+  const requestFailure = state.requestFailure;
+  const hasProviderDiagnostics = Boolean(
+    requestFailure?.providerErrorCode ||
+      requestFailure?.providerRequestId ||
+      requestFailure?.providerHTTPStatus ||
+      requestFailure?.retryAfterAt
+  );
 
   return (
     <Dialog
@@ -102,11 +110,32 @@ export function IntegrationOAuthFlowDialog({
             ) : null}
             <p className="mt-3 font-medium">{t(`oauth.flow.status.${state.status}`)}</p>
             <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">
-              {state.flow?.error_code && !waiting && !succeeded
-                ? metadata.error(state.flow.error_code)
-                : t(`oauth.flow.statusDescription.${state.status}`)}
+              {requestFailure?.message && !waiting && !succeeded
+                ? requestFailure.message
+                : state.flow?.error_code && !waiting && !succeeded
+                  ? metadata.error(state.flow.error_code)
+                  : requestFailure?.errorCode && !waiting && !succeeded
+                    ? metadata.error(requestFailure.errorCode)
+                    : t(`oauth.flow.statusDescription.${state.status}`)}
             </p>
           </div>
+
+          {!waiting && !succeeded && hasProviderDiagnostics ? (
+            <Alert variant="destructive">
+              <AlertCircle className="size-4" />
+              <AlertDescription>
+                {requestFailure?.providerErrorCode === '60020' ? (
+                  <p className="mb-3">{t('setup.verify.wecomTrustedIPHint')}</p>
+                ) : null}
+                <ProviderDiagnosticsDetails
+                  providerErrorCode={requestFailure?.providerErrorCode}
+                  providerRequestId={requestFailure?.providerRequestId}
+                  providerHTTPStatus={requestFailure?.providerHTTPStatus}
+                  retryAfterAt={requestFailure?.retryAfterAt}
+                />
+              </AlertDescription>
+            </Alert>
+          ) : null}
 
           {popupNeedsAttention && state.flow?.authorization_url ? (
             <Alert>

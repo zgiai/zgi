@@ -225,6 +225,8 @@ func invalidSkillToolArgumentsStep(
 	trace := failedSkillTrace("tool_call", toolName, err)
 	trace.SkillID = strings.ToLower(strings.TrimSpace(skillID))
 	trace.Arguments = rawSkillToolArgumentsFingerprint(rawArguments)
+	trace.Arguments["failure_category"] = "arguments"
+	trace.Arguments["provider_request_sent"] = false
 	var argumentErr *skillToolArgumentsError
 	if errors.As(err, &argumentErr) && argumentErr != nil {
 		trace.Arguments["reason_code"] = argumentErr.Code

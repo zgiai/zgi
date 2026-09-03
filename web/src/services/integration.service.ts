@@ -7,6 +7,7 @@ import type {
   AcknowledgeIntegrationOAuthRecoveryResponse,
   CompleteIntegrationConnectionSetupRequest,
   CreateIntegrationConnectionRequest,
+  DetachIntegrationConnectionReferencesRequest,
   GetIntegrationExecutionsParams,
   IntegrationActionPolicyResponse,
   IntegrationCatalogResponse,
@@ -194,6 +195,12 @@ class IntegrationService extends BaseService {
     return new URL(proxyPath, window.location.origin).toString();
   }
 
+  private providerInstallProxyURL(path: string): string {
+    const proxyPath = withBasePath(`/console/api/integrations/provider-install${path}`);
+    if (typeof window === 'undefined') return proxyPath;
+    return new URL(proxyPath, window.location.origin).toString();
+  }
+
   startOAuthFlow(
     data: StartIntegrationOAuthFlowRequest
   ): Promise<ApiResponseData<IntegrationOAuthFlowStartResponse>> {
@@ -217,6 +224,30 @@ class IntegrationService extends BaseService {
   ): Promise<ApiResponseData<{ status: Extract<IntegrationOAuthFlowStatus, 'cancelled'> }>> {
     return this.client.post(
       this.oauthProxyURL(`/flows/${encodeURIComponent(flowId)}/cancel`),
+      undefined,
+      { withCredentials: true }
+    );
+  }
+
+  startProviderInstallFlow(
+    data: StartIntegrationOAuthFlowRequest
+  ): Promise<ApiResponseData<IntegrationOAuthFlowStartResponse>> {
+    return this.client.post(this.providerInstallProxyURL('/flows'), data, {
+      withCredentials: true,
+    });
+  }
+
+  getProviderInstallFlow(flowId: string): Promise<ApiResponseData<IntegrationOAuthFlow>> {
+    return this.client.get(this.providerInstallProxyURL(`/flows/${encodeURIComponent(flowId)}`), {
+      withCredentials: true,
+    });
+  }
+
+  cancelProviderInstallFlow(
+    flowId: string
+  ): Promise<ApiResponseData<{ status: Extract<IntegrationOAuthFlowStatus, 'cancelled'> }>> {
+    return this.client.post(
+      this.providerInstallProxyURL(`/flows/${encodeURIComponent(flowId)}/cancel`),
       undefined,
       { withCredentials: true }
     );
@@ -337,6 +368,13 @@ class IntegrationService extends BaseService {
 
   getDeleteImpact(id: string): Promise<ApiResponseData<IntegrationConnectionDeleteImpact>> {
     return this.request('get', `/integrations/connections/${id}/delete-impact`);
+  }
+
+  detachConnectionReferences(
+    id: string,
+    data: DetachIntegrationConnectionReferencesRequest
+  ): Promise<ApiResponseData<IntegrationConnectionDeleteImpact>> {
+    return this.request('post', `/integrations/connections/${id}/detach-references`, data);
   }
 
   deleteConnection(id: string): Promise<ApiResponseData<null>> {

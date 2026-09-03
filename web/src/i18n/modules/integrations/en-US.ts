@@ -1412,7 +1412,7 @@ const messages = {
       retryHint:
         'The provider received the request, but at least one credential, app status, permission, or network allowlist requirement is not satisfied. Review the connection guide, then retry.',
       wecomTrustedIPHint:
-        'WeCom rejected access from the ZGI API server. Add the backend server public egress IP to the custom application trusted IP list, then retry verification.',
+        'WeCom rejected access from the ZGI API server. In Service Provider Console → Service Provider Information → Basic Information → IP Allowlist, add the backend server public egress IP, wait at least one minute, then retry verification.',
       dingtalkConfigurationHint:
         'Confirm AppKey, AppSecret, and AgentId belong to the same internal app; grant department/contact read access; configure visibility; publish and enable the app; and allow the ZGI API server public egress IP if an IP allowlist is enabled.',
       editConnection: 'Review and edit settings',
@@ -1516,10 +1516,38 @@ const messages = {
   delete: {
     title: 'Delete connection?',
     description: 'This permanently removes the encrypted credential and cannot be undone.',
-    loadingImpact: 'Checking dependent agents...',
+    loadingImpact: 'Checking Agent and Workflow references...',
     impact:
       '{count, plural, one {# agent currently references} other {# agents currently reference}} this connection.',
     impactUnavailable: 'The connection usage could not be verified. Try again before removing it.',
+    refreshImpact: 'Refresh references',
+    references: {
+      title: 'Reference details',
+      summary:
+        '{agents, plural, one {# Agent} other {# Agents}}, {workflows, plural, one {# Workflow} other {# Workflows}}',
+      workspace: 'Workspace: {name}',
+      unavailableWorkspace: 'Workspace unavailable',
+      unavailableAgent: 'Agent unavailable',
+      unavailableWorkflow: 'Workflow unavailable',
+      unavailableNode: 'Unnamed node',
+      assetType: {
+        agent: 'Agent',
+        workflow: 'Workflow',
+      },
+      scope: {
+        draft: 'Draft only',
+        published: 'Published only',
+        both: 'Draft and published',
+      },
+      openAsset: 'Open “{name}”',
+      detachDescription:
+        'Remove this connection from every affected draft and revoke its published runtime access. Existing published Workflow graphs are not edited or republished automatically.',
+      detachAll: 'Detach all references',
+      detachTitle: 'Detach all references?',
+      detachConfirmDescription:
+        'This affects {count, plural, one {# Agent or Workflow} other {# Agents or Workflows}}: draft bindings are removed and published runtime access is revoked immediately. Published versions are not rewritten or republished. You will still confirm the account disconnection separately.',
+      detachConfirm: 'Detach all references',
+    },
     defaultImpact: 'This is the organization default. Choose another default after deletion.',
     cancel: 'Cancel',
     confirm: 'Delete connection',
@@ -1531,9 +1559,9 @@ const messages = {
     personalEffect:
       'This account is also removed from your AIChat External Apps selection. If the provider cannot confirm revocation automatically, ZGI keeps a recovery item and asks you to check the provider’s connected-app settings.',
     sharedEffect:
-      'Remove agent bindings before disconnecting a shared account. After disconnection, members and workspaces can no longer access the provider through this connection.',
+      'Remove Agent and Workflow references before disconnecting a shared account. After disconnection, members and workspaces can no longer access the provider through this connection.',
     resolveDependencies:
-      'Remove this connection from the affected agents, then disconnect the account again.',
+      'Review the draft and published references below. Resolve them individually or choose “Detach all references,” then disconnect the account.',
     confirm: 'Disconnect account',
   },
   policies: {
@@ -1595,6 +1623,7 @@ const messages = {
       'Connection test passed: the credential and provider API are available. This does not mean AIChat selected or called it.',
     defaultSet: 'Default connection updated',
     deleted: 'Connection removed',
+    referencesDetached: 'All references detached. Confirm whether to disconnect the account.',
     policiesSaved: 'Action policies saved',
     grantSaved: 'Usage rule saved',
     grantDeleted: 'Usage rule deleted',

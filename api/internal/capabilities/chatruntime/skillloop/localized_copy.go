@@ -1,6 +1,9 @@
 package skillloop
 
-import "unicode"
+import (
+	"fmt"
+	"unicode"
+)
 
 type ExternalActionFailureScope uint8
 
@@ -41,4 +44,31 @@ func LocalizedExternalActionFailureAnswer(languageHint string, scope ExternalAct
 		}
 	}
 	return copy.english
+}
+
+func localizedExternalActionPartialBatchAnswer(
+	languageHint string,
+	succeeded int,
+	failedSafe int,
+	outcomeUnknown int,
+	executing int,
+) string {
+	for _, r := range languageHint {
+		if unicode.Is(unicode.Han, r) {
+			return fmt.Sprintf(
+				"批量外部操作部分完成：已成功 %d 项，安全失败 %d 项，结果未知 %d 项，仍在执行 %d 项。未知或执行中的项目不会被视为成功，也不会被自动重复执行。",
+				succeeded,
+				failedSafe,
+				outcomeUnknown,
+				executing,
+			)
+		}
+	}
+	return fmt.Sprintf(
+		"The batch external operation partially completed: %d item(s) succeeded, %d failed safely, %d have an unknown outcome, and %d are still executing. Unknown or in-progress items are not treated as successful and will not be replayed automatically.",
+		succeeded,
+		failedSafe,
+		outcomeUnknown,
+		executing,
+	)
 }

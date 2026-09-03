@@ -5,6 +5,7 @@ import type {
 } from '@/services/types/workflow';
 import { normalizeAiCreditMetricValue } from '@/utils/ai-credits';
 import { classifyWorkflowRuntimeError } from '@/utils/workflow/runtime-error';
+import { integrationErrorTranslationKey } from '@/services/integration-error-i18n';
 
 export type WorkflowBillingTranslationScope = 'agents' | 'webapp';
 
@@ -12,6 +13,7 @@ export interface WorkflowBillingMessageOptions {
   isAdmin?: boolean;
   workspaceId?: string | null;
   includeRuntimeDetails?: boolean;
+  integrationTranslator?: WorkflowTranslator;
 }
 
 export interface WorkflowTranslator {
@@ -336,6 +338,19 @@ export function getWorkflowBillingErrorMessage(
         : t(`${prefix}.contactAdmin`),
       actionLabel: options.isAdmin && href ? t(`${prefix}.${code}.action`) : undefined,
       href,
+    };
+  }
+
+  const integrationErrorKey =
+    integrationErrorTranslationKey(error.code, 'integrations') ??
+    integrationErrorTranslationKey(error.message, 'integrations');
+  if (integrationErrorKey && options.integrationTranslator) {
+    return {
+      title:
+        scope === 'agents'
+          ? t('agents.workflow.errors.executionFailed')
+          : t('webapp.chat.workflowRunFailed'),
+      description: options.integrationTranslator(integrationErrorKey),
     };
   }
 

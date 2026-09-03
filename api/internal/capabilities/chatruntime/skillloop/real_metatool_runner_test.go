@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	integrations "github.com/zgiai/zgi/api/internal/modules/integrations"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/wecom"
+	integrations "github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/wecom"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"

@@ -1,7 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, CircleHelp, Loader2 } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  CircleHelp,
+  Loader2,
+  TriangleAlert,
+} from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -28,6 +35,7 @@ import {
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
 import { isRoutineSkillLoadInvocation } from '@/components/chat/variants/aichat/skill-load-timeline';
+import { getAIChatExternalActionOperationState } from '@/components/chat/variants/aichat/external-action-operation-status';
 import {
   getAIChatExternalActionDisplayName,
   getAIChatExternalAppDisplayName,
@@ -53,7 +61,7 @@ import {
 import WorkflowRunMonitor from '@/components/chat/ui/workflow-run-monitor';
 import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
 
-type TimelineTone = 'running' | 'success' | 'error';
+type TimelineTone = 'running' | 'success' | 'warning' | 'error';
 type TimelineDebugLabel = keyof typeof TIMELINE_DEBUG_LABEL_KEYS;
 type GovernanceFieldLabel = keyof typeof GOVERNANCE_FIELD_LABEL_KEYS;
 export type WebappTranslator = ScopedTranslations<'webapp'>;
@@ -298,12 +306,13 @@ function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   ) {
     return 'error';
   }
-  return 'success';
+  return getAIChatExternalActionOperationState(invocation)?.tone ?? 'success';
 }
 
 function getStatusIcon(tone: TimelineTone) {
   if (tone === 'running') return <Loader2 className="size-3.5 animate-spin" />;
   if (tone === 'error') return <AlertCircle className="size-3.5" />;
+  if (tone === 'warning') return <TriangleAlert className="size-3.5 text-amber-600" />;
   return <CheckCircle2 className="size-3.5 text-emerald-600" />;
 }
 
@@ -931,6 +940,33 @@ function buildSkillTitle(
     return t('consoleChat.skills.agentic.strategyAdjusted');
   }
 
+  const externalOperation = getAIChatExternalActionOperationState(invocation);
+  if (externalOperation) {
+    switch (externalOperation.status) {
+      case 'executing':
+        return t('consoleChat.skills.agentic.externalActionExecuting', {
+          skill: skill.label,
+          tool: toolName,
+        });
+      case 'partially_succeeded':
+        return t('consoleChat.skills.agentic.externalActionPartiallySucceeded', {
+          skill: skill.label,
+          tool: toolName,
+        });
+      case 'outcome_unknown':
+        return t('consoleChat.skills.agentic.externalActionOutcomeUnknown', {
+          skill: skill.label,
+          tool: toolName,
+        });
+      case 'failed_safe':
+      case 'failed':
+        return t('consoleChat.skills.agentic.externalActionFailed', {
+          skill: skill.label,
+          tool: toolName,
+        });
+    }
+  }
+
   if (
     tone === 'success' &&
     normalizeGovernanceToolName(invocation.skill_id) === 'agent-management'
@@ -983,7 +1019,9 @@ function SkillTimelineRow({
   const [isOpen, setIsOpen] = useState(false);
   const duration = getDurationText(event.item.invocation.duration_ms, t);
   const detail = event.detail ? sanitizeDisplayString(event.detail) : null;
-  const displayResult = sanitizeTimelineResultForDisplay(event.item.invocation.result);
+  const displayResult = isAIChatExternalAppsInvocation(event.item.invocation)
+    ? event.item.invocation.result
+    : sanitizeTimelineResultForDisplay(event.item.invocation.result);
   const rowContent = (
     <>
       <span
@@ -991,7 +1029,9 @@ function SkillTimelineRow({
           'flex size-5 shrink-0 items-center justify-center rounded-full border bg-background',
           event.tone === 'error'
             ? 'border-destructive/40 text-destructive'
-            : 'border-border text-muted-foreground'
+            : event.tone === 'warning'
+              ? 'border-amber-500/40 text-amber-700 dark:text-amber-300'
+              : 'border-border text-muted-foreground'
         )}
       >
         {getStatusIcon(event.tone)}
@@ -1016,7 +1056,11 @@ function SkillTimelineRow({
     <div
       className={cn(
         'rounded-md border bg-background/80 text-xs',
-        event.tone === 'error' ? 'border-destructive/30' : 'border-border'
+        event.tone === 'error'
+          ? 'border-destructive/30'
+          : event.tone === 'warning'
+            ? 'border-amber-500/30'
+            : 'border-border'
       )}
     >
       {showDetails ? (
@@ -1040,7 +1084,12 @@ function SkillTimelineRow({
               {detail}
             </div>
           ) : null}
-          <AIChatSkillResultSummary result={displayResult} className="mb-2" />
+          <AIChatSkillResultSummary
+            result={displayResult}
+            skillId={event.item.invocation.skill_id}
+            toolName={event.item.invocation.tool_name}
+            className="mb-2"
+          />
           <dl className="grid gap-1 rounded-md bg-background/80 p-2 text-[11px]">
             {timelineDebugRows(event.item.invocation, locale, t).map(([labelKey, value]) => {
               const argumentSummary = value;

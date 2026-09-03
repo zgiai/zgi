@@ -23,18 +23,23 @@ const (
 	operationPlanStepStatusCompleted = "completed"
 	operationPlanStepStatusFailed    = "failed"
 
-	operationPlanExpectedUpdatedFieldsKey  = "expected_updated_fields"
-	operationPlanExpectedBindingActionsKey = "expected_binding_actions"
-	operationPlanConfigGoalKey             = "config_goal"
-	operationPlanEvidenceStateKey          = "evidence_state"
-	operationPlanEvidenceLedgerKey         = "evidence_ledger"
-	operationPlanOutcomesKey               = "outcomes"
-	operationPlanActionAttemptsKey         = "action_attempts"
-	operationPlanEffectLedgerKey           = "effect_ledger"
-	operationPlanServerProjectedToolKey    = "_server_projected_tool_name"
-	operationPlanServerProjectedEpochKey   = "_server_projected_ledger_epoch"
-	operationPlanServerProjectedBindingKey = "_server_projected_binding_fingerprint"
-	operationPlanExternalActionEffectType  = "external.action.completed"
+	operationPlanExpectedUpdatedFieldsKey            = "expected_updated_fields"
+	operationPlanExpectedBindingActionsKey           = "expected_binding_actions"
+	operationPlanConfigGoalKey                       = "config_goal"
+	operationPlanEvidenceStateKey                    = "evidence_state"
+	operationPlanEvidenceLedgerKey                   = "evidence_ledger"
+	operationPlanOutcomesKey                         = "outcomes"
+	operationPlanActionAttemptsKey                   = "action_attempts"
+	operationPlanEffectLedgerKey                     = "effect_ledger"
+	operationPlanServerProjectedToolKey              = "_server_projected_tool_name"
+	operationPlanServerProjectedEpochKey             = "_server_projected_ledger_epoch"
+	operationPlanServerProjectedBindingKey           = "_server_projected_binding_fingerprint"
+	operationPlanServerProjectedConnectionBindingKey = "_server_projected_connection_binding"
+	operationPlanExternalActionEffectType            = "external.action.completed"
+	operationPlanPhaseSourceKey                      = "phase_source"
+	operationPlanPhaseSourceServerOutcome            = "server_outcome"
+	operationPlanPhaseSourceServerPreparation        = "server_preparation"
+	operationPlanPhaseSourceModelAdvisory            = "model_advisory"
 
 	operationPlanCandidateSelectionPolicyKey           = "candidate_selection_policy"
 	operationPlanCandidateSelectionAtMostOnePerField   = "at_most_one_per_binding_field"
@@ -68,11 +73,12 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 	phases := operationPlanPhasesFromTurnStrategy(strategy)
 	if len(phases) == 0 && originalGoal != "" {
 		phases = []map[string]interface{}{{
-			"id":                "phase-1",
-			"step":              originalGoal,
-			"title":             originalGoal,
-			"status":            operationPlanStepStatusPending,
-			"verification_mode": "model_reconciliation",
+			"id":                        "phase-1",
+			"step":                      originalGoal,
+			"title":                     originalGoal,
+			"status":                    operationPlanStepStatusPending,
+			"verification_mode":         "model_reconciliation",
+			operationPlanPhaseSourceKey: operationPlanPhaseSourceModelAdvisory,
 		}}
 	}
 	if len(phases) == 0 {
@@ -260,12 +266,14 @@ func operationPlanPhasesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[str
 				outcomeID = fmt.Sprintf("outcome-%d", index+1)
 			}
 			phases = append(phases, map[string]interface{}{
-				"id":                fmt.Sprintf("phase-%d", len(phases)+1),
-				"outcome_id":        outcomeID,
-				"step":              goal,
-				"title":             goal,
-				"status":            operationPlanStepStatusPending,
-				"completion_source": "runtime_effect_reconciliation",
+				"id":                        fmt.Sprintf("phase-%d", len(phases)+1),
+				"outcome_id":                outcomeID,
+				"step":                      goal,
+				"title":                     goal,
+				"status":                    operationPlanStepStatusPending,
+				"completion_source":         "runtime_effect_reconciliation",
+				"required":                  outcome.Required == nil || *outcome.Required,
+				operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
 			})
 		}
 		return phases
@@ -274,11 +282,12 @@ func operationPlanPhasesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[str
 		phases := make([]map[string]interface{}, 0, len(strategy.PhaseGoals))
 		for idx, goal := range compactStringSliceForPrompt(strategy.PhaseGoals, 8, 180) {
 			phase := map[string]interface{}{
-				"id":                fmt.Sprintf("phase-%d", idx+1),
-				"step":              goal,
-				"title":             goal,
-				"status":            operationPlanStepStatusPending,
-				"verification_mode": "model_reconciliation",
+				"id":                        fmt.Sprintf("phase-%d", idx+1),
+				"step":                      goal,
+				"title":                     goal,
+				"status":                    operationPlanStepStatusPending,
+				"verification_mode":         "model_reconciliation",
+				operationPlanPhaseSourceKey: operationPlanPhaseSourceModelAdvisory,
 			}
 			phases = append(phases, phase)
 		}
@@ -1646,6 +1655,7 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 		if !operationPlanInvocationIsActionable(invocation) {
 			continue
 		}
+		invocation = operationPlanInvocationExecutionEvidenceView(invocation)
 		hadActionableInvocation = true
 		status := operationPlanStatusFromInvocation(invocation)
 		lastActionable = invocation
@@ -1683,7 +1693,7 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 
 func operationPlanCompleteInvocationPhase(plan map[string]interface{}, invocation map[string]interface{}, status string) bool {
 	if len(plan) == 0 || status != operationPlanStepStatusCompleted ||
-		!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
+		!operationPlanInvocationIsExecutionEvidence(invocation) ||
 		operationPlanInvocationIsConsoleRouteNavigation(invocation) {
 		return false
 	}
@@ -1769,7 +1779,7 @@ func operationPlanCompleteInvocationPhase(plan map[string]interface{}, invocatio
 	phases[match]["evidence_refs"] = refs
 	operationPlanAdvanceNextPendingPhase(phases)
 	plan["phases"] = mapsToInterfaceSlice(phases)
-	if operationPlanPhasesTerminal(phases) {
+	if operationPlanPhasesTerminal(plan, phases) {
 		plan["status"] = operationPlanStatusCompleted
 		plan["pending_next_action"] = "none"
 	} else {
@@ -1789,11 +1799,28 @@ func operationPlanPhaseOpen(phase map[string]interface{}) bool {
 }
 
 func operationPlanInvocationIsProjectedExternalAction(invocation map[string]interface{}) bool {
-	return strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") &&
+	return operationPlanInvocationIsExecutionEvidence(invocation) &&
 		strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skills.SkillExternalApps) &&
 		strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), "execute_action")
 }
 
+// operationPlanInvocationIsExecutionEvidence keeps policy and audit records
+// out of execution-state reconciliation. Invocation records persisted before
+// the kind discriminator was introduced remain valid compatibility evidence.
+func operationPlanInvocationIsExecutionEvidence(invocation map[string]interface{}) bool {
+	kind := strings.TrimSpace(stringFromAny(invocation["kind"]))
+	return kind == "" || strings.EqualFold(kind, "tool_call")
+}
+
+func operationPlanInvocationExecutionEvidenceView(invocation map[string]interface{}) map[string]interface{} {
+	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "" ||
+		!operationPlanInvocationIsExecutionEvidence(invocation) {
+		return invocation
+	}
+	normalized := copyStringAnyMap(invocation)
+	normalized["kind"] = "tool_call"
+	return normalized
+}
 func operationPlanInvocationHasServerProjectionEvidence(invocation map[string]interface{}) bool {
 	arguments := mapFromOperationContext(invocation["arguments"])
 	return strings.TrimSpace(stringFromAny(arguments[operationPlanServerProjectedEpochKey])) != "" ||
@@ -2455,7 +2482,7 @@ func finalizeOperationPlanForCompletedResult(metadata map[string]interface{}) {
 		return
 	}
 	operationPlanCompleteModelReconciliationPhases(plan, "main_model_final")
-	if phases := mapSliceFromAny(plan["phases"]); len(phases) > 0 && !operationPlanPhasesTerminal(phases) {
+	if phases := mapSliceFromAny(plan["phases"]); len(phases) > 0 && !operationPlanPhasesTerminal(plan, phases) {
 		plan["completion_verification"] = map[string]interface{}{
 			"status": "incomplete",
 			"source": "main_model_final",
@@ -2589,7 +2616,7 @@ func operationPlanCompleteModelReconciliationPhases(plan map[string]interface{},
 
 func phasesRemainIncomplete(plan map[string]interface{}) bool {
 	phases := mapSliceFromAny(plan["phases"])
-	return len(phases) > 0 && !operationPlanPhasesTerminal(phases)
+	return len(phases) > 0 && !operationPlanPhasesTerminal(plan, phases)
 }
 
 func syncOperationPlanCompletionMetadata(metadata map[string]interface{}) {
@@ -2801,6 +2828,11 @@ func operationPlanArtifactLogicalKey(file map[string]interface{}) string {
 
 func operationPlanInvocationIsActionable(invocation map[string]interface{}) bool {
 	switch strings.TrimSpace(stringFromAny(invocation["kind"])) {
+	case "":
+		// An empty kind is the historical tool-call representation. Require a
+		// tool identity so unrelated legacy metadata does not become actionable.
+		return strings.TrimSpace(stringFromAny(invocation["skill_id"])) != "" ||
+			strings.TrimSpace(stringFromAny(invocation["tool_name"])) != ""
 	case "guardrail":
 		return !operationPlanGuardrailIsPlanningFeedback(invocation)
 	case "tool_call", "client_action", "tool_governance":
@@ -2871,7 +2903,7 @@ func operationPlanInvocationResultSignalsFailure(invocation map[string]interface
 }
 
 func operationPlanInvocationHasRuntimeStateSnapshot(invocation map[string]interface{}) bool {
-	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
+	if !operationPlanInvocationIsExecutionEvidence(invocation) {
 		return true
 	}
 	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))

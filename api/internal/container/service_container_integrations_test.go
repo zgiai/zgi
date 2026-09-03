@@ -6,12 +6,13 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi/api/config"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/exa"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/feishu"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/github"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/adapters/gmail"
-	xintegration "github.com/zgiai/zgi/api/internal/modules/integrations/adapters/x"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/feishu"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/wecom"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/developer/github"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/email/gmail"
+	xintegration "github.com/zgiai/zgi/api/internal/modules/integrations/providers/social/x"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/websearch/exa"
 )
 
 func TestIntegrationRegistryRegistersGitHubWithExternalIntegrations(t *testing.T) {
@@ -66,6 +67,49 @@ func TestIntegrationRegistryRegistersOAuthProvidersWithoutPlatformCredentials(t 
 				t.Fatalf("%s exposed a platform-owned auth method: %#v", expected.integrationID, method)
 			}
 		}
+	}
+}
+
+func TestIntegrationRegistryRegistersWeComWithProviderCredentials(t *testing.T) {
+	container := &ServiceContainer{config: &config.Config{
+		ExternalIntegrations: config.ExternalIntegrationsConfig{
+			Enabled:               true,
+			CredentialActiveKeyID: "active",
+			CredentialKeys: map[string]string{
+				"active": "01234567890123456789012345678901",
+			},
+			WeCom: config.ExternalIntegrationWeComConfig{
+				SuiteID:                    "ww_suite",
+				ProviderCorpID:             "ww_provider",
+				ProviderSecret:             "provider-secret",
+				CustomerContactEnabled:     true,
+				CustomerMassMessageEnabled: true,
+				SuiteSecret:                "suite-secret",
+				CallbackToken:              "callback-token",
+				EncodingAESKey:             "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+				InstallCallbackURL:         "https://example.com/console/api/integrations/wecom/install/callback",
+			},
+		},
+		WebSearch: testWebSearchConfig(),
+	}}
+
+	registry := container.GetIntegrationRegistry()
+	if _, found := registry.ProviderDefinition(wecom.IntegrationID); !found {
+		t.Fatal("WeCom provider was not registered with complete provider credentials")
+	}
+	suiteConfig := integrationWeComSuiteConfig(container.config)
+	if !suiteConfig.CustomerContactEnabled || !suiteConfig.CustomerMassMessageEnabled {
+		t.Fatalf("WeCom customer capability flags were not passed to the adapter: %+v", suiteConfig)
+	}
+}
+
+func TestIntegrationWeComSuiteConfigDefaultsCustomerCapabilitiesOff(t *testing.T) {
+	if got := integrationWeComSuiteConfig(nil); got.CustomerContactEnabled || got.CustomerMassMessageEnabled {
+		t.Fatalf("nil application config enabled WeCom customer capabilities: %+v", got)
+	}
+	got := integrationWeComSuiteConfig(&config.Config{})
+	if got.CustomerContactEnabled || got.CustomerMassMessageEnabled {
+		t.Fatalf("default application config enabled WeCom customer capabilities: %+v", got)
 	}
 }
 

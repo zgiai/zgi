@@ -13,7 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"gorm.io/gorm/clause"

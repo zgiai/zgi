@@ -223,6 +223,79 @@ func TestListBuiltinProvidersFiltersBuiltinToolsForWorkflowCaller(t *testing.T) 
 	}
 }
 
+func TestListBuiltinProvidersIncludesOnlyWorkflowConnectorActions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	manager := tools.NewToolManager(nil)
+	provider := testToolProvider{entity: tools.ToolProviderEntity{
+		ProviderType: tools.ToolProviderTypeConnector,
+		Identity: tools.ToolProviderIdentity{
+			Name: "github", Label: tools.I18nText{"en_US": "GitHub"},
+			Description: tools.I18nText{"en_US": "GitHub connector"},
+		},
+		Tools: []tools.ToolEntity{
+			{
+				Identity: tools.ToolIdentity{Name: "list_repositories", Provider: "github", Label: tools.I18nText{"en_US": "List repositories"}},
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"visibility": map[string]interface{}{"type": "string", "enum": []interface{}{"all", "public"}},
+						"topics":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					},
+				},
+				OutputSchema: map[string]interface{}{"type": "object"},
+				WorkflowOutputs: []tools.ToolWorkflowOutput{{
+					ID: "result__repositories__full_name", Path: []string{"repositories", "*", "full_name"}, Type: "array[string]",
+				}},
+				SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat, tools.ToolInvokeFromWorkflow},
+			},
+			{
+				Identity:         tools.ToolIdentity{Name: "create_issue", Provider: "github", Label: tools.I18nText{"en_US": "Create issue"}},
+				SupportedCallers: []tools.ToolInvokeFrom{tools.ToolInvokeFromAIChat},
+			},
+		},
+	}}
+	if err := manager.RegisterProvider(provider); err != nil {
+		t.Fatalf("register connector provider: %v", err)
+	}
+
+	handler := NewBuiltinToolsHandler(manager, nil, nil)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/console/api/tools/builtin?caller=workflow", nil)
+	ctx.Set("organization_id", "org-1")
+	ctx.Set("account_id", "normal-member")
+
+	handler.ListBuiltinProviders(ctx)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var resp struct {
+		Code string                    `json:"code"`
+		Data []BuiltinProviderResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	providerResponse := findBuiltinProviderResponse(resp.Data, "github")
+	if providerResponse == nil || providerResponse.Type != "connector" {
+		t.Fatalf("connector provider missing: %+v", resp.Data)
+	}
+	if got := responseToolNames(providerResponse.Tools); !sameStrings(got, []string{"list_repositories"}) {
+		t.Fatalf("connector tools = %v", got)
+	}
+	if got := providerResponse.Tools[0].Parameters; len(got) != 2 || got[0].Type != "string-list" || got[1].Type != "select" {
+		t.Fatalf("projected connector parameters = %+v", got)
+	}
+	if providerResponse.Tools[0].OutputSchema == nil {
+		t.Fatal("connector output schema missing")
+	}
+	if got := providerResponse.Tools[0].WorkflowOutputs; len(got) != 1 || got[0].Type != "array[string]" {
+		t.Fatalf("connector workflow outputs = %+v", got)
+	}
+}
+
 func TestGetBuiltinProviderReturnsNotFoundWhenFilteredForWorkflowCaller(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

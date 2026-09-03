@@ -1,6 +1,6 @@
 package metatools
 
-import "github.com/zgiai/zgi/api/internal/modules/integrations"
+import "github.com/zgiai/zgi/api/internal/modules/integrations/core"
 
 func strictObject(properties map[string]interface{}, required ...string) map[string]interface{} {
 	schema := map[string]interface{}{
@@ -326,7 +326,7 @@ func executeActionOutputSchema() map[string]interface{} {
 	batchItemSchema := strictObject(map[string]interface{}{
 		"item_index": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": integrations.MaxOperationBatchItems},
 		"status": map[string]interface{}{
-			"type": "string", "enum": []string{"executing", "succeeded", "failed_safe", "outcome_unknown"},
+			"type": "string", "enum": []string{"executing", "partially_succeeded", "succeeded", "failed_safe", "outcome_unknown"},
 		},
 		"error_code": map[string]interface{}{"type": "string", "maxLength": 128},
 		"retry_safe": map[string]interface{}{"type": "boolean"},
@@ -358,6 +358,8 @@ func executeActionOutputSchema() map[string]interface{} {
 		"schema_revision":         map[string]interface{}{"type": "string", "maxLength": 128},
 		"catalog_revision":        map[string]interface{}{"type": "string", "maxLength": 128},
 		"provider_request_id":     map[string]interface{}{"type": "string", "maxLength": 512},
+		"provider_error_code":     map[string]interface{}{"type": "string", "maxLength": 128},
+		"reason_code":             map[string]interface{}{"type": "string", "maxLength": 128},
 		"cost_usd":                map[string]interface{}{"type": "number", "minimum": 0},
 		"result_count":            map[string]interface{}{"type": "integer", "minimum": 0},
 		"attempt_count":           map[string]interface{}{"type": "integer", "minimum": 0},

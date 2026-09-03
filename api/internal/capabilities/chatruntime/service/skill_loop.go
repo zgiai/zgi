@@ -243,14 +243,17 @@ func (s *service) runPreparedToolLoop(
 		AdditionalSystemMessages:       additionalSystemMessages,
 		RuntimeStateSnapshot:           runtimeStateSnapshot,
 		CurrentMetadata:                skillLoopCurrentMetadata(prepared),
-		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
-		OnTerminalCompletion:           onTerminalCompletion,
-		OnChunk:                        onChunk,
-		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
-		AuthorizeSkillStep:             authorizeSkillStep,
-		PreferredRestoredSkillID:       prepared.PreferredRestoredSkillID,
-		ContinuationType:               prepared.ContinuationType,
-		TerminalOnly:                   prepared.TerminalOnly,
+		CommitProjectedActionBinding: func(_ context.Context, trace skills.SkillTrace) error {
+			return s.commitProjectedActionBinding(persistCtx, prepared, trace)
+		},
+		OnTerminalStateGuardDecision: onTerminalStateGuardDecision,
+		OnTerminalCompletion:         onTerminalCompletion,
+		OnChunk:                      onChunk,
+		PlanningOutputTokenLimit:     planningOutputTokenLimit(prepared),
+		AuthorizeSkillStep:           authorizeSkillStep,
+		PreferredRestoredSkillID:     prepared.PreferredRestoredSkillID,
+		ContinuationType:             prepared.ContinuationType,
+		TerminalOnly:                 prepared.TerminalOnly,
 	})
 	if nativeSkillSession != nil {
 		prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillSessionDiagnostics(nativeSkillSession, prepared.Message.Metadata)
@@ -309,6 +312,13 @@ func externalActionPinnedPlanKeys(metadata map[string]interface{}) []string {
 		expected := mapFromOperationContext(phase["expected_action"])
 		if !strings.EqualFold(strings.TrimSpace(stringFromAny(expected["skill_id"])), skills.SkillExternalApps) ||
 			!strings.EqualFold(strings.TrimSpace(stringFromAny(expected["tool_name"])), integrationmetatools.ToolExecuteAction) {
+			continue
+		}
+		// Persisted pinning is only a continuation of a server-attested binding.
+		// A plain model-authored external expected_action must not elevate an
+		// arbitrary catalog Action into the next request's trusted projection set.
+		if strings.TrimSpace(stringFromAny(expected[operationPlanServerProjectedBindingKey])) == "" ||
+			strings.TrimSpace(stringFromAny(expected[operationPlanServerProjectedToolKey])) == "" {
 			continue
 		}
 		target := mapFromOperationContext(expected["target"])
@@ -1649,10 +1659,13 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 	out := make([]interface{}, 0, len(selected))
 	for _, phase := range selected {
 		item := map[string]interface{}{}
-		for _, key := range []string{"id", "outcome_id", "step", "title", "status", "note", "verification_mode", "completion_source"} {
+		for _, key := range []string{"id", "outcome_id", "step", "title", "status", "note", "verification_mode", "completion_source", operationPlanPhaseSourceKey} {
 			if text := strings.TrimSpace(stringFromAny(phase[key])); text != "" {
 				item[key] = compactForPrompt(text, 240)
 			}
+		}
+		if required, exists := phase["required"].(bool); exists {
+			item["required"] = required
 		}
 		if evidence := stringSliceFromAny(phase["evidence"]); len(evidence) > 0 {
 			item["evidence"] = compactStringSliceForPrompt(evidence, 6, 180)
@@ -2163,7 +2176,7 @@ func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.Age
 		if scope == agentbindings.ScopePublished {
 			var versionIDs []uuid.UUID
 			if err := s.repos.DB.WithContext(ctx).Model(&agentbindings.Binding{}).
-				Where("agent_id = ? AND binding_scope = ? AND published_version_uuid IS NOT NULL", agentID, scope).
+				Where("agent_id = ? AND consumer_type = ? AND binding_scope = ? AND published_version_uuid IS NOT NULL", agentID, agentbindings.ConsumerTypeAgent, scope).
 				Limit(1).
 				Pluck("published_version_uuid", &versionIDs).Error; err != nil {
 				return false, fmt.Errorf("resolve current Agent published binding version: %w", err)

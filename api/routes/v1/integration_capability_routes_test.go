@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 )
 
 func TestIntegrationActionCapabilityAvailability(t *testing.T) {

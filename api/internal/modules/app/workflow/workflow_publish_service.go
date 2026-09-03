@@ -32,6 +32,9 @@ func (s *WorkflowService) PublishWorkflowWithDescription(ctx context.Context, te
 		logger.Error("Failed to get draft workflow", err)
 		return nil, fmt.Errorf("failed to get draft workflow: %w", err)
 	}
+	if err := validateWorkflowConnectorNodesConfigured(draftWorkflow.GetGraphDict()); err != nil {
+		return nil, fmt.Errorf("workflow is not publishable: %w", err)
+	}
 
 	now := time.Now()
 	versionTimestamp := now.Format("20060102150405")
@@ -55,8 +58,15 @@ func (s *WorkflowService) PublishWorkflowWithDescription(ctx context.Context, te
 		UpdatedAt:             now,
 	}
 
-	// 5. Save the new version to database
-	if err := s.repo.CreateWorkflow(ctx, newWorkflow); err != nil {
+	connectorBindings, err := s.workflowConnectorBindingRows(ctx, newWorkflow, newWorkflow.GetGraphDict(), accountID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid workflow connector dependencies: %w", err)
+	}
+
+	// 5. Save the immutable graph version and its exact connector dependency
+	// index atomically. Historical published versions retain their own rows
+	// because they remain directly runnable by version UUID.
+	if err := s.persistWorkflowWithBindings(ctx, newWorkflow, connectorBindings, true); err != nil {
 		logger.Error("Failed to create workflow version", err)
 		return nil, fmt.Errorf("failed to create workflow version: %w", err)
 	}

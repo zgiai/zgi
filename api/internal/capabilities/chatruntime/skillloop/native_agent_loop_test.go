@@ -867,7 +867,7 @@ func TestNativeExecutionCallWrapsActionArgumentsUnderFixedIdentity(t *testing.T)
 func TestNativeProjectedActionCanonicalizesExplicitSelfTarget(t *testing.T) {
 	binding := skills.NativeToolBinding{
 		SkillID: skills.SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
-		BindingFingerprint: "binding-feishu-send-user", Effect: "external_send",
+		BindingFingerprint: "binding-feishu-send-user", Effect: "external_send", IntentMatched: true,
 		FixedArguments: map[string]interface{}{
 			"integration_id": "feishu", "action_id": "feishu.message.send_user",
 		},
@@ -969,6 +969,7 @@ func TestNativeCanonicalizeProjectedActionPlanCallUsesCurrentServerBinding(t *te
 			SkillID:             skills.SkillExternalApps,
 			ToolName:            "execute_action",
 			ArgumentEnvelope:    "arguments",
+			IntentMatched:       true,
 			BindingFingerprint:  "binding-wecom-message-send",
 			TargetArgumentPaths: []string{"recipient.id"},
 			FixedArguments: map[string]interface{}{
@@ -1009,6 +1010,69 @@ func TestNativeCanonicalizeProjectedActionPlanCallUsesCurrentServerBinding(t *te
 	canonicalTargets := evidenceMapFromAny(expected["target_arguments"])
 	if got := evidenceStringFromAny(canonicalTargets["recipient.id"]); got != "alice" || canonicalTargets["attacker.path"] != nil {
 		t.Fatalf("canonical target_arguments = %#v, want only recipient.id alice", expected["target_arguments"])
+	}
+}
+
+func TestNativeCanonicalizeProjectedActionPlanCallRequiresServerAuthorizedBinding(t *testing.T) {
+	baseBinding := func(actionID, fingerprint string) skills.NativeToolBinding {
+		return skills.NativeToolBinding{
+			SkillID: skills.SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
+			BindingFingerprint: fingerprint,
+			FixedArguments:     map[string]interface{}{"integration_id": "mail", "action_id": actionID},
+		}
+	}
+	search := baseBinding("mail.message.search", "binding-mail-search")
+	search.IntentMatched = true
+	account := baseBinding("mail.account.get", "binding-mail-account")
+	resolve := baseBinding("mail.identity.resolve", "binding-mail-resolve")
+	toolSet := &skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{
+		"search_mail_messages":  search,
+		"get_mail_account":      account,
+		"resolve_mail_identity": resolve,
+	}}
+
+	canonicalExpected := func(toolName string) map[string]interface{} {
+		call := nativeExecutionCall(adapter.ToolCall{
+			ID: "call-plan",
+			Function: adapter.FunctionCall{Name: skills.MetaToolUpdatePlan, Arguments: fmt.Sprintf(
+				`{"plan":[{"id":"phase","step":"work","status":"in_progress","expected_action":{"skill_id":"model","tool_name":%q,"_server_projected_binding_fingerprint":"spoofed"}}]}`,
+				toolName,
+			)},
+		}, toolSet)
+		var arguments map[string]interface{}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil {
+			t.Fatal(err)
+		}
+		return evidenceMapFromAny(evidenceMapsFromAny(arguments["plan"])[0]["expected_action"])
+	}
+
+	if expected := canonicalExpected("search_mail_messages"); expected[planExpectedActionServerBindingFingerprintKey] != nil || expected[planExpectedActionServerProjectionKey] != nil {
+		t.Fatalf("new intent-matched model phase gained server attestation: %#v", expected)
+	}
+	if expected := canonicalExpected("get_mail_account"); expected[planExpectedActionServerBindingFingerprintKey] != nil || expected[planExpectedActionServerProjectionKey] != nil {
+		t.Fatalf("merely exposed Action gained server attestation: %#v", expected)
+	}
+
+	account.Pinned = true
+	toolSet.ToolBindings["get_mail_account"] = account
+	if expected := canonicalExpected("get_mail_account"); expected[planExpectedActionServerBindingFingerprintKey] != nil || expected[planExpectedActionServerProjectionKey] != nil {
+		t.Fatalf("new pinned model phase gained server attestation: %#v", expected)
+	}
+
+	account.Pinned = false
+	search.PreparationActionIDs = []string{"mail.identity.resolve"}
+	toolSet.ToolBindings["search_mail_messages"] = search
+	toolSet.ToolBindings["get_mail_account"] = account
+	if expected := canonicalExpected("resolve_mail_identity"); expected[planExpectedActionServerBindingFingerprintKey] != nil {
+		t.Fatalf("PreparationActionIDs without a PreparationHint granted authority: %#v", expected)
+	}
+	search.PreparationHints = []skills.NativeExternalActionPreparationHint{{
+		ActionID: "mail.identity.resolve", Relation: "resolve_target",
+		TargetArguments: []string{"recipient"}, ResultPaths: []string{"recipients[].id"},
+	}}
+	toolSet.ToolBindings["search_mail_messages"] = search
+	if expected := canonicalExpected("resolve_mail_identity"); expected[planExpectedActionServerBindingFingerprintKey] != nil || expected[planExpectedActionServerProjectionKey] != nil {
+		t.Fatalf("new PreparationHint model phase gained server attestation: %#v", expected)
 	}
 }
 
@@ -1091,49 +1155,26 @@ func TestRunnerProjectedAliasesDetectAndExecuteOmittedSecondActionWithoutGuide(t
 	searchAlias := projectedExternalActionAliasForAction(t, toolSet, "wecom", "wecom.contact.search")
 	sendAlias := projectedExternalActionAliasForAction(t, toolSet, "wecom", "wecom.message.send")
 
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{
-			map[string]interface{}{
-				"id": "phase-search", "step": "Search contact", "status": "in_progress",
-				"expected_action": map[string]interface{}{"tool_name": searchAlias},
-			},
-			map[string]interface{}{
-				"id": "phase-send", "step": "Send message", "status": "pending",
-				"expected_action": map[string]interface{}{
-					"tool_name": sendAlias, "target_arguments": map[string]interface{}{"recipient_ref": "alice"},
-				},
-			},
-		},
-	})
 	searchCall := projectedExternalActionRunnerToolCall(t, "call-search", searchAlias, map[string]interface{}{
-		"plan_phase_id": "phase-search", "query": "Alice",
+		"query": "Alice",
 	})
 	sendCall := projectedExternalActionRunnerToolCall(t, "call-send", sendAlias, map[string]interface{}{
 		"recipient_ref": "alice", "content": "hello",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, searchCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{searchCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "联系人已查询，消息也已经发送。"}, FinishReason: "stop"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{sendCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
 	}}
-	state := map[string]interface{}{
-		"operation_plan": map[string]interface{}{"phases": []interface{}{
-			map[string]interface{}{
-				"id": "phase-search", "step": "Search contact", "status": "in_progress", "required": true,
-			},
-			map[string]interface{}{
-				"id": "phase-send", "step": "Send message", "status": "pending", "required": true,
-			},
-		}},
-	}
+	state := map[string]interface{}{"operation_plan": map[string]interface{}{}}
 	runner := &Runner{
 		LLMClient:    fakeLLM,
 		SkillRuntime: runtime,
 		AppContext:   &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -1141,11 +1182,12 @@ func TestRunnerProjectedAliasesDetectAndExecuteOmittedSecondActionWithoutGuide(t
 		Messages: []adapter.Message{{Role: "user", Content: "查询企业微信成员并给他发送消息"}},
 	})
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:             prepared,
-		Resolved:             resolved,
-		NativeAgentLoop:      true,
-		NativeToolSet:        &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		Prepared:                     prepared,
+		Resolved:                     resolved,
+		NativeAgentLoop:              true,
+		NativeToolSet:                &toolSet,
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1159,8 +1201,8 @@ func TestRunnerProjectedAliasesDetectAndExecuteOmittedSecondActionWithoutGuide(t
 	if fakeLLM.appChatCalls != 4 {
 		t.Fatalf("AppChat calls = %d, want initial execution, rejected final, corrected send, final", fakeLLM.appChatCalls)
 	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], `action_id="wecom.message.send"`) {
-		t.Fatal("terminal correction did not identify the omitted projected send Action")
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Call the exact exposed projected business Action directly") {
+		t.Fatal("terminal correction did not require the omitted projected send Action directly")
 	}
 	for _, call := range actionTool.calls {
 		if _, leaked := call["plan_phase_id"]; leaked {
@@ -1180,20 +1222,12 @@ func TestRunnerRejectsInitialProjectedActionSuccessClaimWithoutLedgerOrExecution
 		t.Fatalf("AppendNativeToolProjections() added=%d skipped=%#v, want 1", added, toolSet.SkippedTools)
 	}
 	alias := toolSet.ProviderTools[0].Function.Name
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-send", "step": "Send message", "status": "in_progress",
-			"expected_action": map[string]interface{}{
-				"tool_name": alias, "target_arguments": map[string]interface{}{"recipient_ref": "alice"},
-			},
-		}},
-	})
 	sendCall := projectedExternalActionRunnerToolCall(t, "call-send", alias, map[string]interface{}{
 		"recipient_ref": "alice", "content": "hello",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, sendCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{sendCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
 	}}
 	state := map[string]interface{}{"operation_plan": map[string]interface{}{
@@ -1208,7 +1242,7 @@ func TestRunnerRejectsInitialProjectedActionSuccessClaimWithoutLedgerOrExecution
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -1217,7 +1251,8 @@ func TestRunnerRejectsInitialProjectedActionSuccessClaimWithoutLedgerOrExecution
 			Messages: []adapter.Message{{Role: "user", Content: "给 Alice 发送企业微信消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "消息已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -1225,12 +1260,14 @@ func TestRunnerRejectsInitialProjectedActionSuccessClaimWithoutLedgerOrExecution
 	if got := actionTool.actionIDs(); !reflect.DeepEqual(got, []string{"wecom.message.send"}) {
 		t.Fatalf("external Skill runtime Actions = %#v, want one send after terminal correction", got)
 	}
-	if fakeLLM.appChatCalls != 3 || !runnerTestRequestContains(fakeLLM.appChatRequests[1], "server-owned operation plan") {
-		t.Fatalf("terminal ledger correction was not issued before execution; calls=%d", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "Call the exact exposed projected business Action directly") ||
+		runnerTestRequestContains(fakeLLM.appChatRequests[1], "First call update_plan") {
+		t.Fatalf("direct-Action terminal correction was not issued before execution; calls=%d", fakeLLM.appChatCalls)
 	}
 }
 
-func TestRunnerRejectsNewCompletedProjectedPhaseWithoutExecution(t *testing.T) {
+func TestRunnerCompletedModelAdvisoryCannotSatisfyProjectedActionWithoutExecution(t *testing.T) {
 	runtime, resolved, actionTool := newProjectedExternalActionRunnerRuntime(t)
 	toolSet := skills.NativeToolSet{
 		ActiveSkillIDs: []string{skills.SkillExternalApps}, ToolBindings: map[string]skills.NativeToolBinding{}, BudgetChars: 10000,
@@ -1263,7 +1300,7 @@ func TestRunnerRejectsNewCompletedProjectedPhaseWithoutExecution(t *testing.T) {
 				planBlocked = true
 			}
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -1272,10 +1309,21 @@ func TestRunnerRejectsNewCompletedProjectedPhaseWithoutExecution(t *testing.T) {
 			Messages: []adapter.Message{{Role: "user", Content: "给 Alice 发送企业微信消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
-	if !planBlocked {
-		t.Fatal("new completed projected phase was not rejected by the plan validator")
+	if planBlocked {
+		t.Fatal("completed model advisory was incorrectly treated as a server-authoritative plan mutation")
+	}
+	phases := evidenceMapsFromAny(evidenceMapFromAny(state["operation_plan"])["phases"])
+	if len(phases) != 1 || evidenceStringFromAny(phases[0][operationPlanPhaseSourceKey]) != operationPlanPhaseSourceModelAdvisory {
+		t.Fatalf("completed model progress was not retained as a non-authoritative advisory: %#v", phases)
+	}
+	authorityState := runtimeStateForRun(RunRequest{
+		NativeToolSet: &toolSet, RuntimeStateSnapshot: func() map[string]interface{} { return state },
+	})
+	if operationPlanPhaseHasServerAuthority(phases[0], authorityState) {
+		t.Fatalf("completed model advisory gained server authority: %#v", phases[0])
 	}
 	if len(actionTool.calls) != 0 {
 		t.Fatalf("provider calls = %#v, want none without an explicit projected Action execution", actionTool.calls)
@@ -1286,7 +1334,7 @@ func TestRunnerRejectsNewCompletedProjectedPhaseWithoutExecution(t *testing.T) {
 	if answer == "消息已发送。" || !strings.Contains(answer, "外部操作未完成") {
 		t.Fatalf("unexecuted projected Action did not produce a safe answer: %q", answer)
 	}
-	if fakeLLM.appChatCalls != 3 || !runnerTestRequestContains(fakeLLM.appChatRequests[2], "server-owned operation plan") {
+	if fakeLLM.appChatCalls != 3 || !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Call the exact exposed projected business Action directly") {
 		t.Fatalf("missing-ledger correction was not issued exactly once; calls=%d", fakeLLM.appChatCalls)
 	}
 }
@@ -1351,30 +1399,20 @@ func TestRunnerProjectedAliasCollisionRoutesThroughExternalSkillRuntime(t *testi
 	if strings.EqualFold(alias, "execute_action") {
 		t.Fatalf("projection retained runtime-colliding name %q", alias)
 	}
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-send", "step": "Send message", "status": "in_progress",
-			"expected_action": map[string]interface{}{
-				"tool_name": alias, "target_arguments": map[string]interface{}{"recipient_ref": "alice"},
-			},
-		}},
-	})
 	actionCall := projectedExternalActionRunnerToolCall(t, "call-action", alias, map[string]interface{}{
 		"recipient_ref": "alice", "content": "hello",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, actionCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{actionCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
 	}}
-	state := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{map[string]interface{}{
-		"id": "phase-send", "step": "Send message", "status": "in_progress", "required": true,
-	}}}}
+	state := map[string]interface{}{"operation_plan": map[string]interface{}{}}
 	runtimeRouteCalls := 0
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -1390,7 +1428,8 @@ func TestRunnerProjectedAliasCollisionRoutesThroughExternalSkillRuntime(t *testi
 				return RuntimeToolResult{Status: "error", Error: errors.New("wrong runtime route")}
 			},
 		}},
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "消息已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -1416,29 +1455,19 @@ func TestRunnerProjectedForbiddenProtocolNameIsAliasedAndRoutesThroughExternalSk
 	if strings.EqualFold(alias, skills.MetaToolCallSkillTool) {
 		t.Fatalf("projection retained forbidden protocol name %q", alias)
 	}
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-send", "step": "Send message", "status": "in_progress",
-			"expected_action": map[string]interface{}{
-				"tool_name": alias, "target_arguments": map[string]interface{}{"recipient_ref": "alice"},
-			},
-		}},
-	})
 	actionCall := projectedExternalActionRunnerToolCall(t, "call-action", alias, map[string]interface{}{
 		"recipient_ref": "alice", "content": "hello",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, actionCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{actionCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
 	}}
-	state := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{map[string]interface{}{
-		"id": "phase-send", "step": "Send message", "status": "in_progress", "required": true,
-	}}}}
+	state := map[string]interface{}{"operation_plan": map[string]interface{}{}}
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -1447,7 +1476,8 @@ func TestRunnerProjectedForbiddenProtocolNameIsAliasedAndRoutesThroughExternalSk
 			Messages: []adapter.Message{{Role: "user", Content: "给 Alice 发送企业微信消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "消息已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -1468,18 +1498,6 @@ func TestRunnerProjectedSameActionSameTargetUsesPhaseIDWithoutProviderLeak(t *te
 		t.Fatalf("AppendNativeToolProjections() added=%d skipped=%#v, want 1", added, toolSet.SkippedTools)
 	}
 	alias := toolSet.ProviderTools[0].Function.Name
-	expected := func() map[string]interface{} {
-		return map[string]interface{}{
-			"tool_name":        alias,
-			"target_arguments": map[string]interface{}{"recipient_ref": "alice"},
-		}
-	}
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{
-			map[string]interface{}{"id": "phase-first", "step": "Send first", "status": "in_progress", "expected_action": expected()},
-			map[string]interface{}{"id": "phase-second", "step": "Send second", "status": "pending", "expected_action": expected()},
-		},
-	})
 	firstCall := projectedExternalActionRunnerToolCall(t, "call-first", alias, map[string]interface{}{
 		"plan_phase_id": "phase-first", "recipient_ref": "alice", "content": "first",
 	})
@@ -1487,20 +1505,26 @@ func TestRunnerProjectedSameActionSameTargetUsesPhaseIDWithoutProviderLeak(t *te
 		"plan_phase_id": "phase-second", "recipient_ref": "alice", "content": "second",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, firstCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{firstCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "两条消息都已发送。"}, FinishReason: "stop"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{secondCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "两条消息均已发送。"}, FinishReason: "stop"}}},
 	}}
-	state := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{
-		map[string]interface{}{"id": "phase-first", "step": "Send first", "status": "in_progress", "required": true},
-		map[string]interface{}{"id": "phase-second", "step": "Send second", "status": "pending", "required": true},
-	}}}
+	state := projectedExternalActionTestServerOutcomeState(t, &toolSet, "wecom", "wecom.message.send",
+		projectedExternalActionTestOutcomeSpec{
+			phaseID: "phase-first", status: "in_progress",
+			targetArguments: map[string]interface{}{"recipient_ref": "alice"},
+		},
+		projectedExternalActionTestOutcomeSpec{
+			phaseID: "phase-second", status: "pending",
+			targetArguments: map[string]interface{}{"recipient_ref": "alice"},
+		},
+	)
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -1509,7 +1533,8 @@ func TestRunnerProjectedSameActionSameTargetUsesPhaseIDWithoutProviderLeak(t *te
 			Messages: []adapter.Message{{Role: "user", Content: "给 Alice 连续发送两条不同的企业微信消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "两条消息均已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -1548,27 +1573,19 @@ func TestRunnerProjectedEquivalentProviderActionsAreAnyOfWithoutProviderSelectio
 		t.Fatalf("AppendNativeToolProjections() added=%d skipped=%#v, want 3", added, toolSet.SkippedTools)
 	}
 	alias := projectedExternalActionAliasForIntegration(t, toolSet, "feishu")
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-send", "step": "Send message", "status": "in_progress",
-			"expected_action": map[string]interface{}{"tool_name": alias, "target_arguments": map[string]interface{}{"recipient_ref": "alice"}},
-		}},
-	})
 	actionCall := projectedExternalActionRunnerToolCall(t, "call-send", alias, map[string]interface{}{
-		"plan_phase_id": "phase-send", "recipient_ref": "alice", "content": "hello",
+		"recipient_ref": "alice", "content": "hello",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, actionCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{actionCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
 	}}
-	state := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{map[string]interface{}{
-		"id": "phase-send", "step": "Send message", "status": "in_progress", "required": true,
-	}}}}
+	state := map[string]interface{}{"operation_plan": map[string]interface{}{}}
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -1577,7 +1594,8 @@ func TestRunnerProjectedEquivalentProviderActionsAreAnyOfWithoutProviderSelectio
 			Messages: []adapter.Message{{Role: "user", Content: "给 Alice 发送消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "消息已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -1594,48 +1612,33 @@ func TestRunnerProjectedExplicitProvidersRequireIndependentActionGroups(t *testi
 	}
 	wecom := projectedExternalActionRunnerProjectionFor("wecom", "wecom_send_message", "wecom.message.send")
 	wecom.Binding.IntentGroup = "wecom:message.send"
-	wecom.Binding.IntentTokens = []string{"企业微信", "send", "message", "发送", "消息"}
+	wecom.Binding.IntentTokens = []string{"wecom", "企业微信", "send", "message", "发送", "消息"}
 	feishu := projectedExternalActionRunnerProjectionFor("feishu", "feishu_send_message", "feishu.message.send")
 	feishu.Binding.IntentGroup = "feishu:message.send"
-	feishu.Binding.IntentTokens = []string{"飞书", "send", "message", "发送", "消息"}
+	feishu.Binding.IntentTokens = []string{"feishu", "飞书", "send", "message", "发送", "消息"}
 	if added := skills.AppendNativeToolProjections(&toolSet, []skills.NativeToolProjection{wecom, feishu}, skills.NativeToolProjectionOptions{}); added != 2 {
 		t.Fatalf("AppendNativeToolProjections() added=%d skipped=%#v, want 2", added, toolSet.SkippedTools)
 	}
 	wecomAlias := projectedExternalActionAliasForIntegration(t, toolSet, "wecom")
 	feishuAlias := projectedExternalActionAliasForIntegration(t, toolSet, "feishu")
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{
-			map[string]interface{}{
-				"id": "phase-wecom", "step": "Send with 企业微信", "status": "in_progress",
-				"expected_action": map[string]interface{}{"tool_name": wecomAlias, "target_arguments": map[string]interface{}{"recipient_ref": "alice"}},
-			},
-			map[string]interface{}{
-				"id": "phase-feishu", "step": "Send with 飞书", "status": "pending",
-				"expected_action": map[string]interface{}{"tool_name": feishuAlias, "target_arguments": map[string]interface{}{"recipient_ref": "alice"}},
-			},
-		},
-	})
 	wecomCall := projectedExternalActionRunnerToolCall(t, "call-wecom", wecomAlias, map[string]interface{}{
-		"plan_phase_id": "phase-wecom", "recipient_ref": "alice", "content": "hello",
+		"recipient_ref": "alice", "content": "hello",
 	})
 	feishuCall := projectedExternalActionRunnerToolCall(t, "call-feishu", feishuAlias, map[string]interface{}{
-		"plan_phase_id": "phase-feishu", "recipient_ref": "alice", "content": "hello",
+		"recipient_ref": "alice", "content": "hello",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, wecomCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{wecomCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "两边都已发送。"}, FinishReason: "stop"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{feishuCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "企业微信和飞书均已发送。"}, FinishReason: "stop"}}},
 	}}
-	state := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{
-		map[string]interface{}{"id": "phase-wecom", "step": "Send with 企业微信", "status": "in_progress", "required": true},
-		map[string]interface{}{"id": "phase-feishu", "step": "Send with 飞书", "status": "pending", "required": true},
-	}}}
+	state := map[string]interface{}{"operation_plan": map[string]interface{}{}}
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -1644,7 +1647,8 @@ func TestRunnerProjectedExplicitProvidersRequireIndependentActionGroups(t *testi
 			Messages: []adapter.Message{{Role: "user", Content: "在企业微信和飞书分别给 Alice 发送消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "企业微信和飞书均已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -1698,7 +1702,8 @@ func TestRunnerProjectedContinuationRebindsPinnedFingerprintAfterAliasAndTopKCha
 			Messages: []adapter.Message{{Role: "user", Content: "继续给 Alice 发送消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "消息已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -1840,45 +1845,29 @@ func TestRunnerProjectedUnresolvedMutationAllowsDeclaredPreparationThenBindsExac
 	}
 	searchAlias := toolSet.ProviderTools[0].Function.Name
 	sendAlias := toolSet.ProviderTools[1].Function.Name
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-send", "step": "Resolve Alice and send message", "status": "in_progress",
-			"expected_action": map[string]interface{}{"tool_name": sendAlias},
-		}},
-	})
 	searchCall := projectedExternalActionRunnerToolCall(t, "call-search", searchAlias, map[string]interface{}{
-		"plan_phase_id": "phase-send", "query": "Alice",
-	})
-	bindTargetCall := projectedExternalActionRunnerToolCall(t, "call-bind-target", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"phase_updates": []interface{}{map[string]interface{}{
-			"id": "phase-send",
-			"expected_action": map[string]interface{}{
-				"tool_name": sendAlias, "target_arguments": map[string]interface{}{"recipient_ref": "wm-alice"},
-			},
-		}},
+		"query": "Alice",
 	})
 	sendCall := projectedExternalActionRunnerToolCall(t, "call-send", sendAlias, map[string]interface{}{
-		"plan_phase_id": "phase-send", "recipient_ref": "wm-alice", "content": "hello",
+		"recipient_ref": "wm-alice", "content": "hello",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, searchCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{searchCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{bindTargetCall, sendCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{sendCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
 	}}
-	state := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{
-		map[string]interface{}{"id": "phase-send", "step": "Resolve Alice and send message", "status": "in_progress", "required": true},
-	}}}
-	firstLedgerEpoch := ""
+	state := projectedExternalActionTestServerOutcomeState(t, &toolSet, "wecom", "wecom.message.send",
+		projectedExternalActionTestOutcomeSpec{phaseID: "phase-send", status: "in_progress"},
+	)
+	firstLedgerEpoch := evidenceStringFromAny(
+		evidenceMapsFromAny(evidenceMapFromAny(state["operation_plan"])["phases"])[0][operationPlanServerProjectedLedgerEpochKey],
+	)
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				phases := evidenceMapsFromAny(trace.Result["plan"])
-				if firstLedgerEpoch == "" && len(phases) > 0 {
-					firstLedgerEpoch = evidenceStringFromAny(phases[0][operationPlanServerProjectedLedgerEpochKey])
-				}
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -1887,7 +1876,8 @@ func TestRunnerProjectedUnresolvedMutationAllowsDeclaredPreparationThenBindsExac
 			Messages: []adapter.Message{{Role: "user", Content: "查询 Alice 的企业微信联系人并发送消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "消息已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -1987,42 +1977,29 @@ func TestRunnerProjectedRefinedPreparationSupersedesEarlierAmbiguousResultInSame
 	}
 	searchAlias := toolSet.ProviderTools[0].Function.Name
 	sendAlias := toolSet.ProviderTools[1].Function.Name
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-send", "step": "Resolve Alice and send message", "status": "in_progress",
-			"expected_action": map[string]interface{}{"tool_name": sendAlias},
-		}},
-	})
 	broadSearchCall := projectedExternalActionRunnerToolCall(t, "call-search-broad", searchAlias, map[string]interface{}{
-		"plan_phase_id": "phase-send", "query": "Alice",
+		"query": "Alice",
 	})
 	refinedSearchCall := projectedExternalActionRunnerToolCall(t, "call-search-refined", searchAlias, map[string]interface{}{
-		"plan_phase_id": "phase-send", "query": "Alice in product team",
-	})
-	bindTargetCall := projectedExternalActionRunnerToolCall(t, "call-bind-target", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"phase_updates": []interface{}{map[string]interface{}{
-			"id": "phase-send", "expected_action": map[string]interface{}{
-				"tool_name": sendAlias, "target_arguments": map[string]interface{}{"recipient_ref": "wm-alice-2"},
-			},
-		}},
+		"query": "Alice in product team",
 	})
 	sendCall := projectedExternalActionRunnerToolCall(t, "call-send", sendAlias, map[string]interface{}{
-		"plan_phase_id": "phase-send", "recipient_ref": "wm-alice-2", "content": "hello",
+		"recipient_ref": "wm-alice-2", "content": "hello",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, broadSearchCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{broadSearchCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{refinedSearchCall}}, FinishReason: "tool_calls"}}},
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{bindTargetCall, sendCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{sendCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送。"}, FinishReason: "stop"}}},
 	}}
-	state := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{
-		map[string]interface{}{"id": "phase-send", "step": "Resolve Alice and send message", "status": "in_progress", "required": true},
-	}}}
+	state := projectedExternalActionTestServerOutcomeState(t, &toolSet, "wecom", "wecom.message.send",
+		projectedExternalActionTestOutcomeSpec{phaseID: "phase-send", status: "in_progress"},
+	)
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -2031,7 +2008,8 @@ func TestRunnerProjectedRefinedPreparationSupersedesEarlierAmbiguousResultInSame
 			Messages: []adapter.Message{{Role: "user", Content: "给 Alice 发送企业微信消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "消息已发送。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -2181,42 +2159,28 @@ func runProjectedObservedTargetRejectionWithObservation(
 	}
 	searchAlias := projectedExternalActionAliasForAction(t, *toolSet, "wecom", "wecom.contact.search")
 	sendAlias := projectedExternalActionAliasForAction(t, *toolSet, "wecom", "wecom.message.send")
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-send", "step": "Resolve Alice and send message", "status": "in_progress",
-			"expected_action": map[string]interface{}{"tool_name": sendAlias},
-		}},
-	})
 	searchCallArguments := map[string]interface{}{
-		"plan_phase_id": "phase-send", "query": "Alice",
+		"query": "Alice",
 	}
 	for key, value := range searchArguments {
 		searchCallArguments[key] = value
 	}
 	searchCall := projectedExternalActionRunnerToolCall(t, "call-search", searchAlias, searchCallArguments)
-	bindTargetCall := projectedExternalActionRunnerToolCall(t, "call-bind-target", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"phase_updates": []interface{}{map[string]interface{}{
-			"id": "phase-send",
-			"expected_action": map[string]interface{}{
-				"tool_name": sendAlias, "target_arguments": map[string]interface{}{"recipient_ref": proposedRecipientRef},
-			},
-		}},
-	})
 	sendCall := projectedExternalActionRunnerToolCall(t, "call-send", sendAlias, map[string]interface{}{
-		"plan_phase_id": "phase-send", "recipient_ref": proposedRecipientRef, "content": "must-not-send",
+		"recipient_ref": proposedRecipientRef, "content": "must-not-send",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, searchCall}}, FinishReason: "tool_calls"}}},
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{bindTargetCall, sendCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{searchCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{sendCall}}, FinishReason: "tool_calls"}}},
 	}}
-	snapshot := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{
-		map[string]interface{}{"id": "phase-send", "step": "Resolve Alice and send message", "status": "in_progress", "required": true},
-	}}}
+	snapshot := projectedExternalActionTestServerOutcomeState(t, toolSet, "wecom", "wecom.message.send",
+		projectedExternalActionTestOutcomeSpec{phaseID: "phase-send", status: "in_progress"},
+	)
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				snapshot["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(snapshot, trace)
 			}
 		},
 	}
@@ -2225,7 +2189,8 @@ func runProjectedObservedTargetRejectionWithObservation(
 			Messages: []adapter.Message{{Role: "user", Content: "给 Alice 发送企业微信消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return snapshot },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return snapshot },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(snapshot),
 	})
 	return actionTool, projectedObservedTargetRejectionState{toolSet: toolSet, snapshot: snapshot}, err
 }
@@ -2241,32 +2206,19 @@ func TestRunnerProjectedFeishuSendUserRequiresExplicitAndCanonicalizesSelfTarget
 		t.Fatalf("AppendNativeToolProjections() added=%d skipped=%#v, want 1", added, toolSet.SkippedTools)
 	}
 	alias := toolSet.ProviderTools[0].Function.Name
-	planCall := projectedExternalActionRunnerToolCall(t, "call-plan", skills.MetaToolUpdatePlan, map[string]interface{}{
-		"plan": []interface{}{map[string]interface{}{
-			"id": "phase-send", "step": "Send message to myself", "status": "in_progress",
-			"expected_action": map[string]interface{}{
-				"tool_name": alias,
-				"target_arguments": map[string]interface{}{
-					"recipient_type": "self", "recipient_id": "ignored-plan-id",
-				},
-			},
-		}},
-	})
 	sendCall := projectedExternalActionRunnerToolCall(t, "call-send", alias, map[string]interface{}{
-		"plan_phase_id": "phase-send", "recipient_type": "self", "recipient_id": "ignored-call-id", "text": "hello self",
+		"recipient_type": "self", "recipient_id": "ignored-call-id", "text": "hello self",
 	})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{planCall, sendCall}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{sendCall}}, FinishReason: "tool_calls"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送给自己。"}, FinishReason: "stop"}}},
 	}}
-	state := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{map[string]interface{}{
-		"id": "phase-send", "step": "Send message to myself", "status": "in_progress", "required": true,
-	}}}}
+	state := map[string]interface{}{"operation_plan": map[string]interface{}{}}
 	runner := &Runner{
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -2275,7 +2227,8 @@ func TestRunnerProjectedFeishuSendUserRequiresExplicitAndCanonicalizesSelfTarget
 			Messages: []adapter.Message{{Role: "user", Content: "用飞书给我自己发一条消息"}},
 		}),
 		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
+		RuntimeStateSnapshot:         func() map[string]interface{} { return state },
+		CommitProjectedActionBinding: projectedExternalActionTestCommitBinding(state),
 	})
 	if err != nil || answer != "消息已发送给自己。" {
 		t.Fatalf("Run() answer=%q error=%v", answer, err)
@@ -2328,7 +2281,7 @@ func TestRunnerProjectedFeishuNonSelfStillRequiresRecipientID(t *testing.T) {
 		LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 			if trace.Kind == "plan_update" && trace.Status == "success" {
-				state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+				projectedExternalActionTestApplyPlanTrace(state, trace)
 			}
 		},
 	}
@@ -2388,7 +2341,7 @@ func TestRunnerProjectedFeishuRequiredRecipientTypeFailsBeforeProvider(t *testin
 				LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
 				OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
 					if trace.Kind == "plan_update" && trace.Status == "success" {
-						state["operation_plan"] = map[string]interface{}{"phases": trace.Result["plan"]}
+						projectedExternalActionTestApplyPlanTrace(state, trace)
 					}
 				},
 			}
@@ -2450,17 +2403,25 @@ func projectedFeishuSendUserRunnerProjection() skills.NativeToolProjection {
 }
 
 func projectedExternalActionContinuationState(oldAlias string, fingerprint string) map[string]interface{} {
-	return map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{map[string]interface{}{
-		"id": "phase-send", "step": "Send message", "status": "in_progress", "required": true,
-		operationPlanServerProjectedLedgerEpochKey: "ledger-epoch-1",
-		"expected_action": map[string]interface{}{
-			"skill_id": skills.SkillExternalApps, "tool_name": "execute_action", "projected_tool_name": oldAlias,
-			planExpectedActionServerProjectionKey:         oldAlias,
-			planExpectedActionServerBindingFingerprintKey: fingerprint,
-			"target":           map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.message.send"},
-			"target_arguments": map[string]interface{}{"recipient_ref": "alice"},
-		},
-	}}}}
+	return map[string]interface{}{"operation_plan": map[string]interface{}{
+		"outcomes": []interface{}{map[string]interface{}{
+			"id": "outcome-send", "required": true, "verification_mode": "runtime_effects",
+			"capabilities": []interface{}{skills.SkillExternalApps},
+		}},
+		"phases": []interface{}{map[string]interface{}{
+			"id": "phase-send", "outcome_id": "outcome-send", "step": "Send message", "status": "in_progress", "required": true,
+			operationPlanPhaseSourceKey:                      operationPlanPhaseSourceServerOutcome,
+			operationPlanServerProjectedLedgerEpochKey:       "ledger-epoch-1",
+			operationPlanServerProjectedConnectionBindingKey: skills.NativeExternalActionConnectionBindingHash("connection-wecom"),
+			"expected_action": map[string]interface{}{
+				"skill_id": skills.SkillExternalApps, "tool_name": "execute_action", "projected_tool_name": oldAlias,
+				planExpectedActionServerProjectionKey:         oldAlias,
+				planExpectedActionServerBindingFingerprintKey: fingerprint,
+				"target":           map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.message.send"},
+				"target_arguments": map[string]interface{}{"recipient_ref": "alice"},
+			},
+		}},
+	}}
 }
 
 func newProjectedExternalActionRunnerRuntime(t *testing.T) (*skills.Runtime, *skills.ResolvedSkills, *projectedExternalActionRunnerTool) {
@@ -2482,6 +2443,102 @@ func newProjectedExternalActionRunnerRuntime(t *testing.T) (*skills.Runtime, *sk
 		}},
 	}}}
 	return skills.NewRuntime(tools.NewToolEngine(manager), manager), resolved, actionTool
+}
+
+func projectedExternalActionTestApplyPlanTrace(state map[string]interface{}, trace skills.SkillTrace) {
+	if state == nil || !strings.EqualFold(strings.TrimSpace(trace.Kind), "plan_update") ||
+		!strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
+		return
+	}
+	plan := copyStringAnyMap(evidenceMapFromAny(state["operation_plan"]))
+	if plan == nil {
+		plan = map[string]interface{}{}
+	}
+	if phases, exists := trace.Result["plan"]; exists {
+		plan["phases"] = phases
+	}
+	if outcomes, exists := trace.Result["outcomes"]; exists {
+		plan["outcomes"] = outcomes
+	}
+	// Publish the complete plan snapshot in one assignment so an update cannot
+	// transiently expose new phases with stale or missing server Outcomes.
+	state["operation_plan"] = plan
+}
+
+func projectedExternalActionTestCommitBinding(state map[string]interface{}) ProjectedActionBindingCommitFunc {
+	return func(_ context.Context, trace skills.SkillTrace) error {
+		if !IsProjectedActionAutoBindingTrace(trace) {
+			return fmt.Errorf("unexpected projected Action binding trace: %#v", trace)
+		}
+		projectedExternalActionTestApplyPlanTrace(state, trace)
+		return nil
+	}
+}
+
+type projectedExternalActionTestOutcomeSpec struct {
+	phaseID         string
+	status          string
+	targetArguments map[string]interface{}
+}
+
+func projectedExternalActionTestServerOutcomeState(
+	t *testing.T,
+	toolSet *skills.NativeToolSet,
+	integrationID string,
+	actionID string,
+	specs ...projectedExternalActionTestOutcomeSpec,
+) map[string]interface{} {
+	t.Helper()
+	if toolSet == nil {
+		t.Fatal("projected Action test tool set is nil")
+	}
+	alias := projectedExternalActionAliasForAction(t, *toolSet, integrationID, actionID)
+	binding, ok := toolSet.ToolBindings[alias]
+	if !ok {
+		t.Fatalf("projected Action binding %q is missing", alias)
+	}
+	connectionBinding := strings.TrimSpace(binding.ConnectionBinding)
+	if connectionBinding == "" {
+		connectionBinding = skills.NativeExternalActionConnectionBindingHash(
+			evidenceStringFromAny(binding.FixedArguments["connection_id"]),
+		)
+	}
+	outcomes := make([]interface{}, 0, len(specs))
+	phases := make([]interface{}, 0, len(specs))
+	for _, spec := range specs {
+		phaseID := strings.TrimSpace(spec.phaseID)
+		if phaseID == "" {
+			t.Fatal("projected Action test phase ID is empty")
+		}
+		status := strings.TrimSpace(spec.status)
+		if status == "" {
+			status = "pending"
+		}
+		outcomeID := "outcome-" + phaseID
+		outcomes = append(outcomes, map[string]interface{}{
+			"id": outcomeID, "required": true, "verification_mode": "runtime_effects",
+			"capabilities": []interface{}{skills.SkillExternalApps},
+		})
+		expected := map[string]interface{}{
+			"skill_id": skills.SkillExternalApps, "tool_name": "execute_action", "projected_tool_name": alias,
+			planExpectedActionServerProjectionKey:         alias,
+			planExpectedActionServerBindingFingerprintKey: binding.BindingFingerprint,
+			"target": map[string]interface{}{"integration_id": integrationID, "action_id": actionID},
+		}
+		if len(spec.targetArguments) > 0 {
+			expected["target_arguments"] = copyStringAnyMap(spec.targetArguments)
+		}
+		phases = append(phases, map[string]interface{}{
+			"id": phaseID, "outcome_id": outcomeID, "step": phaseID, "status": status, "required": true,
+			operationPlanPhaseSourceKey:                      operationPlanPhaseSourceServerOutcome,
+			operationPlanServerProjectedLedgerEpochKey:       "ledger-" + phaseID,
+			operationPlanServerProjectedConnectionBindingKey: connectionBinding,
+			"expected_action":                                expected,
+		})
+	}
+	return map[string]interface{}{
+		"operation_plan": map[string]interface{}{"outcomes": outcomes, "phases": phases},
+	}
 }
 
 func projectedExternalActionRunnerProjection(name string, actionID string) skills.NativeToolProjection {
@@ -2873,10 +2930,10 @@ func TestRunnerAcceptsTruthfulNonExecutionAfterEmptyExternalQuery(t *testing.T) 
 		Messages: []adapter.Message{{Role: "user", Content: "查询企业微信成员并给他发送消息"}},
 	})
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:        prepared,
-		Resolved:        &skills.ResolvedSkills{},
-		NativeAgentLoop: true,
-		RuntimeTools:    []RuntimeTool{runnerTestUnusedExternalActionTool(t)},
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
+		NativeAgentLoop:   true,
 		RuntimeStateSnapshot: func() map[string]interface{} {
 			return runtimeState
 		},
@@ -2912,10 +2969,10 @@ func TestRunnerReturnsSafeTerminalAnswerWhenExternalRetryIsExhausted(t *testing.
 		Messages: []adapter.Message{{Role: "user", Content: "发送企业微信消息"}},
 	})
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:        prepared,
-		Resolved:        &skills.ResolvedSkills{},
-		NativeAgentLoop: true,
-		RuntimeTools:    []RuntimeTool{runnerTestUnusedExternalActionTool(t)},
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
+		NativeAgentLoop:   true,
 		RuntimeStateSnapshot: func() map[string]interface{} {
 			return runtimeState
 		},

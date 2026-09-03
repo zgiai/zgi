@@ -328,6 +328,10 @@ func TestToolEngine_InvokeForWorkflowUsesWorkflowInvokePath(t *testing.T) {
 			"token": "workflow-credential",
 		},
 		ConversationID: "workflow-conversation",
+		RuntimeParameters: map[string]interface{}{
+			"connection_id": "connection-789",
+			"workspace_id":  "workspace-123",
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -336,6 +340,8 @@ func TestToolEngine_InvokeForWorkflowUsesWorkflowInvokePath(t *testing.T) {
 	require.NotNil(t, provider.capture.runtime)
 	assert.Equal(t, tools.ToolInvokeFromWorkflow, provider.capture.runtime.InvokeFrom)
 	assert.Equal(t, "workspace-123", provider.capture.runtime.TenantID)
+	assert.Equal(t, "connection-789", provider.capture.runtime.ConnectionID)
+	assert.Equal(t, "workspace-123", provider.capture.runtime.RuntimeParameters["workspace_id"])
 	assert.Equal(t, "workflow-user", provider.capture.userID)
 	assert.Equal(t, "from-workflow", provider.capture.parameters["value"])
 	assert.Equal(t, map[string]interface{}{"token": "workflow-credential"}, provider.capture.parameters["__credentials"])

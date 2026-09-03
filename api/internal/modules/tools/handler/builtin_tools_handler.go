@@ -55,6 +55,7 @@ type BuiltinToolResponse struct {
 	ConfigParameters BuiltinConfigParametersResponse `json:"config_parameters"`
 	Tags             []string                        `json:"tags,omitempty"`
 	OutputSchema     map[string]interface{}          `json:"output_schema,omitempty"`
+	WorkflowOutputs  []tools.ToolWorkflowOutput      `json:"workflow_outputs,omitempty"`
 }
 
 // BuiltinParameterResponse represents a parameter in API response format
@@ -112,7 +113,8 @@ func (h *BuiltinToolsHandler) ListBuiltinProviders(c *gin.Context) {
 
 	var responses []BuiltinProviderResponse
 
-	visibility, err := h.builtinToolVisibility(c.Request.Context(), builtinToolVisibilityCaller(c))
+	caller := builtinToolVisibilityCaller(c)
+	visibility, err := h.builtinToolVisibility(c.Request.Context(), caller)
 	if err != nil {
 		logger.Warn("failed to build builtin tool visibility", "error", err)
 		response.Fail(c, response.ErrSystemError)
@@ -135,7 +137,20 @@ func (h *BuiltinToolsHandler) ListBuiltinProviders(c *gin.Context) {
 		responses = append(responses, providerResp)
 	}
 
-	// 2. Get installed plugins from database (e.g., regex, email)
+	// 2. Connector providers use the same Tool catalog contract in Workflow.
+	// Other callers discover integrations through their dedicated runtimes.
+	if strings.EqualFold(strings.TrimSpace(caller), string(tools.ToolInvokeFromWorkflow)) {
+		connectorProviders := h.toolManager.ListProviders(tools.ToolProviderTypeConnector)
+		for _, provider := range connectorProviders {
+			entity, ok := filterProviderEntityForCaller(provider.GetEntity(), tools.ToolInvokeFromWorkflow)
+			if !ok {
+				continue
+			}
+			responses = append(responses, h.convertProviderEntityToResponse(entity))
+		}
+	}
+
+	// 3. Get installed plugins from database (e.g., regex, email)
 	if h.accountInstallationService != nil {
 		organizationID := getOrganizationIDFromContext(c)
 		if organizationID == "" {
@@ -188,7 +203,8 @@ func (h *BuiltinToolsHandler) GetBuiltinProvider(c *gin.Context) {
 
 	logger.Info("API: Getting builtin provider", "provider", providerName)
 
-	visibility, err := h.builtinToolVisibility(c.Request.Context(), builtinToolVisibilityCaller(c))
+	caller := builtinToolVisibilityCaller(c)
+	visibility, err := h.builtinToolVisibility(c.Request.Context(), caller)
 	if err != nil {
 		logger.Warn("failed to build builtin tool visibility", "error", err)
 		response.Fail(c, response.ErrSystemError)
@@ -215,7 +231,23 @@ func (h *BuiltinToolsHandler) GetBuiltinProvider(c *gin.Context) {
 		return
 	}
 
-	// 2. If not found in builtin, try to get from installed plugins (database)
+	// 2. Workflow may address registered connector providers through the same
+	// catalog endpoint used by the existing Tool node.
+	if strings.EqualFold(strings.TrimSpace(caller), string(tools.ToolInvokeFromWorkflow)) {
+		organizationID := getOrganizationIDFromContext(c)
+		provider, connectorErr := h.toolManager.GetProvider(c.Request.Context(), tools.ToolProviderTypeConnector, providerName, organizationID)
+		if connectorErr == nil {
+			entity, ok := filterProviderEntityForCaller(provider.GetEntity(), tools.ToolInvokeFromWorkflow)
+			if !ok {
+				response.Fail(c, response.ErrNotFound)
+				return
+			}
+			response.Success(c, h.convertProviderEntityToResponse(entity))
+			return
+		}
+	}
+
+	// 3. If not found in builtin or connector, try installed plugins.
 	if h.accountInstallationService != nil {
 		organizationID := getOrganizationIDFromContext(c)
 		if organizationID == "" {
@@ -238,7 +270,7 @@ func (h *BuiltinToolsHandler) GetBuiltinProvider(c *gin.Context) {
 		}
 	}
 
-	// 3. Not found in either source
+	// 4. Not found in any source
 	logger.Warn("Provider not found", "provider", providerName)
 	response.Fail(c, response.ErrNotFound)
 }
@@ -330,6 +362,11 @@ func (h *BuiltinToolsHandler) convertProviderEntityToResponse(entity tools.ToolP
 		toolResponses = append(toolResponses, toolResp)
 	}
 
+	providerType := entity.ProviderType
+	if providerType == "" {
+		providerType = tools.ToolProviderTypeBuiltin
+	}
+
 	return BuiltinProviderResponse{
 		ID:          entity.Identity.Name,
 		Author:      entity.Identity.Author,
@@ -337,7 +374,7 @@ func (h *BuiltinToolsHandler) convertProviderEntityToResponse(entity tools.ToolP
 		Description: entity.Identity.Description,
 		Icon:        entity.Identity.Icon,
 		Label:       entity.Identity.Label,
-		Type:        "builtin",
+		Type:        string(providerType),
 		Tags:        entity.Identity.Tags,
 		Tools:       toolResponses,
 	}
@@ -346,7 +383,16 @@ func (h *BuiltinToolsHandler) convertProviderEntityToResponse(entity tools.ToolP
 // convertToolEntityToResponse converts ToolEntity to API response format
 func (h *BuiltinToolsHandler) convertToolEntityToResponse(entity tools.ToolEntity) BuiltinToolResponse {
 	var params []BuiltinParameterResponse
-	for _, param := range entity.Parameters {
+	toolParameters := entity.Parameters
+	if len(toolParameters) == 0 && len(entity.InputSchema) > 0 {
+		converted, err := tools.JSONSchemaToToolParameters(entity.InputSchema)
+		if err == nil {
+			toolParameters = converted
+		} else {
+			logger.Warn("failed to project tool input schema for catalog", "provider", entity.Identity.Provider, "tool", entity.Identity.Name, "error", err)
+		}
+	}
+	for _, param := range toolParameters {
 		paramResp := h.convertParameterToResponse(param)
 		params = append(params, paramResp)
 	}
@@ -364,7 +410,23 @@ func (h *BuiltinToolsHandler) convertToolEntityToResponse(entity tools.ToolEntit
 		Parameters:       params,
 		ConfigParameters: configParameters,
 		Tags:             entity.Tags,
+		OutputSchema:     entity.OutputSchema,
+		WorkflowOutputs:  entity.WorkflowOutputs,
 	}
+}
+
+func filterProviderEntityForCaller(entity tools.ToolProviderEntity, caller tools.ToolInvokeFrom) (tools.ToolProviderEntity, bool) {
+	filtered := entity
+	filtered.Tools = make([]tools.ToolEntity, 0, len(entity.Tools))
+	for _, tool := range entity.Tools {
+		for _, supported := range tool.SupportedCallers {
+			if supported == caller {
+				filtered.Tools = append(filtered.Tools, tool)
+				break
+			}
+		}
+	}
+	return filtered, len(filtered.Tools) > 0
 }
 
 // convertParameterToResponse converts ToolParameter to API response format

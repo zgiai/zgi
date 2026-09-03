@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 )
 
 func TestCanonicalizeExecuteActionBusinessArgumentsUnifiesConditionalSelfIdentity(t *testing.T) {

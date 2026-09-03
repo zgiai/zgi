@@ -22,6 +22,7 @@ import {
   type WorkflowTranslator,
 } from '@/utils/workflow/billing';
 import { classifyWorkflowRuntimeError } from '@/utils/workflow/runtime-error';
+import { integrationErrorCode } from '@/services/integration-error-i18n';
 
 interface WorkflowPrecheckWarningView {
   code?: string;
@@ -45,7 +46,12 @@ export function useWorkflowBillingFeedback(
 ): UseWorkflowBillingFeedbackReturn {
   const router = useRouter();
   const t = useT();
+  const integrationT = useT('integrations');
   const billingT = useCallback<WorkflowTranslator>((key, values) => t(key as never, values), [t]);
+  const integrationTranslator = useCallback<WorkflowTranslator>(
+    (key, values) => integrationT(key as never, values),
+    [integrationT]
+  );
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const { canManageModelConfig: isAdmin } = useAccountCapabilities();
 
@@ -58,10 +64,11 @@ export function useWorkflowBillingFeedback(
         isAdmin,
         workspaceId: currentWorkspace?.id,
         includeRuntimeDetails: true,
+        integrationTranslator,
       });
       return message?.description;
     },
-    [billingT, currentWorkspace?.id, isAdmin, scope]
+    [billingT, currentWorkspace?.id, integrationTranslator, isAdmin, scope]
   );
 
   const notifyBillingError = useCallback(
@@ -70,6 +77,7 @@ export function useWorkflowBillingFeedback(
       const message = getWorkflowBillingErrorMessage(billingT, scope, parsed, {
         isAdmin,
         workspaceId: currentWorkspace?.id,
+        integrationTranslator,
       });
 
       if (!message) {
@@ -78,15 +86,19 @@ export function useWorkflowBillingFeedback(
 
       const code = resolveWorkflowBillingErrorCode(parsed?.code, parsed?.message);
       const runtimeErrorKind = classifyWorkflowRuntimeError(parsed?.message);
+      const integrationCode =
+        integrationErrorCode(parsed?.code) ?? integrationErrorCode(parsed?.message);
       const isBillingError = isWorkflowBillingErrorCode(code);
       const toastFn = isBillingError ? toast.warning : toast.error;
 
       toastFn(message.title, {
-        id: code
-          ? `workflow-billing-${scope}-${code}`
-          : runtimeErrorKind
-            ? `workflow-runtime-${scope}-${runtimeErrorKind}`
-            : undefined,
+        id: integrationCode
+          ? `workflow-integration-${scope}-${integrationCode}`
+          : code
+            ? `workflow-billing-${scope}-${code}`
+            : runtimeErrorKind
+              ? `workflow-runtime-${scope}-${runtimeErrorKind}`
+              : undefined,
         description: message.description,
         classNames: isBillingError ? workflowBillingToastClassNames : undefined,
         action:
@@ -99,7 +111,7 @@ export function useWorkflowBillingFeedback(
       });
       return true;
     },
-    [billingT, currentWorkspace?.id, isAdmin, router, scope]
+    [billingT, currentWorkspace?.id, integrationTranslator, isAdmin, router, scope]
   );
 
   const getPrecheckWarningViews = useCallback(

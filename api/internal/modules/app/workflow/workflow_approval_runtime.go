@@ -134,7 +134,7 @@ func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *appr
 
 	go func() {
 		defer close(doneChan)
-		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
+		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom, nil)
 	}()
 
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
@@ -294,7 +294,7 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 	}
 	go func() {
 		defer close(doneChan)
-		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
+		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom, nil)
 	}()
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
 }

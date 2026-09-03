@@ -3,6 +3,7 @@ package fxapp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -130,6 +131,7 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		RegisterIntegrationAuditCompletionLifecycle(lc, params.ServiceContainer.GetIntegrationExecutor(), params.Logger)
 		RegisterIntegrationOAuthMaintenanceLifecycle(lc, params.ServiceContainer.GetIntegrationOAuthFlowService(), params.Logger)
 		RegisterIntegrationOAuthRecoveryLifecycle(lc, params.ServiceContainer.GetIntegrationOAuthRecoveryService(), params.Logger)
+		RegisterWorkflowConnectorBindingBackfillLifecycle(lc, params.ServiceContainer.GetWorkflowConnectorBindingBackfillRunner(), params.Logger)
 	}
 	RegisterGraphRuntimeHealthLifecycle(lc, graphRuntimeHealth)
 	RegisterGraphEvidenceRepairLifecycle(lc, params.GraphFlowService, params.Logger)
@@ -152,6 +154,37 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 // IntegrationOAuthRecoveryRunner drains encrypted OAuth token recovery work.
 type IntegrationOAuthRecoveryRunner interface {
 	RunOAuthRecovery(ctx context.Context)
+}
+
+// RegisterWorkflowConnectorBindingBackfillLifecycle drains the finite upgrade
+// queue synchronously before the HTTP listener starts. An individual malformed
+// historical Workflow remains fail-closed and queued for a later retry, while
+// valid Workflows and unrelated product surfaces can still start.
+func RegisterWorkflowConnectorBindingBackfillLifecycle(
+	lc fx.Lifecycle,
+	runner container.WorkflowConnectorBindingBackfillRunner,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
+		if err := runner.ReconcileWorkflowConnectorBindingBackfills(ctx); err != nil {
+			var incomplete interface {
+				error
+				WorkflowConnectorBindingBackfillIncomplete() bool
+			}
+			if errors.As(err, &incomplete) && incomplete.WorkflowConnectorBindingBackfillIncomplete() {
+				log.Warn("workflow connector binding backfill remains incomplete", zap.Error(err))
+				return nil
+			}
+			return fmt.Errorf("initialize workflow connector binding backfill: %w", err)
+		}
+		return nil
+	}})
 }
 
 // RegisterIntegrationOAuthRecoveryLifecycle runs durable token recovery for

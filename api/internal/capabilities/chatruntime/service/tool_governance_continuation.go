@@ -636,7 +636,7 @@ func approvedFrozenInvocationHasCompletedServerProjectedBinding(
 ) bool {
 	plan := mapFromOperationContext(metadata["operation_plan"])
 	phases := mapSliceFromAny(plan["phases"])
-	if len(phases) == 0 || !operationPlanPhasesTerminal(phases) {
+	if len(phases) == 0 || !operationPlanPhasesTerminal(plan, phases) {
 		return false
 	}
 	for _, phase := range phases {

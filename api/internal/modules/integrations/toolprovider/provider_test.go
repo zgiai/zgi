@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
+	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
@@ -96,6 +96,10 @@ func TestConnectorProviderInvokesIntegrationExecutor(t *testing.T) {
 		!governance.DataEgress || governance.ExternalDestination != "example.com" ||
 		governance.SensitiveDataAllowed {
 		t.Fatalf("connector governance metadata = %#v", governance)
+	}
+	workflowOutputs := providerTool.GetEntity().WorkflowOutputs
+	if len(workflowOutputs) != 1 || workflowOutputs[0].ID != "result__ok" || workflowOutputs[0].Type != "boolean" {
+		t.Fatalf("connector workflow outputs = %#v", workflowOutputs)
 	}
 	manager := tools.NewToolManager(nil)
 	if err := manager.RegisterProvider(provider); err != nil {
