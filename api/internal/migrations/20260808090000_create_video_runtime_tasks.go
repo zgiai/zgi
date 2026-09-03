@@ -24,6 +24,7 @@ func upCreateVideoRuntimeTasks(schema *mschema.Builder) error {
 			prompt text NOT NULL DEFAULT '',
 			status varchar(40) NOT NULL DEFAULT 'pending',
 			video_url text NOT NULL DEFAULT '',
+			poster_url text NOT NULL DEFAULT '',
 			error_message text NOT NULL DEFAULT '',
 			duration_seconds integer NOT NULL DEFAULT 0,
 			resolution varchar(32) NOT NULL DEFAULT '',

@@ -24,6 +24,7 @@ type videoTaskRecord struct {
 	Prompt           string         `gorm:"column:prompt"`
 	Status           string         `gorm:"column:status"`
 	VideoURL         string         `gorm:"column:video_url"`
+	PosterURL        string         `gorm:"column:poster_url"`
 	ErrorMessage     string         `gorm:"column:error_message"`
 	DurationSeconds  int            `gorm:"column:duration_seconds"`
 	Resolution       string         `gorm:"column:resolution"`
@@ -75,6 +76,7 @@ var videoTaskListColumns = []string{
 	"prompt",
 	"status",
 	"video_url",
+	"poster_url",
 	"error_message",
 	"duration_seconds",
 	"resolution",

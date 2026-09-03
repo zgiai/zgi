@@ -1,13 +1,17 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,6 +37,11 @@ const (
 	defaultDuration              = 5
 	videoCreateTimeout           = 2 * time.Minute
 	videoPlaybackURLTTL          = time.Hour
+	videoPosterTimeout           = 45 * time.Second
+	videoPosterSeekTime          = "0.1"
+	videoPosterMIMEType          = "image/jpeg"
+	videoPosterExtension         = ".jpg"
+	videoPosterMaxBytes          = 10 << 20
 
 	videoPredeductPointsPerSecond int64 = 143
 	internalCreditsPerPoint       int64 = 1000
@@ -45,6 +54,7 @@ type LLMVideoClient interface {
 
 type VideoArtifactSaver interface {
 	SaveRemoteVideo(ctx context.Context, scope Scope, videoURL string) (string, error)
+	SavePosterImage(ctx context.Context, scope Scope, poster []byte) (string, error)
 }
 
 type Service interface {
@@ -60,6 +70,7 @@ type service struct {
 	llmClient       LLMVideoClient
 	tasks           *taskRepository
 	artifactSaver   VideoArtifactSaver
+	posterExtractor func(context.Context, string) ([]byte, error)
 }
 
 func NewService(db *gorm.DB, availableModels llmmodelsvc.AvailableModelsService, llmClient interface{}) Service {
@@ -69,6 +80,7 @@ func NewService(db *gorm.DB, availableModels llmmodelsvc.AvailableModelsService,
 		llmClient:       videoClient,
 		tasks:           newTaskRepository(db),
 		artifactSaver:   defaultVideoArtifactSaver{},
+		posterExtractor: extractVideoPoster,
 	}
 }
 
@@ -94,6 +106,25 @@ func (defaultVideoArtifactSaver) SaveRemoteVideo(_ context.Context, scope Scope,
 		return "", errors.New("stored video url is empty")
 	}
 	return strings.TrimSpace(*stored.URL), nil
+}
+
+func (defaultVideoArtifactSaver) SavePosterImage(ctx context.Context, scope Scope, poster []byte) (string, error) {
+	if len(poster) == 0 {
+		return "", errors.New("video poster is empty")
+	}
+	filename := fmt.Sprintf("video-poster-%s.jpg", time.Now().UTC().Format("20060102150405"))
+	toolFile, err := workflowtoolfile.CreateFileByRawGlobal(ctx, workflowtoolfile.CreateFileByRawParams{
+		UserID:    scope.AccountID.String(),
+		TenantID:  scope.OrganizationID.String(),
+		FileData:  poster,
+		MimeType:  videoPosterMIMEType,
+		Filename:  &filename,
+		Lifecycle: workflowtoolfile.ToolFileLifecyclePersistent,
+	})
+	if err != nil {
+		return "", err
+	}
+	return workflowtoolfile.SignToolFileGlobalWithMode(toolFile.ID, videoPosterExtension, workflowtoolfile.ToolFileURLModePermanent)
 }
 
 func (s *service) ListModels(ctx context.Context, scope Scope) ([]VideoModel, error) {
@@ -291,7 +322,9 @@ func (s *service) startUpstreamVideoTask(record videoTaskRecord, appCtx *llmclie
 				AccountID:      record.AccountID,
 				WorkspaceID:    record.WorkspaceID,
 			}
-			videoURL = s.storeVideoArtifact(ctx, scope, videoURL, payload)
+			var posterURL string
+			videoURL, posterURL = s.storeVideoArtifact(ctx, scope, videoURL, payload)
+			record.PosterURL = posterURL
 		}
 		record.UpstreamTaskID = upstreamID
 		record.Status = status
@@ -469,7 +502,11 @@ func (s *service) refreshTask(ctx context.Context, scope Scope, record *videoTas
 	payload := videoResponsePayload(resp)
 	if videoURL := firstVideoURL(resp); videoURL != "" {
 		if record.Status == "succeeded" {
-			videoURL = s.storeVideoArtifact(ctx, scope, videoURL, payload)
+			var posterURL string
+			videoURL, posterURL = s.storeVideoArtifact(ctx, scope, videoURL, payload)
+			if posterURL != "" {
+				record.PosterURL = posterURL
+			}
 		}
 		record.VideoURL = videoURL
 	}
@@ -707,10 +744,13 @@ func firstVideoURL(resp *adapter.VideoResponse) string {
 	return ""
 }
 
-func (s *service) storeVideoArtifact(ctx context.Context, scope Scope, videoURL string, payload map[string]any) string {
+func (s *service) storeVideoArtifact(ctx context.Context, scope Scope, videoURL string, payload map[string]any) (string, string) {
 	videoURL = strings.TrimSpace(videoURL)
-	if videoURL == "" || s == nil || s.artifactSaver == nil || isStoredVideoArtifactURL(videoURL) {
-		return videoURL
+	if videoURL == "" || s == nil || s.artifactSaver == nil {
+		return videoURL, ""
+	}
+	if isStoredVideoArtifactURL(videoURL) {
+		return videoURL, s.generateVideoPoster(ctx, scope, videoURL, payload)
 	}
 	storedURL, err := s.artifactSaver.SaveRemoteVideo(ctx, scope, videoURL)
 	if err != nil {
@@ -719,14 +759,106 @@ func (s *service) storeVideoArtifact(ctx context.Context, scope Scope, videoURL 
 			payload["video_transfer_error"] = err.Error()
 			payload["video_source_url"] = videoURL
 		}
-		return videoURL
+		return videoURL, s.generateVideoPoster(ctx, scope, videoURL, payload)
 	}
 	if payload != nil {
 		payload["video_transfer_status"] = "succeeded"
 		payload["video_source_url"] = videoURL
 		payload["stored_video_url"] = storedURL
 	}
-	return storedURL
+	return storedURL, s.generateVideoPoster(ctx, scope, storedURL, payload)
+}
+
+func (s *service) generateVideoPoster(ctx context.Context, scope Scope, videoURL string, payload map[string]any) string {
+	videoURL = strings.TrimSpace(videoURL)
+	if videoURL == "" || s == nil || s.artifactSaver == nil {
+		return ""
+	}
+	extractor := s.posterExtractor
+	if extractor == nil {
+		extractor = extractVideoPoster
+	}
+	posterCtx, cancel := context.WithTimeout(ctx, videoPosterTimeout)
+	defer cancel()
+	poster, err := extractor(posterCtx, videoURL)
+	if err != nil {
+		if payload != nil {
+			payload["poster_generation_status"] = "failed"
+			payload["poster_generation_error"] = err.Error()
+		}
+		return ""
+	}
+	posterURL, err := s.artifactSaver.SavePosterImage(ctx, scope, poster)
+	if err != nil {
+		if payload != nil {
+			payload["poster_generation_status"] = "failed"
+			payload["poster_generation_error"] = err.Error()
+		}
+		return ""
+	}
+	posterURL = strings.TrimSpace(posterURL)
+	if posterURL == "" {
+		if payload != nil {
+			payload["poster_generation_status"] = "failed"
+			payload["poster_generation_error"] = "stored poster url is empty"
+		}
+		return ""
+	}
+	if payload != nil {
+		payload["poster_generation_status"] = "succeeded"
+		payload["poster_url"] = posterURL
+	}
+	return posterURL
+}
+
+func extractVideoPoster(ctx context.Context, videoURL string) ([]byte, error) {
+	videoURL = strings.TrimSpace(videoURL)
+	if videoURL == "" {
+		return nil, errors.New("video url is empty")
+	}
+	tempDir, err := os.MkdirTemp("", "zgi-video-poster-*")
+	if err != nil {
+		return nil, fmt.Errorf("create video poster temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	posterPath := filepath.Join(tempDir, "poster.jpg")
+	cmd := exec.CommandContext(ctx,
+		"ffmpeg",
+		"-hide_banner",
+		"-loglevel", "error",
+		"-y",
+		"-ss", videoPosterSeekTime,
+		"-i", videoURL,
+		"-frames:v", "1",
+		"-q:v", "3",
+		posterPath,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			return nil, fmt.Errorf("extract video poster: %w", err)
+		}
+		return nil, fmt.Errorf("extract video poster: %w: %s", err, message)
+	}
+
+	info, err := os.Stat(posterPath)
+	if err != nil {
+		return nil, fmt.Errorf("read video poster file info: %w", err)
+	}
+	if info.Size() <= 0 {
+		return nil, errors.New("video poster file is empty")
+	}
+	if info.Size() > videoPosterMaxBytes {
+		return nil, fmt.Errorf("video poster file is too large: %d bytes", info.Size())
+	}
+	poster, err := os.ReadFile(posterPath)
+	if err != nil {
+		return nil, fmt.Errorf("read video poster file: %w", err)
+	}
+	return poster, nil
 }
 
 func isStoredVideoArtifactURL(videoURL string) bool {
@@ -971,6 +1103,7 @@ func taskFromRecord(record videoTaskRecord) VideoTask {
 		Prompt:           record.Prompt,
 		Status:           record.Status,
 		VideoURL:         record.VideoURL,
+		PosterURL:        record.PosterURL,
 		ErrorMessage:     record.ErrorMessage,
 		DurationSeconds:  record.DurationSeconds,
 		Resolution:       record.Resolution,

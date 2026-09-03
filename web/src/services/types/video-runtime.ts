@@ -44,6 +44,7 @@ export interface VideoRuntimeTask {
   status: VideoTaskStatus;
   video_url?: string;
   playback_url?: string;
+  poster_url?: string;
   error_message?: string;
   duration_seconds?: number;
   resolution?: string;

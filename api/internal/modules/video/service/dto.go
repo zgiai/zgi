@@ -54,6 +54,7 @@ type VideoTask struct {
 	Status           string         `json:"status"`
 	VideoURL         string         `json:"video_url,omitempty"`
 	PlaybackURL      string         `json:"playback_url,omitempty"`
+	PosterURL        string         `json:"poster_url,omitempty"`
 	ErrorMessage     string         `json:"error_message,omitempty"`
 	DurationSeconds  int            `json:"duration_seconds,omitempty"`
 	Resolution       string         `json:"resolution,omitempty"`

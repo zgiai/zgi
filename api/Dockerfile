@@ -53,6 +53,7 @@ RUN apk --no-cache add \
     tesseract-ocr \
     tesseract-ocr-data-eng \
     tesseract-ocr-data-chi_sim \
+    ffmpeg \
     && fc-cache -f
 
 # Set timezone

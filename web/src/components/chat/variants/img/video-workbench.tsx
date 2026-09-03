@@ -715,8 +715,7 @@ function VideoTaskCard({
   const status = getTaskDisplayStatus(task);
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
-  const videoUrl = status === 'succeeded' ? taskPlaybackURL(task) : '';
-  const posterUrl = videoUrl ? videoPosterCache.get(videoUrl) || '' : '';
+  const posterUrl = status === 'succeeded' ? taskPosterURL(task) : '';
   const Icon = isLoadingStatus
     ? Loader2
     : status === 'succeeded'
@@ -749,18 +748,8 @@ function VideoTaskCard({
       )}
     >
       <div className="relative h-[72px] w-[92px] shrink-0 overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-slate-800 via-slate-900 to-black shadow-sm">
-        {videoUrl ? (
-          posterUrl ? (
-            <img src={posterUrl} alt="" className="h-full w-full object-cover opacity-90" />
-          ) : (
-            <video
-              src={videoUrl}
-              muted
-              playsInline
-              preload="metadata"
-              className="h-full w-full object-cover opacity-90"
-            />
-          )
+        {posterUrl ? (
+          <img src={posterUrl} alt="" className="h-full w-full object-cover opacity-90" />
         ) : (
           <Image
             src="/assets/video/default-video-cover.webp"
@@ -1198,7 +1187,9 @@ function TaskDetailSheet({
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
   const isDownloadingVideo = Boolean(task?.task_id && downloadingTaskId === task.task_id);
   const videoUrl = taskPlaybackURL(task);
-  const posterUrl = useVideoPoster(videoUrl);
+  const storedPosterUrl = taskPosterURL(task);
+  const generatedPosterUrl = useVideoPoster(storedPosterUrl ? undefined : videoUrl);
+  const posterUrl = storedPosterUrl || generatedPosterUrl;
   const displayErrorMessage = React.useMemo(
     () => formatVideoTaskErrorMessage(task?.error_message, locale),
     [locale, task?.error_message]
@@ -1527,16 +1518,20 @@ function useVideoPoster(url: string | undefined) {
 function preloadTaskMedia(task: VideoRuntimeTask, options: { eagerVideo?: boolean } = {}) {
   if (typeof window === 'undefined') return;
 
+  const posterUrl = taskPosterURL(task);
+  preloadImage(posterUrl);
   const videoUrl = taskPlaybackURL(task);
-  preloadVideo(videoUrl, options.eagerVideo ? 'auto' : 'metadata');
-  if (options.eagerVideo) void ensureVideoPoster(videoUrl);
+  if (options.eagerVideo) {
+    preloadVideo(videoUrl, 'auto');
+    if (!posterUrl) void ensureVideoPoster(videoUrl);
+  }
   getTaskReferenceMaterials(task, '', '').forEach(material => {
     if (material.kind === 'image') {
       preloadImage(material.url);
-    } else if (material.kind === 'video') {
+    } else if (material.kind === 'video' && options.eagerVideo) {
       const materialVideoUrl = toDirectToolFileDeliveryUrl(material.url);
-      preloadVideo(materialVideoUrl, options.eagerVideo ? 'auto' : 'metadata');
-      if (options.eagerVideo) void ensureVideoPoster(materialVideoUrl);
+      preloadVideo(materialVideoUrl, 'auto');
+      void ensureVideoPoster(materialVideoUrl);
     }
   });
 }
@@ -1652,6 +1647,10 @@ function ensureVideoPoster(url: string | undefined): Promise<string | null> {
 
 function taskPlaybackURL(task: VideoRuntimeTask | null | undefined) {
   return task?.playback_url?.trim() || toDirectToolFileDeliveryUrl(task?.video_url);
+}
+
+function taskPosterURL(task: VideoRuntimeTask | null | undefined) {
+  return task?.poster_url?.trim() || '';
 }
 
 function toDirectToolFileDeliveryUrl(url: string | undefined) {
