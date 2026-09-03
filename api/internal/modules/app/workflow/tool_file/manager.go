@@ -491,6 +491,13 @@ func GetFileBinaryGlobal(ctx context.Context, toolFileID string) ([]byte, string
 	return GlobalToolFileManager.GetFileBinary(ctx, toolFileID)
 }
 
+func GetPresignedFileURLGlobal(ctx context.Context, toolFileID string, expires time.Duration) (string, bool, error) {
+	if GlobalToolFileManager == nil {
+		return "", false, fmt.Errorf("tool file manager not initialized")
+	}
+	return GlobalToolFileManager.GetPresignedFileURL(ctx, toolFileID, expires)
+}
+
 func GetToolFilesByIDsGlobal(ctx context.Context, toolFileIDs []string) (map[string]*ToolFile, error) {
 	if GlobalToolFileManager == nil {
 		return nil, fmt.Errorf("tool file manager not initialized")

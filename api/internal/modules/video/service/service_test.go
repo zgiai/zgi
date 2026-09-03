@@ -209,3 +209,46 @@ func TestStoreVideoArtifactSkipsStoredURL(t *testing.T) {
 		t.Fatalf("artifact saver calls = %d, want 0", saver.calls)
 	}
 }
+
+func TestToolFileIDFromSignedVideoURL(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "absolute signed tool URL",
+			raw:  "https://console.example.com/console/api/files/tools/abc123.mp4?expires_at=123&signature=secret",
+			want: "abc123",
+		},
+		{
+			name: "relative signed tool URL",
+			raw:  "/console/api/files/tools/video-20260903-abcdef.mp4?expires_at=123",
+			want: "video-20260903-abcdef",
+		},
+		{
+			name: "tool URL without extension",
+			raw:  "/console/api/files/tools/video-20260903-abcdef?expires_at=123",
+			want: "video-20260903-abcdef",
+		},
+		{
+			name: "upstream URL",
+			raw:  "https://upstream.example.com/videos/result.mp4",
+			want: "",
+		},
+		{
+			name: "empty URL",
+			raw:  "",
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := toolFileIDFromSignedVideoURL(tc.raw)
+			if got != tc.want {
+				t.Fatalf("toolFileIDFromSignedVideoURL(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}

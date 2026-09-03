@@ -715,7 +715,7 @@ function VideoTaskCard({
   const status = getTaskDisplayStatus(task);
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
-  const videoUrl = toDirectToolFileDeliveryUrl(status === 'succeeded' ? task.video_url : undefined);
+  const videoUrl = status === 'succeeded' ? taskPlaybackURL(task) : '';
   const posterUrl = videoUrl ? videoPosterCache.get(videoUrl) || '' : '';
   const Icon = isLoadingStatus
     ? Loader2
@@ -1197,7 +1197,7 @@ function TaskDetailSheet({
   const [downloadingTaskId, setDownloadingTaskId] = React.useState<string | null>(null);
   const status = task ? getTaskDisplayStatus(task) : normalizeStatus('');
   const isDownloadingVideo = Boolean(task?.task_id && downloadingTaskId === task.task_id);
-  const videoUrl = toDirectToolFileDeliveryUrl(task?.video_url);
+  const videoUrl = taskPlaybackURL(task);
   const posterUrl = useVideoPoster(videoUrl);
   const displayErrorMessage = React.useMemo(
     () => formatVideoTaskErrorMessage(task?.error_message, locale),
@@ -1527,7 +1527,7 @@ function useVideoPoster(url: string | undefined) {
 function preloadTaskMedia(task: VideoRuntimeTask, options: { eagerVideo?: boolean } = {}) {
   if (typeof window === 'undefined') return;
 
-  const videoUrl = toDirectToolFileDeliveryUrl(task.video_url);
+  const videoUrl = taskPlaybackURL(task);
   preloadVideo(videoUrl, options.eagerVideo ? 'auto' : 'metadata');
   if (options.eagerVideo) void ensureVideoPoster(videoUrl);
   getTaskReferenceMaterials(task, '', '').forEach(material => {
@@ -1648,6 +1648,10 @@ function ensureVideoPoster(url: string | undefined): Promise<string | null> {
 
   videoPosterPromises.set(normalizedUrl, posterPromise);
   return posterPromise;
+}
+
+function taskPlaybackURL(task: VideoRuntimeTask | null | undefined) {
+  return task?.playback_url?.trim() || toDirectToolFileDeliveryUrl(task?.video_url);
 }
 
 function toDirectToolFileDeliveryUrl(url: string | undefined) {

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -30,6 +32,7 @@ const (
 	defaultResolution            = "720p"
 	defaultDuration              = 5
 	videoCreateTimeout           = 2 * time.Minute
+	videoPlaybackURLTTL          = time.Hour
 
 	videoPredeductPointsPerSecond int64 = 143
 	internalCreditsPerPoint       int64 = 1000
@@ -133,7 +136,7 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	if clientRequestID != "" {
 		existing, err := s.tasks.findByClientRequestID(operationCtx, scope, clientRequestID)
 		if err == nil {
-			return &GenerateResult{Task: taskFromRecord(*existing)}, nil
+			return &GenerateResult{Task: taskFromRecordWithPlaybackURL(operationCtx, *existing)}, nil
 		}
 		if !errors.Is(err, ErrTaskNotFound) {
 			return nil, err
@@ -189,14 +192,14 @@ func (s *service) Generate(ctx context.Context, scope Scope, req GenerateRequest
 	if err := s.tasks.create(operationCtx, record); err != nil {
 		if clientRequestID != "" {
 			if existing, findErr := s.tasks.findByClientRequestID(operationCtx, scope, clientRequestID); findErr == nil {
-				return &GenerateResult{Task: taskFromRecord(*existing)}, nil
+				return &GenerateResult{Task: taskFromRecordWithPlaybackURL(operationCtx, *existing)}, nil
 			}
 		}
 		return nil, err
 	}
 
 	s.startUpstreamVideoTask(*record, appCtx, videoReq)
-	task := taskFromRecord(*record)
+	task := taskFromRecordWithPlaybackURL(operationCtx, *record)
 	return &GenerateResult{Task: task}, nil
 }
 
@@ -338,7 +341,7 @@ func (s *service) ListTasks(ctx context.Context, scope Scope, query ListTasksQue
 	}
 	result := make([]VideoTask, 0, len(page.Records))
 	for _, record := range page.Records {
-		result = append(result, taskFromRecord(record))
+		result = append(result, taskFromRecordWithPlaybackURL(ctx, record))
 	}
 	nextCursor := ""
 	if page.HasMore && len(page.Records) > 0 {
@@ -383,7 +386,7 @@ func (s *service) GetTask(ctx context.Context, scope Scope, taskID string) (*Vid
 			_ = s.markVideoRuntimeTaskFailedFromError(ctx, record, err)
 		}
 	}
-	task := taskFromRecord(*record)
+	task := taskFromRecordWithPlaybackURL(ctx, *record)
 	return &task, nil
 }
 
@@ -983,6 +986,50 @@ func taskFromRecord(record videoTaskRecord) VideoTask {
 		UpdatedAt:        record.UpdatedAt,
 		CompletedAt:      record.CompletedAt,
 	}
+}
+
+func taskFromRecordWithPlaybackURL(ctx context.Context, record videoTaskRecord) VideoTask {
+	task := taskFromRecord(record)
+	task.PlaybackURL = videoPlaybackURL(ctx, task.VideoURL)
+	return task
+}
+
+func videoPlaybackURL(ctx context.Context, videoURL string) string {
+	toolFileID := toolFileIDFromSignedVideoURL(videoURL)
+	if toolFileID == "" {
+		return ""
+	}
+
+	directURL, supported, err := workflowtoolfile.GetPresignedFileURLGlobal(ctx, toolFileID, videoPlaybackURLTTL)
+	if err != nil || !supported {
+		return ""
+	}
+	return strings.TrimSpace(directURL)
+}
+
+func toolFileIDFromSignedVideoURL(rawURL string) string {
+	normalizedURL := strings.TrimSpace(rawURL)
+	if normalizedURL == "" {
+		return ""
+	}
+
+	parsedURL, err := url.Parse(normalizedURL)
+	if err != nil {
+		return ""
+	}
+
+	const toolFilePathPrefix = "/console/api/files/tools/"
+	pathname := parsedURL.Path
+	index := strings.LastIndex(pathname, toolFilePathPrefix)
+	if index < 0 {
+		return ""
+	}
+
+	filename := path.Base(pathname[index+len(toolFilePathPrefix):])
+	if filename == "." || filename == "/" {
+		return ""
+	}
+	return strings.TrimSuffix(filename, path.Ext(filename))
 }
 
 func mapFromJSON(data datatypes.JSON) map[string]any {
