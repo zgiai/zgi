@@ -80,7 +80,7 @@ const retainedPreloadedVideoElements = new Map<string, HTMLVideoElement>();
 const mountedRetainedVideoUrls = new Set<string>();
 const videoPosterCache = new Map<string, string>();
 const videoPosterPromises = new Map<string, Promise<string | null>>();
-const HISTORY_AUTO_PREFETCH_COUNT = 6;
+const VIDEO_HISTORY_PAGE_SIZE = 10;
 const MAX_RETAINED_VIDEO_PRELOADS = 12;
 const REFERENCE_KIND_ORDER: ReferenceKind[] = ['image', 'video', 'audio'];
 const REFERENCE_ACCEPT_BY_KIND: Record<ReferenceKind, string> = {
@@ -530,10 +530,6 @@ function GenerationRecordsSidebar({
   const [deleteTargetTask, setDeleteTargetTask] = React.useState<VideoRuntimeTask | null>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
-  const autoPrefetchTasks = React.useMemo(
-    () => tasks.slice(0, HISTORY_AUTO_PREFETCH_COUNT),
-    [tasks]
-  );
   const loadMoreRef = useInfiniteObserver({
     hasNextPage,
     isFetchingNextPage,
@@ -546,18 +542,6 @@ function GenerationRecordsSidebar({
   React.useEffect(() => {
     listRef.current?.scrollTo({ top: 0 });
   }, [query]);
-
-  React.useEffect(() => {
-    if (isLoading || isError || isSearchPending || autoPrefetchTasks.length === 0) return;
-
-    const timeoutIds = autoPrefetchTasks.map((task, index) =>
-      window.setTimeout(() => onPrefetchTask(task), 120 + index * 80)
-    );
-
-    return () => {
-      timeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId));
-    };
-  }, [autoPrefetchTasks, isError, isLoading, isSearchPending, onPrefetchTask]);
 
   return (
     <aside className="hidden h-full w-[328px] shrink-0 flex-col border-r border-border bg-background md:flex">
@@ -685,7 +669,7 @@ function GenerationRecordsSidebar({
                 >
                   {t('chat.videoWorkbench.loadMoreRecords')}
                 </Button>
-              ) : total > 20 ? (
+              ) : total > VIDEO_HISTORY_PAGE_SIZE ? (
                 <span className="text-[11px] text-muted-foreground">
                   {t('chat.videoWorkbench.allRecordsLoaded')}
                 </span>
@@ -732,7 +716,7 @@ function VideoTaskCard({
   const isLoadingStatus = status === 'pending' || status === 'running';
   const deleteDisabled = isDeleting || isActiveVideoTaskStatus(task.status);
   const videoUrl = toDirectToolFileDeliveryUrl(status === 'succeeded' ? task.video_url : undefined);
-  const posterUrl = useVideoPoster(videoUrl);
+  const posterUrl = videoUrl ? videoPosterCache.get(videoUrl) || '' : '';
   const Icon = isLoadingStatus
     ? Loader2
     : status === 'succeeded'
