@@ -30,7 +30,7 @@ export function prioritizeModelsByUseCase(
 
 export function modelDisplayVendor(model: ModelItem): string {
   if (model.is_custom) return model.provider;
-  return model.vendor?.trim().toLowerCase() || model.provider;
+  return model.vendor?.trim().toLowerCase() || '';
 }
 
 export function aggregatePlatformModels(models: ModelItem[]): ModelItem[] {
@@ -44,30 +44,49 @@ export function aggregatePlatformModels(models: ModelItem[]): ModelItem[] {
     }
 
     const vendor = modelDisplayVendor(model);
+    if (!vendor) continue;
     const key = `${vendor}\u0000${model.model}`;
     const existingIndex = platformIndexes.get(key);
     if (existingIndex === undefined) {
       platformIndexes.set(key, result.length);
-      result.push({ ...model, vendor });
+      result.push(normalizePlatformVendor(model, vendor));
       continue;
     }
 
-    result[existingIndex] = mergePlatformModel(result[existingIndex], model, vendor);
+    result[existingIndex] = mergePlatformModel(result[existingIndex], model);
   }
 
   return result;
 }
 
-function mergePlatformModel(current: ModelItem, incoming: ModelItem, vendor: string): ModelItem {
-  const primary = preferPlatformModel(current, incoming, vendor) ? current : incoming;
+function normalizePlatformVendor(model: ModelItem, vendor: string): ModelItem {
+  const sourceVendor = model.vendor?.trim().toLowerCase() || model.provider.trim().toLowerCase();
+  if (sourceVendor === vendor) return { ...model, vendor };
+  return {
+    ...model,
+    vendor,
+    vendor_name: undefined,
+    vendor_cn_name: undefined,
+    vendor_en_name: undefined,
+  };
+}
+
+function mergePlatformModel(current: ModelItem, incoming: ModelItem): ModelItem {
+  const currentVendor = modelDisplayVendor(current);
+  const incomingVendor = modelDisplayVendor(incoming);
+  const primary = preferPlatformModel(current, incoming, currentVendor, incomingVendor) ? current : incoming;
   const secondary = primary === current ? incoming : current;
+  const resolvedVendor = primary === current ? currentVendor : incomingVendor;
+  const secondaryDeclaredVendor =
+    secondary.vendor?.trim().toLowerCase() || secondary.provider.trim().toLowerCase();
+  const secondaryHasSameVendor = secondaryDeclaredVendor === resolvedVendor;
   return {
     ...secondary,
     ...primary,
-    vendor,
-    vendor_name: primary.vendor_name || secondary.vendor_name,
-    vendor_cn_name: primary.vendor_cn_name || secondary.vendor_cn_name,
-    vendor_en_name: primary.vendor_en_name || secondary.vendor_en_name,
+    vendor: resolvedVendor,
+    vendor_name: primary.vendor_name || (secondaryHasSameVendor ? secondary.vendor_name : undefined),
+    vendor_cn_name: primary.vendor_cn_name || (secondaryHasSameVendor ? secondary.vendor_cn_name : undefined),
+    vendor_en_name: primary.vendor_en_name || (secondaryHasSameVendor ? secondary.vendor_en_name : undefined),
     is_flagship: Boolean(current.is_flagship || incoming.is_flagship),
     is_recommended: Boolean(current.is_recommended || incoming.is_recommended),
     is_featured: Boolean(current.is_featured || incoming.is_featured),
@@ -84,16 +103,33 @@ function mergePlatformModel(current: ModelItem, incoming: ModelItem, vendor: str
   };
 }
 
-function preferPlatformModel(current: ModelItem, incoming: ModelItem, vendor: string): boolean {
-  const rank = (model: ModelItem) =>
+function preferPlatformModel(
+  current: ModelItem,
+  incoming: ModelItem,
+  currentVendor: string,
+  incomingVendor: string
+): boolean {
+  const rank = (model: ModelItem, vendor: string) =>
+    modelOwnerAffinity(model.model, vendor) +
     (model.provider.toLowerCase() === vendor ? 8 : 0) +
     (model.callable ? 4 : 0) +
     (model.is_recommended ? 2 : 0) +
     (model.is_available ? 1 : 0);
-  const currentRank = rank(current);
-  const incomingRank = rank(incoming);
+  const currentRank = rank(current, currentVendor);
+  const incomingRank = rank(incoming, incomingVendor);
   if (currentRank !== incomingRank) return currentRank > incomingRank;
   return `${current.provider}\u0000${current.id}` <= `${incoming.provider}\u0000${incoming.id}`;
+}
+
+function modelOwnerAffinity(model: string, vendor: string): number {
+  const normalizedModel = model.trim().toLowerCase();
+  const normalizedVendor = vendor.trim().toLowerCase();
+  if (!normalizedModel || !normalizedVendor) return 0;
+  return normalizedModel === normalizedVendor ||
+    normalizedModel.startsWith(`${normalizedVendor}-`) ||
+    normalizedModel.startsWith(`${normalizedVendor}/`)
+    ? 16
+    : 0;
 }
 
 function union<T>(left: T[] | null | undefined, right: T[] | null | undefined): T[] {

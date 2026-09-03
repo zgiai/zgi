@@ -31,6 +31,7 @@ type ChatRequest struct {
 	FileIDs                          []string               `json:"file_ids,omitempty"`
 	Model                            string                 `json:"model,omitempty"`
 	Provider                         string                 `json:"provider,omitempty"`
+	RoutingStrategy                  string                 `json:"routing_strategy,omitempty"`
 	ResponseMode                     string                 `json:"response_mode,omitempty"`
 	Parameters                       map[string]interface{} `json:"parameters,omitempty"`
 	UseMemory                        bool                   `json:"use_memory,omitempty"`
@@ -50,6 +51,7 @@ type RegenerateMessageRequest struct {
 	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
 	Model            *string                `json:"model,omitempty"`
 	Provider         *string                `json:"provider,omitempty"`
+	RoutingStrategy  *string                `json:"routing_strategy,omitempty"`
 	Parameters       map[string]interface{} `json:"parameters,omitempty"`
 	UseMemory        *bool                  `json:"use_memory,omitempty"`
 }

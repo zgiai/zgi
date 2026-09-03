@@ -12,7 +12,9 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
@@ -234,6 +236,30 @@ func insertGatewayCatalogModel(t *testing.T, db *gorm.DB, id uuid.UUID, provider
 	).Error; err != nil {
 		t.Fatalf("insert model for provider %q: %v", provider, err)
 	}
+}
+
+func TestHydratePlatformModelIdentityUsesGenericCatalogVendorMapping(t *testing.T) {
+	db := openGatewayCatalogDB(t)
+	ownerModelID := uuid.New()
+	insertGatewayCatalogModel(t, db, ownerModelID, "model-owner", "general-chat-model")
+	catalogvendor.Replace([]catalogvendor.Entry{{
+		Provider: "supplier-cloud",
+		Model:    "general-chat-model",
+		Vendor:   "model-owner",
+	}})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		Model: llmmodel.LLMModel{
+			Provider: "supplier-cloud",
+			Model:    "general-chat-model",
+		},
+	}
+	require.NoError(t, hydratePlatformModelIdentity(t.Context(), db, selection))
+	require.Equal(t, "model-owner", selection.ModelVendor)
+	require.NotEqual(t, uuid.Nil, selection.ModelVendorProviderID)
+	require.Equal(t, ownerModelID, selection.ModelVendorModelID)
 }
 
 func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
@@ -661,7 +687,7 @@ func TestSelectChannelsForProviderRejectsWrongOfficialProviderForSameName(t *tes
 	}
 }
 
-func TestSelectChannelsForProviderRejectsAmbiguousProviderlessCatalogModel(t *testing.T) {
+func TestSelectChannelsForProviderResolvesProviderlessCatalogModelFromEnabledRoute(t *testing.T) {
 	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
 	db := openGatewayCatalogDB(t)
 	organizationID := uuid.New()
@@ -690,12 +716,50 @@ func TestSelectChannelsForProviderRejectsAmbiguousProviderlessCatalogModel(t *te
 		modelName,
 		1,
 	)
-	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("SelectChannelsForProvider = (%#v, %v), want ambiguous provider error", selections, err)
+	if err != nil {
+		t.Fatalf("SelectChannelsForProvider returned error: %v", err)
 	}
-	if selections != nil {
-		t.Fatalf("selections = %#v, want nil", selections)
+	if len(selections) != 1 || selections[0].Model == nil {
+		t.Fatalf("selections = %#v, want one catalog model", selections)
 	}
+	if selections[0].Model.Provider != "openai" {
+		t.Fatalf("selection provider = %q, want enabled route provider openai", selections[0].Model.Provider)
+	}
+}
+
+func TestSelectChannelsForProviderReplacesUnavailableRepresentativeWithinSameVendor(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "general-chat-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-a", modelName)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-b", modelName)
+	catalogvendor.Replace([]catalogvendor.Entry{
+		{Provider: "supplier-a", Model: modelName, Vendor: "model-owner"},
+		{Provider: "supplier-b", Model: modelName, Vendor: "model-owner"},
+	})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "supplier-b", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(t.Context(), organizationID, "supplier-a", modelName, 1)
+	require.NoError(t, err)
+	require.Len(t, selections, 1)
+	require.NotNil(t, selections[0].Model)
+	require.Equal(t, "supplier-b", selections[0].Model.Provider)
 }
 
 func TestSelectChannelsForProviderUsesHintForAmbiguousCatalogModel(t *testing.T) {

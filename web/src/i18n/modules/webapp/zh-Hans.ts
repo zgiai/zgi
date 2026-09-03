@@ -428,7 +428,6 @@ const messages: WebappMessages = {
     routingStrategy: {
       label: '路由策略',
       options: {
-        balanced: '综合均衡',
         speed: '速度优先',
         price: '价格优先',
         stability: '稳定优先',

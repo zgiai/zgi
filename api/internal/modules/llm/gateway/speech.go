@@ -120,13 +120,17 @@ func (s *llmGatewayServiceImpl) GenerateSpeech(
 				ProviderName:          selection.Provider.Provider,
 				IsStreaming:           true,
 			})
-			return speechAdapter.GenerateSpeech(callContext, &adapter.SpeechRequest{
+			adapterRequest := &adapter.SpeechRequest{
 				RequestID:      requestID,
 				Model:          request.Model,
 				Input:          request.Input,
 				Voice:          request.Voice,
 				ResponseFormat: request.ResponseFormat,
-			}, dst)
+			}
+			if err := speechAdapter.GenerateSpeech(callContext, adapterRequest, dst); err != nil {
+				return err
+			}
+			return s.mirrorPlatformMediaSettlement(ctx, apiKey, selection, shadowOrganizationID, requestID, requestID, PricingOperationSpeech, true, startedAt, adapterRequest.Settlement)
 		}
 
 		usage := MeteredUsage{

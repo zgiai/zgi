@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 	"gorm.io/gorm"
 )
@@ -39,22 +40,23 @@ type modelUsageSummaryRow struct {
 }
 
 type modelUsageModelRow struct {
-	ModelID          uuid.UUID `gorm:"column:model_id"`
-	ModelName        string    `gorm:"column:model_name"`
-	ProviderID       uuid.UUID `gorm:"column:provider_id"`
-	ProviderName     string    `gorm:"column:provider_name"`
-	AttemptCount     int64     `gorm:"column:attempt_count"`
-	SuccessCount     int64     `gorm:"column:success_count"`
-	FailedCount      int64     `gorm:"column:failed_count"`
-	PartialCount     int64     `gorm:"column:partial_count"`
-	PromptTokens     int64     `gorm:"column:prompt_tokens"`
-	CacheReadTokens  int64     `gorm:"column:cache_read_tokens"`
-	CacheWriteTokens int64     `gorm:"column:cache_write_tokens"`
-	CompletionTokens int64     `gorm:"column:completion_tokens"`
-	TotalTokens      int64     `gorm:"column:total_tokens"`
-	OfficialPoints   int64     `gorm:"column:official_points"`
-	PrivatePoints    int64     `gorm:"column:private_points"`
-	TotalPoints      int64     `gorm:"column:total_points"`
+	ModelID           uuid.UUID `gorm:"column:model_id"`
+	ModelName         string    `gorm:"column:model_name"`
+	ProviderID        uuid.UUID `gorm:"column:provider_id"`
+	ProviderName      string    `gorm:"column:provider_name"`
+	UseSystemProvider bool      `gorm:"column:use_system_provider"`
+	AttemptCount      int64     `gorm:"column:attempt_count"`
+	SuccessCount      int64     `gorm:"column:success_count"`
+	FailedCount       int64     `gorm:"column:failed_count"`
+	PartialCount      int64     `gorm:"column:partial_count"`
+	PromptTokens      int64     `gorm:"column:prompt_tokens"`
+	CacheReadTokens   int64     `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens  int64     `gorm:"column:cache_write_tokens"`
+	CompletionTokens  int64     `gorm:"column:completion_tokens"`
+	TotalTokens       int64     `gorm:"column:total_tokens"`
+	OfficialPoints    int64     `gorm:"column:official_points"`
+	PrivatePoints     int64     `gorm:"column:private_points"`
+	TotalPoints       int64     `gorm:"column:total_points"`
 }
 
 type modelUsageAppTypeRow struct {
@@ -183,6 +185,7 @@ func (r *statisticsRepositoryImpl) queryModelUsageByModel(ctx context.Context, f
 			b.model_name,
 			b.provider_id,
 			b.provider_name,
+			b.use_system_provider,
 			COUNT(*) as attempt_count,
 			COALESCE(SUM(CASE WHEN b.status = 'success' THEN 1 ELSE 0 END), 0) as success_count,
 			COALESCE(SUM(CASE WHEN b.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_count,
@@ -197,13 +200,55 @@ func (r *statisticsRepositoryImpl) queryModelUsageByModel(ctx context.Context, f
 			COALESCE(SUM(b.total_points), 0) as total_points
 		`)
 	query = applyUsageBillFilters(query, "b", filters).
-		Group("b.model_id, b.model_name, b.provider_id, b.provider_name").
+		Group("b.model_id, b.model_name, b.provider_id, b.provider_name, b.use_system_provider").
 		Order("total_points DESC").
 		Order("total_tokens DESC")
 	if err := query.Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	return rows, nil
+	return r.normalizePlatformModelUsageRows(ctx, rows), nil
+}
+
+func (r *statisticsRepositoryImpl) normalizePlatformModelUsageRows(ctx context.Context, rows []modelUsageModelRow) []modelUsageModelRow {
+	merged := make(map[string]modelUsageModelRow, len(rows))
+	order := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.UseSystemProvider {
+			vendor := strings.TrimSpace(catalogvendor.Lookup(row.ProviderName, row.ModelName))
+			if vendor == "" {
+				vendor = invocationModelVendor(row.ProviderName, row.ModelName)
+			}
+			if vendor != "" && vendor != row.ProviderName {
+				row.ProviderName = vendor
+				_ = r.db.WithContext(ctx).Unscoped().Table("llm_providers").Select("id").Where("provider = ?", vendor).Scan(&row.ProviderID).Error
+				_ = r.db.WithContext(ctx).Unscoped().Table("llm_models").Select("id").Where("provider = ? AND name = ?", vendor, row.ModelName).Scan(&row.ModelID).Error
+			}
+		}
+		key := row.ModelID.String() + "\x00" + row.ProviderID.String() + "\x00" + row.ModelName + "\x00" + row.ProviderName
+		if current, ok := merged[key]; ok {
+			current.AttemptCount += row.AttemptCount
+			current.SuccessCount += row.SuccessCount
+			current.FailedCount += row.FailedCount
+			current.PartialCount += row.PartialCount
+			current.PromptTokens += row.PromptTokens
+			current.CacheReadTokens += row.CacheReadTokens
+			current.CacheWriteTokens += row.CacheWriteTokens
+			current.CompletionTokens += row.CompletionTokens
+			current.TotalTokens += row.TotalTokens
+			current.OfficialPoints += row.OfficialPoints
+			current.PrivatePoints += row.PrivatePoints
+			current.TotalPoints += row.TotalPoints
+			merged[key] = current
+			continue
+		}
+		merged[key] = row
+		order = append(order, key)
+	}
+	result := make([]modelUsageModelRow, 0, len(order))
+	for _, key := range order {
+		result = append(result, merged[key])
+	}
+	return result
 }
 
 func (r *statisticsRepositoryImpl) queryModelUsageByAppType(ctx context.Context, filters modelUsageFilters) ([]modelUsageAppTypeRow, error) {

@@ -42,9 +42,10 @@ const (
 type PricingSource string
 
 const (
-	PricingSourceUpstreamModelPrice  PricingSource = "upstream_model_price"
-	PricingSourceAdminFallback       PricingSource = "admin_fallback"
-	PricingSourceCodeDefaultFallback PricingSource = "code_default_fallback"
+	PricingSourceUpstreamModelPrice        PricingSource = "upstream_model_price"
+	PricingSourceAdminFallback             PricingSource = "admin_fallback"
+	PricingSourceCodeDefaultFallback       PricingSource = "code_default_fallback"
+	PricingSourcePlatformPredeductEstimate PricingSource = "platform_prededuct_estimate"
 )
 
 type UsageSource string

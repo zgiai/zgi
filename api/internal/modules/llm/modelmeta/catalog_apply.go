@@ -152,12 +152,26 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 		if _, err := txService.markPublishedModelsMissingFromCatalogDeprecated(ctx, appliedProviderNames, modelKeys); err != nil {
 			return err
 		}
+		if err := txService.ensurePublishedModelVendorIdentities(ctx, catalog); err != nil {
+			return err
+		}
 
 		return txService.upsertCatalogSyncState(ctx, catalog.Version, catalog.PublishedAt, "")
 	})
 	if err != nil {
 		return err
 	}
+	RefreshPublishedCatalogProjection(catalog)
+	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
+		invalidator.InvalidateModelCache(ctx)
+	}
+	return nil
+}
+
+// RefreshPublishedCatalogProjection rebuilds Console-owned model-vendor display
+// metadata in memory. The synchronizer calls this at startup for the last
+// applied immutable snapshot, even when no newer catalog event exists.
+func RefreshPublishedCatalogProjection(catalog PublishedCatalog) {
 	vendors := make([]catalogvendor.Entry, 0, len(catalog.Models))
 	for _, catalogModel := range catalog.Models {
 		vendors = append(vendors, catalogvendor.Entry{
@@ -180,10 +194,6 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 		})
 	}
 	catalogvendor.ReplaceMetadata(vendorMetadata)
-	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
-		invalidator.InvalidateModelCache(ctx)
-	}
-	return nil
 }
 
 func validatePublishedCatalog(catalog PublishedCatalog) error {
@@ -278,6 +288,96 @@ func (s *Service) upsertPublishedModel(ctx context.Context, model PublishedModel
 	}
 
 	return true, s.updatePublishedModel(ctx, existing.ID, model)
+}
+
+// ensurePublishedModelVendorIdentities materializes the stable logical model
+// identity used by platform billing and statistics. A catalog model's Provider
+// is the supplier that can serve it, while Vendor is the model owner. Supplier
+// rows remain the source for availability and pricing; the inactive owner rows
+// below exist only so every published (vendor, model) pair has durable IDs.
+func (s *Service) ensurePublishedModelVendorIdentities(ctx context.Context, catalog PublishedCatalog) error {
+	vendors := make(map[string]PublishedVendor, len(catalog.Vendors))
+	for _, vendor := range catalog.Vendors {
+		vendors[strings.ToLower(strings.TrimSpace(vendor.Vendor))] = vendor
+	}
+
+	ensuredProviders := make(map[string]struct{})
+	ensuredModels := make(map[catalogModelKey]struct{})
+	for _, source := range catalog.Models {
+		vendor := strings.ToLower(strings.TrimSpace(source.Vendor))
+		if vendor == "" || strings.EqualFold(vendor, strings.TrimSpace(source.Provider)) {
+			continue
+		}
+
+		if _, ok := ensuredProviders[vendor]; !ok {
+			if err := s.ensureModelVendorProviderIdentity(ctx, vendor, vendors[vendor]); err != nil {
+				return err
+			}
+			ensuredProviders[vendor] = struct{}{}
+		}
+
+		key := catalogModelKey{Provider: vendor, Model: strings.TrimSpace(source.Model)}
+		if _, ok := ensuredModels[key]; ok {
+			continue
+		}
+		ensuredModels[key] = struct{}{}
+		if _, err := s.findExistingPublishedModel(ctx, key.Provider, key.Model); err == nil {
+			continue
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		identity := source
+		identity.Provider = vendor
+		identity.Status = llmmodel.ModelStatusDeprecated
+		identity.IsActive = false
+		identity.IsSystemEnabled = false
+		identity.InputPrice = 0
+		identity.OutputPrice = 0
+		identity.CachedInputPrice = 0
+		identity.CacheReadPrice = nil
+		identity.CacheWritePrice = nil
+		identity.Pricing = nil
+		identity.InputPriceConfigured = false
+		identity.OutputPriceConfigured = false
+		identity.ReplacementProvider = ""
+		identity.ReplacementModel = ""
+		identity.DeprecationReason = "model vendor identity"
+		if err := s.createPublishedModel(ctx, identity); err != nil {
+			return fmt.Errorf("create model vendor identity %s/%s: %w", key.Provider, key.Model, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) ensureModelVendorProviderIdentity(ctx context.Context, vendor string, metadata PublishedVendor) error {
+	if _, err := s.findExistingProvider(ctx, vendor); err == nil {
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	name := strings.TrimSpace(metadata.VendorName)
+	if name == "" {
+		name = strings.TrimSpace(metadata.ENName)
+	}
+	if name == "" {
+		name = vendor
+	}
+	provider := PublishedProvider{
+		Provider:        vendor,
+		ProviderName:    name,
+		Description:     metadata.Description,
+		Website:         metadata.Website,
+		CountryCode:     metadata.CountryCode,
+		Status:          llmmodel.ModelStatusDeprecated,
+		IsActive:        false,
+		IsSystemEnabled: false,
+	}
+	if err := s.createPublishedProvider(ctx, provider); err != nil {
+		return fmt.Errorf("create model vendor provider identity %s: %w", vendor, err)
+	}
+	return nil
 }
 
 type existingProviderForSync struct {

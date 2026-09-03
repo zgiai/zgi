@@ -150,6 +150,22 @@ func (s *Synchronizer) connect(ctx context.Context) (catalogRPCClient, io.Closer
 	if err != nil {
 		return nil, closer, nil, err
 	}
+	if lastSeenVersion > 0 {
+		resp, err := client.GetPublishedCatalog(ctx, &pb.GetPublishedCatalogRequest{Version: lastSeenVersion})
+		if err != nil {
+			return nil, closer, nil, err
+		}
+		// Reapply the immutable current snapshot on startup. Besides restoring
+		// in-memory projections, this lets idempotent schema/data invariants added
+		// by newer Pre versions backfill from an already-published catalog without
+		// requiring Console to publish an unrelated new version.
+		catalog := catalogFromResponse(resp)
+		service := modelmeta.NewService(s.db)
+		if err := service.ApplyPublishedCatalog(ctx, catalog); err != nil {
+			_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
+			return nil, closer, nil, err
+		}
+	}
 
 	stream, err := client.WatchCatalogPublishes(ctx, &pb.WatchCatalogPublishesRequest{
 		LastSeenVersion: s.watchStartVersion(lastSeenVersion),

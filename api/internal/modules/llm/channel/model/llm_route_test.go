@@ -35,7 +35,7 @@ func TestLLMRouteSupportsModel_LegacyProviderWildcardBehavesAsGlobalWildcard(t *
 	}
 }
 
-func TestLLMRouteSupportsModelForProvider_OfficialRouteRequiresExactPair(t *testing.T) {
+func TestLLMRouteSupportsModelForProvider_OfficialRouteUsesLogicalModel(t *testing.T) {
 	route := &LLMRoute{
 		IsOfficial: true,
 		Models:     []string{"same-name", "Pro/gpt-4.1"},
@@ -48,8 +48,8 @@ func TestLLMRouteSupportsModelForProvider_OfficialRouteRequiresExactPair(t *test
 	if !route.SupportsModelForProvider("openai", "same-name") {
 		t.Fatal("official exact provider-model pair should be supported")
 	}
-	if route.SupportsModelForProvider("anthropic", "same-name") {
-		t.Fatal("official same-name model under the wrong provider should be rejected")
+	if !route.SupportsModelForProvider("anthropic", "same-name") {
+		t.Fatal("official model should remain available independent of supplier provider")
 	}
 	if route.SupportsModelForProvider("", "same-name") {
 		t.Fatal("official model with missing provider should be rejected")

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"gorm.io/gorm"
 )
 
 // FinalizePlatformProxySettlement mirrors a console-api proxy settlement locally.
@@ -59,6 +60,36 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 	return nil
 }
 
+// MirrorPlatformMediaSettlement records a Console-owned metered media charge in
+// the local attempt/bill ledger without reserving or settling funds a second
+// time. Console already performed the authoritative metered deduction.
+func (s *RemoteBilling) MirrorPlatformMediaSettlement(ctx context.Context, bc *BillingContext, settlement *adapter.SettlementResult) error {
+	if bc == nil || settlement == nil || strings.TrimSpace(settlement.SettlementID) == "" {
+		return fmt.Errorf("invalid platform media settlement")
+	}
+	terminal, err := s.isAttemptTerminal(ctx, bc.AttemptID)
+	if err != nil || terminal {
+		return err
+	}
+	bc.BillingLane = UsageBillingLanePlatform
+	bc.UseSystemProvider = true
+	bc.DeductionID = settlement.SettlementID
+	bc.ActualCredits = settlement.OfficialPoints
+	bc.Status = "success"
+	bc.SettledAt = time.Now().UTC()
+	applyPlatformSettlementCostSnapshot(bc, settlement)
+	return s.localService.db.Transaction(func(tx *gorm.DB) error {
+		if err := s.localService.upsertAttemptInit(ctx, tx, bc); err != nil {
+			return err
+		}
+		invocation := "success"
+		if err := s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusSettled, &invocation, nil, nil); err != nil {
+			return err
+		}
+		return s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusSuccess, nil, nil)
+	})
+}
+
 func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter.SettlementResult) {
 	if bc == nil || settlement == nil {
 		return
@@ -98,6 +129,18 @@ func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter
 	} {
 		if value, ok := parseNonNegativeBillingDecimal(raw); ok {
 			values[key] = value.String()
+			changed = true
+		}
+	}
+	for key, value := range map[string]string{
+		"actual_channel_id":     settlement.ActualChannelID,
+		"actual_channel_name":   settlement.ActualChannelName,
+		"actual_provider":       settlement.ActualProvider,
+		"actual_protocol":       settlement.ActualProtocol,
+		"actual_upstream_model": settlement.ActualUpstreamModel,
+	} {
+		if value = strings.TrimSpace(value); value != "" {
+			values[key] = value
 			changed = true
 		}
 	}

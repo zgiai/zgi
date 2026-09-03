@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodeldto "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -342,6 +343,12 @@ func TestAvailableModels_ReturnsMusicGenerationCapability(t *testing.T) {
 }
 
 func TestAvailableModels_CloudOfficialRouteUsesPlatformChannelCatalog(t *testing.T) {
+	catalogvendor.Replace([]catalogvendor.Entry{{Provider: "openai", Model: "gpt-cloud", Vendor: "openai"}})
+	catalogvendor.ReplaceMetadata([]catalogvendor.Metadata{{Vendor: "openai", VendorName: "OpenAI"}})
+	t.Cleanup(func() {
+		catalogvendor.Replace(nil)
+		catalogvendor.ReplaceMetadata(nil)
+	})
 	organizationID := uuid.New()
 	modelName := "gpt-cloud"
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
@@ -605,7 +612,7 @@ func TestRouteBacksModelForUseCase_GlobalAgentKeepsAdapterWhitelist(t *testing.T
 	}
 }
 
-func TestAvailableModels_OfficialRouteRequiresExactProviderModelPair(t *testing.T) {
+func TestAvailableModels_OfficialRouteAvailabilityIsIndependentOfSupplierProvider(t *testing.T) {
 	modelName := "same-name"
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
 		{
@@ -642,8 +649,15 @@ func TestAvailableModels_OfficialRouteRequiresExactProviderModelPair(t *testing.
 	if err != nil {
 		t.Fatalf("ListAvailable returned error: %v", err)
 	}
-	if len(models) != 1 || models[0].Provider != "openai" || models[0].Name != modelName {
-		t.Fatalf("available same-name models = %#v, want only openai/%s", models, modelName)
+	if len(models) != 2 {
+		t.Fatalf("available same-name models = %#v, want both catalog records for UI aggregation", models)
+	}
+	gotProviders := map[string]bool{}
+	for _, item := range models {
+		gotProviders[item.Provider] = true
+	}
+	if !gotProviders["openai"] || !gotProviders["anthropic"] {
+		t.Fatalf("available providers = %#v, want logical model independent of supplier", gotProviders)
 	}
 }
 
@@ -1311,7 +1325,7 @@ func TestModelAvailabilityBatchMatchesSingleDeprecatedModel(t *testing.T) {
 	}
 }
 
-func TestModelAvailabilitySingleAndBatchRejectWrongOfficialProvider(t *testing.T) {
+func TestModelAvailabilitySingleAndBatchUseLogicalOfficialModel(t *testing.T) {
 	organizationID := uuid.New()
 	modelID := uuid.New()
 	modelName := "same-name"
@@ -1334,16 +1348,16 @@ func TestModelAvailabilitySingleAndBatchRejectWrongOfficialProvider(t *testing.T
 	if err != nil {
 		t.Fatalf("CheckModelAvailable returned error: %v", err)
 	}
-	if single.Available || single.ChannelCount != 0 {
-		t.Fatalf("single availability = %#v, want unavailable for wrong official provider", single)
+	if !single.Available || single.ChannelCount != 1 {
+		t.Fatalf("single availability = %#v, want available independent of supplier provider", single)
 	}
 
 	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
 	if err != nil {
 		t.Fatalf("BatchCheckAvailability returned error: %v", err)
 	}
-	if got := batch.Items[modelName]; got == nil || got.Available || got.ChannelCount != 0 {
-		t.Fatalf("batch availability = %#v, want unavailable for wrong official provider", got)
+	if got := batch.Items[modelName]; got == nil || !got.Available || got.ChannelCount != 1 {
+		t.Fatalf("batch availability = %#v, want available independent of supplier provider", got)
 	}
 }
 
@@ -1467,7 +1481,7 @@ func TestModelAvailabilitySingleAndBatchKeepSingleProviderAvailable(t *testing.T
 	}
 }
 
-func TestModelServiceOfficialAvailabilityUsesExactProviderModelPair(t *testing.T) {
+func TestModelServiceOfficialAvailabilityUsesLogicalModel(t *testing.T) {
 	db := openOfficialModelServiceDB(t)
 	organizationID := uuid.New()
 	modelName := "same-name"
@@ -1487,18 +1501,11 @@ func TestModelServiceOfficialAvailabilityUsesExactProviderModelPair(t *testing.T
 	if err != nil {
 		t.Fatalf("ListTenantModels returned error: %v", err)
 	}
-	if len(views) != 2 {
-		t.Fatalf("ListTenantModels returned %d models, want 2", len(views))
+	if len(views) != 1 {
+		t.Fatalf("ListTenantModels returned %d models, want one logical model", len(views))
 	}
-	availability := make(map[string][2]bool, len(views))
-	for _, view := range views {
-		availability[view.Provider] = [2]bool{view.IsAvailable, view.ZgiOfficialAvailable}
-	}
-	if got := availability["openai"]; got != [2]bool{true, true} {
-		t.Fatalf("openai availability = %v, want [true true]", got)
-	}
-	if got := availability["anthropic"]; got != [2]bool{false, false} {
-		t.Fatalf("anthropic availability = %v, want [false false]", got)
+	if !views[0].IsAvailable || !views[0].ZgiOfficialAvailable {
+		t.Fatalf("logical model availability = %#v, want platform available", views[0])
 	}
 }
 

@@ -225,8 +225,7 @@ export function AIChatInputToolbar({
   const showStopButton = canStop ?? isSending;
   const activeGovernanceTier = getToolGovernanceTierDisplay(toolGovernancePermissionTier, t);
   const ActiveGovernanceIcon = activeGovernanceTier.Icon;
-  const routingStrategy = modelSelectorValue.routing_strategy ?? 'balanced';
-
+  const routingStrategy = modelSelectorValue.routing_strategy ?? 'price';
   return (
     <div className="flex items-center justify-between gap-2 px-1">
       <div className="flex min-w-0 items-center gap-1.5">
@@ -279,7 +278,7 @@ export function AIChatInputToolbar({
                   })
                 }
               >
-                {(['balanced', 'speed', 'price', 'stability'] as const).map(strategy => (
+                {(['speed', 'price', 'stability'] as const).map(strategy => (
                   <DropdownMenuRadioItem key={strategy} value={strategy}>
                     {t(`consoleChat.routingStrategy.options.${strategy}`)}
                   </DropdownMenuRadioItem>

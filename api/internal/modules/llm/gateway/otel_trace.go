@@ -404,11 +404,15 @@ func traceLLMOperation(ctx context.Context, payload llmTracePayload) {
 
 func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 	bc := payload.Billing
+	genAISystem := bc.ProviderName
+	if bc.UseSystemProvider {
+		genAISystem = "zgi-cloud"
+	}
 	attrs := []attribute.KeyValue{
 		attribute.String("zgi.llm.schema_version", llmTraceSchemaVersion),
 		attribute.String("zgi.invocation_id", bc.RequestID),
 		attribute.String("gen_ai.operation.name", payload.Operation),
-		attribute.String("gen_ai.system", bc.ProviderName),
+		attribute.String("gen_ai.system", genAISystem),
 		attribute.String("gen_ai.request.model", bc.ModelName),
 		attribute.String("gen_ai.response.model", bc.ModelName),
 		attribute.String("zgi.request_id", bc.RequestID),
@@ -417,6 +421,7 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 		attribute.String("zgi.organization_id", bc.OrganizationID),
 		attribute.String("zgi.api_key_id", bc.APIKeyID),
 		attribute.String("zgi.provider", bc.ProviderName),
+		attribute.String("zgi.model_vendor", bc.ProviderName),
 		attribute.String("zgi.provider_id", bc.ProviderID.String()),
 		attribute.String("zgi.model", bc.ModelName),
 		attribute.String("zgi.model_id", bc.ModelID.String()),
@@ -425,6 +430,21 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 		attribute.Int64("zgi.estimated_credits", bc.EstimatedCredits),
 		attribute.Int64("zgi.actual_credits", bc.ActualCredits),
 		attribute.String("zgi.status", bc.Status),
+	}
+	if bc.UseSystemProvider {
+		attrs = append(attrs, attribute.String("zgi.logical_channel", "ZGI Cloud"))
+		var snapshot map[string]interface{}
+		if len(bc.PricingSnapshot) > 0 && json.Unmarshal(bc.PricingSnapshot, &snapshot) == nil {
+			for key, attributeKey := range map[string]string{
+				"actual_channel_id": "zgi.actual_channel_id", "actual_channel_name": "zgi.actual_channel_name",
+				"actual_provider": "zgi.actual_provider", "actual_protocol": "zgi.actual_protocol",
+				"actual_upstream_model": "zgi.actual_upstream_model",
+			} {
+				if value, ok := snapshot[key].(string); ok && strings.TrimSpace(value) != "" {
+					attrs = append(attrs, attribute.String(attributeKey, value))
+				}
+			}
+		}
 	}
 
 	if llmLangfuseAttributesEnabled() {

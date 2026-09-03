@@ -148,6 +148,7 @@ const messages = {
       subtitle:
         'Inspect every model call routed through the Gateway by source, business area, and model.',
       description: 'Gateway attempts are grouped into logical business calls.',
+      supplierLabel: 'Supplier: {name}',
       loadFailed: 'Failed to load invocation log',
       loadFailedDescription:
         'The request did not complete successfully. Check the connection and try again.',
@@ -216,6 +217,7 @@ const messages = {
         model: 'Model',
         provider: 'Provider',
         channel: 'Channel',
+        supplier: 'Actual supplier',
         invocationId: 'Invocation ID',
         startedAt: 'Started at',
         settledAt: 'Finished at',

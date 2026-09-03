@@ -1,7 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ModelSelectorValue } from '@/components/common/model-selector';
+import type {
+  ModelSelectorValue,
+  RoutingStrategy,
+} from '@/components/common/model-selector';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
@@ -17,7 +20,23 @@ import {
   type AiModelScope,
 } from '@/utils/ui-local';
 
-const EMPTY_MODEL_VALUE: AIChatModelValue = { provider: '', model: '', params: {} };
+const EMPTY_MODEL_VALUE: AIChatModelValue = {
+  provider: '',
+  model: '',
+  routing_strategy: 'stability',
+  params: {},
+};
+
+function normalizeRoutingStrategy(value: string | undefined): RoutingStrategy {
+  switch (value) {
+    case 'speed':
+    case 'price':
+    case 'stability':
+      return value;
+    default:
+      return 'stability';
+  }
+}
 
 function modelMatches(
   candidate: Pick<AIChatModelValue, 'provider' | 'model'> | null | undefined,
@@ -52,6 +71,7 @@ function toAIChatModelValue(value: DefaultModelValue): AIChatModelValue {
   return {
     provider: value.provider,
     model: value.model,
+    routing_strategy: 'stability',
     params: value.params,
   };
 }
@@ -62,6 +82,7 @@ function firstAvailableAIChatModel(models: ModelItem[]): AIChatModelValue | null
   return {
     provider: candidate.provider,
     model: candidate.model,
+    routing_strategy: 'stability',
     params: {},
   };
 }
@@ -90,7 +111,7 @@ export function usePersistedAIChatModelSelection({
       ? {
           provider: saved.provider,
           model: saved.model,
-          routing_strategy: saved.routing_strategy ?? 'balanced',
+          routing_strategy: normalizeRoutingStrategy(saved.routing_strategy),
           params: {},
         }
       : EMPTY_MODEL_VALUE;
@@ -159,7 +180,7 @@ export function usePersistedAIChatModelSelection({
         setModelSelectorValue({
           provider: saved.provider,
           model: saved.model,
-          routing_strategy: saved.routing_strategy ?? 'balanced',
+          routing_strategy: normalizeRoutingStrategy(saved.routing_strategy),
           params: {},
         });
         setIsInitialModelResolved(true);
@@ -179,7 +200,7 @@ export function usePersistedAIChatModelSelection({
       const next: AIChatModelValue = {
         provider: legacySaved.provider,
         model: legacySaved.model,
-        routing_strategy: legacySaved.routing_strategy ?? 'balanced',
+        routing_strategy: normalizeRoutingStrategy(legacySaved.routing_strategy),
         params: {},
       };
       saveLastSelectedAiModel(accountId, scope, {
@@ -235,8 +256,9 @@ export function usePersistedAIChatModelSelection({
 
   const handleModelChange = useCallback(
     (value: ModelSelectorValue) => {
-      const routingStrategy =
-        value.routing_strategy ?? modelSelectorValue.routing_strategy ?? 'balanced';
+      const routingStrategy = normalizeRoutingStrategy(
+        value.routing_strategy ?? modelSelectorValue.routing_strategy
+      );
       setModelSelectorValue(previous => ({
         ...previous,
         provider: value.provider,

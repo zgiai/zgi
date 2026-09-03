@@ -130,6 +130,9 @@ func (s *llmGatewayServiceImpl) Transcribe(
 			if result == nil {
 				return nil, fmt.Errorf("%w: transcription provider returned no response", adapter.ErrUpstreamError)
 			}
+			if err := s.mirrorPlatformMediaSettlement(ctx, apiKey, selection, shadowOrganizationID, requestID, requestID, PricingOperationTranscription, false, startedAt, result.Settlement); err != nil {
+				return nil, err
+			}
 			return &TranscriptionResponse{RequestID: result.RequestID, Text: result.Text}, nil
 		}
 

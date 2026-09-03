@@ -146,6 +146,7 @@ export interface InvocationLogItem {
   model_name: string;
   provider_name: string;
   channel_name: string;
+  supplier_name?: string;
   status: InvocationStatus;
   attempt_count: number;
   prompt_tokens: number;

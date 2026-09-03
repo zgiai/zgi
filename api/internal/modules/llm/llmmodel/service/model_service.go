@@ -1325,26 +1325,27 @@ func boolPtr(b bool) *bool {
 }
 
 type routeModelAvailability struct {
-	privateModels          map[string]bool
-	officialProviderModels map[channelmodel.ProviderModel]struct{}
+	privateModels  map[string]bool
+	officialModels map[string]bool
 }
 
 func newRouteModelAvailability() routeModelAvailability {
 	return routeModelAvailability{
-		privateModels:          make(map[string]bool),
-		officialProviderModels: make(map[channelmodel.ProviderModel]struct{}),
+		privateModels:  make(map[string]bool),
+		officialModels: make(map[string]bool),
 	}
 }
 
-func (a routeModelAvailability) Supports(provider, modelName string) bool {
+func (a routeModelAvailability) Supports(_ string, modelName string) bool {
 	if a.privateModels[modelName] || a.privateModels["*"] {
 		return true
 	}
-	_, ok := a.officialProviderModels[channelmodel.ProviderModel{Provider: provider, Model: modelName}]
-	return ok
+	return a.officialModels[modelName] || a.officialModels["*"]
 }
 
-// getAvailableModelsFromRoutes returns private model names and exact official pairs available to the tenant.
+// getAvailableModelsFromRoutes returns private route models and logical platform
+// models available to the tenant. Platform channel providers are suppliers and
+// therefore do not constrain the catalog provider/model identity.
 // Checks both system channels and user-owned routes
 func (s *modelService) getAvailableModelsFromRoutes(ctx context.Context, organizationID uuid.UUID) routeModelAvailability {
 	availableModels := newRouteModelAvailability()
@@ -1362,10 +1363,8 @@ func (s *modelService) getAvailableModelsFromRoutes(ctx context.Context, organiz
 
 	for _, route := range routes {
 		if route.IsOfficial || route.Type == shared.RouteTypeZGICloud {
-			for _, pair := range route.OfficialProviderModels {
-				if pair.Provider != "" && pair.Model != "" {
-					availableModels.officialProviderModels[pair] = struct{}{}
-				}
+			for _, modelName := range route.GetEffectiveModels() {
+				availableModels.officialModels[modelName] = true
 			}
 			continue
 		}
@@ -1377,7 +1376,7 @@ func (s *modelService) getAvailableModelsFromRoutes(ctx context.Context, organiz
 	return availableModels
 }
 
-// getSystemAvailableModels returns exact provider-model pairs available in official routes.
+// getSystemAvailableModels returns logical model names available in official routes.
 // This is independent of tenant configuration - shows what's available system-wide via official channels
 func (s *modelService) getSystemAvailableModels(ctx context.Context) routeModelAvailability {
 	systemModels := newRouteModelAvailability()
@@ -1394,10 +1393,8 @@ func (s *modelService) getSystemAvailableModels(ctx context.Context) routeModelA
 	_ = officialmodel.HydrateRouteValues(ctx, s.db, routes)
 
 	for _, route := range routes {
-		for _, pair := range route.OfficialProviderModels {
-			if pair.Provider != "" && pair.Model != "" {
-				systemModels.officialProviderModels[pair] = struct{}{}
-			}
+		for _, modelName := range route.GetEffectiveModels() {
+			systemModels.officialModels[modelName] = true
 		}
 	}
 

@@ -31,6 +31,7 @@ type InvocationLogItem struct {
 	ModelName        string                    `json:"model_name"`
 	ProviderName     string                    `json:"provider_name"`
 	ChannelName      string                    `json:"channel_name"`
+	SupplierName     string                    `json:"supplier_name,omitempty"`
 	Status           string                    `json:"status"`
 	AttemptCount     int64                     `json:"attempt_count"`
 	PromptTokens     int64                     `json:"prompt_tokens"`

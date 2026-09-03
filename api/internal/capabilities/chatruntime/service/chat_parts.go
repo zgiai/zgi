@@ -189,6 +189,7 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 		ModelName:           modelName,
 		Provider:            provider,
 		ProviderPtr:         providerPtr,
+		RoutingStrategy:     normalizeRoutingStrategy(req.RoutingStrategy),
 		Parameters:          params,
 		UseMemory:           req.UseMemory,
 	}, nil
@@ -242,6 +243,10 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 	if provider != "" {
 		providerPtr = &provider
 	}
+	routingStrategy := normalizeRoutingStrategy(stringMetadataValue(message.Metadata["routing_strategy"]))
+	if req.RoutingStrategy != nil {
+		routingStrategy = normalizeRoutingStrategy(*req.RoutingStrategy)
+	}
 
 	useMemory := boolMetadata(message.Metadata, "use_memory")
 	if req.UseMemory != nil {
@@ -262,6 +267,7 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 		ModelName:           modelName,
 		Provider:            provider,
 		ProviderPtr:         providerPtr,
+		RoutingStrategy:     routingStrategy,
 		Parameters:          params,
 		UseMemory:           useMemory,
 	}, nil
@@ -337,6 +343,7 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	metadata := map[string]interface{}{
 		"system_prompt_version": version,
 		"surface":               normalizeAIChatSurface(parts.Surface),
+		"routing_strategy":      normalizeRoutingStrategy(parts.RoutingStrategy),
 	}
 	if mode := normalizeExecutionMode(parts.ExecutionMode); mode != "" {
 		metadata["execution_mode"] = mode

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
@@ -58,6 +59,11 @@ type ProviderSelection struct {
 	ModelSource       PricingModelSource
 	BillingLane       UsageBillingLane
 	UseSystemProvider bool
+	// ModelVendor is the catalog owner of the logical model. It is deliberately
+	// separate from ChannelProvider, which identifies the route/supplier.
+	ModelVendor           string
+	ModelVendorProviderID uuid.UUID
+	ModelVendorModelID    uuid.UUID
 
 	// Channel configuration from the selected route
 	RouteID                     uuid.UUID
@@ -80,6 +86,8 @@ type ProviderSelection struct {
 	UpstreamProbeRequiresBackup bool
 	UpstreamProbeHasBackup      bool
 }
+
+var errAmbiguousActiveCatalogModel = errors.New("ambiguous active catalog model")
 
 // HasRoute returns true if this selection has a valid route
 func (ps *ProviderSelection) HasRoute() bool {
@@ -186,25 +194,32 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	llmModel, privateModel, err := r.resolveSelectionModel(ctx, organizationID, providerHint, modelName)
 	isPrivateCustomModel := privateModel != nil
 	isPassthroughMode := false
+	isAmbiguousCatalogModel := false
 	modelProvider := ""
 	if err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, errAmbiguousActiveCatalogModel) && providerHint == "" {
+			// A logical model may be published by multiple upstream suppliers. Defer
+			// choosing the local catalog row until the enabled platform route has
+			// been hydrated, so callers can continue to select by model only.
+			isAmbiguousCatalogModel = true
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			logger.ErrorContext(logCtx, "failed to resolve LLM model", err)
 			return nil, fmt.Errorf("failed to resolve LLM model %q: %w", modelName, err)
+		} else {
+			knownGlobalModel, knownErr := r.globalModelExists(ctx, providerHint, modelName)
+			if knownErr != nil {
+				logger.ErrorContext(logCtx, "failed to check LLM model lifecycle", knownErr)
+				return nil, fmt.Errorf("failed to check LLM model %q: %w", modelName, knownErr)
+			}
+			if knownGlobalModel {
+				logger.DebugContext(logCtx, "LLM model exists in global registry but is not active")
+				return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+			}
+			// Model not in local registries - enable passthrough mode
+			logger.DebugContext(logCtx, "LLM model not found in local registries, using passthrough mode")
+			isPassthroughMode = true
+			modelProvider = providerHint
 		}
-		knownGlobalModel, knownErr := r.globalModelExists(ctx, providerHint, modelName)
-		if knownErr != nil {
-			logger.ErrorContext(logCtx, "failed to check LLM model lifecycle", knownErr)
-			return nil, fmt.Errorf("failed to check LLM model %q: %w", modelName, knownErr)
-		}
-		if knownGlobalModel {
-			logger.DebugContext(logCtx, "LLM model exists in global registry but is not active")
-			return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
-		}
-		// Model not in local registries - enable passthrough mode
-		logger.DebugContext(logCtx, "LLM model not found in local registries, using passthrough mode")
-		isPassthroughMode = true
-		modelProvider = providerHint
 	} else {
 		modelProvider = llmModel.Provider
 	}
@@ -232,6 +247,14 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("%w: no enabled routes found for organizationID %s. Please configure at least one active channel in your workspace", llmerrors.DomainErrRouteNotFound, organizationID)
+	}
+	if isAmbiguousCatalogModel {
+		llmModel, err = r.resolveCatalogModelForRoutes(ctx, routes, modelName)
+		if err != nil {
+			return nil, err
+		}
+		modelProvider = llmModel.Provider
+		logCtx = logger.WithFields(logCtx, zap.String("provider", modelProvider))
 	}
 
 	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, true)
@@ -449,7 +472,7 @@ func (r *ChannelRouter) queryActiveModel(ctx context.Context, provider, modelNam
 			return nil, gorm.ErrRecordNotFound
 		}
 		if len(providers) > 1 {
-			return nil, fmt.Errorf("ambiguous active catalog model %q across providers; provider hint is required", modelName)
+			return nil, fmt.Errorf("%w %q across providers", errAmbiguousActiveCatalogModel, modelName)
 		}
 		provider = providers[0]
 	}
@@ -460,6 +483,23 @@ func (r *ChannelRouter) queryActiveModel(ctx context.Context, provider, modelNam
 		return nil, err
 	}
 	return &m, nil
+}
+
+func (r *ChannelRouter) resolveCatalogModelForRoutes(ctx context.Context, routes []*channelmodel.LLMRoute, modelName string) (*llmmodel.LLMModel, error) {
+	var models []llmmodel.LLMModel
+	if err := r.activeModelQuery(ctx, "", modelName).
+		Order("llm_models.provider ASC").
+		Find(&models).Error; err != nil {
+		return nil, err
+	}
+	for _, route := range routes {
+		for i := range models {
+			if route.SupportsOfficialProviderModel(models[i].Provider, modelName) {
+				return &models[i], nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("logical model %q has no provider available on an enabled route", modelName)
 }
 
 func (r *ChannelRouter) activeModelQuery(ctx context.Context, provider, modelName string) *gorm.DB {
@@ -842,9 +882,20 @@ func (r *ChannelRouter) buildChannelSelection(
 
 	isOfficial := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
 	if llmModel != nil {
+		if isOfficial && !route.SupportsOfficialProviderModel(llmModel.Provider, targetModelName) {
+			resolvedModel, err := r.resolveSameVendorModelForOfficialRoute(ctx, route, llmModel, targetModelName)
+			if err != nil {
+				return nil, err
+			}
+			llmModel = resolvedModel
+		}
 		modelProvider = llmModel.Provider
 	}
-	if !route.SupportsModelForProvider(modelProvider, targetModelName) {
+	supportsModel := route.SupportsModelForProvider(modelProvider, targetModelName)
+	if isOfficial {
+		supportsModel = route.SupportsOfficialProviderModel(modelProvider, targetModelName)
+	}
+	if !supportsModel {
 		return nil, fmt.Errorf("model %s not supported by route %s (supported: %v)", targetModelName, route.ID, models)
 	}
 
@@ -910,6 +961,44 @@ func (r *ChannelRouter) buildChannelSelection(
 	}
 
 	return selection, nil
+}
+
+// resolveSameVendorModelForOfficialRoute replaces a stale representative
+// supplier with one currently advertised by Console, but only when both rows
+// belong to the same logical model vendor. This keeps model-only selection
+// independent from supplier availability without allowing cross-vendor matches.
+func (r *ChannelRouter) resolveSameVendorModelForOfficialRoute(
+	ctx context.Context,
+	route *channelmodel.LLMRoute,
+	current *llmmodel.LLMModel,
+	modelName string,
+) (*llmmodel.LLMModel, error) {
+	if r == nil || r.db == nil || route == nil || current == nil {
+		return current, nil
+	}
+	currentVendor := logicalCatalogModelVendor(current.Provider, modelName)
+	for _, pair := range route.OfficialProviderModels {
+		pairProvider := strings.TrimSpace(pair.Provider)
+		pairModel := strings.TrimSpace(pair.Model)
+		if pairProvider == "" || pairModel != modelName || logicalCatalogModelVendor(pairProvider, pairModel) != currentVendor {
+			continue
+		}
+		candidate, err := r.getModelForProvider(ctx, pairProvider, modelName)
+		if err == nil {
+			return candidate, nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("resolve current supplier model %q/%q: %w", pairProvider, modelName, err)
+		}
+	}
+	return current, nil
+}
+
+func logicalCatalogModelVendor(provider, modelName string) string {
+	if vendor := strings.TrimSpace(catalogvendor.Lookup(provider, modelName)); vendor != "" {
+		return strings.ToLower(vendor)
+	}
+	return strings.ToLower(strings.TrimSpace(provider))
 }
 
 func resolveChannelModelSource(privateModel *llmmodel.CustomModel, isPassthroughMode bool) (channelModelSource, uuid.UUID) {
@@ -1104,7 +1193,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 		return nil, fmt.Errorf("provider %s not found or inactive", providerName)
 	}
 
-	return &ProviderSelection{
+	selection := &ProviderSelection{
 		OrganizationID:              cs.OrganizationID,
 		Provider:                    *provider,
 		Model:                       modelForSelection(cs),
@@ -1128,7 +1217,37 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 		UpstreamHalfOpen:            cs.UpstreamHalfOpen,
 		UpstreamProbe:               cs.UpstreamProbe,
 		UpstreamProbeRequiresBackup: cs.UpstreamProbeRequiresBackup,
-	}, nil
+	}
+	if err := hydratePlatformModelIdentity(ctx, db, selection); err != nil {
+		return nil, err
+	}
+	return selection, nil
+}
+
+func hydratePlatformModelIdentity(ctx context.Context, db *gorm.DB, selection *ProviderSelection) error {
+	if selection == nil || !selection.UseSystemProvider || db == nil {
+		return nil
+	}
+	vendor := strings.TrimSpace(catalogvendor.Lookup(selection.Model.Provider, selection.Model.Model))
+	if vendor == "" {
+		vendor = strings.TrimSpace(selection.Model.Vendor)
+	}
+	if vendor == "" {
+		return nil
+	}
+
+	var provider providermodel.LLMProvider
+	if err := db.WithContext(ctx).Unscoped().Where("provider = ?", vendor).Take(&provider).Error; err != nil {
+		return fmt.Errorf("resolve catalog model vendor provider %q: %w", vendor, err)
+	}
+	var model llmmodel.LLMModel
+	if err := db.WithContext(ctx).Unscoped().Where("provider = ? AND name = ?", vendor, selection.Model.Model).Take(&model).Error; err != nil {
+		return fmt.Errorf("resolve catalog model vendor model %q/%q: %w", vendor, selection.Model.Model, err)
+	}
+	selection.ModelVendor = vendor
+	selection.ModelVendorProviderID = provider.ID
+	selection.ModelVendorModelID = model.ID
+	return nil
 }
 
 func pricingModelSourceFromChannelModelSource(source channelModelSource) PricingModelSource {

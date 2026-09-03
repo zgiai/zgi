@@ -514,6 +514,6 @@ func normalizeConsoleRoutingStrategy(value string) string {
 	case "speed", "price", "stability":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
-		return "balanced"
+		return "stability"
 	}
 }

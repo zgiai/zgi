@@ -171,9 +171,37 @@ func (s *llmGatewayServiceImpl) quoteImagePricingForSelection(
 		return PricingQuote{}, fmt.Errorf("failed to resolve billing lane for image pricing: %w", err)
 	}
 	if lane == UsageBillingLanePlatform {
-		return PricingQuote{}, nil
+		quote, quoteErr := s.quoteImagePricing(ctx, model, req)
+		if quoteErr != nil {
+			quote = fallbackPlatformImagePredeductQuote(req)
+		}
+		quote.PricingSource = PricingSourcePlatformPredeductEstimate
+		return quote, nil
 	}
 	return s.quoteImagePricing(ctx, model, req)
+}
+
+func fallbackPlatformTokenPredeductQuote(promptTokens, completionTokens int) PricingQuote {
+	const estimateUSDPerMillionTokens = int64(10)
+	unit := decimal.NewFromInt(estimateUSDPerMillionTokens).Div(decimal.NewFromInt(1_000_000))
+	inputUSD := decimal.NewFromInt(int64(max(promptTokens, 0))).Mul(unit)
+	outputUSD := decimal.NewFromInt(int64(max(completionTokens, 0))).Mul(unit)
+	return newUSDQuote(inputUSD, outputUSD, PricingSourcePlatformPredeductEstimate, "platform.uniform.max-token-estimate", UsageSourceEstimatedUsage, buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":             PricingSourcePlatformPredeductEstimate,
+		"estimate_usd_per_1m_tokens": estimateUSDPerMillionTokens,
+	}))
+}
+
+func fallbackPlatformImagePredeductQuote(req *adapter.ImageRequest) PricingQuote {
+	count := 1
+	if req != nil && req.N != nil && *req.N > 0 {
+		count = *req.N
+	}
+	return newOutputOnlyUSDQuote(decimal.NewFromInt(int64(count)), PricingSourcePlatformPredeductEstimate, "platform.uniform.image-estimate", UsageSourceEstimatedUsage, buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":         PricingSourcePlatformPredeductEstimate,
+		"estimate_usd_per_image": 1,
+		"image_count":            count,
+	}))
 }
 
 func pricingErrorParamsFromModelRef(model PricingModelRef) map[string]interface{} {

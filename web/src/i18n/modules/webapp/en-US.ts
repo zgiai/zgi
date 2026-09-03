@@ -460,7 +460,6 @@ const messages = {
     routingStrategy: {
       label: 'Routing strategy',
       options: {
-        balanced: 'Balanced',
         speed: 'Fastest',
         price: 'Lowest cost',
         stability: 'Most stable',

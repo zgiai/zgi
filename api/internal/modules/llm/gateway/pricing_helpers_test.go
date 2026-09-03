@@ -191,7 +191,7 @@ func TestQuoteTokenPricingForSelectionUsesConservativeReasoningReservation(t *te
 	}
 }
 
-func TestQuoteImagePricingForSelectionSkipsLocalPricingForOfficialRoute(t *testing.T) {
+func TestQuoteImagePricingForSelectionUsesSafeFallbackForOfficialRoute(t *testing.T) {
 	svc := &llmGatewayServiceImpl{pricingEngine: &fakePricingEngine{imageErr: ErrPricingNotConfigured}}
 	selection := &ProviderSelection{
 		UseSystemProvider: true,
@@ -207,8 +207,8 @@ func TestQuoteImagePricingForSelectionSkipsLocalPricingForOfficialRoute(t *testi
 	if err != nil {
 		t.Fatalf("quoteImagePricingForSelection() error = %v, want nil", err)
 	}
-	if !reflect.DeepEqual(quote, PricingQuote{}) {
-		t.Fatalf("quote = %#v, want zero quote", quote)
+	if quote.TotalCredits <= 0 || quote.PricingSource != PricingSourcePlatformPredeductEstimate {
+		t.Fatalf("quote = %#v, want positive platform estimate", quote)
 	}
 }
 

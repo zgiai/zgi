@@ -121,6 +121,9 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 			if err != nil {
 				reportLLMProviderFailure(ctx, err, "llm.provider.request_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
 			}
+			if err == nil {
+				err = s.mirrorPlatformMediaSettlement(ctx, apiKey, selection, shadowOrganizationID, request.RequestID, request.RequestID+":lyrics", PricingOperationLyrics, false, startedAt, result.Settlement)
+			}
 			return result, err
 		}
 
@@ -274,7 +277,10 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 			if err != nil && (destination.writeErr == nil || !errors.Is(err, destination.writeErr)) {
 				reportLLMProviderFailure(ctx, err, "llm.provider.stream_failed", selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			return s.mirrorPlatformMediaSettlement(ctx, apiKey, selection, shadowOrganizationID, request.RequestID, request.RequestID, PricingOperationMusic, true, startedAt, adapterRequest.Settlement)
 		}
 
 		usage := MeteredUsage{Operation: PricingOperationMusic, Meter: meterOutputTrack, BaseUnit: baseUnitTrack, Quantity: 1}

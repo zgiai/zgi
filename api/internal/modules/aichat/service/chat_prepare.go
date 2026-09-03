@@ -218,10 +218,12 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 	query := ""
 	preferredProvider := ""
 	preferredModel := ""
+	routingStrategy := "stability"
 	if parts != nil {
 		query = parts.Query
 		preferredProvider = parts.Provider
 		preferredModel = parts.ModelName
+		routingStrategy = parts.RoutingStrategy
 	}
 	conversationID := conversation.ID
 	workspaceID := conversation.WorkspaceID
@@ -241,6 +243,7 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 			FallbackTitle:     fallbackTitle,
 			PreferredProvider: preferredProvider,
 			PreferredModel:    preferredModel,
+			RoutingStrategy:   routingStrategy,
 			PreferredUseCase:  string(llmmodelmodel.UseCaseTextChat),
 		})
 		if err != nil {
@@ -505,7 +508,7 @@ func normalizeRegenerateRequest(req aichatdto.RegenerateMessageRequest, message 
 	if provider != "" {
 		providerPtr = &provider
 	}
-	routingStrategy := "balanced"
+	routingStrategy := "stability"
 	if req.RoutingStrategy != nil {
 		routingStrategy = normalizeRoutingStrategy(*req.RoutingStrategy)
 	}
@@ -677,7 +680,7 @@ func normalizeRoutingStrategy(value string) string {
 	case "speed", "price", "stability":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
-		return "balanced"
+		return "stability"
 	}
 }
 

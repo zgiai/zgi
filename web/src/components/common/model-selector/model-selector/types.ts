@@ -6,7 +6,7 @@ export interface ModelSelectorValue {
   routing_strategy?: RoutingStrategy;
 }
 
-export type RoutingStrategy = 'balanced' | 'speed' | 'price' | 'stability';
+export type RoutingStrategy = 'speed' | 'price' | 'stability';
 
 // Expose full selected model props including provider for external control
 export type ModelSelectorModelProps = ModelItem;
@@ -17,6 +17,7 @@ export type FeatureLabels = Record<string, string>;
 // Provider group structure for display
 export interface ProviderGroup {
   provider: string;
+  label: string;
   models: ModelItem[];
 }
 

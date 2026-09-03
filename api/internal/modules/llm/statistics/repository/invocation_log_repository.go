@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	"github.com/zgiai/zgi/api/internal/modules/llm/statistics/dto"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
@@ -83,6 +84,7 @@ type invocationBillRow struct {
 	ModelName        string         `gorm:"column:model_name"`
 	ProviderName     string         `gorm:"column:provider_name"`
 	ChannelName      string         `gorm:"column:channel_name"`
+	SupplierName     string         `gorm:"column:supplier_name"`
 	Status           string         `gorm:"column:status"`
 	PromptTokens     int64          `gorm:"column:prompt_tokens"`
 	CacheReadTokens  int64          `gorm:"column:cache_read_tokens"`
@@ -286,7 +288,8 @@ func (r *statisticsRepositoryImpl) queryInvocationPage(ctx context.Context, filt
 func (r *statisticsRepositoryImpl) queryInvocationBills(ctx context.Context, filters invocationLogFilters, requestIDs []string) ([]invocationBillRow, error) {
 	var rows []invocationBillRow
 	pricingSnapshotColumn := "'{}' AS pricing_snapshot"
-	if r.db.Migrator().HasColumn(usageBillTable, "pricing_snapshot") {
+	hasPricingSnapshot := r.db.Migrator().HasColumn(usageBillTable, "pricing_snapshot")
+	if hasPricingSnapshot {
 		pricingSnapshotColumn = "b.pricing_snapshot"
 	}
 	billingLaneColumn := "'' AS billing_lane"
@@ -301,6 +304,14 @@ func (r *statisticsRepositoryImpl) queryInvocationBills(ctx context.Context, fil
 	if r.db.Migrator().HasColumn(usageBillTable, "usage_source") {
 		usageSourceColumn = "b.usage_source"
 	}
+	supplierNameColumn := "'' AS supplier_name"
+	if hasPricingSnapshot {
+		actualChannelName := "NULLIF(b.pricing_snapshot ->> 'actual_channel_name', '')"
+		if r.db.Dialector.Name() == "sqlite" {
+			actualChannelName = "NULLIF(json_extract(b.pricing_snapshot, '$.actual_channel_name'), '')"
+		}
+		supplierNameColumn = "COALESCE(" + actualChannelName + ", '') AS supplier_name"
+	}
 	channelNameColumn := "'' AS channel_name"
 	joinChannel := r.db.Migrator().HasColumn(usageBillTable, "channel_id") &&
 		r.db.Migrator().HasTable("llm_routes") &&
@@ -311,8 +322,8 @@ func (r *statisticsRepositoryImpl) queryInvocationBills(ctx context.Context, fil
 	query := r.db.WithContext(ctx).Table(usageBillTable+" b").
 		Select(fmt.Sprintf(`b.request_id, b.app_id, b.app_type, b.invocation_source, b.model_name, b.provider_name,
 			b.status, b.prompt_tokens, b.cache_read_tokens, b.cache_write_tokens, b.completion_tokens, b.total_tokens, b.total_points,
-			b.error_code, b.request_created_at, b.settled_at, %s, %s, %s, %s, %s`,
-			pricingSnapshotColumn, channelNameColumn, billingLaneColumn, pricingSourceColumn, usageSourceColumn)).
+			b.error_code, b.request_created_at, b.settled_at, %s, %s, %s, %s, %s, %s`,
+			pricingSnapshotColumn, channelNameColumn, supplierNameColumn, billingLaneColumn, pricingSourceColumn, usageSourceColumn)).
 		Where("b.request_id IN ?", requestIDs)
 	if joinChannel {
 		query = query.Joins("LEFT JOIN llm_routes r ON r.id = b.channel_id")
@@ -390,8 +401,9 @@ func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRo
 		}
 		if bill.Status == "success" || !acc.hasSuccess {
 			acc.item.ModelName = bill.ModelName
-			acc.item.ProviderName = bill.ProviderName
+			acc.item.ProviderName = invocationModelVendor(bill.ProviderName, bill.ModelName)
 			acc.item.ChannelName = bill.ChannelName
+			acc.item.SupplierName = bill.SupplierName
 			acc.item.InvocationSource = normalizedInvocationSource(bill.InvocationSource)
 			acc.item.AppType = normalizedAppType(bill.AppType)
 			acc.item.AppID = bill.AppID
@@ -430,6 +442,22 @@ func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRo
 		items = append(items, acc.item)
 	}
 	return items
+}
+
+func invocationModelVendor(providerName, modelName string) string {
+	providerName = strings.TrimSpace(providerName)
+	modelName = strings.TrimSpace(modelName)
+	if vendor := strings.TrimSpace(catalogvendor.Lookup(providerName, modelName)); vendor != "" {
+		return vendor
+	}
+	// Historical platform bills may contain the supplying provider in
+	// provider_name. Infer only known model families when catalog metadata is
+	// unavailable, and otherwise preserve the recorded value.
+	normalizedModel := strings.ToLower(modelName)
+	if normalizedModel == "deepseek" || strings.HasPrefix(normalizedModel, "deepseek-") || strings.HasPrefix(normalizedModel, "deepseek/") {
+		return "deepseek"
+	}
+	return providerName
 }
 
 func invocationPricingDetails(bill invocationBillRow) *dto.InvocationPricingDetails {

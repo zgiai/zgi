@@ -689,6 +689,21 @@ func (s *llmGatewayServiceImpl) settleVideoTaskSuccess(
 	billingCtx.Status = billingContextStatusSuccess
 	billingCtx.ResponseTime = 0
 	applyPricingQuoteToBillingContext(billingCtx, quote)
+	if selection.UseSystemProvider && resp.Settlement != nil {
+		billingCtx.DeductionID = resp.Settlement.SettlementID
+		decision, err := s.resolveBillingDecision(selection, billingCtx)
+		if err != nil {
+			return err
+		}
+		settlementCtx, cancel := billingFinalizationContext(ctx)
+		defer cancel()
+		if err := s.finalizePlatformProxySettlement(settlementCtx, billingCtx, resp.Settlement, decision); err != nil {
+			return err
+		}
+		resp.EstimatedCredits = billingCtx.EstimatedCredits
+		resp.ActualCredits = billingCtx.ActualCredits
+		return nil
+	}
 
 	if err := s.settleVideoBillingContext(ctx, selection, billingCtx); err != nil {
 		return err

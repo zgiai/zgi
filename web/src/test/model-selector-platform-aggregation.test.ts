@@ -77,4 +77,37 @@ assert.ok(custom);
 assert.equal(modelDisplayVendor(custom), 'workspace-channel');
 assert.equal(custom.provider, 'workspace-channel');
 
+const supplierFallback = aggregatePlatformModels([
+  model({
+    id: 'siliconflow-deepseek',
+    provider: 'siliconflow',
+    vendor: 'deepseek',
+    vendor_name: '深度求索',
+    model: 'deepseek-v4-pro',
+  }),
+  model({ id: 'deepseek-direct', provider: 'deepseek', vendor: 'deepseek', model: 'deepseek-v4-pro' }),
+]);
+assert.equal(supplierFallback.length, 1, 'a logical platform model should not duplicate by supplier');
+const supplierFallbackModel = supplierFallback[0];
+assert.ok(supplierFallbackModel);
+assert.equal(supplierFallbackModel.provider, 'deepseek', 'model maker should win over supplier fallback');
+assert.equal(modelDisplayVendor(supplierFallbackModel), 'deepseek');
+assert.equal(supplierFallbackModel.vendor_name, '深度求索');
+
+const missingCatalogVendor = aggregatePlatformModels([
+  model({
+    id: 'siliconflow-only-deepseek',
+    provider: 'siliconflow',
+    vendor_name: 'SiliconFlow',
+    model: 'deepseek-v4-pro',
+  }),
+]);
+assert.equal(missingCatalogVendor.length, 0, 'platform models without catalog vendor mapping must not be grouped under suppliers');
+
+const conflictingDirectoryMappings = aggregatePlatformModels([
+  model({ id: 'vendor-a-model', provider: 'reseller-a', vendor: 'vendor-a', model: 'shared-name' }),
+  model({ id: 'vendor-b-model', provider: 'reseller-b', vendor: 'vendor-b', model: 'shared-name' }),
+]);
+assert.equal(conflictingDirectoryMappings.length, 2, 'different model vendors must remain separate even when model ids match');
+
 console.log('model selector platform aggregation tests passed');

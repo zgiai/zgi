@@ -9,7 +9,7 @@ import (
 func TestPlatformProxyRoutingHeaders(t *testing.T) {
 	bc := &BillingContext{
 		BillingLane:           UsageBillingLanePlatform,
-		RoutingStrategy:       "price",
+		RoutingStrategy:       "speed",
 		EstimatedInputTokens:  120,
 		EstimatedOutputTokens: 80,
 	}
@@ -19,8 +19,8 @@ func TestPlatformProxyRoutingHeaders(t *testing.T) {
 	}
 	applyPlatformProxyHeaders(req)
 
-	if got := req.Header.Get(headerZGIRoutingStrategy); got != "price" {
-		t.Fatalf("routing strategy header = %q, want price", got)
+	if got := req.Header.Get(headerZGIRoutingStrategy); got != "speed" {
+		t.Fatalf("routing strategy header = %q, want speed", got)
 	}
 	if got := req.Header.Get(headerZGIEstimatedInputTokens); got != "120" {
 		t.Fatalf("estimated input header = %q, want 120", got)
@@ -31,7 +31,7 @@ func TestPlatformProxyRoutingHeaders(t *testing.T) {
 }
 
 func TestPrivateChannelDoesNotReceiveRoutingHeaders(t *testing.T) {
-	bc := &BillingContext{BillingLane: UsageBillingLanePrivate, RoutingStrategy: "speed"}
+	bc := &BillingContext{BillingLane: UsageBillingLanePrivate, RoutingStrategy: "price"}
 	req, err := http.NewRequestWithContext(withPlatformProxyMetadata(context.Background(), bc), http.MethodPost, "http://private-channel", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -39,5 +39,17 @@ func TestPrivateChannelDoesNotReceiveRoutingHeaders(t *testing.T) {
 	applyPlatformProxyHeaders(req)
 	if got := req.Header.Get(headerZGIRoutingStrategy); got != "" {
 		t.Fatalf("private channel routing strategy header = %q, want empty", got)
+	}
+}
+
+func TestNormalizeConsoleRoutingStrategy(t *testing.T) {
+	tests := map[string]string{
+		"": "stability", "balanced": "stability", "unexpected": "stability",
+		"speed": "speed", "PRICE": "price", " stability ": "stability",
+	}
+	for input, want := range tests {
+		if got := normalizeConsoleRoutingStrategy(input); got != want {
+			t.Fatalf("normalizeConsoleRoutingStrategy(%q) = %q, want %q", input, got, want)
+		}
 	}
 }

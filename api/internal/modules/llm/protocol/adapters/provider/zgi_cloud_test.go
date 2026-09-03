@@ -389,6 +389,11 @@ func TestZGICloudAdapterChatCompletion_ForwardsToConsoleInternal(t *testing.T) {
 		w.Header().Set(headerOutputPriceUSD, "30")
 		w.Header().Set(headerInputCostUSD, "0.000055")
 		w.Header().Set(headerOutputCostUSD, "0.00021")
+		w.Header().Set(headerActualChannelID, "channel-siliconflow")
+		w.Header().Set(headerActualChannelName, "硅基流动")
+		w.Header().Set(headerActualProvider, "siliconflow")
+		w.Header().Set(headerActualProtocol, "native")
+		w.Header().Set(headerActualUpstreamModel, "deepseek-ai/DeepSeek-V4-Pro")
 		fmt.Fprint(w, `{
 			"id":"chatcmpl-zgi-cloud-1",
 			"object":"chat.completion",
@@ -443,6 +448,9 @@ func TestZGICloudAdapterChatCompletion_ForwardsToConsoleInternal(t *testing.T) {
 	if resp.Settlement.InputPriceUSDPer1MTokens != "5" || resp.Settlement.OutputPriceUSDPer1MTokens != "30" || resp.Settlement.InputCostUSD != "0.000055" || resp.Settlement.OutputCostUSD != "0.00021" {
 		t.Fatalf("settlement component pricing = %+v", resp.Settlement)
 	}
+	if resp.Settlement.ActualChannelID != "channel-siliconflow" || resp.Settlement.ActualChannelName != "硅基流动" || resp.Settlement.ActualProvider != "siliconflow" || resp.Settlement.ActualProtocol != "native" || resp.Settlement.ActualUpstreamModel != "deepseek-ai/DeepSeek-V4-Pro" {
+		t.Fatalf("settlement actual channel = %+v", resp.Settlement)
+	}
 }
 
 func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.T) {
@@ -457,7 +465,7 @@ func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.
 		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
 		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n")
 		fmt.Fprint(w, "event: zgi.settlement\n")
-		fmt.Fprint(w, "data: {\"settlement_id\":\"deduction-stream\",\"official_points\":9,\"remaining_balance\":91,\"status\":\"settled\",\"total_cost_usd\":\"0.009\",\"total_cost_cny\":\"0.0648\",\"cny_per_usd\":\"7.2\"}\n\n")
+		fmt.Fprint(w, "data: {\"settlement_id\":\"deduction-stream\",\"official_points\":9,\"remaining_balance\":91,\"status\":\"settled\",\"total_cost_usd\":\"0.009\",\"total_cost_cny\":\"0.0648\",\"cny_per_usd\":\"7.2\",\"actual_channel_id\":\"channel-siliconflow\",\"actual_channel_name\":\"硅基流动\",\"actual_provider\":\"siliconflow\",\"actual_protocol\":\"native\",\"actual_upstream_model\":\"deepseek-ai/DeepSeek-V4-Pro\"}\n\n")
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer server.Close()
@@ -503,6 +511,74 @@ func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.
 	}
 	if done.Settlement.TotalCostCNY != "0.0648" || done.Settlement.CNYPerUSD != "7.2" {
 		t.Fatalf("done settlement cost snapshot = %+v", done.Settlement)
+	}
+	if done.Settlement.ActualChannelID != "channel-siliconflow" || done.Settlement.ActualChannelName != "硅基流动" || done.Settlement.ActualProvider != "siliconflow" || done.Settlement.ActualProtocol != "native" || done.Settlement.ActualUpstreamModel != "deepseek-ai/DeepSeek-V4-Pro" {
+		t.Fatalf("done settlement actual channel = %+v", done.Settlement)
+	}
+	if done.Usage == nil || done.Usage.TotalTokens != 5 {
+		t.Fatalf("done usage = %+v, want total 5", done.Usage)
+	}
+}
+
+func TestZGICloudAdapterChatCompletionStream_AllowsSettlementAfterCallerCancellation(t *testing.T) {
+	t.Helper()
+
+	allowSettlement := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-allowSettlement
+		fmt.Fprint(w, "event: zgi.settlement\n")
+		fmt.Fprint(w, "data: {\"settlement_id\":\"deduction-after-cancel\",\"official_points\":9,\"remaining_balance\":91,\"status\":\"settled\"}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL: server.URL + "/v1/internal",
+		AuthHook: func(req *http.Request) {
+			req.Header.Set("X-Test-Signature", "signed")
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := a.ChatCompletionStream(ctx, &adapter.ChatRequest{
+		Model:    "gpt-4o-mini",
+		Messages: []adapter.Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream() error = %v", err)
+	}
+
+	var done adapter.StreamResponse
+	settlementReleased := false
+	for event := range stream {
+		if event.Error != nil {
+			t.Fatalf("stream error = %v", event.Error)
+		}
+		if !settlementReleased && streamResponseFinished(event) {
+			cancel()
+			close(allowSettlement)
+			settlementReleased = true
+		}
+		if event.Done {
+			done = event
+		}
+	}
+
+	if !settlementReleased {
+		t.Fatal("stream did not emit a model finish event")
+	}
+	if done.Settlement == nil || done.Settlement.SettlementID != "deduction-after-cancel" {
+		t.Fatalf("done settlement = %+v, want deduction-after-cancel", done.Settlement)
 	}
 	if done.Usage == nil || done.Usage.TotalTokens != 5 {
 		t.Fatalf("done usage = %+v, want total 5", done.Usage)

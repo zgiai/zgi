@@ -59,6 +59,11 @@ func TestApplyPlatformSettlementCostSnapshotRecordsCallTimeCurrencyFacts(t *test
 		InputCostUSD:                  "0.00001",
 		CacheWriteCostUSD:             "0.004096",
 		OutputCostUSD:                 "0.002495",
+		ActualChannelID:               "channel-siliconflow",
+		ActualChannelName:             "硅基流动",
+		ActualProvider:                "siliconflow",
+		ActualProtocol:                "native",
+		ActualUpstreamModel:           "deepseek-ai/DeepSeek-V4-Pro",
 	})
 
 	if !bc.TotalUSD.Equal(decimal.RequireFromString("0.006601")) {
@@ -79,6 +84,9 @@ func TestApplyPlatformSettlementCostSnapshotRecordsCallTimeCurrencyFacts(t *test
 	}
 	if snapshot["input_cost_usd"] != "0.00001" || snapshot["cache_write_cost_usd"] != "0.004096" || snapshot["output_cost_usd"] != "0.002495" {
 		t.Fatalf("component costs missing from pricing snapshot: %#v", snapshot)
+	}
+	if snapshot["actual_channel_id"] != "channel-siliconflow" || snapshot["actual_channel_name"] != "硅基流动" || snapshot["actual_provider"] != "siliconflow" || snapshot["actual_protocol"] != "native" || snapshot["actual_upstream_model"] != "deepseek-ai/DeepSeek-V4-Pro" {
+		t.Fatalf("actual channel missing from pricing snapshot: %#v", snapshot)
 	}
 }
 

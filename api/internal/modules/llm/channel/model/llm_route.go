@@ -133,32 +133,39 @@ func (r *LLMRoute) SupportsModel(modelName string) bool {
 	return false
 }
 
-// SupportsModelForProvider requires exact provider provenance for official routes.
-// Private routes retain their existing model-list behavior.
+// SupportsModelForProvider keeps model discovery scoped to the logical model.
+// Supplier identity must not make the same platform model appear or disappear.
 func (r *LLMRoute) SupportsModelForProvider(provider, modelName string) bool {
 	if !r.IsOfficial && r.Type != shared.RouteTypeZGICloud {
 		return r.SupportsModel(modelName)
 	}
+	if strings.TrimSpace(provider) == "" {
+		return false
+	}
+	return r.SupportsModel(modelName)
+}
 
+// SupportsOfficialProviderModel validates the exact supplier/model capability
+// advertised by Console. Invocation routing uses this stricter boundary after
+// model-only discovery has completed.
+func (r *LLMRoute) SupportsOfficialProviderModel(provider, modelName string) bool {
 	provider = strings.TrimSpace(provider)
 	modelName = strings.TrimSpace(modelName)
 	if provider == "" || modelName == "" {
 		return false
 	}
-
-	// Snapshots created before provider provenance was introduced can retain
-	// their effective model names while the new provider-model list is empty.
-	// Preserve the legacy model-name behavior until a successful sync supplies
-	// exact pairs; once any pair exists, the strict provider check below applies.
-	if len(r.OfficialProviderModels) == 0 {
-		return r.SupportsModel(modelName)
-	}
-	for _, pair := range r.OfficialProviderModels {
-		if pair.Provider == provider && pair.Model == modelName {
-			return true
+	if len(r.OfficialProviderModels) > 0 {
+		for _, pair := range r.OfficialProviderModels {
+			pairProvider := strings.TrimSpace(pair.Provider)
+			pairModel := canonicalRouteModel(pair.Model)
+			if (pairProvider == provider || pairProvider == "*") && (pairModel == modelName || pairModel == "*") {
+				return true
+			}
 		}
+		return false
 	}
-	return false
+
+	return r.SupportsModel(modelName)
 }
 
 func normalizeRouteModels(models []string) []string {

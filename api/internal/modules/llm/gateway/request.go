@@ -223,6 +223,15 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 	} else {
 		billingCtx.AuthMethod = "legacy_api_key"
 	}
+	if billingCtx.UseSystemProvider && strings.TrimSpace(providerSelection.ModelVendor) != "" {
+		billingCtx.ProviderName = strings.TrimSpace(providerSelection.ModelVendor)
+		if providerSelection.ModelVendorProviderID != uuid.Nil {
+			billingCtx.ProviderID = providerSelection.ModelVendorProviderID
+		}
+		if providerSelection.ModelVendorModelID != uuid.Nil {
+			billingCtx.ModelID = providerSelection.ModelVendorModelID
+		}
+	}
 	if appCtx != nil {
 		billingCtx.AppID = appCtx.AppID
 		billingCtx.AppType = appCtx.AppType

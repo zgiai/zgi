@@ -250,11 +250,21 @@ export function ModelSelector({
       existing.push(model);
       groupMap.set(displayProvider, existing);
     });
-    return Array.from(groupMap.entries()).map(([provider, items]) => ({
-      provider,
-      models: prioritizeModelsByUseCase(items, preferredUseCase),
-    }));
-  }, [displayModels, preferredUseCase]);
+    return Array.from(groupMap.entries()).map(([provider, items]) => {
+      const catalogLabel = locale === 'zh-Hans'
+        ? items.find(item => item.vendor_cn_name)?.vendor_cn_name ||
+          items.find(item => item.vendor_name)?.vendor_name ||
+          items.find(item => item.vendor_en_name)?.vendor_en_name
+        : items.find(item => item.vendor_en_name)?.vendor_en_name ||
+          items.find(item => item.vendor_name)?.vendor_name ||
+          items.find(item => item.vendor_cn_name)?.vendor_cn_name;
+      return {
+        provider,
+        label: catalogLabel || getProviderName(provider),
+        models: prioritizeModelsByUseCase(items, preferredUseCase),
+      };
+    });
+  }, [displayModels, getProviderName, locale, preferredUseCase]);
 
   // Clear search when dropdown closes or component unmounts
   useEffect(() => {
@@ -267,7 +277,7 @@ export function ModelSelector({
   const searchIndex = useMemo(() => {
     const idx = new Map<string, { providerLower: string; modelLower: Map<string, string> }>();
     providerGroups.forEach(p => {
-      const providerLabel = getProviderName(p.provider);
+      const providerLabel = p.label;
       const providerLower = `${p.provider.toLowerCase()} ${providerLabel.toLowerCase()}`.trim();
       const modelLower = new Map<string, string>();
       p.models.forEach(m => {
@@ -277,7 +287,7 @@ export function ModelSelector({
       idx.set(p.provider, { providerLower, modelLower });
     });
     return idx;
-  }, [getProviderName, locale, providerGroups]);
+  }, [locale, providerGroups]);
 
   // Filter providers and models based on search query
   const filteredProviders = useMemo(() => {
@@ -319,7 +329,7 @@ export function ModelSelector({
       rows.push({
         type: 'header',
         providerId: p.provider,
-        providerLabel: getProviderName(p.provider),
+        providerLabel: p.label,
         modelCount: p.models.length,
       });
       const isCollapsed = collapsible && collapsedProviders.has(p.provider);
@@ -328,7 +338,7 @@ export function ModelSelector({
       }
     });
     return rows;
-  }, [filteredProviders, collapsedProviders, collapsible, getProviderName]);
+  }, [filteredProviders, collapsedProviders, collapsible]);
 
   // Row heights for windowing
   const rowHeights = useMemo<number[]>(

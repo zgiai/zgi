@@ -447,6 +447,11 @@ type SettlementResult struct {
 	CacheWrite5mCostUSD             string `json:"cache_write_5m_cost_usd,omitempty"`
 	CacheWrite1hCostUSD             string `json:"cache_write_1h_cost_usd,omitempty"`
 	OutputCostUSD                   string `json:"output_cost_usd,omitempty"`
+	ActualChannelID                 string `json:"actual_channel_id,omitempty"`
+	ActualChannelName               string `json:"actual_channel_name,omitempty"`
+	ActualProvider                  string `json:"actual_provider,omitempty"`
+	ActualProtocol                  string `json:"actual_protocol,omitempty"`
+	ActualUpstreamModel             string `json:"actual_upstream_model,omitempty"`
 }
 
 // SettlementError carries console-api settlement failure data for official streams.

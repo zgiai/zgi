@@ -564,17 +564,10 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Capabilities:        capabilities,
 			Video:               videoFromCapabilities(capabilities),
 		}
-		if strings.TrimSpace(am.Vendor) == "" {
-			am.Vendor = strings.ToLower(strings.TrimSpace(m.Provider))
-		}
 		if metadata, ok := catalogvendor.LookupMetadata(am.Vendor); ok {
 			am.VendorName = metadata.VendorName
 			am.VendorCNName = metadata.CNName
 			am.VendorENName = metadata.ENName
-		} else {
-			am.VendorName = m.Provider
-			am.VendorCNName = m.Provider
-			am.VendorENName = m.Provider
 		}
 
 		// Apply tenant custom display name if set
