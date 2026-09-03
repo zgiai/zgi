@@ -222,6 +222,7 @@ const messages = {
         'This model is deprecated and cannot be selected for new configurations.',
       useCases: 'Use Cases',
       features: 'Features',
+      pricing: 'Pricing',
       replacementSuggestion: 'Suggested replacement:',
       description: 'Description:',
       unknown: 'unknown',

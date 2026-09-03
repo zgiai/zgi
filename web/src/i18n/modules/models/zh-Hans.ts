@@ -215,6 +215,7 @@ const messages: ModelsMessages = {
       deprecatedUnavailable: '该模型已废弃，不支持新建选择。',
       useCases: '使用场景',
       features: '功能',
+      pricing: '价格',
       replacementSuggestion: '建议使用',
       description: '描述：',
       unknown: '未知',

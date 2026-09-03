@@ -11,6 +11,7 @@ import type { Locale } from '@/lib/i18n';
 import type { FeatureLabels } from '../types';
 import { serializeValue } from '../utils';
 import { ModelTooltipContent } from '@/components/model/model-tooltip-content';
+import { hasModelPriceDisplay } from '@/components/model/model-price-summary';
 import { getModelDisplayName } from '@/utils/model-label';
 
 export interface ModelRowItemProps {
@@ -48,7 +49,7 @@ export const ModelRowItem = memo(function ModelRowItem({
   const hasMeta =
     (model.context_window !== undefined && model.context_window > 0) ||
     (model.use_cases && model.use_cases.length > 0);
-  const shouldShowTooltip = hasFeatures || hasMeta;
+  const shouldShowTooltip = hasFeatures || hasMeta || hasModelPriceDisplay(model);
 
   const itemNode = (
     <SelectItem

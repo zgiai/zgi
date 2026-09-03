@@ -9,6 +9,7 @@ import { ModelUseCaseIcon } from '@/components/model/model-use-case-icon';
 import { formatTokens } from '@/utils/format';
 import { cn } from '@/lib/utils';
 import { USE_CASE_BADGE_COLORS } from '@/config/model-colors';
+import { ModelPriceSummary } from '@/components/model/model-price-summary';
 
 // Priority order for displaying features (most important first)
 const FEATURE_PRIORITY = [
@@ -107,6 +108,9 @@ export const ModelTooltipContent = memo(function ModelTooltipContent({
           )}
         </div>
       )}
+
+      {/* Pricing */}
+      <ModelPriceSummary model={model} />
 
       {/* Use Cases grid */}
       {hasUseCases && (
