@@ -745,6 +745,11 @@ assert.match(
   'Editing a legacy installation must retain Webhook rather than silently migrate it'
 );
 assert.match(
+  feishuChannelProvider,
+  /function FeishuCredentialDialog[\s\S]*<DialogContent size="xl" className="w-\[calc\(100vw-2rem\)\] p-0">/,
+  'Feishu credential editing must use a wider dialog while keeping narrow-screen gutters'
+);
+assert.match(
   channels,
   /\) : usesWebhook \? \(/,
   'Long connections must not display a stale callback address'

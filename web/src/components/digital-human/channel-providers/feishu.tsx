@@ -1217,7 +1217,7 @@ export function FeishuCredentialDialog({
       : isFeishuCredentialComplete(value));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg" className="p-0">
+      <DialogContent size="xl" className="w-[calc(100vw-2rem)] p-0">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Pencil className="size-4" />
