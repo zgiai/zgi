@@ -20,11 +20,12 @@ import { fileManageService, uploadService } from '@/services';
 import type { UploadResponse } from '@/services/upload.service';
 import { toast } from 'sonner';
 import { getImagePromptCharacterCount, IMAGE_PROMPT_MAX_CHARACTERS } from './constants';
+import { WorkspaceVoiceInputControl } from '@/components/chat/variants/aichat/voice/workspace-voice-input-control';
 
 const IMAGE_REFERENCE_ACCEPT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
-const IMAGE_REFERENCE_ACCEPT_ATTRIBUTE = IMAGE_REFERENCE_ACCEPT_EXTENSIONS
-  .map(extension => `.${extension}`)
-  .join(',');
+const IMAGE_REFERENCE_ACCEPT_ATTRIBUTE = IMAGE_REFERENCE_ACCEPT_EXTENSIONS.map(
+  extension => `.${extension}`
+).join(',');
 
 export interface ImageReferenceAttachment {
   fileId: string;
@@ -186,6 +187,11 @@ export function InputArea({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          <WorkspaceVoiceInputControl
+            value={input}
+            onChange={setInput}
+            disabled={isSending || isReferenceUploading}
+          />
           <input
             ref={fileInputRef}
             type="file"
@@ -335,7 +341,8 @@ export function InputArea({
   }
 
   async function resolveUploadedImageURL(uploaded: UploadResponse): Promise<string> {
-    const directURL = uploaded.source_url?.trim() || uploaded.url?.trim() || uploaded.download_url?.trim();
+    const directURL =
+      uploaded.source_url?.trim() || uploaded.url?.trim() || uploaded.download_url?.trim();
     if (directURL) return directURL;
     const preview = await fileManageService.getOriginalPreviewUrl(uploaded.id);
     const previewURL = preview.data?.url?.trim();
