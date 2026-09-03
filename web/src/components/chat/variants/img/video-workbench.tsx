@@ -1143,6 +1143,10 @@ function ComposerPanel({
 
 function RetainedVideoPlayer({ src, posterUrl }: { src: string; posterUrl: string }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const latestPosterUrlRef = React.useRef(posterUrl);
+
+  latestPosterUrlRef.current = posterUrl;
 
   React.useEffect(() => {
     const normalizedUrl = src.trim();
@@ -1159,22 +1163,28 @@ function RetainedVideoPlayer({ src, posterUrl }: { src: string; posterUrl: strin
     video.playsInline = true;
     video.preload = 'auto';
     video.className = 'h-full w-full bg-black object-contain';
-    if (posterUrl) {
-      video.poster = posterUrl;
-    } else {
-      video.removeAttribute('poster');
-    }
+    applyVideoPoster(video, latestPosterUrlRef.current);
 
+    videoRef.current = video;
     container.replaceChildren(video);
 
     return () => {
       mountedRetainedVideoUrls.delete(normalizedUrl);
+      if (videoRef.current === video) {
+        videoRef.current = null;
+      }
       video.pause();
       if (video.parentElement === container) {
         container.removeChild(video);
       }
     };
-  }, [posterUrl, src]);
+  }, [src]);
+
+  React.useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    applyVideoPoster(video, posterUrl);
+  }, [posterUrl]);
 
   return (
     <div
@@ -1182,6 +1192,14 @@ function RetainedVideoPlayer({ src, posterUrl }: { src: string; posterUrl: strin
       className="aspect-video w-full overflow-hidden rounded-lg border border-border bg-black"
     />
   );
+}
+
+function applyVideoPoster(video: HTMLVideoElement, posterUrl: string) {
+  if (posterUrl) {
+    video.poster = posterUrl;
+  } else {
+    video.removeAttribute('poster');
+  }
 }
 function TaskDetailSheet({
   task,
