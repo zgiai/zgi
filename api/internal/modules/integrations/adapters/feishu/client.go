@@ -467,7 +467,8 @@ func mapFeishuBusinessCode(code int) error {
 
 func parseFeishuErrorDiagnostics(payload []byte) (int, bool, string, string) {
 	var envelope struct {
-		Code  *int `json:"code"`
+		Code  *int   `json:"code"`
+		Msg   string `json:"msg"`
 		Error struct {
 			LogID           string `json:"log_id"`
 			FieldViolations []struct {
@@ -486,6 +487,16 @@ func parseFeishuErrorDiagnostics(payload []byte) (int, bool, string, string) {
 		if normalized.InvalidField != "" {
 			invalidField = normalized.InvalidField
 			break
+		}
+	}
+	if invalidField == "" && *envelope.Code == 230001 {
+		// Feishu also reports content validation through its documented ext
+		// reason instead of field_violations. Preserve only the safe field
+		// identity; raw provider text can contain message data or credentials.
+		// Do not classify a generic 230001 (e.g. invalid receive_id) as content.
+		_, reason, found := strings.Cut(strings.ToLower(envelope.Msg), "ext=")
+		if found && strings.HasPrefix(strings.TrimSpace(reason), "invalid message content") {
+			invalidField = "content"
 		}
 	}
 	diagnostics := integrations.NormalizeProviderDiagnostics(integrations.ProviderDiagnostics{

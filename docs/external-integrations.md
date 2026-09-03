@@ -838,6 +838,27 @@ Channels page without rerunning the model. An `unknown` provider outcome cannot
 be retried automatically: verify the Feishu group first to avoid a duplicate
 reply.
 
+DigitalHuman Feishu replies use rich-text `post` messages with a standalone
+`md` node, following the [Feishu message content format](https://open.feishu.cn/document/server-docs/im-v1/message-content-description/create_json).
+Headings, emphasis, lists, fenced code, tables and links are rendered by the
+Feishu client; some styles require a recent client version. Server-validated
+group mentions occupy a separate native `at` row. Model-authored mention tags
+cannot select additional recipients. Model output, run logs and stored reply
+intents remain Markdown, and channel history reads both text and rich-text
+posts. The general Feishu integration send Action and other channels retain
+their existing formats.
+
+If the encoded rich-text request exceeds the adapter's 28 KiB safety budget,
+ZGI sends one readable plain-text representation, retaining code, table cells
+and file URLs. This does not raise the existing 20,000-character channel reply
+limit. Plain text is checked against Feishu's 150 KiB request limit and is never
+silently truncated by the adapter. ZGI also allows one plain-text fallback
+after an explicit provider content-format or size rejection, but never after
+permission, DLP, network or ambiguous-response errors. Multi-message splitting
+is not used: one outbox intent keeps one provider receipt, avoiding replay of
+partially delivered replies. Feishu's one-hour UUID deduplication supplements,
+but does not replace, durable outbox state.
+
 Long-running turns can emit transient channel feedback. Each DigitalHuman has
 independent published switches for the processing acknowledgement and coherent
 user-visible progress that ChatRuntime finalizes before a tool call or as an

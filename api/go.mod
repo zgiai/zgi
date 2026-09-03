@@ -48,6 +48,7 @@ require (
 	github.com/swaggo/gin-swagger v1.6.0
 	github.com/tiktoken-go/tokenizer v0.7.0
 	github.com/xuri/excelize/v2 v2.9.1
+	github.com/yuin/goldmark v1.8.5
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.54.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.54.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.54.0

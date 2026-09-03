@@ -411,10 +411,10 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 		request.DeliveryID == uuid.Nil || strings.TrimSpace(request.ExternalConversationID) == "" || strings.TrimSpace(request.Text) == "" {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
-	request.Text = renderFeishuDeliveryText(request.Text, request.Mentions)
 	if adapter.directProviderAvailable() {
 		return adapter.deliverDirect(ctx, request)
 	}
+	request.Text = renderFeishuDeliveryText(request.Text, request.Mentions)
 	result, err := adapter.executor.Execute(ctx, integrations.ActionRequest{
 		OrganizationID: request.OrganizationID.String(), WorkspaceID: request.WorkspaceID.String(), UserID: request.ActorID.String(),
 		ConversationID: request.RunID.String(), MessageID: request.DeliveryID.String(), ConnectionID: request.ConnectionID.String(),
@@ -484,24 +484,18 @@ func (adapter *ChannelAdapter) deliverDirect(ctx context.Context, request channe
 	if err != nil {
 		return nil, err
 	}
-	output, meta, err := adapter.provider.sendMessage(ctx, region, token, connection, map[string]interface{}{
-		"recipient_type": "chat_id",
-		"recipient_id":   strings.TrimSpace(request.ExternalConversationID),
-		"text":           strings.TrimSpace(request.Text),
-	}, false)
+	messageID, meta, err := adapter.sendChannelMessage(ctx, region, token, request)
 	meta.Attempts += tokenMeta.Attempts
 	if err != nil {
-		// The Feishu send API has no idempotency key. Once a network request has
-		// started, retrying an ambiguous timeout or transport failure could send
-		// a duplicate message, so leave the durable delivery in unknown state.
+		// Feishu's UUID deduplication expires after one hour. It is not a
+		// durable delivery guarantee: never resend an ambiguous provider write.
 		switch integrations.ErrorCode(err) {
-		case integrations.ErrorCodeTimeout, integrations.ErrorCodeUpstream:
+		case integrations.ErrorCodeTimeout, integrations.ErrorCodeUpstream, integrations.ErrorCodeResponseInvalid:
 			return nil, errors.Join(channelruntime.ErrDeliveryOutcomeUnknown, err)
 		default:
 			return nil, err
 		}
 	}
-	messageID := nestedString(output, "message", "message_id")
 	if messageID == "" {
 		return nil, channelruntime.ErrDeliveryOutcomeUnknown
 	}

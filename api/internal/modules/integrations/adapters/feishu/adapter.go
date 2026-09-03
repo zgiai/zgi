@@ -857,6 +857,9 @@ func validIANATimezone(value string) bool {
 }
 
 func normalizedMessageText(messageType, raw string) string {
+	if strings.EqualFold(strings.TrimSpace(messageType), "post") {
+		return normalizedPostText(raw)
+	}
 	if !strings.EqualFold(strings.TrimSpace(messageType), "text") {
 		return ""
 	}
