@@ -1050,7 +1050,7 @@ const messages: WebappMessages = {
           description: '通过 GitHub REST API 读取已授权的仓库、议题和当前账户信息。',
         },
         webSearch: {
-          name: '网页搜索',
+          name: 'Exa 网页搜索',
           description: '通过 Exa 搜索公开网页并读取相关内容。',
         },
         genericDescription: '通过已授权连接，让 AIChat 安全使用该外部应用。',

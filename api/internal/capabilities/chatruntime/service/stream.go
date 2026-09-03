@@ -116,6 +116,15 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
 			}
+			var pendingConnector *skillloop.ConnectorConfirmationPendingError
+			if errors.As(err, &pendingConnector) {
+				metadata, persistErr := s.persistConnectorConfirmationPendingResult(persistCtx, prepared, pendingConnector.Payload, usage)
+				if persistErr != nil {
+					return nil, finalizedRuntimePersistenceError(persistErr)
+				}
+				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil
+			}
 			var pendingClientAction *skillloop.ClientActionPendingError
 			if errors.As(err, &pendingClientAction) {
 				metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, pendingClientAction.Payload, usage)
@@ -313,7 +322,7 @@ func (s *service) StreamConversationEventsForCaller(ctx context.Context, scope S
 		for _, event := range events {
 			lastID = event.ID
 			event = hydrateStreamEventGeneratedFileURL(event)
-			event = publicExternalActionStreamEvent(event)
+			event = publicToolStreamEvent(event)
 			if err := onEvent(event); err != nil {
 				return err
 			}
@@ -719,7 +728,7 @@ func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, e
 	if suppressClientStreamEvent(event.EventType, event.Payload) {
 		return
 	}
-	publicEvent := publicExternalActionStreamEvent(*event)
+	publicEvent := publicToolStreamEvent(*event)
 	if err := onEvent(StreamEvent{
 		ID:          publicEvent.ID,
 		EventType:   publicEvent.EventType,
@@ -940,7 +949,7 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 			"content_len", timelineDebugTextLen(event.Payload["content"]),
 		)
 	}
-	publicEvent := publicExternalActionStreamEvent(*event)
+	publicEvent := publicToolStreamEvent(*event)
 	if err := onEvent(StreamEvent{
 		ID:          publicEvent.ID,
 		EventType:   publicEvent.EventType,

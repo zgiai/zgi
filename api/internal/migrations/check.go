@@ -1,6 +1,8 @@
 package migrations
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,6 +41,9 @@ func Check(options CheckOptions) (CheckResult, error) {
 	result.MigrationCount = len(allMigrations())
 
 	if err := checkMigrationSourceSafety(files); err != nil {
+		return result, err
+	}
+	if err := checkRetirementSourceSafety(); err != nil {
 		return result, err
 	}
 
@@ -95,13 +100,14 @@ func checkMigrationFilenames() ([]string, error) {
 	slices.Sort(files)
 
 	allowed := map[string]struct{}{
-		"check.go":               {},
-		"legacy_bridge.go":       {},
-		"postgres_smoke_test.go": {},
-		"registry.go":            {},
-		"runner.go":              {},
-		"runner_test.go":         {},
-		"schema_executor.go":     {},
+		"check.go":                    {},
+		"legacy_bridge.go":            {},
+		"postgres_smoke_test.go":      {},
+		"registry.go":                 {},
+		"runner.go":                   {},
+		"runner_test.go":              {},
+		"schema_executor.go":          {},
+		"migration_source_history.go": {},
 	}
 	migrationIDs := make(map[string]struct{}, len(allMigrations()))
 	for _, migration := range allMigrations() {
@@ -137,6 +143,12 @@ func checkMigrationSourceSafety(files []string) error {
 		if err != nil {
 			return fmt.Errorf("read migration file %s: %w", file, err)
 		}
+		if expected, ok := historicalMigrationSourceDigests[strings.TrimSuffix(filepath.Base(file), ".go")]; ok {
+			if migrationSourceDigest(data) != expected {
+				return fmt.Errorf("historical migration %s differs from its pinned source", filepath.Base(file))
+			}
+			continue
+		}
 		normalized := strings.ToUpper(string(data))
 		for _, forbidden := range []string{
 			"ALLOWDESTRUCTIVE()",
@@ -151,6 +163,30 @@ func checkMigrationSourceSafety(files []string) error {
 				return fmt.Errorf("migration file %s contains forbidden token %q", filepath.Base(file), forbidden)
 			}
 		}
+	}
+	return nil
+}
+
+func migrationSourceDigest(data []byte) string {
+	normalized := strings.ReplaceAll(string(data), "\r\n", "\n")
+	value := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(value[:])
+}
+
+// The closed retirement executor is checked explicitly even though its source
+// lives in the offline package. A change requires reviewing this pinned digest;
+// ordinary migrations still cannot obtain a destructive SQL capability.
+func checkRetirementSourceSafety() error {
+	root, err := migrationsDir()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(filepath.Join(root, "connectorfinalize", "retirement_schema.go"))
+	if err != nil {
+		return err
+	}
+	if migrationSourceDigest(data) != retirementSchemaSourceDigest {
+		return fmt.Errorf("fixed retirement executor changed; review its exact object capability")
 	}
 	return nil
 }

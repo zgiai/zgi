@@ -177,10 +177,6 @@ func agentBindingChecks(
 			check.BindingType = "workflow"
 			check.AccessMode = "execute"
 			check.ParentResourceID = stringMapValue(resource.Metadata, "agent_id", "workflow_id")
-		case "integration_connection":
-			check.BindingType = "integration_connection"
-			check.ParentResourceID = stringMapValue(resource.Metadata, "integration_id")
-			check.ActionID = stringMapValue(resource.Metadata, "action_id")
 		}
 		if check.BindingType == "" || check.ResourceID == "" {
 			continue
@@ -661,9 +657,6 @@ func assetRefsFromToolArguments(manifest toolgovernance.Manifest, arguments map[
 	case "workflow_run":
 		idKeys = []string{"workflow_run_id", "workflowRunId", "run_id", "runId", "asset_id", "resource_id", "id"}
 		nameKeys = []string{"workflow_run_name", "workflowRunName", "run_name", "runName", "asset_name", "resource_name", "name"}
-	case "integration_connection":
-		idKeys = []string{"connection_id", "connectionId", "integration_connection_id", "integrationConnectionId", "asset_id", "resource_id", "id"}
-		nameKeys = []string{"connection_name", "connectionName", "integration_connection_name", "integrationConnectionName", "asset_name", "resource_name", "name"}
 	}
 
 	metadata := assetMetadataFromToolArguments(assetType, arguments)
@@ -1060,14 +1053,7 @@ func assetMetadataFromToolArguments(assetType string, arguments map[string]inter
 			metadata["lifecycle"] = lifecycle
 		}
 	}
-	if assetType == "integration_connection" {
-		if integrationID := stringMapValue(arguments, "integration_id", "integrationId"); integrationID != "" {
-			metadata["integration_id"] = strings.ToLower(integrationID)
-		}
-		if actionID := stringMapValue(arguments, "action_id", "actionId"); actionID != "" {
-			metadata["action_id"] = strings.ToLower(actionID)
-		}
-	}
+
 	if len(metadata) == 0 {
 		return nil
 	}

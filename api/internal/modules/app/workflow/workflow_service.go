@@ -15,7 +15,6 @@ import (
 
 	"github.com/google/uuid"
 	appconfig "github.com/zgiai/zgi/api/config"
-	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
@@ -27,6 +26,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
@@ -57,7 +57,7 @@ type WorkflowService struct {
 	runningWorkflowsMu sync.RWMutex
 	diagnoser          *diagnosis.Diagnoser
 	workflowDB         *gorm.DB
-	workflowBindings   *agentbindings.Repository
+	connectorBindings  *connectorbindings.GormRepository
 }
 
 var (
@@ -601,6 +601,7 @@ func (s *WorkflowService) SyncDraftWorkflow(ctx context.Context, workspaceID, ag
 		workflow = existingWorkflow
 	}
 
+	workflow.ConnectorReferenceCommands = syncReq.ConnectorReferenceCommands
 	connectorBindings, err := s.workflowConnectorBindingRows(ctx, workflow, syncReq.Graph, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid workflow connector dependencies: %w", err)
@@ -662,6 +663,7 @@ func (s *WorkflowService) SyncDraftWorkflow(ctx context.Context, workspaceID, ag
 		"result":     "success",
 		"hash":       fmt.Sprintf("%x", md5.Sum([]byte(workflow.ID+workflow.UpdatedAt.String()))),
 		"updated_at": workflow.UpdatedAt,
+		"graph":      workflow.GetGraphDict(),
 	}
 
 	return response, nil
@@ -1659,9 +1661,9 @@ func (s *WorkflowService) DeleteWorkflow(ctx context.Context, tenantID, agentID,
 		return fmt.Errorf("failed to get workflow: %w", err)
 	}
 
-	// Delete the graph row and its exact draft/published connector dependency
-	// scope in one transaction. Other immutable published versions are separate
-	// consumers and remain runnable until explicitly deleted or detached.
+	// Delete the selected graph row only after the draft and every immutable
+	// published Connector authorization snapshot in this Workflow lineage have
+	// been revoked in the same transaction.
 	if err := s.deleteWorkflowWithBindings(ctx, workflow); err != nil {
 		logger.Error("Failed to delete workflow", err)
 		return fmt.Errorf("failed to delete workflow: %w", err)
@@ -2687,6 +2689,7 @@ func (s *WorkflowService) GetWorkflowRunDetail(ctx context.Context, tenantID, ag
 	if log.Features != nil && *log.Features != "" {
 		_ = json.Unmarshal([]byte(*log.Features), &features)
 	}
+	delete(features, "connector_action_instances")
 
 	var inputs map[string]interface{}
 	if log.Inputs != nil && *log.Inputs != "" {

@@ -23,6 +23,7 @@ const (
 	EventSkillCallEnd           = "skill_call_end"
 	EventSkillCallError         = "skill_call_error"
 	EventClientActionRequired   = "client_action_required"
+	EventConnectorConfirmation  = "connector_confirmation_required"
 	EventToolGovernanceDecision = "tool_governance_decision"
 	EventSkillLoadStart         = "skill_load_start"
 	EventSkillLoadEnd           = "skill_load_end"
@@ -47,7 +48,6 @@ var (
 	ErrModelIdleTimeout       = errors.New("model idle timeout")
 	ErrFinalAnswerUnavailable = errors.New("final answer unavailable")
 	ErrAgentOutputTruncated   = errors.New("agent output truncated")
-	ErrProjectedActionBinding = errors.New("projected Action binding could not be durably committed")
 )
 
 type WorkflowApprovalPendingError struct {
@@ -108,6 +108,24 @@ func (e *ClientActionPendingError) Error() string {
 		return "client action is pending"
 	}
 	return fmt.Sprintf("client action is pending for %s", actionID)
+}
+
+// ConnectorConfirmationPendingError is intentionally independent from the
+// legacy client-action and governance continuations. Its opaque receipt is
+// resolved only through the shared Connector confirmation endpoint.
+type ConnectorConfirmationPendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *ConnectorConfirmationPendingError) Error() string {
+	if e == nil {
+		return "Connector confirmation is pending"
+	}
+	receipt := stringFromInterface(e.Payload["route_receipt"])
+	if receipt == "" {
+		return "Connector confirmation is pending"
+	}
+	return fmt.Sprintf("Connector confirmation is pending for %s", receipt)
 }
 
 type UserInputPendingError struct {
@@ -180,7 +198,6 @@ type RunRequest struct {
 	AdditionalSystemMessages       []adapter.Message
 	RuntimeStateSnapshot           RuntimeStateSnapshotFunc
 	CurrentMetadata                func() map[string]interface{}
-	CommitProjectedActionBinding   ProjectedActionBindingCommitFunc
 	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
 	OnTerminalCompletion           func(TerminalCompletionResult)
 	OnChunk                        func(string) error
@@ -216,12 +233,6 @@ type TerminalStateGuardDecisionRecord struct {
 
 type RuntimeStateSnapshotFunc func() map[string]interface{}
 
-// ProjectedActionBindingCommitFunc durably commits a server-generated
-// projected Action binding before the corresponding Provider may be called.
-// Returning nil means the commit completed; the Runner still re-reads and
-// verifies RuntimeStateSnapshot before allowing execution.
-type ProjectedActionBindingCommitFunc func(context.Context, skills.SkillTrace) error
-
 type TerminalCompletionResult struct {
 	Status           string
 	Source           string
@@ -231,10 +242,11 @@ type TerminalCompletionResult struct {
 }
 
 type SkillToolCallRef struct {
-	SkillID   string
-	ToolName  string
-	Arguments map[string]interface{}
-	Result    map[string]interface{}
+	ConnectorNative bool
+	SkillID         string
+	ToolName        string
+	Arguments       map[string]interface{}
+	Result          map[string]interface{}
 }
 
 type ModelInvocationTrace struct {

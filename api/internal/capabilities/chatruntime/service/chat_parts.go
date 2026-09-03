@@ -60,6 +60,8 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.AgentMemoryAutoExtractionEnabled = config.AgentMemoryAutoExtractionEnabled
 	parts.AgentMemorySlots = normalizeAgentMemorySlots(config.AgentMemorySlots)
 	parts.AgentMemoryUserScope = strings.TrimSpace(config.AgentMemoryUserScope)
+	parts.ConnectorTargetScope = config.ConnectorTargetScope
+	parts.ConnectorTargetVersionID = config.ConnectorTargetVersionID
 	parts.AgentMemoryConfigScope = strings.TrimSpace(config.AgentMemoryConfigScope)
 	parts.AgentMemoryConfigRevision = strings.TrimSpace(config.AgentMemoryConfigRevision)
 	parts.AgentMemoryAgentID = strings.TrimSpace(config.BillingAppID)
@@ -177,6 +179,7 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 		providerPtr = &provider
 	}
 	return &chatRequestParts{
+		ConversationID:      strings.TrimSpace(req.ConversationID),
 		Query:               query,
 		Surface:             surface,
 		RuntimeContext:      runtimeContext,
@@ -249,6 +252,7 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
 
 	return &chatRequestParts{
+		ConversationID:      message.ConversationID.String(),
 		Query:               query,
 		Surface:             surface,
 		RuntimeContext:      runtimeContext,

@@ -1,10 +1,10 @@
+import { isConnectorOperationInvocation } from '@/components/connectors/runtime/connector-operation-presentation';
 export interface TimelineSkillInvocationLike {
   kind?: string;
   status?: string;
   skill_id?: string;
   tool_name?: string;
-  integration_id?: string;
-  action_id?: string;
+  runtime_source?: string;
   arguments?: unknown;
   result?: unknown;
   message?: string;
@@ -192,7 +192,7 @@ function normalizedToolIdentity(invocation: TimelineSkillInvocationLike): string
   return skillId && toolName ? `${skillId}\u0000${toolName}` : null;
 }
 
-function safeExternalActionIdentifier(value: unknown): string | null {
+function safeDiagnosticIdentifier(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   if (
@@ -208,21 +208,7 @@ function safeExternalActionIdentifier(value: unknown): string | null {
 
 function objectStringField(value: unknown, key: string): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return safeExternalActionIdentifier((value as Record<string, unknown>)[key]);
-}
-
-function normalizedExternalActionIdentity(invocation: TimelineSkillInvocationLike): string | null {
-  if (normalizedToolIdentity(invocation) !== 'external-apps\u0000execute_action') return null;
-
-  const integrationId =
-    safeExternalActionIdentifier(invocation.integration_id) ??
-    objectStringField(invocation.arguments, 'integration_id') ??
-    objectStringField(invocation.result, 'integration_id');
-  const actionId =
-    safeExternalActionIdentifier(invocation.action_id) ??
-    objectStringField(invocation.arguments, 'action_id') ??
-    objectStringField(invocation.result, 'action_id');
-  return integrationId && actionId ? `${integrationId}\u0000${actionId}` : null;
+  return safeDiagnosticIdentifier((value as Record<string, unknown>)[key]);
 }
 
 function isSuccessfulToolInvocation(invocation: TimelineSkillInvocationLike): boolean {
@@ -243,33 +229,24 @@ export function recoveredInvalidArgumentTimelineItemIds(
   timeline: readonly TimelineSkillItemLike[]
 ): ReadonlySet<string> {
   const recovered = new Set<string>();
-  const laterSuccessfulTools = new Map<string, Array<string | null>>();
-
+  const laterSuccessfulTools = new Set<string>();
   for (let index = timeline.length - 1; index >= 0; index -= 1) {
     const item = timeline[index];
     if (item.type !== 'skill_event' || !item.invocation) continue;
+    // Connector results remain visible independently, including different
+    // connections or inputs sharing the same tool name.
+    if (isConnectorOperationInvocation(item.invocation)) continue;
     const identity = normalizedToolIdentity(item.invocation);
     if (!identity) continue;
     if (isSuccessfulToolInvocation(item.invocation)) {
-      const successfulActions = laterSuccessfulTools.get(identity) ?? [];
-      successfulActions.push(normalizedExternalActionIdentity(item.invocation));
-      laterSuccessfulTools.set(identity, successfulActions);
+      laterSuccessfulTools.add(identity);
       continue;
     }
-    const failedActionIdentity = normalizedExternalActionIdentity(item.invocation);
-    const laterSuccesses = laterSuccessfulTools.get(identity) ?? [];
-    const identifiedLaterSuccesses = laterSuccesses.filter(
-      (successfulActionIdentity): successfulActionIdentity is string =>
-        Boolean(successfulActionIdentity)
-    );
-    const isExternalActionFacade = identity === 'external-apps\u0000execute_action';
-    const hasMatchingLaterSuccess = isExternalActionFacade
-      ? Boolean(failedActionIdentity && identifiedLaterSuccesses.includes(failedActionIdentity))
-      : laterSuccesses.length > 0;
-    if (hasMatchingLaterSuccess && isRecoverableInvalidArgumentsInvocation(item.invocation)) {
-      recovered.add(item.id);
-    }
+    if (
+      laterSuccessfulTools.has(identity) &&
+      isRecoverableInvalidArgumentsInvocation(item.invocation)
+    )
+      {recovered.add(item.id);}
   }
-
   return recovered;
 }

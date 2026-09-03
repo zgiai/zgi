@@ -1,18 +1,10 @@
 package tools_test
 
 import (
+	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"strings"
 	"testing"
 
-	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/dingtalk"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/feishu"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/collaboration/wecom"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/developer/github"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/email/gmail"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/email/mail"
-	xadapter "github.com/zgiai/zgi/api/internal/modules/integrations/providers/social/x"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/providers/websearch/exa"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
@@ -21,23 +13,14 @@ import (
 // Schema, while the Workflow editor must preserve required fields and semantic
 // controls instead of degrading dates and string lists to raw text/JSON.
 func TestWorkflowConnectorSchemasProjectToUsableForms(t *testing.T) {
-	definitions := []integrations.ProviderDefinition{
-		dingtalk.ProviderDefinition(),
-		exa.ProviderDefinition("auto"),
-		feishu.ProviderDefinition(),
-		github.ProviderDefinition(),
-		gmail.ProviderDefinition(),
-		wecom.ProviderDefinition(),
-		xadapter.ProviderDefinition(),
+	definitions, err := catalog.BuiltinDefinitions()
+	if err != nil {
+		t.Fatal(err)
 	}
-	definitions = append(definitions, mail.ProviderDefinitions()...)
 
 	workflowActions := 0
 	for _, definition := range definitions {
-		for _, action := range definition.Actions {
-			if !supportsWorkflow(action.SupportedCallers) {
-				continue
-			}
+		for _, action := range definition.Operations {
 			workflowActions++
 			parameters, err := tools.JSONSchemaToToolParameters(action.InputSchema)
 			if err != nil {

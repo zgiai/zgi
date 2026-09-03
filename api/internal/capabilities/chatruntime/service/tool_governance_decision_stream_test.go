@@ -611,15 +611,8 @@ func TestToolGovernanceContinuationUsesAuthoritativeConnectionEvent(t *testing.T
 		uuid.New(), uuid.New(), correlationID, toolGovernanceActionApprove,
 		toolGovernanceApprovalStatusApproved, false, nil, event,
 	)
-	publicFrozen, found, err := toolGovernanceFrozenInvocationFromEvent(publicResponse.Event)
-	if err != nil || !found {
-		t.Fatalf("public frozen invocation = %#v found=%t error=%v", publicFrozen, found, err)
-	}
-	if toolgovernance.FrozenInvocationHashMatches(publicFrozen) {
-		t.Fatal("public projection should be detached and sanitized, not used for internal execution")
-	}
-	if publicFrozen.Arguments["connection_id"] != nil || publicFrozen.Assets[0].ID != "" {
-		t.Fatalf("public projection exposed internal connection identifiers: %#v", publicFrozen)
+	if _, found, err := toolGovernanceFrozenInvocationFromEvent(publicResponse.Event); err != nil || found {
+		t.Fatal("public projection must not carry a frozen invocation", err)
 	}
 
 	authoritative, err := authoritativeToolGovernanceContinuationEvent(message, correlationID, toolGovernanceActionApprove)

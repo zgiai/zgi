@@ -2,156 +2,138 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"sort"
-	"strings"
-
 	"github.com/google/uuid"
+	core "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 )
 
-// workflowConnectorAction is the provider-authoritative identity of one
-// connector tool. Workflow graphs persist the provider tool name, while the
-// binding ledger must retain the stable Action ID used by runtime governance.
-type workflowConnectorAction struct {
-	ActionID   string
-	AccessMode string
+type workflowConnectorSelection struct {
+	NodeID       string
+	OwnerID      uuid.UUID
+	BindingID    uuid.UUID
+	ConnectionID uuid.UUID
+	ConnectorID  core.Identifier
+	OperationID  core.Identifier
 }
 
-type workflowConnectorActionResolver func(
-	ctx context.Context,
-	integrationID string,
-	toolName string,
-) (workflowConnectorAction, error)
-
-// workflowConnectorDependency is one configured connector node in a Workflow
-// graph. NodeID is part of the authorization identity: two nodes that happen to
-// use the same connection are still separate binding instances.
-type workflowConnectorDependency struct {
-	NodeID        string
-	NodeTitle     string
-	IntegrationID string
-	ToolName      string
-	ActionID      string
-	ConnectionID  string
-	AccessMode    string
-}
-
-func extractWorkflowConnectorDependencies(
-	ctx context.Context,
-	graph map[string]interface{},
-	resolve workflowConnectorActionResolver,
-) ([]workflowConnectorDependency, error) {
+func (s *WorkflowService) workflowConnectorBindingRows(ctx context.Context, workflow *Workflow, graph map[string]interface{}, accountID string) ([]workflowConnectorSelection, error) {
 	nodes, err := workflowConnectorGraphNodes(graph)
 	if err != nil {
 		return nil, err
 	}
-	if len(nodes) == 0 {
-		return []workflowConnectorDependency{}, nil
-	}
-	if resolve == nil {
-		return nil, fmt.Errorf("workflow connector Action resolver is required")
-	}
-
-	dependencies := make([]workflowConnectorDependency, 0)
-	seenNodeIDs := make(map[string]struct{}, len(nodes))
-	for index, node := range nodes {
+	owner, ownerErr := uuid.Parse(accountID)
+	result := []workflowConnectorSelection{}
+	seen := map[string]bool{}
+	for _, node := range nodes {
 		data := workflowNodeData(node)
-		if !strings.EqualFold(strings.TrimSpace(workflowString(data, "provider_type")), "connector") {
+		if workflowString(data, "provider_type") != "connector" {
 			continue
 		}
-
-		nodeID := strings.TrimSpace(workflowString(node, "id"))
-		if nodeID == "" {
-			return nil, fmt.Errorf("workflow connector node at index %d has no id", index)
-		}
-		if _, exists := seenNodeIDs[nodeID]; exists {
-			return nil, fmt.Errorf("workflow connector node id %q is duplicated", nodeID)
-		}
-		seenNodeIDs[nodeID] = struct{}{}
-
-		connectionID := strings.TrimSpace(workflowString(data, "connection_id"))
-		// An unconfigured connector node is allowed in a draft/import, but it
-		// has no executable dependency and therefore must not create a ledger row.
-		if connectionID == "" {
+		if _, unavailable := data["connector_unavailable_ref"]; unavailable {
 			continue
 		}
-		parsedConnectionID, parseErr := uuid.Parse(connectionID)
-		if parseErr != nil || parsedConnectionID == uuid.Nil {
-			return nil, fmt.Errorf("workflow connector node %q has an invalid connection_id", nodeID)
+		ref, ok := data["connector"].(map[string]interface{})
+		if !ok {
+			if workflowString(data, "connection_id") != "" {
+				return nil, fmt.Errorf("Connector node requires a native reference")
+			}
+			continue
 		}
-
-		integrationID := strings.ToLower(strings.TrimSpace(workflowString(data, "provider_id")))
-		toolName := strings.TrimSpace(workflowString(data, "tool_name"))
-		if integrationID == "" || toolName == "" {
-			return nil, fmt.Errorf("workflow connector node %q requires provider_id and tool_name", nodeID)
+		connectionValue := workflowString(ref, "connection_id")
+		if connectionValue == "" {
+			continue
 		}
-		action, resolveErr := resolve(ctx, integrationID, toolName)
-		if resolveErr != nil {
-			return nil, fmt.Errorf("resolve workflow connector node %q Action: %w", nodeID, resolveErr)
+		nodeID := workflowString(node, "id")
+		connection, err := uuid.Parse(connectionValue)
+		connector, e1 := core.NormalizeIdentifier(workflowString(ref, "connector_id"))
+		operation, e2 := core.NormalizeIdentifier(workflowString(ref, "operation_id"))
+		if ownerErr != nil || owner == uuid.Nil || err != nil || connection == uuid.Nil || e1 != nil || e2 != nil || nodeID == "" || seen[nodeID] {
+			return nil, fmt.Errorf("Connector node identity is invalid")
 		}
-		actionID := strings.ToLower(strings.TrimSpace(action.ActionID))
-		if actionID == "" {
-			return nil, fmt.Errorf("workflow connector node %q resolved to an empty Action ID", nodeID)
+		seen[nodeID] = true
+		if s.executor == nil || s.executor.connectorCatalog == nil {
+			return nil, fmt.Errorf("Connector catalog is unavailable")
 		}
-		accessMode := strings.ToLower(strings.TrimSpace(action.AccessMode))
-		if accessMode != "read" && accessMode != "write" {
-			return nil, fmt.Errorf("workflow connector node %q resolved to invalid access mode %q", nodeID, action.AccessMode)
+		definition, found := s.executor.connectorCatalog.Get(connector.String())
+		if !found {
+			return nil, fmt.Errorf("Connector is unavailable")
 		}
-
-		title := strings.TrimSpace(workflowString(data, "title"))
-		if title == "" {
-			title = strings.TrimSpace(workflowString(data, "tool_label"))
+		matched := false
+		for _, op := range definition.Operations {
+			if op.ID == operation.String() {
+				matched = true
+				data["provider_id"] = definition.ID
+				data["tool_name"] = op.ToolName
+				break
+			}
 		}
-		if title == "" {
-			title = toolName
+		if !matched {
+			return nil, fmt.Errorf("Connector operation is unavailable")
 		}
-		dependencies = append(dependencies, workflowConnectorDependency{
-			NodeID:        nodeID,
-			NodeTitle:     title,
-			IntegrationID: integrationID,
-			ToolName:      toolName,
-			ActionID:      actionID,
-			ConnectionID:  parsedConnectionID.String(),
-			AccessMode:    accessMode,
-		})
+		var binding uuid.UUID
+		if value := workflowString(ref, "binding_id"); value != "" {
+			binding, err = uuid.Parse(value)
+			if err != nil || binding == uuid.Nil {
+				return nil, fmt.Errorf("Connector binding is invalid")
+			}
+		}
+		result = append(result, workflowConnectorSelection{NodeID: nodeID, OwnerID: owner, ConnectionID: connection, ConnectorID: connector, OperationID: operation, BindingID: binding})
 	}
-
-	sort.Slice(dependencies, func(i, j int) bool {
-		if dependencies[i].NodeID != dependencies[j].NodeID {
-			return dependencies[i].NodeID < dependencies[j].NodeID
-		}
-		if dependencies[i].IntegrationID != dependencies[j].IntegrationID {
-			return dependencies[i].IntegrationID < dependencies[j].IntegrationID
-		}
-		return dependencies[i].ConnectionID < dependencies[j].ConnectionID
-	})
-	return dependencies, nil
+	return result, nil
 }
-
-// validateWorkflowConnectorNodesConfigured is a publish-time gate. Drafts and
-// imports may keep a connector node while its connection is being configured,
-// but an executable published graph must never contain such a node.
 func validateWorkflowConnectorNodesConfigured(graph map[string]interface{}) error {
 	nodes, err := workflowConnectorGraphNodes(graph)
 	if err != nil {
 		return err
 	}
-	for index, node := range nodes {
+	for _, node := range nodes {
 		data := workflowNodeData(node)
-		if !strings.EqualFold(strings.TrimSpace(workflowString(data, "provider_type")), "connector") {
+		if workflowString(data, "provider_type") != "connector" {
 			continue
 		}
-		nodeID := strings.TrimSpace(workflowString(node, "id"))
-		if nodeID == "" {
-			nodeID = fmt.Sprintf("index %d", index)
-		}
-		if strings.TrimSpace(workflowString(data, "connection_id")) == "" {
-			return fmt.Errorf("workflow connector node %q must be reconnected before publishing", nodeID)
+		ref, ok := data["connector"].(map[string]interface{})
+		if !ok || workflowString(ref, "connection_id") == "" || workflowString(ref, "binding_id") == "" || data["connector_unavailable_ref"] != nil {
+			return fmt.Errorf("Connector node %s must be replaced before publishing", workflowString(node, "id"))
 		}
 	}
 	return nil
 }
-
+func rewriteWorkflowConnectorIDs(workflow *Workflow, bindings []core.TargetBinding) error {
+	graph := workflow.GetGraphDict()
+	nodes, err := workflowConnectorGraphNodes(graph)
+	if err != nil {
+		return err
+	}
+	byNode := map[string]core.TargetBinding{}
+	for _, binding := range bindings {
+		byNode[binding.Target.BindingInstanceID] = binding
+	}
+	for _, node := range nodes {
+		data := workflowNodeData(node)
+		if workflowString(data, "provider_type") != "connector" {
+			continue
+		}
+		ref, ok := data["connector"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		binding, found := byNode[workflowString(node, "id")]
+		if found {
+			ref["binding_id"] = binding.ID.String()
+			ref["connection_id"] = binding.ConnectionID.String()
+			ref["connector_id"] = binding.ConnectorID.String()
+			ref["revision"] = binding.Revision
+		} else {
+			delete(ref, "binding_id")
+		}
+	}
+	encoded, err := json.Marshal(graph)
+	if err == nil {
+		workflow.Graph = string(encoded)
+	}
+	return err
+}
 func workflowConnectorGraphNodes(graph map[string]interface{}) ([]map[string]interface{}, error) {
 	if len(graph) == 0 {
 		return []map[string]interface{}{}, nil
@@ -184,60 +166,4 @@ func workflowString(values map[string]interface{}, key string) string {
 	}
 	value, _ := values[key].(string)
 	return value
-}
-
-// clearWorkflowConnectorConnection removes one connection only from the
-// selected connector node instances. It deliberately keeps provider/tool
-// configuration so the draft remains editable and can be reconnected later.
-func clearWorkflowConnectorConnection(
-	graph map[string]interface{},
-	connectionID string,
-	nodeIDs map[string]struct{},
-) (bool, error) {
-	connectionID = strings.TrimSpace(connectionID)
-	if connectionID == "" {
-		return false, fmt.Errorf("workflow connector connection id is required")
-	}
-	nodes, err := workflowConnectorGraphNodes(graph)
-	if err != nil {
-		return false, err
-	}
-	changed := false
-	for _, node := range nodes {
-		nodeID := strings.TrimSpace(workflowString(node, "id"))
-		if len(nodeIDs) > 0 {
-			if _, selected := nodeIDs[nodeID]; !selected {
-				continue
-			}
-		}
-		data := workflowNodeData(node)
-		if !strings.EqualFold(strings.TrimSpace(workflowString(data, "provider_type")), "connector") ||
-			!strings.EqualFold(strings.TrimSpace(workflowString(data, "connection_id")), connectionID) {
-			continue
-		}
-		delete(data, "connection_id")
-		changed = true
-	}
-	return changed, nil
-}
-
-func clearAllWorkflowConnectorConnections(graph map[string]interface{}) ([]string, error) {
-	nodes, err := workflowConnectorGraphNodes(graph)
-	if err != nil {
-		return nil, err
-	}
-	cleared := make([]string, 0)
-	for _, node := range nodes {
-		data := workflowNodeData(node)
-		if !strings.EqualFold(strings.TrimSpace(workflowString(data, "provider_type")), "connector") {
-			continue
-		}
-		if strings.TrimSpace(workflowString(data, "connection_id")) == "" {
-			continue
-		}
-		delete(data, "connection_id")
-		cleared = append(cleared, strings.TrimSpace(workflowString(node, "id")))
-	}
-	sort.Strings(cleared)
-	return cleared, nil
 }

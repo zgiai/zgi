@@ -1,0 +1,1647 @@
+openapi: 3.1.0
+info:
+  title: ZGI Personal Connector API
+  version: 2.1.1
+  description:
+    Native personal Connectors. Runtime contains no retired integrations implementation.
+    Agent and Workflow mutations use their host save transactions; direct binding and reference
+    repair mutations are Chat-only.
+servers:
+  - url: /console/api
+paths:
+  /connectors/{connectorId}/app-credential-setups:
+    post:
+      operationId: connectWithAppCredentials
+      description:
+        Versioned multi-field setup using the existing candidate verification, encrypted
+        credential and personal connection lifecycle. Request limit 32 KiB. Candidate Secret is
+        write-only. No binding or runtime confirmation rules are relaxed.
+      parameters:
+        - $ref: "#/components/parameters/ConnectorId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [values]
+              properties:
+                values:
+                  $ref: "#/components/schemas/AppCredentialValues"
+                target:
+                  $ref: "#/components/schemas/TargetRef"
+      responses:
+        "201":
+          description: Verified personal connection, using KeySetupResult in the standard data envelope
+        "202":
+          description: Verification in progress, using KeySetupResult in the standard data envelope
+        "422":
+          description: App identity verification failed; does not mutate an existing Secret
+  /connectors/{connectorId}/onboarding-flows:
+    post:
+      operationId: startConnectorApplicationRegistration
+      description:
+        Explicitly start create_app with fixed permission template. Owner and organization
+        come from authenticated context. Request limit 8 KiB. Same idempotency key returns the original
+        flow; changed input conflicts. Uncertain outcomes must not be retried with a new key.
+      parameters:
+        - $ref: "#/components/parameters/ConnectorId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [intent, region, template_id]
+              properties:
+                intent:
+                  const: create_app
+                region:
+                  enum: [feishu, lark]
+                template_id:
+                  enum: [feishu-app-template-v2, feishu-app-template-v1]
+                  description: New flows require v2. v1 is accepted only to recover an existing receipt with its original idempotency key.
+      responses:
+        "202":
+          $ref: "#/components/responses/ConnectorOnboardingSnapshot"
+        "409":
+          description: Idempotency request conflict
+        "429":
+          description: Active flow or start-rate budget exceeded; existing flows are not cancelled
+  /connector-connections/{connectionId}/onboarding-flows:
+    post:
+      operationId: configureConnectorApplication
+      description:
+        update_app pins the owned connection revision, credential version, region and App ID.
+        These identities cannot be changed in the QR session. No new bindings are created.
+      parameters:
+        - $ref: "#/components/parameters/ConnectionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [intent, expected_revision, template_id]
+              properties:
+                intent:
+                  const: update_app
+                expected_revision:
+                  type: integer
+                  minimum: 1
+                template_id:
+                  enum: [feishu-app-template-v2, feishu-app-template-v1]
+                  description: New flows require v2. v1 is accepted only to recover an existing receipt with its original idempotency key.
+      responses:
+        "202":
+          $ref: "#/components/responses/ConnectorOnboardingSnapshot"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Connection or application identity changed
+  /connectors/onboarding-flows/{flowId}:
+    parameters:
+      - in: path
+        name: flowId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getConnectorApplicationRegistration
+      description:
+        Owner-scoped local snapshot only. Does not begin or poll the external provider.
+        Responses are no-store; verification URLs must not enter query caches or persistent storage.
+      responses:
+        "200":
+          $ref: "#/components/responses/ConnectorOnboardingSnapshot"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: cancelConnectorApplicationRegistration
+      description:
+        Explicit CAS cancellation clears the encrypted device session, but does not delete
+        an application already created in Feishu. Terminal requests return the current state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_revision]
+              properties:
+                expected_revision:
+                  type: integer
+                  minimum: 1
+      responses:
+        "200":
+          $ref: "#/components/responses/ConnectorOnboardingSnapshot"
+        "409":
+          description: Flow revision changed; read status before cancelling again
+  /connector-preferences/chat/me:
+    get:
+      operationId: getPersonalChatConnectorDefaults
+      description:
+        Personal defaults scoped by the authenticated organization and account. A missing
+        record returns revision 0 and an empty defaults map; existing connections are never guessed.
+        Connection summaries are batch-resolved without decrypting credentials. This preference is
+        not runtime authority and does not change any saved Chat, Agent, or Workflow binding.
+      responses:
+        "200":
+          $ref: "#/components/responses/ChatConnectorPreferences"
+        "401":
+          $ref: "#/components/responses/ConnectorPreferenceError"
+        "500":
+          $ref: "#/components/responses/ConnectorPreferenceError"
+  /connector-preferences/chat/me/{connectorId}:
+    put:
+      operationId: updatePersonalChatConnectorDefault
+      description:
+        Mutates only one Connector entry using revision CAS. selected requires an owned,
+        same-organization, same-Connector ready connection with an admitted usable Chat operation
+        permitted by its current owner, expiry, denial and wildcard new-chat boundary constraints.
+        none is a durable explicit opt-out. Replays with the same Idempotency-Key and request return
+        the current snapshot without applying the change again; a different request using the key
+        conflicts. Removing a saved connection atomically changes matching defaults to none.
+      parameters:
+        - $ref: "#/components/parameters/ConnectorId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatConnectorPreferenceUpdate"
+      responses:
+        "200":
+          $ref: "#/components/responses/ChatConnectorPreferences"
+        "400":
+          $ref: "#/components/responses/ConnectorPreferenceError"
+        "401":
+          $ref: "#/components/responses/ConnectorPreferenceError"
+        "404":
+          $ref: "#/components/responses/ConnectorPreferenceError"
+        "409":
+          $ref: "#/components/responses/ConnectorPreferenceError"
+        "500":
+          $ref: "#/components/responses/ConnectorPreferenceError"
+  /connectors/catalog:
+    get:
+      operationId: listConnectors
+      parameters:
+        - in: query
+          name: classification
+          schema:
+            $ref: "#/components/schemas/ConnectorClassification"
+        - in: query
+          name: query
+          schema:
+            type: string
+            maxLength: 200
+        - in: query
+          name: status
+          schema:
+            enum:
+              - all
+              - connected
+              - needs_attention
+      responses:
+        "200":
+          description: Owner-filtered catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ConnectorCatalogItem"
+  /connectors/catalog/{connectorId}:
+    get:
+      operationId: getConnector
+      parameters:
+        - $ref: "#/components/parameters/ConnectorId"
+      responses:
+        "200":
+          description: Secret-free Connector detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorCatalogItem"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /connectors/{connectorId}/key-setups:
+    post:
+      operationId: connectWithKey
+      parameters:
+        - $ref: "#/components/parameters/ConnectorId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KeySetupRequest"
+      responses:
+        "201":
+          description: Verified ready Personal Connection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeySetupResult"
+        "202":
+          description: Bounded asynchronous verification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeySetupResult"
+        "422":
+          $ref: "#/components/responses/InvalidKey"
+        "503":
+          description: Provider unavailable; does not claim the Key is invalid
+  /connectors/key-setups/{attemptId}:
+    get:
+      operationId: getKeySetup
+      parameters:
+        - $ref: "#/components/parameters/AttemptId"
+      responses:
+        "200":
+          description: Non-secret setup state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeySetupResult"
+    delete:
+      operationId: cancelKeySetup
+      parameters:
+        - $ref: "#/components/parameters/AttemptId"
+      responses:
+        "204":
+          description: Attempt cancelled; no partial Key retained
+  /connector-connections:
+    get:
+      operationId: listPersonalConnections
+      parameters:
+        - in: query
+          name: connector_id
+          schema:
+            type: string
+        - in: query
+          name: target_type
+          schema:
+            $ref: "#/components/schemas/TargetType"
+        - in: query
+          name: target_id
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Complete owner-only candidate set
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PersonalConnection"
+  /connector-connections/{connectionId}:
+    get:
+      operationId: getPersonalConnection
+      parameters:
+        - $ref: "#/components/parameters/ConnectionId"
+      responses:
+        "200":
+          description: Owner-only non-secret detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonalConnectionDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: renamePersonalConnection
+      parameters:
+        - $ref: "#/components/parameters/ConnectionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - revision
+                - name
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+      responses:
+        "200":
+          description: Renamed Connection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonalConnection"
+    delete:
+      operationId: removePersonalConnection
+      parameters:
+        - $ref: "#/components/parameters/ConnectionId"
+        - in: query
+          name: force
+          schema:
+            type: boolean
+            default: false
+        - in: header
+          name: X-Impact-Token
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed by owner
+        "409":
+          description: References block normal removal; inspect removal impact
+  /connector-connections/{connectionId}/reconnect:
+    post:
+      operationId: reconnectWithCandidateKey
+      parameters:
+        - $ref: "#/components/parameters/ConnectionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconnectKeyRequest"
+      responses:
+        "200":
+          description: Same identity; existing Connection switched atomically
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeySetupResult"
+        "201":
+          description: Different identity; new unbound Connection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeySetupResult"
+        "422":
+          $ref: "#/components/responses/InvalidKey"
+  /connector-connections/{connectionId}/diagnostics:
+    get:
+      operationId: diagnosePersonalConnection
+      parameters:
+        - $ref: "#/components/parameters/ConnectionId"
+      responses:
+        "200":
+          description: Non-secret readiness/capability diagnostics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonalConnectionDetail"
+  /connector-connections/{connectionId}/removal-impact:
+    get:
+      operationId: getRemovalImpact
+      parameters:
+        - $ref: "#/components/parameters/ConnectionId"
+      responses:
+        "200":
+          description: Complete affected target list and impact token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemovalImpact"
+  /connector-target-bindings:
+    get:
+      operationId: listTargetBindings
+      parameters: &a1
+        - in: query
+          name: target_type
+          required: true
+          schema:
+            type: string
+            enum:
+              - chat
+              - agent
+              - workflow
+        - in: query
+          name: target_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: target_scope
+          schema:
+            type: string
+            enum:
+              - live
+              - draft
+              - published
+        - in: query
+          name: target_version_id
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Native and legacy read-only binding projections
+    post:
+      operationId: attachPersonalConnection
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTargetBindingRequest"
+      responses:
+        "201":
+          description: Ready immediately usable binding
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TargetBinding"
+        "403":
+          description: Caller does not own the Connection or cannot edit target
+      description:
+        Chat-only explicit selection. Agent and Workflow submit Connector selections with their
+        host draft save.
+  /connector-target-bindings/{bindingId}:
+    delete:
+      operationId: detachPersonalConnection
+      parameters:
+        - in: path
+          name: bindingId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DetachTargetBindingRequest"
+      responses:
+        "200":
+          description: Disabled native binding with its stable identity retained
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TargetBinding"
+        "403":
+          description: Caller cannot edit the target
+        "409":
+          description: Stale revision or legacy read-only binding
+      description: Chat-only detach, requiring the current revision. Published bindings are immutable.
+  /connectors/runtime/confirmations/{receipt}:
+    get:
+      operationId: readConnectorRuntimeConfirmationStatus
+      description:
+        Read-only status scoped to the authenticated organization and personal owner.
+        Accepts only the opaque receipt path parameter, without query parameters.
+        Never invokes providers, submits a decision, records a terminal or resumes a host.
+        Pending rows are unresolved and do not authorize retrying an uncertain operation.
+      parameters:
+        - in: path
+          name: receipt
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Credential-free status in the standard data envelope
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [no-store]
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ConnectorRuntimeStatusResponse"
+        "400":
+          description: Malformed receipt or unexpected query parameters
+        "403":
+          description: Receipt is unavailable to this authenticated owner
+        "404":
+          description: No visible confirmation record
+        "503":
+          description: Connector status service is unavailable
+  /connectors/runtime/confirmations:
+    post:
+      operationId: resolveConnectorRuntimeConfirmation
+      description:
+        Resolves one server-frozen interactive Connector operation. The client submits only the
+        opaque receipt and its one-shot decision; operation arguments, credentials, policy,
+        remember, and session fields are not accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectorRuntimeConfirmationCommand"
+      responses:
+        "200":
+          description: Credential-free terminal projected to the frozen Chat, Agent, or Workflow host
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorRuntimeConfirmationResponse"
+        "400":
+          description: Malformed receipt
+          decision: null
+          or request shape: null
+        "403":
+          description: Receipt is unavailable to this Personal Connection owner
+        "409":
+          description: A conflicting decision or concurrent resolution already won
+        "503":
+          description: Connector runtime is unavailable; no legacy fallback is attempted
+  /connector-unavailable-references:
+    get:
+      summary: Read unavailable references for an authorized host scope
+      parameters: *a1
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ConnectorUnavailableReference"
+  /connector-unavailable-references/{referenceId}/resolve:
+    post:
+      summary: Replace or detach a Chat unavailable reference
+      description:
+        Agent and Workflow use connector_reference_commands in their draft save. Published
+        versions cannot be repaired in place.
+      parameters:
+        - in: path
+          name: referenceId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectorReferenceResolveRequest"
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                      binding:
+                        $ref: "#/components/schemas/TargetBinding"
+        "403":
+          description: Owner or host authority denied
+        "409":
+          description: Reference revision changed
+components:
+  parameters:
+    ConnectorId:
+      in: path
+      name: connectorId
+      required: true
+      schema:
+        type: string
+        pattern: ^[a-z0-9][a-z0-9._-]{0,127}$
+    ConnectionId:
+      in: path
+      name: connectionId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AttemptId:
+      in: path
+      name: attemptId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 200
+  responses:
+    ConnectorOnboardingSnapshot:
+      description: Secret-free owner-scoped flow snapshot in the standard response envelope
+      headers:
+        Cache-Control:
+          schema:
+            const: no-store
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                $ref: "#/components/schemas/ConnectorOnboardingFlow"
+    ChatConnectorPreferences:
+      description: Current owner-scoped snapshot with safe live metadata
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message, data]
+            properties:
+              code:
+                const: "0"
+              message:
+                const: success
+              data:
+                $ref: "#/components/schemas/ChatConnectorPreferenceSnapshot"
+    ConnectorPreferenceError:
+      description:
+        Stable application code and safe localized message (Accept-Language en-US or
+        zh-Hans). X-ZGI-App-Error-Code repeats the stable identity. Database causes and credentials
+        are never returned. Refresh/review after a revision conflict; never silently retry a send.
+      headers:
+        X-ZGI-App-Error-Code:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message, retryable]
+            properties:
+              code:
+                enum:
+                  - connector.preference.invalid_input
+                  - connector.preference.access_denied
+                  - connector.preference.connection_not_found
+                  - connector.preference.connection_unavailable
+                  - connector.preference.revision_conflict
+                  - connector.preference.idempotency_conflict
+                  - connector.preference.internal
+              message:
+                type: string
+              retryable:
+                type: boolean
+    NotFound:
+      description: Resource is unavailable to this owner
+    InvalidKey:
+      description: Invalid or insufficient Key; no usable Connection or partial Key retained
+  schemas:
+    AppCredentialValues:
+      type: object
+      additionalProperties: false
+      required: [region, app_id, app_secret]
+      properties:
+        region:
+          enum: [feishu, lark]
+        app_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9_-]+$
+        app_secret:
+          type: string
+          writeOnly: true
+          minLength: 1
+          maxLength: 16384
+    ConnectorOnboardingFlow:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          connector_id,
+          intent,
+          state,
+          region,
+          revision,
+          expires_at,
+          retry_after,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        connector_id:
+          type: string
+        intent:
+          enum: [create_app, update_app]
+        state:
+          enum:
+            [
+              starting,
+              awaiting_authorization,
+              verifying,
+              ready,
+              cancelled,
+              expired,
+              failed,
+              recovery_required,
+            ]
+        region:
+          enum: [feishu, lark]
+        revision:
+          type: integer
+          minimum: 1
+        expires_at:
+          type: string
+          format: date-time
+        retry_after:
+          type: integer
+          minimum: 2
+        verification_url:
+          type: string
+          format: uri
+          description: Transient allowlisted official HTTPS URL. Never persist or share it.
+        user_code:
+          type: string
+        error_code:
+          type: string
+        result_connection_id:
+          type: string
+          format: uuid
+    AppCredentialField:
+      type: object
+      required: [name, label, required, secret, type, max_length]
+      properties:
+        name:
+          enum: [region, app_id, app_secret]
+        label:
+          type: string
+        label_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        required:
+          const: true
+        secret:
+          type: boolean
+        type:
+          const: string
+        max_length:
+          type: integer
+        enum:
+          type: array
+          items:
+            type: string
+    ConnectorPermissionTemplate:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["profile_id", "profile_version", "addons", "user_event_dependencies"],
+        "description": "Fixed configuration request, not proof of granted permissions or enabled events.",
+        "properties":
+          {
+            "profile_id": { "const": "feishu-app-template-v2" },
+            "profile_version": { "const": "2.0.0" },
+            "addons":
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["preset", "scopes", "events", "callbacks"],
+                "properties":
+                  {
+                    "preset": { "const": false },
+                    "scopes":
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["tenant", "user"],
+                        "properties":
+                          {
+                            "tenant":
+                              {
+                                "type": "array",
+                                "minItems": 34,
+                                "maxItems": 34,
+                                "items": { "type": "string", "maxLength": 128 },
+                              },
+                            "user":
+                              {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 1,
+                                "items": { "const": "offline_access" },
+                              },
+                          },
+                      },
+                    "events":
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["items"],
+                        "properties":
+                          {
+                            "items":
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": ["tenant", "user"],
+                                "properties":
+                                  {
+                                    "tenant":
+                                      {
+                                        "type": "array",
+                                        "minItems": 6,
+                                        "maxItems": 6,
+                                        "items":
+                                          {
+                                            "type": "string",
+                                            "maxLength": 128,
+                                          },
+                                      },
+                                    "user":
+                                      {
+                                        "type": "array",
+                                        "minItems": 3,
+                                        "maxItems": 3,
+                                        "items":
+                                          {
+                                            "type": "string",
+                                            "maxLength": 128,
+                                          },
+                                      },
+                                  },
+                              },
+                          },
+                      },
+                    "callbacks":
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["items"],
+                        "properties":
+                          {
+                            "items":
+                              {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 1,
+                                "items": { "const": "card.action.trigger" },
+                              },
+                          },
+                      },
+                  },
+              },
+            "user_event_dependencies":
+              {
+                "type": "array",
+                "description": "Informational only: not transmitted as addons scopes and no subscription API is called. User authorization and event consumption are not implemented.",
+                "minItems": 3,
+                "maxItems": 3,
+                "items":
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["event_id", "user_scope", "subscription_api"],
+                    "properties":
+                      {
+                        "event_id": { "type": "string", "maxLength": 128 },
+                        "user_scope": { "type": "string", "maxLength": 128 },
+                        "subscription_api": { "type": "string", "maxLength": 256 },
+                      },
+                  },
+              },
+          },
+      }
+    AppProviderEvidence:
+      type: object
+      additionalProperties: false
+      properties:
+        region:
+          enum: [feishu, lark]
+        app_id:
+          type: string
+        app_name:
+          type: string
+        template_id:
+          type: string
+        granted_scopes:
+          type: array
+          maxItems: 256
+          items:
+            type: string
+        scope_status:
+          enum: [unknown, verified]
+        event_configuration:
+          const: unknown
+        events_enabled:
+          const: false
+        user_authorization_enabled:
+          const: false
+    ChatConnectorPreferenceUpdate:
+      type: object
+      additionalProperties: false
+      required: [mode, expected_revision]
+      properties:
+        mode:
+          enum: [selected, none]
+        connection_id:
+          type: string
+          format: uuid
+          description: Required for selected; omitted or empty for none. Canonical nonzero UUID only.
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+    ChatConnectorPreferenceSnapshot:
+      type: object
+      required: [revision, defaults]
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+        defaults:
+          type: object
+          maxProperties: 64
+          description:
+            Keyed by Connector ID (Exa is web-search). An omitted entry means unset;
+            none means explicit opt-out. Names are read live, not cached into preferences.
+          additionalProperties:
+            $ref: "#/components/schemas/ChatConnectorDefault"
+    ChatConnectorDefault:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          enum: [selected, none]
+        connection_id:
+          type: string
+          format: uuid
+        available:
+          type: boolean
+          description: Present for selected even when the connection is missing or invisible.
+        connection:
+          type: object
+          description: Omitted when the reference is no longer visible; never contains credentials.
+          required:
+            [id, name, external_display_name, state, usable_operation_ids]
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            external_display_name:
+              type: string
+            state:
+              type: string
+            usable_operation_ids:
+              type: array
+              items:
+                type: string
+    InitialChatConnectorSelection:
+      type: object
+      description:
+        Optional fields on the first AIChat request only. The explicit list is the final
+        selection; the server never fills missing bindings from preferences. If defaults_revision
+        is supplied it is validated even for an empty list, in the chat/binding creation transaction
+        before tool discovery. Existing conversation_id or parent_id forbids initialization fields.
+        Revision conflict uses the existing AIChat HTTP 400/string code 199001 envelope with
+        X-ZGI-App-Error-Code connector.preference.revision_conflict. Current clients freeze the
+        explicit selection and omit the preference revision, including for inherited defaults;
+        the revision validation remains compatible with older clients. Actual binding validation
+        still applies. Preferences never replace missing bindings at execution time.
+      properties:
+        initial_connector_bindings:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            additionalProperties: false
+            required: [connector_id, connection_id]
+            properties:
+              connector_id:
+                type: string
+              connection_id:
+                type: string
+                format: uuid
+        initial_connector_defaults_revision:
+          type: integer
+          format: int64
+          minimum: 0
+    LocalizedText:
+      type: object
+      description:
+        Optional BCP 47 display translations; built-ins use en-US and zh-Hans, while scalar
+        sibling fields remain the compatibility fallback. Empty translations and equivalent
+        duplicate locale tags are rejected.
+      maxProperties: 16
+      additionalProperties:
+        type: string
+        minLength: 1
+        pattern: \S
+      propertyNames:
+        maxLength: 35
+        pattern: ^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$
+    ConnectorClassification:
+      type: string
+      description:
+        Primary presentation category, independent of data/action capability types. Built-in
+        GitHub and Exa Web Search (web-search) use connector; Exa is not a data_source item.
+      enum:
+        - connector
+        - data_source
+    ConnectorReadiness:
+      type: string
+      enum:
+        - ready
+        - reconnect_required
+        - unavailable
+    TargetType:
+      type: string
+      enum:
+        - chat
+        - agent
+        - workflow
+    KeyField:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - label
+        - required
+        - secret
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+        label_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        placeholder:
+          type: string
+        placeholder_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        help_url:
+          type: string
+          format: uri
+        required:
+          type: boolean
+        secret:
+          const: true
+    CapabilitySummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - usable
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        name_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        description:
+          type: string
+        description_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        usable:
+          type: boolean
+        unavailable_reason:
+          type: string
+    ConnectorCatalogItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - plugin_id
+        - name
+        - description
+        - classification
+        - key_fields
+        - capabilities
+        - connection_summary
+      properties:
+        extension_schema_version:
+          const: 1.1.0
+        credential_fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/AppCredentialField"
+        setup:
+          type: object
+          properties:
+            handler:
+              const: feishu-app-registration-v1
+            methods:
+              type: array
+              items:
+                enum: [manual, qr_create, qr_update]
+            template_id:
+              const: feishu-app-template-v2
+            template_digest:
+              type: string
+        permission_template:
+          $ref: "#/components/schemas/ConnectorPermissionTemplate"
+        id:
+          type: string
+        plugin_id:
+          type: string
+        name:
+          type: string
+        name_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        description:
+          type: string
+        description_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        icon:
+          type: string
+        classification:
+          $ref: "#/components/schemas/ConnectorClassification"
+        key_fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/KeyField"
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CapabilitySummary"
+        examples:
+          type: array
+          items:
+            type: string
+        connection_summary:
+          type: object
+          required:
+            - count
+          properties:
+            count:
+              type: integer
+              minimum: 0
+            needs_attention_count:
+              type: integer
+              minimum: 0
+            primary_connection_id:
+              type: string
+              format: uuid
+            state:
+              $ref: "#/components/schemas/ConnectorReadiness"
+            external_display_name:
+              type: string
+    TargetRef:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+      properties:
+        type:
+          $ref: "#/components/schemas/TargetType"
+        id:
+          type: string
+        binding_instance_id:
+          type: string
+        scope:
+          type: string
+          enum:
+            - live
+            - draft
+            - published
+          description: Chat uses live; Agent and Workflow use draft or an immutable published version.
+        version_id:
+          type: string
+          format: uuid
+          description: Required for published targets; absent for live and draft.
+    KeySetupRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - values
+      properties:
+        values:
+          type: object
+          additionalProperties:
+            type: string
+            minLength: 1
+          writeOnly: true
+        target:
+          $ref: "#/components/schemas/TargetRef"
+    ReconnectKeyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - values
+      properties:
+        values:
+          type: object
+          additionalProperties:
+            type: string
+            minLength: 1
+          writeOnly: true
+        confirm_unstable_identity:
+          type: boolean
+          default: false
+          description:
+            Explicit owner confirmation only when the provider cannot return a stable account
+            identity.
+    KeySetupResult:
+      type: object
+      additionalProperties: false
+      required:
+        - attempt_id
+        - state
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        state:
+          enum:
+            - verifying
+            - ready
+            - failed
+            - cancelled
+        connection:
+          $ref: "#/components/schemas/PersonalConnection"
+        attachment:
+          $ref: "#/components/schemas/TargetBinding"
+        error_code:
+          type: string
+        retryable:
+          type: boolean
+        binding_warning:
+          type: string
+    PersonalConnection:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - connector_id
+        - name
+        - state
+        - revision
+        - credential_configured
+        - created_at
+        - updated_at
+      properties:
+        provider_evidence:
+          $ref: "#/components/schemas/AppProviderEvidence"
+        id:
+          type: string
+          format: uuid
+        connector_id:
+          type: string
+        name:
+          type: string
+        external_account_id:
+          type: string
+        external_display_name:
+          type: string
+        state:
+          $ref: "#/components/schemas/ConnectorReadiness"
+        diagnostic_code:
+          type: string
+        usable_operation_ids:
+          type: array
+          items:
+            type: string
+        credential_configured:
+          const: true
+        credential_version:
+          type: integer
+          minimum: 1
+        revision:
+          type: integer
+          minimum: 1
+        last_verified_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PersonalConnectionDetail:
+      allOf:
+        - $ref: "#/components/schemas/PersonalConnection"
+        - type: object
+          required:
+            - capabilities
+            - bindings
+          properties:
+            capabilities:
+              type: array
+              items:
+                $ref: "#/components/schemas/CapabilitySummary"
+            bindings:
+              type: array
+              items:
+                $ref: "#/components/schemas/TargetBinding"
+    CreateTargetBindingRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - connection_id
+        - target
+      properties:
+        connection_id:
+          type: string
+          format: uuid
+        target:
+          $ref: "#/components/schemas/TargetRef"
+        expected_revision:
+          type: integer
+          minimum: 1
+    DetachTargetBindingRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+    TargetBinding:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - connection_id
+        - connector_id
+        - target
+        - status
+        - revision
+      properties:
+        id:
+          type: string
+          format: uuid
+        connection_id:
+          type: string
+          format: uuid
+        connector_id:
+          type: string
+        target:
+          $ref: "#/components/schemas/TargetRef"
+        target_name:
+          type: string
+        status:
+          enum:
+            - active
+            - disabled
+            - needs_replacement
+        revision:
+          type: integer
+          minimum: 1
+    ConnectorRuntimeConfirmationCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - route_receipt
+        - decision
+      properties:
+        route_receipt:
+          type: string
+          format: uuid
+        decision:
+          enum:
+            - confirmed
+            - cancelled
+    ConnectorRuntimeConsequence:
+      type: object
+      additionalProperties: false
+      required:
+        - external_effect
+        - data_egress
+      properties:
+        external_effect:
+          type: string
+        description:
+          type: string
+        description_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        data_egress:
+          type: boolean
+        external_destination:
+          type: string
+    ConnectorRuntimeConfirmation:
+      type: object
+      description:
+        Safe pre-execution confirmation emitted by Chat, Agent, and Workflow runtime events.
+        Display translations come from the pinned operation, never from operation input.
+      additionalProperties: false
+      required:
+        - route_receipt
+        - connector_id
+        - connector_name
+        - operation_id
+        - action_name
+        - target
+        - consequence
+        - risk_classification
+      properties:
+        route_receipt:
+          type: string
+          format: uuid
+        connector_id:
+          type: string
+        connector_name:
+          type: string
+        connector_name_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        operation_id:
+          type: string
+        action_name:
+          type: string
+        action_name_i18n:
+          $ref: "#/components/schemas/LocalizedText"
+        target:
+          $ref: "#/components/schemas/TargetRef"
+        consequence:
+          $ref: "#/components/schemas/ConnectorRuntimeConsequence"
+        risk_classification:
+          enum:
+            - high
+            - unclassified
+    ConnectorRuntimeStatusResponse:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [resolution]
+          properties:
+            resolution:
+              enum: [unresolved]
+        - type: object
+          additionalProperties: false
+          required: [resolution, state]
+          properties:
+            resolution:
+              enum: [resolved]
+            state:
+              enum: [completed, cancelled, failed, unknown]
+            decision_id:
+              type: string
+              format: uuid
+            error_code:
+              type: string
+    ConnectorRuntimeConfirmationResponse:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - state
+          properties:
+            state:
+              enum:
+                - cancelled
+                - completed
+            decision_id:
+              type: string
+              format: uuid
+        - type: object
+          additionalProperties: false
+          required:
+            - state
+          properties:
+            state:
+              enum:
+                - failed
+                - unknown
+            decision_id:
+              type: string
+              format: uuid
+            error_code:
+              type: string
+              minLength: 1
+              maxLength: 128
+    RemovalImpact:
+      type: object
+      additionalProperties: false
+      required:
+        - connection_id
+        - can_remove
+        - affected_targets
+      properties:
+        connection_id:
+          type: string
+          format: uuid
+        can_remove:
+          type: boolean
+        impact_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        affected_targets:
+          type: array
+          items:
+            $ref: "#/components/schemas/TargetBinding"
+    ConnectorUnavailableReference:
+      type: object
+      required:
+        - id
+        - target
+        - former_reference_id
+        - label
+        - reason_code
+        - status
+        - revision
+      properties:
+        id:
+          type: string
+          format: uuid
+        target:
+          $ref: "#/components/schemas/TargetRef"
+        former_reference_id:
+          type: string
+        label:
+          type: string
+        reason_code:
+          type: string
+        status:
+          type: string
+          enum:
+            - needs_replacement
+            - explicitly_replaced
+            - detached
+        revision:
+          type: integer
+          minimum: 1
+    ConnectorReferenceCommand:
+      type: object
+      additionalProperties: false
+      required:
+        - reference_id
+        - expected_revision
+        - action
+      properties:
+        reference_id: &a2
+          type: string
+          format: uuid
+        expected_revision: &a3
+          type: integer
+          minimum: 1
+        action: &a4
+          type: string
+          enum:
+            - replace
+            - detach
+        connection_id: &a5
+          type: string
+          format: uuid
+        operation_id: &a6
+          type: string
+    ConnectorReferenceResolveRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - target
+        - reference_id
+        - expected_revision
+        - action
+      properties:
+        target:
+          $ref: "#/components/schemas/TargetRef"
+        reference_id: *a2
+        expected_revision: *a3
+        action: *a4
+        connection_id: *a5
+        operation_id: *a6

@@ -1105,7 +1105,7 @@ const messages = {
             'Read authorized repositories, issues, and account details through the GitHub REST API.',
         },
         webSearch: {
-          name: 'Web Search',
+          name: 'Exa Web Search',
           description: 'Search public webpages and read relevant content through Exa.',
         },
         genericDescription:

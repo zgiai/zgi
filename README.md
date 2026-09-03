@@ -182,8 +182,10 @@ Read the product documentation at [`docs.zgi.ai`](https://docs.zgi.ai).
 Repository-local README files are kept for development and contribution notes.
 For deployment behavior such as the embedded system skill catalog, see
 [`docker/README.md`](docker/README.md#system-skill-catalog).
-For external application Connections, credential rotation, grants, health, and
-AIChat usage, see [`docs/external-integrations.md`](docs/external-integrations.md).
+For Key-only Personal Connectors and their simplified member experience, see
+[`docs/connectors.md`](docs/connectors.md). Legacy organization/shared
+Connections, OAuth, grants, and provider governance remain documented in
+[`docs/external-integrations.md`](docs/external-integrations.md).
 The Exa-specific setup is documented in [`docs/web-search.md`](docs/web-search.md).
 
 ## Contributing

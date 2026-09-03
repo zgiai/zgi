@@ -253,14 +253,14 @@ func TestParseNodeDataFromConfigReadsConnectorConnection(t *testing.T) {
 			"provider_type":   "connector",
 			"provider_id":     "github",
 			"tool_name":       "list_github_repositories",
-			"connection_id":   "connection-123",
+			"connector":       map[string]interface{}{"connection_id": "connection-123", "connector_id": "github", "operation_id": "github.repository.list"},
 			"tool_parameters": map[string]interface{}{},
 		},
 	})
 	if err != nil {
 		t.Fatalf("parseNodeDataFromConfig() error = %v", err)
 	}
-	if nodeID != "tool-node" || data.ConnectionID != "connection-123" || data.ProviderType != "connector" {
+	if nodeID != "tool-node" || (data.Connector == nil || data.Connector.ConnectionID != "connection-123") || data.ProviderType != "connector" {
 		t.Fatalf("parsed connector data = %#v, nodeID = %q", data, nodeID)
 	}
 }
@@ -351,12 +351,12 @@ func TestWorkflowToolRuntimeParametersIncludesConnectorScope(t *testing.T) {
 		NodeStruct: base.NodeStruct{
 			TenantID: "legacy-workspace", WorkspaceID: "workspace-123", WorkflowID: "workflow-123", NodeID: "tool-node",
 		},
-		nodeData: NodeData{ConnectionID: "connection-123"},
+		nodeData: NodeData{Connector: &ConnectorNodeReference{ConnectionID: "connection-123"}},
 	}
 
 	parameters := node.workflowToolRuntimeParameters(pool)
 	for key, want := range map[string]string{
-		"connection_id": "connection-123", "workspace_id": "workspace-123", "workflow_id": "workflow-123", "workflow_run_id": "run-123", "node_id": "tool-node",
+		"workspace_id": "workspace-123", "workflow_id": "workflow-123", "workflow_run_id": "run-123", "node_id": "tool-node",
 	} {
 		if got := parameters[key]; got != want {
 			t.Fatalf("runtime parameter %s = %#v, want %q", key, got, want)

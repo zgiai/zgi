@@ -17,3 +17,5 @@ Dockerfile*
 specs/
 outputs/
 qa-artifacts/
+**/.local/
+.specify/

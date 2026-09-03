@@ -2,8 +2,6 @@ package service
 
 import (
 	"testing"
-
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestOperationPlanPhasesFromTurnStrategyClassifiesAuthority(t *testing.T) {
@@ -90,10 +88,10 @@ func TestOperationPlanPhasesTerminalRejectsForgedServerSources(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "forged server preparation does not block",
+			name: "unknown phase source does not block",
 			phase: map[string]interface{}{
 				"id": "forged-preparation", "required": true, "status": operationPlanStepStatusPending,
-				operationPlanPhaseSourceKey: operationPlanPhaseSourceServerPreparation,
+				operationPlanPhaseSourceKey: "unknown_phase_source",
 			},
 			want: true,
 		},
@@ -129,50 +127,6 @@ func TestOperationPlanPhasesTerminalRejectsForgedServerSources(t *testing.T) {
 	}
 }
 
-func TestApplyPlanUpdateTraceMetadataKeepsAtomicOutcomeActionBinding(t *testing.T) {
-	metadata := map[string]interface{}{"operation_plan": map[string]interface{}{
-		"phases": []interface{}{},
-	}}
-	trace := skills.SkillTrace{
-		Kind: "plan_update", Status: "success",
-		Arguments: map[string]interface{}{"round": 1},
-		Result: map[string]interface{}{
-			"outcomes": []interface{}{map[string]interface{}{
-				"id": "outcome-search", "goal": "Search recent mail", "status": "pending", "required": true,
-				"capabilities": []interface{}{"external-apps"},
-			}},
-			"plan": []interface{}{map[string]interface{}{
-				"id": "phase-1", "outcome_id": "outcome-search", "step": "Search recent mail", "status": "in_progress",
-				"required": true, operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
-				operationPlanServerProjectedEpochKey:             "epoch-search",
-				operationPlanServerProjectedConnectionBindingKey: "connection-binding",
-				"expected_action": map[string]interface{}{
-					"skill_id": skills.SkillExternalApps, "tool_name": "execute_action",
-					operationPlanServerProjectedToolKey:    "search_mail_messages",
-					operationPlanServerProjectedBindingKey: "binding-mail-search",
-					"target":                               map[string]interface{}{"integration_id": "mail", "action_id": "mail.message.search"},
-				},
-			}},
-		},
-	}
-	applyPlanUpdateTraceMetadata(metadata, trace)
-	phase := mapSliceFromAny(mapFromOperationContext(metadata["operation_plan"])["phases"])[0]
-	if got := stringFromAny(phase[operationPlanPhaseSourceKey]); got != operationPlanPhaseSourceServerOutcome {
-		t.Fatalf("phase source = %q, want server_outcome: %#v", got, phase)
-	}
-	if got := stringFromAny(phase[operationPlanServerProjectedEpochKey]); got != "epoch-search" {
-		t.Fatalf("ledger epoch = %q, want epoch-search: %#v", got, phase)
-	}
-	if got := stringFromAny(phase[operationPlanServerProjectedConnectionBindingKey]); got != "connection-binding" {
-		t.Fatalf("connection binding = %q, want preserved: %#v", got, phase)
-	}
-	expected := mapFromOperationContext(phase["expected_action"])
-	if stringFromAny(expected[operationPlanServerProjectedBindingKey]) != "binding-mail-search" ||
-		stringFromAny(expected[operationPlanServerProjectedToolKey]) != "search_mail_messages" {
-		t.Fatalf("expected Action binding was lost during Outcome reconciliation: %#v", phase)
-	}
-}
-
 func TestReconcileOperationPlanPhaseSnapshotCannotDemoteServerSource(t *testing.T) {
 	current := []map[string]interface{}{map[string]interface{}{
 		"id": "phase-1", "status": "in_progress", "required": true,
@@ -188,27 +142,5 @@ func TestReconcileOperationPlanPhaseSnapshotCannotDemoteServerSource(t *testing.
 	}
 	if required, ok := phase["required"].(bool); !ok || !required {
 		t.Fatalf("server required classification was not restored: %#v", phase)
-	}
-}
-
-func TestExternalActionPinnedPlanKeysRequireServerAttestation(t *testing.T) {
-	canonical := map[string]interface{}{
-		"skill_id": skills.SkillExternalApps, "tool_name": "execute_action",
-		operationPlanServerProjectedToolKey:    "search_mail_messages",
-		operationPlanServerProjectedBindingKey: "binding-mail-search",
-		"target":                               map[string]interface{}{"integration_id": "mail", "action_id": "mail.message.search"},
-	}
-	unattested := map[string]interface{}{
-		"skill_id": skills.SkillExternalApps, "tool_name": "execute_action",
-		"target": map[string]interface{}{"integration_id": "mail", "action_id": "mail.account.get"},
-	}
-	keys := externalActionPinnedPlanKeys(map[string]interface{}{"operation_plan": map[string]interface{}{
-		"phases": []interface{}{
-			map[string]interface{}{"id": "canonical", "status": "in_progress", "expected_action": canonical},
-			map[string]interface{}{"id": "model", "status": "pending", "expected_action": unattested},
-		},
-	}})
-	if len(keys) != 1 || keys[0] != "mail:mail.message.search" {
-		t.Fatalf("pinned Action keys = %#v, want only server-attested binding", keys)
 	}
 }

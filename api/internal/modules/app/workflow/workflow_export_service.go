@@ -132,6 +132,12 @@ func SanitizeGraph(graph map[string]interface{}) {
 		// connection_id intact; only connector nodes use it as an auth handle.
 		if strings.EqualFold(strings.TrimSpace(workflowString(data, "provider_type")), "connector") {
 			delete(data, "connection_id")
+			delete(data, "connector_unavailable_ref")
+			if ref, ok := data["connector"].(map[string]interface{}); ok {
+				delete(ref, "connection_id")
+				delete(ref, "binding_id")
+				delete(ref, "revision")
+			}
 		}
 		delete(data, "selected")
 		delete(nodeMap, "selected")

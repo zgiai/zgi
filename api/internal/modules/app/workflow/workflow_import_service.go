@@ -86,9 +86,7 @@ func (s *WorkflowService) ImportWorkflow(
 	// Connection IDs are organization-local authorization handles. Never carry
 	// them across an import boundary; keep the connector node editable and make
 	// the user select an authorized connection in the destination workspace.
-	if _, err := clearAllWorkflowConnectorConnections(graph); err != nil {
-		return nil, fmt.Errorf("failed to sanitize imported connector dependencies: %w", err)
-	}
+	SanitizeGraph(graph)
 
 	stats := CollectImportStats(graph)
 

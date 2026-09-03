@@ -40,7 +40,7 @@ func TestAgentScopeQueriesAndReplacementExcludeWorkflowConsumers(t *testing.T) {
 	repo, mock := openWorkflowBindingRepository(t)
 	agentID := uuid.New()
 
-	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND binding_scope = \$3\) AND published_version_uuid IS NULL ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`).
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND binding_scope = \$3\) AND published_version_uuid IS NULL AND binding_type IN \('skill','knowledge_dataset','database','database_table','workflow'\) ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`).
 		WithArgs(agentID, ConsumerTypeAgent, ScopeDraft).
 		WillReturnRows(sqlmock.NewRows(workflowBindingColumns()))
 	bindings, err := repo.ListScope(context.Background(), ScopeRef{AgentID: agentID, Scope: ScopeDraft})
@@ -52,6 +52,9 @@ func TestAgentScopeQueriesAndReplacementExcludeWorkflowConsumers(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND binding_scope = \$3\) AND published_version_uuid IS NULL`).
+		WithArgs(agentID, ConsumerTypeAgent, ScopeDraft).
+		WillReturnRows(sqlmock.NewRows(workflowBindingColumns()))
 	mock.ExpectExec(`DELETE FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND binding_scope = \$3\) AND published_version_uuid IS NULL`).
 		WithArgs(agentID, ConsumerTypeAgent, ScopeDraft).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -79,7 +82,7 @@ func TestReplaceWorkflowScopeLocksConnectionAndPersistsNodeIdentity(t *testing.T
 		WithArgs(agentID, ConsumerTypeWorkflow, workflowID, ScopeDraft).
 		WillReturnRows(sqlmock.NewRows(workflowBindingColumns()))
 	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)).
-		WithArgs(resourceLockKey(organizationID, BindingTypeIntegrationConnection, "wecom", connectionID)).
+		WithArgs(resourceLockKey(organizationID, BindingTypeSkill, "wecom", connectionID)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`DELETE FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND consumer_id = \$3 AND binding_scope = \$4\) AND published_version_uuid IS NULL`).
 		WithArgs(agentID, ConsumerTypeWorkflow, workflowID, ScopeDraft).
@@ -92,13 +95,13 @@ func TestReplaceWorkflowScopeLocksConnectionAndPersistsNodeIdentity(t *testing.T
 		OrganizationID:    organizationID,
 		WorkspaceID:       workspaceID,
 		BindingInstanceID: "  send-message-node  ",
-		BindingType:       BindingTypeIntegrationConnection,
+		BindingType:       BindingTypeSkill,
 		ResourceID:        "  " + connectionID + "  ",
 		ParentResourceID:  " wecom ",
 		DisplayName:       " Send message ",
 		AccessMode:        " WRITE ",
 		Metadata: map[string]interface{}{
-			IntegrationAllowedActionIDsMetadataKey: []string{"wecom.message.send"},
+			"label": []string{"wecom.message.send"},
 		},
 	}})
 	if err != nil {
@@ -119,18 +122,18 @@ func TestFindWorkflowNodeBindingUsesExactConsumerAndNode(t *testing.T) {
 	now := time.Now()
 
 	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND consumer_id = \$3 AND binding_instance_id = \$4 AND binding_scope = \$5 AND binding_type = \$6 AND resource_id = \$7 AND parent_resource_id = \$8\) AND published_version_uuid IS NULL AND access_mode = \$9 LIMIT \$10`).
-		WithArgs(agentID, ConsumerTypeWorkflow, workflowID, "node-send", ScopeDraft, BindingTypeIntegrationConnection, connectionID, "wecom", "write", 1).
+		WithArgs(agentID, ConsumerTypeWorkflow, workflowID, "node-send", ScopeDraft, BindingTypeSkill, connectionID, "wecom", "write", 1).
 		WillReturnRows(sqlmock.NewRows(workflowBindingColumns()).AddRow(
 			uuid.New(), agentID, ConsumerTypeWorkflow, workflowID, "node-send",
 			ScopeDraft, organizationID, workspaceID, nil,
-			BindingTypeIntegrationConnection, connectionID, "wecom", "Send message", "write", `{"allowed_action_ids":["wecom.message.send"]}`,
+			BindingTypeSkill, connectionID, "wecom", "Send message", "write", `{"allowed_action_ids":["wecom.message.send"]}`,
 			uuid.New(), now, now, now,
 		))
 
 	binding, err := repo.FindWorkflowNodeBinding(context.Background(), WorkflowScopeRef{
 		AgentID: agentID, WorkflowID: workflowID, Scope: ScopeDraft,
 	}, " node-send ", Match{
-		BindingType:      BindingTypeIntegrationConnection,
+		BindingType:      BindingTypeSkill,
 		ResourceID:       connectionID,
 		ParentResourceID: "wecom",
 		AccessMode:       "write",
@@ -141,14 +144,8 @@ func TestFindWorkflowNodeBindingUsesExactConsumerAndNode(t *testing.T) {
 	if binding == nil {
 		t.Fatal("FindWorkflowNodeBinding() = nil, want binding")
 	}
-	reference, ok := binding.AsWorkflowConnectionReference()
-	if !ok {
-		t.Fatalf("AsWorkflowConnectionReference() rejected %#v", binding)
-	}
-	if reference.WorkflowID != workflowID || reference.NodeID != "node-send" || reference.NodeTitle != "Send message" ||
-		reference.ConnectionID != connectionID || reference.IntegrationID != "wecom" ||
-		len(reference.ActionIDs) != 1 || reference.ActionIDs[0] != "wecom.message.send" {
-		t.Fatalf("workflow connection reference = %#v", reference)
+	if binding.ConsumerID != workflowID || binding.BindingInstanceID != "node-send" || binding.ResourceID != connectionID {
+		t.Fatalf("wrong node binding: %#v", binding)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("workflow node lookup expectations: %v", err)
@@ -172,7 +169,7 @@ func TestReplaceWorkflowPublishedHeadPreservesOtherRunnableVersions(t *testing.T
 			WithArgs(agentID, ConsumerTypeWorkflow, workflowID, ScopePublished, versionID).
 			WillReturnRows(sqlmock.NewRows(workflowBindingColumns()))
 		mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)).
-			WithArgs(resourceLockKey(organizationID, BindingTypeIntegrationConnection, "wecom", connectionID)).
+			WithArgs(resourceLockKey(organizationID, BindingTypeSkill, "wecom", connectionID)).
 			WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec(`DELETE FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND consumer_id = \$3 AND binding_scope = \$4\) AND published_version_uuid = \$5`).
 			WithArgs(agentID, ConsumerTypeWorkflow, workflowID, ScopePublished, versionID).
@@ -184,7 +181,7 @@ func TestReplaceWorkflowPublishedHeadPreservesOtherRunnableVersions(t *testing.T
 		err := repo.ReplaceWorkflowPublishedHead(context.Background(), nil, ref, []Binding{{
 			OrganizationID: organizationID, WorkspaceID: workspaceID,
 			BindingInstanceID: "node-" + string(rune('1'+index)),
-			BindingType:       BindingTypeIntegrationConnection,
+			BindingType:       BindingTypeSkill,
 			ResourceID:        connectionID,
 			ParentResourceID:  "wecom",
 			AccessMode:        "write",
@@ -212,13 +209,13 @@ func TestRevokeAgentConsumersRemovesAgentAndWorkflowRowsTogether(t *testing.T) {
 		AddRow(
 			uuid.New(), agentID, ConsumerTypeAgent, agentID, "",
 			ScopeDraft, organizationID, workspaceID, nil,
-			BindingTypeIntegrationConnection, agentConnectionID, "gmail", "Gmail", "read", `{}`,
+			BindingTypeSkill, agentConnectionID, "gmail", "Gmail", "read", `{}`,
 			uuid.New(), now, now, now,
 		).
 		AddRow(
 			uuid.New(), agentID, ConsumerTypeWorkflow, workflowID, "node-send",
 			ScopeDraft, organizationID, workspaceID, nil,
-			BindingTypeIntegrationConnection, workflowConnectionID, "wecom", "Send", "write", `{}`,
+			BindingTypeSkill, workflowConnectionID, "wecom", "Send", "write", `{}`,
 			uuid.New(), now, now, now,
 		)
 	mock.ExpectBegin()
@@ -226,8 +223,8 @@ func TestRevokeAgentConsumersRemovesAgentAndWorkflowRowsTogether(t *testing.T) {
 		WithArgs(agentID).
 		WillReturnRows(rows)
 	lockKeys := []string{
-		resourceLockKey(organizationID, BindingTypeIntegrationConnection, "gmail", agentConnectionID),
-		resourceLockKey(organizationID, BindingTypeIntegrationConnection, "wecom", workflowConnectionID),
+		resourceLockKey(organizationID, BindingTypeSkill, "gmail", agentConnectionID),
+		resourceLockKey(organizationID, BindingTypeSkill, "wecom", workflowConnectionID),
 	}
 	sort.Strings(lockKeys)
 	for _, key := range lockKeys {
@@ -258,7 +255,7 @@ func TestListImpactCanSelectOneWorkflowNodeAndScope(t *testing.T) {
 	scope := ScopePublished
 
 	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE organization_id = \$1 AND \(binding_type = \$2 AND resource_id = \$3\) AND consumer_type = \$4 AND consumer_id = \$5 AND binding_instance_id = \$6 AND binding_scope = \$7 ORDER BY agent_id ASC, binding_scope ASC, published_version_uuid ASC`).
-		WithArgs(organizationID, BindingTypeIntegrationConnection, "connection-1", ConsumerTypeWorkflow, workflowID, "node-1", scope).
+		WithArgs(organizationID, BindingTypeSkill, "connection-1", ConsumerTypeWorkflow, workflowID, "node-1", scope).
 		WillReturnRows(sqlmock.NewRows(workflowBindingColumns()))
 
 	bindings, err := repo.ListImpact(context.Background(), ResourceRef{
@@ -267,7 +264,7 @@ func TestListImpactCanSelectOneWorkflowNodeAndScope(t *testing.T) {
 		ConsumerID:        &workflowID,
 		BindingInstanceID: "node-1",
 		Scope:             &scope,
-		BindingType:       BindingTypeIntegrationConnection,
+		BindingType:       BindingTypeSkill,
 		ResourceID:        "connection-1",
 	})
 	if err != nil {
@@ -286,19 +283,9 @@ func TestPrepareWorkflowBindingsRejectsMissingNodeIdentity(t *testing.T) {
 		AgentID: uuid.New(), WorkflowID: uuid.New(), Scope: ScopeDraft,
 	}, []Binding{{
 		OrganizationID: uuid.New(), WorkspaceID: uuid.New(),
-		BindingType: BindingTypeIntegrationConnection, ResourceID: uuid.NewString(),
+		BindingType: BindingTypeSkill, ResourceID: uuid.NewString(),
 	}}, time.Now())
 	if err == nil {
 		t.Fatal("prepareWorkflowBindings() accepted a binding without node identity")
-	}
-}
-
-func TestIntegrationConnectionResourceLockDoesNotDependOnProviderID(t *testing.T) {
-	organizationID := uuid.New()
-	connectionID := uuid.NewString()
-	withProvider := resourceLockKey(organizationID, BindingTypeIntegrationConnection, "wecom", connectionID)
-	withoutProvider := resourceLockKey(organizationID, BindingTypeIntegrationConnection, "", connectionID)
-	if withProvider != withoutProvider {
-		t.Fatalf("integration connection lock keys differ: %q != %q", withProvider, withoutProvider)
 	}
 }

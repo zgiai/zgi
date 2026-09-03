@@ -4,11 +4,12 @@ import (
 	"github.com/gin-gonic/gin"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
+	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
-	integrations "github.com/zgiai/zgi/api/internal/modules/integrations/core"
-	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
@@ -19,25 +20,26 @@ import (
 )
 
 type ExternalRouteDeps struct {
-	DB                    *gorm.DB
-	AccountService        interfaces.AccountService
-	FileService           interfaces.FileService
-	ContentExtractor      workflow_file.ContentExtractor
-	QuotaService          interfaces.QuotaService
-	OrganizationService   interfaces.OrganizationService
-	LLMClient             llmclient.LLMClient
-	ToolEngine            *tools.ToolEngine
-	ToolManager           *tools.ToolManager
-	MemoryService         *memory.Service
-	GraphFlowService      *graphflow.Service
-	PromptResolver        promptservice.PromptService
-	DataSourceService     datasourceservice.DataSourceService
-	KnowledgeService      *datasetservice.KnowledgeRetrievalService
-	ResourcePermission    interfaces.ResourcePermissionService
-	WorkflowEngineFactory *graph_engine.EngineFactory
-	SkillManifestResolver skills.ToolGovernanceManifestResolver
-	IntegrationRegistry   *integrations.Registry
-	ActionProjections     integrationmetatools.ActionProjectionResolver
+	ConnectorDispatcher        connectordispatch.Dispatcher
+	ConnectorAgentRuntime      connectorruntimeauth.AgentRuntimeResolver
+	ConnectorConfirmationStore connectorexecution.ConfirmationContinuationStore
+	DB                         *gorm.DB
+	AccountService             interfaces.AccountService
+	FileService                interfaces.FileService
+	ContentExtractor           workflow_file.ContentExtractor
+	QuotaService               interfaces.QuotaService
+	OrganizationService        interfaces.OrganizationService
+	LLMClient                  llmclient.LLMClient
+	ToolEngine                 *tools.ToolEngine
+	ToolManager                *tools.ToolManager
+	MemoryService              *memory.Service
+	GraphFlowService           *graphflow.Service
+	PromptResolver             promptservice.PromptService
+	DataSourceService          datasourceservice.DataSourceService
+	KnowledgeService           *datasetservice.KnowledgeRetrievalService
+	ResourcePermission         interfaces.ResourcePermissionService
+	WorkflowEngineFactory      *graph_engine.EngineFactory
+	SkillManifestResolver      skills.ToolGovernanceManifestResolver
 }
 
 // RegisterExternalRoutes registers all external API routes
@@ -70,8 +72,7 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 			deps.ResourcePermission,
 			deps.WorkflowEngineFactory,
 			deps.SkillManifestResolver,
-			deps.IntegrationRegistry,
-			deps.ActionProjections,
+			deps.ConnectorDispatcher, deps.ConnectorAgentRuntime, deps.ConnectorConfirmationStore,
 		)
 	}
 

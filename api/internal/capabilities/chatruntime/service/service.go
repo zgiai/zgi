@@ -15,7 +15,10 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
-	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
+	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
+	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
+	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -149,14 +152,14 @@ type RunConfig struct {
 	WorkflowBindings                 []AgentWorkflowBinding
 	WorkflowBoundByAccountID         string
 	WorkflowBoundAtUnix              int64
-	IntegrationConnectionIDs         map[string]string
-	IntegrationSelectedConnectionIDs map[string][]string
 	BindingAuthorizations            []ResourceBindingAuthorization
 	UseMemory                        bool
 	AgentMemoryEnabled               bool
 	AgentMemoryAutoExtractionEnabled bool
 	AgentMemorySlots                 []AgentMemorySlotConfig
 	AgentMemoryUserScope             string
+	ConnectorTargetScope             string
+	ConnectorTargetVersionID         string
 	AgentMemoryConfigScope           string
 	AgentMemoryConfigRevision        string
 	BillingAppID                     string
@@ -166,13 +169,12 @@ type RunConfig struct {
 // ResourceBindingAuthorization is the runtime authorization evidence for one
 // concrete Agent resource binding.
 type ResourceBindingAuthorization struct {
-	BindingType      string   `json:"binding_type"`
-	ResourceID       string   `json:"resource_id"`
-	ParentResourceID string   `json:"parent_resource_id,omitempty"`
-	AccessMode       string   `json:"access_mode"`
-	AllowedActionIDs []string `json:"allowed_action_ids,omitempty"`
-	BoundByAccountID string   `json:"bound_by_account_id"`
-	BoundAtUnix      int64    `json:"bound_at_unix"`
+	BindingType      string `json:"binding_type"`
+	ResourceID       string `json:"resource_id"`
+	ParentResourceID string `json:"parent_resource_id,omitempty"`
+	AccessMode       string `json:"access_mode"`
+	BoundByAccountID string `json:"bound_by_account_id"`
+	BoundAtUnix      int64  `json:"bound_at_unix"`
 }
 
 type AgentMemorySlotConfig = agentmemoryruntime.Slot
@@ -260,6 +262,7 @@ type StopRuntimeMessageRequest struct {
 }
 
 type Service interface {
+	RecordConnectorConfirmationResolution(ctx context.Context, command connectorconfirmation.Command, result connectorconfirmation.Result) error
 	CreateConversation(ctx context.Context, scope Scope, title string) (*runtimemodel.Conversation, error)
 	CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error)
 	ListConversations(ctx context.Context, scope Scope, page, limit int) ([]*runtimemodel.Conversation, int64, error)
@@ -343,31 +346,6 @@ type AgentMemoryExtractionScheduler interface {
 	ScheduleExtraction(ctx context.Context, req agentmemory.ScheduleExtractionRequest) (*agentmemory.AgentMemoryExtractionJob, error)
 }
 
-// AIChatIntegrationRuntimePreferences is the trusted, server-side snapshot of
-// external connections selected by the current AIChat user. It is deliberately
-// separate from request DTOs: callers must not be able to grant themselves a
-// connection by supplying these IDs in a chat request.
-type AIChatIntegrationRuntimePreferences struct {
-	SelectedConnectionIDs  map[string][]string
-	PreferredConnectionIDs map[string]string
-}
-
-// AIChatIntegrationPreferenceResolver reloads the current user's external-app
-// selection for every AIChat execution boundary, including continuations.
-// Implementations should read authoritative persisted preferences; individual
-// tools and the integration executor still perform their own current ACL check.
-type AIChatIntegrationPreferenceResolver interface {
-	ResolveAIChatIntegrationPreferences(ctx context.Context, scope Scope) (AIChatIntegrationRuntimePreferences, error)
-}
-
-// AIChatIntegrationPreferenceResolverFunc adapts a function for dependency
-// injection without coupling chatruntime to the integrations persistence model.
-type AIChatIntegrationPreferenceResolverFunc func(context.Context, Scope) (AIChatIntegrationRuntimePreferences, error)
-
-func (f AIChatIntegrationPreferenceResolverFunc) ResolveAIChatIntegrationPreferences(ctx context.Context, scope Scope) (AIChatIntegrationRuntimePreferences, error) {
-	return f(ctx, scope)
-}
-
 type service struct {
 	repos                          *repository.Repositories
 	llmClient                      llmclient.LLMClient
@@ -383,8 +361,10 @@ type service struct {
 	memoryService                  UserMemoryService
 	agentMemoryService             AgentMemoryContextService
 	agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
-	integrationPrefs               AIChatIntegrationPreferenceResolver
-	externalActionProjections      integrationmetatools.ActionProjectionResolver
+	connectorChatRuntime           connectorruntimeauth.ChatRuntimeResolver
+	connectorAgentRuntime          connectorruntimeauth.AgentRuntimeResolver
+	connectorConfirmationStore     connectorexecution.ConfirmationContinuationStore
+	connectorActionResolverFactory repository.ConnectorActionResolverFactory
 	customSkillStorage             customSkillStorage
 	modelIdleTimeout               time.Duration
 	modelProgressSchedule          modelprogress.Schedule
@@ -434,8 +414,13 @@ func NewServiceWithSkillRuntime(
 ) Service {
 	var agentMemoryService AgentMemoryContextService
 	var agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
-	var integrationPrefs AIChatIntegrationPreferenceResolver
-	var externalActionProjections integrationmetatools.ActionProjectionResolver
+	var connectorChatRuntime connectorruntimeauth.ChatRuntimeResolver
+	var connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver
+	var connectorConfirmationStore connectorexecution.ConfirmationContinuationStore
+	var connectorActionResolverFactory repository.ConnectorActionResolverFactory
+	if repos != nil && repos.DB != nil {
+		connectorActionResolverFactory = repository.NewConnectorActionResolverFactory(repos.DB)
+	}
 	for _, item := range optionalServices {
 		switch typed := item.(type) {
 		case AgentMemoryContextService:
@@ -446,14 +431,20 @@ func NewServiceWithSkillRuntime(
 			if agentMemoryExtractionScheduler == nil {
 				agentMemoryExtractionScheduler = typed
 			}
-		case AIChatIntegrationPreferenceResolver:
-			if integrationPrefs == nil {
-				integrationPrefs = typed
+		case connectorruntimeauth.ChatRuntimeResolver:
+			if connectorChatRuntime == nil {
+				connectorChatRuntime = typed
 			}
-		case integrationmetatools.ActionProjectionResolver:
-			if externalActionProjections == nil {
-				externalActionProjections = typed
+		case connectorruntimeauth.AgentRuntimeResolver:
+			if connectorAgentRuntime == nil {
+				connectorAgentRuntime = typed
 			}
+		case connectorexecution.ConfirmationContinuationStore:
+			if connectorConfirmationStore == nil {
+				connectorConfirmationStore = typed
+			}
+		case repository.ConnectorActionResolverFactory:
+			connectorActionResolverFactory = typed
 		}
 	}
 	return &service{
@@ -471,8 +462,10 @@ func NewServiceWithSkillRuntime(
 		memoryService:                  memoryService,
 		agentMemoryService:             agentMemoryService,
 		agentMemoryExtractionScheduler: agentMemoryExtractionScheduler,
-		integrationPrefs:               integrationPrefs,
-		externalActionProjections:      externalActionProjections,
+		connectorChatRuntime:           connectorChatRuntime,
+		connectorAgentRuntime:          connectorAgentRuntime,
+		connectorConfirmationStore:     connectorConfirmationStore,
+		connectorActionResolverFactory: connectorActionResolverFactory,
 		customSkillStorage:             newFilesystemCustomSkillStorage(customSkillStorageRoot),
 		modelIdleTimeout:               configuredModelIdleTimeout(),
 	}
@@ -571,6 +564,7 @@ type ExistingSkill struct {
 }
 
 type chatRequestParts struct {
+	ConversationID                   string
 	Query                            string
 	Surface                          string
 	RuntimeContext                   string
@@ -596,6 +590,11 @@ type chatRequestParts struct {
 	ModelCapabilityStatus            string
 	ModelCapabilityError             string
 	ProtocolToolsEnabled             bool
+	BaseSkillIDs                     []string
+	BaseToolSkillIDs                 []string
+	ConnectorSkillIDs                []string
+	RequiredInitialConnectorBindings []connectorbindings.InitialChatConnection
+	ConnectorToolsEnabled            bool
 	UseMemory                        bool
 	SkillIDs                         []string
 	ToolSkillIDs                     []string
@@ -610,6 +609,8 @@ type chatRequestParts struct {
 	AgentMemoryToolsEnabled          bool
 	AgentMemorySlots                 []AgentMemorySlotConfig
 	AgentMemoryUserScope             string
+	ConnectorTargetScope             string
+	ConnectorTargetVersionID         string
 	AgentMemoryConfigScope           string
 	AgentMemoryConfigRevision        string
 	AgentMemoryAgentID               string

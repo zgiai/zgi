@@ -2,7 +2,7 @@ package tools
 
 import "testing"
 
-func TestAgentBindingAuthorizationsPreserveIntegrationActionAllowlist(t *testing.T) {
+func TestAgentBindingAuthorizationsRejectRetiredIntegrationEvidence(t *testing.T) {
 	authorizations := AgentBindingAuthorizations(map[string]interface{}{
 		AgentBindingAuthorizationsParameter: []map[string]interface{}{{
 			"binding_type":        "integration_connection",
@@ -14,10 +14,7 @@ func TestAgentBindingAuthorizationsPreserveIntegrationActionAllowlist(t *testing
 			"bound_at_unix":       123,
 		}},
 	})
-	if len(authorizations) != 1 {
+	if len(authorizations) != 0 {
 		t.Fatalf("authorizations = %#v", authorizations)
-	}
-	if !authorizations[0].AllowsAction("web.search") || authorizations[0].AllowsAction("web.delete") {
-		t.Fatalf("action allowlist = %#v", authorizations[0].AllowedActionIDs)
 	}
 }

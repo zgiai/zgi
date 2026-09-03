@@ -7,60 +7,13 @@ import (
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
-	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
-
-func TestDynamicActionValidationRecoveryPreservesActionIdentityAndSafeContract(t *testing.T) {
-	action := integrations.ActionDefinition{
-		ID: "feishu.contact.search",
-		InputSchema: map[string]interface{}{
-			"type":                 "object",
-			"additionalProperties": false,
-			"properties": map[string]interface{}{
-				"query":     map[string]interface{}{"type": "string", "minLength": 1},
-				"page_size": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 50},
-			},
-			"required": []string{"query"},
-		},
-	}
-	err := integrations.ValidateActionInput("feishu", action, map[string]interface{}{
-		"name": "private-contact-name",
-	})
-	payload := recoverableSkillToolErrorPayload(
-		err,
-		"fallback",
-		skills.SkillExternalApps,
-		"execute_action",
-	)
-	if payload["reason_code"] != integrations.ActionValidationReasonSchemaMismatch ||
-		payload["integration_id"] != "feishu" ||
-		payload["action_id"] != action.ID ||
-		payload["provider_request_sent"] != false {
-		t.Fatalf("payload = %#v", payload)
-	}
-	expected, ok := payload["expected_arguments"].(map[string]interface{})
-	if !ok || expected["arguments_path"] != "arguments" || expected["tool_name"] != "execute_action" {
-		t.Fatalf("expected_arguments = %#v", payload["expected_arguments"])
-	}
-	issues, ok := payload["argument_errors"].([]tools.JSONSchemaValidationIssue)
-	if !ok || len(issues) == 0 {
-		t.Fatalf("argument_errors = %#v", payload["argument_errors"])
-	}
-	encoded, marshalErr := json.Marshal(payload)
-	if marshalErr != nil {
-		t.Fatal(marshalErr)
-	}
-	if strings.Contains(string(encoded), "private-contact-name") {
-		t.Fatalf("recovery leaked rejected argument value: %s", encoded)
-	}
-}
 
 func TestDynamicSchemaFailureReturnsSafeExpectedArgumentsAndRetryFeedback(t *testing.T) {
 	const (
-		skillID       = "dynamic-external-apps-test"
-		toolName      = "execute_action"
+		skillID       = "dynamic-schema-test"
+		toolName      = "perform_task"
 		rejectedValue = "invalid-connection-id-private-value"
 	)
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
@@ -169,8 +122,8 @@ func TestDynamicSchemaFailureReturnsSafeExpectedArgumentsAndRetryFeedback(t *tes
 
 func TestDynamicSchemaRecoveryHidesReadOnlyConnectionIdentity(t *testing.T) {
 	const (
-		skillID       = "external-apps"
-		toolName      = "execute_action"
+		skillID       = "ordinary-skill"
+		toolName      = "perform_task"
 		rejectedValue = "private-invalid-connection-value"
 	)
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{

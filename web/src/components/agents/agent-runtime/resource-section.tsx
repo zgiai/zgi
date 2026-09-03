@@ -22,8 +22,9 @@ interface AgentRuntimeResourceSectionProps {
   emptyText: string;
   isLoading: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
-  onAdd: () => void;
+  onAdd: (anchorElement: HTMLElement) => void;
   addTooltip?: string;
+  addMenuOpen?: boolean;
   readOnly?: boolean;
   children: ReactNode;
 }
@@ -50,6 +51,7 @@ export function AgentRuntimeResourceSection({
   onToggleSection,
   onAdd,
   addTooltip,
+  addMenuOpen,
   readOnly = false,
   children,
 }: AgentRuntimeResourceSectionProps) {
@@ -57,7 +59,13 @@ export function AgentRuntimeResourceSection({
   const action = (
     <div className="flex items-center gap-2">
       <Badge variant="subtle">{t('selectedCount', { count })}</Badge>
-      <ResourceAddButton label={addLabel} tooltip={addTooltip} onAdd={onAdd} disabled={readOnly} />
+      <ResourceAddButton
+        label={addLabel}
+        tooltip={addTooltip}
+        onAdd={onAdd}
+        menuOpen={addMenuOpen}
+        disabled={readOnly}
+      />
     </div>
   );
 
@@ -128,11 +136,13 @@ function ResourceAddButton({
   label,
   tooltip,
   onAdd,
+  menuOpen,
   disabled = false,
 }: {
   label: string;
   tooltip?: string;
-  onAdd: () => void;
+  onAdd: (anchorElement: HTMLElement) => void;
+  menuOpen?: boolean;
   disabled?: boolean;
 }) {
   const button = (
@@ -143,11 +153,13 @@ function ResourceAddButton({
       isIcon
       className="size-8"
       aria-label={label}
+      aria-haspopup={menuOpen === undefined ? undefined : 'dialog'}
+      aria-expanded={menuOpen}
       disabled={disabled}
       onClick={event => {
         event.stopPropagation();
         if (disabled) return;
-        onAdd();
+        onAdd(event.currentTarget);
       }}
     >
       <Plus className="size-4" />

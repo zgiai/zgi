@@ -1,5 +1,11 @@
 'use client';
 
+import {
+  isConnectorOperationInvocation,
+  connectorOperationTone,
+  parseConnectorOperationPresentation,
+} from '@/components/connectors/runtime/connector-operation-presentation';
+
 import { useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, Loader2, TriangleAlert } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -17,12 +23,9 @@ import {
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
-import {
-  getAIChatExternalInvocationDisplayName,
-  isAIChatExternalAppsInvocation,
-} from '@/components/chat/variants/aichat/external-app-display';
+
 import { sanitizeTimelineDisplayString } from '@/components/chat/variants/aichat/timeline-display-safety';
-import { getAIChatExternalActionOperationState } from '@/components/chat/variants/aichat/external-action-operation-status';
+
 import {
   formatAIChatTimelineArgumentSummary,
   formatAIChatTimelineValue,
@@ -58,9 +61,11 @@ interface AIChatSkillTracePanelProps {
 }
 
 function getInvocationTone(invocation: AIChatSkillInvocation): SkillTraceTone {
+  const nativeTone = connectorOperationTone(invocation);
+  if (nativeTone) return nativeTone;
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
   if (invocation.status === 'error') return 'error';
-  return getAIChatExternalActionOperationState(invocation)?.tone ?? 'success';
+  return 'success';
 }
 
 function getStatusIcon(tone: SkillTraceTone) {
@@ -85,17 +90,13 @@ function skillTraceDebugRows(
   locale: string,
   t: ScopedTranslations<'webapp'>
 ) {
-  const isExternalApp = isAIChatExternalAppsInvocation(invocation);
+  if (isConnectorOperationInvocation(invocation)) return [];
+  const isConnector = isConnectorOperationInvocation(invocation);
   const fallbackToolName =
     getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
     t('consoleChat.connectedApps.actions.generic');
-  const externalToolName = getAIChatExternalInvocationDisplayName(
-    invocation,
-    locale,
-    t,
-    fallbackToolName
-  );
-  const argumentSummary = isExternalApp
+  const externalToolName = parseConnectorOperationPresentation(invocation)?.title;
+  const argumentSummary = isConnector
     ? {
         type: 'object',
         keys: Object.keys(invocation.arguments ?? {}).filter(
@@ -106,9 +107,9 @@ function skillTraceDebugRows(
   const reasonCode = invocation.arguments?.reason_code;
   return [
     ['kind', getAIChatInvocationKindLabel(invocation.kind, t)],
-    ['skillId', isExternalApp ? null : invocation.skill_id],
+    ['skillId', isConnector ? null : invocation.skill_id],
     ['toolName', externalToolName ?? fallbackToolName],
-    ['path', isExternalApp ? null : invocation.path],
+    ['path', isConnector ? null : invocation.path],
     ['duration', getDurationText(invocation.duration_ms, t)],
     ['arguments', formatAIChatTimelineArgumentSummary(argumentSummary, t)],
     [
@@ -148,6 +149,7 @@ export function AIChatSkillTracePanel({
   skillDisplayById,
 }: AIChatSkillTracePanelProps) {
   const t = useT('webapp');
+  const connectorT = useT('connectors');
   const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
 
@@ -157,19 +159,30 @@ export function AIChatSkillTracePanel({
         const skillId = invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
         const baseSkill =
           skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
-        const isExternalApp = isAIChatExternalAppsInvocation(invocation);
-        const skill = isExternalApp
+        const isConnector = isConnectorOperationInvocation(invocation);
+        const skill = isConnector
           ? { ...baseSkill, label: t('consoleChat.connectedApps.title') }
           : baseSkill;
         const fallbackToolName =
           getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
-          (isExternalApp ? null : invocation.path) ||
+          (isConnector ? null : invocation.path) ||
           t('consoleChat.skills.trace.unknownTool');
-        const toolName =
-          getAIChatExternalInvocationDisplayName(invocation, locale, t, fallbackToolName) ??
-          fallbackToolName;
+        const toolName = parseConnectorOperationPresentation(invocation)?.title ?? fallbackToolName;
         const tone = getInvocationTone(invocation);
-        const externalOperation = getAIChatExternalActionOperationState(invocation);
+        if (isConnector) {
+          const presentation = parseConnectorOperationPresentation(invocation);
+          return {
+            invocation,
+            skill,
+            tone,
+            title:
+              (presentation?.title ?? connectorT('runtime.presentation.title')) +
+              ' · ' +
+              connectorT(
+                `runtime.presentation.status.${presentation?.display_status ?? 'unavailable'}`
+              ),
+          };
+        }
         const resultDetail = getAIChatSkillResultDisplay(invocation, locale);
         const reasonCode = invocation.arguments?.reason_code;
 
@@ -211,7 +224,7 @@ export function AIChatSkillTracePanel({
             tone,
             title: t('consoleChat.skills.trace.referenceRead', {
               skill: skill.label,
-              path: isExternalApp
+              path: isConnector
                 ? toolName
                 : invocation.path || t('consoleChat.skills.trace.unknownReference'),
             }),
@@ -240,33 +253,14 @@ export function AIChatSkillTracePanel({
           skill,
           tone,
           title:
-            externalOperation?.status === 'partially_succeeded'
-              ? t('consoleChat.skills.trace.externalActionPartiallySucceeded', {
-                  skill: skill.label,
-                  tool: toolName,
-                })
-              : externalOperation?.status === 'outcome_unknown'
-                ? t('consoleChat.skills.trace.externalActionOutcomeUnknown', {
+            tone === 'running'
+              ? t('consoleChat.skills.agentic.callingTool', { skill: skill.label, tool: toolName })
+              : tone === 'error'
+                ? t('consoleChat.skills.agentic.toolFailed', { skill: skill.label, tool: toolName })
+                : t('consoleChat.skills.agentic.toolSucceeded', {
                     skill: skill.label,
                     tool: toolName,
-                  })
-                : externalOperation?.status === 'failed_safe' ||
-                    externalOperation?.status === 'failed'
-                  ? t('consoleChat.skills.trace.externalActionFailed', {
-                      skill: skill.label,
-                      tool: toolName,
-                    })
-                  : tone === 'running'
-                    ? t('consoleChat.skills.trace.running', {
-                        skill: skill.label,
-                        tool: toolName,
-                      })
-                    : tone === 'error'
-                      ? t('consoleChat.skills.trace.error', { skill: skill.label })
-                      : t('consoleChat.skills.trace.success', {
-                          skill: skill.label,
-                          tool: toolName,
-                        }),
+                  }),
           detail:
             resultDetail ||
             localizeAIChatRuntimeMessage(
@@ -286,7 +280,7 @@ export function AIChatSkillTracePanel({
             undefined,
         };
       }),
-    [invocations, locale, skillDisplayById, t]
+    [invocations, locale, skillDisplayById, t, connectorT]
   );
 
   const summary = useMemo(() => {
@@ -390,6 +384,7 @@ export function AIChatSkillTracePanel({
                         <div className="mt-1 line-clamp-2 text-muted-foreground">{detail}</div>
                       ) : null}
                       <AIChatSkillResultSummary
+                        invocation={event.invocation}
                         result={event.invocation.result}
                         skillId={event.invocation.skill_id}
                         toolName={event.invocation.tool_name}

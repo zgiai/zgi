@@ -1,8 +1,6 @@
 package agentbindings
 
 import (
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,12 +27,11 @@ const (
 type BindingType string
 
 const (
-	BindingTypeSkill                 BindingType = "skill"
-	BindingTypeKnowledgeDataset      BindingType = "knowledge_dataset"
-	BindingTypeDatabase              BindingType = "database"
-	BindingTypeDatabaseTable         BindingType = "database_table"
-	BindingTypeWorkflow              BindingType = "workflow"
-	BindingTypeIntegrationConnection BindingType = "integration_connection"
+	BindingTypeSkill            BindingType = "skill"
+	BindingTypeKnowledgeDataset BindingType = "knowledge_dataset"
+	BindingTypeDatabase         BindingType = "database"
+	BindingTypeDatabaseTable    BindingType = "database_table"
+	BindingTypeWorkflow         BindingType = "workflow"
 )
 
 type Binding struct {
@@ -92,102 +89,10 @@ type ResourceRef struct {
 	ParentResourceID  string
 }
 
-// WorkflowConnectionReference is the transport-neutral detail needed to
-// explain or revoke a Workflow connector reference. Presentation layers may
-// enrich Agent/Workspace names without importing the Workflow module here.
-type WorkflowConnectionReference struct {
-	OrganizationID       uuid.UUID  `json:"organization_id"`
-	WorkspaceID          uuid.UUID  `json:"workspace_id"`
-	AgentID              uuid.UUID  `json:"agent_id"`
-	WorkflowID           uuid.UUID  `json:"workflow_id"`
-	Scope                Scope      `json:"scope"`
-	PublishedVersionUUID *uuid.UUID `json:"published_version_uuid,omitempty"`
-	NodeID               string     `json:"node_id"`
-	NodeTitle            string     `json:"node_title"`
-	IntegrationID        string     `json:"integration_id"`
-	ConnectionID         string     `json:"connection_id"`
-	ActionIDs            []string   `json:"action_ids"`
-}
-
-// AsWorkflowConnectionReference projects one Workflow Integration binding
-// into a stable impact-detail contract.
-func (binding Binding) AsWorkflowConnectionReference() (WorkflowConnectionReference, bool) {
-	if binding.ConsumerType != ConsumerTypeWorkflow ||
-		binding.ConsumerID == uuid.Nil ||
-		binding.BindingType != BindingTypeIntegrationConnection ||
-		strings.TrimSpace(binding.BindingInstanceID) == "" {
-		return WorkflowConnectionReference{}, false
-	}
-	return WorkflowConnectionReference{
-		OrganizationID:       binding.OrganizationID,
-		WorkspaceID:          binding.WorkspaceID,
-		AgentID:              binding.AgentID,
-		WorkflowID:           binding.ConsumerID,
-		Scope:                binding.BindingScope,
-		PublishedVersionUUID: cloneUUID(binding.PublishedVersionUUID),
-		NodeID:               strings.TrimSpace(binding.BindingInstanceID),
-		NodeTitle:            strings.TrimSpace(binding.DisplayName),
-		IntegrationID:        strings.TrimSpace(binding.ParentResourceID),
-		ConnectionID:         strings.TrimSpace(binding.ResourceID),
-		ActionIDs:            IntegrationAllowedActionIDs(binding),
-	}, true
-}
-
 // Match describes the concrete resource a single Agent tool step is about to use.
 type Match struct {
 	BindingType      BindingType
 	ResourceID       string
 	ParentResourceID string
 	AccessMode       string
-}
-
-const IntegrationAllowedActionIDsMetadataKey = "allowed_action_ids"
-
-func IntegrationAllowedActionIDs(binding Binding) []string {
-	if binding.BindingType != BindingTypeIntegrationConnection || binding.Metadata == nil {
-		return []string{}
-	}
-	raw, ok := binding.Metadata[IntegrationAllowedActionIDsMetadataKey]
-	if !ok {
-		return []string{}
-	}
-	values := make([]string, 0)
-	switch typed := raw.(type) {
-	case []string:
-		values = append(values, typed...)
-	case []interface{}:
-		for _, item := range typed {
-			if value, ok := item.(string); ok {
-				values = append(values, value)
-			}
-		}
-	}
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (binding Binding) AllowsIntegrationAction(actionID string) bool {
-	actionID = strings.ToLower(strings.TrimSpace(actionID))
-	if actionID == "" {
-		return false
-	}
-	for _, allowed := range IntegrationAllowedActionIDs(binding) {
-		if allowed == actionID {
-			return true
-		}
-	}
-	return false
 }

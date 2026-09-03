@@ -3,29 +3,32 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
-	"github.com/zgiai/zgi/api/pkg/database"
-	"gorm.io/gorm"
 )
 
 // Node represents a Tools node in the workflow for the new Plugin Runner system
 type Node struct {
 	base.NodeStruct
-	nodeData   NodeData
-	toolEngine *tools.ToolEngine
+	nodeData                   NodeData
+	toolEngine                 *tools.ToolEngine
+	connectorConfirmationStore connectorexecution.ConfirmationContinuationStore
+	connectorDispatcher        connectordispatch.Dispatcher
+	connectorCatalog           connectorexecution.DefinitionCatalog
+	connectorActionResolver    connectordispatch.ActionInstanceResolver
 }
 
 // ToolInput represents a tool parameter input with type information
@@ -37,6 +40,7 @@ type ToolInput struct {
 
 // NodeData contains the configuration for the tools node
 type NodeData struct {
+	Connector                  *ConnectorNodeReference    `json:"connector,omitempty"`
 	Title                      string                     `json:"title"`
 	ProviderType               string                     `json:"provider_type"`           // builtin, runner, plugin_runner, api, workflow, app, dataset-retrieval, mcp
 	ProviderID                 string                     `json:"provider_id"`             // Tool provider identifier
@@ -48,7 +52,6 @@ type NodeData struct {
 	HasWorkflowOutputsSnapshot bool                       `json:"-"`
 	ToolConfigurations         map[string]any             `json:"tool_configurations"` // Pre-configured tool settings (form type)
 	CredentialID               string                     `json:"credential_id,omitempty"`
-	ConnectionID               string                     `json:"connection_id,omitempty"`
 	PluginUniqueIdentifier     string                     `json:"plugin_unique_identifier,omitempty"`
 	ToolNodeVersion            string                     `json:"tool_node_version,omitempty"` // For backward compatibility
 }
@@ -96,15 +99,24 @@ func New(
 		nodeData:   nd,
 	}
 
-	// Extract ToolEngine from optionalDeps
+	// Extract application-scoped runtime dependencies from optionalDeps.
 	for _, dep := range optionalDeps {
-		if te, ok := dep.(*tools.ToolEngine); ok {
+		switch typed := dep.(type) {
+		case *tools.ToolEngine:
+			te := typed
 			n.toolEngine = te
-			break
+		case connectordispatch.Dispatcher:
+			n.connectorDispatcher = typed
+		case connectorexecution.DefinitionCatalog:
+			n.connectorCatalog = typed
+		case connectorexecution.ConfirmationContinuationStore:
+			n.connectorConfirmationStore = typed
+		case connectordispatch.ActionInstanceResolver:
+			n.connectorActionResolver = typed
 		}
 	}
 
-	if n.toolEngine == nil {
+	if n.toolEngine == nil && n.getProviderType() != tools.ToolProviderTypeConnector {
 		return nil, fmt.Errorf("ToolEngine is required for Tools node")
 	}
 
@@ -172,6 +184,23 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		tenantID = n.OrganizationID
 	}
 	runtimeParameters := n.workflowToolRuntimeParameters(variablePool)
+	connectorIdentity, err := n.workflowConnectorIdentity(ctx, variablePool)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Workflow Connector execution identity: %w", err)
+	}
+	if connectorIdentity != nil {
+		// Published Connector authorization is keyed by the immutable
+		// workflows.version_uuid, while Workflow graph loading continues to use
+		// the concrete workflows.id held by n.WorkflowID.
+		runtimeParameters["workflow_id"] = connectorIdentity.Target.ID
+	}
+	var connectorInput map[string]interface{}
+	if providerType == tools.ToolProviderTypeConnector {
+		connectorInput, err = cloneWorkflowConnectorInput(toolParams)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot Workflow Connector input: %w", err)
+		}
+	}
 
 	req := tools.WorkflowToolInvokeRequest{
 		TenantID:           tenantID,
@@ -187,13 +216,93 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		RuntimeParameters:  runtimeParameters,
 	}
 
-	result, err := n.toolEngine.InvokeForWorkflow(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to invoke tool via ToolEngine: %w", err)
+	var result *tools.InvokeResult
+	var invokeErr error
+	if providerType == tools.ToolProviderTypeConnector {
+		if n.connectorDispatcher == nil || connectorIdentity == nil {
+			return nil, connectorcore.NewError(connectorcore.ErrorCodeConnectorUnavailable, false, nil)
+		}
+		// Normalize defaults before committing the durable action identity. The
+		// confirmation snapshot and dispatch must carry the same business input.
+		if n.connectorCatalog == nil {
+			return nil, connectorcore.NewError(connectorcore.ErrorCodeConnectorUnavailable, false, nil)
+		}
+		definition, ok := n.connectorCatalog.Get(connectorIdentity.ConnectorID.String())
+		if !ok {
+			return nil, connectorcore.NewError(connectorcore.ErrorCodeConnectorUnavailable, false, nil)
+		}
+		for _, operation := range definition.Operations {
+			if operation.ID == connectorIdentity.OperationID.String() {
+				connectorInput = connectordispatch.InputWithDefaults(operation.InputSchema, connectorInput)
+				break
+			}
+		}
+		resolveAction := n.connectorActionResolver
+		if resolveAction == nil {
+			resolveAction = n.persistWorkflowConnectorAction
+		}
+		persisted, err := resolveAction(ctx, *connectorIdentity, connectorInput)
+		if err != nil {
+			return nil, fmt.Errorf("persist Workflow Connector action: %w", err)
+		}
+		connectorIdentity = &persisted
+		native, err := n.connectorDispatcher.Dispatch(ctx, connectordispatch.Invocation{Identity: *connectorIdentity, Input: connectorInput})
+		invokeErr = err
+		result = &tools.InvokeResult{Success: err == nil, Messages: connectortools.MessagesForInvocation(native, *connectorIdentity)}
+	} else {
+		result, invokeErr = n.toolEngine.InvokeForWorkflow(ctx, req)
+	}
+	if providerType == tools.ToolProviderTypeConnector && result != nil && len(result.Messages) > 0 {
+		paused, handled, confirmationErr := n.pauseForConnectorConfirmation(
+			ctx, connectorIdentity, connectorInput, runtimeParameters, result, invokeErr,
+		)
+		if confirmationErr != nil {
+			return nil, fmt.Errorf("persist Workflow Connector confirmation: %w", confirmationErr)
+		}
+		if handled {
+			return paused, nil
+		}
+	}
+	var connectorPresentation map[string]interface{}
+	if providerType == tools.ToolProviderTypeConnector {
+		metadata, found, metadataErr := workflowResultMetadata(result)
+		connectorPresentation = workflowConnectorOutcomePresentation(metadata)
+		if metadataErr != nil || !found || invokeErr != nil || metadata.Operation == nil || !metadata.Operation.Valid() ||
+			metadata.State != connectorexecution.ExecutionStateCompleted || metadata.OutcomeID == uuid.Nil || metadata.OutcomeStatus != connectorcore.OutcomeStatusSuccessful {
+			failure := invokeErr
+			if failure == nil {
+				code := connectorcore.ErrorCodeOutcomeUnknown
+				if metadata.OutcomeID != uuid.Nil && metadata.OutcomeStatus == connectorcore.OutcomeStatusFailed {
+					code = connectorcore.ErrorCodeProviderUnavailable
+				}
+				failure = connectorcore.NewError(code, false, nil)
+			}
+			return &shared.NodeRunResult{
+				Status:  shared.FAILED,
+				Outputs: connectorPresentation,
+				Metadata: map[shared.WorkflowNodeExecutionMetadataKey]interface{}{shared.ToolInfo: map[string]interface{}{
+					"provider_id": n.nodeData.ProviderID, "tool_name": n.nodeData.ToolName,
+					"provider_type": n.nodeData.ProviderType, "runtime_source": "connector", "result": connectorPresentation,
+				}},
+				Err:     failure,
+				ErrType: "ConnectorOperationNotSuccessful",
+			}, nil
+		}
+	}
+	if invokeErr != nil {
+		return nil, fmt.Errorf("failed to invoke tool via ToolEngine: %w", invokeErr)
 	}
 
 	workflowOutputs := n.nodeData.WorkflowOutputs
-	if !n.nodeData.HasWorkflowOutputsSnapshot {
+	if providerType == tools.ToolProviderTypeConnector && n.connectorCatalog != nil && connectorIdentity != nil {
+		if definition, ok := n.connectorCatalog.Get(connectorIdentity.ConnectorID.String()); ok {
+			if entity, err := connectortools.OperationEntity(definition, connectorIdentity.OperationID.String()); err == nil {
+				workflowOutputs = entity.WorkflowOutputs
+			}
+		}
+	} else if providerType == tools.ToolProviderTypeConnector {
+		return nil, fmt.Errorf("Connector output schema is unavailable")
+	} else if !n.nodeData.HasWorkflowOutputsSnapshot {
 		if entity, resolveErr := n.toolEngine.ResolveToolEntity(
 			ctx,
 			providerType,
@@ -211,10 +320,11 @@ func (n *Node) executeRun(ctx context.Context, eventChan chan *shared.NodeEventC
 		Outputs: outputs,
 		Metadata: map[shared.WorkflowNodeExecutionMetadataKey]interface{}{
 			shared.ToolInfo: map[string]interface{}{
-				"provider_id":   n.nodeData.ProviderID,
-				"tool_name":     n.nodeData.ToolName,
-				"provider_type": n.nodeData.ProviderType,
-				"system":        n.nodeData.ProviderType,
+				"provider_id":      n.nodeData.ProviderID,
+				"tool_name":        n.nodeData.ToolName,
+				"provider_type":    n.nodeData.ProviderType,
+				"system":           n.nodeData.ProviderType,
+				"connector_result": connectorPresentation,
 			},
 		},
 	}, nil
@@ -249,10 +359,9 @@ func (n *Node) workflowToolRuntimeParameters(variablePool *entities.VariablePool
 		workspaceID = strings.TrimSpace(n.TenantID)
 	}
 	parameters := map[string]interface{}{
-		"connection_id": strings.TrimSpace(n.nodeData.ConnectionID),
-		"workspace_id":  workspaceID,
-		"workflow_id":   strings.TrimSpace(n.WorkflowID),
-		"node_id":       strings.TrimSpace(n.NodeID),
+		"workspace_id": workspaceID,
+		"workflow_id":  strings.TrimSpace(n.WorkflowID),
+		"node_id":      strings.TrimSpace(n.NodeID),
 	}
 	if variablePool != nil {
 		if value := variablePool.Get([]string{"sys", "workflow_run_id"}); value != nil {
@@ -261,99 +370,7 @@ func (n *Node) workflowToolRuntimeParameters(variablePool *entities.VariablePool
 			}
 		}
 	}
-	if n.getProviderType() == tools.ToolProviderTypeConnector {
-		parameters = skills.WithAgentBindingVerifier(parameters, n.workflowConnectorBindingVerifier())
-	}
 	return parameters
-}
-
-// workflowConnectorBindingVerifier rechecks the concrete persisted Workflow
-// graph row and exact node binding immediately before Provider execution. The
-// graph's connection_id is configuration, not authorization evidence.
-func (n *Node) workflowConnectorBindingVerifier() skills.AgentBindingVerifier {
-	return func(ctx context.Context, check skills.AgentBindingCheck) (bool, error) {
-		if agentbindings.BindingType(strings.TrimSpace(check.BindingType)) != agentbindings.BindingTypeIntegrationConnection {
-			return false, nil
-		}
-		if !strings.EqualFold(strings.TrimSpace(check.ResourceID), strings.TrimSpace(n.nodeData.ConnectionID)) ||
-			!strings.EqualFold(strings.TrimSpace(check.ParentResourceID), strings.TrimSpace(n.nodeData.ProviderID)) {
-			return false, nil
-		}
-		db := database.GetDB()
-		if db == nil {
-			return false, fmt.Errorf("workflow connector binding database is not configured")
-		}
-		workflowID, err := uuid.Parse(strings.TrimSpace(n.WorkflowID))
-		if err != nil || workflowID == uuid.Nil {
-			return false, fmt.Errorf("workflow connector runtime workflow id is invalid")
-		}
-		agentID, err := uuid.Parse(strings.TrimSpace(n.APPID))
-		if err != nil || agentID == uuid.Nil {
-			return false, fmt.Errorf("workflow connector runtime Agent id is invalid")
-		}
-		workspaceIDValue := strings.TrimSpace(n.WorkspaceID)
-		if workspaceIDValue == "" {
-			workspaceIDValue = strings.TrimSpace(n.TenantID)
-		}
-		workspaceID, err := uuid.Parse(workspaceIDValue)
-		if err != nil || workspaceID == uuid.Nil {
-			return false, fmt.Errorf("workflow connector runtime workspace id is invalid")
-		}
-		organizationID, err := uuid.Parse(strings.TrimSpace(n.OrganizationID))
-		if err != nil || organizationID == uuid.Nil {
-			return false, fmt.Errorf("workflow connector runtime organization id is invalid")
-		}
-
-		type workflowBindingRuntimeState struct {
-			ID          uuid.UUID
-			AgentID     uuid.UUID
-			WorkspaceID uuid.UUID
-			Version     string
-			VersionUUID *uuid.UUID
-		}
-		var state workflowBindingRuntimeState
-		query := db.WithContext(ctx).
-			Table("workflows AS workflow").
-			Select("workflow.id, workflow.agent_id, workflow.tenant_id AS workspace_id, workflow.version, workflow.version_uuid").
-			Joins("JOIN agents AS owner ON owner.id = workflow.agent_id AND owner.deleted_at IS NULL").
-			Joins("JOIN workspaces AS workspace ON workspace.id = workflow.tenant_id AND workspace.status = ?", "normal").
-			Where("workflow.id = ? AND workflow.agent_id = ? AND workflow.tenant_id = ? AND workspace.organization_id = ?", workflowID, agentID, workspaceID, organizationID).
-			Take(&state)
-		if query.Error != nil {
-			if errors.Is(query.Error, gorm.ErrRecordNotFound) {
-				return false, nil
-			}
-			return false, fmt.Errorf("load workflow connector runtime scope: %w", query.Error)
-		}
-
-		ref := agentbindings.WorkflowScopeRef{
-			AgentID:    state.AgentID,
-			WorkflowID: state.ID,
-		}
-		if strings.EqualFold(strings.TrimSpace(state.Version), "draft") {
-			ref.Scope = agentbindings.ScopeDraft
-		} else {
-			if state.VersionUUID == nil || *state.VersionUUID == uuid.Nil {
-				return false, fmt.Errorf("published workflow connector runtime version is missing")
-			}
-			ref.Scope = agentbindings.ScopePublished
-			ref.PublishedVersionUUID = state.VersionUUID
-		}
-
-		binding, err := agentbindings.NewRepository(db).FindWorkflowNodeBinding(ctx, ref, strings.TrimSpace(n.NodeID), agentbindings.Match{
-			BindingType:      agentbindings.BindingTypeIntegrationConnection,
-			ResourceID:       strings.TrimSpace(check.ResourceID),
-			ParentResourceID: strings.TrimSpace(check.ParentResourceID),
-			AccessMode:       strings.TrimSpace(check.AccessMode),
-		})
-		if err != nil || binding == nil {
-			return false, err
-		}
-		if binding.OrganizationID != organizationID || binding.WorkspaceID != workspaceID {
-			return false, nil
-		}
-		return binding.AllowsIntegrationAction(check.ActionID), nil
-	}
 }
 
 // getProviderType converts string provider type to tools.ToolProviderType
@@ -1052,9 +1069,15 @@ func parseNodeDataFromConfig(config map[string]any) (NodeData, string, error) {
 		nd.CredentialID = credID
 	}
 
-	// Parse connection_id (optional for legacy nodes, required by connector nodes).
-	if connectionID, ok := data["connection_id"].(string); ok {
-		nd.ConnectionID = connectionID
+	if reference, ok := data["connector"].(map[string]interface{}); ok {
+		encoded, err := json.Marshal(reference)
+		if err != nil {
+			return nd, "", err
+		}
+		nd.Connector = &ConnectorNodeReference{}
+		if err = json.Unmarshal(encoded, nd.Connector); err != nil {
+			return nd, "", err
+		}
 	}
 
 	// Parse plugin_unique_identifier (optional)

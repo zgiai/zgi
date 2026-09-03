@@ -20,7 +20,6 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
-import { useSystemFeatures } from '@/hooks/auth/use-system-features';
 import { useT } from '@/i18n';
 import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
 import {
@@ -38,6 +37,7 @@ import type { OpeningStatementDialogValue } from '@/components/workflow/ui/featu
 import type {
   AgentDetail,
   AgentBindingHealth,
+  AgentConnectorBinding,
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
@@ -46,10 +46,7 @@ import type {
   AgentPublishedVersionRollbackPreview,
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
-import type {
-  AgentIntegrationConnectionBinding,
-  AgentIntegrationConnectionCandidate,
-} from '@/services/types/integration';
+import type { ConnectorReferenceCommand } from '@/services/types/connector';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { Dataset } from '@/services/types/dataset';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -67,8 +64,9 @@ import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
 import { buildAgentRuntimeAIChatContext } from '../aichat-context';
 import { normalizeAgentDatabaseBindings } from '../database-binding-draft';
 import {
+  getAgentConnectorBindingConflicts,
   mergeSupersededAgentRuntimePayload,
-  normalizeAgentIntegrationBindings,
+  normalizeAgentConnectorBindings,
   normalizeAgentWorkflowBindings,
 } from '../binding-rebase-merge';
 import { agentSkillCandidateToMetadata, normalizeAgentSkillCandidates } from '../skill-candidates';
@@ -87,6 +85,17 @@ class AgentMemoryRevisionChangedError extends Error {
   }
 }
 
+class AgentConnectorBindingRevisionChangedError extends Error {
+  constructor(
+    readonly baselinePayload: UpdateAgentRuntimeConfigRequest,
+    readonly serverPayload: UpdateAgentRuntimeConfigRequest,
+    readonly bindingHealth?: AgentBindingHealth
+  ) {
+    super('Agent Connector selection changed during binding conflict recovery');
+    this.name = 'AgentConnectorBindingRevisionChangedError';
+  }
+}
+
 function describeBindingChanges(
   local: UpdateAgentRuntimeConfigRequest,
   server: Partial<AgentRuntimeConfig>,
@@ -97,8 +106,7 @@ function describeBindingChanges(
     databaseTable: string;
     writableDatabaseTable: string;
     workflow: string;
-    integrationConnection: string;
-    integrationAction: string;
+    connectorConnection: string;
   }
 ) {
   const collect = (value: Partial<AgentRuntimeConfig | UpdateAgentRuntimeConfigRequest>) => {
@@ -116,17 +124,8 @@ function describeBindingChanges(
     for (const binding of value.workflow_bindings ?? []) {
       add(`Workflow:${binding.binding_id}`, labels.workflow);
     }
-    for (const binding of value.integration_bindings ?? []) {
-      add(
-        `Integration:${binding.integration_id}:${binding.connection_id}`,
-        labels.integrationConnection
-      );
-      for (const id of binding.allowed_action_ids) {
-        add(
-          `Integration Action:${binding.integration_id}:${binding.connection_id}:${id}`,
-          labels.integrationAction
-        );
-      }
+    for (const binding of value.connector_bindings ?? []) {
+      add(`Connector:${binding.connector_id}:${binding.connection_id}`, labels.connectorConnection);
     }
     return out;
   };
@@ -252,8 +251,6 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { locale } = useLocale();
   const t = useT('agents.agentRuntime');
   const tRoot = useT();
-  const systemFeatures = useSystemFeatures();
-  const externalIntegrationsEnabled = Boolean(systemFeatures.data?.enable_external_integrations);
   const {
     permissions,
     organizationRole,
@@ -304,18 +301,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     enabled: Boolean(agentId) && canConfigureAgentRuntime,
     staleTime: 60_000,
   });
-  const { data: integrationCandidatesResponse, isLoading: isIntegrationCandidatesLoading } =
-    useQuery({
-      queryKey: AGENT_KEYS.integrationConnectionCandidates(agentId),
-      queryFn: () =>
-        agentService.getAgentIntegrationConnectionCandidates(agentId, {
-          page: 1,
-          limit: 100,
-          include_selected: true,
-        }),
-      enabled: Boolean(agentId) && canConfigureAgentRuntime && externalIntegrationsEnabled,
-      staleTime: 60_000,
-    });
   const config = configResponse?.data;
   const voiceInputEnabled = Boolean(voiceDefaultModel?.model);
   const speechEnabled =
@@ -325,10 +310,6 @@ export function useAgentRuntimePageModel(agentId: string) {
   const workflowCandidates = useMemo<AgentWorkflowBindingCandidate[]>(
     () => (workflowCandidatesResponse?.data.data ?? []) as AgentWorkflowBindingCandidate[],
     [workflowCandidatesResponse?.data.data]
-  );
-  const integrationCandidates = useMemo<AgentIntegrationConnectionCandidate[]>(
-    () => integrationCandidatesResponse?.data.data ?? [],
-    [integrationCandidatesResponse?.data.data]
   );
   const {
     models: availableAgentRuntimeModels,
@@ -363,8 +344,9 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
   const [databaseBindings, setDatabaseBindings] = useState<AgentDatabaseBinding[]>([]);
   const [workflowBindings, setWorkflowBindings] = useState<AgentWorkflowBinding[]>([]);
-  const [integrationBindings, setIntegrationBindings] = useState<
-    AgentIntegrationConnectionBinding[]
+  const [connectorBindings, setConnectorBindings] = useState<AgentConnectorBinding[]>([]);
+  const [connectorReferenceCommands, setConnectorReferenceCommands] = useState<
+    ConnectorReferenceCommand[]
   >([]);
   const [bindingRevision, setBindingRevision] = useState('');
   const [bindingHealth, setBindingHealth] = useState<AgentBindingHealth>();
@@ -372,7 +354,9 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
-  const [integrationDialogOpen, setIntegrationDialogOpen] = useState(false);
+  const [connectorDialogOpen, setConnectorDialogOpen] = useState(false);
+  const [connectorDialogAnchorElement, setConnectorDialogAnchorElement] =
+    useState<HTMLElement | null>(null);
   const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
   const [memoryValuesOpen, setMemoryValuesOpen] = useState(false);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
@@ -399,7 +383,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     knowledge: true,
     databases: true,
     workflows: true,
-    integrations: true,
+    connectors: true,
     files: true,
     memory: true,
   });
@@ -488,12 +472,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     () => new Map(workflowCandidates.map(candidate => [candidate.binding_id, candidate])),
     [workflowCandidates]
   );
-  const integrationCandidatesByConnectionID = useMemo<
-    Map<string, AgentIntegrationConnectionCandidate>
-  >(
-    () => new Map(integrationCandidates.map(candidate => [candidate.connection_id, candidate])),
-    [integrationCandidates]
-  );
   const normalizedSelectedSkillIds = useMemo(
     () => normalizeAIChatSkillIds(selectedSkillIds),
     [selectedSkillIds]
@@ -580,7 +558,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledge_retrieval_config: {},
       database_bindings: databaseBindings,
       workflow_bindings: workflowBindings,
-      integration_bindings: integrationBindings,
+      connector_bindings: connectorBindings,
+      connector_reference_commands: connectorReferenceCommands,
       binding_revision: bindingRevision || undefined,
     }),
     [
@@ -599,7 +578,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledgeDatasetIds,
       databaseBindings,
       workflowBindings,
-      integrationBindings,
+      connectorBindings,
+      connectorReferenceCommands,
       bindingRevision,
       systemPrompt,
     ]
@@ -638,7 +618,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
     setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
     setWorkflowBindings(normalizeAgentWorkflowBindings(payload.workflow_bindings ?? []));
-    setIntegrationBindings(normalizeAgentIntegrationBindings(payload.integration_bindings ?? []));
+    setConnectorBindings(normalizeAgentConnectorBindings(payload.connector_bindings ?? []));
+    setConnectorReferenceCommands(payload.connector_reference_commands ?? []);
     const nextBindingRevision = payload.binding_revision ?? '';
     setBindingRevision(nextBindingRevision);
     bindingRevisionRef.current = nextBindingRevision;
@@ -652,9 +633,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       system_prompt: runtimeConfig.system_prompt ?? fallback?.system_prompt ?? '',
       model_provider: runtimeConfig.model_provider ?? fallback?.model_provider ?? '',
       model: runtimeConfig.model ?? fallback?.model ?? '',
-      model_parameters: toModelParams(
-        runtimeConfig.model_parameters ?? fallback?.model_parameters
-      ),
+      model_parameters: toModelParams(runtimeConfig.model_parameters ?? fallback?.model_parameters),
       enabled_skill_ids: runtimeConfig.enabled_skill_ids ?? fallback?.enabled_skill_ids ?? [],
       use_memory: runtimeConfig.use_memory ?? fallback?.use_memory ?? false,
       agent_memory_enabled:
@@ -663,8 +642,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         runtimeConfig.agent_memory_auto_extraction_enabled ??
         fallback?.agent_memory_auto_extraction_enabled ??
         false,
-      agent_memory_slots:
-        runtimeConfig.agent_memory_slots ?? fallback?.agent_memory_slots ?? [],
+      agent_memory_slots: runtimeConfig.agent_memory_slots ?? fallback?.agent_memory_slots ?? [],
       agent_memory_config_revision:
         runtimeConfig.agent_memory_config_revision ?? fallback?.agent_memory_config_revision,
       file_upload_enabled:
@@ -673,13 +651,11 @@ export function useAgentRuntimePageModel(agentId: string) {
         runtimeConfig.home_title && runtimeConfig.home_title !== 'title'
           ? runtimeConfig.home_title
           : fallback?.home_title || defaultHomeTitle,
-      opening_statement:
-        runtimeConfig.opening_statement ?? fallback?.opening_statement ?? '',
+      opening_statement: runtimeConfig.opening_statement ?? fallback?.opening_statement ?? '',
       input_placeholder:
         runtimeConfig.input_placeholder ?? fallback?.input_placeholder ?? defaultInputPlaceholder,
       theme_color: fallback?.theme_color ?? 'default',
-      suggested_questions:
-        runtimeConfig.suggested_questions ?? fallback?.suggested_questions ?? [],
+      suggested_questions: runtimeConfig.suggested_questions ?? fallback?.suggested_questions ?? [],
       knowledge_dataset_ids:
         runtimeConfig.knowledge_dataset_ids ?? fallback?.knowledge_dataset_ids ?? [],
       knowledge_retrieval_config:
@@ -690,9 +666,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       workflow_bindings: normalizeAgentWorkflowBindings(
         runtimeConfig.workflow_bindings ?? fallback?.workflow_bindings ?? []
       ),
-      integration_bindings: normalizeAgentIntegrationBindings(
-        runtimeConfig.integration_bindings ?? fallback?.integration_bindings ?? []
+      connector_bindings: normalizeAgentConnectorBindings(
+        runtimeConfig.connector_bindings ?? fallback?.connector_bindings ?? []
       ),
+      connector_reference_commands: [],
       binding_revision: runtimeConfig.binding_revision ?? fallback?.binding_revision,
     }),
     [defaultHomeTitle, defaultInputPlaceholder]
@@ -715,7 +692,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
       setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
       setWorkflowBindings(normalizeAgentWorkflowBindings(payload.workflow_bindings ?? []));
-      setIntegrationBindings(normalizeAgentIntegrationBindings(payload.integration_bindings ?? []));
+      setConnectorBindings(normalizeAgentConnectorBindings(payload.connector_bindings ?? []));
+      setConnectorReferenceCommands(payload.connector_reference_commands ?? []);
       applySavedBindingMetadata(payload, health);
     },
     [applySavedBindingMetadata]
@@ -733,6 +711,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       };
       let wasBindingRevisionRebased = false;
       let rebasedBindingHealth: AgentBindingHealth | undefined;
+      const baselinePayload = lastServerPayloadRef.current ?? payload;
       let response: Awaited<ReturnType<typeof agentService.updateAgentConfig>>;
       try {
         response = await agentService.updateAgentConfig(agentId, configPayload);
@@ -746,6 +725,14 @@ export function useAgentRuntimePageModel(agentId: string) {
         if (serverMemoryRevision && serverMemoryRevision !== submittedMemoryRevision) {
           throw new AgentMemoryRevisionChangedError();
         }
+        const serverPayload = payloadFromRuntimeConfig(serverConfig, payload);
+        if (getAgentConnectorBindingConflicts(baselinePayload, payload, serverPayload).length > 0) {
+          throw new AgentConnectorBindingRevisionChangedError(
+            baselinePayload,
+            serverPayload,
+            conflict?.bindingHealth
+          );
+        }
         const changedBindings = describeBindingChanges(payload, serverConfig, {
           skill: t('bindingHealth.types.skill'),
           knowledge: t('bindingHealth.types.knowledge_dataset'),
@@ -753,8 +740,7 @@ export function useAgentRuntimePageModel(agentId: string) {
           databaseTable: t('bindingHealth.types.database_table'),
           writableDatabaseTable: t('bindingHealth.types.writable_database_table'),
           workflow: t('bindingHealth.types.workflow'),
-          integrationConnection: t('bindingHealth.types.integration_connection'),
-          integrationAction: t('bindingHealth.types.integration_action'),
+          connectorConnection: t('bindingHealth.types.connector_connection'),
         });
         if (changedBindings.length > 0) {
           toast.warning(
@@ -763,12 +749,7 @@ export function useAgentRuntimePageModel(agentId: string) {
             })
           );
         }
-        const serverPayload = payloadFromRuntimeConfig(serverConfig, payload);
-        configPayload = mergeSupersededAgentRuntimePayload(
-          lastServerPayloadRef.current ?? payload,
-          payload,
-          serverPayload
-        );
+        configPayload = mergeSupersededAgentRuntimePayload(baselinePayload, payload, serverPayload);
         configPayload.agent_memory_config_revision =
           serverConfig.agent_memory_config_revision ?? configPayload.agent_memory_config_revision;
         wasBindingRevisionRebased = true;
@@ -781,8 +762,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         binding_revision: response.data.binding_revision ?? configPayload.binding_revision,
         agent_memory_slots: response.data.agent_memory_slots ?? payload.agent_memory_slots,
         agent_memory_config_revision:
-          response.data.agent_memory_config_revision ??
-          configPayload.agent_memory_config_revision,
+          response.data.agent_memory_config_revision ?? configPayload.agent_memory_config_revision,
       };
       setAgentMemoryConfigRevision(savedPayload.agent_memory_config_revision ?? '');
 
@@ -849,16 +829,37 @@ export function useAgentRuntimePageModel(agentId: string) {
         result.savedPayload
       );
       applyServerBindingPayload(mergedPayload, result.bindingHealth);
+      if (
+        getAgentConnectorBindingConflicts(submittedPayload, latestPayload, result.savedPayload)
+          .length > 0
+      ) {
+        setConnectorDialogOpen(true);
+        toast.warning(t('toasts.connectorBindingRevisionChanged'));
+      }
     },
     onSaveFailed: (error, options) => {
+      if (error instanceof AgentConnectorBindingRevisionChangedError) {
+        // Keep edits made while the request was pending, but never carry the
+        // rejected same-slot switch onto the freshly received server revision.
+        const mergedPayload = mergeSupersededAgentRuntimePayload(
+          error.baselinePayload,
+          currentPayload,
+          error.serverPayload
+        );
+        lastServerPayloadRef.current = error.serverPayload;
+        applyServerBindingPayload(mergedPayload, error.bindingHealth);
+        setConnectorDialogOpen(true);
+        toast.warning(t('toasts.connectorBindingRevisionChanged'));
+        return;
+      }
       if (!options.silent) {
         const bindingConflict = getAgentBindingConflict(error);
         toast.error(
           error instanceof AgentMemoryRevisionChangedError
             ? t('toasts.memoryRevisionChanged')
             : bindingConflict?.code === 'agent_bindings_invalid'
-            ? t('toasts.saveBindingsInvalid')
-            : t('toasts.saveFailedDraftKept')
+              ? t('toasts.saveBindingsInvalid')
+              : t('toasts.saveFailedDraftKept')
         );
       }
     },
@@ -930,8 +931,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     setWorkflowBindings(normalizeAgentWorkflowBindings(bindings));
   }, []);
 
-  const handleConfirmIntegrations = useCallback((bindings: AgentIntegrationConnectionBinding[]) => {
-    setIntegrationBindings(normalizeAgentIntegrationBindings(bindings));
+  const handleConfirmConnectors = useCallback((bindings: AgentConnectorBinding[]) => {
+    setConnectorBindings(normalizeAgentConnectorBindings(bindings));
   }, []);
 
   const handleRemoveAbnormalSkills = useCallback(() => {
@@ -1231,8 +1232,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       targetSection = 'databases';
     }
     if (firstAbnormalBinding?.binding_type === 'workflow') targetSection = 'workflows';
-    if (firstAbnormalBinding?.binding_type === 'integration_connection') {
-      targetSection = 'integrations';
+    if (firstAbnormalBinding?.binding_type === 'connector_connection') {
+      targetSection = 'connectors';
     }
 
     if (health) {
@@ -1247,7 +1248,7 @@ export function useAgentRuntimePageModel(agentId: string) {
               next.databases = true;
             }
             if (item.binding_type === 'workflow') next.workflows = true;
-            if (item.binding_type === 'integration_connection') next.integrations = true;
+            if (item.binding_type === 'connector_connection') next.connectors = true;
           });
         return next;
       });
@@ -1487,7 +1488,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     agentId,
     locale,
     t,
-    externalIntegrationsEnabled,
+
+    connectorsEnabled: true,
     aiChatContext,
     isLoading: isAgentLoading || isConfigLoading || isPermissionsLoading,
     canOpenAgentRuntimeEditor,
@@ -1574,10 +1576,11 @@ export function useAgentRuntimePageModel(agentId: string) {
       workflowBindings,
       workflowCandidatesByBindingID,
       isWorkflowCandidatesLoading,
-      integrationBindings,
-      integrationCandidatesByConnectionID,
-      isIntegrationCandidatesLoading,
-      externalIntegrationsEnabled,
+      connectorBindings,
+      connectorsEnabled: true,
+      connectorMenuOpen: connectorDialogOpen,
+      connectorReferenceCommands,
+
       suggestedQuestions,
       isGeneratingSuggestions,
       fileUploadEnabled,
@@ -1621,9 +1624,12 @@ export function useAgentRuntimePageModel(agentId: string) {
         if (isRuntimeConfigReadOnly) return;
         setWorkflowDialogOpen(true);
       },
-      onOpenIntegrationDialog: () => {
-        if (isRuntimeConfigReadOnly || !externalIntegrationsEnabled) return;
-        setIntegrationDialogOpen(true);
+      onOpenConnectorDialog: (anchorElement: HTMLElement) => {
+        if (isRuntimeConfigReadOnly || !anchorElement.isConnected) {
+          return;
+        }
+        setConnectorDialogAnchorElement(anchorElement);
+        setConnectorDialogOpen(current => !current);
       },
       onToggleSkill: (skillId: string, checked: boolean) => {
         if (isRuntimeConfigReadOnly) return;
@@ -1641,9 +1647,9 @@ export function useAgentRuntimePageModel(agentId: string) {
         if (isRuntimeConfigReadOnly) return;
         setWorkflowBindings(normalizeAgentWorkflowBindings(value));
       },
-      onChangeIntegrationBindings: (value: AgentIntegrationConnectionBinding[]) => {
+      onChangeConnectorBindings: (value: AgentConnectorBinding[]) => {
         if (isRuntimeConfigReadOnly) return;
-        setIntegrationBindings(normalizeAgentIntegrationBindings(value));
+        setConnectorBindings(normalizeAgentConnectorBindings(value));
       },
       onGenerateSuggestedQuestions: async (value: OpeningStatementDialogValue) => {
         if (isRuntimeConfigReadOnly) return undefined;
@@ -1730,12 +1736,21 @@ export function useAgentRuntimePageModel(agentId: string) {
         onOpenChange: setWorkflowDialogOpen,
         onConfirmWorkflows: handleConfirmWorkflows,
       },
-      integration: {
+      connector: {
         agentId,
-        open: integrationDialogOpen && externalIntegrationsEnabled,
-        bindings: integrationBindings,
-        onOpenChange: setIntegrationDialogOpen,
-        onConfirmBindings: handleConfirmIntegrations,
+        targetName: agentDetail?.name || defaultHomeTitle,
+        open: connectorDialogOpen,
+        anchorElement: connectorDialogAnchorElement,
+        connectorsEnabled: true,
+        connectorBindings,
+        onOpenChange: setConnectorDialogOpen,
+        onConfirmConnectorBindings: handleConfirmConnectors,
+        pendingReferenceCommands: connectorReferenceCommands,
+        onReferenceCommand: (command: ConnectorReferenceCommand) =>
+          setConnectorReferenceCommands(current => [
+            ...current.filter(value => value.reference_id !== command.reference_id),
+            command,
+          ]),
       },
       memoryValues: {
         agentId,

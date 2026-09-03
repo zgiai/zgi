@@ -1,12 +1,32 @@
 'use client';
 
+import { ConnectorIcon } from '@/components/connectors/connector-icon';
+
 import React, { useMemo, useCallback } from 'react';
+import type { ConnectorReferenceCommand } from '@/services/types/connector';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { ConnectorPickerDialog } from '@/components/connectors/picker';
+import type {
+  ConnectorPickerActionRequest,
+  ConnectorPickerBindingRef,
+} from '@/components/connectors/picker';
+import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
+import { ConnectorKeySetupPanel } from '@/components/connectors/setup/connector-key-setup-panel';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectTrigger,
@@ -23,7 +43,7 @@ import { useBuiltinTools } from '@/hooks/workflow/use-builtin-tools';
 import { mapParametersToFormFields, coerceValue } from '@/utils/tool-helpers';
 import { useLocale } from '@/hooks/use-locale';
 import type { WorkflowVariable } from '@/components/workflow/store';
-import { Wrench, Info, Variable } from 'lucide-react';
+import { ArrowLeft, ChevronsUpDown, Wrench, Info, Variable } from 'lucide-react';
 import { useWorkflowStore } from '../../../store';
 import OutputVariablesView from '../../../common/output-variables-view';
 import WorkflowValueEditor, {
@@ -31,23 +51,28 @@ import WorkflowValueEditor, {
 } from '../../../common/workflow-value-editor';
 import { useT } from '@/i18n';
 import ToolConfigDialog from './tool-config-dialog';
+import { workflowConnectorSelection } from './workflow-connector-selection';
 import ValueSourceEditor from '../../../common/value-source-editor';
-import {
-  integrationConnectionItems,
-  useAllAvailableIntegrationConnections,
-} from '@/hooks/integrations/use-integrations';
+import { personalConnectionItems, usePersonalConnections } from '@/hooks/connectors/use-connectors';
+import type { ConnectorCatalogItem } from '@/services/types/connector';
 
 import {
   useNodeData,
   useNodeDataUpdate,
   useLocalNodeData,
   useNodeOutputVariables,
+  useWorkflowEditor,
 } from '../../../hooks';
 
 interface ToolManagerProps {
   id: string;
   className?: string;
   readOnly?: boolean;
+}
+
+interface WorkflowConnectorSetupContext {
+  connector: ConnectorCatalogItem;
+  replacedBinding?: ConnectorPickerBindingRef;
 }
 
 // Map form field type to primitive type for variable selector filter
@@ -113,11 +138,36 @@ const paramsEqual = (a: unknown, b: unknown) => {
   }
 };
 
+function connectorDetailURL(request: ConnectorPickerActionRequest): string {
+  const params = new URLSearchParams({
+    target_type: 'workflow',
+    target_id: request.target?.id ?? '',
+  });
+  if (request.target?.binding_instance_id) {
+    params.set('binding_instance_id', request.target.binding_instance_id);
+  }
+  if (request.connection?.id) params.set('connection_id', request.connection.id);
+  return `/console/connectors/${encodeURIComponent(request.connector.id)}?${params.toString()}`;
+}
+
 const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOnly = false }) => {
+  const router = useRouter();
+  const { workflowId } = useWorkflowEditor();
   const { tools, isLoading, isFetching } = useBuiltinTools();
   const { locale } = useLocale();
-  const t = useT();
+  const connectorT = useT('connectors');
+  const navigationT = useT('navigation');
   const [showConfig, setShowConfig] = React.useState(false);
+  const [showConnectorPicker, setShowConnectorPicker] = React.useState(false);
+  const [connectorSetup, setConnectorSetup] = React.useState<WorkflowConnectorSetupContext>();
+  const localizedSetupConnector = connectorSetup
+    ? localizeConnectorCatalogItem(connectorSetup.connector, locale)
+    : undefined;
+
+  React.useEffect(() => {
+    setShowConnectorPicker(false);
+    setConnectorSetup(undefined);
+  }, [nodeId, workflowId, readOnly]);
 
   // Use store-aware useLocalNodeData for 'tool_parameters' with debouncing
   const { localData: toolParameters, setLocalData: setToolParameters } = useLocalNodeData<
@@ -141,17 +191,44 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
   }, [nodeData?.provider_id, tools]);
   const isConnector =
     nodeData?.provider_type === 'connector' || providerDefinition?.type === 'connector';
-  const connectionsQuery = useAllAvailableIntegrationConnections(
-    { integration_id: isConnector ? nodeData?.provider_id : undefined },
-    Boolean(isConnector && nodeData?.provider_id)
+  const connectorID = providerDefinition?.id ?? nodeData?.provider_id ?? '';
+  const personalConnectionsQuery = usePersonalConnections(
+    {
+      connector_id: connectorID || undefined,
+      target_type: 'workflow',
+      target_id: workflowId || undefined,
+    },
+    Boolean(isConnector && connectorID && workflowId)
   );
-  const connectorConnections = useMemo(
+  const personalConnections = personalConnectionItems(personalConnectionsQuery.data?.data);
+  const currentConnectionID = nodeData?.connector?.connection_id?.trim() ?? '';
+  const selectedPersonalConnection = personalConnections.find(
+    connection => connection.id === currentConnectionID
+  );
+  const { pickerBindings, selectedConnectionLabel } = useMemo(
     () =>
-      integrationConnectionItems(connectionsQuery.data?.data)
-        .filter(connection => connection.credential_source !== 'account')
-        .filter(connection => connection.status === 'active')
-        .sort((left, right) => Number(right.is_default) - Number(left.is_default)),
-    [connectionsQuery.data?.data]
+      workflowConnectorSelection({
+        workflowID: workflowId,
+        nodeID: nodeId,
+        connectorID,
+        currentConnectionID,
+        personalConnection: selectedPersonalConnection,
+        bindingID: nodeData?.connector?.binding_id,
+        revision: nodeData?.connector?.revision,
+        icon: providerDefinition?.icon,
+        unavailableLabel: connectorT('status.unavailable'),
+      }),
+    [
+      connectorID,
+      connectorT,
+      currentConnectionID,
+      nodeId,
+      providerDefinition?.icon,
+      nodeData?.connector?.binding_id,
+      nodeData?.connector?.revision,
+      selectedPersonalConnection,
+      workflowId,
+    ]
   );
 
   // Get provider icon URL from tools list
@@ -192,6 +269,40 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
       }
     }
   }, [tools]);
+
+  const referenceCommands = useWorkflowStore(
+    state => state.workflowData?.connector_reference_commands
+  );
+  const stageReferenceCommand = (command: ConnectorReferenceCommand) => {
+    const state = useWorkflowStore.getState();
+    if (!state.workflowData || readOnly) return;
+    useWorkflowStore.setState({
+      workflowData: {
+        ...state.workflowData,
+        connector_reference_commands: [
+          ...(state.workflowData.connector_reference_commands ?? []).filter(
+            item => item.reference_id !== command.reference_id
+          ),
+          command,
+        ],
+      },
+      isDirty: true,
+    });
+  };
+  const setConnectorConnection = (connectionID: string) => {
+    const operationID = toolDefinition?.connector_operation_id;
+    if (!operationID || !connectorID || readOnly) {
+      throw new Error('connector operation is unavailable');
+    }
+    updateNodeData({
+      connector: {
+        ...nodeData?.connector,
+        connection_id: connectionID,
+        connector_id: connectorID,
+        operation_id: operationID,
+      },
+    });
+  };
 
   const configParams = toolDefinition?.config_parameters;
   const hasConfig = !!(configParams && configParams.enable);
@@ -294,7 +405,9 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center overflow-hidden">
-            {providerIcon ? (
+            {isConnector ? (
+              <ConnectorIcon connectorId={connectorID} name={connectorID} icon={providerIcon} classification="connector" className="size-8 rounded-full border-0 shadow-none" />
+            ) : providerIcon ? (
               // <ImageSafe
               //   src={providerIcon}
               //   className="w-6 h-6 object-contain"
@@ -337,7 +450,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
             disabled={readOnly}
           >
             <Wrench size={14} />
-            工具配置
+            {isConnector ? connectorT('picker.toolConfigAction') : navigationT('settings')}
           </Button>
         )}
       </div>
@@ -345,36 +458,131 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
       {isConnector ? (
         <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
           <Label className="text-sm">
-            {t('nodes.tool.connection.label')}
+            {connectorT('picker.workflowConnectionLabel')}
             <span className="ml-1 text-red-500">*</span>
           </Label>
-          {connectionsQuery.isLoading ? (
-            <Skeleton className="h-9 w-full" />
-          ) : connectionsQuery.isError ? (
-            <p className="text-xs text-destructive">{t('nodes.tool.connection.loadFailed')}</p>
-          ) : connectorConnections.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t('nodes.tool.connection.empty')}</p>
-          ) : (
-            <Select
-              value={nodeData?.connection_id || ''}
-              onValueChange={connectionId => updateNodeData({ connection_id: connectionId })}
-              disabled={readOnly}
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full justify-between bg-background font-normal"
+            disabled={readOnly || !connectorID || !workflowId}
+            onClick={() => setShowConnectorPicker(true)}
+          >
+            <span
+              className={cn(
+                'min-w-0 truncate text-left',
+                !selectedConnectionLabel && 'text-muted-foreground'
+              )}
             >
-              <SelectTrigger>
-                <SelectValue placeholder={t('nodes.tool.connection.placeholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                {connectorConnections.map(connection => (
-                  <SelectItem key={connection.id} value={connection.id}>
-                    {connection.name}
-                    {connection.display_name ? ` · ${connection.display_name}` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          <p className="text-xs text-muted-foreground">{t('nodes.tool.connection.hint')}</p>
+              {selectedConnectionLabel || connectorT('picker.workflowConnectionPlaceholder')}
+            </span>
+            <ChevronsUpDown aria-hidden="true" className="size-4 shrink-0 opacity-50" />
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            {connectorT('picker.workflowConnectionHint')}
+          </p>
         </div>
+      ) : null}
+
+      {isConnector && connectorID && workflowId ? (
+        connectorSetup && localizedSetupConnector ? (
+          <Dialog
+            open={showConnectorPicker}
+            onOpenChange={nextOpen => {
+              setShowConnectorPicker(nextOpen);
+              if (!nextOpen) setConnectorSetup(undefined);
+            }}
+          >
+            <DialogContent size="md" className="overflow-hidden p-0">
+              <DialogHeader className="border-b pb-4 pr-12">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mb-2 w-fit px-2"
+                  onClick={() => setConnectorSetup(undefined)}
+                >
+                  <ArrowLeft aria-hidden="true" className="size-4" />
+                  {connectorT('picker.backToChoices')}
+                </Button>
+                <DialogTitle>
+                  {connectorT('picker.setupTitle', {
+                    connector: localizedSetupConnector.name,
+                  })}
+                </DialogTitle>
+                <DialogDescription>
+                  {connectorT('picker.subtitle', {
+                    target: nodeData?.title || connectorT('picker.targetTypes.workflow'),
+                  })}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogBody className="p-5">
+                <ConnectorKeySetupPanel
+                  connector={localizedSetupConnector}
+                  submitLabel={connectorT(
+                    connectorSetup.replacedBinding
+                      ? 'picker.actions.addConnection'
+                      : 'picker.actions.connectAndAdd'
+                  )}
+                  onReady={connection => {
+                    if (connectorSetup.replacedBinding || currentConnectionID) {
+                      setConnectorSetup(undefined);
+                      toast.success(connectorT('picker.connectionReadyNotAdded'));
+                      return;
+                    }
+                    setConnectorConnection(connection.id);
+                    setConnectorSetup(undefined);
+                    setShowConnectorPicker(false);
+                  }}
+                />
+              </DialogBody>
+            </DialogContent>
+          </Dialog>
+        ) : (
+          <ConnectorPickerDialog
+            open={showConnectorPicker}
+            target={{ type: 'workflow', id: workflowId, binding_instance_id: nodeId }}
+            targetName={nodeData?.title || connectorT('picker.targetTypes.workflow')}
+            connectorId={connectorID}
+            bindings={pickerBindings}
+            onReferenceCommand={stageReferenceCommand}
+            pendingReferenceCommands={referenceCommands}
+            onOpenChange={setShowConnectorPicker}
+            onRequestAdd={request => {
+              if (request.connector.id !== connectorID) return;
+              if (currentConnectionID) {
+                throw new Error('connector switch confirmation is required');
+              }
+              setConnectorConnection(request.connection.id);
+              setShowConnectorPicker(false);
+            }}
+            onRequestSwitch={request => {
+              if (request.connector.id !== connectorID) return;
+              setConnectorConnection(request.connection.id);
+              setShowConnectorPicker(false);
+            }}
+            onRequestConnectAndAdd={request => {
+              if (request.connector.id !== connectorID) return;
+              setConnectorSetup({
+                connector: request.connector,
+                replacedBinding: request.replacedBinding,
+              });
+            }}
+            onRequestUpdateKey={request => {
+              setShowConnectorPicker(false);
+              router.push(connectorDetailURL(request));
+            }}
+            onRequestViewReason={request => {
+              setShowConnectorPicker(false);
+              router.push(connectorDetailURL(request));
+            }}
+            onRequestDetach={request => {
+              if (request.binding.connection_id !== currentConnectionID) return;
+              setConnectorConnection('');
+              setShowConnectorPicker(false);
+            }}
+          />
+        )
       ) : null}
 
       {/* Parameters editor */}
@@ -395,6 +603,7 @@ const ToolManager: React.FC<ToolManagerProps> = ({ id: nodeId, className, readOn
         <ToolConfigDialog
           open={showConfig}
           onOpenChange={setShowConfig}
+          title={isConnector ? connectorT('picker.toolConfigAction') : undefined}
           configParameters={configParams}
           initialValues={nodeData?.tool_configurations || {}}
           onSave={values => {

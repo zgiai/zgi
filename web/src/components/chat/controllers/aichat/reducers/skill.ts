@@ -279,7 +279,7 @@ function upsertMemoryTimelineItem(
       item => item.type === 'memory_event' && item.id === itemId
     );
     const existing = existingIndex >= 0 ? baseTimeline[existingIndex] : undefined;
-    const existingKeys = existing?.type === 'memory_event' ? existing.event.keys ?? [] : [];
+    const existingKeys = existing?.type === 'memory_event' ? (existing.event.keys ?? []) : [];
     const keys = Array.from(
       new Set([...existingKeys, ...(payload.key ? [payload.key] : [])].filter(Boolean))
     );
@@ -1134,6 +1134,7 @@ export function applySkillCallEndState(
     eventId,
     {
       kind: payload.kind ?? 'tool_call',
+      runtime_source: payload.runtime_source,
       invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       action_id: payload.action_id,
@@ -1179,6 +1180,7 @@ export function applySkillCallErrorState(
     eventId,
     {
       kind: payload.kind ?? (payload.tool_name ? 'tool_call' : 'skill_load'),
+      runtime_source: payload.runtime_source,
       invocation_id: payload.invocation_id,
       runtime_id: payload.runtime_id,
       action_id: payload.action_id,
@@ -1194,6 +1196,7 @@ export function applySkillCallErrorState(
       duration_ms: payload.duration_ms,
       message: payload.message,
       error: payload.status === 'blocked' ? undefined : payload.message,
+      result: payload.result,
       error_code: payload.error_code,
       governance: payload.governance,
       asset_operation_audit: payload.asset_operation_audit,

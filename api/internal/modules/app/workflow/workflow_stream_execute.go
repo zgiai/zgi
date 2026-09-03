@@ -151,8 +151,18 @@ func (h *WorkflowHandler) executeWorkflowStream(ctx context.Context, workspaceID
 			nodePredecessors[pausedNodeIDs[0]] = resumeState.ExecutorState.PredecessorNodeID
 		}
 		workflowpause.RestoreVariablePoolSnapshot(sharedVariablePool, resumeState.VariablePool)
+		if err := restoreWorkflowResolvedPausedNodes(
+			pausedNodeIDs, completedNodes, executionOutputs, sharedVariablePool,
+			&nodeQueue, edgeMap, nodePredecessors,
+		); err != nil {
+			errorChan <- err
+			return
+		}
 		questionAnswerResume := false
 		for _, pausedNodeID := range pausedNodeIDs {
+			if completedNodes[pausedNodeID] {
+				continue
+			}
 			if workflowStreamNodeType(nodeMap, pausedNodeID) != string(workflow_shared.QuestionAnswer) {
 				clearResumedNodeVariables(sharedVariablePool, pausedNodeID)
 			} else {

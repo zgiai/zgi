@@ -616,44 +616,11 @@ const (
 
 // Domain behavior and toolchain keys.
 const (
-	// Shared external-integration runtime, including Web Search.
-	envExternalIntegrationsEnabled                = "EXTERNAL_INTEGRATIONS_ENABLED"
-	envIntegrationOrgDailyLimit                   = "INTEGRATION_ORG_DAILY_LIMIT"
-	envIntegrationTimeoutSeconds                  = "INTEGRATION_TIMEOUT_SECONDS"
-	envIntegrationCredentialActiveKeyID           = "INTEGRATION_CREDENTIAL_ACTIVE_KEY_ID"
-	envIntegrationCredentialKeysJSON              = "INTEGRATION_CREDENTIAL_KEYS_JSON"
-	envIntegrationHealthFailureThreshold          = "INTEGRATION_HEALTH_FAILURE_THRESHOLD"
-	envIntegrationOAuthRefreshWindowSeconds       = "INTEGRATION_OAUTH_REFRESH_WINDOW_SECONDS"
-	envIntegrationOAuthFlowTTLSeconds             = "INTEGRATION_OAUTH_FLOW_TTL_SECONDS"
-	envIntegrationOAuthCallbackURL                = "INTEGRATION_OAUTH_CALLBACK_URL"
-	envIntegrationOAuthResultURL                  = "INTEGRATION_OAUTH_RESULT_URL"
-	envIntegrationOAuthClientsJSON                = "INTEGRATION_OAUTH_CLIENTS_JSON"
-	envIntegrationWeComSuiteID                    = "INTEGRATION_WECOM_SUITE_ID"
-	envIntegrationWeComProviderCorpID             = "INTEGRATION_WECOM_PROVIDER_CORP_ID"
-	envIntegrationWeComProviderSecret             = "INTEGRATION_WECOM_PROVIDER_SECRET"
-	envIntegrationWeComCustomerContactEnabled     = "INTEGRATION_WECOM_CUSTOMER_CONTACT_ENABLED"
-	envIntegrationWeComCustomerMassMessageEnabled = "INTEGRATION_WECOM_CUSTOMER_MASS_MESSAGE_ENABLED"
-	envIntegrationWeComSuiteSecret                = "INTEGRATION_WECOM_SUITE_SECRET"
-	envIntegrationWeComCallbackToken              = "INTEGRATION_WECOM_CALLBACK_TOKEN"
-	envIntegrationWeComEncodingAESKey             = "INTEGRATION_WECOM_ENCODING_AES_KEY"
-	envIntegrationWeComInstallAuthMode            = "INTEGRATION_WECOM_INSTALL_AUTH_MODE"
-	envIntegrationWeComInstallCallbackURL         = "INTEGRATION_WECOM_INSTALL_CALLBACK_URL"
-	envIntegrationWeComSuiteEventsURL             = "INTEGRATION_WECOM_SUITE_EVENTS_URL"
-	envIntegrationWeComResultURL                  = "INTEGRATION_WECOM_RESULT_URL"
-
-	// Web search provider runtime configuration.
-	// envWebSearchProvider selects the web search provider. Phase one supports exa. Default: exa.
-	envWebSearchProvider = "WEB_SEARCH_PROVIDER"
-	// envExaTimeoutSeconds sets the total Exa request timeout in seconds. Default: 20.
-	envExaTimeoutSeconds = "EXA_TIMEOUT_SECONDS"
-	// envExaMaxResults caps results returned by one search action. Default: 10.
-	envExaMaxResults = "EXA_MAX_RESULTS"
-	// envExaDefaultSearchType selects the search mode used when a tool call omits search_type. Default: auto.
-	envExaDefaultSearchType = "EXA_DEFAULT_SEARCH_TYPE"
-	// envExaMaxFetchURLs caps URLs handled by one fetch action. Default: 5.
-	envExaMaxFetchURLs = "EXA_MAX_FETCH_URLS"
-	// envExaMaxContentCharacters caps content retained for one fetched page. Default: 20000.
-	envExaMaxContentCharacters = "EXA_MAX_CONTENT_CHARACTERS"
+	// Independent Personal Connector runtime.
+	envConnectorCredentialActiveKeyID = "CONNECTOR_CREDENTIAL_ACTIVE_KEY_ID"
+	envConnectorCredentialKeysJSON    = "CONNECTOR_CREDENTIAL_KEYS_JSON"
+	// JSON array of trusted local Agent Plugin package roots.
+	envConnectorPluginDirectoriesJSON = "CONNECTOR_PLUGIN_DIRECTORIES_JSON"
 
 	// Knowledge retrieval limit switch.
 	// envKnowledgeRateLimitEnabled controls whether knowledge retrieval rate limiting is enabled. Default: false.

@@ -2,19 +2,10 @@
 
 import { useMemo } from 'react';
 import { useT, type ScopedTranslations } from '@/i18n/translations';
-import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
+import { isConnectorOperationInvocation } from '@/components/connectors/runtime/connector-operation-presentation';
+import { ConnectorOperationSummary } from '@/components/connectors/runtime/connector-operation-summary';
 import { sanitizeTimelineDisplayPayload } from '@/components/chat/variants/aichat/timeline-display-safety';
-import {
-  getAIChatExternalActionDisplayName,
-  getAIChatExternalAppDisplayName,
-} from '@/components/chat/variants/aichat/external-app-display';
-import {
-  getAIChatExternalActionOperationState,
-  isWeComNoValidRecipientCode,
-  safeExternalActionDiagnosticCode,
-  type AIChatExternalActionOperationStatus,
-} from '@/components/chat/variants/aichat/external-action-operation-status';
 
 const KNOWLEDGE_RESULT_KEYS = [
   'status',
@@ -90,19 +81,9 @@ interface ResultSummaryRow {
 }
 
 type WebappTranslator = ScopedTranslations<'webapp'>;
-type LocalizedTextMap = Record<string, string>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function localizedTextMap(value: unknown): LocalizedTextMap | undefined {
-  if (!isRecord(value)) return undefined;
-  const entries = Object.entries(value).flatMap(([locale, text]) => {
-    const localized = typeof text === 'string' ? text.trim() : '';
-    return localized ? ([[locale, localized]] as const) : [];
-  });
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function formatScalar(value: unknown): string | null {
@@ -190,17 +171,6 @@ function localizedResultStatus(value: unknown, t: WebappTranslator): string | nu
   }
 }
 
-function localizedExternalOperationStatus(
-  status: AIChatExternalActionOperationStatus,
-  t: WebappTranslator
-): string {
-  return `${t(`consoleChat.skills.trace.result.operationStatuses.${status}`)} (${status})`;
-}
-
-function safeDiagnosticCode(value: unknown): string | null {
-  return safeExternalActionDiagnosticCode(value);
-}
-
 function buildKnowledgeRows(
   result: Record<string, unknown>,
   t: WebappTranslator
@@ -249,197 +219,7 @@ function buildDatabaseRows(
   return rows;
 }
 
-function buildExternalActionRows(
-  result: Record<string, unknown>,
-  locale: string,
-  t: WebappTranslator
-): ResultSummaryRow[] {
-  const integrationId = formatScalar(result.integration_id) ?? '';
-  const integrationName = formatScalar(result.integration_name);
-  const integrationNameI18n = localizedTextMap(result.integration_name_i18n);
-  const actionId = formatScalar(result.action_id) ?? '';
-  const actionName = formatScalar(result.action_name);
-  const actionNameI18n = localizedTextMap(result.action_name_i18n);
-  const connectionName = formatScalar(result.connection_name) ?? '';
-  const connectionSelection = formatScalar(result.connection_selection)?.toLowerCase() ?? '';
-  const rows: ResultSummaryRow[] = [];
-  if (integrationId) {
-    rows.push({
-      key: 'integration',
-      labelKey: 'integration',
-      value: getAIChatExternalAppDisplayName(integrationId, integrationName ?? integrationId, t, {
-        locale,
-        nameI18n: integrationNameI18n,
-      }),
-    });
-  }
-  if (actionId) {
-    rows.push({
-      key: 'action',
-      labelKey: 'action',
-      value: getAIChatExternalActionDisplayName(actionId, t, {
-        locale,
-        fallbackName: actionName,
-        nameI18n: actionNameI18n,
-      }),
-    });
-  }
-  if (connectionName || connectionSelection) {
-    rows.push({
-      key: 'connection',
-      labelKey: 'connection',
-      value:
-        connectionName ||
-        (connectionSelection === 'preferred'
-          ? t('consoleChat.governance.approvalPanel.preferredConnection')
-          : t('consoleChat.governance.approvalPanel.selectedConnection')),
-    });
-  }
-  const operationState = getAIChatExternalActionOperationState({
-    skill_id: 'external-apps',
-    tool_name: 'execute_action',
-    result,
-  });
-  if (operationState) {
-    rows.push({
-      key: 'operation_status',
-      labelKey: 'operationStatus',
-      value: localizedExternalOperationStatus(operationState.status, t),
-    });
-  }
-  const errorCode = safeDiagnosticCode(result.error_code);
-  if (errorCode) rows.push({ key: 'error_code', labelKey: 'errorCode', value: errorCode });
-  const reasonCode = safeDiagnosticCode(result.reason_code);
-  if (reasonCode) rows.push({ key: 'reason_code', labelKey: 'reasonCode', value: reasonCode });
-  const providerErrorCode = safeDiagnosticCode(result.provider_error_code);
-  if (providerErrorCode) {
-    rows.push({
-      key: 'provider_error_code',
-      labelKey: 'providerErrorCode',
-      value: providerErrorCode,
-    });
-  }
-  const retrySafe = localizedBoolean(result.retry_safe, t);
-  if (retrySafe) rows.push({ key: 'retry_safe', labelKey: 'retrySafe', value: retrySafe });
-  if (isWeComNoValidRecipientCode(result.integration_id, providerErrorCode)) {
-    rows.push({
-      key: 'diagnostic',
-      labelKey: 'diagnostic',
-      value: t('consoleChat.skills.trace.result.providerDiagnostics.wecom81013'),
-    });
-  }
-  const resultCount = formatScalar(result.result_count);
-  if (resultCount) rows.push({ key: 'result_count', labelKey: 'resultCount', value: resultCount });
-  const attemptCount = formatScalar(result.attempt_count);
-  if (attemptCount) {
-    rows.push({ key: 'attempt_count', labelKey: 'attemptCount', value: attemptCount });
-  }
-  const nestedResult = isRecord(result.result) ? result.result : null;
-  const hasProviderResult =
-    Object.prototype.hasOwnProperty.call(result, 'result') &&
-    result.result !== undefined &&
-    result.result !== null;
-  const providerResult =
-    result.result_truncated === true ||
-    nestedResult?.content_truncated === true ||
-    nestedResult?.result_code === 'integration_result_truncated'
-      ? t('consoleChat.skills.trace.values.truncated')
-      : hasProviderResult
-        ? t('consoleChat.skills.trace.values.returned')
-        : null;
-  if (providerResult) rows.push({ key: 'result', labelKey: 'result', value: providerResult });
-  return rows;
-}
-
-function safeResultCount(result: Record<string, unknown>, collectionKeys: string[]): string | null {
-  const explicit = formatScalar(result.result_count) ?? formatScalar(result.count);
-  if (explicit) return explicit;
-  for (const key of collectionKeys) {
-    if (Array.isArray(result[key])) return String(result[key].length);
-  }
-  return null;
-}
-
-function safeResultWasTruncated(result: Record<string, unknown>): boolean {
-  const nestedResult = isRecord(result.result) ? result.result : null;
-  return (
-    result.result_truncated === true ||
-    result.content_truncated === true ||
-    nestedResult?.content_truncated === true ||
-    nestedResult?.result_code === 'integration_result_truncated'
-  );
-}
-
-function buildSafeDeliveryRows(
-  result: Record<string, unknown>,
-  collectionKeys: string[],
-  t: WebappTranslator
-): ResultSummaryRow[] {
-  const rows: ResultSummaryRow[] = [];
-  const count = safeResultCount(result, collectionKeys);
-  if (count) rows.push({ key: 'result_count', labelKey: 'resultCount', value: count });
-  rows.push({
-    key: 'result',
-    labelKey: 'result',
-    value: safeResultWasTruncated(result)
-      ? t('consoleChat.skills.trace.values.truncated')
-      : t('consoleChat.skills.trace.values.returned'),
-  });
-  return rows;
-}
-
-function buildExternalActionGuideRows(
-  result: Record<string, unknown>,
-  locale: string,
-  t: WebappTranslator
-): ResultSummaryRow[] {
-  const rows: ResultSummaryRow[] = [];
-  const integrationId = formatScalar(result.integration_id) ?? '';
-  if (integrationId) {
-    rows.push({
-      key: 'integration',
-      labelKey: 'integration',
-      value: getAIChatExternalAppDisplayName(integrationId, integrationId, t, { locale }),
-    });
-  }
-  const actionId = formatScalar(result.action_id) ?? '';
-  if (actionId) {
-    rows.push({
-      key: 'action',
-      labelKey: 'action',
-      value: getAIChatExternalActionDisplayName(actionId, t, {
-        locale,
-        fallbackName: formatScalar(result.name),
-        nameI18n: localizedTextMap(result.name_i18n),
-      }),
-    });
-  }
-  return [...rows, ...buildSafeDeliveryRows(result, [], t)];
-}
-
-function buildResultRows(
-  result: Record<string, unknown>,
-  t: WebappTranslator,
-  locale: string,
-  skillId?: string,
-  toolName?: string
-): ResultSummaryRow[] {
-  const normalizedSkillId = skillId?.trim().toLowerCase();
-  const normalizedToolName = toolName?.trim().toLowerCase();
-  if (normalizedSkillId === 'external-apps') {
-    switch (normalizedToolName) {
-      case 'execute_action':
-        return buildExternalActionRows(result, locale, t);
-      case 'list_connections':
-        return buildSafeDeliveryRows(result, ['connections'], t);
-      case 'search_actions':
-        return buildSafeDeliveryRows(result, ['actions'], t);
-      case 'get_action_guide':
-        return buildExternalActionGuideRows(result, locale, t);
-      default:
-        return buildSafeDeliveryRows(result, [], t);
-    }
-  }
+function buildResultRows(result: Record<string, unknown>, t: WebappTranslator): ResultSummaryRow[] {
   const hasKnowledgeFields = KNOWLEDGE_RESULT_KEYS.some(key => result[key] !== undefined);
   if (hasKnowledgeFields) {
     const rows = buildKnowledgeRows(result, t);
@@ -459,6 +239,7 @@ function buildResultRows(
 }
 
 interface AIChatSkillResultSummaryProps {
+  invocation?: unknown;
   result?: Record<string, unknown> | null;
   skillId?: string;
   toolName?: string;
@@ -466,13 +247,11 @@ interface AIChatSkillResultSummaryProps {
 }
 
 export function AIChatSkillResultSummary({
+  invocation,
   result,
-  skillId,
-  toolName,
   className,
 }: AIChatSkillResultSummaryProps) {
   const t = useT('webapp');
-  const { locale } = useLocale();
   const summary = useMemo(() => {
     const safeResult = sanitizeTimelineDisplayPayload(
       result,
@@ -481,17 +260,16 @@ export function AIChatSkillResultSummary({
     );
     if (!isRecord(safeResult)) return { rows: [], tone: null };
     return {
-      rows: buildResultRows(safeResult, t, locale, skillId, toolName),
-      tone:
-        getAIChatExternalActionOperationState({
-          skill_id: skillId,
-          tool_name: toolName,
-          result: safeResult,
-        })?.tone ?? null,
+      rows: buildResultRows(safeResult, t),
+      tone: null,
     };
-  }, [locale, result, skillId, t, toolName]);
+  }, [result, t]);
 
   const { rows, tone } = summary;
+
+  if (isConnectorOperationInvocation(invocation)) {
+    return <ConnectorOperationSummary invocation={invocation} className={className} />;
+  }
 
   if (!rows.length) return null;
 

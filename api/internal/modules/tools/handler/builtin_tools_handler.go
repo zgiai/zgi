@@ -47,15 +47,16 @@ type BuiltinProviderResponse struct {
 
 // BuiltinToolResponse represents a tool in API response format
 type BuiltinToolResponse struct {
-	Name             string                          `json:"name"`
-	Author           string                          `json:"author,omitempty"`
-	Label            tools.I18nText                  `json:"label"`
-	Description      tools.ToolDescription           `json:"description"`
-	Parameters       []BuiltinParameterResponse      `json:"parameters"`
-	ConfigParameters BuiltinConfigParametersResponse `json:"config_parameters"`
-	Tags             []string                        `json:"tags,omitempty"`
-	OutputSchema     map[string]interface{}          `json:"output_schema,omitempty"`
-	WorkflowOutputs  []tools.ToolWorkflowOutput      `json:"workflow_outputs,omitempty"`
+	Name                 string                          `json:"name"`
+	ConnectorOperationID string                          `json:"connector_operation_id,omitempty"`
+	Author               string                          `json:"author,omitempty"`
+	Label                tools.I18nText                  `json:"label"`
+	Description          tools.ToolDescription           `json:"description"`
+	Parameters           []BuiltinParameterResponse      `json:"parameters"`
+	ConfigParameters     BuiltinConfigParametersResponse `json:"config_parameters"`
+	Tags                 []string                        `json:"tags,omitempty"`
+	OutputSchema         map[string]interface{}          `json:"output_schema,omitempty"`
+	WorkflowOutputs      []tools.ToolWorkflowOutput      `json:"workflow_outputs,omitempty"`
 }
 
 // BuiltinParameterResponse represents a parameter in API response format
@@ -403,15 +404,16 @@ func (h *BuiltinToolsHandler) convertToolEntityToResponse(entity tools.ToolEntit
 	}
 
 	return BuiltinToolResponse{
-		Name:             entity.Identity.Name,
-		Author:           entity.Identity.Author,
-		Label:            entity.Identity.Label,
-		Description:      entity.Description,
-		Parameters:       params,
-		ConfigParameters: configParameters,
-		Tags:             entity.Tags,
-		OutputSchema:     entity.OutputSchema,
-		WorkflowOutputs:  entity.WorkflowOutputs,
+		Name:                 entity.Identity.Name,
+		ConnectorOperationID: entity.ConnectorOperationID,
+		Author:               entity.Identity.Author,
+		Label:                entity.Identity.Label,
+		Description:          entity.Description,
+		Parameters:           params,
+		ConfigParameters:     configParameters,
+		Tags:                 entity.Tags,
+		OutputSchema:         entity.OutputSchema,
+		WorkflowOutputs:      entity.WorkflowOutputs,
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"strings"
 	"time"
 
@@ -22,8 +23,6 @@ type toolFailureExplanationEvidence struct {
 	MissingFields       []string               `json:"missing_fields,omitempty"`
 	FailureStage        string                 `json:"failure_stage,omitempty"`
 	ReasonCode          string                 `json:"reason_code,omitempty"`
-	IntegrationID       string                 `json:"integration_id,omitempty"`
-	ActionID            string                 `json:"action_id,omitempty"`
 	ProviderRequestSent *bool                  `json:"provider_request_sent,omitempty"`
 	Recoverable         bool                   `json:"recoverable,omitempty"`
 	RecoveryAction      string                 `json:"recovery_action,omitempty"`
@@ -31,12 +30,11 @@ type toolFailureExplanationEvidence struct {
 }
 
 type toolFailureOperation struct {
-	SkillID       string `json:"skill_id,omitempty"`
-	ToolName      string `json:"tool_name,omitempty"`
-	IntegrationID string `json:"integration_id,omitempty"`
-	ActionID      string `json:"action_id,omitempty"`
-	ErrorCode     string `json:"error_code,omitempty"`
-	Status        string `json:"status,omitempty"`
+	Operation *connectortools.OperationRef `json:"operation,omitempty"`
+	SkillID   string                       `json:"skill_id,omitempty"`
+	ToolName  string                       `json:"tool_name,omitempty"`
+	ErrorCode string                       `json:"error_code,omitempty"`
+	Status    string                       `json:"status,omitempty"`
 }
 
 func (r *Runner) completeBusinessToolFailure(
@@ -268,210 +266,59 @@ func buildToolFailureExplanationEvidenceWithRuntimeState(
 	}
 	evidence.FailureStage = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["failure_stage"]))
 	evidence.ReasonCode = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["reason_code"]))
-	evidence.IntegrationID = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["integration_id"]))
-	evidence.ActionID = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["action_id"]))
-	if evidence.IntegrationID == "" || evidence.ActionID == "" {
-		integrationID, actionID := terminalStateGuardExternalActionIdentity(map[string]interface{}{
-			"arguments": failure.Arguments,
-			"result":    failure.Result,
-		})
-		if evidence.IntegrationID == "" {
-			evidence.IntegrationID = integrationID
-		}
-		if evidence.ActionID == "" {
-			evidence.ActionID = actionID
+	if sent, known := failure.Arguments["provider_request_sent"].(bool); known {
+		evidence.ProviderRequestSent = &sent
+	}
+	if failure.ConnectorNative {
+		proof, _ := connectortools.Evidence(map[string]any{"kind": "tool_call", "runtime_source": "connector", "result": failure.Result})
+		if proof.Operation.Valid() {
+			evidence.FailedOperation.Operation = &proof.Operation
+			evidence.FailedOperation.Status = proof.Status
 		}
 	}
-	evidence.FailedOperation.IntegrationID = evidence.IntegrationID
-	evidence.FailedOperation.ActionID = evidence.ActionID
-	if providerRequestSent, ok := failure.Arguments["provider_request_sent"].(bool); ok {
-		evidence.ProviderRequestSent = &providerRequestSent
-	}
-	evidence.Recoverable, _ = failure.Arguments["recoverable"].(bool)
-	evidence.RecoveryAction = strings.TrimSpace(evidenceStringFromAny(failure.Arguments["recovery_action"]))
-	evidence.MissingFields = evidenceStringSliceFromAny(failure.Arguments["missing_fields"])
 	evidence.CompletedOperations = toolFailureCompletedOperations(successfulToolCalls, runtimeState)
 	evidence.PartialSuccess = len(evidence.CompletedOperations) > 0
 	return evidence
 }
 
-func toolFailureCompletedOperations(
-	successfulToolCalls []SkillToolCallRef,
-	runtimeState map[string]interface{},
-) []toolFailureOperation {
-	completed := make([]toolFailureOperation, 0)
-	seen := map[string]struct{}{}
+func toolFailureCompletedOperations(successfulToolCalls []SkillToolCallRef, runtimeState map[string]interface{}) []toolFailureOperation {
+	completed := []toolFailureOperation{}
+	seen := map[string]bool{}
 	appendOperation := func(operation toolFailureOperation) {
-		key := strings.ToLower(strings.Join([]string{
-			strings.TrimSpace(operation.SkillID),
-			strings.TrimSpace(operation.ToolName),
-			strings.TrimSpace(operation.IntegrationID),
-			strings.TrimSpace(operation.ActionID),
-			strings.TrimSpace(operation.Status),
-		}, "\x00"))
-		if key == "\x00\x00\x00\x00" {
-			return
-		}
-		if _, exists := seen[key]; exists {
-			return
-		}
-		seen[key] = struct{}{}
-		completed = append(completed, operation)
-	}
-
-	if runtimeState != nil {
-		for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(runtimeState["operation_plan"])["phases"]) {
-			if !strings.EqualFold(
-				strings.TrimSpace(evidenceStringFromAny(phase[operationPlanPhaseSourceKey])),
-				operationPlanPhaseSourceServerOutcome,
-			) || !operationPlanPhaseHasServerAuthority(phase, runtimeState) ||
-				!operationPlanPhaseRequiredByServer(phase, runtimeState) {
-				continue
-			}
-			if _, external := projectedExternalActionKeyFromExpected(evidenceMapFromAny(phase["expected_action"])); !external {
-				continue
-			}
-			if operation, confirmed := toolFailureCompletedServerOutcome(phase, runtimeState); confirmed {
-				appendOperation(operation)
-			}
+		encoded, _ := json.Marshal(operation)
+		key := string(encoded)
+		if !seen[key] {
+			seen[key] = true
+			completed = append(completed, operation)
 		}
 	}
-
+	for _, record := range terminalStateGuardInvocations(runtimeState) {
+		if proof, native := connectortools.Evidence(record); native && proof.Status == "successful" {
+			ref := proof.Operation
+			appendOperation(toolFailureOperation{Operation: &ref, Status: "successful"})
+		}
+	}
 	for _, call := range successfulToolCalls {
-		if strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillExternalApps) &&
-			strings.EqualFold(strings.TrimSpace(call.ToolName), "execute_action") &&
-			runtimeState != nil {
-			// In the runtime path, standalone external calls are implementation
-			// evidence only. A required server Outcome is the user-visible success
-			// contract; in particular, a successful preparation query must not become
-			// a completed operation by itself.
-			continue
-		}
-		if operation, trusted := trustedToolFailureCompletedOperation(call); trusted {
+		if operation, ok := trustedToolFailureCompletedOperation(call); ok {
 			appendOperation(operation)
 		}
 	}
 	return completed
 }
 
-func toolFailureCompletedServerOutcome(
-	phase map[string]interface{},
-	runtimeState map[string]interface{},
-) (toolFailureOperation, bool) {
-	expected := evidenceMapFromAny(phase["expected_action"])
-	actionKey, external := projectedExternalActionKeyFromExpected(expected)
-	if !external || actionKey == "" || projectedExpectedActionServerBindingIssue(expected, runtimeState) != "" {
-		return toolFailureOperation{}, false
-	}
-	parts := strings.SplitN(actionKey, ":", 2)
-	candidate := projectedExternalActionCandidateByFingerprint(
-		runtimeState,
-		strings.TrimSpace(evidenceStringFromAny(expected[planExpectedActionServerBindingFingerprintKey])),
-	)
-	if len(parts) != 2 || len(candidate) == 0 ||
-		strings.TrimSpace(evidenceStringFromAny(candidate[operationPlanServerProjectedConnectionBindingKey])) !=
-			strings.TrimSpace(evidenceStringFromAny(phase[operationPlanServerProjectedConnectionBindingKey])) ||
-		!toolFailureServerOutcomeProviderConfirmed(phase, expected, actionKey, runtimeState) {
-		return toolFailureOperation{}, false
-	}
-	return toolFailureOperation{
-		SkillID:       skills.SkillExternalApps,
-		ToolName:      "execute_action",
-		IntegrationID: parts[0],
-		ActionID:      parts[1],
-		Status:        "provider_confirmed_success",
-	}, true
-}
-
-func toolFailureServerOutcomeProviderConfirmed(
-	phase map[string]interface{},
-	expected map[string]interface{},
-	actionKey string,
-	runtimeState map[string]interface{},
-) bool {
-	phaseID := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
-	ledgerEpoch := strings.TrimSpace(evidenceStringFromAny(phase[operationPlanServerProjectedLedgerEpochKey]))
-	bindingFingerprint := strings.TrimSpace(evidenceStringFromAny(expected[planExpectedActionServerBindingFingerprintKey]))
-	connectionBinding := strings.TrimSpace(evidenceStringFromAny(phase[operationPlanServerProjectedConnectionBindingKey]))
-	if phaseID == "" || ledgerEpoch == "" || bindingFingerprint == "" || connectionBinding == "" {
-		return false
-	}
-	expectedTarget := terminalStateGuardExpectedActionTargetKey(expected)
-	matched := false
-	confirmed := false
-	for _, invocation := range terminalStateGuardExternalInvocations(runtimeState) {
-		if !terminalStateGuardInvocationIsExecutionEvidence(invocation) ||
-			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), skills.SkillExternalApps) ||
-			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])), "execute_action") ||
-			terminalStateGuardExternalActionKey(invocation) != actionKey ||
-			!strings.EqualFold(terminalStateGuardExternalPlanPhaseID(invocation), phaseID) ||
-			terminalStateGuardExternalLedgerEpoch(invocation) != ledgerEpoch {
-			continue
-		}
-		arguments := evidenceMapFromAny(invocation["arguments"])
-		if strings.TrimSpace(evidenceStringFromAny(arguments[planExpectedActionServerBindingFingerprintKey])) != bindingFingerprint ||
-			strings.TrimSpace(evidenceStringFromAny(arguments[operationPlanServerProjectedConnectionBindingKey])) != connectionBinding {
-			continue
-		}
-		if invocationTarget := terminalStateGuardExternalActionTargetKey(invocation); expectedTarget != "" && invocationTarget != expectedTarget {
-			continue
-		}
-		matched = true
-		confirmed = toolFailureInvocationExplicitProviderConfirmed(invocation) &&
-			terminalStateGuardExternalActionProviderConfirmed(invocation)
-	}
-	return matched && confirmed
-}
-
-func toolFailureInvocationExplicitProviderConfirmed(invocation map[string]interface{}) bool {
-	seen := false
-	for _, source := range []map[string]interface{}{
-		invocation,
-		evidenceMapFromAny(invocation["result"]),
-		evidenceMapFromAny(invocation["result_summary"]),
-	} {
-		raw, exists := source["provider_success_confirmed"]
-		if !exists {
-			continue
-		}
-		confirmed, ok := raw.(bool)
-		if !ok || !confirmed {
-			return false
-		}
-		seen = true
-	}
-	return seen
-}
-
 func trustedToolFailureCompletedOperation(call SkillToolCallRef) (toolFailureOperation, bool) {
-	skillID := strings.TrimSpace(call.SkillID)
-	toolName := strings.TrimSpace(call.ToolName)
+	if call.ConnectorNative {
+		proof, _ := connectortools.Evidence(map[string]any{"kind": "tool_call", "runtime_source": "connector", "result": call.Result})
+		if proof.Status != "successful" {
+			return toolFailureOperation{}, false
+		}
+		return toolFailureOperation{Operation: &proof.Operation, Status: "successful"}, true
+	}
+	skillID, toolName := strings.TrimSpace(call.SkillID), strings.TrimSpace(call.ToolName)
 	if skillID == "" || toolName == "" {
 		return toolFailureOperation{}, false
 	}
-	operation := toolFailureOperation{SkillID: skillID, ToolName: toolName, Status: "success"}
-	if !strings.EqualFold(skillID, skills.SkillExternalApps) || !strings.EqualFold(toolName, "execute_action") {
-		return operation, true
-	}
-
-	record := map[string]interface{}{
-		"kind":      "tool_call",
-		"status":    "success",
-		"skill_id":  skillID,
-		"tool_name": toolName,
-		"arguments": call.Arguments,
-		"result":    call.Result,
-	}
-	integrationID, actionID := terminalStateGuardExternalActionIdentity(record)
-	providerConfirmed, hasProviderConfirmation := call.Result["provider_success_confirmed"].(bool)
-	if integrationID == "" || actionID == "" || !hasProviderConfirmation || !providerConfirmed ||
-		!terminalStateGuardExternalActionProviderConfirmed(record) {
-		return toolFailureOperation{}, false
-	}
-	operation.IntegrationID = integrationID
-	operation.ActionID = actionID
-	operation.Status = "provider_confirmed_success"
-	return operation, true
+	return toolFailureOperation{SkillID: skillID, ToolName: toolName, Status: "success"}, true
 }
 
 func truncateFailureEvidence(value string, maxRunes int) string {

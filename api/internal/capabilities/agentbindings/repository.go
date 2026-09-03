@@ -41,7 +41,7 @@ func (r *Repository) ListScope(ctx context.Context, ref ScopeRef) ([]Binding, er
 		return nil, err
 	}
 	var bindings []Binding
-	query := r.db.WithContext(ctx).Where(
+	query := r.db.WithContext(ctx).Scopes(ordinaryResourceRows).Where(
 		"agent_id = ? AND consumer_type = ? AND binding_scope = ?",
 		ref.AgentID, ConsumerTypeAgent, ref.Scope,
 	)
@@ -63,7 +63,7 @@ func (r *Repository) ListWorkflowScope(ctx context.Context, ref WorkflowScopeRef
 		return nil, fmt.Errorf("agent bindings database is required")
 	}
 	var bindings []Binding
-	query := r.db.WithContext(ctx).Where(
+	query := r.db.WithContext(ctx).Scopes(ordinaryResourceRows).Where(
 		"agent_id = ? AND consumer_type = ? AND consumer_id = ? AND binding_scope = ?",
 		ref.AgentID, ConsumerTypeWorkflow, ref.WorkflowID, ref.Scope,
 	)
@@ -84,7 +84,7 @@ func (r *Repository) HasBinding(ctx context.Context, ref ScopeRef, match Match) 
 	if r == nil || r.db == nil {
 		return false, fmt.Errorf("agent bindings database is required")
 	}
-	if match.BindingType == "" || strings.TrimSpace(match.ResourceID) == "" {
+	if !validBindingType(match.BindingType) || strings.TrimSpace(match.ResourceID) == "" {
 		return false, fmt.Errorf("binding type and resource id are required")
 	}
 	query := r.db.WithContext(ctx).Model(&Binding{}).
@@ -114,7 +114,7 @@ func (r *Repository) FindBinding(ctx context.Context, ref ScopeRef, match Match)
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("agent bindings database is required")
 	}
-	if match.BindingType == "" || strings.TrimSpace(match.ResourceID) == "" {
+	if !validBindingType(match.BindingType) || strings.TrimSpace(match.ResourceID) == "" {
 		return nil, fmt.Errorf("binding type and resource id are required")
 	}
 	query := r.db.WithContext(ctx).
@@ -137,9 +137,9 @@ func (r *Repository) FindBinding(ctx context.Context, ref ScopeRef, match Match)
 	return &binding, nil
 }
 
-// HasWorkflowNodeBinding rechecks the exact connector node binding against
+// HasWorkflowNodeBinding rechecks an ordinary resource node binding against
 // the current Workflow graph scope. Callers should perform this check before
-// every connector node execution instead of trusting graph JSON alone.
+// every resource node execution instead of trusting graph JSON alone.
 func (r *Repository) HasWorkflowNodeBinding(
 	ctx context.Context,
 	ref WorkflowScopeRef,
@@ -165,7 +165,7 @@ func (r *Repository) FindWorkflowNodeBinding(
 		return nil, fmt.Errorf("agent bindings database is required")
 	}
 	nodeID = strings.TrimSpace(nodeID)
-	if nodeID == "" || match.BindingType == "" || strings.TrimSpace(match.ResourceID) == "" {
+	if nodeID == "" || !validBindingType(match.BindingType) || strings.TrimSpace(match.ResourceID) == "" {
 		return nil, fmt.Errorf("workflow node id, binding type, and resource id are required")
 	}
 	query := r.db.WithContext(ctx).Where(
@@ -196,48 +196,6 @@ func (r *Repository) FindWorkflowNodeBinding(
 	return &binding, nil
 }
 
-// AllowsWorkflowNodeIntegrationAction enforces the persisted action allowlist
-// for one exact Workflow connector node. Missing evidence denies by default.
-func (r *Repository) AllowsWorkflowNodeIntegrationAction(
-	ctx context.Context,
-	ref WorkflowScopeRef,
-	nodeID string,
-	connectionID string,
-	integrationID string,
-	actionID string,
-) (bool, error) {
-	binding, err := r.FindWorkflowNodeBinding(ctx, ref, nodeID, Match{
-		BindingType:      BindingTypeIntegrationConnection,
-		ResourceID:       strings.TrimSpace(connectionID),
-		ParentResourceID: strings.TrimSpace(integrationID),
-	})
-	if err != nil || binding == nil {
-		return false, err
-	}
-	return binding.AllowsIntegrationAction(actionID), nil
-}
-
-// AllowsIntegrationAction enforces the action allowlist persisted with an
-// Agent's selected Integration Connection. An empty or absent allowlist denies
-// every action.
-func (r *Repository) AllowsIntegrationAction(
-	ctx context.Context,
-	ref ScopeRef,
-	connectionID string,
-	integrationID string,
-	actionID string,
-) (bool, error) {
-	binding, err := r.FindBinding(ctx, ref, Match{
-		BindingType:      BindingTypeIntegrationConnection,
-		ResourceID:       strings.TrimSpace(connectionID),
-		ParentResourceID: strings.TrimSpace(integrationID),
-	})
-	if err != nil || binding == nil {
-		return false, err
-	}
-	return binding.AllowsIntegrationAction(actionID), nil
-}
-
 // LockResources serializes binding creation, rollback, publish, move, and
 // deletion for the same concrete resources. Callers must pass their active
 // transaction so PostgreSQL holds these advisory locks until commit/rollback.
@@ -247,7 +205,7 @@ func (r *Repository) LockResources(ctx context.Context, tx *gorm.DB, refs []Reso
 	}
 	keys := map[string]struct{}{}
 	for _, ref := range refs {
-		if ref.OrganizationID == uuid.Nil || ref.BindingType == "" || strings.TrimSpace(ref.ResourceID) == "" {
+		if ref.OrganizationID == uuid.Nil || !validBindingType(ref.BindingType) || strings.TrimSpace(ref.ResourceID) == "" {
 			return fmt.Errorf("organization, binding type, and resource id are required for agent binding resource lock")
 		}
 		keys[resourceLockKey(ref.OrganizationID, ref.BindingType, ref.ParentResourceID, ref.ResourceID)] = struct{}{}
@@ -298,12 +256,6 @@ func (r *Repository) LockAgents(ctx context.Context, tx *gorm.DB, agentIDs []uui
 }
 
 func resourceLockKey(organizationID uuid.UUID, bindingType BindingType, parentResourceID, resourceID string) string {
-	// A connection UUID is already globally unique within an organization.
-	// Ignore its provider/integration parent so save, detach, and delete paths
-	// contend on the same lock even when one caller only has the connection ID.
-	if bindingType == BindingTypeIntegrationConnection {
-		parentResourceID = ""
-	}
 	return strings.Join([]string{
 		"agent-binding-resource",
 		organizationID.String(),
@@ -329,7 +281,17 @@ func (r *Repository) ReplaceScope(ctx context.Context, tx *gorm.DB, ref ScopeRef
 		return fmt.Errorf("agent bindings database is required")
 	}
 	replace := func(current *gorm.DB) error {
-		deleteQuery := current.WithContext(ctx).Where(
+		oldQuery := current.WithContext(ctx).Scopes(ordinaryResourceRows).Where(
+			"agent_id = ? AND consumer_type = ? AND binding_scope = ?",
+			ref.AgentID, ConsumerTypeAgent, ref.Scope,
+		)
+		oldQuery = applyVersionScope(oldQuery, ref.PublishedVersionUUID)
+		var oldBindings []Binding
+		if err := oldQuery.Find(&oldBindings).Error; err != nil {
+			return fmt.Errorf("list prior agent resource bindings: %w", err)
+		}
+
+		deleteQuery := current.WithContext(ctx).Scopes(ordinaryResourceRows).Where(
 			"agent_id = ? AND consumer_type = ? AND binding_scope = ?",
 			ref.AgentID, ConsumerTypeAgent, ref.Scope,
 		)
@@ -343,7 +305,9 @@ func (r *Repository) ReplaceScope(ctx context.Context, tx *gorm.DB, ref ScopeRef
 		now := time.Now()
 		rows := make([]Binding, 0, len(bindings))
 		for _, binding := range bindings {
-			binding.ID = uuid.Nil
+			if !validBindingType(binding.BindingType) {
+				return fmt.Errorf("unsupported resource binding type")
+			}
 			binding.AgentID = ref.AgentID
 			binding.ConsumerType = ConsumerTypeAgent
 			binding.ConsumerID = ref.AgentID
@@ -355,11 +319,14 @@ func (r *Repository) ReplaceScope(ctx context.Context, tx *gorm.DB, ref ScopeRef
 			binding.DisplayName = strings.TrimSpace(binding.DisplayName)
 			binding.AccessMode = strings.ToLower(strings.TrimSpace(binding.AccessMode))
 			binding.Metadata = normalizeBindingMetadata(binding)
-			binding.CreatedAt = now
+			if binding.CreatedAt.IsZero() {
+				binding.CreatedAt = now
+			}
 			binding.UpdatedAt = now
 			rows = append(rows, binding)
 		}
-		if err := current.WithContext(ctx).Create(&rows).Error; err != nil {
+		rows = ReconcileTargetProjectionBindings(oldBindings, rows)
+		if err := current.WithContext(ctx).Scopes(ordinaryResourceRows).Create(&rows).Error; err != nil {
 			return fmt.Errorf("create agent resource bindings: %w", err)
 		}
 		return nil
@@ -394,7 +361,7 @@ func (r *Repository) ReplaceWorkflowScope(
 		return fmt.Errorf("agent bindings database is required")
 	}
 	replace := func(current *gorm.DB) error {
-		oldQuery := current.WithContext(ctx).Where(
+		oldQuery := current.WithContext(ctx).Scopes(ordinaryResourceRows).Where(
 			"agent_id = ? AND consumer_type = ? AND consumer_id = ? AND binding_scope = ?",
 			ref.AgentID, ConsumerTypeWorkflow, ref.WorkflowID, ref.Scope,
 		)
@@ -403,11 +370,12 @@ func (r *Repository) ReplaceWorkflowScope(
 		if err := oldQuery.Find(&oldBindings).Error; err != nil {
 			return fmt.Errorf("list prior workflow resource bindings: %w", err)
 		}
+		rows = ReconcileTargetProjectionBindings(oldBindings, rows)
 		if err := r.lockBindingRows(ctx, current, oldBindings, rows); err != nil {
 			return err
 		}
 
-		deleteQuery := current.WithContext(ctx).Where(
+		deleteQuery := current.WithContext(ctx).Scopes(ordinaryResourceRows).Where(
 			"agent_id = ? AND consumer_type = ? AND consumer_id = ? AND binding_scope = ?",
 			ref.AgentID, ConsumerTypeWorkflow, ref.WorkflowID, ref.Scope,
 		)
@@ -418,7 +386,7 @@ func (r *Repository) ReplaceWorkflowScope(
 		if len(rows) == 0 {
 			return nil
 		}
-		if err := current.WithContext(ctx).Create(&rows).Error; err != nil {
+		if err := current.WithContext(ctx).Scopes(ordinaryResourceRows).Create(&rows).Error; err != nil {
 			return fmt.Errorf("create workflow resource bindings: %w", err)
 		}
 		return nil
@@ -432,6 +400,9 @@ func (r *Repository) ReplaceWorkflowScope(
 func prepareWorkflowBindings(ref WorkflowScopeRef, bindings []Binding, now time.Time) ([]Binding, error) {
 	rows := make([]Binding, 0, len(bindings))
 	for _, binding := range bindings {
+		if !validBindingType(binding.BindingType) {
+			return nil, fmt.Errorf("unsupported resource binding type")
+		}
 		nodeID := strings.TrimSpace(binding.BindingInstanceID)
 		if nodeID == "" {
 			return nil, fmt.Errorf("workflow resource binding node id is required")
@@ -439,7 +410,6 @@ func prepareWorkflowBindings(ref WorkflowScopeRef, bindings []Binding, now time.
 		if binding.OrganizationID == uuid.Nil || binding.WorkspaceID == uuid.Nil || binding.BindingType == "" || strings.TrimSpace(binding.ResourceID) == "" {
 			return nil, fmt.Errorf("workflow resource binding organization, workspace, type, and resource id are required")
 		}
-		binding.ID = uuid.Nil
 		binding.AgentID = ref.AgentID
 		binding.ConsumerType = ConsumerTypeWorkflow
 		binding.ConsumerID = ref.WorkflowID
@@ -451,7 +421,9 @@ func prepareWorkflowBindings(ref WorkflowScopeRef, bindings []Binding, now time.
 		binding.DisplayName = strings.TrimSpace(binding.DisplayName)
 		binding.AccessMode = strings.ToLower(strings.TrimSpace(binding.AccessMode))
 		binding.Metadata = normalizeBindingMetadata(binding)
-		binding.CreatedAt = now
+		if binding.CreatedAt.IsZero() {
+			binding.CreatedAt = now
+		}
 		binding.UpdatedAt = now
 		rows = append(rows, binding)
 	}
@@ -489,9 +461,7 @@ func normalizeBindingMetadata(binding Binding) map[string]interface{} {
 		}
 		metadata[key] = value
 	}
-	if binding.BindingType == BindingTypeIntegrationConnection {
-		metadata[IntegrationAllowedActionIDsMetadataKey] = IntegrationAllowedActionIDs(binding)
-	}
+
 	return metadata
 }
 
@@ -512,7 +482,7 @@ func (r *Repository) ReplacePublishedHead(ctx context.Context, tx *gorm.DB, ref 
 		return fmt.Errorf("agent bindings database is required")
 	}
 	replace := func(current *gorm.DB) error {
-		if err := current.WithContext(ctx).
+		if err := current.WithContext(ctx).Scopes(ordinaryResourceRows).
 			Where("agent_id = ? AND consumer_type = ? AND binding_scope = ?", ref.AgentID, ConsumerTypeAgent, ScopePublished).
 			Delete(&Binding{}).Error; err != nil {
 			return fmt.Errorf("clear historical agent published bindings: %w", err)
@@ -527,9 +497,9 @@ func (r *Repository) ReplacePublishedHead(ctx context.Context, tx *gorm.DB, ref 
 
 // ReplaceWorkflowPublishedHead replaces the exact immutable published
 // Workflow/version scope. Despite its historical name, it intentionally keeps
-// bindings for older published versions because those versions remain directly
-// executable by version UUID. Explicit resource revocation is responsible for
-// invalidating bindings across every version.
+// resource rows for older immutable versions until lineage or
+// resource revocation removes them. Runtime authority is independently limited
+// to the current agents.workflow_id head and its canonical version snapshot.
 func (r *Repository) ReplaceWorkflowPublishedHead(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -563,7 +533,7 @@ func (r *Repository) RevokeAgentConsumers(ctx context.Context, tx *gorm.DB, agen
 	}
 	revoke := func(current *gorm.DB) error {
 		var bindings []Binding
-		if err := current.WithContext(ctx).Where("agent_id = ?", agentID).Find(&bindings).Error; err != nil {
+		if err := current.WithContext(ctx).Scopes(ordinaryResourceRows).Where("agent_id = ?", agentID).Find(&bindings).Error; err != nil {
 			return fmt.Errorf("list Agent-owned resource bindings: %w", err)
 		}
 		if err := r.lockBindingRows(ctx, current, bindings); err != nil {
@@ -572,7 +542,7 @@ func (r *Repository) RevokeAgentConsumers(ctx context.Context, tx *gorm.DB, agen
 		if err := r.LockAgents(ctx, current, []uuid.UUID{agentID}); err != nil {
 			return fmt.Errorf("lock Agent before revoking owned resource bindings: %w", err)
 		}
-		if err := current.WithContext(ctx).Where("agent_id = ?", agentID).Delete(&Binding{}).Error; err != nil {
+		if err := current.WithContext(ctx).Scopes(ordinaryResourceRows).Where("agent_id = ?", agentID).Delete(&Binding{}).Error; err != nil {
 			return fmt.Errorf("revoke Agent-owned resource bindings: %w", err)
 		}
 		return nil
@@ -587,7 +557,7 @@ func (r *Repository) ListImpact(ctx context.Context, ref ResourceRef) ([]Binding
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("agent bindings database is required")
 	}
-	if ref.OrganizationID == uuid.Nil || strings.TrimSpace(ref.ResourceID) == "" || ref.BindingType == "" {
+	if ref.OrganizationID == uuid.Nil || strings.TrimSpace(ref.ResourceID) == "" || !validBindingType(ref.BindingType) {
 		return nil, fmt.Errorf("organization, binding type, and resource id are required")
 	}
 	query := r.db.WithContext(ctx).Where("organization_id = ?", ref.OrganizationID)
@@ -638,43 +608,6 @@ func (r *Repository) ListImpact(ctx context.Context, ref ResourceRef) ([]Binding
 	return bindings, nil
 }
 
-// ListWorkflowConnectionImpact returns node- and version-level Workflow
-// references for a connection. Draft and every still-runnable published
-// version remain separate records so callers can explain the exact impact.
-func (r *Repository) ListWorkflowConnectionImpact(
-	ctx context.Context,
-	organizationID uuid.UUID,
-	connectionID string,
-) ([]WorkflowConnectionReference, error) {
-	bindings, err := r.ListImpact(ctx, ResourceRef{
-		OrganizationID: organizationID,
-		ConsumerType:   ConsumerTypeWorkflow,
-		BindingType:    BindingTypeIntegrationConnection,
-		ResourceID:     strings.TrimSpace(connectionID),
-	})
-	if err != nil {
-		return nil, err
-	}
-	references := make([]WorkflowConnectionReference, 0, len(bindings))
-	for _, binding := range bindings {
-		if reference, ok := binding.AsWorkflowConnectionReference(); ok {
-			references = append(references, reference)
-		}
-	}
-	sort.Slice(references, func(i, j int) bool {
-		left := strings.Join([]string{
-			references[i].WorkspaceID.String(), references[i].AgentID.String(),
-			string(references[i].Scope), references[i].WorkflowID.String(), references[i].NodeID,
-		}, "|")
-		right := strings.Join([]string{
-			references[j].WorkspaceID.String(), references[j].AgentID.String(),
-			string(references[j].Scope), references[j].WorkflowID.String(), references[j].NodeID,
-		}, "|")
-		return left < right
-	})
-	return references, nil
-}
-
 func (r *Repository) RevokeResource(ctx context.Context, tx *gorm.DB, ref ResourceRef) error {
 	db := r.db
 	if tx != nil {
@@ -683,7 +616,7 @@ func (r *Repository) RevokeResource(ctx context.Context, tx *gorm.DB, ref Resour
 	if db == nil {
 		return fmt.Errorf("agent bindings database is required")
 	}
-	if ref.OrganizationID == uuid.Nil || strings.TrimSpace(ref.ResourceID) == "" || ref.BindingType == "" {
+	if ref.OrganizationID == uuid.Nil || strings.TrimSpace(ref.ResourceID) == "" || !validBindingType(ref.BindingType) {
 		return fmt.Errorf("organization, binding type, and resource id are required")
 	}
 	query := db.WithContext(ctx).Where("organization_id = ?", ref.OrganizationID)
@@ -839,4 +772,15 @@ func cloneUUID(value *uuid.UUID) *uuid.UUID {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func validBindingType(value BindingType) bool {
+	switch value {
+	case BindingTypeSkill, BindingTypeKnowledgeDataset, BindingTypeDatabase, BindingTypeDatabaseTable, BindingTypeWorkflow:
+		return true
+	}
+	return false
+}
+func ordinaryResourceRows(db *gorm.DB) *gorm.DB {
+	return db.Where("binding_type IN ('skill','knowledge_dataset','database','database_table','workflow')")
 }

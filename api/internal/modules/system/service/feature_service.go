@@ -69,7 +69,8 @@ func (s *featureService) fillFromEnv(sf *model.SystemFeature) {
 	sf.EnableSocialOAuthLogin = features.EnableSocialOAuthLogin
 	sf.IsAllowRegister = features.AllowRegister
 	sf.IsAllowCreateWorkspace = features.AllowCreateWorkspace
-	sf.EnableExternalIntegrations = cfg.ExternalIntegrations.Enabled
+	// Retain the response field for older clients; Connectors are always available.
+	sf.EnableConnectors = true
 
 	sf.IsEmailSetup = config.HasEmailDeliveryConfig(cfg)
 	sf.IsPublicDeployment = s.IsPublicDeployment()

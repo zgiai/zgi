@@ -722,6 +722,11 @@ func newWorkflowRoutesTestRouterWithConversationAndAccountService(t *testing.T, 
 	t.Cleanup(func() {
 		database.DB = oldDB
 	})
+	t.Cleanup(func() {
+		require.Eventually(t, func() bool {
+			return mock.ExpectationsWereMet() == nil
+		}, time.Second, 10*time.Millisecond)
+	})
 
 	webAppID, userID, conversationID := seedWorkflowRoutesTestData()
 	expectWorkflowRoutesSQL(t, mock, webAppID, userID, conversationID)
@@ -840,6 +845,20 @@ func seedWorkflowRoutesTestData() (string, string, string) {
 
 func expectWorkflowRoutesSQL(t *testing.T, mock sqlmock.Sqlmock, webAppID, userID, conversationID string) {
 	t.Helper()
+
+	switch t.Name() {
+	case "TestWorkflowRoutes_BuiltInWorkflowsAcceptOrganizationMemberWithoutWorkspace",
+		"TestWorkflowRoutes_BuiltInWorkflowsFilterRuntimeGrantForOtherAccount",
+		"TestWorkflowRoutes_BuiltInWorkflowsAllowRuntimeGrantForDepartmentMember",
+		"TestWorkflowRoutes_BuiltInWorkflowDetailRejectsRuntimeGrantForOtherAccount",
+		"TestWorkflowRoutes_BuiltInWorkflowDetailAllowsRuntimeGrantForDepartmentMember",
+		"TestWorkflowRoutes_BuiltInWorkflowRuntimeSurfacesReturnFallbackForAdmin",
+		"TestWorkflowRoutes_BuiltInWorkflowRuntimeSurfacesUpdateAccountGrantForAdmin",
+		"TestWorkflowRoutes_BuiltInWorkflowRuntimeSurfacesRejectsAccountGrantOutsideOrganization",
+		"TestWorkflowRoutes_BuiltInWorkflowRuntimeSurfacesRejectsDepartmentGrantOutsideOrganization",
+		"TestWorkflowRoutes_BuiltInWorkflowRuntimeSurfacesRejectsNonAdminUpdate":
+		expectWorkflowRoutesAuthenticatedAccount(mock, userID)
+	}
 
 	switch t.Name() {
 	case "TestWorkflowRoutes_WebAppConfigIsPublic",
@@ -976,12 +995,25 @@ func expectAgentByWebAppWithRuntimeSurface(mock sqlmock.Sqlmock, webAppID, webAp
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agents"`)).
 		WithArgs(webAppID, 1).
 		WillReturnRows(rows)
-	if surfaceEnabled == (webAppStatus == "active") {
+	if webAppStatus != "active" {
+		return agentID
+	}
+	if surfaceEnabled {
 		expectAgentWebAppRuntimeFallback(mock, agentID)
 	} else {
 		expectAgentWebAppRuntimeSurface(mock, agentID, surfaceEnabled)
 	}
 	return agentID
+}
+
+func expectWorkflowRoutesAuthenticatedAccount(mock sqlmock.Sqlmock, userID string) {
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id","status" FROM "accounts" WHERE id = $1 AND "accounts"."deleted_at" IS NULL LIMIT $2`)).
+		WithArgs(userID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(userID, auth_model.AccountStatusActive))
+
+	mock.ExpectExec(`UPDATE "accounts" SET .* WHERE id = \$[0-9]+ AND \(last_active_at IS NULL OR last_active_at < \$[0-9]+\).*`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), userID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
 func expectAgentWebAppRuntimeFallback(mock sqlmock.Sqlmock, agentID uuid.UUID) {

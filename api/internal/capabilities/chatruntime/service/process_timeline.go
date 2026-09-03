@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -291,7 +290,7 @@ func (r *processTimelineRecorder) RecordTrace(traces []skills.SkillTrace, trace 
 	if r == nil || r.service == nil {
 		return
 	}
-	if nonVisibleTraceCarriesMetadata(trace) && !skillloop.IsProjectedActionAutoBindingTrace(trace) {
+	if nonVisibleTraceCarriesMetadata(trace) {
 		r.service.persistSkillTracesBestEffort(r.persistCtx, r.prepared, []skills.SkillTrace{trace})
 	}
 	if streamBackedTrace(trace) {
@@ -512,6 +511,7 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 			"message":     payloadString(payload, "message"),
 			"error":       payloadString(payload, "message"),
 			"error_code":  payloadString(payload, "error_code"),
+			"result":      payloadMap(payload, "result"),
 		}))
 		invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
 		return invocation
@@ -925,6 +925,9 @@ func invocationTimelineFields(payload map[string]interface{}, values map[string]
 	}
 	if len(payload) == 0 {
 		return values
+	}
+	if payload["runtime_source"] == "connector" {
+		values["runtime_source"] = "connector"
 	}
 	if _, exists := values["created_at"]; !exists {
 		values["created_at"] = payload["created_at"]

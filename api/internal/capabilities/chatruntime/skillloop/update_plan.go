@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -12,7 +11,6 @@ const maxPlanPhases = 16
 
 func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}, evidence map[string]interface{}, round int) skillStepResult {
 	var phases []map[string]interface{}
-	resolvedTargetPhaseIDs := map[string]struct{}{}
 	var phaseUpdates []map[string]interface{}
 	var outcomes []map[string]interface{}
 	var err error
@@ -38,43 +36,21 @@ func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}
 	if err == nil && len(phases) > 0 {
 		restoreOperationPlanServerPhaseAuthority(phases, evidence)
 	}
-	if err == nil && len(phases) > 0 {
-		resolvedTargetPhaseIDs, err = validateProjectedExternalActionObservedTargetBindings(phases, evidence)
-	}
-	if err == nil && len(phases) > 0 {
-		err = validateProjectedExternalActionPlanSnapshot(phases, evidence)
-	}
-	if err == nil && len(outcomes) > 0 && projectedExternalActionPlanRequiresPhaseLedger(evidence) {
-		err = fmt.Errorf("%w: a projected external Action request requires the plan form with complete expected_action outcome bindings", ErrInvalidInput)
+	if err == nil {
+		if len(phases) > 0 {
+			err = validateConnectorPlanSnapshot(phases, evidence)
+		} else {
+			for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(evidence["operation_plan"])["phases"]) {
+				if len(connectorPhaseOperation(phase)) > 0 {
+					err = fmt.Errorf("%w: Connector plans require explicit operation phases", ErrInvalidInput)
+					break
+				}
+			}
+		}
 	}
 	if err != nil {
 		trace := failedSkillTrace("plan_update", skills.MetaToolUpdatePlan, err)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "submit independently verifiable outcomes with stable IDs, or a compatibility plan snapshot with valid statuses")), false, false)
-	}
-	if len(phases) > 0 {
-		baselineByID := map[string]map[string]interface{}{}
-		for _, baseline := range evidenceMapsFromAny(evidenceMapFromAny(evidence["operation_plan"])["phases"]) {
-			if id := strings.TrimSpace(evidenceStringFromAny(baseline["id"])); id != "" {
-				baselineByID[id] = baseline
-			}
-		}
-		for _, phase := range phases {
-			if !operationPlanPhaseHasServerAuthority(phase, evidence) {
-				stripOperationPlanProjectedServerAttestation(phase)
-				continue
-			}
-			expected := evidenceMapFromAny(phase["expected_action"])
-			if _, external := projectedExternalActionKeyFromExpected(expected); !external ||
-				projectedExpectedActionServerBindingIssue(expected, evidence) != "" {
-				continue
-			}
-			phaseID := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
-			ledgerEpoch := strings.TrimSpace(evidenceStringFromAny(baselineByID[phaseID][operationPlanServerProjectedLedgerEpochKey]))
-			if _, targetResolved := resolvedTargetPhaseIDs[phaseID]; targetResolved || ledgerEpoch == "" {
-				ledgerEpoch = uuid.NewString()
-			}
-			phase[operationPlanServerProjectedLedgerEpochKey] = ledgerEpoch
-		}
 	}
 	explanation := trimRunes(stringFromInterface(args["explanation"]), 500)
 	result := map[string]interface{}{}
@@ -215,11 +191,9 @@ func restoreOperationPlanServerPhaseAuthority(phases []map[string]interface{}, e
 		id := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
 		baseline := baselineByID[id]
 		if id == "" || len(baseline) == 0 {
-			stripOperationPlanProjectedServerAttestation(phase)
 			continue
 		}
 		if !operationPlanPhaseHasServerAuthority(baseline, evidence) {
-			stripOperationPlanProjectedServerAttestation(phase)
 			downgradeOperationPlanInvalidServerAuthority(phase)
 			continue
 		}
@@ -230,8 +204,6 @@ func restoreOperationPlanServerPhaseAuthority(phases []map[string]interface{}, e
 		switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(baseline[operationPlanPhaseSourceKey]))) {
 		case operationPlanPhaseSourceServerOutcome:
 			phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceServerOutcome
-		case operationPlanPhaseSourceServerPreparation:
-			phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceServerPreparation
 		case operationPlanPhaseSourceModelAdvisory:
 			phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceModelAdvisory
 		default:
@@ -249,7 +221,6 @@ func restoreOperationPlanServerPhaseAuthority(phases []map[string]interface{}, e
 			phase["required"] = required
 		}
 		restoreOperationPlanServerCompletionPolicy(phase, baseline, evidence)
-		restoreOperationPlanProjectedServerAttestation(phase, baseline)
 	}
 }
 
@@ -282,65 +253,13 @@ func restoreOperationPlanServerCompletionPolicy(
 	}
 }
 
-func stripOperationPlanProjectedServerAttestation(phase map[string]interface{}) {
-	delete(phase, operationPlanServerProjectedLedgerEpochKey)
-	delete(phase, operationPlanServerProjectedConnectionBindingKey)
-	expected := evidenceMapFromAny(phase["expected_action"])
-	if len(expected) == 0 {
-		return
-	}
-	delete(expected, planExpectedActionServerProjectionKey)
-	delete(expected, planExpectedActionServerBindingFingerprintKey)
-}
-
 func downgradeOperationPlanInvalidServerAuthority(phase map[string]interface{}) {
 	switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(phase[operationPlanPhaseSourceKey]))) {
-	case operationPlanPhaseSourceServerOutcome, operationPlanPhaseSourceServerPreparation:
+	case operationPlanPhaseSourceServerOutcome:
 		phase[operationPlanPhaseSourceKey] = operationPlanPhaseSourceModelAdvisory
 	}
 }
 
-func restoreOperationPlanProjectedServerAttestation(phase map[string]interface{}, baseline map[string]interface{}) {
-	baselineExpected := evidenceMapFromAny(baseline["expected_action"])
-	if _, external := projectedExternalActionKeyFromExpected(baselineExpected); !external {
-		stripOperationPlanProjectedServerAttestation(phase)
-		return
-	}
-	expected := evidenceMapFromAny(phase["expected_action"])
-	if expected == nil {
-		expected = map[string]interface{}{}
-	}
-	for _, key := range []string{
-		"skill_id", "tool_name", "projected_tool_name",
-		planExpectedActionServerProjectionKey,
-		planExpectedActionServerBindingFingerprintKey,
-	} {
-		if value, exists := baselineExpected[key]; exists && value != nil {
-			expected[key] = value
-		} else {
-			delete(expected, key)
-		}
-	}
-	if target := copyStringAnyMap(evidenceMapFromAny(baselineExpected["target"])); len(target) > 0 {
-		expected["target"] = target
-	}
-	if len(evidenceMapFromAny(expected["target_arguments"])) == 0 {
-		if targetArguments := copyStringAnyMap(evidenceMapFromAny(baselineExpected["target_arguments"])); len(targetArguments) > 0 {
-			expected["target_arguments"] = targetArguments
-		}
-	}
-	phase["expected_action"] = expected
-	for _, key := range []string{
-		operationPlanServerProjectedLedgerEpochKey,
-		operationPlanServerProjectedConnectionBindingKey,
-	} {
-		if value, exists := baseline[key]; exists && value != nil {
-			phase[key] = value
-		} else {
-			delete(phase, key)
-		}
-	}
-}
 func normalizeOutcomeSnapshot(value interface{}) ([]map[string]interface{}, error) {
 	raw := mapSliceFromAny(value)
 	if len(raw) == 0 {
@@ -493,11 +412,12 @@ func normalizePlanExpectedAction(value interface{}) map[string]interface{} {
 		"skill_id":  trimRunes(skillID, 120),
 		"tool_name": trimRunes(toolName, 160),
 	}
-	if projectedToolName := trimRunes(stringFromInterface(raw["projected_tool_name"]), 160); projectedToolName != "" {
-		action["projected_tool_name"] = projectedToolName
+	if operation := evidenceMapFromAny(raw["connector_operation"]); len(operation) > 0 {
+		connectorID, operationID := strings.TrimSpace(stringFromInterface(operation["connector_id"])), strings.TrimSpace(stringFromInterface(operation["operation_id"]))
+		if connectorID != "" && operationID != "" {
+			action["connector_operation"] = map[string]any{"connector_id": connectorID, "operation_id": operationID}
+		}
 	}
-	// _server_projected_* fields are never accepted from model input. Exact
-	// persisted values are restored from the baseline phase after normalization.
 	targetRaw := evidenceMapFromAny(raw["target"])
 	target := map[string]interface{}{}
 	for _, key := range []string{"integration_id", "action_id", "agent_id", "file_id", "asset_id", "resource_id", "dataset_id", "data_source_id", "table_id", "workflow_id", "binding_id", "href", "route"} {

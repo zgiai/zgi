@@ -32,7 +32,7 @@ func TestRecoverableSkillFailureBudgetSeparatesPlannerAndBusinessFailures(t *tes
 		{
 			name: "pre-provider schema validation",
 			trace: skills.SkillTrace{
-				Kind: "tool_call", SkillID: skills.SkillExternalApps, ToolName: "execute_action", Status: "error",
+				Kind: "tool_call", SkillID: skills.SkillConnectorRuntime, ToolName: "perform_task", Status: "error",
 				Arguments: map[string]interface{}{"provider_request_sent": false},
 			},
 			want: recoverableFailureBudgetPlanner, wantClass: retryFailureArgumentValidation,
@@ -40,7 +40,7 @@ func TestRecoverableSkillFailureBudgetSeparatesPlannerAndBusinessFailures(t *tes
 		{
 			name: "local argument schema validation",
 			trace: skills.SkillTrace{
-				Kind: "tool_call", SkillID: skills.SkillExternalApps, ToolName: "execute_action", Status: "error",
+				Kind: "tool_call", SkillID: skills.SkillConnectorRuntime, ToolName: "perform_task", Status: "error",
 				Arguments: map[string]interface{}{"failure_category": "arguments"},
 			},
 			want: recoverableFailureBudgetPlanner, wantClass: retryFailureArgumentValidation,
@@ -48,7 +48,7 @@ func TestRecoverableSkillFailureBudgetSeparatesPlannerAndBusinessFailures(t *tes
 		{
 			name: "provider business failure",
 			trace: skills.SkillTrace{
-				Kind: "tool_call", SkillID: skills.SkillExternalApps, ToolName: "execute_action", Status: "error",
+				Kind: "tool_call", SkillID: skills.SkillConnectorRuntime, ToolName: "perform_task", Status: "error",
 				Arguments: map[string]interface{}{"provider_request_sent": true, "provider_error_code": "provider.failed"},
 			},
 			want: recoverableFailureBudgetBusiness, wantClass: retryFailureProviderBusiness,
@@ -72,7 +72,7 @@ func TestRecoverableSkillFailureBudgetSeparatesPlannerAndBusinessFailures(t *tes
 }
 
 func TestInvalidSkillToolArgumentsArePreProviderValidationFeedback(t *testing.T) {
-	step := invalidSkillToolArgumentsStep("call-1", "external-apps", "execute_action", []interface{}{"bad"}, ErrInvalidInput)
+	step := invalidSkillToolArgumentsStep("call-1", "ordinary-skill", "perform_task", []interface{}{"bad"}, ErrInvalidInput)
 	if !step.recoverable {
 		t.Fatal("invalid arguments were not recoverable")
 	}
@@ -247,37 +247,35 @@ func TestRunnerAlternatingSchemaAndArgumentValidationFailuresDoNotShareLimit(t *
 }
 
 func TestProviderConfirmedRequiredOutcomesSatisfiedFailsClosed(t *testing.T) {
-	base := providerConfirmedRunnerTestState("completed")
-	if !providerConfirmedRequiredOutcomesSatisfied(base) {
+	base := nativeRunnerTestState("successful")
+	if !connectorRequiredOutcomesSatisfied(base) {
 		t.Fatal("exact provider-confirmed required phase was not recognized")
 	}
 
 	for _, status := range []string{"partially_succeeded", "outcome_unknown", "executing"} {
 		t.Run(status, func(t *testing.T) {
-			state := providerConfirmedRunnerTestState(status)
-			if providerConfirmedRequiredOutcomesSatisfied(state) {
+			state := nativeRunnerTestState(status)
+			if connectorRequiredOutcomesSatisfied(state) {
 				t.Fatalf("operation_status=%q was treated as completed", status)
 			}
 		})
 	}
 
-	state := providerConfirmedRunnerTestState("completed")
+	state := nativeRunnerTestState("successful")
 	phases := evidenceMapsFromAny(evidenceMapFromAny(state["operation_plan"])["phases"])
-	second := projectedExternalActionPlanTestPhase("phase-second", "pending", "recipient_ref", "bob")
+	second := nativeRunnerPhase("phase-second", "pending")
 	phases = append(phases, second)
 	state["operation_plan"] = map[string]interface{}{"phases": mapsToInterfacesForRunnerRetryTest(phases)}
-	if providerConfirmedRequiredOutcomesSatisfied(state) {
+	if connectorRequiredOutcomesSatisfied(state) {
 		t.Fatal("one confirmed phase hid another required pending phase")
 	}
 }
 
 func TestCompleteSkillLoopSafetyTerminationSummarizesProviderConfirmedSuccess(t *testing.T) {
-	state := providerConfirmedRunnerTestState("completed")
+	state := nativeRunnerTestState("successful")
 	toolSet := &skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{
 		"wecom_send_message": {
-			SkillID: skills.SkillExternalApps, ToolName: "execute_action", ArgumentEnvelope: "arguments",
-			FixedArguments: map[string]interface{}{"integration_id": "wecom", "action_id": "wecom.message.send"},
-			Effect:         "external_send", IntentMatched: true, IntentGroup: "message.send",
+			SkillID: skills.SkillConnectorRuntime, ToolName: "send_message", ConnectorOperation: &skills.NativeConnectorOperation{ConnectorID: "wecom", OperationID: "wecom.message.send"},
 		},
 	}}
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
@@ -312,7 +310,7 @@ func TestCompleteSkillLoopSafetyTerminationSummarizesProviderConfirmedSuccess(t 
 	if answer != "消息已发送给 Alice。" {
 		t.Fatalf("answer = %q, want model-generated success summary", answer)
 	}
-	if completion.Status != "pass" || completion.CompletionReason != providerConfirmedOutcomeRecoveryReason {
+	if completion.Status != "pass" || completion.CompletionReason != connectorOutcomeRecoveryReason {
 		t.Fatalf("completion = %#v, want provider-confirmed pass", completion)
 	}
 	if fakeLLM.appChatCalls != 1 {
@@ -324,7 +322,7 @@ func TestCompleteSkillLoopSafetyTerminationSummarizesProviderConfirmedSuccess(t 
 	}
 	content := runnerTestMessageText(request.Messages)
 	if strings.Contains(content, "The requested operation could not be completed") ||
-		!strings.Contains(content, "provider-confirmed execution") {
+		!strings.Contains(content, "native Connector execution") {
 		t.Fatalf("success summary request used the wrong terminal path:\n%s", content)
 	}
 }
@@ -391,88 +389,6 @@ func TestRunnerPlannerFeedbackUsesIndependentConsecutiveLimit(t *testing.T) {
 	}
 }
 
-func TestRunnerProviderSuccessSurvivesLaterPlannerFeedbackLimit(t *testing.T) {
-	runtime, resolved, actionTool := newProjectedExternalActionRunnerRuntime(t)
-	toolSet := skills.NativeToolSet{
-		ActiveSkillIDs: []string{skills.SkillExternalApps},
-		ToolBindings:   map[string]skills.NativeToolBinding{},
-		BudgetChars:    10000,
-	}
-	if added := skills.AppendNativeToolProjections(&toolSet, []skills.NativeToolProjection{
-		projectedExternalActionRunnerProjectionFor("mail", "mail_search_messages", "mail.message.search"),
-	}, skills.NativeToolProjectionOptions{}); added != 1 {
-		t.Fatalf("AppendNativeToolProjections() added=%d, want 1", added)
-	}
-	alias := projectedExternalActionAliasForAction(t, toolSet, "mail", "mail.message.search")
-	responses := []*adapter.ChatResponse{{
-		Choices: []adapter.Choice{{Message: adapter.Message{
-			Role: "assistant",
-			ToolCalls: []adapter.ToolCall{projectedExternalActionRunnerToolCall(
-				t, "call-mail", alias, map[string]interface{}{"query": "recent"},
-			)},
-		}, FinishReason: "tool_calls"}},
-	}}
-	for index := 0; index < defaultMaxConsecutivePlannerFeedbackRounds; index++ {
-		responses = append(responses, &adapter.ChatResponse{Choices: []adapter.Choice{{Message: adapter.Message{
-			Role: "assistant",
-			ToolCalls: []adapter.ToolCall{projectedExternalActionRunnerToolCall(
-				t, "call-invalid-plan-"+evidenceStringFromAny(index), skills.MetaToolUpdatePlan, map[string]interface{}{},
-			)},
-		}, FinishReason: "tool_calls"}}})
-	}
-	responses = append(responses, &adapter.ChatResponse{Choices: []adapter.Choice{{Message: adapter.Message{
-		Role: "assistant", Content: "已查到最近邮件。",
-	}, FinishReason: "stop"}}})
-
-	state := map[string]interface{}{"operation_plan": map[string]interface{}{}}
-	var traces []skills.SkillTrace
-	var completion TerminalCompletionResult
-	runner := &Runner{
-		LLMClient: fakeRunnerLLM(responses), SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
-		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) { traces = append(traces, trace) },
-	}
-	client := runner.LLMClient.(*runnerTestLLMClient)
-	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared: NewPreparedChat("conv-provider-planner-limit", "msg-provider-planner-limit", "", "auto", &adapter.ChatRequest{
-			Messages: []adapter.Message{{Role: "user", Content: "查看最近收件箱"}},
-		}),
-		Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet,
-		RuntimeStateSnapshot: func() map[string]interface{} { return state },
-		CommitProjectedActionBinding: func(_ context.Context, trace skills.SkillTrace) error {
-			state["operation_plan"] = map[string]interface{}{
-				"outcomes": trace.Result["outcomes"],
-				"phases":   trace.Result["plan"],
-			}
-			return nil
-		},
-		OnTerminalCompletion: func(result TerminalCompletionResult) { completion = result },
-	})
-	if err != nil || answer != "已查到最近邮件。" {
-		t.Fatalf("Run() answer=%q error=%v", answer, err)
-	}
-	if len(actionTool.calls) != 1 || actionTool.actionIDs()[0] != "mail.message.search" {
-		t.Fatalf("Provider calls = %#v, want one mail search", actionTool.calls)
-	}
-	if client.appChatCalls != defaultMaxConsecutivePlannerFeedbackRounds+2 {
-		t.Fatalf("AppChat calls = %d, want Action + %d planner feedback + success summary", client.appChatCalls, defaultMaxConsecutivePlannerFeedbackRounds)
-	}
-	if completion.Status != "pass" || completion.CompletionReason != providerConfirmedOutcomeRecoveryReason {
-		t.Fatalf("completion = %#v, want provider-confirmed recovery", completion)
-	}
-	var guard skills.SkillTrace
-	for _, trace := range traces {
-		if trace.Kind == "tool_retry_guard" {
-			guard = trace
-		}
-	}
-	if guard.Arguments["reason_code"] != "planner_feedback_limit_reached" {
-		t.Fatalf("retry guard = %#v, want planner feedback limit", guard)
-	}
-	if got := numericValue(evidenceMapFromAny(guard.Arguments["retry_failure_class_counts"])[string(retryFailurePlannerSchema)]); got != defaultMaxConsecutivePlannerFeedbackRounds {
-		t.Fatalf("planner_schema count = %d, want %d", got, defaultMaxConsecutivePlannerFeedbackRounds)
-	}
-}
-
 func fakeRunnerLLM(responses []*adapter.ChatResponse) *runnerTestLLMClient {
 	return &runnerTestLLMClient{appChatResponses: responses}
 }
@@ -495,25 +411,11 @@ func runnerRetryBudgetToolResponse(call adapter.ToolCall) *adapter.ChatResponse 
 	}}}
 }
 
-func providerConfirmedRunnerTestState(operationStatus string) map[string]interface{} {
-	phase := projectedExternalActionPlanTestPhase("phase-send", "in_progress", "recipient_ref", "alice")
+func nativeRunnerTestState(status string) map[string]interface{} {
+	ref := nativeRunnerOperation()
 	return map[string]interface{}{
-		runtimeStateNativeExternalActionProjectionsKey: []interface{}{map[string]interface{}{
-			"tool_name": "wecom_send_message", "integration_id": "wecom", "action_id": "wecom.message.send",
-			"effect": "external_send", "target_argument_paths": []interface{}{"recipient_ref"},
-		}},
-		"operation_plan": map[string]interface{}{"phases": []interface{}{phase}},
-		"skill_invocations": []interface{}{map[string]interface{}{
-			"kind": "tool_call", "status": "success", "skill_id": skills.SkillExternalApps, "tool_name": "execute_action",
-			"arguments": map[string]interface{}{
-				"integration_id": "wecom", "action_id": "wecom.message.send", "plan_phase_id": "phase-send",
-				"operation_plan_target": map[string]interface{}{"recipient_ref": "alice"},
-			},
-			"result": map[string]interface{}{
-				"integration_id": "wecom", "action_id": "wecom.message.send",
-				"operation_status": operationStatus, "provider_success_confirmed": operationStatus == "completed",
-			},
-		}},
+		"operation_plan":    map[string]interface{}{"phases": []interface{}{nativeRunnerPhase(ref.PlanPhaseID, "in_progress")}},
+		"skill_invocations": []interface{}{nativeOutcomeRecord(ref, "completed", status)},
 	}
 }
 

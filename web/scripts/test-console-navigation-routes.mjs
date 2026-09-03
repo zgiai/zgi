@@ -11,13 +11,19 @@ import { getRecentWorkNavigationHref } from '../src/utils/console-recent-work.ts
 
 const siteMapRoutes = new Set(ZGI_CONSOLE_SITE_MAP.map(route => route.href));
 
-for (const href of ['/console/workflows', '/console/skills', '/console/integrations']) {
+for (const href of [
+  '/console/workflows',
+  '/console/skills',
+  '/console/connectors',
+  '/console/connectors/connections',
+]) {
   assert.equal(siteMapRoutes.has(href), true, `site map must include ${href}`);
   assert.equal(normalizeZGIConsoleNavigationHref(href), href, `${href} must be navigable`);
 }
 
 for (const href of [
-  '/console/integrations/oauth/result',
+  '/console/connectors/github',
+  '/console/connectors/connections/11111111-1111-4111-8111-111111111111',
   '/console/workflows/workflow-1',
   '/console/workflows/workflow-1/logs',
   '/console/workflows/workflow-1/api/keys',
@@ -81,6 +87,22 @@ assert.equal(
     getZGIConsoleNavigationAccess('/console/workflows', readyContext)
   ),
   'forbidden'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess('/console/connectors', {
+    ...readyContext,
+    workspaceStatus: 'workspace_required',
+  }).status,
+  'allowed',
+  'Connector Center must remain available without a workspace'
+);
+assert.equal(
+  getZGIConsoleNavigationAccess(
+    '/console/connectors/connections/11111111-1111-4111-8111-111111111111',
+    { ...readyContext, workspaceStatus: 'workspace_required' }
+  ).status,
+  'allowed',
+  'personal Connection management must remain organization-scoped'
 );
 assert.equal(
   getZGIConsoleNavigationAccess('/console/workflows', {

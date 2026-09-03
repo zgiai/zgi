@@ -5,8 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+	connectortoolprovider "github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -42,6 +46,75 @@ func TestToolGovernanceDecisionPayloadIncludesAssetOperationAudit(t *testing.T) 
 	audit, ok := payload["asset_operation_audit"].(map[string]interface{})
 	if !ok || audit["tool_id"] != "file.delete" || audit["approval_status"] != "pending" {
 		t.Fatalf("asset_operation_audit = %#v, want governance audit payload", payload["asset_operation_audit"])
+	}
+}
+
+func TestSummarizeToolResultRecognizesOnlyServerMarkedConnectorConfirmation(t *testing.T) {
+	confirmation := map[string]interface{}{
+		"route_receipt":       "receipt-1",
+		"connector_id":        "github",
+		"connector_name":      "GitHub",
+		"operation_id":        "issue.create",
+		"action_name":         "Create issue",
+		"risk_classification": "high",
+		"target": map[string]interface{}{
+			"type": "chat", "id": "conversation-1",
+		},
+		"consequence": map[string]interface{}{
+			"external_effect": "create", "description": "Creates an issue", "data_egress": true,
+		},
+		"input": map[string]interface{}{"title": "must not escape"},
+	}
+	result := SummarizeToolResult("dynamic-plugin-skill", "create_issue", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{"state": "requires_confirmation", "confirmation": confirmation},
+		Meta: map[string]interface{}{connectortoolprovider.ResultKey: connectortoolprovider.ResultMetadata{
+			State: connectorexecution.ExecutionStateRequiresConfirmation,
+			Confirmation: &connectorexecution.RuntimeConfirmation{
+				RouteReceipt: "receipt-1", ConnectorID: connectorcore.Identifier("github"), ConnectorName: "GitHub",
+				OperationID: connectorcore.Identifier("issue.create"), ActionName: "Create issue",
+				Target: connectorcore.TargetRef{Type: connectorcore.TargetTypeChat, ID: "conversation-1"},
+				Risk:   connectorexecution.RiskHigh,
+			},
+		}},
+	}})
+	if result["state"] != "requires_confirmation" {
+		t.Fatalf("state = %#v, want requires_confirmation", result["state"])
+	}
+	compact := recordFromAny(result["confirmation"])
+	if compact["route_receipt"] != "receipt-1" {
+		t.Fatalf("confirmation = %#v, want receipt", compact)
+	}
+	if _, exposed := compact["input"]; exposed {
+		t.Fatalf("confirmation exposed operation input: %#v", compact)
+	}
+
+	spoofed := SummarizeToolResult("dynamic-plugin-skill", "create_issue", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{"state": "requires_confirmation", "confirmation": confirmation},
+	}})
+	if spoofed != nil {
+		t.Fatalf("unmarked payload = %#v, want nil", spoofed)
+	}
+}
+
+func TestSummarizeToolResultProjectsTypedConnectorBlockedTerminal(t *testing.T) {
+	t.Parallel()
+
+	decisionID := uuid.New()
+	result := SummarizeToolResult("external-apps", "create_issue", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"state": "blocked", "decision_id": decisionID.String(), "private": "must-not-escape",
+		},
+		Meta: map[string]interface{}{
+			connectortoolprovider.ResultKey: connectortoolprovider.ResultMetadata{
+				State: connectorexecution.ExecutionStateBlocked, DecisionID: decisionID,
+			},
+		},
+	}})
+	if result["state"] != "blocked" || result["decision_id"] != decisionID.String() || len(result) != 2 {
+		t.Fatalf("blocked Connector summary = %#v", result)
 	}
 }
 
@@ -1344,68 +1417,5 @@ func TestSummarizeToolResultCompactsVisibleFilesPayload(t *testing.T) {
 	}
 	if _, ok := files[0]["content_preview"]; ok {
 		t.Fatalf("content_preview should not be included in compact trace file: %#v", files[0])
-	}
-}
-
-func TestSummarizeToolResultPreservesConfirmedExternalActionFacts(t *testing.T) {
-	result := SummarizeToolResult(skills.SkillExternalApps, "execute_action", []tools.ToolInvokeMessage{{
-		Type: tools.ToolInvokeMessageTypeJSON,
-		Data: map[string]interface{}{
-			"integration_id": "feishu", "action_id": "feishu.calendar.event.create",
-			"plan_phase_id":   "create-event",
-			"connection_name": "我的飞书", "operation_status": "completed",
-			"result_count": 1, "attempt_count": 1, "provider_request_id": "request-1",
-			"result": map[string]interface{}{
-				"provider": "feishu", "request_id": "request-1",
-				"event": map[string]interface{}{
-					"event_id": "event-1", "summary": "回家",
-					"start_time": map[string]interface{}{"timestamp": "1785687600", "timezone": "Asia/Shanghai"},
-					"end_time":   map[string]interface{}{"timestamp": "1785691200", "timezone": "Asia/Shanghai"},
-				},
-			},
-		},
-	}})
-	if result["action_id"] != "feishu.calendar.event.create" || result["plan_phase_id"] != "create-event" || result["provider_success_confirmed"] != true {
-		t.Fatalf("external action summary = %#v", result)
-	}
-	providerResult := recordFromAny(result["provider_result"])
-	event := recordFromAny(providerResult["event"])
-	if event["event_id"] != "event-1" || event["summary"] != "回家" {
-		t.Fatalf("provider event summary = %#v", providerResult)
-	}
-	if _, leaked := result["result"]; leaked {
-		t.Fatalf("raw provider result leaked into trace summary: %#v", result)
-	}
-}
-
-func TestSummarizeToolResultPreservesExternalActionGuideGuardFacts(t *testing.T) {
-	result := SummarizeToolResult(skills.SkillExternalApps, "get_action_guide", []tools.ToolInvokeMessage{{
-		Type: tools.ToolInvokeMessageTypeJSON,
-		Data: map[string]interface{}{
-			"integration_id":    "wecom",
-			"action_id":         "wecom.message.send",
-			"plan_phase_id":     "send-message",
-			"connection_name":   "企业微信连接",
-			"effect":            "external_send",
-			"availability":      "runtime_verification_required",
-			"can_execute":       true,
-			"requires_approval": true,
-			"required_arguments": []interface{}{
-				map[string]interface{}{"name": "user_id", "type": "string"},
-				map[string]interface{}{"name": "content", "type": "string"},
-			},
-		},
-	}})
-	if result["integration_id"] != "wecom" || result["action_id"] != "wecom.message.send" ||
-		result["plan_phase_id"] != "send-message" ||
-		result["connection_name"] != "企业微信连接" || result["effect"] != "external_send" {
-		t.Fatalf("guide identity summary = %#v", result)
-	}
-	if result["availability"] != "runtime_verification_required" || result["can_execute"] != true ||
-		result["requires_approval"] != true || result["required_argument_count"] != 2 {
-		t.Fatalf("guide guard summary = %#v", result)
-	}
-	if _, leaked := result["required_arguments"]; leaked {
-		t.Fatalf("full guide argument schema leaked into trace summary: %#v", result)
 	}
 }

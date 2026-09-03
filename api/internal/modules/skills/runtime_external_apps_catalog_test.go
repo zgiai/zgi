@@ -10,11 +10,11 @@ import (
 
 func TestExternalAppsCatalogIsHiddenConnectedAppsRuntimeCapability(t *testing.T) {
 	runtime := NewRuntime(nil, nil)
-	metadata, err := runtime.GetSkillMetadata(context.Background(), SkillExternalApps)
+	metadata, err := runtime.GetSkillMetadata(context.Background(), SkillConnectorRuntime)
 	if err != nil {
 		t.Fatalf("GetSkillMetadata() error = %v", err)
 	}
-	if !IsHiddenSystemSkill(SkillExternalApps) || !IsRuntimeManagedSystemSkill(SkillExternalApps) || SkillUserSelectable(*metadata) {
+	if !IsHiddenSystemSkill(SkillConnectorRuntime) || !IsRuntimeManagedSystemSkill(SkillConnectorRuntime) || SkillUserSelectable(*metadata) {
 		t.Fatalf("external apps exposure = %#v", SkillExposureForMetadata(*metadata))
 	}
 	profile := SkillExposureForMetadata(*metadata)
@@ -26,7 +26,7 @@ func TestExternalAppsCatalogIsHiddenConnectedAppsRuntimeCapability(t *testing.T)
 		metadata.SupportedCallers[1] != SkillCallerAgent {
 		t.Fatalf("supported callers = %#v", metadata.SupportedCallers)
 	}
-	if metadata.DependencyType != SkillDependencyStandalone || len(metadata.IntegrationRequirements) != 0 {
+	if metadata.DependencyType != SkillDependencyStandalone || len(metadata.ConnectorRequirements) != 0 {
 		t.Fatalf("hidden facade must not appear as a business integration-dependent Skill: %#v", metadata)
 	}
 
@@ -36,7 +36,7 @@ func TestExternalAppsCatalogIsHiddenConnectedAppsRuntimeCapability(t *testing.T)
 	}
 	var document *SkillDocument
 	for index := range documents {
-		if documents[index].Metadata.ID == SkillExternalApps {
+		if documents[index].Metadata.ID == SkillConnectorRuntime {
 			document = &documents[index]
 			break
 		}
@@ -44,24 +44,26 @@ func TestExternalAppsCatalogIsHiddenConnectedAppsRuntimeCapability(t *testing.T)
 	if document == nil {
 		t.Fatal("external-apps Skill document not found")
 	}
-	if !strings.Contains(document.Instructions, "can_execute=true") ||
-		!strings.Contains(document.Instructions, "executable guide (`can_execute=true`)") ||
-		strings.Contains(document.Instructions, "Do not execute an Action whose availability is not `ready`") {
-		t.Fatalf("external-apps runtime-verification instructions are inconsistent: %q", document.Instructions)
+	if len(document.Tools) != 0 || !strings.Contains(document.Instructions, "server") || strings.Contains(document.Instructions, "execute_action") {
+		t.Fatalf("native capability document has static facade tools: %#v", document)
 	}
-	wantTools := map[string]struct{}{
-		"list_connections": {}, "search_actions": {}, "get_action_guide": {}, "execute_action": {},
+}
+
+func TestConnectorCapabilityDocumentNeedsNoStaticProvider(t *testing.T) {
+	runtime := NewRuntime(nil, tools.NewToolManager(nil))
+	doc, err := runtime.loadSkillDocument(SkillConnectorRuntime)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, definition := range document.Tools {
-		if definition.ProviderType != tools.ToolProviderTypeConnector || definition.ProviderID != "external-integrations" {
-			t.Fatalf("tool %s provider = %s/%s", definition.Name, definition.ProviderType, definition.ProviderID)
-		}
-		if definition.Governance == nil {
-			t.Fatalf("tool %s has no fail-closed governance manifest", definition.Name)
-		}
-		delete(wantTools, definition.Name)
+	if err := runtime.validateSkillTools(context.Background(), doc); err != nil {
+		t.Fatal(err)
 	}
-	if len(wantTools) != 0 {
-		t.Fatalf("external-apps missing tools: %#v", wantTools)
+	doc.Metadata.References = append(doc.Metadata.References, SkillReference{Path: "references/missing.md"})
+	if runtime.validateSkillReferences(doc) == nil {
+		t.Fatal("missing reference accepted")
+	}
+	doc.Tools = []SkillToolDefinition{{Name: "read_item", ProviderType: tools.ToolProviderTypeBuiltin, ProviderID: "missing-provider"}}
+	if runtime.validateSkillTools(context.Background(), doc) == nil {
+		t.Fatal("missing ordinary tool accepted")
 	}
 }

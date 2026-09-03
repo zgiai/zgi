@@ -54,6 +54,50 @@ func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *appr
 	if err != nil {
 		return fmt.Errorf("load workflow run for approval resume: %w", err)
 	}
+	return h.resumeReadyWorkflowContinuation(ctx, workflowService, run, onEvent)
+}
+
+func (h *WorkflowHandler) ResumeConnectorWorkflow(ctx context.Context, workflowRunID string) error {
+	return h.resumeConnectorWorkflow(ctx, workflowRunID, nil)
+}
+
+func (h *WorkflowHandler) ResumeConnectorWorkflowStream(
+	ctx context.Context,
+	workflowRunID string,
+	onEvent func(string, map[string]interface{}) error,
+) error {
+	return h.resumeConnectorWorkflow(ctx, workflowRunID, onEvent)
+}
+
+func (h *WorkflowHandler) resumeConnectorWorkflow(
+	ctx context.Context,
+	workflowRunID string,
+	onEvent func(string, map[string]interface{}) error,
+) error {
+	workflowService, ok := h.workflowService.(*WorkflowService)
+	if !ok || workflowService == nil || workflowService.workflowRunLogRepo == nil {
+		return fmt.Errorf("workflow service is not available")
+	}
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return fmt.Errorf("workflow_run_id is required")
+	}
+	run, err := workflowService.workflowRunLogRepo.GetByID(ctx, workflowRunID)
+	if err != nil {
+		return fmt.Errorf("load workflow run for Connector resume: %w", err)
+	}
+	return h.resumeReadyWorkflowContinuation(ctx, workflowService, run, onEvent)
+}
+
+func (h *WorkflowHandler) resumeReadyWorkflowContinuation(
+	ctx context.Context,
+	workflowService *WorkflowService,
+	run *WorkflowRunLog,
+	onEvent func(string, map[string]interface{}) error,
+) error {
+	if workflowService == nil || run == nil {
+		return fmt.Errorf("workflow service is not available")
+	}
 
 	pauseService := workflowpause.NewService(database.GetDB())
 	pauseRecord, _, pauseState, err := pauseService.GetActiveByWorkflowRunID(ctx, run.ID)

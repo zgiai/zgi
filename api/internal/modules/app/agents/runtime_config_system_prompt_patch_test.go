@@ -82,6 +82,9 @@ func TestUpdateAgentConfigWithSystemPromptPatchCASAppendsLockedPrompt(t *testing
 		WithArgs(agentID, agentbindings.ConsumerTypeAgent, agentbindings.ScopeDraft).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(`UPDATE "agents_configs" SET`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND consumer_type = \$2 AND binding_scope = \$3\).*published_version_uuid IS NULL`).
+		WithArgs(agentID, agentbindings.ConsumerTypeAgent, agentbindings.ScopeDraft).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(`DELETE FROM "agent_resource_bindings" WHERE`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()

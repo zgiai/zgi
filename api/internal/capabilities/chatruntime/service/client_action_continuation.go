@@ -14,6 +14,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -34,6 +35,8 @@ type ClientActionContinuation struct {
 	Message      *runtimemodel.Message
 	Event        map[string]interface{}
 }
+
+type configuredClientActionContinuationOptions struct{}
 
 func (s *service) persistClientActionPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
 	metadata, _ := s.persistClientActionPendingResult(ctx, prepared, payload, usage)
@@ -65,6 +68,8 @@ func (s *service) persistClientActionPendingResult(ctx context.Context, prepared
 		"label_key":           pendingPayload["label_key"],
 		"route_kind":          pendingPayload["route_kind"],
 		"reason":              pendingPayload["reason"],
+		"confirmation":        pendingPayload["confirmation"],
+		"result":              pendingPayload["result"],
 		"continuation_policy": pendingPayload["continuation_policy"],
 		"blocking":            pendingPayload["blocking"],
 		"original_query":      prepared.Message.Query,
@@ -98,6 +103,51 @@ func (s *service) RunClientActionContinuationStream(
 	req runtimedto.ClientActionResultRequest,
 	onEvent func(StreamEvent) error,
 ) (*ChatResult, error) {
+	return s.RunConfiguredClientActionContinuationStream(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		RunConfig{BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat},
+		conversationID,
+		messageID,
+		actionID,
+		req,
+		onEvent,
+	)
+}
+
+// RunConfiguredClientActionContinuationStream resumes the exact caller that
+// owns the waiting message. Connector confirmations deliberately do not use
+// this replay path; they resume only through the opaque receipt endpoint.
+func (s *service) RunConfiguredClientActionContinuationStream(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	config RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	actionID string,
+	req runtimedto.ClientActionResultRequest,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
+	return s.runConfiguredClientActionContinuationStream(
+		ctx, scope, caller, config, conversationID, messageID, actionID, req,
+		configuredClientActionContinuationOptions{}, onEvent,
+	)
+}
+
+func (s *service) runConfiguredClientActionContinuationStream(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	config RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	actionID string,
+	req runtimedto.ClientActionResultRequest,
+	options configuredClientActionContinuationOptions,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
 	if onEvent == nil {
 		return nil, fmt.Errorf("%w: event callback is required", ErrInvalidInput)
 	}
@@ -107,17 +157,19 @@ func (s *service) RunClientActionContinuationStream(
 	}
 	req.Status = status
 
-	continuation, err := s.beginClientActionContinuation(ctx, scope, conversationID, messageID, actionID)
+	continuation, err := s.beginConfiguredClientActionContinuation(
+		ctx, scope, caller, conversationID, messageID, actionID,
+	)
 	if err != nil {
 		if IsContinuationAlreadyRunningError(err) {
-			if streamErr := s.StreamConversationEvents(ctx, scope, conversationID, messageID, "", onEvent); streamErr != nil {
+			if streamErr := s.StreamConversationEventsForCaller(ctx, scope, caller, conversationID, messageID, "", onEvent); streamErr != nil {
 				return nil, streamErr
 			}
 			return &ChatResult{Status: runtimemodel.MessageStatusStreaming}, nil
 		}
 		return nil, err
 	}
-	conversation, message, err := s.reloadClientActionContinuationMessage(ctx, scope, conversationID, messageID)
+	conversation, message, err := s.reloadConfiguredClientActionContinuationMessage(ctx, scope, caller, conversationID, messageID)
 	if err != nil {
 		s.failClientActionContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
 		return nil, newFinalizedStreamError(err)
@@ -125,7 +177,9 @@ func (s *service) RunClientActionContinuationStream(
 	continuation.Conversation = conversation
 	continuation.Message = message
 
-	prepared, err := s.prepareClientActionContinuationChat(ctx, scope, continuation, req)
+	prepared, err := s.prepareConfiguredClientActionContinuationChat(
+		ctx, scope, caller, config, continuation, req, options,
+	)
 	if err != nil {
 		s.failClientActionContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
 		return nil, newFinalizedStreamError(err)
@@ -151,7 +205,6 @@ func (s *service) RunClientActionContinuationStream(
 	if err := timeline.RecordEvent(streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req)); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
 	}
-
 	var answer string
 	var usage *adapter.Usage
 	answer, usage, err = s.runPreparedToolStream(runCtx, persistCtx, prepared, nil, onEvent)
@@ -246,6 +299,23 @@ func clientActionRequiresModelContinuation(payload map[string]interface{}) bool 
 }
 
 func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
+	return s.beginConfiguredClientActionContinuation(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		conversationID,
+		messageID,
+		actionID,
+	)
+}
+
+func (s *service) beginConfiguredClientActionContinuation(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	conversationID, messageID uuid.UUID,
+	actionID string,
+) (*ClientActionContinuation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -253,7 +323,7 @@ func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope
 	if actionID == "" {
 		return nil, fmt.Errorf("%w: client action_id is required", ErrInvalidInput)
 	}
-	conversation, err := s.getConversation(ctx, scope, conversationID)
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -270,6 +340,9 @@ func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope
 	event, ok := clientActionEventFromMetadata(message.Metadata, actionID)
 	if !ok {
 		return nil, fmt.Errorf("%w: client action event not found", ErrNotFound)
+	}
+	if isConnectorRuntimeConfirmationClientAction(event) {
+		return nil, fmt.Errorf("%w: Connector confirmations require the one-shot confirmation endpoint", ErrInvalidInput)
 	}
 	if message.Status == runtimemodel.MessageStatusStreaming {
 		return nil, newContinuationAlreadyRunningError("client action continuation is already running; reconnect to the active stream instead of retrying the action")
@@ -322,8 +395,30 @@ func isResolvedClientActionEvent(event map[string]interface{}) bool {
 	return status != clientActionStatusWaiting && status != runtimemodel.MessageStatusWaitingClientAction
 }
 
+func isConnectorRuntimeConfirmationClientAction(event map[string]interface{}) bool {
+	return strings.EqualFold(
+		strings.TrimSpace(stringFromAny(event["action_type"])),
+		"connector_runtime_confirmation",
+	)
+}
+
 func (s *service) reloadClientActionContinuationMessage(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
-	conversation, err := s.getConversation(ctx, scope, conversationID)
+	return s.reloadConfiguredClientActionContinuationMessage(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		conversationID,
+		messageID,
+	)
+}
+
+func (s *service) reloadConfiguredClientActionContinuationMessage(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	conversationID, messageID uuid.UUID,
+) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -338,6 +433,26 @@ func (s *service) reloadClientActionContinuationMessage(ctx context.Context, sco
 }
 
 func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope Scope, continuation *ClientActionContinuation, req runtimedto.ClientActionResultRequest) (*PreparedChat, error) {
+	return s.prepareConfiguredClientActionContinuationChat(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		RunConfig{BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat},
+		continuation,
+		req,
+		configuredClientActionContinuationOptions{},
+	)
+}
+
+func (s *service) prepareConfiguredClientActionContinuationChat(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	config RunConfig,
+	continuation *ClientActionContinuation,
+	req runtimedto.ClientActionResultRequest,
+	options configuredClientActionContinuationOptions,
+) (*PreparedChat, error) {
 	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil {
 		return nil, fmt.Errorf("%w: client action continuation is required", ErrInvalidInput)
 	}
@@ -345,12 +460,11 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 		return nil, err
 	}
 	message := continuation.Message
-	caller := Caller{Type: runtimemodel.ConversationCallerAIChat}
-	config, err := s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, RunConfig{
-		BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat,
-	})
-	if err != nil {
-		return nil, err
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+		if normalizeCallerID(caller.ID) == nil {
+			return nil, fmt.Errorf("%w: Agent caller is required", ErrInvalidInput)
+		}
+	} else {
 	}
 	parts, err := normalizeRegenerateRequest(runtimedto.RegenerateMessageRequest{
 		Surface:          req.Surface,
@@ -396,7 +510,8 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
 	appendCurrentTurnAgentTranscript(llmRequest, message)
-	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(clientActionContinuationMessage(message, continuation.Event, req), parts.ExecutionMode))
+	continuationMessage := clientActionContinuationMessage(message, continuation.Event, req)
+	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(continuationMessage, parts.ExecutionMode))
 	prepared.LLMRequest = llmRequest
 	prepared.contextBudget = contextResult
 	return prepared, nil
@@ -951,6 +1066,11 @@ func normalizeClientActionResultStatus(status string) (string, error) {
 func (s *service) failClientActionContinuation(ctx context.Context, continuation *ClientActionContinuation, cause error, onEvent func(StreamEvent) error) {
 	if continuation == nil || continuation.Conversation == nil || continuation.Message == nil || cause == nil {
 		return
+	}
+	if s != nil && s.repos != nil && s.repos.Message != nil && continuation.Message.Metadata != nil {
+		if err := s.repos.Message.UpdateMetadataAnyStatus(ctx, continuation.Message.ID, continuation.Message.Metadata); err != nil {
+			logger.WarnContext(ctx, "failed to persist client action continuation metadata before terminal error", "message_id", continuation.Message.ID.String(), err)
+		}
 	}
 	prepared := &PreparedChat{
 		Conversation: continuation.Conversation,

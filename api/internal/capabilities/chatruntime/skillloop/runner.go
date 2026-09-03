@@ -48,7 +48,7 @@ const (
 	userInputContinuationReplan                  = "replan_after_user_input"
 	restoredSkillInstructionsTotalBudgetChars    = 16000
 	restoredSkillInstructionsPerSkillBudgetChars = 10000
-	providerConfirmedOutcomeRecoveryReason       = "provider_confirmed_outcomes_recovered"
+	connectorOutcomeRecoveryReason               = "connector_outcomes_recovered"
 )
 
 type recoverableFailureBudgetClass string
@@ -266,8 +266,8 @@ func (r *Runner) completeSkillLoopSafetyTermination(
 	round int,
 ) (string, *adapter.Usage, error) {
 	runtimeState := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
-	if providerConfirmedRequiredOutcomesSatisfied(runtimeState) {
-		return r.completeProviderConfirmedOutcomeSuccess(
+	if connectorRequiredOutcomesSatisfied(runtimeState) {
+		return r.completeConnectorOutcomeSuccess(
 			ctx,
 			req,
 			prepared,
@@ -290,7 +290,7 @@ func (r *Runner) completeSkillLoopSafetyTermination(
 	)
 }
 
-func (r *Runner) completeProviderConfirmedOutcomeSuccess(
+func (r *Runner) completeConnectorOutcomeSuccess(
 	ctx context.Context,
 	req RunRequest,
 	prepared *PreparedChat,
@@ -306,14 +306,14 @@ func (r *Runner) completeProviderConfirmedOutcomeSuccess(
 		if encoded, err := json.Marshal(evidence); err == nil {
 			request.Messages = append(request.Messages, adapter.Message{
 				Role:    "system",
-				Content: "Authoritative provider-confirmed completion evidence JSON:\n" + string(encoded),
+				Content: "Authoritative native Connector completion evidence JSON:\n" + string(encoded),
 			})
 		}
 	}
 	request.Messages = append(request.Messages, adapter.Message{
 		Role: "system",
 		Content: strings.Join([]string{
-			"The runtime has verified that every required external outcome is supported by an exact provider-confirmed execution.",
+			"The runtime has verified that every required external outcome is supported by an exact native Connector execution.",
 			"The loop stopped only because later planning or bookkeeping could not make further progress; that internal failure does not undo the completed provider operation.",
 			"Write the normal final user-facing answer from the successful tool results already present in this conversation.",
 			"Report only results supported by those tool results. Do not mention planning, bookkeeping, safety limits, schemas, or this recovery instruction.",
@@ -341,7 +341,7 @@ func (r *Runner) completeProviderConfirmedOutcomeSuccess(
 	}
 	answer := strings.TrimSpace(terminalOnlyAnswerCandidate(result.message))
 	if answer == "" {
-		return "", result.usage, terminalFinalAnswerUnavailableError(errors.New("provider-confirmed completion summary was empty"))
+		return "", result.usage, terminalFinalAnswerUnavailableError(errors.New("native Connector completion summary was empty"))
 	}
 
 	trace := skills.SkillTrace{
@@ -350,11 +350,11 @@ func (r *Runner) completeProviderConfirmedOutcomeSuccess(
 		Message: answer,
 		Status:  "success",
 		Arguments: map[string]interface{}{
-			"completion_reason": providerConfirmedOutcomeRecoveryReason,
+			"completion_reason": connectorOutcomeRecoveryReason,
 			"round":             round,
 		},
 		Result: map[string]interface{}{
-			"source": "provider_confirmed_outcome_recovery",
+			"source": "connector_outcome_recovery",
 		},
 	}
 	traces = append(traces, trace)
@@ -366,114 +366,42 @@ func (r *Runner) completeProviderConfirmedOutcomeSuccess(
 	if req.OnTerminalCompletion != nil {
 		req.OnTerminalCompletion(TerminalCompletionResult{
 			Status:           "pass",
-			Source:           "provider_confirmed_outcome_recovery",
+			Source:           "connector_outcome_recovery",
 			Reason:           strings.TrimSpace(stopReason),
-			CompletionReason: providerConfirmedOutcomeRecoveryReason,
+			CompletionReason: connectorOutcomeRecoveryReason,
 		})
 	}
 	return answer, result.usage, nil
 }
 
-func providerConfirmedRequiredOutcomesSatisfied(runtimeState map[string]interface{}) bool {
-	if terminalStateGuardPendingProtocolBlocker(runtimeState) != "" {
+func connectorRequiredOutcomesSatisfied(runtimeState map[string]interface{}) bool {
+	if terminalStateGuardPendingProtocolBlocker(runtimeState) != "" || connectorTerminalStateDecision(runtimeState, "") != nil {
 		return false
 	}
 	plan := evidenceMapFromAny(runtimeState["operation_plan"])
-	phases := evidenceMapsFromAny(plan["phases"])
-	if len(phases) == 0 {
-		return false
-	}
-
-	confirmedExternalPhase := false
-	confirmedPhaseIDs := map[string]struct{}{}
-	outcomes := evidenceMapsFromAny(plan["outcomes"])
-	for _, phase := range phases {
-		if !operationPlanPhaseRequiredByServer(phase, runtimeState) {
-			continue
-		}
-		phaseID := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
-		if _, external := projectedExternalActionKeyFromExpected(evidenceMapFromAny(phase["expected_action"])); external {
-			if !providerConfirmedExternalPhaseSatisfied(phase, runtimeState) {
+	native := false
+	for _, phase := range evidenceMapsFromAny(plan["phases"]) {
+		if len(connectorPhaseOperation(phase)) > 0 {
+			proof, ok := connectorPhaseEvidence(phase, runtimeState)
+			if !ok || proof.Status != "successful" {
 				return false
 			}
-			confirmedExternalPhase = true
-			confirmedPhaseIDs[phaseID] = struct{}{}
+			native = true
 			continue
 		}
-		status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(phase["status"])))
-		if status == "completed" {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(phase["completion_mode"])), "final_answer") ||
-			(status != "pending" && status != "in_progress" && status != "running") {
+		if operationPlanPhaseRequiredByServer(phase, runtimeState) && phase["status"] != "completed" && !operationPlanPhaseServerClassifiedNonTool(phase, runtimeState) {
 			return false
 		}
 	}
-	for _, outcome := range outcomes {
+	for _, outcome := range evidenceMapsFromAny(plan["outcomes"]) {
 		if required, exists := outcome["required"].(bool); exists && !required {
 			continue
 		}
-		status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(outcome["status"])))
-		if status == "completed" ||
-			(strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(outcome["verification_mode"])), "final_answer") &&
-				(status == "pending" || status == "in_progress" || status == "running")) {
-			continue
-		}
-		satisfiedByConfirmedPhase := false
-		outcomeID := strings.TrimSpace(evidenceStringFromAny(outcome["id"]))
-		for _, phase := range phases {
-			if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(phase["outcome_id"])), outcomeID) {
-				continue
-			}
-			_, satisfiedByConfirmedPhase = confirmedPhaseIDs[strings.TrimSpace(evidenceStringFromAny(phase["id"]))]
-			if satisfiedByConfirmedPhase {
-				break
-			}
-		}
-		if !satisfiedByConfirmedPhase {
+		if outcome["status"] != "completed" && outcome["verification_mode"] != "final_answer" {
 			return false
 		}
 	}
-	return confirmedExternalPhase
-}
-
-func providerConfirmedExternalPhaseSatisfied(phase map[string]interface{}, runtimeState map[string]interface{}) bool {
-	expected := evidenceMapFromAny(phase["expected_action"])
-	actionKey, external := projectedExternalActionKeyFromExpected(expected)
-	if !external || actionKey == "" || projectedExpectedActionServerBindingIssue(expected, runtimeState) != "" {
-		return false
-	}
-	phaseID := strings.TrimSpace(evidenceStringFromAny(phase["id"]))
-	instance := terminalStateGuardExternalGuideInstance{
-		actionKey: actionKey,
-		targetKey: terminalStateGuardExpectedActionTargetKey(expected),
-		pending: terminalStateGuardPendingExternalAction{
-			PlanPhaseID: phaseID,
-			LedgerEpoch: strings.TrimSpace(evidenceStringFromAny(phase[operationPlanServerProjectedLedgerEpochKey])),
-		},
-	}
-	confirmed := false
-	matched := false
-	for sequence, invocation := range terminalStateGuardExternalInvocations(runtimeState) {
-		if !terminalStateGuardInvocationIsExecutionEvidence(invocation) ||
-			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), skills.SkillExternalApps) ||
-			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])), "execute_action") {
-			continue
-		}
-		attempt := terminalStateGuardExternalExecutionAttempt{
-			sequence:    sequence + 1,
-			actionKey:   terminalStateGuardExternalActionKey(invocation),
-			planPhaseID: terminalStateGuardExternalPlanPhaseID(invocation),
-			targetKey:   terminalStateGuardExternalActionTargetKey(invocation),
-			ledgerEpoch: terminalStateGuardExternalLedgerEpoch(invocation),
-			confirmed:   terminalStateGuardExternalActionProviderConfirmed(invocation),
-		}
-		if terminalStateGuardExternalAttemptMatchesGuide(attempt, instance) {
-			matched = true
-			confirmed = attempt.confirmed
-		}
-	}
-	return matched && confirmed
+	return native
 }
 
 type skillStepResult struct {
@@ -490,6 +418,7 @@ type skillStepResult struct {
 	pendingQuestion     map[string]interface{}
 	pendingGovernance   map[string]interface{}
 	pendingClientAction map[string]interface{}
+	pendingConnector    map[string]interface{}
 	pendingUserInput    map[string]interface{}
 	stopBusinessLoop    bool
 	fatalErr            error
@@ -655,7 +584,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 		} else {
 			var preloadErr error
-			loadedSkills, preloadErr = r.preloadNativeSkills(ctx, prepared, resolved, nativeToolSet, &traces)
+			loadedSkills, preloadErr = r.preloadNativeSkills(ctx, prepared, resolved, nativeToolSet, &traces, req.ExecutionContext)
 			if preloadErr != nil {
 				return "", nil, preloadErr
 			}
@@ -677,8 +606,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	retryFailureBudgets := newRetryFailureBudgetState()
 	failedToolCallAttemptCounts := map[string]int{}
 	emptyFinalAnswerRetryCount := 0
-	externalActionCompletionRetryCounts := map[string]int{}
-	projectedPlanLedgerRetryCount := 0
 	skillToolCallCounts := map[string]int{}
 	successfulToolCalls := []SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
@@ -761,7 +688,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			roundRuntimeState = runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			terminalSubmissionAllowed = terminalStateGuardCanStream(roundRuntimeState)
 		}
-		providerConfirmedOutcomesComplete := providerConfirmedRequiredOutcomesSatisfied(roundRuntimeState)
+		connectorOutcomesComplete := connectorRequiredOutcomesSatisfied(roundRuntimeState)
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
@@ -773,7 +700,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Tools = appendContextArtifactTool(planningReq.Tools, r.ContextManager != nil)
 		allowPlanUpdate := planRevisionRequired || operationPlanModelRevisionRequired(req, roundRuntimeState)
 		allowIntermediateAnswer := !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState)
-		if providerConfirmedOutcomesComplete {
+		if connectorOutcomesComplete {
 			planningReq.Tools = controlToolsForRound(
 				planningReq.Tools,
 				false,
@@ -899,51 +826,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			emptyFinalAnswerRetryCount = 0
 			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
-			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
-				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
-					terminalStateGuardRecord(req, guard)
-					retryFailureBudgets.recordStandaloneFailure(
-						retryFailureTerminalProtocol,
-						"protocol",
-						terminalProtocolRetryTrace(guard),
-					)
-					if class, metrics, reached := retryFailureBudgets.limitReached(); reached {
-						return completeRetryFailureLimit(class, metrics, round)
-					}
-					projectedPlanLedgerRetryCount++
-					messages = append(messages,
-						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
-						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
-					)
-					continue
-				}
-				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, text)
-			}
-			if guard.Path != terminalStateGuardAccepted &&
-				terminalStateGuardRequiresExternalExecutionRetry(guard) {
-				if !req.TerminalOnly &&
-					terminalStateGuardCanRetryPendingExternalAction(
-						guard.PendingExternalAction,
-						externalActionCompletionRetryCounts,
-					) {
-					terminalStateGuardRecord(req, guard)
-					retryFailureBudgets.recordStandaloneFailure(
-						retryFailureTerminalProtocol,
-						"protocol",
-						terminalProtocolRetryTrace(guard),
-					)
-					if class, metrics, reached := retryFailureBudgets.limitReached(); reached {
-						return completeRetryFailureLimit(class, metrics, round)
-					}
-					externalActionCompletionRetryCounts[guard.PendingExternalAction.RetryKey]++
-					messages = append(messages,
-						adapter.Message{Role: "assistant", Content: strings.TrimSpace(text)},
-						adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage(guard.PendingExternalAction)},
-					)
-					continue
-				}
-				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, text)
-			}
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
 				terminalStateGuardNotify(req, guard)
@@ -977,51 +859,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 			submission.streamed = submission.streamed || planningResult.answerStreamed
 			guard := terminalStateGuardEvaluate(roundRuntimeState, submission.answer)
-			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresProjectedPlanLedgerRetry(guard) {
-				if !req.TerminalOnly && projectedPlanLedgerRetryCount < 1 {
-					terminalStateGuardRecord(req, guard)
-					retryFailureBudgets.recordStandaloneFailure(
-						retryFailureTerminalProtocol,
-						"protocol",
-						terminalProtocolRetryTrace(guard),
-					)
-					if class, metrics, reached := retryFailureBudgets.limitReached(); reached {
-						return completeRetryFailureLimit(class, metrics, round)
-					}
-					projectedPlanLedgerRetryCount++
-					messages = append(messages,
-						adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
-						adapter.Message{Role: "system", Content: terminalStateGuardProjectedPlanLedgerRetryMessage()},
-					)
-					continue
-				}
-				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, submission.answer)
-			}
-			if guard.Path != terminalStateGuardAccepted &&
-				terminalStateGuardRequiresExternalExecutionRetry(guard) &&
-				terminalStateGuardCanRetryPendingExternalAction(
-					guard.PendingExternalAction,
-					externalActionCompletionRetryCounts,
-				) {
-				terminalStateGuardRecord(req, guard)
-					retryFailureBudgets.recordStandaloneFailure(
-					retryFailureTerminalProtocol,
-					"protocol",
-					terminalProtocolRetryTrace(guard),
-				)
-				if class, metrics, reached := retryFailureBudgets.limitReached(); reached {
-						return completeRetryFailureLimit(class, metrics, round)
-					}
-				externalActionCompletionRetryCounts[guard.PendingExternalAction.RetryKey]++
-				messages = append(messages,
-					adapter.Message{Role: "assistant", Content: strings.TrimSpace(submission.answer)},
-					adapter.Message{Role: "system", Content: terminalStateGuardExternalExecutionRetryMessage(guard.PendingExternalAction)},
-				)
-				continue
-			}
-			if guard.Path != terminalStateGuardAccepted && terminalStateGuardRequiresExternalExecutionRetry(guard) {
-				guard = terminalStateGuardSafeExternalNonExecutionDecision(roundRuntimeState, submission.answer)
-			}
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
 				guardErr := terminalStateGuardError(guard)
@@ -1136,7 +973,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		stopBusinessLoop := false
 		var stopBusinessLoopTrace skills.SkillTrace
 		roundDeferredSystemMessages := []adapter.Message{}
-		claimedProjectedRootPhaseIDs := map[string]struct{}{}
 		for callIndex, call := range toolCalls {
 			stepCount++
 			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
@@ -1188,46 +1024,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				if reason := failedToolCallReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
 					stopAfterWarning := failedToolCallAttemptCounts[failedCallKey] >= 2
 					result = repeatedFailedToolCallRecoverableStep(executionCall.ID, callSkillID, callToolName, callToolArgs, reason, stopAfterWarning, resolved)
-				}
-			}
-			if result.trace.Kind == "" && req.NativeAgentLoop && req.CommitProjectedActionBinding != nil {
-				bindingTrace, phaseID := projectedExternalActionAutoBindCall(
-					call,
-					executionCall,
-					nativeToolSet,
-					callEvidence,
-					round+1,
-					claimedProjectedRootPhaseIDs,
-				)
-				if phaseID != "" {
-					if strings.TrimSpace(bindingTrace.Kind) != "" {
-						bindingExpectation := projectedExternalActionAutoBindingTraceSnapshot(bindingTrace)
-						if commitErr := req.CommitProjectedActionBinding(ctx, bindingTrace); commitErr != nil {
-							return answerBuilder.String(), usage, fmt.Errorf("%w: commit failed: %w", ErrProjectedActionBinding, commitErr)
-						}
-						traces = append(traces, bindingTrace)
-						r.recordTrace(traces, bindingTrace)
-						r.logSkillTrace(ctx, prepared, bindingTrace)
-						bindingTrace = bindingExpectation
-					}
-					callEvidence = runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
-					// A successful callback alone is not an execution grant. Re-read the
-					// runtime snapshot and require the exact server source, fingerprint,
-					// epoch, connection, Action identity, and target generated for this
-					// call before exposing the binding to the Provider path.
-					if !projectedExternalActionCommittedBindingMatchesCall(
-						call,
-						executionCall,
-						nativeToolSet,
-						callEvidence,
-						phaseID,
-						bindingTrace,
-					) {
-						return answerBuilder.String(), usage, fmt.Errorf("%w: committed runtime snapshot did not match phase %q", ErrProjectedActionBinding, phaseID)
-					}
-					call = projectedExternalActionInjectPlanPhase(call, phaseID)
-					executionCall = nativeExecutionCall(call, nativeToolSet)
-					callSkillID, callToolName, callToolArgs, failedCallKey = skillToolCallIdentityForCall(resolved, loadedSkills, executionCall)
 				}
 			}
 			callEvidence[runtimeStateAllowPlanUpdateKey] = req.NativeAgentLoop || planRevisionRequired || operationPlanModelRevisionRequired(req, callEvidence)
@@ -1349,10 +1145,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
 					strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
 					successfulToolCalls = append(successfulToolCalls, SkillToolCallRef{
-						SkillID:   strings.TrimSpace(result.trace.SkillID),
-						ToolName:  strings.TrimSpace(result.trace.ToolName),
-						Arguments: copyStringAnyMap(result.trace.Arguments),
-						Result:    copyStringAnyMap(result.toolResult),
+						ConnectorNative: result.trace.ConnectorNative,
+						SkillID:         strings.TrimSpace(result.trace.SkillID),
+						ToolName:        strings.TrimSpace(result.trace.ToolName),
+						Arguments:       copyStringAnyMap(result.trace.Arguments),
+						Result:          copyStringAnyMap(result.toolResult),
 					})
 				}
 			}
@@ -1376,6 +1173,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					return answerBuilder.String(), usage, checkpointErr
 				}
 				return answerBuilder.String(), usage, &ToolGovernancePendingError{Payload: result.pendingGovernance}
+			}
+			if result.pendingConnector != nil {
+				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for Connector confirmation before this sibling tool could run")
+				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
+					return answerBuilder.String(), usage, checkpointErr
+				}
+				return answerBuilder.String(), usage, &ConnectorConfirmationPendingError{Payload: result.pendingConnector}
 			}
 			if result.pendingClientAction != nil {
 				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for a client action before this sibling tool could run")
@@ -2344,9 +2148,6 @@ func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolNa
 		message += ": " + reason
 	}
 	retryAction := "Do not repeat the identical call. Change the arguments using the validation feedback before retrying."
-	if strings.EqualFold(strings.TrimSpace(skillID), "external-apps") && strings.EqualFold(strings.TrimSpace(toolName), "execute_action") {
-		retryAction = "Call get_action_guide for the selected integration and action, then retry execute_action once with corrected arguments."
-	}
 	if stopBusinessLoop {
 		retryAction = "stop retrying this business tool and explain the incomplete operation truthfully"
 	}

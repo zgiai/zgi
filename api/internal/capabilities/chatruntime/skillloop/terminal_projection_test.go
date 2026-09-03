@@ -4,12 +4,12 @@ import "testing"
 
 func TestTerminalOnlyLatestSuccessfulInvocationUsesExecutionEvidenceOnly(t *testing.T) {
 	execution := map[string]interface{}{
-		"kind": "tool_call", "status": "success", "skill_id": "external-apps", "tool_name": "execute_action",
-		"result": map[string]interface{}{"operation_status": "completed", "provider_success_confirmed": true},
+		"kind": "tool_call", "status": "success", "skill_id": "ordinary-skill", "tool_name": "write_file",
+		"result": map[string]interface{}{"saved": true},
 	}
 	governance := map[string]interface{}{
-		"kind": "tool_governance", "status": "allowed", "skill_id": "external-apps", "tool_name": "execute_action",
-		"result": map[string]interface{}{"operation_status": "completed", "provider_success_confirmed": true},
+		"kind": "tool_governance", "status": "allowed", "skill_id": "ordinary-skill", "tool_name": "write_file",
+		"result": map[string]interface{}{"saved": true},
 	}
 
 	got := terminalOnlyLatestSuccessfulInvocation([]map[string]interface{}{execution, governance})
@@ -23,26 +23,19 @@ func TestTerminalOnlyLatestSuccessfulInvocationUsesExecutionEvidenceOnly(t *test
 
 func TestTerminalOnlyLatestSuccessfulInvocationAcceptsLegacyKind(t *testing.T) {
 	legacy := map[string]interface{}{
-		"status": "success", "skill_id": "external-apps", "tool_name": "execute_action",
-		"result": map[string]interface{}{"operation_status": "completed", "provider_success_confirmed": true},
+		"status": "success", "skill_id": "ordinary-skill", "tool_name": "write_file",
+		"result": map[string]interface{}{"saved": true},
 	}
 	if got := terminalOnlyLatestSuccessfulInvocation([]map[string]interface{}{legacy}); len(got) == 0 {
 		t.Fatal("legacy execution evidence without kind was rejected")
 	}
 }
 
-func TestTerminalOnlyLatestSuccessfulInvocationRejectsUnconfirmedExternalOutcomes(t *testing.T) {
-	for _, operationStatus := range []string{"outcome_unknown", "partially_succeeded", "executing"} {
-		t.Run(operationStatus, func(t *testing.T) {
-			invocation := map[string]interface{}{
-				"kind": "tool_call", "status": "success", "skill_id": "external-apps", "tool_name": "execute_action",
-				"result": map[string]interface{}{
-					"operation_status": operationStatus, "provider_success_confirmed": false,
-				},
-			}
-			if got := terminalOnlyLatestSuccessfulInvocation([]map[string]interface{}{invocation}); len(got) != 0 {
-				t.Fatalf("unconfirmed external outcome was projected as success: %#v", got)
-			}
-		})
+func TestTerminalOnlyLatestSuccessfulInvocationRejectsUnprovenConnectorOutcomes(t *testing.T) {
+	for _, status := range []string{"unknown", "partial", "failed", ""} {
+		invocation := nativeOutcomeRecord(nativeRunnerOperation(), "completed", status)
+		if got := terminalOnlyLatestSuccessfulInvocation([]map[string]interface{}{invocation}); len(got) != 0 {
+			t.Fatalf("unproven outcome %q became success", status)
+		}
 	}
 }

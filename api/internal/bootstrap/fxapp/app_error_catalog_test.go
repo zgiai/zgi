@@ -1,6 +1,7 @@
 package fxapp
 
 import (
+	connectorpreferences "github.com/zgiai/zgi/api/internal/modules/connectors/preferences"
 	"testing"
 
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
@@ -26,6 +27,12 @@ func TestProvideApplicationErrorCatalogComposesDomainDefinitions(t *testing.T) {
 	}
 	if presentation.HTTPStatus != 504 || presentation.Message == "" {
 		t.Fatalf("LLM presentation = %#v", presentation)
+	}
+	for _, definition := range connectorpreferences.CatalogDefinitions() {
+		localized, err := productCatalog.Present(definition.Code, appcatalog.LocaleChineseSimplified, nil)
+		if err != nil || localized.Message != definition.Messages[appcatalog.LocaleChineseSimplified] {
+			t.Fatalf("Connector preference definition missing: %s %v", definition.Code, err)
+		}
 	}
 	musicPresentation, err := productCatalog.Present(
 		musicmodule.AppCodeTaskNotDeletable,

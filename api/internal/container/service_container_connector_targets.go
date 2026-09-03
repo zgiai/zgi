@@ -1,0 +1,154 @@
+package container
+
+import (
+	"context"
+	"strings"
+
+	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	chats "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/execution"
+	workspace "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+)
+
+// Host-specific knowledge stays at the composition root. Connector packages
+// depend only on their own TargetAuthority and TargetAuthorizer ports.
+type connectorTargetAuthority struct{ container *ServiceContainer }
+
+func (c *ServiceContainer) GetConnectorTargetAuthority() *connectorTargetAuthority {
+	if c.connectorTargetAuthority == nil {
+		c.connectorTargetAuthority = &connectorTargetAuthority{container: c}
+	}
+	return c.connectorTargetAuthority
+}
+
+func (authority *connectorTargetAuthority) RequireTargetEdit(ctx context.Context, organizationID, actor uuid.UUID, target bindings.TargetIdentity) error {
+	return authority.authorize(ctx, organizationID, actor, core.TargetRef{Type: target.Type, ID: target.ID, Scope: target.Scope, VersionID: target.VersionID}, true)
+}
+
+func (authority *connectorTargetAuthority) AuthorizeTarget(ctx context.Context, request execution.TargetAuthorizationRequest) error {
+	b, c := request.Binding, request.Connection
+	if request.ActingPrincipalID != request.OwnerAccountID || request.OwnerAccountID == uuid.Nil ||
+		b.OrganizationID != request.OrganizationID || c.OrganizationID != request.OrganizationID || b.OwnerAccountID != request.OwnerAccountID || c.OwnerAccountID != request.OwnerAccountID ||
+		b.ConnectionID != c.ID || b.ConnectorID != c.ConnectorID || !request.OperationID.Valid() {
+		return targetDenied()
+	}
+	if err := authority.authorize(ctx, request.OrganizationID, request.ActingPrincipalID, b.Target, false); err != nil {
+		return err
+	}
+	return authority.verifyHostReference(ctx, request)
+}
+
+func targetDenied() error { return core.NewError(core.ErrorCodeAccessDenied, false, nil) }
+
+func (authority *connectorTargetAuthority) authorize(ctx context.Context, org, actor uuid.UUID, target core.TargetRef, edit bool) error {
+	if authority == nil || authority.container == nil || authority.container.db == nil || ctx == nil || org == uuid.Nil || actor == uuid.Nil {
+		return targetDenied()
+	}
+	id, err := uuid.Parse(target.ID)
+	if err != nil || id == uuid.Nil || id.String() != target.ID {
+		return targetDenied()
+	}
+	if target.Type == core.TargetTypeWorkflow {
+		target.BindingInstanceID = "authority-check"
+	}
+	if target.Validate() != nil || edit && target.EffectiveScope() == core.ScopePublished {
+		return targetDenied()
+	}
+	c := authority.container
+	organizations := c.GetOrganizationService()
+	member, err := organizations.IsOrganizationMember(ctx, org.String(), actor.String())
+	if err != nil || !member {
+		return targetDenied()
+	}
+	if target.Type == core.TargetTypeChat {
+		chat, err := chats.NewConversationRepository(c.db).GetScoped(ctx, id, org, actor)
+		if err != nil || chat == nil || chat.ID != id || chat.OrganizationID != org || chat.AccountID != actor || chat.DeletedAt != nil || chat.CallerType != runtimemodel.ConversationCallerAIChat || chat.ConversationType != runtimemodel.ConversationTypeChat {
+			return targetDenied()
+		}
+		return nil
+	}
+	agentRepository := agents.NewAgentsRepository(c.db)
+	workspaceID := ""
+	permission := workspace.WorkspacePermissionAgentUpdate
+	switch target.Type {
+	case core.TargetTypeAgent:
+		agent, err := agentRepository.GetByID(ctx, id.String())
+		if err != nil || agent == nil || agent.ID != id || agent.DeletedAt != nil || agent.TenantID == uuid.Nil {
+			return targetDenied()
+		}
+		workspaceID = agent.TenantID.String()
+		if target.EffectiveScope() == core.ScopePublished {
+			var version agents.AgentPublishedVersion
+			err := c.db.WithContext(ctx).Where("agent_id = ? AND version_uuid = ? AND deleted_at IS NULL", id, target.VersionID).Take(&version).Error
+			if err != nil || version.VersionUUID.String() != target.VersionID {
+				return targetDenied()
+			}
+			permission = workspace.WorkspacePermissionAgentView
+		}
+		if strings.Contains(strings.ToUpper(agent.AgentsType), "WORKFLOW") || agent.AgentsType == "CONVERSATIONAL_AGENT" {
+			permission = workspace.WorkspacePermissionWorkflowUpdate
+			if !edit {
+				permission = workspace.WorkspacePermissionWorkflowRunDraft
+			}
+			if target.EffectiveScope() == core.ScopePublished {
+				permission = workspace.WorkspacePermissionWorkflowView
+			}
+		}
+	case core.TargetTypeWorkflow:
+		repository := workflow.NewWorkflowRepository(c.db)
+		var row *workflow.Workflow
+		if target.EffectiveScope() == core.ScopePublished {
+			if target.VersionID != target.ID {
+				return targetDenied()
+			}
+			row, err = repository.GetByVersionUUID(ctx, target.VersionID)
+		} else {
+			row, err = repository.GetByID(ctx, target.ID)
+		}
+		if err != nil || row == nil || row.Internal {
+			return targetDenied()
+		}
+		draft := strings.EqualFold(strings.TrimSpace(row.Version), "draft")
+		if draft {
+			if target.EffectiveScope() != core.ScopeDraft || row.ID != target.ID {
+				return targetDenied()
+			}
+		} else {
+			if target.EffectiveScope() != core.ScopePublished || !row.VersionUUID.Valid || row.VersionUUID.UUID != id {
+				return targetDenied()
+			}
+		}
+		workspaceID = row.TenantID
+		agent, err := agentRepository.GetByID(ctx, row.AgentID)
+		if err != nil || agent == nil || agent.DeletedAt != nil || agent.TenantID.String() != workspaceID {
+			return targetDenied()
+		}
+		permission = workspace.WorkspacePermissionWorkflowUpdate
+		if !edit {
+			permission = workspace.WorkspacePermissionWorkflowRunDraft
+			if !draft {
+				permission = workspace.WorkspacePermissionWorkflowView
+			}
+		}
+	default:
+		return targetDenied()
+	}
+	allowed, err := organizations.CheckWorkspaceOrganizationAnyPermission(ctx, org.String(), workspaceID, actor.String(), permission)
+	if err != nil || !allowed {
+		return targetDenied()
+	}
+	return nil
+}
+
+func (authority *connectorTargetAuthority) RequireTargetRead(ctx context.Context, org, actor uuid.UUID, target bindings.TargetIdentity) error {
+	return authority.authorize(ctx, org, actor, core.TargetRef{Type: target.Type, ID: target.ID, Scope: target.Scope, VersionID: target.VersionID}, false)
+}
+
+func (c *ServiceContainer) GetConnectorReferenceService() *bindings.ReferenceService {
+	return bindings.NewReferenceService(c.db, c.GetConnectorTargetAuthority())
+}

@@ -90,6 +90,7 @@ export interface ToolWorkflowOutput {
 
 // Single tool item under a provider entry
 export interface BuiltinToolItem {
+  connector_operation_id?: string;
   // Author of the tool
   author?: string;
   // Tool unique name within provider

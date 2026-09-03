@@ -11,116 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
-	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/integrations/core"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
-
-func TestAgentIntegrationBindingHealthRequiresOrganizationCredentialsAtRuntime(t *testing.T) {
-	tests := []struct {
-		name                   string
-		source                 integrations.ConnectionCredentialSource
-		authMethodID           string
-		actionSupportedAuthIDs []string
-		sharedGrant            bool
-		wantStatus             string
-		wantBound              bool
-	}{
-		{name: "organization", source: integrations.ConnectionCredentialSourceOrganization, sharedGrant: true, wantStatus: agentBindingStatusActive, wantBound: true},
-		{
-			name: "authentication-incompatible organization connection", source: integrations.ConnectionCredentialSourceOrganization,
-			authMethodID: "tenant_app", actionSupportedAuthIDs: []string{"user_oauth"}, sharedGrant: true,
-			wantStatus: agentBindingStatusUnavailable, wantBound: false,
-		},
-		{name: "legacy platform", source: integrations.ConnectionCredentialSourcePlatform, sharedGrant: true, wantStatus: agentBindingStatusUnavailable, wantBound: false},
-		{name: "revoked organization grant", source: integrations.ConnectionCredentialSourceOrganization, wantStatus: agentBindingStatusUnavailable, wantBound: false},
-		{name: "personal account", source: integrations.ConnectionCredentialSourceAccount, wantStatus: agentBindingStatusUnavailable, wantBound: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sqlDB, mock, err := sqlmock.New()
-			if err != nil {
-				t.Fatalf("sqlmock.New() error = %v", err)
-			}
-			t.Cleanup(func() { _ = sqlDB.Close() })
-			db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
-			if err != nil {
-				t.Fatalf("gorm.Open() error = %v", err)
-			}
-			organizationID, workspaceID, connectionID := uuid.New(), uuid.New(), uuid.New()
-			authMethodID := tt.authMethodID
-			if authMethodID == "" {
-				authMethodID = "api_key"
-			}
-			mock.ExpectQuery(regexp.QuoteMeta("SELECT organization_id, integration_id, auth_method_id, credential_source, status, expires_at, deleted_at FROM \"integration_connections\" WHERE id = $1 LIMIT $2")).
-				WithArgs(connectionID.String(), 1).
-				WillReturnRows(sqlmock.NewRows([]string{"organization_id", "integration_id", "auth_method_id", "credential_source", "status", "expires_at", "deleted_at"}).
-					AddRow(organizationID.String(), "github", authMethodID, string(tt.source), string(integrations.ConnectionStatusActive), nil, nil))
-
-			row := agentbindings.Binding{
-				OrganizationID: organizationID, WorkspaceID: workspaceID,
-				BindingType: agentbindings.BindingTypeIntegrationConnection, ResourceID: connectionID.String(), ParentResourceID: "github", AccessMode: "read",
-				Metadata: map[string]interface{}{agentbindings.IntegrationAllowedActionIDsMetadataKey: []string{"github.issue.list"}},
-			}
-			config := dto.AgentConfigResponse{
-				IntegrationBindings:   []dto.AgentIntegrationBinding{{ConnectionID: connectionID.String(), IntegrationID: "github", AccessMode: "read", AllowedActionIDs: []string{"github.issue.list"}}},
-				BindingAuthorizations: []dto.AgentBindingAuthorization{{BindingType: string(agentbindings.BindingTypeIntegrationConnection), ResourceID: connectionID.String(), ParentResourceID: "github", AccessMode: "read", AllowedActionIDs: []string{"github.issue.list"}}},
-			}
-			connections := &agentIntegrationConnectionRepository{items: map[uuid.UUID]*integrations.IntegrationConnection{
-				connectionID: {
-					ID: connectionID, OrganizationID: organizationID, IntegrationID: "github", DriverID: "github-rest", Name: "GitHub",
-					AuthMethodID: authMethodID, CredentialSource: tt.source, Status: integrations.ConnectionStatusActive,
-				},
-			}}
-			grants := &agentIntegrationGrantRepository{}
-			if tt.sharedGrant {
-				grants.grants = []integrations.IntegrationConnectionGrant{{
-					OrganizationID: organizationID, ConnectionID: connectionID,
-					PrincipalType: integrations.ConnectionGrantPrincipalWorkspace, PrincipalID: &workspaceID,
-					AccessMode: integrations.ConnectionGrantAccessRead, AllowedActionIDs: []string{"github.issue.list"}, ResourceConstraints: map[string]any{},
-				}}
-			}
-			service := &agentsService{
-				db: db,
-				integrationActions: explicitAgentIntegrationActionCatalog{
-					integrationID: "github",
-					actions: []integrations.ActionDefinition{{
-						ID:                     "github.issue.list",
-						Effect:                 toolgovernance.EffectRead,
-						SupportedAuthMethodIDs: tt.actionSupportedAuthIDs,
-					}},
-				},
-				integrationConnections: connections,
-				integrationAccess:      agentIntegrationACLService(connections, grants),
-			}
-			status, reason := service.resolveBindingHealthItem(t.Context(), &Agent{TenantID: workspaceID}, uuid.NewString(), &config, row)
-			if status != tt.wantStatus {
-				t.Fatalf("binding status = %q, want %q (reason %q)", status, tt.wantStatus, reason)
-			}
-			config.BindingHealth = dto.AgentBindingHealth{Items: []dto.AgentBindingHealthItem{{
-				BindingType: string(agentbindings.BindingTypeIntegrationConnection), ResourceID: connectionID.String(), ParentResourceID: "github", AccessMode: "read",
-				AllowedActionIDs: []string{"github.issue.list"}, Status: status, Reason: reason,
-			}}}
-			if status == agentBindingStatusActive {
-				config.BindingHealth.ActiveCount = 1
-			} else {
-				config.BindingHealth.UnavailableCount = 1
-			}
-			filtered := filterAgentConfigByBindingHealth(config)
-			runtimeConfig := agentRunConfig("agent-1", "agent.published.v1", filtered, "anonymous")
-			_, bound := runtimeConfig.IntegrationConnectionIDs["github"]
-			if bound != tt.wantBound {
-				t.Fatalf("runtime connection bound = %v, want %v; config = %#v", bound, tt.wantBound, filtered.IntegrationBindings)
-			}
-			if err := mock.ExpectationsWereMet(); err != nil {
-				t.Fatalf("health query expectations: %v", err)
-			}
-		})
-	}
-}
 
 func TestBindingRowsUsePerResourceAuthorizationEvidence(t *testing.T) {
 	workspaceID := uuid.New()
@@ -164,12 +59,12 @@ func TestAgentBindingMutationResourceRefsIncludeRemovedAndAddedResources(t *test
 	organizationID := uuid.New()
 	before := []agentbindings.Binding{{
 		OrganizationID: organizationID,
-		BindingType:    agentbindings.BindingTypeIntegrationConnection,
+		BindingType:    agentbindings.BindingTypeSkill,
 		ResourceID:     "connection-removed",
 	}}
 	after := []agentbindings.Binding{{
 		OrganizationID: organizationID,
-		BindingType:    agentbindings.BindingTypeIntegrationConnection,
+		BindingType:    agentbindings.BindingTypeSkill,
 		ResourceID:     "connection-added",
 	}}
 
@@ -344,7 +239,7 @@ func TestDraftBindingStateDoesNotRepairIndexOnRead(t *testing.T) {
 	}
 	agentID := uuid.New()
 	workspaceID := uuid.New()
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3) AND published_version_uuid IS NULL ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3) AND published_version_uuid IS NULL AND binding_type IN ('skill','knowledge_dataset','database','database_table','workflow') ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`)).
 		WithArgs(agentID, agentbindings.ConsumerTypeAgent, agentbindings.ScopeDraft).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "binding_scope", "organization_id", "workspace_id", "published_version_uuid", "binding_type", "resource_id", "parent_resource_id", "display_name", "access_mode", "authorized_by", "authorized_at", "created_at", "updated_at"}))
 	service := &agentsService{db: db, agentBindings: agentbindings.NewRepositoryWithTokenSecret(db, "test")}
@@ -527,7 +422,7 @@ func TestCreateAgentPublishedVersionRechecksRevisionAfterConfigLock(t *testing.T
 		WithArgs(configID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agents_id", "agent_mode", "created_at", "updated_at"}).
 			AddRow(configID, agentID, `{}`, now, now))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3) AND published_version_uuid IS NULL ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agent_resource_bindings" WHERE (agent_id = $1 AND consumer_type = $2 AND binding_scope = $3) AND published_version_uuid IS NULL AND binding_type IN ('skill','knowledge_dataset','database','database_table','workflow') ORDER BY binding_type ASC, parent_resource_id ASC, resource_id ASC, access_mode ASC`)).
 		WithArgs(agentID, agentbindings.ConsumerTypeAgent, agentbindings.ScopeDraft).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id", "binding_scope", "organization_id", "workspace_id", "published_version_uuid", "binding_type", "resource_id", "parent_resource_id", "display_name", "access_mode", "authorized_by", "authorized_at", "created_at", "updated_at"}))
 	mock.ExpectRollback()

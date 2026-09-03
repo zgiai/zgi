@@ -15,6 +15,10 @@ import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/sk
 import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
 import { presentationProjectionFromMetadata } from '@/components/chat/controllers/aichat/presentation-order';
 import type { AIChatSpeechPlaybackController } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
+import type {
+  ConnectorRuntimeConfirmationCommand,
+  ConnectorRuntimeDecisionResult,
+} from '@/services/types/connector';
 
 interface AIChatMessageListProps {
   messages: AIChatMessage[];
@@ -36,6 +40,12 @@ interface AIChatMessageListProps {
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onConnectorRuntimeDecision?: (
+    conversationId: string,
+    messageId: string,
+    command: ConnectorRuntimeConfirmationCommand,
+    scope?: string
+  ) => Promise<ConnectorRuntimeDecisionResult>;
   onSwitchBranch: (messageId: string) => void;
   onEditStart: (message: AIChatMessage) => void;
   onEditChange: (value: string) => void;
@@ -123,6 +133,7 @@ export function AIChatMessageList({
   onScroll,
   onRegenerate,
   onToolGovernanceDecision,
+  onConnectorRuntimeDecision,
   onSwitchBranch,
   onEditStart,
   onEditChange,
@@ -197,6 +208,17 @@ export function AIChatMessageList({
                 )}
                 onRegenerate={onRegenerate}
                 onToolGovernanceDecision={onToolGovernanceDecision}
+                onConnectorRuntimeDecision={
+                  onConnectorRuntimeDecision
+                    ? (command, scope) =>
+                        onConnectorRuntimeDecision(
+                          message.conversation_id,
+                          message.id,
+                          command,
+                          scope
+                        )
+                    : undefined
+                }
                 branchNavigation={branchNavigationByMessageId.get(message.id)}
                 onSwitchBranch={onSwitchBranch}
                 isEditing={editingMessageId === message.id}

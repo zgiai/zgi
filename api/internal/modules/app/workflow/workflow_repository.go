@@ -621,6 +621,21 @@ func NewWorkflowRunLogRepository(db *gorm.DB) WorkflowRunLogRepository {
 
 // Create creates a new workflow run log
 func (r *workflowRunLogRepository) Create(ctx context.Context, log *WorkflowRunLog) error {
+	if log.Features != nil && *log.Features != "" {
+		var features map[string]json.RawMessage
+		if json.Unmarshal([]byte(*log.Features), &features) != nil || features == nil {
+			return fmt.Errorf("invalid workflow run features")
+		}
+		if _, exists := features["connector_action_instances"]; exists {
+			delete(features, "connector_action_instances")
+			encoded, err := json.Marshal(features)
+			if err != nil {
+				return err
+			}
+			value := string(encoded)
+			log.Features = &value
+		}
+	}
 	return r.db.WithContext(ctx).Create(log).Error
 }
 
@@ -653,7 +668,28 @@ func (r *workflowRunLogRepository) GetByParentInvocationID(ctx context.Context, 
 
 // Update updates an existing workflow run log
 func (r *workflowRunLogRepository) Update(ctx context.Context, log *WorkflowRunLog) error {
-	return r.db.WithContext(ctx).Save(log).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&WorkflowRunLog{}).Where("id = ?", log.ID).Select("*").Omit("id", "features").Updates(log)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		if log.Features == nil {
+			return nil
+		}
+		features := *log.Features
+		if features == "" {
+			features = "{}"
+		}
+		// Run status snapshots may predate a committed Connector action.
+		// Preserve the durable action ledger when saving ordinary features.
+		if tx.Dialector.Name() == "postgres" {
+			return tx.Model(&WorkflowRunLog{}).Where("id = ?", log.ID).UpdateColumn("features", gorm.Expr("((?::jsonb - 'connector_action_instances') || CASE WHEN jsonb_exists(NULLIF(features, '')::jsonb, 'connector_action_instances') THEN jsonb_build_object('connector_action_instances', features::jsonb->'connector_action_instances') ELSE '{}'::jsonb END)::text", features)).Error
+		}
+		return tx.Model(&WorkflowRunLog{}).Where("id = ?", log.ID).UpdateColumn("features", gorm.Expr("json_patch(json_remove(?, '$.connector_action_instances'), CASE WHEN json_type(features, '$.connector_action_instances') IS NOT NULL THEN json_object('connector_action_instances', json_extract(features, '$.connector_action_instances')) ELSE '{}' END)", features)).Error
+	})
 }
 
 // Delete soft deletes a workflow run log by ID

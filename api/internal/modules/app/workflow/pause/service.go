@@ -901,14 +901,15 @@ func runEventPayloadFromModel(event RunEvent) (*RunEventPayload, error) {
 }
 
 type CompleteReasonsParams struct {
-	WorkflowRunID     string
-	PauseID           string
-	ReasonType        string
-	NodeID            string
-	FormID            string
-	SubmissionEventID string
-	TriggerID         string
-	ResumeInputs      map[string]interface{}
+	WorkflowRunID         string
+	PauseID               string
+	ReasonType            string
+	ResumeInteractionType string
+	NodeID                string
+	FormID                string
+	SubmissionEventID     string
+	TriggerID             string
+	ResumeInputs          map[string]interface{}
 }
 
 // CompleteReasons marks the matching reasons as completed and only makes the
@@ -1072,6 +1073,9 @@ func completedReasonResumePayloadTx(
 		for key, value := range eventData {
 			resumeInputs[key] = value
 		}
+	}
+	if strings.TrimSpace(params.ResumeInteractionType) != "" {
+		interactionType = strings.TrimSpace(params.ResumeInteractionType)
 	}
 	resumeInputs["interaction_submissions"] = submissions
 	return triggerID, interactionType, resumeInputs, nil

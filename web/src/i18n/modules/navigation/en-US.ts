@@ -24,6 +24,7 @@ const messages = {
   prompts: 'Prompts',
   skills: 'Skills',
   integrations: 'Connection Center',
+  connectors: 'Connectors',
   dbs: 'Databases',
   files: 'Files',
   chat: 'Chat',

@@ -20,8 +20,8 @@ export interface ToolNodeData {
   provider_type: ProviderType;
   // Provider id, e.g. 'time', 'github'
   provider_id: string;
-  // Explicit shared connection used by connector providers.
-  connection_id?: string;
+  connector?: { binding_id?: string; revision?: number; connection_id: string; connector_id: string; operation_id: string };
+  connector_unavailable_ref?: string;
   // Tool name within the provider, e.g. 'current_time', 'getIssue'
   tool_name: string;
   // Tool parameters with bindings keyed by parameter name
@@ -104,7 +104,7 @@ export const checkValid = (data: ToolNodeData, ctx?: ValidationCtx): ValidationR
   if (!data.tool_name || data.tool_name.trim() === '') {
     errors.push({ code: 'tool.validation.toolRequired' });
   }
-  if (data.provider_type === 'connector' && !data.connection_id?.trim()) {
+  if (data.provider_type === 'connector' && (!data.connector?.connection_id?.trim() || !data.connector.operation_id || Boolean(data.connector_unavailable_ref))) {
     errors.push({ code: 'tool.validation.connectionRequired' });
   }
 

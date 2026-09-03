@@ -13,6 +13,7 @@ import (
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -37,67 +38,6 @@ func (s *service) persistSkillTracesBestEffort(ctx context.Context, prepared *Pr
 		return
 	}
 	_ = s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata)
-}
-
-// commitProjectedActionBinding is the durable execution boundary for a
-// server-generated projected Action ledger binding. The working metadata is
-// deeply cloned so a failed repository write cannot partially mutate the
-// runtime snapshot observed by the current turn. Only a successful write is
-// published back to PreparedChat.
-func (s *service) commitProjectedActionBinding(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace) error {
-	if prepared == nil || prepared.Message == nil {
-		return fmt.Errorf("commit projected Action binding: prepared message is unavailable")
-	}
-	if !skillloop.IsProjectedActionAutoBindingTrace(trace) {
-		return fmt.Errorf("commit projected Action binding: trace is not a server projected Action binding")
-	}
-	if s == nil || s.repos == nil || s.repos.Message == nil {
-		return fmt.Errorf("commit projected Action binding: message repository is unavailable")
-	}
-
-	commitTrace := trace
-	commitTrace.Arguments = cloneProjectedActionBindingMetadata(trace.Arguments)
-	commitTrace.Result = cloneProjectedActionBindingMetadata(trace.Result)
-	metadata := mergeSkillTraceMetadata(cloneProjectedActionBindingMetadata(prepared.Message.Metadata), []skills.SkillTrace{commitTrace})
-	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
-		return fmt.Errorf("commit projected Action binding metadata: %w", err)
-	}
-	prepared.Message.Metadata = metadata
-	return nil
-}
-
-func cloneProjectedActionBindingMetadata(input map[string]interface{}) map[string]interface{} {
-	if input == nil {
-		return nil
-	}
-	out := make(map[string]interface{}, len(input))
-	for key, value := range input {
-		out[key] = cloneProjectedActionBindingMetadataValue(value)
-	}
-	return out
-}
-
-func cloneProjectedActionBindingMetadataValue(value interface{}) interface{} {
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		return cloneProjectedActionBindingMetadata(typed)
-	case []interface{}:
-		out := make([]interface{}, len(typed))
-		for index, item := range typed {
-			out[index] = cloneProjectedActionBindingMetadataValue(item)
-		}
-		return out
-	case []map[string]interface{}:
-		out := make([]map[string]interface{}, len(typed))
-		for index, item := range typed {
-			out[index] = cloneProjectedActionBindingMetadata(item)
-		}
-		return out
-	case []string:
-		return append([]string(nil), typed...)
-	default:
-		return value
-	}
 }
 
 func (s *service) persistGeneratedArtifactBestEffort(ctx context.Context, prepared *PreparedChat, artifact map[string]interface{}) {
@@ -593,8 +533,8 @@ func reconcileOperationPlanPhaseSnapshot(current []map[string]interface{}, next 
 			phase["evidence_refs"] = refs
 		}
 		for _, key := range []string{
-			"outcome_id", "required", "verification_mode", "completion_source", "completed_at", "action_binding_source",
-			operationPlanRuntimeBindingKey, operationPlanServerProjectedEpochKey, operationPlanServerProjectedConnectionBindingKey,
+			"outcome_id", "required", "verification_mode", "completion_source", "completed_at",
+			operationPlanRuntimeBindingKey,
 		} {
 			if _, exists := phase[key]; exists {
 				continue
@@ -605,7 +545,7 @@ func reconcileOperationPlanPhaseSnapshot(current []map[string]interface{}, next 
 		}
 		previousSource := strings.ToLower(strings.TrimSpace(stringFromAny(previous[operationPlanPhaseSourceKey])))
 		switch previousSource {
-		case operationPlanPhaseSourceServerOutcome, operationPlanPhaseSourceServerPreparation:
+		case operationPlanPhaseSourceServerOutcome:
 			// A model snapshot cannot demote or replace an existing server-owned
 			// phase source. The server source remains authoritative across updates.
 			phase[operationPlanPhaseSourceKey] = previousSource
@@ -1201,7 +1141,7 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 }
 
 func clientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
-	metadata := publicExternalActionPayload(copyStringAnyMap(source))
+	metadata := publicToolPayload(copyStringAnyMap(source))
 	if len(metadata) == 0 {
 		return metadata
 	}
@@ -1256,6 +1196,7 @@ func RedactPrivateContextMetadata(source map[string]interface{}) map[string]inte
 	metadata := copyStringAnyMap(source)
 	delete(metadata, agentTranscriptMetadataKey)
 	delete(metadata, agentTranscriptVersionMetadataKey)
+	delete(metadata, dispatch.ActionInstancesMetadataKey)
 	return metadata
 }
 
@@ -2499,6 +2440,17 @@ func skillInvocationsToInterfaceSlice(invocations []map[string]interface{}) []in
 }
 
 func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]interface{} {
+	arguments := trace.Arguments
+	if trace.ConnectorNative {
+		argumentCount := len(trace.Arguments)
+		if trace.Arguments["schema_bound_arguments_redacted"] == true {
+			argumentCount = intValueFromAny(trace.Arguments["argument_count"])
+		}
+		arguments = map[string]interface{}{
+			"schema_bound_arguments_redacted": true,
+			"argument_count":                  argumentCount,
+		}
+	}
 	invocation := map[string]interface{}{
 		"kind":          trace.Kind,
 		"invocation_id": trace.InvocationID,
@@ -2507,28 +2459,31 @@ func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]int
 		"title":         trace.Title,
 		"status":        trace.Status,
 		"duration_ms":   trace.DurationMS,
-		"arguments":     trace.Arguments,
+		"arguments":     arguments,
 		"result":        trace.Result,
 		"message":       trace.Message,
 		"error":         trace.Error,
 		"error_code":    trace.ErrorCode,
 		"runtime_id":    traceRuntimeID(trace, index),
 	}
+	if trace.ConnectorNative {
+		invocation["runtime_source"] = "connector"
+	}
 	if trace.Governance != nil {
 		invocation["governance"] = trace.Governance
 	}
-	if path := firstNonEmptyString(valueFromMap(trace.Arguments, "path"), valueFromMap(trace.Result, "path")); path != "" {
+	if path := firstNonEmptyString(valueFromMap(arguments, "path"), valueFromMap(trace.Result, "path")); path != "" {
 		invocation["path"] = path
 	}
-	if answerID := firstNonEmptyString(valueFromMap(trace.Arguments, "answer_id"), valueFromMap(trace.Result, "answer_id")); answerID != "" {
+	if answerID := firstNonEmptyString(valueFromMap(arguments, "answer_id"), valueFromMap(trace.Result, "answer_id")); answerID != "" {
 		invocation["answer_id"] = answerID
 	}
-	if createdAt := numericValueFromMap(trace.Arguments, "created_at"); createdAt != nil {
+	if createdAt := numericValueFromMap(arguments, "created_at"); createdAt != nil {
 		invocation["created_at"] = createdAt
 	} else if createdAt := numericValueFromMap(trace.Result, "created_at"); createdAt != nil {
 		invocation["created_at"] = createdAt
 	}
-	if createdAtMS := numericValueFromMap(trace.Arguments, "created_at_ms"); createdAtMS != nil {
+	if createdAtMS := numericValueFromMap(arguments, "created_at_ms"); createdAtMS != nil {
 		invocation["created_at_ms"] = createdAtMS
 	} else if createdAtMS := numericValueFromMap(trace.Result, "created_at_ms"); createdAtMS != nil {
 		invocation["created_at_ms"] = createdAtMS

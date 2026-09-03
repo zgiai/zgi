@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"reflect"
 	"strings"
 	"time"
@@ -39,17 +40,11 @@ func operationPlanRecordActionAttempt(plan map[string]interface{}, invocation ma
 				attempt["outcome_id"] = outcomeID
 			}
 		}
-		if ledgerEpoch := strings.TrimSpace(stringFromAny(args[operationPlanServerProjectedEpochKey])); ledgerEpoch != "" {
-			attempt[operationPlanServerProjectedEpochKey] = ledgerEpoch
-		}
-		if fingerprint := strings.TrimSpace(stringFromAny(args[operationPlanServerProjectedBindingKey])); fingerprint != "" {
-			attempt[operationPlanServerProjectedBindingKey] = fingerprint
-		}
-		for _, key := range []string{"integration_id", "action_id", "connection_id"} {
-			if value := strings.TrimSpace(stringFromAny(args[key])); value != "" {
-				attempt[key] = value
-			}
-		}
+	}
+	if proof, native := connectortools.Evidence(invocation); native {
+		attempt["operation"] = proof.Operation
+		attempt["outcome_id"] = proof.OutcomeID.String()
+		attempt["status"] = proof.Status
 	}
 	if message := strings.TrimSpace(firstNonEmptyString(invocation["error"], invocation["message"])); message != "" {
 		attempt["message"] = truncateRunes(message, 240)
@@ -101,6 +96,9 @@ func operationPlanRecordInvocationEffects(plan map[string]interface{}, invocatio
 }
 
 func operationPlanEffectsFromInvocation(plan map[string]interface{}, invocation map[string]interface{}) []map[string]interface{} {
+	if invocation["runtime_source"] == "connector" {
+		return connectorPlanEffects(plan, invocation)
+	}
 	if len(invocation) == 0 {
 		return nil
 	}
@@ -128,25 +126,6 @@ func operationPlanEffectsFromInvocation(plan map[string]interface{}, invocation 
 	}
 
 	switch {
-	case kind == "tool_call" && operationPlanInvocationIsProjectedExternalAction(invocation):
-		match, ok := operationPlanMatchProjectedExternalActionInvocation(plan, invocation)
-		if !ok {
-			return nil
-		}
-		effect := newEffect(operationPlanExternalActionEffectType, "external_action", match.PhaseID)
-		effect["phase_id"] = match.PhaseID
-		effect["integration_id"] = match.IntegrationID
-		effect["action_id"] = match.ActionID
-		effect[operationPlanServerProjectedEpochKey] = match.LedgerEpoch
-		effect[operationPlanServerProjectedBindingKey] = match.BindingFingerprint
-		if match.ConnectionID != "" {
-			effect["connection_id"] = match.ConnectionID
-		}
-		if len(match.TargetArguments) > 0 {
-			effect["target_arguments"] = copyStringAnyMap(match.TargetArguments)
-		}
-		operationPlanEnsureProjectedExternalActionOutcomeAcceptance(plan, match)
-		return []map[string]interface{}{effect}
 	case kind == "client_action" && operationPlanInvocationIsConsoleRouteNavigation(invocation):
 		href := operationPlanInvocationHref(invocation)
 		if href == "" {
@@ -199,51 +178,6 @@ func operationPlanEffectsFromInvocation(plan map[string]interface{}, invocation 
 		return []map[string]interface{}{effect}
 	default:
 		return nil
-	}
-}
-
-func operationPlanEnsureProjectedExternalActionOutcomeAcceptance(plan map[string]interface{}, match operationPlanProjectedActionMatch) {
-	if len(plan) == 0 || match.OutcomeID == "" || match.PhaseID == "" {
-		return
-	}
-	outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey])
-	for _, outcome := range outcomes {
-		if strings.TrimSpace(stringFromAny(outcome["id"])) != match.OutcomeID {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(stringFromAny(outcome["verification_mode"]))) {
-		case "", "runtime_effects", "runtime_unverified":
-		default:
-			// Never convert a server-classified final-answer/non-tool outcome into
-			// a runtime-effect outcome merely because an Action referenced it.
-			return
-		}
-		acceptance := copyStringAnyMap(mapFromOperationContext(outcome["acceptance"]))
-		if acceptance == nil {
-			acceptance = map[string]interface{}{}
-		}
-		specs := mapSliceFromAny(acceptance["effects"])
-		alreadyPresent := false
-		for _, spec := range specs {
-			if strings.EqualFold(strings.TrimSpace(stringFromAny(spec["type"])), operationPlanExternalActionEffectType) &&
-				strings.TrimSpace(stringFromAny(spec["resource_id"])) == match.PhaseID {
-				alreadyPresent = true
-				break
-			}
-		}
-		if !alreadyPresent {
-			specs = append(specs, map[string]interface{}{
-				"type":          operationPlanExternalActionEffectType,
-				"resource_type": "external_action",
-				"resource_id":   match.PhaseID,
-			})
-		}
-		acceptance["mode"] = "all"
-		acceptance["effects"] = mapsToInterfaceSlice(specs)
-		outcome["acceptance"] = acceptance
-		outcome["verification_mode"] = "runtime_effects"
-		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
-		return
 	}
 }
 

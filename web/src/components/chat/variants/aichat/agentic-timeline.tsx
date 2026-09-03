@@ -35,14 +35,14 @@ import {
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
 import { isRoutineSkillLoadInvocation } from '@/components/chat/variants/aichat/skill-load-timeline';
-import { getAIChatExternalActionOperationState } from '@/components/chat/variants/aichat/external-action-operation-status';
+
 import {
-  getAIChatExternalActionDisplayName,
-  getAIChatExternalAppDisplayName,
-  getAIChatExternalArgumentDisplayEntries,
-  getAIChatExternalInvocationDisplayName,
-  isAIChatExternalAppsInvocation,
-} from '@/components/chat/variants/aichat/external-app-display';
+  connectorOperationTone,
+  isConnectorOperationInvocation,
+  parseConnectorOperationPresentation,
+} from '@/components/connectors/runtime/connector-operation-presentation';
+import { ConnectorOperationSummary } from '@/components/connectors/runtime/connector-operation-summary';
+
 import {
   formatAIChatTimelineArgumentSummary,
   getAIChatInvocationKindLabel,
@@ -59,7 +59,14 @@ import {
   type ToolGovernancePendingApproval,
 } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import WorkflowRunMonitor from '@/components/chat/ui/workflow-run-monitor';
+import { parseConnectorProgressResult } from '@/components/connectors/runtime/connector-runtime-source';
 import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
+import {
+  ConnectorRuntimeSurface,
+  type parseConnectorRuntimeExecutionResult,
+  submitConnectorRuntimeDecision,
+  type ConnectorRuntimeDecisionHandler,
+} from '@/components/connectors/runtime';
 
 type TimelineTone = 'running' | 'success' | 'warning' | 'error';
 type TimelineDebugLabel = keyof typeof TIMELINE_DEBUG_LABEL_KEYS;
@@ -183,6 +190,7 @@ interface AIChatAgenticTimelineProps {
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onConnectorRuntimeDecision?: ConnectorRuntimeDecisionHandler;
 }
 
 export interface AIChatToolGovernanceDecisionSubmitPayload {
@@ -236,6 +244,11 @@ type TimelineRenderItem =
       key: string;
       item: MarkdownTimelineItem;
       content: string;
+    }
+  | {
+      renderType: 'connector_runtime';
+      key: string;
+      result: NonNullable<ReturnType<typeof parseConnectorRuntimeExecutionResult>>;
     }
   | {
       renderType: 'intermediate_answer';
@@ -297,6 +310,8 @@ interface ToolGovernanceDecisionViewModel {
 }
 
 function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
+  const connectorTone = connectorOperationTone(invocation);
+  if (connectorTone) return connectorTone;
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
   if (invocation.kind === 'guardrail') return 'success';
   if (
@@ -306,7 +321,7 @@ function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   ) {
     return 'error';
   }
-  return getAIChatExternalActionOperationState(invocation)?.tone ?? 'success';
+  return 'success';
 }
 
 function getStatusIcon(tone: TimelineTone) {
@@ -847,12 +862,12 @@ function agentBindingUpdateTranslationKey(kind: string) {
 }
 
 function timelineDebugRows(invocation: AIChatSkillInvocation, locale: string, t: WebappTranslator) {
-  const isExternalApp = isAIChatExternalAppsInvocation(invocation);
+  const isConnector = isConnectorOperationInvocation(invocation);
   const fallbackToolName =
     getAIChatSkillToolDisplayName(invocation.skill_id, invocation.tool_name, locale) ||
     t('consoleChat.connectedApps.actions.generic');
-  const toolName = getAIChatExternalInvocationDisplayName(invocation, locale, t, fallbackToolName);
-  const argumentSummary = isExternalApp
+  const toolName = parseConnectorOperationPresentation(invocation)?.title ?? fallbackToolName;
+  const argumentSummary = isConnector
     ? {
         type: 'object',
         keys: Object.keys(invocation.arguments ?? {}).filter(
@@ -863,9 +878,9 @@ function timelineDebugRows(invocation: AIChatSkillInvocation, locale: string, t:
   const reasonCode = invocation.arguments?.reason_code;
   return [
     ['kind', getAIChatInvocationKindLabel(invocation.kind, t)],
-    ['skillId', isExternalApp ? null : invocation.skill_id],
+    ['skillId', isConnector ? null : invocation.skill_id],
     ['toolName', toolName ?? fallbackToolName],
-    ['path', isExternalApp ? null : invocation.path],
+    ['path', isConnector ? null : invocation.path],
     ['duration', getDurationText(invocation.duration_ms, t)],
     ['arguments', argumentSummary],
     [
@@ -940,33 +955,6 @@ function buildSkillTitle(
     return t('consoleChat.skills.agentic.strategyAdjusted');
   }
 
-  const externalOperation = getAIChatExternalActionOperationState(invocation);
-  if (externalOperation) {
-    switch (externalOperation.status) {
-      case 'executing':
-        return t('consoleChat.skills.agentic.externalActionExecuting', {
-          skill: skill.label,
-          tool: toolName,
-        });
-      case 'partially_succeeded':
-        return t('consoleChat.skills.agentic.externalActionPartiallySucceeded', {
-          skill: skill.label,
-          tool: toolName,
-        });
-      case 'outcome_unknown':
-        return t('consoleChat.skills.agentic.externalActionOutcomeUnknown', {
-          skill: skill.label,
-          tool: toolName,
-        });
-      case 'failed_safe':
-      case 'failed':
-        return t('consoleChat.skills.agentic.externalActionFailed', {
-          skill: skill.label,
-          tool: toolName,
-        });
-    }
-  }
-
   if (
     tone === 'success' &&
     normalizeGovernanceToolName(invocation.skill_id) === 'agent-management'
@@ -1019,9 +1007,7 @@ function SkillTimelineRow({
   const [isOpen, setIsOpen] = useState(false);
   const duration = getDurationText(event.item.invocation.duration_ms, t);
   const detail = event.detail ? sanitizeDisplayString(event.detail) : null;
-  const displayResult = isAIChatExternalAppsInvocation(event.item.invocation)
-    ? event.item.invocation.result
-    : sanitizeTimelineResultForDisplay(event.item.invocation.result);
+  const displayResult = sanitizeTimelineResultForDisplay(event.item.invocation.result);
   const rowContent = (
     <>
       <span
@@ -1085,6 +1071,7 @@ function SkillTimelineRow({
             </div>
           ) : null}
           <AIChatSkillResultSummary
+            invocation={event.item.invocation}
             result={displayResult}
             skillId={event.item.invocation.skill_id}
             toolName={event.item.invocation.tool_name}
@@ -1543,70 +1530,6 @@ function governanceFrozenInvocationArguments(
   item: GovernanceTimelineItem
 ): Record<string, unknown> | null {
   return governanceRecord(governanceFrozenInvocation(item)?.arguments);
-}
-
-interface ExternalGovernanceActionContext {
-  integration: string;
-  action: string;
-  connection: string;
-  argumentRows: ReturnType<typeof getAIChatExternalArgumentDisplayEntries>;
-}
-
-function governanceLocalizedText(value: unknown): Record<string, string> | null {
-  const record = governanceRecord(value);
-  if (!record) return null;
-  const entries = Object.entries(record).flatMap(([key, nested]) => {
-    const text = governanceStringValue(nested);
-    return text ? ([[key, text]] as const) : [];
-  });
-  return entries.length > 0 ? Object.fromEntries(entries) : null;
-}
-
-function externalGovernanceActionContext(
-  item: GovernanceTimelineItem,
-  locale: string,
-  t: WebappTranslator
-): ExternalGovernanceActionContext | null {
-  const frozenArguments = governanceFrozenInvocationArguments(item);
-  const integrationId = governanceStringValue(frozenArguments?.integration_id);
-  const actionId = governanceStringValue(frozenArguments?.action_id);
-  if (!integrationId || !actionId) return null;
-
-  const integrationName = governanceStringValue(frozenArguments?.integration_name);
-  const actionName = governanceStringValue(frozenArguments?.action_name);
-  const integrationNameI18n = governanceLocalizedText(frozenArguments?.integration_name_i18n);
-  const actionNameI18n = governanceLocalizedText(frozenArguments?.action_name_i18n);
-  const argumentLabelsI18n = governanceRecord(frozenArguments?.argument_labels_i18n);
-  const argumentValueLabelsI18n = governanceRecord(frozenArguments?.argument_value_labels_i18n);
-  const connectionName = sanitizeDisplayString(
-    governanceStringValue(frozenArguments?.connection_name) ?? ''
-  );
-  const connectionSelection = governanceStringValue(frozenArguments?.connection_selection);
-  const actionArguments = frozenArguments?.arguments;
-
-  return {
-    integration: getAIChatExternalAppDisplayName(
-      integrationId,
-      integrationName ?? integrationId,
-      t,
-      { locale, nameI18n: integrationNameI18n }
-    ),
-    action: getAIChatExternalActionDisplayName(actionId, t, {
-      locale,
-      fallbackName: actionName,
-      nameI18n: actionNameI18n,
-    }),
-    connection:
-      connectionName ??
-      (connectionSelection === 'preferred'
-        ? t('consoleChat.governance.approvalPanel.preferredConnection')
-        : t('consoleChat.governance.approvalPanel.selectedConnection')),
-    argumentRows: getAIChatExternalArgumentDisplayEntries(actionArguments, {
-      locale,
-      argumentLabelsI18n,
-      argumentValueLabelsI18n,
-    }),
-  };
 }
 
 function agentNameFromExecutionResult(item: GovernanceTimelineItem): string | null {
@@ -2649,15 +2572,8 @@ function governanceToolLabel(
   item: GovernanceTimelineItem,
   skillDisplayById: AIChatSkillDisplayMap,
   locale: string,
-  t: WebappTranslator
+  _t: WebappTranslator
 ): string | null {
-  const externalAction = externalGovernanceActionContext(item, locale, t);
-  if (externalAction) {
-    return t('consoleChat.governance.externalToolLabel', {
-      integration: externalAction.integration,
-      action: externalAction.action,
-    });
-  }
   const skillId = governanceEventString(item, ['skill_id']);
   const toolName = governanceEventString(item, ['tool_name', 'tool_id']);
   if (!skillId || !toolName) return null;
@@ -2687,14 +2603,6 @@ function governanceActionSentence(
   locale: string,
   skillDisplayById: AIChatSkillDisplayMap
 ): string {
-  const externalAction = externalGovernanceActionContext(item, locale, t);
-  if (externalAction) {
-    return t('consoleChat.governance.approvalPanel.externalAction', {
-      integration: externalAction.integration,
-      action: externalAction.action,
-      connection: externalAction.connection,
-    });
-  }
   const effect = governanceEventString(item, ['effect'])?.toLowerCase();
   const assetType = governanceEventString(item, ['asset_type'])?.toLowerCase();
   const skillId = governanceEventString(item, ['skill_id'])?.toLowerCase();
@@ -2942,7 +2850,7 @@ function buildToolGovernanceDecisionViewModel(
         ]
       : []
   );
-  const externalAction = externalGovernanceActionContext(item, locale, t);
+
   const details: ToolGovernanceDisplayRow[] = governanceFieldRows(item, t).flatMap(
     ([labelKey, value]) => {
       const formatted = governanceDisplayText(value);
@@ -2957,15 +2865,7 @@ function buildToolGovernanceDecisionViewModel(
         : [];
     }
   );
-  for (const argument of externalAction?.argumentRows ?? []) {
-    const formatted = formatDebugValue(argument.value);
-    if (!formatted) continue;
-    details.push({
-      key: `external-argument-${argument.key}`,
-      label: argument.label ?? t('consoleChat.governance.approvalPanel.otherArgument'),
-      value: formatted,
-    });
-  }
+
   const assets: ToolGovernanceDisplayAsset[] = displayAssets.map((asset, index) => {
     const key = `${governanceStringValue(asset.id) ?? governanceAssetDisplayName(asset, t)}-${index}`;
     return {
@@ -3798,6 +3698,16 @@ function timelineRenderItem(
         content: item.content,
       };
     case 'progress_text':
+      {
+        const connectorRuntimeResult = parseConnectorProgressResult(item);
+        if (connectorRuntimeResult) {
+          return {
+            renderType: 'connector_runtime',
+            key: item.id,
+            result: connectorRuntimeResult,
+          };
+        }
+      }
       if (isTransientProgressItem(item)) {
         return {
           renderType: 'transient_progress',
@@ -3867,6 +3777,7 @@ function TimelineRenderRow({
   showWorkflowFailureDetails,
   enableToolGovernanceApprovals,
   onToolGovernanceDecision,
+  onConnectorRuntimeDecision,
 }: {
   item: TimelineRenderItem;
   skillDisplayById: AIChatSkillDisplayMap;
@@ -3877,15 +3788,25 @@ function TimelineRenderRow({
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onConnectorRuntimeDecision: ConnectorRuntimeDecisionHandler;
 }) {
   switch (item.renderType) {
+    case 'connector_runtime':
+      return (
+        <ConnectorRuntimeSurface
+          result={item.result}
+          onDecision={onConnectorRuntimeDecision}
+          compact
+          className="max-w-3xl"
+        />
+      );
     case 'transient_progress':
       return (
-		<div
-		  className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse"
-		  role="status"
-		  aria-live="polite"
-		>
+        <div
+          className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse"
+          role="status"
+          aria-live="polite"
+        >
           <span>{item.content}</span>
         </div>
       );
@@ -3926,6 +3847,9 @@ function TimelineRenderRow({
         <WorkflowTimelineRow item={item.item} showFailureDetails={showWorkflowFailureDetails} />
       );
     case 'skill':
+      if (isConnectorOperationInvocation(item.view.item.invocation)) {
+        return <ConnectorOperationSummary invocation={item.view.item.invocation} />;
+      }
       return <SkillTimelineRow event={item.view} showDetails={showSkillEventDetails} />;
   }
 }
@@ -4038,6 +3962,7 @@ export function AIChatAgenticTimeline({
   suppressPendingToolGovernanceApprovals = false,
   messageStatus,
   onToolGovernanceDecision,
+  onConnectorRuntimeDecision = submitConnectorRuntimeDecision,
 }: AIChatAgenticTimelineProps) {
   const t = useT('webapp');
   const { locale } = useLocale();
@@ -4186,6 +4111,7 @@ export function AIChatAgenticTimeline({
               showWorkflowFailureDetails={showWorkflowFailureDetails}
               enableToolGovernanceApprovals={enableToolGovernanceApprovals}
               onToolGovernanceDecision={onToolGovernanceDecision}
+              onConnectorRuntimeDecision={onConnectorRuntimeDecision}
             />
           ))}
         </div>

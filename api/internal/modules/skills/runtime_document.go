@@ -102,24 +102,24 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 	}
 	return SkillDocument{
 		Metadata: SkillMetadata{
-			ID:                      normalizeSkillID(id),
-			Source:                  normalizeSkillSource(source),
-			Name:                    strings.TrimSpace(frontmatter.Name),
-			Description:             strings.TrimSpace(frontmatter.Description),
-			WhenToUse:               whenToUse,
-			Display:                 normalizeSkillDisplayWithFallback(frontmatter, whenToUse),
-			Tools:                   append([]string{}, frontmatter.Tools...),
-			RuntimeType:             normalizeSkillRuntimeType(frontmatter.RuntimeType, frontmatter.Tools),
-			MaxCallsPerTurn:         normalizePositive(frontmatter.MaxCallsPerTurn, defaultMaxCallsPerTurn),
-			TimeoutSeconds:          normalizeSkillTimeout(frontmatter.TimeoutSeconds, scriptPresent),
-			References:              references,
-			HasScripts:              scriptPresent,
-			ScriptsSupported:        false,
-			RootPath:                root,
-			SupportedCallers:        normalizeSkillCallers(id, source, frontmatter.SupportedCallers),
-			RequiredConfig:          normalizeSkillRequiredConfig(id, frontmatter.RequiredConfig),
-			DependencyType:          skillDependencyType(frontmatter.IntegrationRequirements),
-			IntegrationRequirements: normalizeSkillIntegrationRequirements(frontmatter.IntegrationRequirements),
+			ID:                    normalizeSkillID(id),
+			Source:                normalizeSkillSource(source),
+			Name:                  strings.TrimSpace(frontmatter.Name),
+			Description:           strings.TrimSpace(frontmatter.Description),
+			WhenToUse:             whenToUse,
+			Display:               normalizeSkillDisplayWithFallback(frontmatter, whenToUse),
+			Tools:                 append([]string{}, frontmatter.Tools...),
+			RuntimeType:           normalizeSkillRuntimeType(frontmatter.RuntimeType, frontmatter.Tools),
+			MaxCallsPerTurn:       normalizePositive(frontmatter.MaxCallsPerTurn, defaultMaxCallsPerTurn),
+			TimeoutSeconds:        normalizeSkillTimeout(frontmatter.TimeoutSeconds, scriptPresent),
+			References:            references,
+			HasScripts:            scriptPresent,
+			ScriptsSupported:      false,
+			RootPath:              root,
+			SupportedCallers:      normalizeSkillCallers(id, source, frontmatter.SupportedCallers),
+			RequiredConfig:        normalizeSkillRequiredConfig(id, frontmatter.RequiredConfig),
+			DependencyType:        skillDependencyType(frontmatter.ConnectorRequirements),
+			ConnectorRequirements: normalizeSkillConnectorRequirements(frontmatter.ConnectorRequirements),
 		},
 		Instructions: strings.TrimSpace(body),
 		Tools:        tools,
@@ -138,6 +138,8 @@ func normalizeToolInvokeFrom(value tools.ToolInvokeFrom) tools.ToolInvokeFrom {
 	switch value {
 	case tools.ToolInvokeFromAgent:
 		return tools.ToolInvokeFromAgent
+	case tools.ToolInvokeFromWorkflow:
+		return tools.ToolInvokeFromWorkflow
 	default:
 		return tools.ToolInvokeFromAIChat
 	}
@@ -215,23 +217,23 @@ func normalizeSkillRequiredConfig(id string, required []string) []string {
 	return out
 }
 
-func skillDependencyType(requirements []SkillIntegrationRequirement) string {
-	if len(normalizeSkillIntegrationRequirements(requirements)) > 0 {
-		return SkillDependencyIntegration
+func skillDependencyType(requirements []SkillConnectorRequirement) string {
+	if len(normalizeSkillConnectorRequirements(requirements)) > 0 {
+		return SkillDependencyConnector
 	}
 	return SkillDependencyStandalone
 }
 
-func normalizeSkillIntegrationRequirements(input []SkillIntegrationRequirement) []SkillIntegrationRequirement {
-	byIntegration := make(map[string]SkillIntegrationRequirement, len(input))
+func normalizeSkillConnectorRequirements(input []SkillConnectorRequirement) []SkillConnectorRequirement {
+	byIntegration := make(map[string]SkillConnectorRequirement, len(input))
 	for _, raw := range input {
-		integrationID := strings.ToLower(strings.TrimSpace(raw.IntegrationID))
+		integrationID := strings.ToLower(strings.TrimSpace(raw.ConnectorID))
 		if integrationID == "" {
 			continue
 		}
 		actionSeen := map[string]struct{}{}
-		actionIDs := make([]string, 0, len(raw.ActionIDs))
-		for _, rawActionID := range raw.ActionIDs {
+		actionIDs := make([]string, 0, len(raw.OperationIDs))
+		for _, rawActionID := range raw.OperationIDs {
 			actionID := strings.ToLower(strings.TrimSpace(rawActionID))
 			if actionID == "" {
 				continue
@@ -243,29 +245,29 @@ func normalizeSkillIntegrationRequirements(input []SkillIntegrationRequirement) 
 			actionIDs = append(actionIDs, actionID)
 		}
 		sort.Strings(actionIDs)
-		requirement := SkillIntegrationRequirement{
-			IntegrationID: integrationID,
-			ActionIDs:     actionIDs,
-			Required:      raw.Required,
+		requirement := SkillConnectorRequirement{
+			ConnectorID:  integrationID,
+			OperationIDs: actionIDs,
+			Required:     raw.Required,
 		}
 		if existing, exists := byIntegration[integrationID]; exists {
 			requirement.Required = requirement.Required || existing.Required
-			for _, actionID := range existing.ActionIDs {
+			for _, actionID := range existing.OperationIDs {
 				if _, exists := actionSeen[actionID]; exists {
 					continue
 				}
 				actionSeen[actionID] = struct{}{}
-				requirement.ActionIDs = append(requirement.ActionIDs, actionID)
+				requirement.OperationIDs = append(requirement.OperationIDs, actionID)
 			}
-			sort.Strings(requirement.ActionIDs)
+			sort.Strings(requirement.OperationIDs)
 		}
 		byIntegration[integrationID] = requirement
 	}
-	out := make([]SkillIntegrationRequirement, 0, len(byIntegration))
+	out := make([]SkillConnectorRequirement, 0, len(byIntegration))
 	for _, requirement := range byIntegration {
 		out = append(out, requirement)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].IntegrationID < out[j].IntegrationID })
+	sort.Slice(out, func(i, j int) bool { return out[i].ConnectorID < out[j].ConnectorID })
 	return out
 }
 
@@ -282,8 +284,32 @@ func parseSkillMarkdown(raw []byte) (SkillFrontmatter, string, error) {
 		return SkillFrontmatter{}, "", fmt.Errorf("unterminated yaml frontmatter")
 	}
 	var frontmatter SkillFrontmatter
+	var fields map[string]interface{}
+	if err := yaml.Unmarshal([]byte(remaining[:end]), &fields); err != nil {
+		return SkillFrontmatter{}, "", err
+	}
+	if _, retired := fields["integration_requirements"]; retired {
+		return SkillFrontmatter{}, "", fmt.Errorf("Connector requirements must use connector_requirements with connector_id and operation_ids")
+	}
 	if err := yaml.Unmarshal([]byte(remaining[:end]), &frontmatter); err != nil {
 		return SkillFrontmatter{}, "", err
+	}
+	if values, present := fields["connector_requirements"]; present {
+		items, ok := values.([]interface{})
+		if !ok {
+			return SkillFrontmatter{}, "", fmt.Errorf("invalid Connector requirements")
+		}
+		for _, raw := range items {
+			item, ok := raw.(map[string]interface{})
+			if !ok || strings.TrimSpace(fmt.Sprint(item["connector_id"])) == "" || item["connector_id"] == nil {
+				return SkillFrontmatter{}, "", fmt.Errorf("Connector requirement needs connector_id")
+			}
+			for key := range item {
+				if key != "connector_id" && key != "operation_ids" && key != "required" {
+					return SkillFrontmatter{}, "", fmt.Errorf("unsupported Connector requirement field")
+				}
+			}
+		}
 	}
 	body := strings.TrimPrefix(remaining[end:], "\n---")
 	body = strings.TrimPrefix(body, "\r\n")
@@ -327,9 +353,9 @@ func validateSkillDocument(doc SkillDocument) error {
 			return fmt.Errorf("skill %s has incomplete tool definition", doc.Metadata.ID)
 		}
 	}
-	for _, requirement := range doc.Metadata.IntegrationRequirements {
-		if strings.TrimSpace(requirement.IntegrationID) == "" {
-			return fmt.Errorf("skill %s has an integration requirement without integration_id", doc.Metadata.ID)
+	for _, requirement := range doc.Metadata.ConnectorRequirements {
+		if strings.TrimSpace(requirement.ConnectorID) == "" {
+			return fmt.Errorf("skill %s has an integration requirement without connector_id", doc.Metadata.ID)
 		}
 	}
 	return nil

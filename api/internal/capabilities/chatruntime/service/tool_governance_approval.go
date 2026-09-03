@@ -341,7 +341,7 @@ func toolGovernanceDecisionResponse(
 		ApprovalStatus:     approvalStatus,
 		RememberForSession: rememberForSession,
 		SessionGrant:       sessionGrant,
-		Event:              publicExternalActionPayload(copyStringAnyMap(event)),
+		Event:              publicToolPayload(copyStringAnyMap(event)),
 	}
 }
 

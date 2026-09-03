@@ -1,0 +1,2667 @@
+{
+  "id": "feishu",
+  "plugin_id": "zgi.feishu",
+  "plugin_version": "1.0.2",
+  "source_dialect": "agentplugins-v1",
+  "source_schema_version": "1.0.0",
+  "provider_id": "feishu",
+  "driver_id": "feishu-openapi-v1",
+  "auth_method_id": "feishu.app_credentials",
+  "name": "Feishu / Lark",
+  "name_i18n": {
+    "en-US": "Feishu / Lark",
+    "zh-Hans": "飞书 / Lark"
+  },
+  "description": "Use your self-built Feishu app to access messages, documents and collaboration resources.",
+  "description_i18n": {
+    "en-US": "Use your self-built Feishu app to access messages, documents and collaboration resources.",
+    "zh-Hans": "连接你的飞书自建应用，在对话、智能体和工作流中访问消息、文档与协作资源。"
+  },
+  "icon": "feishu",
+  "classification": "connector",
+  "capability_types": [
+    "data",
+    "action"
+  ],
+  "setup_method": "app_credentials",
+  "ownership": "personal",
+  "surfaces": [
+    "chat",
+    "agent",
+    "workflow"
+  ],
+  "key_fields": null,
+  "operations": [
+    {
+      "id": "feishu.resource.get",
+      "tool_name": "feishu_resource_get",
+      "skill_id": "connector-runtime",
+      "name": "Save a message resource as a private file",
+      "name_i18n": {
+        "en-US": "Save a message resource as a private file",
+        "zh-Hans": "读取消息资源并保存为个人文件"
+      },
+      "description": "Save a message resource as a private file. Only JPEG, PNG, WebP, PDF or plain text, up to 10 MiB. Returns references, never binary or arbitrary URLs.",
+      "description_i18n": {
+        "en-US": "Save a message resource as a private file. Only JPEG, PNG, WebP, PDF or plain text, up to 10 MiB. Returns references, never binary or arbitrary URLs.",
+        "zh-Hans": "读取消息资源并保存为个人文件；仅支持10MiB内的JPEG、PNG、WebP、PDF和纯文本，返回引用而非二进制，不接受任意URL。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "file_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "file",
+              "image"
+            ]
+          }
+        },
+        "required": [
+          "message_id",
+          "file_key",
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.resource.get"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message:readonly",
+          "im:message",
+          "im:message.history:readonly"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.resource.upload",
+      "tool_name": "feishu_resource_upload",
+      "skill_id": "connector-runtime",
+      "name": "Upload an authorized platform file",
+      "name_i18n": {
+        "en-US": "Upload an authorized platform file",
+        "zh-Hans": "上传已授权的平台文件"
+      },
+      "description": "Upload an authorized platform file. Only JPEG, PNG, WebP, PDF or plain text, up to 10 MiB. Returns references, never binary or arbitrary URLs.",
+      "description_i18n": {
+        "en-US": "Upload an authorized platform file. Only JPEG, PNG, WebP, PDF or plain text, up to 10 MiB. Returns references, never binary or arbitrary URLs.",
+        "zh-Hans": "上传已授权的平台文件；仅支持10MiB内的JPEG、PNG、WebP、PDF和纯文本，返回引用而非二进制，不接受任意URL。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "format": "uuid",
+            "minLength": 36,
+            "maxLength": 36
+          }
+        },
+        "required": [
+          "file_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.resource.upload"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "external_send",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:resource",
+          "im:resource:upload"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.message.batch_send",
+      "tool_name": "feishu_message_batch_send",
+      "skill_id": "connector-runtime",
+      "name": "Send a text message to selected users",
+      "name_i18n": {
+        "en-US": "Send a text message to selected users",
+        "zh-Hans": "向选定用户批量发送文本"
+      },
+      "description": "Send a text message to selected users using the selected application. Requires confirmation; no automatic retry.",
+      "description_i18n": {
+        "en-US": "Send a text message to selected users using the selected application. Requires confirmation; no automatic retry.",
+        "zh-Hans": "向选定用户批量发送文本；使用当前应用身份，须运行确认，结果未知时不自动重试。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "open_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": true
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "open_ids",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.message.batch_send"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "external_send",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message:send_as_bot",
+          "im:message"
+        ],
+        [
+          "im:message:send_multi_users"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.message.system_send",
+      "tool_name": "feishu_message_system_send",
+      "skill_id": "connector-runtime",
+      "name": "Send a conversation divider",
+      "name_i18n": {
+        "en-US": "Send a conversation divider",
+        "zh-Hans": "发送单聊分割线系统消息"
+      },
+      "description": "Send a conversation divider using the selected application. Requires confirmation; no automatic retry.",
+      "description_i18n": {
+        "en-US": "Send a conversation divider using the selected application. Requires confirmation; no automatic retry.",
+        "zh-Hans": "发送单聊分割线系统消息；使用当前应用身份，须运行确认，结果未知时不自动重试。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "open_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10
+          }
+        },
+        "required": [
+          "open_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.message.system_send"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "external_send",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message:send_as_bot",
+          "im:message"
+        ],
+        [
+          "im:message:send_sys_msg"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.bot.get",
+      "tool_name": "feishu_bot_get",
+      "skill_id": "connector-runtime",
+      "name": "Get app bot information",
+      "name_i18n": {
+        "en-US": "Get app bot information",
+        "zh-Hans": "获取应用机器人信息"
+      },
+      "description": "Get app bot information using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Get app bot information using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "获取应用机器人信息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.bot.get"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "application:bot.basic_info:read"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.chat.list",
+      "tool_name": "feishu_chat_list",
+      "skill_id": "connector-runtime",
+      "name": "List accessible chats",
+      "name_i18n": {
+        "en-US": "List accessible chats",
+        "zh-Hans": "列出可访问的群"
+      },
+      "description": "List accessible chats using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "List accessible chats using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "列出可访问的群；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "page_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.chat.list"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:chat:read"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.chat.get",
+      "tool_name": "feishu_chat_get",
+      "skill_id": "connector-runtime",
+      "name": "Get chat information",
+      "name_i18n": {
+        "en-US": "Get chat information",
+        "zh-Hans": "获取群信息"
+      },
+      "description": "Get chat information using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Get chat information using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "获取群信息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "chat_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.chat.get"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:chat:read"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.message.list",
+      "tool_name": "feishu_message_list",
+      "skill_id": "connector-runtime",
+      "name": "List chat messages",
+      "name_i18n": {
+        "en-US": "List chat messages",
+        "zh-Hans": "列出会话消息"
+      },
+      "description": "List chat messages using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "List chat messages using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "列出会话消息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "page_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "start_time": {
+            "type": "string",
+            "pattern": "^[0-9]{1,12}$"
+          },
+          "end_time": {
+            "type": "string",
+            "pattern": "^[0-9]{1,12}$"
+          }
+        },
+        "required": [
+          "chat_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.message.list"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message:readonly"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.message.get",
+      "tool_name": "feishu_message_get",
+      "skill_id": "connector-runtime",
+      "name": "Get a message",
+      "name_i18n": {
+        "en-US": "Get a message",
+        "zh-Hans": "获取消息"
+      },
+      "description": "Get a message using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Get a message using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "获取消息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "message_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.message.get"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message:readonly"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.document.read",
+      "tool_name": "feishu_document_read",
+      "skill_id": "connector-runtime",
+      "name": "Read a document",
+      "name_i18n": {
+        "en-US": "Read a document",
+        "zh-Hans": "读取文档"
+      },
+      "description": "Read a document using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Read a document using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "读取文档；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.document.read"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docx:document:readonly"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.document.blocks.list",
+      "tool_name": "feishu_document_blocks_list",
+      "skill_id": "connector-runtime",
+      "name": "List document blocks",
+      "name_i18n": {
+        "en-US": "List document blocks",
+        "zh-Hans": "列出文档块"
+      },
+      "description": "List document blocks using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "List document blocks using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "列出文档块；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "page_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.document.blocks.list"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docx:document:readonly"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.file.metadata.get",
+      "tool_name": "feishu_file_metadata_get",
+      "skill_id": "connector-runtime",
+      "name": "Get file metadata",
+      "name_i18n": {
+        "en-US": "Get file metadata",
+        "zh-Hans": "获取文件元数据"
+      },
+      "description": "Get file metadata using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Get file metadata using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "获取文件元数据；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "file_type": {
+            "enum": [
+              "docx",
+              "doc",
+              "sheet",
+              "bitable",
+              "file",
+              "slides"
+            ]
+          }
+        },
+        "required": [
+          "file_token",
+          "file_type"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.file.metadata.get"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "drive:drive.metadata:readonly"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.wiki.node.get",
+      "tool_name": "feishu_wiki_node_get",
+      "skill_id": "connector-runtime",
+      "name": "Get a knowledge-space node",
+      "name_i18n": {
+        "en-US": "Get a knowledge-space node",
+        "zh-Hans": "获取知识空间节点"
+      },
+      "description": "Get a knowledge-space node using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Get a knowledge-space node using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "获取知识空间节点；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.wiki.node.get"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "wiki:node:read"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.comment.list",
+      "tool_name": "feishu_comment_list",
+      "skill_id": "connector-runtime",
+      "name": "List document comments",
+      "name_i18n": {
+        "en-US": "List document comments",
+        "zh-Hans": "列出文档评论"
+      },
+      "description": "List document comments using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "List document comments using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "列出文档评论；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "page_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "file_token"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.comment.list"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docs:document.comment:read"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.message.send",
+      "tool_name": "feishu_message_send",
+      "skill_id": "connector-runtime",
+      "name": "Send a text message",
+      "name_i18n": {
+        "en-US": "Send a text message",
+        "zh-Hans": "发送文本消息"
+      },
+      "description": "Send a text message using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Send a text message using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "发送文本消息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "receive_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "receive_id_type": {
+            "enum": [
+              "chat_id",
+              "open_id"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "receive_id",
+          "receive_id_type",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.message.send"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "external_send",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message:send_as_bot"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.message.reply",
+      "tool_name": "feishu_message_reply",
+      "skill_id": "connector-runtime",
+      "name": "Reply to a message",
+      "name_i18n": {
+        "en-US": "Reply to a message",
+        "zh-Hans": "回复消息"
+      },
+      "description": "Reply to a message using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Reply to a message using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "回复消息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "message_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.message.reply"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "external_send",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message:send_as_bot"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.document.blocks.append",
+      "tool_name": "feishu_document_blocks_append",
+      "skill_id": "connector-runtime",
+      "name": "Append a text block",
+      "name_i18n": {
+        "en-US": "Append a text block",
+        "zh-Hans": "追加文档文本块"
+      },
+      "description": "Append a text block using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Append a text block using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "追加文档文本块；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "block_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "document_id",
+          "block_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.document.blocks.append"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "create",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docx:document:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.document.blocks.update",
+      "tool_name": "feishu_document_blocks_update",
+      "skill_id": "connector-runtime",
+      "name": "Update a text block",
+      "name_i18n": {
+        "en-US": "Update a text block",
+        "zh-Hans": "更新文档文本块"
+      },
+      "description": "Update a text block using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Update a text block using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "更新文档文本块；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "block_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "document_id",
+          "block_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.document.blocks.update"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "update",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docx:document:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.comment.create",
+      "tool_name": "feishu_comment_create",
+      "skill_id": "connector-runtime",
+      "name": "Add a document comment",
+      "name_i18n": {
+        "en-US": "Add a document comment",
+        "zh-Hans": "添加文档评论"
+      },
+      "description": "Add a document comment using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Add a document comment using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "添加文档评论；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "file_token",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.comment.create"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "create",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docs:document.comment:create",
+          "docs:document.comment:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.comment.reply",
+      "tool_name": "feishu_comment_reply",
+      "skill_id": "connector-runtime",
+      "name": "Reply to a document comment",
+      "name_i18n": {
+        "en-US": "Reply to a document comment",
+        "zh-Hans": "回复文档评论"
+      },
+      "description": "Reply to a document comment using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Reply to a document comment using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "回复文档评论；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "comment_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "file_token",
+          "comment_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.comment.reply"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "create",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docs:document.comment:create",
+          "docs:document.comment:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.message.update",
+      "tool_name": "feishu_message_update",
+      "skill_id": "connector-runtime",
+      "name": "Update a text message",
+      "name_i18n": {
+        "en-US": "Update a text message",
+        "zh-Hans": "更新文本消息"
+      },
+      "description": "Update a text message using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Update a text message using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "更新文本消息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "message_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.message.update"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "update",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message:update"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.comment.update",
+      "tool_name": "feishu_comment_update",
+      "skill_id": "connector-runtime",
+      "name": "Update a document comment reply",
+      "name_i18n": {
+        "en-US": "Update a document comment reply",
+        "zh-Hans": "修改文档评论回复"
+      },
+      "description": "Update a document comment reply using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Update a document comment reply using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "修改文档评论回复；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "comment_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "reply_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "file_token",
+          "comment_id",
+          "reply_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.comment.update"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "update",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docs:document.comment:update",
+          "docs:document.comment:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.comment.delete",
+      "tool_name": "feishu_comment_delete",
+      "skill_id": "connector-runtime",
+      "name": "Delete a document comment reply",
+      "name_i18n": {
+        "en-US": "Delete a document comment reply",
+        "zh-Hans": "删除文档评论回复"
+      },
+      "description": "Delete a document comment reply using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Delete a document comment reply using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "删除文档评论回复；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "comment_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "reply_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "file_token",
+          "comment_id",
+          "reply_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.comment.delete"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "delete",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docs:document.comment:delete",
+          "docs:document.comment:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.reaction.list",
+      "tool_name": "feishu_reaction_list",
+      "skill_id": "connector-runtime",
+      "name": "List message reactions",
+      "name_i18n": {
+        "en-US": "List message reactions",
+        "zh-Hans": "列出消息表情回复"
+      },
+      "description": "List message reactions using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "List message reactions using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "列出消息表情回复；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "page_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "message_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.reaction.list"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message.reactions:read"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.reaction.add",
+      "tool_name": "feishu_reaction_add",
+      "skill_id": "connector-runtime",
+      "name": "Add a message reaction",
+      "name_i18n": {
+        "en-US": "Add a message reaction",
+        "zh-Hans": "添加消息表情回复"
+      },
+      "description": "Add a message reaction using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Add a message reaction using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "添加消息表情回复；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "emoji_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "message_id",
+          "emoji_type"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.reaction.add"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "create",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message.reactions:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.reaction.remove",
+      "tool_name": "feishu_reaction_remove",
+      "skill_id": "connector-runtime",
+      "name": "Remove a message reaction",
+      "name_i18n": {
+        "en-US": "Remove a message reaction",
+        "zh-Hans": "移除消息表情回复"
+      },
+      "description": "Remove a message reaction using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Remove a message reaction using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "移除消息表情回复；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "reaction_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "message_id",
+          "reaction_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.reaction.remove"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "delete",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message.reactions:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.pin.list",
+      "tool_name": "feishu_pin_list",
+      "skill_id": "connector-runtime",
+      "name": "List pinned messages",
+      "name_i18n": {
+        "en-US": "List pinned messages",
+        "zh-Hans": "列出置顶消息"
+      },
+      "description": "List pinned messages using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "List pinned messages using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "列出置顶消息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "page_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "chat_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.pin.list"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message.pins:read"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.pin.add",
+      "tool_name": "feishu_pin_add",
+      "skill_id": "connector-runtime",
+      "name": "Pin a message",
+      "name_i18n": {
+        "en-US": "Pin a message",
+        "zh-Hans": "置顶消息"
+      },
+      "description": "Pin a message using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Pin a message using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "置顶消息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "message_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.pin.add"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "create",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message.pins:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.pin.remove",
+      "tool_name": "feishu_pin_remove",
+      "skill_id": "connector-runtime",
+      "name": "Unpin a message",
+      "name_i18n": {
+        "en-US": "Unpin a message",
+        "zh-Hans": "取消消息置顶"
+      },
+      "description": "Unpin a message using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Unpin a message using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "取消消息置顶；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "message_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.pin.remove"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "delete",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:message.pins:write_only"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.chat.create",
+      "tool_name": "feishu_chat_create",
+      "skill_id": "connector-runtime",
+      "name": "Create a chat",
+      "name_i18n": {
+        "en-US": "Create a chat",
+        "zh-Hans": "创建群"
+      },
+      "description": "Create a chat using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Create a chat using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "创建群；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "user_id_list": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "name",
+          "user_id_list"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.chat.create"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "create",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:chat:create"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.chat.update",
+      "tool_name": "feishu_chat_update",
+      "skill_id": "connector-runtime",
+      "name": "Update chat name and description",
+      "name_i18n": {
+        "en-US": "Update chat name and description",
+        "zh-Hans": "更新群名称和描述"
+      },
+      "description": "Update chat name and description using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Update chat name and description using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "更新群名称和描述；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "chat_id",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.chat.update"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "update",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "im:chat:update"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.card.create",
+      "tool_name": "feishu_card_create",
+      "skill_id": "connector-runtime",
+      "name": "Create a text card",
+      "name_i18n": {
+        "en-US": "Create a text card",
+        "zh-Hans": "创建文本卡片"
+      },
+      "description": "Create a text card using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Create a text card using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "创建文本卡片；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.card.create"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "create",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "cardkit:card:write"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.card.update",
+      "tool_name": "feishu_card_update",
+      "skill_id": "connector-runtime",
+      "name": "Update a text card",
+      "name_i18n": {
+        "en-US": "Update a text card",
+        "zh-Hans": "更新文本卡片"
+      },
+      "description": "Update a text card using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Update a text card using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "更新文本卡片；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "card_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "card_id",
+          "sequence",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.card.update"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "update",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "cardkit:card:write"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.document.blocks.convert",
+      "tool_name": "feishu_document_blocks_convert",
+      "skill_id": "connector-runtime",
+      "name": "Convert Markdown to document blocks",
+      "name_i18n": {
+        "en-US": "Convert Markdown to document blocks",
+        "zh-Hans": "将 Markdown 转为文档块"
+      },
+      "description": "Convert Markdown to document blocks using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Convert Markdown to document blocks using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "将 Markdown 转为文档块；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16000
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.document.blocks.convert"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "invoke",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "high",
+      "idempotent": false,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "docx:document.block:convert"
+        ]
+      ]
+    },
+    {
+      "id": "feishu.contact.basic.get",
+      "tool_name": "feishu_contact_basic_get",
+      "skill_id": "connector-runtime",
+      "name": "Get basic user information",
+      "name_i18n": {
+        "en-US": "Get basic user information",
+        "zh-Hans": "获取用户基础信息"
+      },
+      "description": "Get basic user information using the selected Feishu app; resource access is checked by Feishu.",
+      "description_i18n": {
+        "en-US": "Get basic user information using the selected Feishu app; resource access is checked by Feishu.",
+        "zh-Hans": "获取用户基础信息；使用当前绑定的飞书应用身份，具体资源仍需飞书授权。"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "feishu"
+          },
+          "operation": {
+            "const": "feishu.contact.basic.get"
+          },
+          "data": {
+            "type": "object"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "provider",
+          "operation",
+          "data",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "effect": "read",
+      "data_egress": true,
+      "external_destination": "Feishu / Lark OpenAPI",
+      "sensitive_data_allowed": false,
+      "risk_hint": "low",
+      "idempotent": true,
+      "credential_subject": "app",
+      "required_scopes": [
+        [
+          "contact:contact.base:readonly"
+        ]
+      ]
+    }
+  ],
+  "extension_schema_version": "1.1.0",
+  "contract_version": 2,
+  "credential_fields": [
+    {
+      "name": "region",
+      "label": "Region",
+      "label_i18n": {
+        "en-US": "Region",
+        "zh-Hans": "区域"
+      },
+      "required": true,
+      "secret": false,
+      "type": "string",
+      "enum": [
+        "feishu",
+        "lark"
+      ],
+      "max_length": 6
+    },
+    {
+      "name": "app_id",
+      "label": "App ID",
+      "label_i18n": {
+        "en-US": "App ID",
+        "zh-Hans": "App ID（应用标识）"
+      },
+      "required": true,
+      "secret": false,
+      "type": "string",
+      "max_length": 128
+    },
+    {
+      "name": "app_secret",
+      "label": "App Secret",
+      "label_i18n": {
+        "en-US": "App Secret",
+        "zh-Hans": "App Secret（应用密钥）"
+      },
+      "required": true,
+      "secret": true,
+      "type": "string",
+      "max_length": 16384
+    }
+  ],
+  "setup": {
+    "handler": "feishu-app-registration-v1",
+    "methods": [
+      "manual",
+      "qr_create",
+      "qr_update"
+    ],
+    "template_id": "feishu-app-template-v2",
+    "template_digest": "4930f0a57d31ed17ed4d86384fd05219cfce7c5b4f20bbfcadec2329307634cc"
+  }
+}

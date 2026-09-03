@@ -149,6 +149,15 @@ func (s *service) finishUserInputContinuationPendingOrError(
 		s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
 	}
+	var pendingConnector *skillloop.ConnectorConfirmationPendingError
+	if errors.As(cause, &pendingConnector) {
+		metadata, persistErr := s.persistConnectorConfirmationPendingResult(persistCtx, prepared, pendingConnector.Payload, usage)
+		if persistErr != nil {
+			return nil, finalizedRuntimePersistenceError(persistErr)
+		}
+		s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
+	}
 	var pendingClientAction *skillloop.ClientActionPendingError
 	if errors.As(cause, &pendingClientAction) {
 		metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, pendingClientAction.Payload, usage)
@@ -472,10 +481,6 @@ func (s *service) prepareUserInputContinuationChat(
 		return nil, err
 	}
 	var err error
-	config, err = s.refreshAIChatIntegrationRunConfig(ctx, scope, caller, config)
-	if err != nil {
-		return nil, err
-	}
 	message := continuation.Message
 	regenerateReq := applyRunConfigToRegenerateRequest(config, runtimedto.RegenerateMessageRequest{
 		Surface:          req.Surface,

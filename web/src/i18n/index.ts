@@ -9,6 +9,7 @@ export {
   useT,
   getT,
   type UnifiedTranslations,
+  type ScopedTranslations,
   type AllTranslationKeys,
   type NodesSuffix,
   type SettingsSuffix,

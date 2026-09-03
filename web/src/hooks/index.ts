@@ -124,6 +124,22 @@ export { useVerifyForgotPassword } from './auth/use-verify-forgot-password';
 export { useResetPassword } from './auth/use-reset-password';
 export { useConsumeCasdoorTicket } from './auth/use-consume-casdoor-ticket';
 export { useSystemFeatures } from './auth/use-system-features';
+export {
+  connectorCatalogItems,
+  connectorTargetBindingItems,
+  personalConnectionItems,
+  useConnector,
+  useConnectorCatalog,
+  useConnectorTargetBindings,
+  useDiagnosePersonalConnection,
+  usePersonalConnection,
+  usePersonalConnectionRemovalImpact,
+  usePersonalConnections,
+  useRemovePersonalConnection,
+  useRenamePersonalConnection,
+} from './connectors/use-connectors';
+export { useConnectorSetup } from './connectors/use-connector-setup';
+export { useConnectorReconnect } from './connectors/use-connector-reconnect';
 export { useInviteInfo, useAcceptInvite } from './auth/use-invite';
 export {
   usePhoneCheck,
@@ -194,46 +210,6 @@ export {
   useAIChatAssetOperationAudits,
   type UseAIChatAssetOperationAuditsParams,
 } from './aichat/use-aichat-asset-operation-audits';
-export {
-  integrationCatalogItems,
-  integrationConnectionItems,
-  integrationConnectionGrantItems,
-  integrationConnectionHealthEventItems,
-  integrationExecutionItems,
-  useAllIntegrationConnections,
-  useAllAvailableIntegrationConnections,
-  useAllMyIntegrationConnections,
-  useCreateIntegrationConnection,
-  useCreateIntegrationConnectionGrant,
-  useCreateMyIntegrationConnection,
-  useDeleteIntegrationConnection,
-  useDetachIntegrationConnectionReferences,
-  useDeleteIntegrationConnectionGrant,
-  useDeleteMyIntegrationConnection,
-  useDeleteIntegrationOAuthClientConfig,
-  useIntegrationActionPolicies,
-  useIntegrationCatalog,
-  useIntegrationConnection,
-  useIntegrationConnectionGrants,
-  useIntegrationConnectionHealthEvents,
-  useIntegrationConnections,
-  useIntegrationExecutions,
-  useIntegrationOAuthRecovery,
-  useIntegrationOAuthClientConfig,
-  useIntegrationOAuthClientConfigImpact,
-  useIntegrationProviderCapabilities,
-  useMyIntegrationConnections,
-  useSetDefaultIntegrationConnection,
-  useTestIntegrationConnection,
-  useTestMyIntegrationConnection,
-  useUpdateIntegrationActionPolicies,
-  useUpdateIntegrationConnection,
-  useUpdateIntegrationConnectionGrant,
-  useUpdateIntegrationOAuthClientConfig,
-  useUpdateMyIntegrationConnection,
-  useAcknowledgeIntegrationOAuthRecovery,
-} from './integrations/use-integrations';
-export { useIntegrationOAuthFlow } from './integrations/use-oauth-flow';
 export {
   useDeleteAIChatSkill,
   useAIChatSkill,
