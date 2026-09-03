@@ -27,6 +27,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hibiken/asynq v0.25.1
+	github.com/larksuite/oapi-sdk-go/v3 v3.11.0
 	github.com/lib/pq v1.10.9
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/nyaruka/phonenumbers v1.2.2

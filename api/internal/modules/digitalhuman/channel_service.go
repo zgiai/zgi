@@ -73,6 +73,7 @@ type ChannelService struct {
 	artifacts   channelArtifactLinker
 	receivers   interface {
 		Status(uuid.UUID) channelruntime.ReceiverStatus
+		Retry(uuid.UUID)
 	}
 	apiBaseURL string
 	now        func() time.Time
@@ -80,6 +81,7 @@ type ChannelService struct {
 
 func (service *ChannelService) WithReceiverStatus(resolver interface {
 	Status(uuid.UUID) channelruntime.ReceiverStatus
+	Retry(uuid.UUID)
 }) *ChannelService {
 	if service != nil {
 		service.receivers = resolver
@@ -188,20 +190,53 @@ func (service *ChannelService) ListInstallations(ctx context.Context, scope Scop
 		if installation.ConnectionID == installation.ID {
 			credentialMode = "embedded"
 		}
-		receiver := channelruntime.ReceiverStatus{Mode: "webhook", State: channelruntime.ReceiverStateNotApplicable}
-		if service.receivers != nil {
-			receiver = service.receivers.Status(installation.ID)
+		receiver := service.receiverStatus(ctx, installation)
+		webhookURL := ""
+		if receiver.Mode == "webhook" {
+			webhookURL = service.webhookURL(installation)
 		}
 		views = append(views, &ChannelInstallationView{
 			Installation:     installation,
 			ChannelContext:   service.credentials.ContextReadiness(ctx, installation),
-			WebhookURL:       service.webhookURL(installation),
+			WebhookURL:       webhookURL,
 			CredentialMode:   credentialMode,
 			IdentityVerified: strings.TrimSpace(installation.ExternalTenantID) != "" && strings.TrimSpace(installation.ExternalBotID) != "",
 			Receiver:         receiver,
 		})
 	}
 	return views, nil
+}
+
+func (service *ChannelService) receiverStatus(ctx context.Context, installation *channelruntime.Installation) channelruntime.ReceiverStatus {
+	status := channelruntime.ReceiverStatus{Mode: "webhook", State: channelruntime.ReceiverStateNotApplicable}
+	provider, err := service.adapters.ResolveProvider(installation.Provider)
+	if err != nil || provider.Receiver == nil {
+		return status
+	}
+	// Derive mode from saved configuration, not the timing of the background
+	// reconciler. Disabled installations and fresh API replicas must agree.
+	credential, err := service.credentials.ResolveCredential(ctx, installation)
+	if err != nil {
+		return channelruntime.ReceiverStatus{Mode: "unknown", State: channelruntime.ReceiverStateError, ErrorCode: "credential_unavailable"}
+	}
+	status.Mode = provider.Receiver.Mode(*credential)
+	credential.Destroy()
+	if status.Mode == "webhook" {
+		return status
+	}
+	status.State = channelruntime.ReceiverStatePending
+	if installation.Status != channelruntime.InstallationStatusActive {
+		status.State = channelruntime.ReceiverStateDisconnected
+		return status
+	}
+	if service.receivers != nil {
+		observed := service.receivers.Status(installation.ID)
+		if observed.Revision == installation.Revision && (observed.Mode == status.Mode || observed.Mode == "") {
+			observed.Mode = status.Mode
+			return observed
+		}
+	}
+	return status
 }
 
 func (service *ChannelService) webhookURL(installation *channelruntime.Installation) string {
@@ -298,6 +333,9 @@ func (service *ChannelService) VerifyInstallation(
 		return nil, applicationError(err, operation)
 	}
 	checkedAt := service.now()
+	if service.receivers != nil {
+		service.receivers.Retry(installation.ID)
+	}
 	externalTenantID, externalSelfID, err := service.credentials.ResolveIdentity(ctx, installation)
 	externalTenantID = strings.TrimSpace(externalTenantID)
 	externalSelfID = strings.TrimSpace(externalSelfID)
@@ -767,12 +805,18 @@ func (service *ChannelService) HandleWebhook(ctx context.Context, provider strin
 func (service *ChannelService) HandleInboundMessage(
 	ctx context.Context,
 	installationID uuid.UUID,
+	expectedRevision int64,
 	message *channelruntime.InboundMessage,
 	receivedAt time.Time,
 ) (*ChannelWebhookResult, error) {
 	installation, err := service.store.ChannelInstallationByID(ctx, installationID)
 	if err != nil || installation == nil || installation.Status != channelruntime.InstallationStatusActive {
 		return nil, ErrChannelInstallationNotFound
+	}
+	// Fence events from the old connection after credential rotation, transport
+	// switching or disabling, even before the next receiver reconciliation.
+	if expectedRevision < 1 || installation.Revision != expectedRevision {
+		return nil, ErrChannelConflict
 	}
 	adapter, err := service.adapters.Resolve(installation.Provider)
 	if err != nil {

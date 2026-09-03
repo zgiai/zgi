@@ -304,6 +304,8 @@ type ReceiverRequest struct {
 	Identity       InstallationIdentity
 	Credential     ResolvedChannelCredential
 	OnConnected    func()
+	// OnStateChange reports transport lifecycle changes, never message content.
+	OnStateChange func(ReceiverConnectionState)
 }
 
 // InboundMessageHandler accepts a normalized provider message. Returning an
@@ -318,6 +320,12 @@ type Receiver interface {
 	Run(context.Context, ReceiverRequest, InboundMessageHandler) error
 }
 
+// ReceiverLeaseScope optionally identifies a provider application shared by
+// several installations. Its value is hashed and never exposed to the console.
+type ReceiverLeaseScope interface {
+	LeaseScope(ResolvedChannelCredential) string
+}
+
 // ReceiverConnectionState is the safe, credential-free state exposed to the
 // console for one channel installation.
 type ReceiverConnectionState string
@@ -327,6 +335,7 @@ const (
 	ReceiverStatePending       ReceiverConnectionState = "pending"
 	ReceiverStateConnecting    ReceiverConnectionState = "connecting"
 	ReceiverStateConnected     ReceiverConnectionState = "connected"
+	ReceiverStateReconnecting  ReceiverConnectionState = "reconnecting"
 	ReceiverStateDisconnected  ReceiverConnectionState = "disconnected"
 	ReceiverStateError         ReceiverConnectionState = "error"
 )
@@ -335,11 +344,23 @@ const (
 // codes are stable internal categories and never contain provider responses or
 // credentials.
 type ReceiverStatus struct {
+	Revision  int64                   `json:"-"`
 	Mode      string                  `json:"mode"`
 	State     ReceiverConnectionState `json:"state"`
 	ErrorCode string                  `json:"error_code,omitempty"`
 	UpdatedAt time.Time               `json:"updated_at,omitempty"`
 }
+
+// ReceiverError carries a safe connection diagnostic. Permanent failures must
+// wait for an explicit retry or a configuration revision, not retry forever.
+type ReceiverError struct {
+	Code      string
+	Retryable bool
+	Cause     error
+}
+
+func (err *ReceiverError) Error() string { return "channel receiver: " + err.Code }
+func (err *ReceiverError) Unwrap() error { return err.Cause }
 
 // DeliveryRequest is the immutable intent passed to a provider adapter.
 type DeliveryRequest struct {

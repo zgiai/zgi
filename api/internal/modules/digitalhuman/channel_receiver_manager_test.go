@@ -53,13 +53,19 @@ type receiverStoreStub struct {
 	installation *channelruntime.Installation
 	mu           sync.Mutex
 	leased       bool
+	check        func(context.Context) error
 }
 
 func (store *receiverStoreStub) ListActiveChannelInstallations(context.Context) ([]*channelruntime.Installation, error) {
-	return []*channelruntime.Installation{store.installation}, nil
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.installation == nil || store.installation.Status != channelruntime.InstallationStatusActive {
+		return nil, nil
+	}
+	return []*channelruntime.Installation{cloneInstallation(store.installation)}, nil
 }
 
-func (store *receiverStoreStub) TryAcquireChannelReceiverLease(context.Context, uuid.UUID) (func(), bool, error) {
+func (store *receiverStoreStub) TryAcquireChannelReceiverLease(context.Context, uuid.UUID) (*ChannelReceiverLease, bool, error) {
 	store.mu.Lock()
 	if store.leased {
 		store.mu.Unlock()
@@ -67,17 +73,21 @@ func (store *receiverStoreStub) TryAcquireChannelReceiverLease(context.Context, 
 	}
 	store.leased = true
 	store.mu.Unlock()
-	return func() {
+	return &ChannelReceiverLease{Check: store.check, Release: func() {
 		store.mu.Lock()
 		store.leased = false
 		store.mu.Unlock()
-	}, true, nil
+	}}, true, nil
 }
 
-type receiverCredentialStub struct{}
+type receiverCredentialStub struct{ mode string }
 
-func (receiverCredentialStub) ResolveCredential(context.Context, *channelruntime.Installation) (*channelruntime.ResolvedChannelCredential, error) {
-	return &channelruntime.ResolvedChannelCredential{Values: map[string]string{"mode": "stream"}}, nil
+func (stub receiverCredentialStub) ResolveCredential(context.Context, *channelruntime.Installation) (*channelruntime.ResolvedChannelCredential, error) {
+	mode := stub.mode
+	if mode == "" {
+		mode = "stream"
+	}
+	return &channelruntime.ResolvedChannelCredential{Values: map[string]string{"mode": mode}}, nil
 }
 
 func (receiverCredentialStub) ResolveIdentity(context.Context, *channelruntime.Installation) (string, string, error) {
@@ -115,6 +125,7 @@ type receiverSinkStub struct {
 func (sink *receiverSinkStub) HandleInboundMessage(
 	_ context.Context,
 	_ uuid.UUID,
+	_ int64,
 	message *channelruntime.InboundMessage,
 	_ time.Time,
 ) (*ChannelWebhookResult, error) {

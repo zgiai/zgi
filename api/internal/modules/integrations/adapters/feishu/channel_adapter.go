@@ -215,9 +215,23 @@ func (*ChannelAdapter) PrepareCredentials(current, updates map[string]string) (m
 			prepared[key] = value
 		}
 	}
-	if prepared["app_id"] == "" || prepared["app_secret"] == "" || prepared["verification_token"] == "" {
+	// Absence on an existing credential means the legacy webhook transport.
+	// New clients default to WebSocket; explicit webhook credentials from older
+	// clients remain valid without silently changing their transport.
+	if prepared["connection_mode"] == "" {
+		prepared["connection_mode"] = "websocket"
+		if len(current) > 0 || prepared["verification_token"] != "" {
+			prepared["connection_mode"] = "webhook"
+		}
+	}
+	if prepared["connection_mode"] != "websocket" && prepared["connection_mode"] != "webhook" {
 		destroyCredentialValues(prepared)
-		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "Feishu App ID, App Secret, and Verification Token are required", nil)
+		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "unsupported Feishu connection mode", nil)
+	}
+	if prepared["app_id"] == "" || prepared["app_secret"] == "" ||
+		(prepared["connection_mode"] == "webhook" && prepared["verification_token"] == "") {
+		destroyCredentialValues(prepared)
+		return nil, integrations.NewError(integrations.ErrorCodeInvalidInput, "required Feishu credentials are missing for the selected transport", nil)
 	}
 	return prepared, nil
 }
@@ -239,6 +253,11 @@ func (adapter *ChannelAdapter) ResolveIdentity(ctx context.Context, credential c
 }
 
 func (adapter *ChannelAdapter) Verify(_ context.Context, request channelruntime.WebhookRequest, credential channelruntime.ResolvedChannelCredential) (*channelruntime.VerifiedWebhook, error) {
+	// Switching transport also disables the old inbound URL. Stored webhook
+	// secrets are retained only so an explicit rollback remains possible.
+	if feishuConnectionMode(credential) != "webhook" {
+		return nil, channelruntime.ErrWebhookUnauthorized
+	}
 	if adapter == nil || len(request.Body) == 0 || len(request.Body) > maxWebhookBodyBytes || !json.Valid(request.Body) {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
@@ -681,7 +700,7 @@ func firstChannelValue(values ...string) string {
 
 func isChannelCredentialKey(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "app_id", "app_secret", "verification_token", "encrypt_key":
+	case "app_id", "app_secret", "verification_token", "encrypt_key", "connection_mode":
 		return true
 	default:
 		return false

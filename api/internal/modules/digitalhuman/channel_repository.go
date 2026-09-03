@@ -72,7 +72,14 @@ type ChannelConnectionTestStore interface {
 // opening competing receivers for the same installation.
 type ChannelReceiverStore interface {
 	ListActiveChannelInstallations(context.Context) ([]*channelruntime.Installation, error)
-	TryAcquireChannelReceiverLease(context.Context, uuid.UUID) (release func(), acquired bool, err error)
+	TryAcquireChannelReceiverLease(context.Context, uuid.UUID) (*ChannelReceiverLease, bool, error)
+}
+
+// ChannelReceiverLease owns one database session lock. Check detects a lost
+// session so the transport stops instead of continuing without ownership.
+type ChannelReceiverLease struct {
+	Release func()
+	Check   func(context.Context) error
 }
 
 // ChannelCredentialStore is kept separate from ChannelStore so existing
@@ -282,7 +289,7 @@ func (r *GormRepository) ListActiveChannelInstallations(ctx context.Context) ([]
 func (r *GormRepository) TryAcquireChannelReceiverLease(
 	ctx context.Context,
 	installationID uuid.UUID,
-) (func(), bool, error) {
+) (*ChannelReceiverLease, bool, error) {
 	if installationID == uuid.Nil {
 		return nil, false, ErrInvalidRequest
 	}
@@ -290,7 +297,7 @@ func (r *GormRepository) TryAcquireChannelReceiverLease(
 	// released automatically if the API process exits. Other dialects are used
 	// only by local tests and run a single receiver manager.
 	if r.db.Dialector.Name() != "postgres" {
-		return func() {}, true, nil
+		return &ChannelReceiverLease{Release: func() {}}, true, nil
 	}
 	database, err := r.db.DB()
 	if err != nil {
@@ -310,7 +317,10 @@ func (r *GormRepository) TryAcquireChannelReceiverLease(
 		_ = connection.Close()
 		return nil, false, nil
 	}
-	return func() { releaseChannelReceiverLease(connection, key) }, true, nil
+	return &ChannelReceiverLease{
+		Release: func() { releaseChannelReceiverLease(connection, key) },
+		Check:   connection.PingContext,
+	}, true, nil
 }
 
 func channelReceiverLeaseKey(installationID uuid.UUID) int64 {

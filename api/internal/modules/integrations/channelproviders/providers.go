@@ -24,7 +24,7 @@ func RegisterProduction(registry *channelruntime.Registry, connections integrati
 	if err != nil {
 		return fmt.Errorf("initialize Feishu channel adapter: %w", err)
 	}
-	if err := registry.Register(channelruntime.Provider{Adapter: adapter, Provisioner: adapter}); err != nil {
+	if err := registry.Register(channelruntime.Provider{Adapter: adapter, Provisioner: adapter, Receiver: feishu.NewWebSocketReceiver(adapter)}); err != nil {
 		return fmt.Errorf("register Feishu channel provider: %w", err)
 	}
 	dingTalkProvider, err := dingtalk.New(nil)

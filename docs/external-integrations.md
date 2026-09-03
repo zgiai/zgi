@@ -748,8 +748,10 @@ actually depends on earlier provider messages.
 
 The DigitalHuman channel gateway is available whenever the API is running.
 Configure the shared integration credential keyring before storing channel
-credentials, then configure a **Feishu tenant app** with its App ID, App Secret,
-event Verification Token, and Encrypt Key. By default, the encrypted credential
+credentials, then configure a **Feishu enterprise self-built app** with its
+App ID and App Secret. New directly configured installations default to the
+official SDK's **WebSocket long connection**. No public inbound URL,
+Verification Token, or Encrypt Key is needed in this mode. By default, the encrypted credential
 belongs to the channel installation and does not create a Connection Center
 record. An existing organization credential from Connection Center may be
 selected instead. Channel reads and sends call Feishu directly and do not depend
@@ -757,22 +759,27 @@ on Connection action grants, action policy, cached scope observations, approval,
 or operation receipts.
 
 For attributed group context, also grant the application identity
-`im:message:readonly`, `im:message.group_msg`, and `im:chat.members:read`, then
-publish the Feishu app version. Feishu remains the authority for these
+`im:message:readonly`, `im:message.group_msg`, and `im:chat.members:read`.
+Permission-only changes take effect after being enabled or approved; they do
+not require publishing a new version. Follow Feishu's console instructions for
+other application configuration and availability changes. Feishu remains the authority for these
 capabilities: each real operation verifies them at runtime, and the console
 reports that the channel capability will be verified when used.
 
 From a published DigitalHuman's **External connections** page:
 
 1. Enter the Feishu application credential directly, or select an available
-   credential from Connection Center, and name the installation. ZGI verifies
-   the tenant and bot identity through Feishu and stores only encrypted secret
-   material. The current DigitalHuman becomes the installation's default
-   subject.
-2. Copy the generated webhook URL into the Feishu application's event
-   subscription configuration, enable encrypted callbacks, and subscribe to
-   `im.message.receive_v1`.
-3. Publish the Feishu application version and enable bot capability. The first
+   credential from Connection Center, and name the installation. ZGI stores
+   encrypted secret material. The current DigitalHuman becomes the installation's
+   default subject. Existing Connection Center credentials without an explicit
+   transport setting retain Webhook mode.
+2. For a new long connection, enable bot capability and wait for ZGI to show
+   **Connected**. Then select **Use persistent connection to receive events** in
+   Feishu's **Events and callbacks → Event configuration**, and subscribe to
+   `im.message.receive_v1`. Feishu requires a live SDK connection before saving
+   this subscription method; do not configure a callback URL for it.
+3. Check application permissions and availability, then click **Start connection
+   test** and send the provided text in a real private conversation. The first
    direct message atomically creates a binding to the installation's default
    DigitalHuman, reserves one stable local ChatRuntime conversation, and is
    processed immediately. No discovery-only direct-message turn is required.
@@ -781,7 +788,37 @@ From a published DigitalHuman's **External connections** page:
    processes that first mention. Ordinary group messages neither create a route
    nor invoke the model.
 
-The generated webhook URL uses the backend `CONSOLE_API_URL`. Docker
+The receiver displays pending, connecting, connected, reconnecting, disconnected,
+or an actionable error. Network interruptions reconnect automatically; confirmed
+credential/configuration failures stop retrying until credentials change or the
+user explicitly starts a new connection test. Being connected proves transport
+availability, not message permissions: private and group round-trip tests still
+verify inbound delivery, final replies, and group context separately.
+
+ZGI uses a per-app database lease so only one API instance owns a given Feishu
+app's receiver within the deployment. Disabling, rotating credentials, or changing
+transport stops the previous receiver before starting another; shutdown waits for
+SDK workers to exit. Both transports use the same persisted event/message
+deduplication and DigitalHuman invocation pipeline. No new database migration is
+required.
+
+Use different Feishu apps for local, test, and production deployments. Feishu
+distributes events among connections of the same app instead of broadcasting to
+all of them; a local connection can otherwise receive a production event. The
+server needs outbound HTTPS/WebSocket access to Feishu. Generated-file links still
+need a client-accessible `FILES_PUBLIC_URL`, even though inbound public access is
+unnecessary. See the [official Go SDK event guide](https://open.feishu.cn/document/server-side-sdk/golang-sdk-guide/handle-events).
+
+**Existing Webhook installations stay unchanged.** To migrate, select long
+connection under **Edit application credentials**, save, wait for Connected, and
+switch the subscription method in Feishu. Brief interruption is possible while
+switching; perform the private and group tests again afterwards. Webhook remains
+available for rollback: select it explicitly and configure the event Verification
+Token (and Encrypt Key for encrypted callbacks), then update Feishu's event
+subscription URL. The old HTTP endpoint does not accept callbacks while the
+installation is in WebSocket mode.
+
+In Webhook mode, the generated URL uses the backend `CONSOLE_API_URL`. Docker
 deployments may set `CONSOLE_API_URL` to the HTTPS gateway or tunnel that
 reaches the API; when it is omitted, it falls back to `PUBLIC_URL` and then to
 the backend's local base URL. This is independent from `FILES_PUBLIC_URL`,
@@ -808,7 +845,7 @@ direct message. ChatRuntime creates that reserved conversation idempotently
 before the first accepted run. This prevents concurrent first messages from
 creating separate histories.
 
-For an accepted group mention or direct message, the webhook records only the
+For an accepted group mention or direct message, the receiver records only the
 trigger and queues the run. The worker then reads a bounded snapshot from the
 same Feishu chat, ending at the trigger timestamp. This provider snapshot is
 the primary conversational context. It prioritizes the replied-to message,
