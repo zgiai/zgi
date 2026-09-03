@@ -22,6 +22,7 @@ import { getModelPriceDisplay } from '@/utils/model-price';
 import { useOrganizationStore } from '@/store/organization-store';
 import { getBillingDisplaySettings } from '@/utils/billing-display';
 import { useT } from '@/i18n';
+import { getModelExperienceHref } from './experience-route';
 import { useLocale } from '@/hooks/use-locale';
 
 const USE_CASE_VALUES: ModelUseCase[] = [
@@ -164,6 +165,7 @@ async function fetchAllProviderModels(
       provider,
       page,
       page_size: pageSize,
+      available_only: true,
       use_case: useCase === 'all' ? undefined : useCase,
     });
     const list = response.data;
@@ -189,14 +191,6 @@ async function fetchAllProviderModels(
 
 function isModelRecord(value: unknown): value is ModelItem {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function getExperienceHref(model: ModelItem): string {
-  const params = `provider=${encodeURIComponent(model.provider)}&model=${encodeURIComponent(model.model)}`;
-  const basePath = model.use_cases?.includes('image-gen')
-    ? '/console/work/image'
-    : '/console/work/chat';
-  return `${basePath}?${params}`;
 }
 
 export function ModelPlazaPage() {
@@ -288,6 +282,7 @@ export function ModelPlazaPage() {
     refetch: refetchAllModels,
   } = useAllModelsInfinite({
     limit: 100,
+    available_only: true,
     use_case: useCaseFilter === 'all' ? undefined : useCaseFilter,
   });
   const manufacturerFilters = React.useMemo<ManufacturerFilterItem[]>(() => {
@@ -321,6 +316,7 @@ export function ModelPlazaPage() {
     refetch: refetchProviderModels,
   } = useProviderModelsInfinite(selectedProvider, {
     limit: 100,
+    available_only: true,
     use_case: useCaseFilter === 'all' ? undefined : useCaseFilter,
   });
   const providerSearchResults = useQueries({
@@ -648,7 +644,7 @@ function ModelCard({
   const displayName = modelDisplayName(model);
   const manufacturer = modelManufacturer(model, locale);
   const displayManufacturer = manufacturerLabel ?? manufacturer.label;
-  const experienceHref = getExperienceHref(model);
+  const experienceHref = getModelExperienceHref(model);
   const priceItems = getModelPriceDisplay({
     inputPrice: model.input_price,
     outputPrice: model.output_price,
@@ -746,9 +742,6 @@ function ModelCard({
 
         <div className="flex min-h-6 flex-wrap gap-1.5">
           {model.is_recommended ? <Badge>{t('plaza.recommended')}</Badge> : null}
-          <Badge variant={model.is_available ? 'success' : 'subtle'}>
-            {model.is_available ? t('plaza.available') : t('plaza.unavailable')}
-          </Badge>
           {capabilityLabels.length > 0 ? (
             capabilityLabels.map(label => (
               <Badge key={label} variant="secondary">
@@ -819,19 +812,9 @@ function ModelCard({
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {model.is_available ? (
-              <Button asChild size="sm" variant="ghost">
-                <Link href={experienceHref}>{t('plaza.tryNow')}</Link>
-              </Button>
-            ) : (
-              <Button asChild size="sm" variant="ghost">
-                <Link
-                  href={`/dashboard/provider/${encodeURIComponent(model.provider)}?model=${encodeURIComponent(model.model)}`}
-                >
-                  {t('plaza.enable')}
-                </Link>
-              </Button>
-            )}
+            <Button asChild size="sm" variant="ghost">
+              <Link href={experienceHref}>{t('plaza.tryNow')}</Link>
+            </Button>
           </div>
         </div>
       </CardContent>

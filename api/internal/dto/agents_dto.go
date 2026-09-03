@@ -193,9 +193,14 @@ type AgentRuntimeSurfaceAuthorization struct {
 }
 
 type AgentRuntimeSurfaceGrant struct {
-	SubjectType string  `json:"subject_type"`
-	SubjectID   *string `json:"subject_id"`
-	Enabled     bool    `json:"enabled"`
+	SubjectType   string                                 `json:"subject_type"`
+	SubjectID     *string                                `json:"subject_id"`
+	Enabled       bool                                   `json:"enabled"`
+	SubjectDetail *AgentRuntimeSurfaceGrantSubjectDetail `json:"subject_detail,omitempty"`
+}
+
+type AgentRuntimeSurfaceGrantSubjectDetail struct {
+	DisplayName string `json:"display_name"`
 }
 
 type AgentRuntimeModeConfig struct {

@@ -355,6 +355,7 @@ const messages: ChannelsMessages = {
       mistral: 'Mistral AI',
       cohere: 'Cohere',
       openrouter: 'OpenRouter',
+      siliconflow: '硅基流动',
       anthropic: 'Anthropic',
       qwen: '阿里云（通义千问）',
       moonshotaiCn: '月之暗面（Kimi）',

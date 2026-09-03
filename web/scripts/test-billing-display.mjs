@@ -9,6 +9,7 @@ import {
   billingDisplayInputValueFromUSD,
   formatBillingDisplayAmountFromUSD,
   formatBillingDisplayAmountFromNormalizedCredits,
+  formatCurrencyAmountForBillingDisplay,
   formatRecordedBillingAmountFromUSD,
   formatRecordedCurrencyAmount,
   formatCatalogCurrencyAmount,
@@ -149,6 +150,37 @@ assert.match(
   /^≈USD\s*10\.29$/,
   'current product catalog prices may follow the organization display currency using the current rate'
 );
+assert.match(
+  formatCurrencyAmountForBillingDisplay(70, 'CNY', usdSettings, { locale: 'en-US' }),
+  /^≈USD\s*10\.00$/,
+  'CNY wallet balances must follow the organization USD display setting'
+);
+assert.match(
+  formatCurrencyAmountForBillingDisplay(10, 'USD', cnySettings, { locale: 'en-US' }),
+  /^≈CNY\s*70\.00$/,
+  'USD commercial amounts must follow the organization CNY display setting'
+);
+
+const [walletCardSource, billsPageSource] = await Promise.all([
+  readFile(
+    new URL(
+      '../src/components/dashboard/cost-center/overview/wallet-card.tsx',
+      import.meta.url
+    ),
+    'utf8'
+  ),
+  readFile(new URL('../src/app/dashboard/cost-center/bills/page.tsx', import.meta.url), 'utf8'),
+]);
+assert.match(
+  walletCardSource,
+  /formatCurrencyAmountForBillingDisplay\([\s\S]*balance,[\s\S]*billingDisplay/,
+  'the account overview wallet must use the organization display currency'
+);
+assert.match(
+  billsPageSource,
+  /formatCurrencyAmountForBillingDisplay\([\s\S]*transaction\.wallet_change_amount,[\s\S]*billingDisplay/,
+  'bill wallet amounts must use the organization display currency'
+);
 
 assert.equal(
   normalizedAiCreditsToUSD(9_661.55),
@@ -196,6 +228,11 @@ assert.equal(
   formatBillingDisplayAmountFromNormalizedCredits(0, usdSettings, { locale: 'en-US' }),
   '$0.00',
   'zero usage must be visibly distinct from missing usage'
+);
+assert.equal(
+  formatBillingDisplayAmountFromNormalizedCredits(0, cnySettings, { locale: 'en-US' }),
+  '≈¥0.00',
+  'zero usage must retain the organization CNY display currency'
 );
 assert.equal(
   formatBillingDisplayAmountFromNormalizedCredits(1_234_567_890, usdSettings, {

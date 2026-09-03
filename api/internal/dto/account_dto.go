@@ -192,6 +192,15 @@ type LoginResponse struct {
 	RefreshToken string                  `json:"refresh_token"`
 	Account      *AccountProfileResponse `json:"account"`
 	SSO          *SSOProviderToken       `json:"sso,omitempty"`
+	Invitation   *RegistrationInvitation `json:"invitation,omitempty"`
+}
+
+// RegistrationInvitation reports the outcome of an organization invite that
+// was accepted as part of account registration.
+type RegistrationInvitation struct {
+	Status         string  `json:"status"`
+	OrganizationID string  `json:"organization_id"`
+	WorkspaceID    *string `json:"workspace_id,omitempty"`
 }
 
 type LoginResultType string

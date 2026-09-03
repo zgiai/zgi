@@ -167,6 +167,7 @@ export function useAllModelsInfinite(options?: {
   search?: string;
   limit?: number;
   is_enabled?: boolean;
+  available_only?: boolean;
   use_case?: ModelUseCase;
 }): {
   models: ModelItem[];
@@ -183,11 +184,18 @@ export function useAllModelsInfinite(options?: {
   const limit = options?.limit ?? 50;
   const search = options?.search;
   const is_enabled = options?.is_enabled;
+  const available_only = options?.available_only;
   const use_case = options?.use_case;
 
   const key = useMemo(
-    () => MODEL_KEYS.allInfinite({ search: search || '', is_enabled, use_case: use_case || '' }),
-    [search, is_enabled, use_case]
+    () =>
+      MODEL_KEYS.allInfinite({
+        search: search || '',
+        is_enabled,
+        available_only,
+        use_case: use_case || '',
+      }),
+    [search, is_enabled, available_only, use_case]
   );
 
   const { data, isLoading, isFetching, hasNextPage, fetchNextPage, isFetchingNextPage, refetch } =
@@ -200,6 +208,7 @@ export function useAllModelsInfinite(options?: {
           page_size: limit,
           search,
           is_enabled,
+          available_only,
           use_case,
         });
       },
@@ -558,6 +567,7 @@ export function useProviderModelsInfinite(
   const output_modalities = options?.output_modalities;
   const use_case = options?.use_case;
   const search = options?.search;
+  const available_only = options?.available_only;
 
   const key = useMemo(
     () =>
@@ -567,9 +577,10 @@ export function useProviderModelsInfinite(
         input_modalities: input_modalities || '',
         output_modalities: output_modalities || '',
         use_case: use_case || '',
+        available_only,
         limit,
       }),
-    [provider, search, input_modalities, output_modalities, use_case, limit]
+    [provider, search, input_modalities, output_modalities, use_case, available_only, limit]
   );
 
   const { data, isLoading, isFetching, hasNextPage, fetchNextPage, isFetchingNextPage, refetch } =
@@ -586,6 +597,7 @@ export function useProviderModelsInfinite(
           input_modalities,
           output_modalities,
           use_case,
+          available_only,
         });
       },
       initialPageParam: 1,

@@ -704,6 +704,17 @@ assert.match(workbenchSource, /generationTab/);
 assert.match(composerSource, /data-ui=["']music-model-selector["']/);
 assert.doesNotMatch(workbenchSource, /data-ui=["']music-model-selector["']/);
 assert.match(workbenchSource, /useMusicModels/);
+assert.match(workbenchSource, /useSearchParams/);
+assert.match(
+  workbenchSource,
+  /const requestedModel = searchParams\.get\('model'\)[\s\S]*useState\(requestedModel\)/,
+  'music workbench must initialize the model requested by Model Plaza'
+);
+assert.match(
+  workbenchSource,
+  /if \(modelsQuery\.isLoading\) return;[\s\S]*requestedModelIsAvailable/,
+  'music workbench must preserve the requested model while available models load'
+);
 assert.doesNotMatch(
   composerSource,
   /\{item\.model_name \|\| item\.model\}\s*·\s*\{item\.provider\}/,

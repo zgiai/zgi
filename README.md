@@ -196,6 +196,16 @@ Community expectations are documented in
 
 For security-sensitive reports, follow [`SECURITY.md`](SECURITY.md).
 
+## Star History
+
+<a href="https://github.com/zgiai/zgi/stargazers">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/star-history-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="./assets/star-history.svg" />
+    <img alt="ZGI Star History" src="./assets/star-history.svg" width="900" />
+  </picture>
+</a>
+
 ## License
 
 ZGI source code is available under the ZGI Community License, based on Apache

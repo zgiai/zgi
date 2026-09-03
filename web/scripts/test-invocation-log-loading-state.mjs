@@ -44,5 +44,15 @@ assert.match(
   /formatBillingDisplayAmountFromNormalizedCredits\(fallbackPoints, billingDisplay/,
   'the invocation summary points fallback must follow the current display currency and rate'
 );
+assert.match(
+  sectionSource,
+  /formatBillingDisplayAmountFromNormalizedCredits\(\s*item\.total_points,\s*billingDisplay/,
+  'zero-cost and failed invocation rows must follow the current display currency and rate'
+);
+assert.doesNotMatch(
+  sectionSource,
+  /formatBillingDisplayAmountFromNormalizedCredits\(\s*item\.total_points,\s*DEFAULT_BILLING_DISPLAY/,
+  'invocation rows must not fall back to the default USD display setting'
+);
 
 console.log('Invocation log loading-state checks passed.');

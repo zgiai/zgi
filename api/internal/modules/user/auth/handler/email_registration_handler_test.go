@@ -12,7 +12,7 @@ import (
 
 func TestEmailRegistrationHandlerRejectsShortPassword(t *testing.T) {
 	service := &emailRegistrationHandlerService{}
-	handler := NewEmailRegistrationHandler(service)
+	handler := NewEmailRegistrationHandler(service, newRegistrationErrorProjector(t))
 	c, recorder := newAccountContextHandlerTestContext(
 		http.MethodPost,
 		"/register/finish",

@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 import { normalizeToastDescription } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import {
+  formatCurrencyAmountForBillingDisplay,
   formatRecordedCurrencyAmount,
   getBillingDisplaySettings,
 } from '@/utils/billing-display';
@@ -113,12 +114,13 @@ export default function BillsPage() {
       if (canDisplayUSD) {
         return formatRecordedCurrencyAmount(transaction.recharge_amount_usd, 'USD');
       }
-      return formatRecordedCurrencyAmount(
-        transaction.recharge_amount_cny ?? transaction.recharge_amount,
-        transaction.recharge_currency || 'CNY'
+      return formatCurrencyAmountForBillingDisplay(
+        transaction.recharge_amount,
+        transaction.recharge_currency || 'CNY',
+        billingDisplay
       );
     },
-    [billingDisplay.currency]
+    [billingDisplay]
   );
 
   // Build API request filters from searchParams
@@ -366,16 +368,18 @@ export default function BillsPage() {
                         {formatRechargeAmount(transaction)}
                       </TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
-                        {formatRecordedCurrencyAmount(
+                        {formatCurrencyAmountForBillingDisplay(
                           transaction.wallet_change_amount,
                           transaction.wallet_currency || 'CNY',
+                          billingDisplay,
                           { showSign: true }
                         )}
                       </TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
-                        {formatRecordedCurrencyAmount(
+                        {formatCurrencyAmountForBillingDisplay(
                           transaction.balance_after,
-                          transaction.wallet_currency || 'CNY'
+                          transaction.wallet_currency || 'CNY',
+                          billingDisplay
                         )}
                       </TableCell>
                     </TableRow>

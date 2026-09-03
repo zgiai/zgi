@@ -385,6 +385,7 @@ const messages = {
       mistral: 'Mistral AI',
       cohere: 'Cohere',
       openrouter: 'OpenRouter',
+      siliconflow: 'SiliconFlow',
       anthropic: 'Anthropic',
       qwen: 'Alibaba Cloud (Qwen)',
       moonshotaiCn: 'Moonshot AI (Kimi)',

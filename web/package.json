@@ -67,6 +67,7 @@
     "test:dataset-file-asset-selection": "node scripts/test-dataset-file-asset-selection.mjs",
     "test:aichat-skill-taxonomy": "node scripts/test-aichat-skill-taxonomy.mjs",
     "test:console-navigation-routes": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-console-navigation-routes.mjs",
+    "test:registration-invite-flow": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-registration-invite-flow.mjs",
     "test:app-sidebar-items": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-app-sidebar-items.mjs",
     "test:model-usage-app-types": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-model-usage-app-types.mjs",
     "test:invocation-log-loading-state": "node scripts/test-invocation-log-loading-state.mjs",

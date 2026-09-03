@@ -5,6 +5,7 @@ import (
 
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
+	authservice "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 )
 
@@ -36,6 +37,17 @@ func TestProvideApplicationErrorCatalogComposesDomainDefinitions(t *testing.T) {
 	}
 	if musicPresentation.HTTPStatus != 409 || musicPresentation.Message != "音乐生成完成或失败后才能删除该任务。" {
 		t.Fatalf("music presentation = %#v", musicPresentation)
+	}
+	registrationPresentation, err := productCatalog.Present(
+		authservice.AppCodeRegistrationInvitationUnavailable,
+		appcatalog.LocaleChineseSimplified,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Present(registration code) error = %v", err)
+	}
+	if registrationPresentation.HTTPStatus != 401 || registrationPresentation.Message != "该邀请已失效或无法使用，请联系管理员获取新的邀请链接。" {
+		t.Fatalf("registration presentation = %#v", registrationPresentation)
 	}
 
 	sharedCatalog, err := appcatalog.NewDefault()

@@ -106,6 +106,7 @@ function editableAudienceGrants(
       grants.push({
         subject_type: grant.subject_type,
         subject_id: grant.subject_type === 'organization' ? '' : (grant.subject_id ?? ''),
+        subject_detail: grant.subject_detail,
       });
     }
   }

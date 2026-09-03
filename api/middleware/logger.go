@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,7 +21,7 @@ func Logger() gin.HandlerFunc {
 			"log_type", "access",
 			"request_id", c.GetString(requestIDContextKey),
 			"method", c.Request.Method,
-			"path", c.Request.URL.Path,
+			"path", requestLogPath(c),
 			"status", status,
 			"latency_ms", latency.Milliseconds(),
 			"client_ip", c.ClientIP(),
@@ -46,4 +47,32 @@ func Logger() gin.HandlerFunc {
 			logger.Info("http request", fields...)
 		}
 	}
+}
+
+// requestLogPath avoids persisting path parameters such as public invitation
+// tokens. Matched requests use Gin's route template; unmatched requests retain
+// their concrete path so 404 and fallback diagnostics remain useful.
+func requestLogPath(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	if route := strings.TrimSpace(c.FullPath()); route != "" {
+		return route
+	}
+	if c.Request == nil || c.Request.URL == nil {
+		return ""
+	}
+	return redactSensitiveRequestPath(c.Request.URL.Path)
+}
+
+func redactSensitiveRequestPath(path string) string {
+	segments := strings.Split(path, "/")
+	for i := 0; i+2 < len(segments); i++ {
+		if strings.EqualFold(segments[i], "public") &&
+			strings.EqualFold(segments[i+1], "invites") &&
+			strings.TrimSpace(segments[i+2]) != "" {
+			segments[i+2] = "[REDACTED]"
+		}
+	}
+	return strings.Join(segments, "/")
 }

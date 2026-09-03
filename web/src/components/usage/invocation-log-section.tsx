@@ -45,7 +45,6 @@ import {
   formatBillingDisplayAmountFromNormalizedCredits,
   formatRecordedBillingAmount,
   formatRecordedBillingAmountFromUSD,
-  DEFAULT_BILLING_DISPLAY,
   type BillingDisplaySettings,
 } from '@/utils/billing-display';
 import { formatAiCreditValue } from '@/utils/ai-credits';
@@ -813,7 +812,7 @@ function formatInvocationCost(
   }
   return formatBillingDisplayAmountFromNormalizedCredits(
     item.total_points,
-    DEFAULT_BILLING_DISPLAY,
+    billingDisplay,
     { locale }
   );
 }
