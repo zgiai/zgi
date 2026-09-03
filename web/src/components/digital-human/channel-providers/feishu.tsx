@@ -13,6 +13,7 @@ import {
   Loader2,
   MessageSquare,
   Pencil,
+  RadioTower,
   RotateCcw,
   Send,
   ShieldCheck,
@@ -30,6 +31,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type {
   ChannelCredentialDialogProps,
   ChannelCredentialDraft,
@@ -48,6 +50,7 @@ const FEISHU_CREDENTIAL_KEYS = [
   'app_secret',
   'verification_token',
   'encrypt_key',
+  'connection_mode',
 ] as const;
 
 const FEISHU_PERMISSION_BUNDLE = [
@@ -61,7 +64,10 @@ const FEISHU_PERMISSION_BUNDLE = [
 ].join('\n');
 
 export function createEmptyFeishuCredentialDraft(): ChannelCredentialDraft {
-  return Object.fromEntries(FEISHU_CREDENTIAL_KEYS.map(key => [key, '']));
+  return {
+    ...Object.fromEntries(FEISHU_CREDENTIAL_KEYS.map(key => [key, ''])),
+    connection_mode: 'websocket',
+  };
 }
 
 export function serializeFeishuCredential(value: ChannelCredentialDraft): Record<string, string> {
@@ -74,7 +80,9 @@ export function serializeFeishuCredential(value: ChannelCredentialDraft): Record
 
 export function isFeishuCredentialComplete(value: ChannelCredentialDraft): boolean {
   return Boolean(
-    value.app_id?.trim() && value.app_secret?.trim() && value.verification_token?.trim()
+    value.app_id?.trim() &&
+      value.app_secret?.trim() &&
+      (value.connection_mode === 'websocket' || value.verification_token?.trim())
   );
 }
 
@@ -93,7 +101,7 @@ function CredentialPrivacyNotice() {
   );
 }
 
-function CredentialLocationGuide() {
+function CredentialLocationGuide({ websocket }: { websocket: boolean }) {
   const t = useT('digitalHumans');
   const copyPermissions = async () => {
     try {
@@ -128,7 +136,9 @@ function CredentialLocationGuide() {
                   {t(`channels.installations.credential.guide.steps.${step}.title`)}
                 </p>
                 <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                  {t(`channels.installations.credential.guide.steps.${step}.description`)}
+                  {websocket && step === 'credentials'
+                    ? t('channels.installations.websocket.credentialsDescription')
+                    : t(`channels.installations.credential.guide.steps.${step}.description`)}
                 </p>
               </div>
             </li>
@@ -168,17 +178,19 @@ function CredentialLocationGuide() {
               </p>
             </div>
           </div>
-          <div className="flex gap-2 rounded-lg border bg-background px-3 py-2.5">
-            <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
-            <div>
-              <p className="text-xs font-medium">
-                {t('channels.installations.credential.guide.eventSecurity')}
-              </p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {t('channels.installations.credential.guide.eventSecurityPath')}
-              </p>
+          {!websocket ? (
+            <div className="flex gap-2 rounded-lg border bg-background px-3 py-2.5">
+              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
+              <div>
+                <p className="text-xs font-medium">
+                  {t('channels.installations.credential.guide.eventSecurity')}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t('channels.installations.credential.guide.eventSecurityPath')}
+                </p>
+              </div>
             </div>
-          </div>
+          ) : null}
         </div>
         <Button variant="link" className="h-auto p-0 text-xs" asChild>
           <a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer">
@@ -193,6 +205,20 @@ function CredentialLocationGuide() {
 
 export function FeishuInstallationSetupGuide({ installation }: ChannelInstallationSetupProps) {
   const t = useT('digitalHumans');
+  if (installation.receiver?.mode === 'unknown') {
+    return (
+      <div
+        role="alert"
+        className="mt-4 flex gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive"
+      >
+        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+        <p>{t('channels.installations.websocket.errors.credential_unavailable')}</p>
+      </div>
+    );
+  }
+  if (installation.receiver?.mode === 'websocket') {
+    return <FeishuWebSocketSetup installation={installation} />;
+  }
   const webhookReady = /^https:\/\//i.test(installation.webhook_url?.trim() ?? '');
   return (
     <div className="mt-4 rounded-xl border border-blue-500/20 bg-blue-500/[0.035] p-4">
@@ -230,6 +256,72 @@ export function FeishuInstallationSetupGuide({ installation }: ChannelInstallati
           {t('channels.installations.webhookUnavailableHint')}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function FeishuWebSocketSetup({ installation }: ChannelInstallationSetupProps) {
+  const t = useT('digitalHumans');
+  const state = installation.receiver?.state ?? 'pending';
+  const active = installation.status === 'active';
+  const transitioning = active && ['pending', 'connecting', 'reconnecting'].includes(state);
+  const errorCode = installation.receiver?.error_code;
+  const safeCode =
+    (
+      [
+        'credentials_invalid',
+        'permission_missing',
+        'configuration_invalid',
+        'connection_limit',
+        'connection_in_use',
+        'lease_unavailable',
+        'credential_unavailable',
+      ] as const
+    ).find(code => code === errorCode) ?? 'connection_failed';
+  return (
+    <div className="mt-4 rounded-xl border border-blue-500/20 bg-blue-500/[0.035] p-4">
+      <div className="flex items-start gap-3" role="status" aria-live="polite">
+        {transitioning ? (
+          <Loader2 className="mt-0.5 size-5 shrink-0 animate-spin motion-reduce:animate-none text-blue-600" />
+        ) : state === 'error' && active ? (
+          <AlertTriangle className="mt-0.5 size-5 shrink-0 text-destructive" />
+        ) : (
+          <RadioTower className="mt-0.5 size-5 shrink-0 text-blue-600" />
+        )}
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{t('channels.installations.websocket.title')}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {active
+              ? t(`channels.installations.websocket.state.${state}`)
+              : t('channels.installations.websocket.disabled')}
+          </p>
+          {state === 'error' && active ? (
+            <p className="mt-2 text-xs leading-5 text-destructive">
+              {t(`channels.installations.websocket.errors.${safeCode}`)}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <ol className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {(['connect', 'subscribe', 'availability', 'test'] as const).map((step, index) => (
+          <li key={step} className="flex gap-2 rounded-lg border bg-background px-3 py-2.5">
+            <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+              {index + 1}
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-medium">
+                {t(`channels.installations.websocket.steps.${step}.title`)}
+              </p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                {t(`channels.installations.websocket.steps.${step}.description`)}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p className="mt-3 text-xs leading-5 text-muted-foreground">
+        {t('channels.installations.websocket.environmentHint')}
+      </p>
     </div>
   );
 }
@@ -276,6 +368,7 @@ export function FeishuInstallationVerificationStatus({
         <FeishuConnectionTestController
           digitalHumanID={digitalHumanID}
           installationID={installation.id}
+          websocket={installation.receiver?.mode === 'websocket'}
           test={directTest}
           onChange={onConnectionTestChange}
           onRestart={() => onStartConnectionTest?.('direct') ?? Promise.resolve()}
@@ -289,6 +382,7 @@ export function FeishuInstallationVerificationStatus({
           <FeishuConnectionTestController
             digitalHumanID={digitalHumanID}
             installationID={installation.id}
+            websocket={installation.receiver?.mode === 'websocket'}
             test={groupTest}
             onChange={onConnectionTestChange}
             onRestart={() => onStartConnectionTest?.('group') ?? Promise.resolve()}
@@ -328,6 +422,7 @@ function FeishuConnectionTestController({
   onChange,
   onRestart,
   restarting,
+  websocket,
 }: {
   digitalHumanID: string;
   installationID: string;
@@ -335,6 +430,7 @@ function FeishuConnectionTestController({
   onChange?: (test: DigitalHumanChannelConnectionTest) => void;
   onRestart?: () => Promise<void>;
   restarting?: boolean;
+  websocket: boolean;
 }) {
   const sentConfirmationStorageKey = `digital-human-channel-connection-test-sent:${digitalHumanID}:${installationID}:${test.conversation_type}`;
   const [sentConfirmationTestID, setSentConfirmationTestID] = useState('');
@@ -401,6 +497,7 @@ function FeishuConnectionTestController({
   };
   return (
     <FeishuMessageRoundTripTest
+      websocket={websocket}
       test={currentTest}
       userConfirmedSent={userConfirmedSent}
       refreshing={connectionTestQuery.isFetching}
@@ -478,6 +575,7 @@ function FeishuMessageRoundTripTest({
   onConfirmSent,
   onRefresh,
   onRestart,
+  websocket,
 }: {
   test: DigitalHumanChannelConnectionTest;
   userConfirmedSent: boolean;
@@ -486,6 +584,7 @@ function FeishuMessageRoundTripTest({
   onConfirmSent: () => void;
   onRefresh: () => void;
   onRestart?: () => Promise<void>;
+  websocket: boolean;
 }) {
   const t = useT('digitalHumans');
   const groupTest = test.conversation_type === 'group';
@@ -642,13 +741,15 @@ function FeishuMessageRoundTripTest({
               {t('channels.installations.connectionTest.failureDetectedTitle')}
             </p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {t(
-                `channels.installations.connectionTest.failure.${
-                  groupTest && failureKey === 'message_not_received'
-                    ? 'group_message_not_received'
-                    : failureKey
-                }`
-              )}
+              {websocket && failureKey === 'message_not_received'
+                ? t('channels.installations.websocket.messageNotReceived')
+                : t(
+                    `channels.installations.connectionTest.failure.${
+                      groupTest && failureKey === 'message_not_received'
+                        ? 'group_message_not_received'
+                        : failureKey
+                    }`
+                  )}
             </p>
           </div>
         </div>
@@ -710,8 +811,20 @@ function FeishuMessageRoundTripTest({
             {t('channels.installations.connectionTest.eventChecklistTitle')}
           </p>
           <ol className="mt-1 list-decimal space-y-1 pl-4">
-            <li>{t('channels.installations.connectionTest.eventChecklist.eventPage')}</li>
-            <li>{t('channels.installations.connectionTest.eventChecklist.subscription')}</li>
+            <li>
+              {t(
+                websocket
+                  ? 'channels.installations.websocket.eventChecklist'
+                  : 'channels.installations.connectionTest.eventChecklist.eventPage'
+              )}
+            </li>
+            <li>
+              {t(
+                websocket
+                  ? 'channels.installations.websocket.subscriptionChecklist'
+                  : 'channels.installations.connectionTest.eventChecklist.subscription'
+              )}
+            </li>
             <li>{t('channels.installations.connectionTest.eventChecklist.publish')}</li>
             {groupTest ? (
               <li>{t('channels.installations.connectionTest.eventChecklist.groupAccess')}</li>
@@ -968,6 +1081,7 @@ export function FeishuCredentialFields({
   editing = false,
 }: ChannelCredentialFieldsProps) {
   const t = useT('digitalHumans');
+  const websocket = value.connection_mode === 'websocket';
   const update = (key: (typeof FEISHU_CREDENTIAL_KEYS)[number], nextValue: string) =>
     onChange({ ...value, [key]: nextValue });
   const keepExisting = editing
@@ -975,7 +1089,35 @@ export function FeishuCredentialFields({
     : undefined;
   return (
     <div className="space-y-4">
-      <CredentialLocationGuide />
+      <div className="space-y-2">
+        <Label>{t('channels.installations.websocket.modeLabel')}</Label>
+        <Tabs
+          value={websocket ? 'websocket' : 'webhook'}
+          onValueChange={mode => update('connection_mode', mode)}
+        >
+          <TabsList className="grid h-auto w-full grid-cols-2">
+            <TabsTrigger value="websocket" className="whitespace-normal py-2">
+              {t('channels.installations.websocket.modeWebSocket')}
+            </TabsTrigger>
+            <TabsTrigger value="webhook" className="whitespace-normal py-2">
+              {t('channels.installations.websocket.modeWebhook')}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <p className="text-xs leading-5 text-muted-foreground">
+          {t(
+            websocket
+              ? 'channels.installations.websocket.modeDescription'
+              : 'channels.installations.websocket.webhookDescription'
+          )}
+        </p>
+        {editing ? (
+          <p className="text-xs leading-5 text-amber-700 dark:text-amber-300">
+            {t('channels.installations.websocket.switchHint')}
+          </p>
+        ) : null}
+      </div>
+      <CredentialLocationGuide websocket={websocket} />
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="App ID">
           <Input
@@ -994,28 +1136,32 @@ export function FeishuCredentialFields({
             onChange={event => update('app_secret', event.target.value)}
           />
         </Field>
-        <Field label="Verification Token">
-          <Input
-            type="password"
-            value={value.verification_token ?? ''}
-            placeholder={keepExisting}
-            autoComplete="new-password"
-            onChange={event => update('verification_token', event.target.value)}
-          />
-        </Field>
-        <div className="sm:col-span-2">
-          <Field label="Encrypt Key">
-            <Input
-              type="password"
-              value={value.encrypt_key ?? ''}
-              placeholder={
-                keepExisting ?? t('channels.installations.credential.encryptKeyPlaceholder')
-              }
-              autoComplete="new-password"
-              onChange={event => update('encrypt_key', event.target.value)}
-            />
-          </Field>
-        </div>
+        {!websocket ? (
+          <>
+            <Field label="Verification Token">
+              <Input
+                type="password"
+                value={value.verification_token ?? ''}
+                placeholder={keepExisting}
+                autoComplete="new-password"
+                onChange={event => update('verification_token', event.target.value)}
+              />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field label="Encrypt Key">
+                <Input
+                  type="password"
+                  value={value.encrypt_key ?? ''}
+                  placeholder={
+                    keepExisting ?? t('channels.installations.credential.encryptKeyPlaceholder')
+                  }
+                  autoComplete="new-password"
+                  onChange={event => update('encrypt_key', event.target.value)}
+                />
+              </Field>
+            </div>
+          </>
+        ) : null}
       </div>
       <CredentialPrivacyNotice />
     </div>
@@ -1034,12 +1180,15 @@ export function FeishuCredentialDialog({
   const [error, setError] = useState('');
   useEffect(() => {
     if (!open) return;
-    setValue(createEmptyFeishuCredentialDraft());
+    setValue({
+      ...createEmptyFeishuCredentialDraft(),
+      connection_mode: installation.receiver?.mode === 'websocket' ? 'websocket' : 'webhook',
+    });
     setError('');
-  }, [open]);
+  }, [open, installation.id, installation.receiver?.mode]);
   const submit = async () => {
     const credentials = serializeFeishuCredential(value);
-    if (Object.keys(credentials).length === 0) return;
+    if (!canSubmit) return;
     setError('');
     try {
       await mutations.updateCredential.mutateAsync({
@@ -1054,10 +1203,18 @@ export function FeishuCredentialDialog({
     }
   };
   const credentialFields = serializeFeishuCredential(value);
+  const transportChanged =
+    value.connection_mode !==
+    (installation.receiver?.mode === 'websocket' ? 'websocket' : 'webhook');
+  const hasCredentialChanges = Object.keys(credentialFields).some(key => key !== 'connection_mode');
   const canSubmit =
-    installation.credential_mode === 'embedded'
+    (hasCredentialChanges || transportChanged) &&
+    (value.connection_mode !== 'webhook' ||
+      installation.receiver?.mode !== 'websocket' ||
+      Boolean(value.verification_token?.trim())) &&
+    (installation.credential_mode === 'embedded'
       ? Object.keys(credentialFields).length > 0
-      : isFeishuCredentialComplete(value);
+      : isFeishuCredentialComplete(value));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="lg" className="p-0">

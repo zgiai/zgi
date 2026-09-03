@@ -720,6 +720,36 @@ assert.doesNotMatch(
   'The generic DigitalHuman channel page must not contain Feishu-specific branches or credential fields'
 );
 assert.match(
+  feishuChannelProvider,
+  /createEmptyFeishuCredentialDraft[\s\S]*connection_mode: 'websocket'/,
+  'New directly configured Feishu connections must default to WebSocket'
+);
+assert.match(
+  feishuChannelProvider,
+  /value\.connection_mode === 'websocket' \|\| value\.verification_token\?\.trim\(\)/,
+  'Only Webhook credentials require a verification token'
+);
+assert.match(
+  feishuChannelProvider,
+  /installation\.receiver\?\.mode === 'websocket'[\s\S]*<FeishuWebSocketSetup/,
+  'Saved receiver mode must select the appropriate installation guide'
+);
+assert.match(
+  feishuChannelProvider,
+  /websocket\.eventChecklist[\s\S]*eventChecklist\.eventPage/,
+  'WebSocket diagnostics must not instruct users to configure an HTTP callback'
+);
+assert.match(
+  feishuChannelProvider,
+  /connection_mode: installation\.receiver\?\.mode === 'websocket' \? 'websocket' : 'webhook'/,
+  'Editing a legacy installation must retain Webhook rather than silently migrate it'
+);
+assert.match(
+  channels,
+  /\) : usesWebhook \? \(/,
+  'Long connections must not display a stale callback address'
+);
+assert.match(
   channels,
   /const wasOpen = useRef\(false\)[\s\S]*open && !wasOpen\.current[\s\S]*createInstallation\.mutateAsync[\s\S]*connection_id: selectedConnectionID[\s\S]*credentials: provider\.credentialUI\.serialize/,
   'DigitalHuman channel creation must reset the form and submit either an installation credential or a provider-filtered Connection Center reference'

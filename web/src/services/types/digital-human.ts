@@ -429,8 +429,15 @@ export interface DigitalHumanChannelInstallation {
   external_bot_id?: string;
   webhook_url?: string;
   receiver?: {
-    mode: 'stream' | 'webhook' | (string & {});
-    state: 'not_applicable' | 'pending' | 'connecting' | 'connected' | 'disconnected' | 'error';
+    mode: 'stream' | 'websocket' | 'webhook' | 'unknown' | (string & {});
+    state:
+      | 'not_applicable'
+      | 'pending'
+      | 'connecting'
+      | 'connected'
+      | 'reconnecting'
+      | 'disconnected'
+      | 'error';
     error_code?: string;
     updated_at?: string;
   };

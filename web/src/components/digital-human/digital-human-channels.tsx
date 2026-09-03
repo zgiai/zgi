@@ -422,12 +422,14 @@ function InstallationPanel({
             const webhookURL = installation.webhook_url?.trim() ?? '';
             const webhookReady = /^https:\/\//i.test(webhookURL);
             const usesStream = installation.provider === 'dingtalk';
+            const usesWebhook = !installation.receiver || installation.receiver.mode === 'webhook';
             const receiverState = installation.receiver?.state ?? 'pending';
             const receiverStateLabel = {
               not_applicable: 'channels.installations.stream.state.not_applicable',
               pending: 'channels.installations.stream.state.pending',
               connecting: 'channels.installations.stream.state.connecting',
               connected: 'channels.installations.stream.state.connected',
+              reconnecting: 'channels.installations.stream.state.reconnecting',
               disconnected: 'channels.installations.stream.state.disconnected',
               error: 'channels.installations.stream.state.error',
             }[receiverState] as
@@ -435,6 +437,7 @@ function InstallationPanel({
               | 'channels.installations.stream.state.pending'
               | 'channels.installations.stream.state.connecting'
               | 'channels.installations.stream.state.connected'
+              | 'channels.installations.stream.state.reconnecting'
               | 'channels.installations.stream.state.disconnected'
               | 'channels.installations.stream.state.error';
             return (
@@ -514,6 +517,7 @@ function InstallationPanel({
                     </div>
                   ) : null}
                 </div>
+                {SetupGuide ? <SetupGuide installation={installation} /> : null}
                 {VerificationStatus ? (
                   <VerificationStatus
                     digitalHumanID={id}
@@ -522,7 +526,10 @@ function InstallationPanel({
                     connectionTests={currentConnectionTests}
                     onConnectionTestChange={test => onConnectionTestChange(installation.id, test)}
                     onStartConnectionTest={async conversationType => {
-                      const response = await onStartConnectionTest(installation.id, conversationType);
+                      const response = await onStartConnectionTest(
+                        installation.id,
+                        conversationType
+                      );
                       onConnectionTestChange(installation.id, response);
                     }}
                     startingConnectionTest={verifyingInstallationId === installation.id}
@@ -533,7 +540,6 @@ function InstallationPanel({
                     result={verificationResult}
                   />
                 )}
-                {SetupGuide ? <SetupGuide installation={installation} /> : null}
                 {usesStream ? (
                   <div className="mt-4 rounded-lg border bg-background p-3">
                     <div className="flex items-start gap-3">
@@ -553,7 +559,7 @@ function InstallationPanel({
                       </div>
                     </div>
                   </div>
-                ) : (
+                ) : usesWebhook ? (
                   <div className="mt-4">
                     <div className="rounded-lg border bg-background p-3">
                       <div className="flex items-start justify-between gap-3">
@@ -588,7 +594,7 @@ function InstallationPanel({
                       ) : null}
                     </div>
                   </div>
-                )}
+                ) : null}
                 <ChannelContextStatus readiness={installation.channel_context} />
               </div>
             );
@@ -1371,17 +1377,17 @@ function DeliveryStatus({ status }: { status: DigitalHumanChannelDeliveryStatus 
         ? 'destructive'
         : status === 'dismissed'
           ? 'subtle'
-        : status === 'unknown'
-          ? 'warning'
-          : 'info';
+          : status === 'unknown'
+            ? 'warning'
+            : 'info';
   const Icon =
     status === 'succeeded'
       ? CheckCircle2
       : status === 'dismissed'
         ? CircleOff
-      : status === 'pending' || status === 'processing'
-        ? Clock3
-        : Send;
+        : status === 'pending' || status === 'processing'
+          ? Clock3
+          : Send;
   return (
     <Badge variant={variant}>
       <Icon className={cn(status === 'processing' && 'animate-pulse')} />

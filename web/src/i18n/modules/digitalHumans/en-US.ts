@@ -946,6 +946,79 @@ const messages = {
       webhookUnavailable: 'No public callback URL is available yet',
       webhookUnavailableHint:
         'This deployment does not have an HTTPS address reachable by external platforms. Contact an administrator.',
+      websocket: {
+        title: 'Feishu WebSocket connection',
+        modeLabel: 'Receive messages via',
+        modeWebSocket: 'Long connection (recommended)',
+        modeWebhook: 'Webhook callback',
+        modeDescription:
+          'For enterprise self-built apps. Requires App ID, App Secret, and outbound internet access. No public callback URL is needed.',
+        webhookDescription:
+          'Receive events at a public HTTPS endpoint. Suitable for existing Webhook deployments; requires a callback URL and verification credentials.',
+        credentialsDescription:
+          'Copy App ID and App Secret. WebSocket does not require Verification Token or Encrypt Key.',
+        switchHint:
+          'Also change the subscription mode in Feishu Events & Callbacks → Event Configuration. Establish the long connection before saving that mode in Feishu. Switching may briefly interrupt inbound messages.',
+        disabled: 'Disabled. New messages are not received.',
+        environmentHint:
+          'Use separate Feishu apps for local, test, and production environments. Multiple clients of the same App ID share message delivery; events are not broadcast.',
+        state: {
+          not_applicable: 'Waiting for the server to establish a connection.',
+          pending: 'Waiting for the server to connect. This page updates automatically.',
+          connecting: 'Verifying the app identity and connecting to Feishu…',
+          connected:
+            'Connected. Event subscription and real direct/group tests are still required to verify delivery and permissions.',
+          reconnecting: 'Connection interrupted. Reconnecting automatically…',
+          disconnected: 'Disconnected. The server is restoring the connection.',
+          error: 'The connection is unavailable. Follow the guidance below.',
+        },
+        errors: {
+          credentials_invalid:
+            'App ID or App Secret is invalid. Edit the credential and test again. Automatic retry has stopped.',
+          permission_missing:
+            'Feishu denied identity verification. Check bot capability and application permissions such as tenant:tenant:readonly, then select Start connection test for details and retry.',
+          configuration_invalid:
+            'Feishu rejected the connection. Confirm this is an enterprise self-built app with bot capability, and check App ID and App Secret. Test again after fixing the configuration. Automatic retry has stopped.',
+          connection_limit:
+            'The app connection limit was reached. Stop duplicate deployments or extra clients, then test again. Automatic retry has stopped.',
+          connection_in_use:
+            'Another service instance or connection configuration owns this app connection. Check for duplicates; if another instance of this deployment receives messages, continue with the real-message test.',
+          lease_unavailable:
+            'Connection ownership could not be verified. Receiving is paused until recovery. Check the service and database connection.',
+          credential_unavailable:
+            'The server cannot read the encrypted credential. Check credential storage or save the credential again.',
+          connection_failed:
+            'Cannot connect to Feishu yet. The server will retry. Check outbound HTTPS / WebSocket access to Feishu.',
+        },
+        steps: {
+          connect: {
+            title: 'Wait for the connection',
+            description:
+              'ZGI connects after saving credentials. Confirm the status above is Connected first.',
+          },
+          subscribe: {
+            title: 'Choose WebSocket and events',
+            description:
+              'In Feishu Events & Callbacks → Event Configuration, choose persistent connection and subscribe to im.message.receive_v1. Do not enter a callback URL.',
+          },
+          availability: {
+            title: 'Check permissions and access',
+            description:
+              'Enable application permissions and include test members in app availability. Permission-only changes need no new version; save or publish other settings as directed by Feishu.',
+          },
+          test: {
+            title: 'Test direct and group messages',
+            description:
+              'Select Start connection test, complete the direct test, then mention the bot in a group. Connected does not mean all permissions are verified.',
+          },
+        },
+        messageNotReceived:
+          'This connection has not received the test message. Check connection status, persistent subscription mode, im.message.receive_v1, direct/group permissions, bot membership, and app availability. Ensure another environment is not receiving events with the same App ID.',
+        eventChecklist:
+          'Confirm ZGI is connected, then select persistent connection in Feishu Event Configuration. No public callback URL is required.',
+        subscriptionChecklist:
+          'Subscribe to im.message.receive_v1 and check message permissions, bot membership, and app availability. Do not share this App ID with another environment using a long connection.',
+      },
       stream: {
         title: 'Stream connection',
         state: {
@@ -953,6 +1026,7 @@ const messages = {
           pending: 'Waiting for the server to establish a connection…',
           connecting: 'Connecting to DingTalk…',
           connected: 'Connected. No public callback URL is required.',
+          reconnecting: 'Reconnecting to DingTalk…',
           disconnected: 'Disconnected. The server will reconnect automatically.',
           error: 'DingTalk is temporarily unreachable.',
         },

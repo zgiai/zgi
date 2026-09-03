@@ -877,6 +877,75 @@ const messages: DigitalHumansMessages = {
       copy: '复制',
       webhookUnavailable: '暂未生成可用的公网回调地址',
       webhookUnavailableHint: '当前部署尚未配置可供外部平台访问的 HTTPS 地址，请联系管理员处理。',
+      websocket: {
+        title: '飞书 WebSocket 长连接',
+        modeLabel: '消息接收方式',
+        modeWebSocket: '长连接（推荐）',
+        modeWebhook: 'Webhook 回调',
+        modeDescription:
+          '适用于企业自建应用。只需 App ID 和 App Secret，服务器能访问公网即可，无需公网回调地址。',
+        webhookDescription:
+          '通过公网 HTTPS 地址接收消息，适合已有 Webhook 部署。需要配置回调地址与安全凭证。',
+        credentialsDescription:
+          '复制 App ID 和 App Secret。长连接不需要 Verification Token 或 Encrypt Key。',
+        switchHint:
+          '切换后请同步修改飞书“事件与回调 → 事件配置”的订阅方式。长连接建立后才能在飞书保存该方式；切换期间可能短暂无法收消息。',
+        disabled: '连接已停用，不接收新消息。',
+        environmentHint:
+          '本地、测试和生产环境请使用不同的飞书应用。同一 App ID 的多个长连接不会广播消息，只会由其中一个客户端接收。',
+        state: {
+          not_applicable: '等待服务端建立长连接。',
+          pending: '等待服务端建立长连接，页面会自动更新。',
+          connecting: '正在验证应用身份并连接飞书…',
+          connected: '长连接已建立。还需完成事件订阅和私聊、群聊实测，才能确认收发与权限正常。',
+          reconnecting: '网络连接中断，正在自动重连…',
+          disconnected: '连接已断开，服务端正在恢复连接。',
+          error: '长连接暂不可用，请按下方提示处理。',
+        },
+        errors: {
+          credentials_invalid:
+            'App ID 或 App Secret 无效。请编辑应用凭证后重新测试；已停止自动重试。',
+          permission_missing:
+            '身份校验被飞书拒绝。请检查机器人能力和 tenant:tenant:readonly 等应用身份权限，再点击“开始连接测试”查看具体原因并重试。',
+          configuration_invalid:
+            '飞书拒绝建立长连接。请确认是企业自建应用、机器人能力已启用，并核对 App ID 与 App Secret。修正后重新测试；已停止自动重试。',
+          connection_limit:
+            '飞书应用连接数受限。请关闭重复部署或多余客户端后重新测试；已停止自动重试。',
+          connection_in_use:
+            '该应用的连接由另一个服务实例或连接配置持有。请检查重复配置；若由同一部署的其他实例接收，可继续通过真实消息验证。',
+          lease_unavailable: '暂时无法确认连接归属，已暂停接收并等待恢复。请检查服务与数据库连接。',
+          credential_unavailable: '服务端无法读取加密凭证，请检查凭证存储配置或重新保存凭证。',
+          connection_failed:
+            '暂时无法连接飞书，服务端将重试。请检查出站网络是否允许访问飞书 HTTPS / WebSocket 服务。',
+        },
+        steps: {
+          connect: {
+            title: '等待长连接建立',
+            description: '保存凭证后 ZGI 自动连接。请先确认上方显示“长连接已建立”。',
+          },
+          subscribe: {
+            title: '选择长连接并订阅事件',
+            description:
+              '在飞书“事件与回调 → 事件配置”选择“使用长连接接收事件”，订阅 im.message.receive_v1；不要填写回调地址。',
+          },
+          availability: {
+            title: '确认权限与可用范围',
+            description:
+              '开通下方应用身份权限，将测试成员加入可用范围。权限修改无需发布新版本；其他应用配置按飞书后台提示保存、发布。',
+          },
+          test: {
+            title: '验证真实私聊和群聊',
+            description:
+              '点击“开始连接测试”，先完成私聊，再到群聊 @ 机器人。长连接已建立不代表所有权限已通过。',
+          },
+        },
+        messageNotReceived:
+          '当前连接尚未收到测试消息。请确认长连接已建立、已选择长连接订阅并订阅 im.message.receive_v1，再检查对应私聊或群聊权限、机器人入群和应用可用范围。确认没有其他环境使用同一 App ID 接收消息。',
+        eventChecklist:
+          '先确认 ZGI 显示长连接已建立，再在飞书“事件配置”选择“使用长连接接收事件”。无需填写公网回调地址。',
+        subscriptionChecklist:
+          '订阅 im.message.receive_v1；检查对应消息权限、机器人入群和应用可用范围。不要让其他环境共用同一 App ID 的长连接。',
+      },
       stream: {
         title: 'Stream 长连接',
         state: {
@@ -884,6 +953,7 @@ const messages: DigitalHumansMessages = {
           pending: '正在等待服务端建立连接…',
           connecting: '正在连接钉钉…',
           connected: '已连接，无需配置公网回调地址。',
+          reconnecting: '正在重新连接钉钉…',
           disconnected: '连接已断开，服务端将自动重连。',
           error: '暂时无法连接钉钉。',
         },
