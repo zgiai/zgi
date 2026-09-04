@@ -22,12 +22,12 @@ export function hasModelPriceDisplay(model: ModelItem): boolean {
       model.output_price_configured ||
       isFiniteNumber(model.input_price_override) ||
       isFiniteNumber(model.output_price_override) ||
-      isFiniteNumber(model.synced_input_price) ||
-      isFiniteNumber(model.synced_output_price) ||
+      isPositiveNumber(model.synced_input_price) ||
+      isPositiveNumber(model.synced_output_price) ||
       isFiniteNumber(model.cached_input_price) ||
       isFiniteNumber(model.cache_read_price_override) ||
       isFiniteNumber(model.cache_read_price) ||
-      isFiniteNumber(model.synced_cache_read_price) ||
+      isPositiveNumber(model.synced_cache_read_price) ||
       isFiniteNumber(model.input_price) ||
       isFiniteNumber(model.output_price)
   );
@@ -53,7 +53,7 @@ export const ModelPriceSummary = memo(function ModelPriceSummary({
     configured: model.output_price_configured,
   });
   const cachedInputPrice = resolvePrice({
-    price: model.cache_read_price ?? model.cached_input_price,
+    price: resolveCachePrice(model),
     overridePrice: model.cache_read_price_override,
     syncedPrice: model.synced_cache_read_price,
     configured: model.cache_read_price_configured,
@@ -145,7 +145,7 @@ function resolvePrice({
   if (isPositiveNumber(price)) {
     return { price, configured: true };
   }
-  if (isFiniteNumber(syncedPrice)) {
+  if (isPositiveNumber(syncedPrice)) {
     return { price: syncedPrice, configured: true };
   }
   return { price, configured: false };
@@ -157,6 +157,16 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isPositiveNumber(value: unknown): value is number {
   return isFiniteNumber(value) && value > 0;
+}
+
+function resolveCachePrice(model: ModelItem): number | null | undefined {
+  if (model.cache_read_price_configured || isPositiveNumber(model.cache_read_price)) {
+    return model.cache_read_price;
+  }
+  if (isPositiveNumber(model.cached_input_price)) {
+    return model.cached_input_price;
+  }
+  return model.cache_read_price ?? model.cached_input_price;
 }
 
 function ModelPriceChip({
