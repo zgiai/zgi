@@ -4,6 +4,8 @@ import type {
   ConnectorCatalogItem,
   ConnectorOnboardingFlow,
   ConnectorOnboardingRequest,
+  ConnectorPendingSetup,
+  ConnectorPendingSetupList,
   ConnectorChatPreferences,
   SetConnectorChatPreferenceRequest,
   ConnectorUnavailableReference,
@@ -58,6 +60,54 @@ class ConnectorService extends BaseService {
 
   getKeySetup(attemptId: string): Promise<ApiResponseData<KeySetupResult>> {
     return this.request('get', `/connectors/key-setups/${encodeURIComponent(attemptId)}`);
+  }
+
+  getPendingSetups(connectorId?: string): Promise<ApiResponseData<ConnectorPendingSetupList>> {
+    return this.request('get', '/connectors/pending-setups', undefined, {
+      params: { connector_id: connectorId, limit: 200 },
+      retryAttemptsOverride: 0,
+    });
+  }
+  getPendingSetup(id: string): Promise<ApiResponseData<ConnectorPendingSetup>> {
+    return this.request('get', `/connectors/pending-setups/${encodeURIComponent(id)}`, undefined, {
+      retryAttemptsOverride: 0,
+    });
+  }
+  cancelPendingSetup(
+    id: string,
+    revision: number
+  ): Promise<ApiResponseData<ConnectorPendingSetup>> {
+    return this.request(
+      'delete',
+      `/connectors/pending-setups/${encodeURIComponent(id)}`,
+      undefined,
+      { data: { expected_revision: revision }, retryAttemptsOverride: 0 }
+    );
+  }
+  resumePendingSetup(
+    id: string,
+    revision: number,
+    key: string
+  ): Promise<ApiResponseData<ConnectorOnboardingFlow>> {
+    return this.request(
+      'post',
+      `/connectors/pending-setups/${encodeURIComponent(id)}/onboarding-flows`,
+      { expected_revision: revision },
+      { headers: { 'Idempotency-Key': key }, retryAttemptsOverride: 0 }
+    );
+  }
+  resumePendingManual(
+    id: string,
+    revision: number,
+    values: Record<string, string>,
+    key: string
+  ): Promise<ApiResponseData<ConnectorOnboardingFlow>> {
+    return this.request(
+      'post',
+      '/connectors/feishu/app-credential-setups',
+      { pending_setup_id: id, expected_pending_revision: revision, values },
+      { headers: { 'Idempotency-Key': key }, retryAttemptsOverride: 0 }
+    );
   }
 
   startAppCredentialSetup(

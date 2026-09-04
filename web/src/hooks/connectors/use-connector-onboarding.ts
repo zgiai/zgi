@@ -41,19 +41,40 @@ function recover(key: string): RecoveryTicket | undefined {
       return undefined;
     }
     const incoming = value.request;
+    if (incoming.intent === 'resume_app') {
+      if (
+        !/^[a-f0-9-]{36}$/.test(incoming.pending_setup_id) ||
+        !Number.isSafeInteger(incoming.expected_revision) ||
+        incoming.expected_revision < 1 ||
+        (value.flowId && !/^[a-f0-9-]{36}$/.test(value.flowId))
+      ) {
+        return;
+      }
+      return {
+        key: value.key,
+        flowId: value.flowId,
+        request: {
+          intent: 'resume_app',
+          pending_setup_id: incoming.pending_setup_id,
+          expected_revision: incoming.expected_revision,
+        },
+      };
+    }
     if ('protocol_version' in incoming) {
       if (
         incoming.protocol_version !== 1 ||
         (incoming.intent !== 'register_bot' &&
           incoming.intent !== 'login_session' &&
           incoming.intent !== 'reauthorize')
-      )
-        {return;}
+      ) {
+        return;
+      }
       if (
         incoming.intent === 'reauthorize' &&
         (!Number.isSafeInteger(incoming.expected_revision) || incoming.expected_revision < 1)
-      )
-        {return;}
+      ) {
+        return;
+      }
       if (value.flowId && !/^[a-f0-9-]{36}$/.test(value.flowId)) return;
       return {
         key: value.key,
@@ -107,11 +128,12 @@ function recover(key: string): RecoveryTicket | undefined {
 
 export function useConnectorOnboarding(
   connector: ConnectorCatalogItem,
-  update?: PersonalConnection
+  update?: PersonalConnection,
+  pendingSetupID?: string
 ) {
   const accountID = useAuthStore.use.user()?.id;
   const organizationID = useOrganizationStore.use.currentOrganization()?.id;
-  const scope = `connector-onboarding:${organizationID}:${accountID}:${connector.id}:${update?.id ?? 'create'}`;
+  const scope = `connector-onboarding:${organizationID}:${accountID}:${connector.id}:${pendingSetupID ?? update?.id ?? 'create'}`;
   const [flow, setFlow] = useState<ConnectorOnboardingFlow>();
   const [connection, setConnection] = useState<PersonalConnection>();
   const [errorCode, setErrorCode] = useState<string>();
@@ -152,12 +174,28 @@ export function useConnectorOnboarding(
           if (current(version)) setErrorCode(connectorRequestErrorDetails(error).code);
         });
     } else if (ticket.current) setErrorCode('transport_unconfirmed');
+    else if (pendingSetupID) {
+      setRestored(true);
+      void connectorService
+        .getPendingSetup(pendingSetupID)
+        .then(async result => {
+          if (!current(version) || !result.data.active_flow_id) return;
+          const active = await connectorService.getOnboarding(
+            result.data.active_flow_id,
+            controller.signal
+          );
+          if (current(version)) setFlow(active.data);
+        })
+        .catch(error => {
+          if (current(version)) setErrorCode(connectorRequestErrorDetails(error).code);
+        });
+    }
     return () => {
       generation.current = version + 1;
       controller.abort();
       ticket.current = undefined;
     };
-  }, [scope, current]);
+  }, [scope, current, pendingSetupID]);
 
   useEffect(() => {
     if (!flow || !activeOnboarding(flow) || errorCode) return;
@@ -198,8 +236,16 @@ export function useConnectorOnboarding(
       });
   }, [flow, connection, current, queryClient, scope, refresh]);
 
+  useEffect(() => {
+    if (flow?.state !== 'pending_completion') return;
+    // The server-side pending record is now the recovery source. A later Add
+    // connection must not replay this finished create attempt from storage.
+    persist(scope);
+    ticket.current = undefined;
+  }, [flow?.state, scope]);
+
   const start = useCallback(
-    async (region: 'feishu' | 'lark' = 'feishu', resume = false) => {
+    async (region: 'feishu' | 'lark' = 'feishu', resume = false, pendingRevision?: number) => {
       const templateID = connector.setup?.template_id;
       const messaging = supportsMessagingContract(connector);
       if (
@@ -208,30 +254,39 @@ export function useConnectorOnboarding(
         !organizationID ||
         (!messaging && !templateID) ||
         activeOnboarding(flow)
-      )
-        {return;}
+      ) {
+        return;
+      }
       if (
         messaging &&
         !resume &&
         !messagingMethod(connector, update ? 'qr_reauthorize' : 'qr_connect')
-      )
-        {return;}
+      ) {
+        return;
+      }
       if (!resume && ticket.current && !flow) return;
       const version = generation.current;
-      const request: ConnectorOnboardingRequest = messaging
-        ? update
-          ? { intent: 'reauthorize', protocol_version: 1, expected_revision: update.revision }
-          : {
-              intent: connector.id === 'weixin' ? 'login_session' : 'register_bot',
-              protocol_version: 1,
-            }
-        : update
-          ? {
-              intent: 'update_app',
-              expected_revision: update.revision,
-              template_id: templateID ?? '',
-            }
-          : { intent: 'create_app', region, template_id: templateID ?? '' };
+      if (pendingSetupID && !resume && !pendingRevision) return;
+      const request: ConnectorOnboardingRequest = pendingSetupID
+        ? {
+            intent: 'resume_app',
+            pending_setup_id: pendingSetupID,
+            expected_revision: pendingRevision ?? 0,
+          }
+        : messaging
+          ? update
+            ? { intent: 'reauthorize', protocol_version: 1, expected_revision: update.revision }
+            : {
+                intent: connector.id === 'weixin' ? 'login_session' : 'register_bot',
+                protocol_version: 1,
+              }
+          : update
+            ? {
+                intent: 'update_app',
+                expected_revision: update.revision,
+                template_id: templateID ?? '',
+              }
+            : { intent: 'create_app', region, template_id: templateID ?? '' };
       if (!resume) {
         ticket.current = { key: crypto.randomUUID(), request };
         setRestored(false);
@@ -242,12 +297,19 @@ export function useConnectorOnboarding(
       setBusy(true);
       setErrorCode(undefined);
       try {
-        const result = await connectorService.startOnboarding(
-          connector.id,
-          active.request,
-          active.key,
-          update?.id
-        );
+        const result =
+          active.request.intent === 'resume_app'
+            ? await connectorService.resumePendingSetup(
+                active.request.pending_setup_id,
+                active.request.expected_revision,
+                active.key
+              )
+            : await connectorService.startOnboarding(
+                connector.id,
+                active.request,
+                active.key,
+                update?.id
+              );
         if (!current(version)) return;
         ticket.current = { ...active, flowId: result.data.id };
         persist(scope, ticket.current);
@@ -264,7 +326,7 @@ export function useConnectorOnboarding(
         if (current(version)) setBusy(false);
       }
     },
-    [busy, accountID, organizationID, flow, update, connector, scope, current]
+    [busy, accountID, organizationID, flow, update, connector, scope, current, pendingSetupID]
   );
 
   const retryStatus = useCallback(async () => {
@@ -318,8 +380,9 @@ export function useConnectorOnboarding(
         flow.protocol_version !== 1 ||
         flow.step !== 'awaiting_code' ||
         !flow.allowed_actions?.includes('submit_code')
-      )
-        {return;}
+      ) {
+        return;
+      }
       const version = generation.current;
       setBusy(true);
       setErrorCode(undefined);
@@ -337,7 +400,15 @@ export function useConnectorOnboarding(
 
   return {
     clearTerminal: () => {
-      if (!flow || activeOnboarding(flow) || flow.state === 'ready' || busy) return;
+      if (
+        !flow ||
+        activeOnboarding(flow) ||
+        flow.state === 'ready' ||
+        flow.state === 'pending_completion' ||
+        busy
+      ) {
+        return;
+      }
       persist(scope);
       ticket.current = undefined;
       setFlow(undefined);

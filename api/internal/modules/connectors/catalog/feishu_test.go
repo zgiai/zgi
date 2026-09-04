@@ -257,15 +257,16 @@ func assertFeishuReviewedTemplateExpansionCompatibility(t *testing.T, candidate 
 		t.Errorf("reviewed template and additive search release rejected: %v", err)
 	}
 	for name, change := range map[string]func(*Definition){
-		"same version":       func(d *Definition) { d.PluginVersion = current.PluginVersion },
-		"unreviewed release": func(d *Definition) { d.PluginVersion = "1.0.4" },
-		"unknown template":   func(d *Definition) { d.Setup.TemplateID = "feishu-app-template-v4" },
-		"changed digest":     func(d *Definition) { d.Setup.TemplateDigest = strings.Repeat("f", 64) },
-		"changed scopes":     func(d *Definition) { d.Operations[0].RequiredScopes = [][]string{{"tenant:tenant:readonly"}} },
-		"changed risk":       func(d *Definition) { d.Operations[0].Idempotent = !d.Operations[0].Idempotent },
-		"changed skill":      func(d *Definition) { d.Operations[0].SkillID = "external-apps" },
-		"different plugin":   func(d *Definition) { d.PluginID = "other.feishu" },
-		"removed search":     func(d *Definition) { d.Operations = d.Operations[:len(d.Operations)-1] },
+		"same version":     func(d *Definition) { d.PluginVersion = current.PluginVersion },
+		"unknown template": func(d *Definition) { d.Setup.TemplateID = "feishu-app-template-v4" },
+		"changed digest":   func(d *Definition) { d.Setup.TemplateDigest = strings.Repeat("f", 64) },
+		"changed scopes":   func(d *Definition) { d.Operations[0].RequiredScopes = [][]string{{"tenant:tenant:readonly"}} },
+		"changed risk":     func(d *Definition) { d.Operations[0].Idempotent = !d.Operations[0].Idempotent },
+		"changed skill":    func(d *Definition) { d.Operations[0].SkillID = "external-apps" },
+		"different plugin": func(d *Definition) { d.PluginID = "other.feishu" },
+		"removed old action": func(d *Definition) {
+			d.Operations = slices.DeleteFunc(d.Operations, func(op Operation) bool { return op.ID == current.Operations[0].ID })
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			mutated := cloneDefinition(candidate)

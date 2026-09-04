@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: ZGI Personal Connector API
-  version: 2.1.1
+  version: 2.2.0
   description:
     Native personal Connectors. Runtime contains no retired integrations implementation.
     Agent and Workflow mutations use their host save transactions; direct binding and reference
@@ -12,6 +12,67 @@ info:
 servers:
   - url: /console/api
 paths:
+  /connectors/pending-setups:
+    get:
+      operationId: listPendingConnectorSetups
+      description: Read-only, current-owner registration receipts. Never counted as usable Connections. No provider approval polling.
+      parameters:
+        - {in: query, name: connector_id, schema: {type: string, enum: [feishu]}}
+        - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {in: query, name: offset, schema: {type: integer, minimum: 0, default: 0}}
+      responses:
+        "200":
+          description: Nonterminal, unexpired records; counts do not include formal connections.
+          headers:
+            Cache-Control: {schema: {const: no-store}}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [items, total_pending]
+                    properties:
+                      items: {type: array, items: {$ref: "#/components/schemas/ConnectorPendingSetup"}}
+                      total_pending: {type: integer, minimum: 0}
+  /connectors/pending-setups/{pendingId}:
+    parameters:
+      - {in: path, name: pendingId, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: getPendingConnectorSetup
+      description: Local read only, including retained terminal receipts. Never begins registration or refreshes last_verification_at.
+      responses:
+        "200": {$ref: "#/components/responses/ConnectorPendingSnapshot"}
+        "404": {description: "Not owned by the current account/organization, or receipt retention ended."}
+    delete:
+      operationId: cancelPendingConnectorSetup
+      description: Cancel the local pending record and fence its active attempt. Does not delete the external app, Connection or Binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PendingSetupRevision"}
+      responses:
+        "200": {$ref: "#/components/responses/ConnectorPendingSnapshot"}
+        "409": {description: Revision changed; reload the record before another explicit action.}
+  /connectors/pending-setups/{pendingId}/onboarding-flows:
+    post:
+      operationId: resumePendingConnectorSetup
+      description: Same-app resume only, enabled for Feishu and Lark. Identity/profile are server-owned; never falls back to create_app. Uses the original App ID and no creation template. Provider configuration/Secret side effects have not been verified in real tenants.
+      parameters:
+        - {in: path, name: pendingId, required: true, schema: {type: string, format: uuid}}
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PendingSetupRevision"}
+      responses:
+        "202": {$ref: "#/components/responses/ConnectorOnboardingSnapshot"}
+        "409": {description: "Stale revision, terminal receipt or conflicting active attempt."}
+        "503": {description: Same-app QR resume is not available for this region; use manual verification of the original app.}
   /connectors/{connectorId}/app-credential-setups:
     post:
       operationId: connectWithAppCredentials
@@ -35,7 +96,21 @@ paths:
                   $ref: "#/components/schemas/AppCredentialValues"
                 target:
                   $ref: "#/components/schemas/TargetRef"
+                pending_setup_id:
+                  type: string
+                  format: uuid
+                  description: Optional Feishu same-app manual recovery; App ID and region must match the original record. No target permitted.
+                expected_pending_revision:
+                  type: integer
+                  minimum: 1
+              dependentRequired:
+                pending_setup_id: [expected_pending_revision]
+                expected_pending_revision: [pending_setup_id]
+              not:
+                required: [pending_setup_id, target]
       responses:
+        "200":
+          $ref: "#/components/responses/ConnectorOnboardingSnapshot"
         "201":
           description: Verified personal connection, using KeySetupResult in the standard data envelope
         "202":
@@ -674,6 +749,17 @@ components:
         minLength: 16
         maxLength: 200
   responses:
+    ConnectorPendingSnapshot:
+      description: Secret-free owner-scoped pending receipt, not a Connection.
+      headers:
+        Cache-Control: {schema: {const: no-store}}
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: {$ref: "#/components/schemas/ConnectorPendingSetup"}
     ConnectorOnboardingSnapshot:
       description: Secret-free owner-scoped flow snapshot in the standard response envelope
       headers:
@@ -773,7 +859,7 @@ components:
         connector_id:
           type: string
         intent:
-          enum: [create_app, update_app]
+          enum: [create_app, update_app, resume_app]
         state:
           enum:
             [
@@ -785,6 +871,7 @@ components:
               expired,
               failed,
               recovery_required,
+              pending_completion,
             ]
         region:
           enum: [feishu, lark]
@@ -808,6 +895,39 @@ components:
         result_connection_id:
           type: string
           format: uuid
+        pending_setup_id:
+          type: string
+          format: uuid
+          description: Non-secret pending record; absent from runtime Connection and Binding APIs.
+        qr_expires_at:
+          type: string
+          format: date-time
+          description: This attempt's QR deadline, never the approval retention deadline. Verifying has no QR URL.
+    PendingSetupRevision:
+      type: object
+      additionalProperties: false
+      required: [expected_revision]
+      properties:
+        expected_revision: {type: integer, minimum: 1}
+    ConnectorPendingSetup:
+      type: object
+      additionalProperties: false
+      required: [kind, id, connector_id, region, app_id, state, revision, resume_expires_at, allowed_actions]
+      properties:
+        kind: {const: pending_setup}
+        id: {type: string, format: uuid}
+        connector_id: {const: feishu}
+        region: {enum: [feishu, lark]}
+        app_id: {type: string}
+        state: {enum: [verification_required, awaiting_application, completed, cancelled, expired]}
+        revision: {type: integer, minimum: 1}
+        resume_expires_at: {type: string, format: date-time}
+        last_verification_at: {type: string, format: date-time}
+        reason_code: {type: string}
+        allowed_actions: {type: array, items: {enum: [resume_manual, resume_qr, cancel]}}
+        resume_qr_unavailable_reason: {enum: [same_app_resume_not_verified]}
+        active_flow_id: {type: string, format: uuid}
+        result_connection_id: {type: string, format: uuid}
     AppCredentialField:
       type: object
       required: [name, label, required, secret, type, max_length]

@@ -1,6 +1,45 @@
 import type { ConnectorMessages } from './en-US';
 
 const messages: ConnectorMessages = {
+  pending: {
+    title: '待完成',
+    awaitingShort: '待应用就绪',
+    verifyShort: '待继续验证',
+    count: '待完成 {count}',
+    continue: '继续连接',
+    awaitingHint:
+      '上次验证时应用尚未就绪。请在飞书端完成审批、发布并检查可用范围，然后回到这里验证同一个应用。此处不会自动查询审批进度。',
+    verifyHint: '已保留原 App ID，但验证尚未完成。请检查这个应用后继续，不必重新创建应用。',
+    lastChecked: '上次验证：{date}',
+    retention: '此待完成记录保留至 {date}；这不是二维码有效期。',
+    expiringSoon: '该记录将在 3 天内到期，请及时完成验证；到期不会删除飞书端应用。',
+    qrUnavailable:
+      '当前暂不能扫码续接，请使用下方原应用的 App Secret 继续。再次扫码创建新应用不等于恢复。',
+    resumeQRHint:
+      '扫码将定位原应用，请在飞书官方页面核对 App ID 和配置变更后确认。官方确认流程可能涉及应用配置或 Secret 变化，目前尚未完成真实租户验证；系统不会自动改为创建新应用。',
+    secretHint:
+      'App Secret 位于原应用的飞书开发者后台「凭证与基础信息」。仅在本次验证时使用，成功后才加密保存；无需另存“续约凭证”。',
+    openConsole: '打开应用开发者后台',
+    refresh: '刷新本地记录',
+    closeHint: '关闭窗口会保留待完成记录。验证通过前，不会创建可用连接或绑定对话。',
+    resumeQR: '扫码继续原应用',
+    verify: '验证原应用并连接',
+    loadFailed: '无法加载待完成记录，已保存的连接不受影响。',
+    remove: '移除待完成记录',
+    removeTitle: '移除此待完成记录？',
+    removeHint: '仅取消本地记录及正在进行的扫码，不会删除飞书端应用或已保存的连接。',
+    removeFailed: '未能移除此记录，状态可能已改变。请刷新列表后重试。',
+    expired: '待完成记录已过期',
+    cancelled: '待完成记录已移除',
+    completed: '此应用已完成连接',
+    terminalHint:
+      '这条回执不会再创建连接。请使用已保存连接；如需重新添加原应用，请明确开始一次手动添加。',
+    newManual: '手动添加原应用',
+    back: '返回连接器列表',
+    invalidLink: '连接链接无效，或当前工作空间无权访问。',
+    updateSecret: '更新应用 Secret',
+    updateSecretHint: '应用身份保持不变；验证失败不会替换现有 Secret 或影响绑定。',
+  },
   messaging: {
     startAgain: '重新填写凭据',
     reauthorizeTitle: '更新连接凭据',
@@ -64,7 +103,8 @@ const messages: ConnectorMessages = {
     readyHint: '仅已验证的能力可用。事件与用户授权尚未在 ZGI 启用。',
     recovery:
       '无法确定本次注册结果。请先在飞书开发者后台核对应用，必要时用 App ID 与 App Secret 手动添加；系统不会自动再次创建。',
-    expired: '二维码已过期，请重新开始。',
+    expired:
+      '本次二维码已失效。若飞书端已创建应用，请从待完成记录继续；没有记录时，可在手动添加中填写原应用凭据，避免重复创建。',
     cancelled: '本次扫码已取消。飞书侧已经创建的应用不会被自动删除。',
     failed: '本次流程未完成。已保存的其他连接不会受影响。',
     invalid: '无法验证 App ID 和 App Secret，请确认区域及凭据属于同一应用。',
@@ -76,7 +116,8 @@ const messages: ConnectorMessages = {
     manage: '管理这条连接',
     newConnection: '已保存为一条新的独立连接，原有使用位置未变。',
     updateTitle: '更新应用 Secret',
-    updateHint: '相同应用验证成功后才会替换 Secret；不同应用将保存为新的未绑定连接。',
+    updateHint:
+      '应用身份保持不变，验证成功后才替换 Secret；验证失败保留原凭据和所有绑定。添加其他应用请使用「新增连接」。',
     repairTitle: '补充应用权限',
     repairHint: '扫码将固定当前应用，不会新建或切换应用。完成后重新验证实际可用能力。',
     repair: '扫码补充权限',

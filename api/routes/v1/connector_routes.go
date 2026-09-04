@@ -382,6 +382,10 @@ func (handler *connectorHandler) startKeySetup(c *gin.Context) {
 		connectorRouteError(c, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil))
 		return
 	}
+	handler.startParsedKeySetup(c, request, organizationID, accountID, connectorID.String())
+}
+
+func (handler *connectorHandler) startParsedKeySetup(c *gin.Context, request connectorKeySetupRequest, organizationID, accountID uuid.UUID, connectorID string) {
 	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if len(idempotencyKey) < 16 || len(idempotencyKey) > 200 {
 		connectorRouteError(c, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil))
@@ -395,7 +399,7 @@ func (handler *connectorHandler) startKeySetup(c *gin.Context) {
 	result, err := handler.connections.StartKeySetup(c.Request.Context(), connectorconnections.KeySetupCommand{
 		OrganizationID: organizationID,
 		OwnerAccountID: accountID,
-		ConnectorID:    connectorID.String(),
+		ConnectorID:    connectorID,
 		IdempotencyKey: idempotencyKey,
 		Values:         request.Values,
 		Target:         target,

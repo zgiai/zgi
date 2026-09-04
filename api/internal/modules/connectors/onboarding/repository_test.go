@@ -44,7 +44,17 @@ func flowRow(f Flow) *sqlmock.Rows {
 	if f.LeaseUntil != nil {
 		until = *f.LeaseUntil
 	}
-	return sqlmock.NewRows([]string{"id", "organization_id", "owner_account_id", "connector_id", "intent", "region", "requested_region", "state", "generation", "revision", "fencing", "lease_owner", "lease_until", "expires_at", "idempotency_key_hash", "request_fingerprint", "begin_dispatched"}).AddRow(f.ID, f.OrganizationID, f.OwnerAccountID, f.ConnectorID, f.Intent, f.Region, f.RequestedRegion, f.State, f.Generation, f.Revision, f.Fencing, worker, until, f.ExpiresAt, f.IdempotencyKeyHash, f.RequestFingerprint, f.BeginDispatched)
+	var pending, deadline, app driver.Value
+	if f.PendingSetupID != nil {
+		pending = f.PendingSetupID.String()
+	}
+	if f.VerificationDeadline != nil {
+		deadline = *f.VerificationDeadline
+	}
+	if f.ExpectedAppID != nil {
+		app = *f.ExpectedAppID
+	}
+	return sqlmock.NewRows([]string{"id", "organization_id", "owner_account_id", "connector_id", "intent", "region", "requested_region", "state", "generation", "revision", "fencing", "lease_owner", "lease_until", "expires_at", "idempotency_key_hash", "request_fingerprint", "begin_dispatched", "pending_setup_id", "verification_deadline", "expected_app_id", "template_id", "template_digest", "accepted_definition_digest"}).AddRow(f.ID, f.OrganizationID, f.OwnerAccountID, f.ConnectorID, f.Intent, f.Region, f.RequestedRegion, f.State, f.Generation, f.Revision, f.Fencing, worker, until, f.ExpiresAt, f.IdempotencyKeyHash, f.RequestFingerprint, f.BeginDispatched, pending, deadline, app, f.TemplateID, f.TemplateDigest, f.AcceptedDefinitionDigest)
 }
 func expectBudget(mock sqlmock.Sqlmock) {
 	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -53,6 +63,8 @@ func expectCleanup(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery(`SELECT .*connector_onboarding_flows.*FOR UPDATE SKIP LOCKED`).WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec(`DELETE FROM "connector_onboarding_secrets" WHERE expires_at`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DELETE FROM "connector_onboarding_flows" WHERE terminal_at`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT .*connector_pending_setups.*FOR UPDATE SKIP LOCKED`).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectExec(`DELETE FROM "connector_pending_setups"`).WillReturnResult(sqlmock.NewResult(0, 0))
 }
 
 func TestRepositoryAdmissionLimitsAreLockedAndDoNotDiscardCancelledHistory(t *testing.T) {

@@ -178,6 +178,8 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
             expired: 'messaging.localExpired',
             failed: 'messaging.failed',
             recovery_required: 'messaging.recovery',
+            // Not emitted by protocol 1; fail closed if a mixed-version server does.
+            pending_completion: 'messaging.recovery',
           } as const
         )[onboarding.flow?.state ?? 'starting'];
 
@@ -314,8 +316,9 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
                           setManualError(
                             result.data.state === 'failed' ? result.data.error_code : undefined
                           );
-                          if (result.data.state === 'ready')
-                            {invalidatePersonalConnectionQueries(queryClient);}
+                          if (result.data.state === 'ready') {
+                            invalidatePersonalConnectionQueries(queryClient);
+                          }
                         })
                         .catch(() => {
                           if (current()) setManualError('transport_unconfirmed');

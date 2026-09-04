@@ -198,8 +198,14 @@ assert.match(routeModulesSource, /'connectors'/);
 
 // Legacy Key setup remains simple. Versioned application and messaging
 // onboarding may expose QR steps without adding a Key policy editor.
-const { app: enApp, messaging: enMessaging, ...enKeyCopy } = en;
-const { app: zhApp, messaging: zhMessaging, ...zhKeyCopy } = zh;
+const { app: enApp, messaging: enMessaging, pending: enPending, ...enKeyCopy } = en;
+const { app: zhApp, messaging: zhMessaging, pending: zhPending, ...zhKeyCopy } = zh;
+assert.match(enPending.qrUnavailable, /currently unavailable/);
+assert.match(zhPending.qrUnavailable, /暂不能/);
+assert.match(enPending.resumeQRHint, /has not been verified in a real tenant/);
+assert.match(zhPending.resumeQRHint, /尚未完成真实租户验证/);
+assert.match(enPending.lastChecked, /\{date\}/);
+assert.match(zhPending.retention, /\{date\}/);
 const visibleCopy = `${JSON.stringify(enKeyCopy)}\n${JSON.stringify(zhKeyCopy)}`;
 assert.match(enApp.qr, /QR/);
 assert.match(zhApp.qr, /扫码/);

@@ -19,6 +19,7 @@ import (
 type onboardingRouteFixture struct {
 	starts, gets, cancels int
 	command               onboarding.StartCommand
+	resumeCommand         onboarding.ResumeCommand
 	org, owner            uuid.UUID
 	revision              int64
 	err                   error
@@ -62,7 +63,17 @@ func onboardingRouteRouter(t *testing.T, s *onboardingRouteFixture, org, owner u
 	if err != nil {
 		t.Fatal(err)
 	}
-	(&connectorHandler{onboarding: s, errorProjector: projector}).registerOnboarding(group)
+	definition, err := catalog.FeishuDefinition()
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitions, err := catalog.New(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := &connectorHandler{onboarding: s, catalog: definitions, errorProjector: projector}
+	handler.registerOnboarding(group)
+	group.POST("/connectors/:connectorId/app-credential-setups", handler.startAppCredentialSetup)
 	return router
 }
 func TestConnectorOnboardingRoutesUseServerOwnerAndReadOnlyGET(t *testing.T) {

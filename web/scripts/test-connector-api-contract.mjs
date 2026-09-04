@@ -39,6 +39,9 @@ for (const header of contractHeaders) {
 assert.equal(allowedHeaders.has('*'), false, 'CORS must not allow arbitrary headers');
 
 const expectedPaths = [
+  '/connectors/pending-setups',
+  '/connectors/pending-setups/{pendingId}',
+  '/connectors/pending-setups/{pendingId}/onboarding-flows',
   '/connectors/{connectorId}/app-credential-setups',
   '/connectors/{connectorId}/onboarding-flows',
   '/connector-connections/{connectionId}/onboarding-flows',
@@ -69,6 +72,14 @@ assert.equal(
 );
 
 const schemas = contract.components.schemas;
+assert.deepEqual(Object.keys(contract.paths['/connectors/pending-setups']), ['get']);
+assert.deepEqual(Object.keys(contract.paths['/connectors/pending-setups/{pendingId}']), ['parameters','get','delete']);
+assert.equal(schemas.ConnectorPendingSetup.additionalProperties,false);
+assert.equal(schemas.ConnectorPendingSetup.properties.kind.const,'pending_setup');
+for (const forbidden of ['app_secret','device_code','verification_url','binding','is_default']) {
+  assert.equal(schemas.ConnectorPendingSetup.properties[forbidden],undefined);
+}
+assert.ok(schemas.ConnectorOnboardingFlow.properties.state.enum.includes('pending_completion'));
 assert.deepEqual(Object.keys(contract.paths['/connectors/runtime/confirmations/{receipt}']), ['get']);
 assert.equal(schemas.ConnectorRuntimeStatusResponse.oneOf[0].properties.resolution.enum[0], 'unresolved');
 assert.equal(schemas.ConnectorRuntimeStatusResponse.oneOf[1].additionalProperties, false);
@@ -279,6 +290,7 @@ const responseRoots = [
   'ConnectorRuntimeConfirmationResponse',
   'RemovalImpact',
   'ConnectorOnboardingFlow',
+  'ConnectorPendingSetup',
 ];
 const responsePropertyNames = new Set();
 

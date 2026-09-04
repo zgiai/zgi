@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
@@ -45,7 +46,11 @@ func TestRegistrationCreateAndUpdateUseFixedTemplateAndNoSecretDTO(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := client.Begin(context.Background(), tc.region, appID)
+			purpose := CreateApplication
+			if appID != "" {
+				purpose = UpdateApplication
+			}
+			got, err := client.Begin(context.Background(), RegistrationRequest{Purpose: purpose, Region: tc.region, AppID: appID})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -167,22 +172,78 @@ func TestRegistrationRejectsForeignURLsAndInvalidInputs(t *testing.T) {
 			b, _ := json.Marshal(map[string]any{"device_code": "device", "verification_uri_complete": raw})
 			return reply(string(b)), nil
 		})})
-		if _, err := client.Begin(context.Background(), "feishu", ""); err == nil {
+		if _, err := client.Begin(context.Background(), RegistrationRequest{Purpose: CreateApplication, Region: "feishu"}); err == nil {
 			t.Fatal("unsafe verification URL accepted")
 		}
 	}
 	calls := 0
 	client, _ := NewRegistrationClient(&http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) { calls++; return reply(`{}`), nil })})
-	if _, err := client.Begin(context.Background(), "evil", ""); err == nil {
+	if _, err := client.Begin(context.Background(), RegistrationRequest{Purpose: CreateApplication, Region: "evil"}); err == nil {
 		t.Fatal("unknown region")
 	}
-	if _, err := client.Begin(context.Background(), "feishu", "../bad"); err == nil {
+	if _, err := client.Begin(context.Background(), RegistrationRequest{Purpose: UpdateApplication, Region: "feishu", AppID: "../bad"}); err == nil {
 		t.Fatal("invalid app ID")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := client.Begin(ctx, "feishu", ""); err == nil || calls != 0 {
+	if _, err := client.Begin(ctx, RegistrationRequest{Purpose: CreateApplication, Region: "feishu"}); err == nil || calls != 0 {
 		t.Fatal("cancelled call reached provider")
+	}
+}
+
+func TestRegistrationExpiryAliasesAndResumeProfile(t *testing.T) {
+	for _, tc := range []struct {
+		fields  string
+		seconds int
+		invalid bool
+	}{
+		{``, 600, false}, {`,"expires_in":60`, 60, false}, {`,"expire_in":30,"expires_in":60`, 30, false},
+		{`,"expire_in":0`, 0, true}, {`,"expires_in":-1`, 0, true}, {`,"expire_in":900`, 600, false},
+	} {
+		client, _ := NewRegistrationClient(&http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) {
+			return reply(`{"device_code":"device","verification_uri_complete":"https://accounts.feishu.cn/app?name=bad&avatar=bad&description=bad"` + tc.fields + `}`), nil
+		})})
+		got, err := client.Begin(context.Background(), RegistrationRequest{Purpose: ResumeApplication, Region: "feishu", AppID: "cli_original"})
+		if tc.invalid {
+			if err == nil {
+				t.Fatal("invalid explicit TTL accepted")
+			}
+			continue
+		}
+		if err != nil || got.TTL != time.Duration(tc.seconds)*time.Second {
+			t.Fatalf("TTL: %v %v", got.TTL, err)
+		}
+		u, _ := url.Parse(got.VerificationURL)
+		q := u.Query()
+		if q.Get("clientID") != "cli_original" || q.Has("createOnly") || q.Has("name") || q.Has("avatar") || q.Has("description") {
+			t.Fatal("resume changes identity or creation fields")
+		}
+		b, _ := base64.RawURLEncoding.DecodeString(q.Get("addons"))
+		z, _ := gzip.NewReader(bytes.NewReader(b))
+		raw, _ := io.ReadAll(z)
+		z.Close()
+		if string(raw) != `{"preset":false}` {
+			t.Fatalf("resume must not apply permissions: %s", raw)
+		}
+	}
+}
+
+func TestRegistrationPurposeCannotSilentlyCreate(t *testing.T) {
+	calls := 0
+	client, _ := NewRegistrationClient(&http.Client{Transport: transportFunc(func(*http.Request) (*http.Response, error) { calls++; return reply(`{}`), nil })})
+	for _, request := range []RegistrationRequest{
+		{Purpose: ResumeApplication, Region: "feishu"}, {Purpose: UpdateApplication, Region: "feishu"},
+		{Purpose: CreateApplication, Region: "feishu", AppID: "cli_existing"}, {Region: "feishu"},
+	} {
+		if _, err := client.Begin(context.Background(), request); err == nil {
+			t.Fatal("invalid intent accepted")
+		}
+	}
+	if calls != 0 {
+		t.Fatal("invalid intent reached provider")
+	}
+	if !resumeQREnabled("feishu") || !resumeQREnabled("lark") || resumeQREnabled("") || resumeQREnabled("other") {
+		t.Fatal("same-app resume must be enabled only for supported regions")
 	}
 }
 

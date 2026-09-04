@@ -75,7 +75,13 @@ export interface ConnectorOnboardingFlow {
   challenge_revision?: number;
   id: string;
   connector_id: string;
-  intent: 'create_app' | 'update_app' | 'register_bot' | 'login_session' | 'reauthorize';
+  intent:
+    | 'create_app'
+    | 'update_app'
+    | 'resume_app'
+    | 'register_bot'
+    | 'login_session'
+    | 'reauthorize';
   state:
     | 'starting'
     | 'awaiting_authorization'
@@ -84,7 +90,8 @@ export interface ConnectorOnboardingFlow {
     | 'cancelled'
     | 'expired'
     | 'failed'
-    | 'recovery_required';
+    | 'recovery_required'
+    | 'pending_completion';
   region: 'feishu' | 'lark';
   revision: number;
   expires_at: string;
@@ -93,8 +100,32 @@ export interface ConnectorOnboardingFlow {
   user_code?: string;
   result_connection_id?: string;
   error_code?: string;
+  pending_setup_id?: string;
+  qr_expires_at?: string;
+}
+/** Non-secret registration receipt; never a selectable PersonalConnection. */
+export interface ConnectorPendingSetup {
+  kind: 'pending_setup';
+  id: string;
+  connector_id: string;
+  region: 'feishu' | 'lark';
+  app_id: string;
+  state: 'verification_required' | 'awaiting_application' | 'completed' | 'cancelled' | 'expired';
+  revision: number;
+  resume_expires_at: string;
+  last_verification_at?: string;
+  reason_code?: string;
+  allowed_actions: Array<'resume_qr' | 'resume_manual' | 'cancel'>;
+  resume_qr_unavailable_reason?: string;
+  active_flow_id?: string;
+  result_connection_id?: string;
+}
+export interface ConnectorPendingSetupList {
+  items: ConnectorPendingSetup[];
+  total_pending: number;
 }
 export type ConnectorOnboardingRequest =
+  | { intent: 'resume_app'; pending_setup_id: string; expected_revision: number }
   | { intent: 'create_app'; region: 'feishu' | 'lark'; template_id: string }
   | { intent: 'update_app'; expected_revision: number; template_id: string }
   | { intent: 'register_bot' | 'login_session'; protocol_version: 1 }
@@ -131,7 +162,7 @@ export interface ConnectorCatalogItem {
   icon?: string;
   classification: ConnectorClassification;
   key_fields: ConnectorKeyField[];
-  extension_schema_version?: '1.1.0' | '1.2.0';
+  extension_schema_version?: '1.1.0' | '1.2.0' | '1.3.0';
   setup_availability?: { enabled: boolean; methods: string[]; unavailable_reason?: string };
   credential_fields?: ConnectorCredentialField[];
   setup?: ConnectorSetupDescriptor;

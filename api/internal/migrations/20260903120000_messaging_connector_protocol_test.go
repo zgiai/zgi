@@ -76,6 +76,9 @@ func TestMessagingProtocolPostgresIsolation(t *testing.T) {
 	if err = upMessagingConnectorProtocol(mschema.New(db)); err != nil {
 		t.Fatal(err)
 	}
+	if err = upConnectorPendingSetups(mschema.New(db)); err != nil {
+		t.Fatal(err)
+	}
 	var kept onboarding.Flow
 	if db.First(&kept, "id = ?", legacy.ID).Error != nil || kept.ProtocolVersion != 0 || kept.TemplateDigest != legacy.TemplateDigest {
 		t.Fatal("legacy row changed")

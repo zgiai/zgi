@@ -1,14 +1,7 @@
 'use client';
 
 import { useRef } from 'react';
-import {
-  ChevronDown,
-  CircleAlert,
-  KeyRound,
-  Minus,
-  Plus,
-  Star,
-} from 'lucide-react';
+import { ChevronDown, CircleAlert, KeyRound, Minus, Plus, Star } from 'lucide-react';
 import { ConnectorIcon } from '@/components/connectors/connector-icon';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,9 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type {
-  ConnectorChatDefault,
-} from '@/services/types/connector';
+import type { ConnectorChatDefault, ConnectorPendingSetup } from '@/services/types/connector';
 import {
   connectorPickerGroupSummary,
   type ConnectorPickerMenuGroup,
@@ -39,6 +30,8 @@ interface ConnectorPickerGroupRowProps {
   preference?: ConnectorChatDefault;
   onSelect: (row: ConnectorPickerRow, trigger?: HTMLButtonElement | null) => void;
   onDetach: (group: ConnectorPickerMenuGroup) => void;
+  pendingSetups?: ConnectorPendingSetup[];
+  onResume?: (id: string) => void;
 }
 
 export function ConnectorPickerGroupRow({
@@ -48,6 +41,8 @@ export function ConnectorPickerGroupRow({
   preference,
   onSelect,
   onDetach,
+  pendingSetups = [],
+  onResume,
 }: ConnectorPickerGroupRowProps) {
   const t = useT('connectors');
   const handoffRef = useRef(false);
@@ -72,8 +67,7 @@ export function ConnectorPickerGroupRow({
   const selectAccount = (row: ConnectorPickerRow) => {
     // Switch/repair/setup can open a dialog which takes ownership of focus.
     handoffRef.current =
-      row.state !== 'added' &&
-      (row.state !== 'ready' || Boolean(row.replacedBinding));
+      row.state !== 'added' && (row.state !== 'ready' || Boolean(row.replacedBinding));
     onSelect(row, triggerRef.current);
   };
   const summaryClass =
@@ -95,7 +89,7 @@ export function ConnectorPickerGroupRow({
           {group.unavailable ? t('picker.group.serviceUnavailable') : group.connector?.description}
         </p>
       </div>
-      {group.count > 0 || group.currentBinding ? (
+      {group.count > 0 || group.currentBinding || pendingSetups.length > 0 ? (
         <DropdownMenu
           onOpenChange={next => {
             if (next) handoffRef.current = false;
@@ -128,10 +122,19 @@ export function ConnectorPickerGroupRow({
               <span className="min-w-0 flex-1">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate font-medium">
-                    {summary.selected ? currentName : t('picker.group.chooseConnection')}
+                    {summary.selected
+                      ? currentName
+                      : t(
+                          pendingSetups.length > 0 && group.count === 0
+                            ? 'pending.continue'
+                            : 'picker.group.chooseConnection'
+                        )}
                   </span>
                   {summary.isDefault ? (
-                    <Star className="size-3.5 shrink-0 fill-primary text-primary" aria-label={t('defaults.newChatDefault')} />
+                    <Star
+                      className="size-3.5 shrink-0 fill-primary text-primary"
+                      aria-label={t('defaults.newChatDefault')}
+                    />
                   ) : null}
                 </span>
                 <span
@@ -153,6 +156,8 @@ export function ConnectorPickerGroupRow({
                       )}
                       <span className="shrink-0">· {availabilityLabel}</span>
                     </>
+                  ) : pendingSetups.length > 0 ? (
+                    t('pending.count', { count: pendingSetups.length })
                   ) : (
                     t('picker.group.savedCount', { count: group.count })
                   )}
@@ -216,7 +221,10 @@ export function ConnectorPickerGroupRow({
                           <span className="text-primary">{t('picker.states.inUse')}</span>
                         ) : null}
                         {isDefault ? (
-                          <Star className="size-3.5 fill-primary text-primary" aria-label={t('defaults.newChatDefault')} />
+                          <Star
+                            className="size-3.5 fill-primary text-primary"
+                            aria-label={t('defaults.newChatDefault')}
+                          />
                         ) : null}
                       </span>
                     </span>
@@ -258,6 +266,25 @@ export function ConnectorPickerGroupRow({
                 );
               })}
             </DropdownMenuRadioGroup>
+            {pendingSetups.length > 0 && (
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                {t('pending.title')}
+              </DropdownMenuLabel>
+            )}
+            {pendingSetups.map(item => (
+              <DropdownMenuItem
+                key={item.id}
+                disabled={disabled}
+                className="min-h-12 gap-2 rounded-lg"
+                onSelect={() => {
+                  handoffRef.current = true;
+                  onResume?.(item.id);
+                }}
+              >
+                <span className="min-w-0 flex-1 truncate font-mono text-xs">{item.app_id}</span>
+                <span className="shrink-0 text-xs text-warning">{t('pending.continue')}</span>
+              </DropdownMenuItem>
+            ))}
             {group.currentBinding && !currentAccount ? (
               <p className="flex items-start gap-2 px-2 py-2 text-xs text-warning">
                 <CircleAlert aria-hidden="true" className="size-4 shrink-0" />

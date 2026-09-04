@@ -8,6 +8,8 @@ import {
 } from '../unavailable-references';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
+import { ConnectorKeySetupPanel } from '@/components/connectors/setup/connector-key-setup-panel';
 import { AlertCircle, Info, RefreshCw, SearchX } from 'lucide-react';
 import { localizeConnectorCatalogItem } from '@/components/connectors/connector-metadata';
 import { Button } from '@/components/ui/button';
@@ -103,6 +105,9 @@ export function ConnectorPickerDialog({
   const [pendingSwitch, setPendingSwitch] = useState<ConnectorPickerSwitchRequest>();
   const [switchPending, setSwitchPending] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
+  const [resumingID, setResumingID] = useState<string>();
+  const pendingQuery = usePendingSetups('feishu', open);
+  const pendingSetups = useMemo(() => pendingQuery.data?.data.items ?? [], [pendingQuery.data]);
   const preferencesQuery = useChatConnectorPreferences(open && groupByConnector);
   const preferences = preferencesQuery.isError ? undefined : preferencesQuery.data?.data;
   const busyRef = useRef(false);
@@ -152,6 +157,7 @@ export function ConnectorPickerDialog({
     setPendingSwitch(undefined);
     setSwitchPending(false);
     setActionFailed(false);
+    setResumingID(undefined);
     busyRef.current = false;
     if (open) restoreFocusRef.current = true;
   }, [scope, open]);
@@ -178,9 +184,10 @@ export function ConnectorPickerDialog({
         listedConnectorGroups(
           createConnectorPickerMenuGroups(eligibleCatalog, connections, bindings)
         ),
-        { query, status }
+        { query, status },
+        new Set(pendingSetups.map(item => item.connector_id))
       ),
-    [eligibleCatalog, connections, bindings, query, status]
+    [eligibleCatalog, connections, bindings, query, status, pendingSetups]
   );
   const isLoading = catalogQuery.isLoading || connectionsQuery.isLoading;
   const isError = catalogQuery.isError || connectionsQuery.isError;
@@ -276,6 +283,9 @@ export function ConnectorPickerDialog({
     pendingSwitch?.connection.external_display_name ||
     switchConnectorName ||
     '';
+  const resumingConnector = resumingID
+    ? eligibleCatalog.find(item => item.id === 'feishu')
+    : undefined;
 
   return (
     <>
@@ -302,132 +312,174 @@ export function ConnectorPickerDialog({
           </DialogHeader>
 
           <DialogBody className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
-            <div className="shrink-0 space-y-3 border-b px-6 pb-4">
-              <SearchInput
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                placeholder={t('picker.searchPlaceholder')}
-                aria-label={t('picker.searchAria')}
-                className="h-10 rounded-lg bg-background"
-              />
-              <div
-                className="flex gap-2 overflow-x-auto pb-0.5"
-                role="group"
-                aria-label={t('picker.filtersLabel')}
-              >
-                {FILTER_VALUES.map(value => (
-                  <Button
-                    key={value}
-                    type="button"
-                    size="sm"
-                    variant={status === value ? 'default' : 'outline'}
-                    className="rounded-full"
-                    aria-pressed={status === value}
-                    onClick={() => setStatus(value)}
-                  >
-                    {value === 'all'
-                      ? t('filters.all')
-                      : value === 'connected'
-                        ? t('filters.connected')
-                        : t('filters.needsAttention')}
-                  </Button>
-                ))}
+            {open && resumingID && resumingConnector ? (
+              <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
+                <Button className="mb-4" variant="ghost" onClick={() => setResumingID(undefined)}>
+                  {t('pending.back')}
+                </Button>
+                <ConnectorKeySetupPanel
+                  connector={resumingConnector}
+                  pendingSetupID={resumingID}
+                  embedded
+                  onReady={connection => {
+                    if (!mountedRef.current || sessionRef.current !== session || !open) return;
+                    setResumingID(undefined);
+                    const row = createConnectorPickerRows(
+                      eligibleCatalog,
+                      [...connections.filter(item => item.id !== connection.id), connection],
+                      bindings
+                    ).find(item => item.connection?.id === connection.id);
+                    if (row) {
+                      void perform(row.key, () =>
+                        requestConnectorPickerAction(row, handlers, target)
+                      );
+                    }
+                  }}
+                />
               </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-              {groupByConnector && preferencesQuery.isError ? (
-                <div
-                  role="alert"
-                  className="mb-3 rounded-lg border border-warning/30 px-3 py-2 text-sm"
-                >
-                  <p>{t('defaults.loadFailed')}</p>
-                  <Button size="sm" variant="ghost" onClick={() => void preferencesQuery.refetch()}>
-                    {t('actions.retry')}
-                  </Button>
+            ) : (
+              <>
+                <div className="shrink-0 space-y-3 border-b px-6 pb-4">
+                  <SearchInput
+                    value={query}
+                    onChange={event => setQuery(event.target.value)}
+                    placeholder={t('picker.searchPlaceholder')}
+                    aria-label={t('picker.searchAria')}
+                    className="h-10 rounded-lg bg-background"
+                  />
+                  <div
+                    className="flex gap-2 overflow-x-auto pb-0.5"
+                    role="group"
+                    aria-label={t('picker.filtersLabel')}
+                  >
+                    {FILTER_VALUES.map(value => (
+                      <Button
+                        key={value}
+                        type="button"
+                        size="sm"
+                        variant={status === value ? 'default' : 'outline'}
+                        className="rounded-full"
+                        aria-pressed={status === value}
+                        onClick={() => setStatus(value)}
+                      >
+                        {value === 'all'
+                          ? t('filters.all')
+                          : value === 'connected'
+                            ? t('filters.connected')
+                            : t('filters.needsAttention')}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
-              ) : null}
-              {actionFailed ? (
-                <div
-                  role="alert"
-                  className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-                >
-                  <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-                  <span>{t('picker.actionFailed')}</span>
-                </div>
-              ) : null}
 
-              {isLoading ? (
-                <div className="space-y-3" role="status" aria-label={t('picker.loading')}>
-                  <span className="sr-only">{t('picker.loading')}</span>
-                  {Array.from({ length: 4 }, (_, index) => (
-                    <Skeleton key={index} className="h-[82px] rounded-xl" />
-                  ))}
-                </div>
-              ) : null}
+                <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+                  {groupByConnector && preferencesQuery.isError ? (
+                    <div
+                      role="alert"
+                      className="mb-3 rounded-lg border border-warning/30 px-3 py-2 text-sm"
+                    >
+                      <p>{t('defaults.loadFailed')}</p>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void preferencesQuery.refetch()}
+                      >
+                        {t('actions.retry')}
+                      </Button>
+                    </div>
+                  ) : null}
+                  {actionFailed ? (
+                    <div
+                      role="alert"
+                      className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                    >
+                      <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                      <span>{t('picker.actionFailed')}</span>
+                    </div>
+                  ) : null}
 
-              {!isLoading && isError ? (
-                <div className="flex min-h-52 flex-col items-center justify-center text-center">
-                  <AlertCircle aria-hidden="true" className="size-8 text-muted-foreground" />
-                  <h3 className="mt-3 text-sm font-semibold">{t('picker.loadFailedTitle')}</h3>
-                  <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">
-                    {t('picker.loadFailedDescription')}
-                  </p>
-                  <Button type="button" variant="outline" className="mt-4" onClick={retry}>
-                    <RefreshCw aria-hidden="true" className="size-4" />
-                    {t('actions.retry')}
-                  </Button>
-                </div>
-              ) : null}
-
-              {!isLoading && !isError && !hasResults ? (
-                <div className="flex min-h-52 flex-col items-center justify-center text-center">
-                  <SearchX aria-hidden="true" className="size-8 text-muted-foreground" />
-                  <h3 className="mt-3 text-sm font-semibold">{t('picker.emptyTitle')}</h3>
-                  <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">
-                    {t('picker.emptyDescription')}
-                  </p>
-                  <Button type="button" variant="outline" className="mt-4" onClick={resetFilters}>
-                    {t('catalog.resetFilters')}
-                  </Button>
-                </div>
-              ) : null}
-
-              {!isLoading && !isError && hasResults ? (
-                <div className="space-y-3">
-                  {groupByConnector
-                    ? groups.map(group => (
-                        <ConnectorPickerGroupRow
-                          key={group.id}
-                          group={group}
-                          targetLabel={targetLabel}
-                          disabled={Boolean(pendingKey || pendingSwitch)}
-                          preference={preferences?.defaults[group.id]}
-                          onSelect={runAction}
-                          onDetach={detachGroup}
-                        />
-                      ))
-                    : nativeRows.map(row => (
-                        <ConnectorPickerRowView
-                          key={row.key}
-                          row={row}
-                          pending={Boolean(pendingKey || pendingSwitch)}
-                          onAction={item => void runAction(item)}
-                        />
+                  {isLoading ? (
+                    <div className="space-y-3" role="status" aria-label={t('picker.loading')}>
+                      <span className="sr-only">{t('picker.loading')}</span>
+                      {Array.from({ length: 4 }, (_, index) => (
+                        <Skeleton key={index} className="h-[82px] rounded-xl" />
                       ))}
-                </div>
-              ) : null}
-            </div>
+                    </div>
+                  ) : null}
 
-            <p className="sr-only" role="status" aria-live="polite">
-              {pendingKey ? t('picker.updating') : ''}
-            </p>
-            <ConnectorUnavailableReferences
-              target={target}
-              enabled={open && !draft}
-              onReferenceCommand={onReferenceCommand}
-              pendingReferenceCommands={pendingReferenceCommands}
-            />
+                  {!isLoading && isError ? (
+                    <div className="flex min-h-52 flex-col items-center justify-center text-center">
+                      <AlertCircle aria-hidden="true" className="size-8 text-muted-foreground" />
+                      <h3 className="mt-3 text-sm font-semibold">{t('picker.loadFailedTitle')}</h3>
+                      <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">
+                        {t('picker.loadFailedDescription')}
+                      </p>
+                      <Button type="button" variant="outline" className="mt-4" onClick={retry}>
+                        <RefreshCw aria-hidden="true" className="size-4" />
+                        {t('actions.retry')}
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  {!isLoading && !isError && !hasResults ? (
+                    <div className="flex min-h-52 flex-col items-center justify-center text-center">
+                      <SearchX aria-hidden="true" className="size-8 text-muted-foreground" />
+                      <h3 className="mt-3 text-sm font-semibold">{t('picker.emptyTitle')}</h3>
+                      <p className="mt-1 max-w-sm text-sm leading-5 text-muted-foreground">
+                        {t('picker.emptyDescription')}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="mt-4"
+                        onClick={resetFilters}
+                      >
+                        {t('catalog.resetFilters')}
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  {!isLoading && !isError && hasResults ? (
+                    <div className="space-y-3">
+                      {groupByConnector
+                        ? groups.map(group => (
+                            <ConnectorPickerGroupRow
+                              key={group.id}
+                              group={group}
+                              targetLabel={targetLabel}
+                              disabled={Boolean(pendingKey || pendingSwitch)}
+                              preference={preferences?.defaults[group.id]}
+                              onSelect={runAction}
+                              onDetach={detachGroup}
+                              pendingSetups={pendingSetups.filter(
+                                item => item.connector_id === group.id
+                              )}
+                              onResume={setResumingID}
+                            />
+                          ))
+                        : nativeRows.map(row => (
+                            <ConnectorPickerRowView
+                              key={row.key}
+                              row={row}
+                              pending={Boolean(pendingKey || pendingSwitch)}
+                              onAction={item => void runAction(item)}
+                            />
+                          ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <p className="sr-only" role="status" aria-live="polite">
+                  {pendingKey ? t('picker.updating') : ''}
+                </p>
+                <ConnectorUnavailableReferences
+                  target={target}
+                  enabled={open && !draft}
+                  onReferenceCommand={onReferenceCommand}
+                  pendingReferenceCommands={pendingReferenceCommands}
+                />
+              </>
+            )}
           </DialogBody>
 
           <DialogFooter className="shrink-0 justify-start border-t bg-primary/[0.03] px-6 py-4 text-left">

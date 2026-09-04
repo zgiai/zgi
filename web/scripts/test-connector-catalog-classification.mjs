@@ -31,6 +31,16 @@ const { filterConnectorCatalog, getConnectorCatalogRowState, partitionConnectorC
   await import(moduleURL(catalogModelSource));
 const metadata = await import(metadataURL);
 
+const pendingOnly = {
+  id:'feishu',plugin_id:'feishu',name:'Feishu',description:'Application connector',
+  auth_type:'app_credentials',classification:'connector',key_fields:[],
+  capabilities:[{id:'message.send',name:'Send',description:'',usable:true}],
+  connection_summary:{count:0,state:'unavailable'},
+};
+assert.equal(filterConnectorCatalog([pendingOnly], {query:'',status:'needs_attention'}, new Set(['feishu'])).length,1);
+assert.equal(filterConnectorCatalog([pendingOnly], {query:'',status:'connected'}, new Set(['feishu'])).length,0,'pending does not increase connected counts');
+assert.equal(filterConnectorCatalog([pendingOnly], {query:'other-provider',status:'needs_attention'}, new Set(['feishu'])).length,0,'pending preserves catalog search');
+
 const catalog = [
   {
     id: 'github',

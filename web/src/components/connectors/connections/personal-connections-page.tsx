@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
+import { ConnectorPendingRows } from '@/components/connectors/setup/connector-pending-rows';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { ArrowLeft, ArrowRight, LockKeyhole, Plus } from 'lucide-react';
@@ -38,6 +40,9 @@ export function PersonalConnectionsPage() {
   const locale = useLocale();
   const [connectorFilter, setConnectorFilter] = useState('');
   const [addingConnectorID, setAddingConnectorID] = useState('');
+  const [pendingID, setPendingID] = useState<string>();
+  const pendingQuery = usePendingSetups();
+  const pendingItems = pendingQuery.data?.data.items ?? [];
   const connectionsQuery = usePersonalConnections();
   const catalogQuery = useConnectorCatalog();
   const connections = personalConnectionItems(connectionsQuery.data?.data);
@@ -47,6 +52,9 @@ export function PersonalConnectionsPage() {
   const catalogByID = new Map(catalog.map(item => [item.id, item]));
   const addingConnector = catalogByID.get(addingConnectorID);
   const groups = groupPersonalConnections(connections);
+  for (const item of pendingItems)
+    {if (!groups.some(group => group.connectorID === item.connector_id))
+      {groups.push({ connectorID: item.connector_id, connections: [] });}}
   const visibleGroups = connectorFilter
     ? groups.filter(group => group.connectorID === connectorFilter)
     : groups;
@@ -68,6 +76,11 @@ export function PersonalConnectionsPage() {
               <Badge variant="subtle">
                 {t('connections.count', { count: connections.length })}
               </Badge>
+              {pendingItems.length > 0 && (
+                <Badge variant="outline">
+                  {t('pending.count', { count: pendingItems.length })}
+                </Badge>
+              )}
               <Badge variant="outline">
                 {t('connections.connectorCount', { count: groups.length })}
               </Badge>
@@ -75,7 +88,15 @@ export function PersonalConnectionsPage() {
           ) : null}
         </header>
 
-        {connectionsQuery.isLoading ? (
+        {pendingQuery.isError && (
+          <p className="mb-3 text-sm text-warning">
+            {t('pending.loadFailed')}{' '}
+            <Button variant="ghost" onClick={() => void pendingQuery.refetch()}>
+              {t('actions.retry')}
+            </Button>
+          </p>
+        )}
+        {connectionsQuery.isLoading || pendingQuery.isLoading ? (
           <ConnectorPageLoading label={t('connections.loading')} />
         ) : connectionsQuery.isError ? (
           <ConnectorPageMessage
@@ -85,7 +106,7 @@ export function PersonalConnectionsPage() {
             actionLabel={t('actions.retry')}
             onAction={() => void connectionsQuery.refetch()}
           />
-        ) : connections.length === 0 ? (
+        ) : connections.length === 0 && pendingItems.length === 0 ? (
           <ConnectorPageMessage
             kind="empty"
             title={t('connections.emptyTitle')}
@@ -189,6 +210,13 @@ export function PersonalConnectionsPage() {
                         </div>
                       </article>
                     ))}
+                    <ConnectorPendingRows
+                      items={pendingItems.filter(item => item.connector_id === group.connectorID)}
+                      onContinue={id => {
+                        setPendingID(id);
+                        setAddingConnectorID(group.connectorID);
+                      }}
+                    />
                   </CardContent>
                 </Card>
               );
@@ -203,9 +231,13 @@ export function PersonalConnectionsPage() {
       {addingConnector ? (
         <ConnectorCreateDialog
           connector={addingConnector}
+          pendingSetupID={pendingID}
           open
           onOpenChange={open => {
-            if (!open) setAddingConnectorID('');
+            if (!open) {
+              setAddingConnectorID('');
+              setPendingID(undefined);
+            }
           }}
         />
       ) : null}

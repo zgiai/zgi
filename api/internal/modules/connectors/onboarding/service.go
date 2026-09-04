@@ -53,6 +53,9 @@ func (s *Service) Start(ctx context.Context, command StartCommand) (Snapshot, er
 	if command.ProtocolVersion != 0 || command.Intent == "register_bot" || command.Intent == "login_session" || command.Intent == "reauthorize" {
 		return s.startMessaging(ctx, command)
 	}
+	if command.Intent != "" && command.Intent != "create_app" && command.Intent != "update_app" {
+		return Snapshot{}, registrationError(core.ErrorCodeInvalidInput)
+	}
 	if command.OrganizationID == uuid.Nil || command.OwnerAccountID == uuid.Nil {
 		return Snapshot{}, registrationError(core.ErrorCodeAccessDenied)
 	}
@@ -141,10 +144,11 @@ func (s *Service) Cancel(ctx context.Context, org, owner, id uuid.UUID, revision
 	return s.snapshot(ctx, f)
 }
 func (s *Service) snapshot(ctx context.Context, f Flow) (Snapshot, error) {
-	result := Snapshot{ID: f.ID, ConnectorID: f.ConnectorID, Intent: f.Intent, State: f.State, Region: f.Region, Revision: f.Revision, ExpiresAt: f.ExpiresAt, RetryAfter: max(2, f.PollIntervalSeconds), ErrorCode: f.SafeErrorCode, ResultConnectionID: f.ResultConnectionID}
+	result := Snapshot{ID: f.ID, ConnectorID: f.ConnectorID, Intent: f.Intent, State: f.State, Region: f.Region, Revision: f.Revision, ExpiresAt: f.ExpiresAt, RetryAfter: max(2, f.PollIntervalSeconds), ErrorCode: f.SafeErrorCode, ResultConnectionID: f.ResultConnectionID, PendingSetupID: f.PendingSetupID}
 	if f.ProtocolVersion != 0 {
 		return s.messagingSnapshot(ctx, f, result)
 	}
+	result.QRExpiresAt = &f.ExpiresAt
 	if f.State == Awaiting && f.ExpiresAt.After(s.now()) {
 		if err := s.authority.Check(ctx, f); err != nil {
 			return Snapshot{}, err
@@ -224,7 +228,11 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 		if f.ExpectedAppID != nil {
 			appID = *f.ExpectedAppID
 		}
-		session, err := s.registrar.Begin(bounded, f.Region, appID)
+		startedAt := s.now()
+		if f.Intent == "resume_app" && !resumeQREnabled(f.Region) {
+			return fail(registrationError(core.ErrorCodeConnectorUnavailable))
+		}
+		session, err := s.registrar.Begin(bounded, RegistrationRequest{Purpose: RegistrationPurpose(f.Intent), Region: f.Region, AppID: appID})
 		if err != nil {
 			return fail(err)
 		}
@@ -237,7 +245,11 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 		if err != nil {
 			return fail(registrationError(core.ErrorCodeInternal))
 		}
-		err = s.repository.AwaitAuthorization(bounded, f, DeviceRecord{FlowID: f.ID, OrganizationID: f.OrganizationID, OwnerAccountID: f.OwnerAccountID, Generation: f.Generation, EncryptedDevice: encrypted}, session.Interval, session.TTL)
+		remaining := startedAt.Add(session.TTL).Sub(s.now())
+		if remaining <= 0 {
+			return fail(registrationError(core.ErrorCodeFlowExpired))
+		}
+		err = s.repository.AwaitAuthorization(bounded, f, DeviceRecord{FlowID: f.ID, OrganizationID: f.OrganizationID, OwnerAccountID: f.OwnerAccountID, Generation: f.Generation, EncryptedDevice: encrypted}, session.Interval, remaining)
 		if err != nil {
 			return fail(err)
 		}
@@ -259,7 +271,7 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 			interval = min(300, interval+5)
 		}
 		if result.Status == "switch_region" {
-			if f.Intent == "update_app" || f.SwitchedRegion {
+			if f.Intent == "update_app" || f.Intent == "resume_app" || f.SwitchedRegion {
 				return fail(registrationError(core.ErrorCodeOutcomeUnknown))
 			}
 			region, switched = "lark", true
@@ -278,7 +290,21 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 		if err = s.authority.Check(bounded, f); err != nil {
 			return fail(err)
 		}
+		if f.Intent == "create_app" || f.Intent == "resume_app" {
+			repo, ok := s.repository.(PendingRepository)
+			if !ok {
+				return fail(registrationError(core.ErrorCodeInternal))
+			}
+			observed, observeErr := repo.ObserveApplication(bounded, f, result.AppID)
+			if observeErr != nil {
+				return fail(observeErr)
+			}
+			f = observed
+		}
 		if _, err = s.repository.Complete(bounded, f, values); err != nil {
+			if f.PendingSetupID != nil {
+				return true, s.deferCandidate(ctx, f, err)
+			}
 			return fail(err)
 		}
 		return true, nil

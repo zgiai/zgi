@@ -99,6 +99,9 @@ func (c *ServiceContainer) GetConnectorOnboardingService() *onboarding.Service {
 		}
 		repo := connections.NewGormRepository(tx.Session(&gorm.Session{DisableNestedTransaction: true}))
 		key := "connector-onboarding:" + f.ID.String()
+		if f.PendingSetupID != nil {
+			key = "connector-pending:" + f.PendingSetupID.String()
+		}
 		var result *core.PersonalConnection
 		if f.Intent == "update_app" || f.Intent == "reauthorize" {
 			validIdentity := f.ProtocolVersion == 0 && f.ExpectedAppID != nil && values["region"] == f.Region && values["app_id"] == *f.ExpectedAppID
@@ -129,6 +132,9 @@ func (c *ServiceContainer) GetConnectorOnboardingService() *onboarding.Service {
 			}
 			result = ready.Connection
 		} else {
+			if f.PendingSetupID != nil && (values["region"] != f.Region || (f.ExpectedAppID != nil && values["app_id"] != *f.ExpectedAppID)) {
+				return uuid.Nil, core.NewError(core.ErrorCodeConflict, false, nil)
+			}
 			service, err := setup.InTransactionRepository(repo)
 			if err != nil {
 				return uuid.Nil, err
@@ -169,11 +175,12 @@ func (c *ServiceContainer) GetConnectorOnboardingService() *onboarding.Service {
 func (c *ServiceContainer) EnsureConnectorOnboardingSchema(ctx context.Context) error {
 	var ready bool
 	err := c.db.WithContext(ctx).Raw(`SELECT to_regclass('public.connector_onboarding_flows') IS NOT NULL
+	 AND to_regclass('public.connector_pending_setups') IS NOT NULL
  AND to_regclass('public.connector_onboarding_secrets') IS NOT NULL
  AND to_regclass('public.connector_connection_provider_evidence') IS NOT NULL
  AND to_regclass('public.connector_messaging_states') IS NOT NULL
  AND to_regclass('public.connector_messaging_contexts') IS NOT NULL
- AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='connector_onboarding_flows' AND column_name='protocol_version')`).Scan(&ready).Error
+ AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='connector_onboarding_flows' AND column_name='verification_deadline')`).Scan(&ready).Error
 	if err != nil || !ready {
 		return fmt.Errorf("Connector onboarding schema migration is required")
 	}

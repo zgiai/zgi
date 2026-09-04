@@ -34,7 +34,7 @@ func NativeTables() []string {
 		"connector_connections", "connector_conversion_records", "connector_definition_versions",
 		"connector_definitions", "connector_invocation_claims", "connector_key_setup_attempts",
 		"connector_lifecycle_decisions", "connector_messaging_contexts", "connector_messaging_states",
-		"connector_onboarding_flows", "connector_onboarding_secrets", "connector_operation_outcomes",
+		"connector_onboarding_flows", "connector_onboarding_secrets", "connector_pending_setups", "connector_operation_outcomes",
 		"connector_platform_lifecycle_events", "connector_plugin_versions", "connector_schema_readiness",
 		"connector_target_bindings", "connector_unavailable_references",
 	}

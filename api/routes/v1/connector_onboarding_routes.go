@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/connectors/onboarding"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"net/http"
+	"strconv"
 )
 
 type connectorOnboardingService interface {
@@ -18,6 +19,10 @@ type connectorOnboardingService interface {
 }
 
 func (h *connectorHandler) registerOnboarding(group *gin.RouterGroup) {
+	group.GET("/connectors/pending-setups", h.listPendingSetups)
+	group.GET("/connectors/pending-setups/:pendingId", h.getPendingSetup)
+	group.DELETE("/connectors/pending-setups/:pendingId", h.cancelPendingSetup)
+	group.POST("/connectors/pending-setups/:pendingId/onboarding-flows", h.resumePendingSetup)
 	group.POST("/connectors/:connectorId/onboarding-flows", h.startOnboarding)
 	group.POST("/connector-connections/:connectionId/onboarding-flows", h.startOnboarding)
 	group.GET("/connectors/onboarding-flows/:flowId", h.getOnboarding)
@@ -32,7 +37,131 @@ func (h *connectorHandler) startAppCredentialSetup(c *gin.Context) {
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32*1024)
-	h.startKeySetup(c)
+	org, owner, ok := connectorActor(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		connectorKeySetupRequest
+		PendingSetupID          string `json:"pending_setup_id"`
+		ExpectedPendingRevision int64  `json:"expected_pending_revision"`
+	}
+	defer func() { core.DestroySecretValues(request.Values) }()
+	if decodeConnectorJSON(c, &request) != nil {
+		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	if request.PendingSetupID == "" {
+		if request.ExpectedPendingRevision != 0 {
+			h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+			return
+		}
+		h.startParsedKeySetup(c, request.connectorKeySetupRequest, org, owner, d.ID)
+		return
+	}
+	id, err := parseConnectorUUID(request.PendingSetupID)
+	if err != nil || request.ExpectedPendingRevision < 1 || request.Target != nil || d.ID != "feishu" {
+		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	service, ok := h.onboarding.(connectorPendingService)
+	if !ok {
+		h.credentialError(c, core.NewError(core.ErrorCodeConnectorUnavailable, false, nil))
+		return
+	}
+	result, err := service.ResumePendingManual(c.Request.Context(), onboarding.ResumeCommand{OrganizationID: org, OwnerAccountID: owner, PendingSetupID: id, ExpectedRevision: request.ExpectedPendingRevision, IdempotencyKey: c.GetHeader("Idempotency-Key"), Values: request.Values})
+	if err != nil {
+		h.credentialError(c, err)
+		return
+	}
+	connectorSuccess(c, http.StatusOK, result)
+}
+
+type connectorPendingService interface {
+	ListPending(context.Context, uuid.UUID, uuid.UUID, string, int, int) (onboarding.PendingList, error)
+	GetPending(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (onboarding.PendingSnapshot, error)
+	CancelPending(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int64) (onboarding.PendingSnapshot, error)
+	ResumePending(context.Context, onboarding.ResumeCommand) (onboarding.Snapshot, error)
+	ResumePendingManual(context.Context, onboarding.ResumeCommand) (onboarding.Snapshot, error)
+}
+
+func (h *connectorHandler) listPendingSetups(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	org, owner, ok := connectorActor(c)
+	if !ok {
+		return
+	}
+	limit, e1 := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, e2 := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if e1 != nil || e2 != nil {
+		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	s, ok := h.onboarding.(connectorPendingService)
+	if !ok {
+		h.credentialError(c, core.NewError(core.ErrorCodeConnectorUnavailable, false, nil))
+		return
+	}
+	result, err := s.ListPending(c.Request.Context(), org, owner, c.Query("connector_id"), limit, offset)
+	if err != nil {
+		h.credentialError(c, err)
+		return
+	}
+	connectorSuccess(c, http.StatusOK, result)
+}
+func (h *connectorHandler) getPendingSetup(c *gin.Context) {
+	h.pendingSetupAction(c, "get")
+}
+func (h *connectorHandler) cancelPendingSetup(c *gin.Context) { h.pendingSetupAction(c, "cancel") }
+func (h *connectorHandler) resumePendingSetup(c *gin.Context) { h.pendingSetupAction(c, "resume") }
+func (h *connectorHandler) pendingSetupAction(c *gin.Context, action string) {
+	c.Header("Cache-Control", "no-store")
+	org, owner, ok := connectorActor(c)
+	if !ok {
+		return
+	}
+	id, err := parseConnectorUUID(c.Param("pendingId"))
+	if err != nil {
+		h.credentialError(c, err)
+		return
+	}
+	s, ok := h.onboarding.(connectorPendingService)
+	if !ok {
+		h.credentialError(c, core.NewError(core.ErrorCodeConnectorUnavailable, false, nil))
+		return
+	}
+	if action == "get" {
+		result, err := s.GetPending(c.Request.Context(), org, owner, id)
+		if err != nil {
+			h.credentialError(c, err)
+			return
+		}
+		connectorSuccess(c, http.StatusOK, result)
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8*1024)
+	var request struct {
+		ExpectedRevision int64 `json:"expected_revision"`
+	}
+	if decodeConnectorJSON(c, &request) != nil || request.ExpectedRevision < 1 {
+		h.credentialError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	if action == "cancel" {
+		result, err := s.CancelPending(c.Request.Context(), org, owner, id, request.ExpectedRevision)
+		if err != nil {
+			h.credentialError(c, err)
+			return
+		}
+		connectorSuccess(c, http.StatusOK, result)
+		return
+	}
+	result, err := s.ResumePending(c.Request.Context(), onboarding.ResumeCommand{OrganizationID: org, OwnerAccountID: owner, PendingSetupID: id, ExpectedRevision: request.ExpectedRevision, IdempotencyKey: c.GetHeader("Idempotency-Key")})
+	if err != nil {
+		h.credentialError(c, err)
+		return
+	}
+	connectorSuccess(c, http.StatusAccepted, result)
 }
 func (h *connectorHandler) startOnboarding(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")

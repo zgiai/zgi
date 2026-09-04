@@ -5,7 +5,8 @@ import type {
 
 export function supportsMessagingContract(connector: ConnectorCatalogItem): boolean {
   return (
-    connector.extension_schema_version === '1.2.0' &&
+    (connector.extension_schema_version === '1.2.0' ||
+      connector.extension_schema_version === '1.3.0') &&
     ['dingtalk', 'wecom', 'weixin'].includes(connector.id) &&
     connector.setup?.handler === `${connector.id}-registration-v1` &&
     connector.setup.protocol_version === 1
@@ -22,7 +23,8 @@ export function messagingMethod(connector: ConnectorCatalogItem, method: string)
 
 export function supportsAppSetup(connector: ConnectorCatalogItem): boolean {
   return (
-    connector.extension_schema_version === '1.1.0' &&
+    (connector.extension_schema_version === '1.1.0' ||
+      connector.extension_schema_version === '1.3.0') &&
     connector.setup?.handler === 'feishu-app-registration-v1' &&
     connector.setup.methods?.includes('manual') === true &&
     connector.credential_fields?.length === 3
@@ -44,7 +46,11 @@ export function supportsConnectorSetup(connector: ConnectorCatalogItem): boolean
   if (supportsMessagingContract(connector)) {
     return connector.setup?.methods.some(method => messagingMethod(connector, method)) === true;
   }
-  if (connector.extension_schema_version) return supportsAppSetup(connector);
+  if (supportsAppSetup(connector)) return true;
+  // Schema 1.3 adds host surfaces while retaining each service's credential contract.
+  if (connector.extension_schema_version && connector.extension_schema_version !== '1.3.0') {
+    return false;
+  }
   return (
     !connector.setup &&
     !connector.credential_fields &&

@@ -46,6 +46,7 @@ function errorText(t: ScopedTranslations<'connectors'>, code: string | undefined
 
 export interface ConnectorKeySetupPanelProps {
   connector: ConnectorCatalogItem;
+  pendingSetupID?: string;
   target?: ConnectorTargetRef;
   title?: string;
   description?: string;
@@ -59,8 +60,9 @@ export interface ConnectorKeySetupPanelProps {
 }
 
 export function ConnectorKeySetupPanel(props: ConnectorKeySetupPanelProps) {
-  if (supportsMessagingContract(props.connector))
-    {return <ConnectorMessagingSetupPanel {...props} />;}
+  if (supportsMessagingContract(props.connector)) {
+    return <ConnectorMessagingSetupPanel {...props} />;
+  }
   if (supportsAppSetup(props.connector)) {
     return (
       <ConnectorAppSetupPanel

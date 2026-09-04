@@ -1,4 +1,49 @@
 const messages = {
+  pending: {
+    title: 'Pending completion',
+    awaitingShort: 'Waiting for app readiness',
+    verifyShort: 'Verification required',
+    count: '{count} pending',
+    continue: 'Continue connection',
+    awaitingHint:
+      'At the last check, this app was not ready. Complete approval, publishing and availability settings in Feishu, then verify this same app here. Approval status is not refreshed automatically.',
+    verifyHint:
+      'The original App ID is saved, but verification has not completed. Check this app and continue here; do not create another one.',
+    lastChecked: 'Last verification: {date}',
+    retention: 'This pending record is kept until {date}; this is not the QR code expiry.',
+    expiringSoon:
+      'This record expires in less than 3 days. Complete verification soon; the app in Feishu will not be deleted.',
+    qrUnavailable:
+      'Same-app QR resume is currently unavailable. Use the existing app’s App Secret below; scanning to create another app is not recovery.',
+    resumeQRHint:
+      'This scan targets the original app. Review its App ID and configuration changes on the official Feishu page before confirming. The provider flow may affect app configuration or its Secret and has not been verified in a real tenant. The system never falls back to creating another app.',
+    secretHint:
+      'Find App Secret in the existing app’s developer console under Credentials & Basic Info. It is used only for this verification and stored encrypted only after success. No renewal token is needed.',
+    openConsole: 'Open the app developer console',
+    refresh: 'Refresh local record',
+    closeHint:
+      'Closing this window keeps the pending record. No usable connection or conversation binding exists until verification succeeds.',
+    resumeQR: 'Scan to resume this app',
+    verify: 'Verify existing app and connect',
+    loadFailed: 'Could not load pending records. Saved connections are unchanged.',
+    remove: 'Remove pending record',
+    removeTitle: 'Remove this pending record?',
+    removeFailed:
+      'Could not remove this record; its state may have changed. Refresh the list and try again.',
+    removeHint:
+      'Only this local record and its active scan will be cancelled. The app in Feishu and saved connections will not be deleted.',
+    expired: 'Pending record expired',
+    cancelled: 'Pending record removed',
+    completed: 'This app is already connected',
+    terminalHint:
+      'This receipt cannot create another connection. Use the saved connection, or explicitly start a new manual setup for the existing app.',
+    newManual: 'Add existing app manually',
+    back: 'Back to connectors',
+    invalidLink: 'This connection link is invalid or unavailable in the current workspace.',
+    updateSecret: 'Update app Secret',
+    updateSecretHint:
+      'The app identity stays fixed. The current Secret and bindings remain unchanged if verification fails.',
+  },
   messaging: {
     startAgain: 'Enter credentials again',
     reauthorizeTitle: 'Update connection credentials',
@@ -74,7 +119,8 @@ const messages = {
       'Only verified operations are available. Events and user authorization are not enabled in ZGI.',
     recovery:
       'The registration outcome is uncertain. Check the Feishu developer console and add the application manually if needed. No new application will be created automatically.',
-    expired: 'Registration expired. Start again when ready.',
+    expired:
+      'This QR code has expired. If the app was created, continue from its pending record. Without a record, use manual setup with the existing app credentials to avoid creating another app.',
     cancelled:
       'Registration cancelled. Any application already created in Feishu is not automatically deleted.',
     failed: 'Registration did not complete. Other saved connections are unchanged.',
@@ -90,7 +136,7 @@ const messages = {
     newConnection: 'Saved as a new independent connection. Existing bindings are unchanged.',
     updateTitle: 'Update application Secret',
     updateHint:
-      'A verified Secret for the same application replaces the existing one. A different application creates a new unbound connection.',
+      'The application identity stays fixed. A verified Secret replaces the current one; failed verification preserves credentials and bindings. Use Add connection for another app.',
     repairTitle: 'Configure application permissions',
     repairHint:
       'Registration is pinned to this application. It will not create or switch applications. Available operations are verified afterwards.',

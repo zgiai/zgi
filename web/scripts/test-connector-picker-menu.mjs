@@ -30,6 +30,7 @@ assert.deepEqual(
 const { isConnectorPickerSwitchCurrent } = pickerModel;
 const {
   createConnectorPickerMenuGroups,
+  filterConnectorPickerGroups,
   requestConnectorPickerMenuAccount,
   requestConnectorPickerMenuToggle,
 } = await import(
@@ -77,6 +78,10 @@ const current = {
 const target = { type: 'chat', id: 'conversation-a' };
 const connections = [connection('a'), connection('b'), connection('exa-a', 'ready', exa.id)];
 const groups = createConnectorPickerMenuGroups([github, exa], connections, [current], []);
+const pendingOnlyGroups = createConnectorPickerMenuGroups([exa], [], []);
+assert.equal(filterConnectorPickerGroups(pendingOnlyGroups, {query:'',status:'needs_attention'}, new Set([exa.id])).length, 1);
+assert.equal(filterConnectorPickerGroups(pendingOnlyGroups, {query:'',status:'connected'}, new Set([exa.id])).length, 0, 'pending is not connected');
+assert.equal(filterConnectorPickerGroups(pendingOnlyGroups, {query:'unrelated-name',status:'needs_attention'}, new Set([exa.id])).length, 0, 'pending preserves search filtering');
 const hiddenConnector = { ...github, id: 'dingtalk' };
 const hiddenConnection = connection('hidden', 'ready', hiddenConnector.id);
 const hiddenBinding = {

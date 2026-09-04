@@ -18,6 +18,7 @@ import { connectorService } from '@/services/connector.service';
 import { useConnectorOnboarding } from '@/hooks/connectors/use-connector-onboarding';
 import { connectorRequestErrorDetails } from '@/hooks/connectors/connector-request-error';
 import { invalidatePersonalConnectionQueries } from '@/hooks/connectors/connection-detail-query';
+import { pendingSetupKeys, usePendingSetup } from '@/hooks/connectors/use-pending-setups';
 import type { KeySetupResult, PersonalConnection } from '@/services/types/connector';
 import type { ConnectorKeySetupPanelProps } from './connector-key-setup-panel';
 import { useCreationDefault } from './use-creation-default';
@@ -26,13 +27,14 @@ import { activeOnboarding, appCredentialErrorKey, safeVerificationURL } from './
 type AppSetupProps = ConnectorKeySetupPanelProps & {
   updateConnection?: PersonalConnection;
   initialMode?: 'qr' | 'manual';
+  initialIdentity?: { app_id: string; region: 'feishu' | 'lark' };
 };
 export function ConnectorAppSetupPanel(props: AppSetupProps) {
   const actor = useAuthStore.use.user()?.id;
   const organization = useOrganizationStore.use.currentOrganization()?.id;
   return (
     <ScopedConnectorAppSetupPanel
-      key={`${organization}:${actor}:${props.connector.id}:${props.updateConnection?.id ?? 'create'}`}
+      key={`${organization}:${actor}:${props.connector.id}:${props.pendingSetupID ?? props.updateConnection?.id ?? 'create'}`}
       {...props}
     />
   );
@@ -44,14 +46,26 @@ function ScopedConnectorAppSetupPanel({
   onReady,
   updateConnection,
   initialMode = 'qr',
+  pendingSetupID,
+  initialIdentity,
 }: AppSetupProps) {
   const t = useT('connectors');
   const creationDefault = useCreationDefault(!updateConnection);
-  const [mode, setMode] = useState(initialMode);
+  const [mode, setMode] = useState(pendingSetupID ? 'manual' : initialMode);
+  const pendingQuery = usePendingSetup(pendingSetupID);
+  const pending = pendingQuery.data?.data;
+  const [freshManual, setFreshManual] = useState(false);
   const [region, setRegion] = useState<'feishu' | 'lark'>(
-    updateConnection?.provider_evidence?.region ?? 'feishu'
+    initialIdentity?.region ??
+      updateConnection?.provider_evidence?.region ??
+      (updateConnection?.external_account_id?.startsWith('lark:') ? 'lark' : 'feishu')
   );
-  const [appID, setAppID] = useState(updateConnection?.provider_evidence?.app_id ?? '');
+  const [appID, setAppID] = useState(
+    initialIdentity?.app_id ??
+      updateConnection?.provider_evidence?.app_id ??
+      updateConnection?.external_account_id?.split(':')[1] ??
+      ''
+  );
   const [secret, setSecret] = useState('');
   const [manualResult, setManualResult] = useState<KeySetupResult>();
   const [manualError, setManualError] = useState<string>();
@@ -60,7 +74,7 @@ function ScopedConnectorAppSetupPanel({
   const generation = useRef(0);
   const notified = useRef('');
   const queryClient = useQueryClient();
-  const onboarding = useConnectorOnboarding(connector, updateConnection);
+  const onboarding = useConnectorOnboarding(connector, updateConnection, pendingSetupID);
   const busy =
     submitting ||
     onboarding.busy ||
@@ -79,8 +93,21 @@ function ScopedConnectorAppSetupPanel({
     useOrganizationStore.getState().currentOrganization?.id === organization;
 
   useEffect(() => {
+    if (pending) {
+      setRegion(pending.region);
+      setAppID(pending.app_id);
+    }
+  }, [pending]);
+  useEffect(() => {
+    if (onboarding.flow?.pending_setup_id || onboarding.flow?.state === 'ready') {
+      void queryClient.invalidateQueries({ queryKey: pendingSetupKeys });
+    }
+  }, [onboarding.flow?.state, onboarding.flow?.pending_setup_id, queryClient]);
+
+  useEffect(() => {
     if (activeOnboarding(onboarding.flow)) setMode('qr');
-  }, [onboarding.flow]);
+    else if (pendingSetupID && onboarding.flow?.state === 'pending_completion') setMode('manual');
+  }, [onboarding.flow, pendingSetupID]);
   useEffect(() => {
     if (!Number.isFinite(expiry) || expired) return;
     const timer = setTimeout(
@@ -99,12 +126,20 @@ function ScopedConnectorAppSetupPanel({
     if (!ready || isRestored || notified.current === ready.id) return;
     notified.current = ready.id;
     const version = generation.current;
-    void creationDefault.complete(ready).then(current => current && generation.current === version && onReady?.(
-      ready,
-      manualResult?.state === 'ready'
-        ? { attachment: manualResult.attachment, bindingWarning: manualResult.binding_warning }
-        : {}
-    ));
+    void creationDefault.complete(ready).then(
+      current =>
+        current &&
+        generation.current === version &&
+        onReady?.(
+          ready,
+          manualResult?.state === 'ready'
+            ? {
+                attachment: manualResult.attachment,
+                bindingWarning: manualResult.binding_warning,
+              }
+            : {}
+        )
+    );
   }, [ready, onReady, isRestored, manualResult, creationDefault]);
   useEffect(() => {
     if (manualResult?.state !== 'verifying') return;
@@ -142,6 +177,35 @@ function ScopedConnectorAppSetupPanel({
     setSubmitting(true);
     setManualError(undefined);
     try {
+      if (pendingSetupID) {
+        const latest = await pendingQuery.refetch();
+        if (!current(version)) return;
+        const record = latest.data?.data;
+        if (!record?.allowed_actions.includes('resume_manual')) {
+          setManualError('connector_conflict');
+          return;
+        }
+        const resumed = await connectorService.resumePendingManual(
+          record.id,
+          record.revision,
+          values,
+          crypto.randomUUID()
+        );
+        if (!current(version)) return;
+        if (resumed.data.state === 'ready' && resumed.data.result_connection_id) {
+          const saved = await connectorService.getConnection(resumed.data.result_connection_id);
+          if (!current(version)) return;
+          setManualResult({ state: 'ready', attempt_id: resumed.data.id, connection: saved.data });
+          invalidatePersonalConnectionQueries(queryClient);
+        } else if (
+          resumed.data.error_code &&
+          resumed.data.error_code !== 'connector_application_not_ready'
+        ) {
+          setManualError(resumed.data.error_code);
+        }
+        await queryClient.invalidateQueries({ queryKey: pendingSetupKeys });
+        return;
+      }
       const response = updateConnection
         ? await connectorService.reconnectConnection(
             updateConnection.id,
@@ -168,6 +232,79 @@ function ScopedConnectorAppSetupPanel({
     }
   };
 
+  // Swap the content of the original setup surface, not a second dialog. Old
+  // default/host intents are discarded when verification becomes pending.
+  if (
+    !pendingSetupID &&
+    onboarding.flow?.state === 'pending_completion' &&
+    onboarding.flow.pending_setup_id
+  ) {
+    return (
+      <ConnectorAppSetupPanel
+        connector={connector}
+        pendingSetupID={onboarding.flow.pending_setup_id}
+        embedded={embedded}
+        onReady={onReady}
+      />
+    );
+  }
+  if (freshManual && pending) {
+    return (
+      <ConnectorAppSetupPanel
+        connector={connector}
+        initialMode="manual"
+        initialIdentity={pending}
+        embedded={embedded}
+        onReady={onReady}
+      />
+    );
+  }
+  if (pendingSetupID && !pending) {
+    return (
+      <Alert>
+        <AlertDescription>
+          {t(pendingQuery.isError ? 'pending.loadFailed' : 'connections.loading')}
+        </AlertDescription>
+        <Button variant="ghost" onClick={() => void pendingQuery.refetch()}>
+          {t('actions.retry')}
+        </Button>
+      </Alert>
+    );
+  }
+  if (
+    pending &&
+    !ready &&
+    (pending.state === 'completed' || pending.state === 'expired' || pending.state === 'cancelled')
+  ) {
+    return (
+      <div className="space-y-3">
+        <Alert>
+          <AlertTitle>{t(`pending.${pending.state}`)}</AlertTitle>
+          <AlertDescription>
+            {pending.app_id}
+            <br />
+            {t('pending.terminalHint')}
+          </AlertDescription>
+        </Alert>
+        {pending.state === 'completed' ? (
+          pending.result_connection_id ? (
+            <Button asChild className="w-full">
+              <Link
+                href={`/console/connectors/connections/${encodeURIComponent(pending.result_connection_id)}`}
+              >
+                {t('app.manage')}
+              </Link>
+            </Button>
+          ) : null
+        ) : (
+          <Button variant="outline" onClick={() => setFreshManual(true)}>
+            {t('pending.newManual')}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   const errorCode =
     mode === 'manual' ? manualError : (onboarding.errorCode ?? onboarding.flow?.error_code);
   const state = onboarding.flow?.state;
@@ -179,8 +316,72 @@ function ScopedConnectorAppSetupPanel({
         </CardHeader>
       )}
       <CardContent className={embedded ? 'space-y-4 p-0' : 'space-y-4'}>
+        {pending && !ready && (
+          <Alert className="border-warning/30 bg-warning/5">
+            <AlertTitle>{t('pending.title')}</AlertTitle>
+            <AlertDescription>
+              <p>
+                {t(
+                  pending.state === 'awaiting_application'
+                    ? 'pending.awaitingHint'
+                    : 'pending.verifyHint'
+                )}
+              </p>
+              <p className="mt-2 font-mono text-xs break-all">
+                {pending.app_id} · {t(pending.region === 'feishu' ? 'app.feishu' : 'app.lark')}
+              </p>
+              {pending.last_verification_at && (
+                <p className="mt-1 text-xs">
+                  {t('pending.lastChecked', {
+                    date: new Date(pending.last_verification_at).toLocaleString(),
+                  })}
+                </p>
+              )}
+              <p className="mt-2">
+                {t('pending.retention', {
+                  date: new Date(pending.resume_expires_at).toLocaleDateString(),
+                })}
+              </p>
+              {Date.parse(pending.resume_expires_at) - Date.now() < 3 * 86400000 && (
+                <p>{t('pending.expiringSoon')}</p>
+              )}
+              {pending.resume_qr_unavailable_reason && (
+                <p className="mt-2">{t('pending.qrUnavailable')}</p>
+              )}
+              {pending.reason_code && pending.reason_code !== 'connector_application_not_ready' && (
+                <p className="mt-2">{t(appCredentialErrorKey(pending.reason_code))}</p>
+              )}
+              <p className="mt-2 text-xs">{t('pending.secretHint')}</p>
+              <Button variant="link" asChild className="h-auto px-0">
+                <a
+                  href={
+                    pending.region === 'feishu'
+                      ? 'https://open.feishu.cn/app'
+                      : 'https://open.larksuite.com/app'
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {t('pending.openConsole')}
+                </a>
+              </Button>
+              <Button
+                variant="link"
+                className="ml-3 h-auto px-0"
+                disabled={pendingQuery.isFetching || submitting}
+                onClick={async () => {
+                  await pendingQuery.refetch();
+                  // Refresh only an existing receipt; no implicit registration.
+                  if (onboarding.flow?.id) await onboarding.retryStatus();
+                }}
+              >
+                {t('pending.refresh')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
         <p className="text-sm leading-6 text-muted-foreground">
-          {t(updateConnection ? 'app.updateHint' : 'app.notice')}
+          {t(pending ? 'pending.closeHint' : updateConnection ? 'app.updateHint' : 'app.notice')}
         </p>
         {ready ? (
           <div className="space-y-3">
@@ -222,13 +423,15 @@ function ScopedConnectorAppSetupPanel({
             <div className="grid grid-cols-2 gap-2" role="group" aria-label={t('app.title')}>
               <Button
                 variant={mode === 'qr' ? 'default' : 'outline'}
-                disabled={busy}
+                disabled={
+                  busy || Boolean(pending && !pending.allowed_actions.includes('resume_qr'))
+                }
                 onClick={() => {
                   setSecret('');
                   setMode('qr');
                 }}
               >
-                {t(updateConnection ? 'app.repair' : 'app.qr')}
+                {t(pending ? 'pending.resumeQR' : updateConnection ? 'app.repair' : 'app.qr')}
               </Button>
               <Button
                 variant={mode === 'manual' ? 'default' : 'outline'}
@@ -257,7 +460,7 @@ function ScopedConnectorAppSetupPanel({
                   <select
                     id="connector-app-region"
                     className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                    disabled={busy}
+                    disabled={busy || Boolean(updateConnection || pending)}
                     value={region}
                     onChange={event => setRegion(event.target.value as 'feishu' | 'lark')}
                   >
@@ -277,7 +480,7 @@ function ScopedConnectorAppSetupPanel({
                         spellCheck={false}
                         maxLength={field.max_length}
                         required={field.required}
-                        disabled={busy}
+                        disabled={busy || (!field.secret && Boolean(updateConnection || pending))}
                         value={field.secret ? secret : appID}
                         onChange={event =>
                           field.secret
@@ -291,9 +494,14 @@ function ScopedConnectorAppSetupPanel({
                   type="submit"
                   className="w-full"
                   loading={submitting}
-                  disabled={busy || !appID.trim() || !secret.trim()}
+                  disabled={
+                    busy ||
+                    !appID.trim() ||
+                    !secret.trim() ||
+                    Boolean(pending && !pending.allowed_actions.includes('resume_manual'))
+                  }
                 >
-                  {t(submitting ? 'app.verifying' : 'setup.submit')}
+                  {t(submitting ? 'app.verifying' : pending ? 'pending.verify' : 'setup.submit')}
                 </Button>
                 {manualError && (
                   <Button type="button" variant="outline" asChild className="w-full">
@@ -319,9 +527,17 @@ function ScopedConnectorAppSetupPanel({
             ) : (
               <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  {t(updateConnection ? 'app.repairHint' : 'app.scanHint')}
+                  {t(
+                    pending
+                      ? 'pending.resumeQRHint'
+                      : updateConnection
+                        ? 'app.repairHint'
+                        : 'app.scanHint'
+                  )}
                 </p>
-                <ConnectorPermissionTemplateDetails template={connector.permission_template} />
+                {!pending && (
+                  <ConnectorPermissionTemplateDetails template={connector.permission_template} />
+                )}
                 {updateConnection ? (
                   <p className="rounded-lg border bg-muted/20 p-3 text-sm">
                     {updateConnection.provider_evidence?.app_name ?? updateConnection.name}
@@ -331,7 +547,7 @@ function ScopedConnectorAppSetupPanel({
                         updateConnection.external_account_id}
                     </span>
                   </p>
-                ) : (
+                ) : pending ? null : (
                   <div className="flex gap-2">
                     <Button
                       size="sm"
@@ -383,21 +599,24 @@ function ScopedConnectorAppSetupPanel({
                     {t(state === 'verifying' ? 'app.verifying' : 'app.starting')}
                   </div>
                 )}
-                {state && !activeOnboarding(onboarding.flow) && state !== 'ready' && (
-                  <Alert>
-                    <AlertDescription>
-                      {t(
-                        state === 'recovery_required'
-                          ? 'app.recovery'
-                          : state === 'expired'
-                            ? 'app.expired'
-                            : state === 'cancelled'
-                              ? 'app.cancelled'
-                              : 'app.failed'
-                      )}
-                    </AlertDescription>
-                  </Alert>
-                )}
+                {state &&
+                  !activeOnboarding(onboarding.flow) &&
+                  state !== 'ready' &&
+                  state !== 'pending_completion' && (
+                    <Alert>
+                      <AlertDescription>
+                        {t(
+                          state === 'recovery_required'
+                            ? 'app.recovery'
+                            : state === 'expired'
+                              ? 'app.expired'
+                              : state === 'cancelled'
+                                ? 'app.cancelled'
+                                : 'app.failed'
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 {activeOnboarding(onboarding.flow) && (
                   <Button
                     variant="outline"
@@ -423,10 +642,17 @@ function ScopedConnectorAppSetupPanel({
                   !(onboarding.hasRecovery && !state) && (
                     <Button
                       className="w-full"
-                      disabled={busy}
-                      onClick={() => { creationDefault.begin(); void onboarding.start(region); }}
+                      disabled={
+                        busy || Boolean(pending && !pending.allowed_actions.includes('resume_qr'))
+                      }
+                      onClick={() => {
+                        creationDefault.begin();
+                        void onboarding.start(region, false, pending?.revision);
+                      }}
                     >
-                      {t(updateConnection ? 'app.repair' : 'app.start')}
+                      {t(
+                        pending ? 'pending.resumeQR' : updateConnection ? 'app.repair' : 'app.start'
+                      )}
                     </Button>
                   )}
               </div>

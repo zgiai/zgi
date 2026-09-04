@@ -23,9 +23,29 @@ import (
 // Calls are separated so a durable worker can fence, cancel and rate-limit each
 // request. No global HTTP client, SDK logging or in-memory polling loop is used.
 type RegistrationClient struct {
-	http   *http.Client
-	addons string
+	http         *http.Client
+	addons       string
+	resumeAddons string
 }
+type RegistrationPurpose string
+
+const (
+	CreateApplication RegistrationPurpose = "create_app"
+	UpdateApplication RegistrationPurpose = "update_app"
+	ResumeApplication RegistrationPurpose = "resume_app"
+)
+
+type RegistrationRequest struct {
+	Purpose RegistrationPurpose
+	Region  string
+	AppID   string
+}
+
+// Same-app resume is enabled for the two supported regions. Admission still
+// fixes the app identity and never falls back to application creation. Enabling
+// this path does not certify the provider's configuration/Secret side effects.
+func resumeQREnabled(region string) bool { return region == "feishu" || region == "lark" }
+
 type RegistrationSession struct {
 	DeviceCode      string        `json:"-"`
 	VerificationURL string        `json:"-"`
@@ -39,7 +59,7 @@ type RegistrationResult struct {
 	AppSecret string `json:"-"`
 }
 type Registrar interface {
-	Begin(context.Context, string, string) (RegistrationSession, error)
+	Begin(context.Context, RegistrationRequest) (RegistrationSession, error)
 	Poll(context.Context, string, string, bool) (RegistrationResult, error)
 }
 
@@ -67,7 +87,15 @@ func NewRegistrationClient(client *http.Client) (*RegistrationClient, error) {
 		h.Timeout = 10 * time.Second
 	}
 	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &RegistrationClient{http: &h, addons: base64.RawURLEncoding.EncodeToString(compressed.Bytes())}, nil
+	var resume bytes.Buffer
+	zw := gzip.NewWriter(&resume)
+	if _, err = zw.Write([]byte(`{"preset":false}`)); err != nil {
+		return nil, err
+	}
+	if err = zw.Close(); err != nil {
+		return nil, err
+	}
+	return &RegistrationClient{http: &h, addons: base64.RawURLEncoding.EncodeToString(compressed.Bytes()), resumeAddons: base64.RawURLEncoding.EncodeToString(resume.Bytes())}, nil
 }
 func registrationOrigin(region string) string {
 	switch region {
@@ -78,8 +106,11 @@ func registrationOrigin(region string) string {
 	}
 	return ""
 }
-func (c *RegistrationClient) Begin(ctx context.Context, region, appID string) (RegistrationSession, error) {
-	if registrationOrigin(region) == "" || (appID != "" && !appIdentifier.MatchString(appID)) {
+func (c *RegistrationClient) Begin(ctx context.Context, request RegistrationRequest) (RegistrationSession, error) {
+	region, appID := request.Region, request.AppID
+	if registrationOrigin(region) == "" ||
+		(request.Purpose == CreateApplication && appID != "") ||
+		(request.Purpose != CreateApplication && (request.Purpose != UpdateApplication && request.Purpose != ResumeApplication || !appIdentifier.MatchString(appID))) {
 		return RegistrationSession{}, registrationError(core.ErrorCodeInvalidInput)
 	}
 	var response struct {
@@ -87,7 +118,8 @@ func (c *RegistrationClient) Begin(ctx context.Context, region, appID string) (R
 		URL        string `json:"verification_uri_complete"`
 		UserCode   string `json:"user_code"`
 		Interval   int    `json:"interval"`
-		TTL        int    `json:"expire_in"`
+		TTL        *int   `json:"expire_in"`
+		ExpiresIn  *int   `json:"expires_in"`
 	}
 	if err := c.request(ctx, region, url.Values{"action": {"begin"}, "archetype": {"PersonalAgent"}, "auth_method": {"client_secret"}, "request_user_info": {"open_id"}}, &response); err != nil {
 		return RegistrationSession{}, err
@@ -104,6 +136,12 @@ func (c *RegistrationClient) Begin(ctx context.Context, region, appID string) (R
 	q.Set("tp", "sdk")
 	q.Set("source", "go-sdk/zgi")
 	q.Set("addons", c.addons)
+	if request.Purpose == ResumeApplication {
+		q.Set("addons", c.resumeAddons)
+		q.Del("name")
+		q.Del("avatar")
+		q.Del("description")
+	}
 	q.Del("createOnly")
 	q.Del("clientID")
 	if appID == "" {
@@ -121,12 +159,14 @@ func (c *RegistrationClient) Begin(ctx context.Context, region, appID string) (R
 		// require recovery instead of silently shortening the interval.
 		return RegistrationSession{}, registrationError(core.ErrorCodeOutcomeUnknown)
 	}
-	ttl := response.TTL
-	if ttl <= 0 {
-		ttl = 600
-	}
-	if ttl > 600 {
-		ttl = 600
+	ttl := 600
+	for _, value := range []*int{response.TTL, response.ExpiresIn} {
+		if value != nil {
+			if *value <= 0 {
+				return RegistrationSession{}, registrationError(core.ErrorCodeOutcomeUnknown)
+			}
+			ttl = min(ttl, *value)
+		}
 	}
 	return RegistrationSession{DeviceCode: response.DeviceCode, VerificationURL: u.String(), UserCode: response.UserCode, Interval: time.Duration(interval) * time.Second, TTL: time.Duration(ttl) * time.Second}, nil
 }

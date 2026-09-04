@@ -122,13 +122,16 @@ export function createConnectorPickerMenuGroups(
 /** Filter services, not their account lists: counts and repair/create choices stay complete. */
 export function filterConnectorPickerGroups(
   groups: readonly ConnectorPickerMenuGroup[],
-  filters: ConnectorPickerFilters
+  filters: ConnectorPickerFilters,
+  pendingConnectorIDs: ReadonlySet<string> = new Set()
 ): ConnectorPickerMenuGroup[] {
   return groups.filter(
     group =>
       filterConnectorPickerRows(
         [...group.accounts, ...(group.createRow ? [group.createRow] : [])],
-        filters
+        filters.status === 'needs_attention' && pendingConnectorIDs.has(group.id)
+          ? { ...filters, status: 'all' }
+          : filters
       ).length > 0 || Boolean(group.unavailable && group.currentBinding && !filters.query.trim())
   );
 }

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
 import { ConnectorCreateDialog } from '../setup/connector-create-dialog';
 import { supportsConnectorSetup } from '../setup/app-setup-state';
 import { ArrowRight, ChevronDown, CircleAlert, CircleCheck, KeyRound, Plus } from 'lucide-react';
@@ -21,6 +22,8 @@ import { getConnectorCatalogRowState } from './catalog-model';
 export function ConnectorCatalogRow({ item }: { item: ConnectorCatalogItem }) {
   const t = useT('connectors');
   const [adding, setAdding] = useState(false);
+  const pendingQuery = usePendingSetups(item.id);
+  const pendingCount = pendingQuery.data?.data.total_pending ?? 0;
   const canConnect = supportsConnectorSetup(item);
   const hasConnections = item.connection_summary.count > 0;
   const rowState = getConnectorCatalogRowState(item);
@@ -91,6 +94,7 @@ export function ConnectorCatalogRow({ item }: { item: ConnectorCatalogItem }) {
           <div className="min-w-0">
             <p className="truncate" title={summary}>
               {summary}
+              {pendingCount > 0 ? ` · ${t('pending.count', { count: pendingCount })}` : ''}
             </p>
             {statusHint ? (
               <p className="truncate text-[11px]" title={statusHint}>
@@ -100,7 +104,7 @@ export function ConnectorCatalogRow({ item }: { item: ConnectorCatalogItem }) {
           </div>
         </div>
         <div className="flex h-9 w-36 shrink-0">
-          {hasConnections ? (
+          {hasConnections || pendingCount > 0 ? (
             <>
               <Button
                 asChild
@@ -111,7 +115,9 @@ export function ConnectorCatalogRow({ item }: { item: ConnectorCatalogItem }) {
                   href={actionHref}
                   aria-label={`${t('catalog.manageConnections')}: ${item.name}`}
                 >
-                  <span className="truncate">{t('catalog.manageConnections')}</span>
+                  <span className="truncate">
+                    {t(hasConnections ? 'catalog.manageConnections' : 'pending.continue')}
+                  </span>
                 </Link>
               </Button>
               {canConnect && (

@@ -86,10 +86,17 @@ APIs appear separately as informational dependencies, not requested scopes or AP
 
 Configuration is additive: removing a scope from this template does **not** revoke
 it on an existing Feishu app. Manage existing grants in Feishu and re-run connection
-diagnostics to verify them. Upgrading this built-in plugin permits the exact reviewed
-v1 → v2 template reduction and the pinned plugin 1.0.2 → 1.1.0 or 1.2.0 / v2 → v3 releases; it neither changes saved credentials/bindings nor makes
-external configuration calls. Existing registration receipts keep their original
-template and idempotency key. Active flows pinned to an older template stop instead
+diagnostics to verify them. The v3 registration template is a fixed baseline;
+adding runtime actions or supported host surfaces does not change its permissions.
+The reviewed v2 → v3 transition pins the complete old and new authentication
+contracts (credential fields and setup configuration), independently of product
+release names. Other identity, existing-operation, permission, risk, surface and
+same-version checks still apply. Unknown templates, changed authentication
+configuration and reverse template transitions remain incompatible. The historical
+v1 → v2 reduction retains its existing exact-release rule. Catalog admission neither
+changes saved credentials/bindings nor makes external configuration calls or
+expands an existing connection's authorized operations. Existing registration receipts
+keep their original template and idempotency key. Active flows pinned to an older template stop instead
 of silently switching templates or creating another app; check Feishu for any app
 already created before explicitly starting again or using manual entry.
 For an existing app, explicitly choose **Configure application permissions** in
@@ -503,6 +510,54 @@ keeps its default reference. Deleting the default connection clears that prefere
 atomically without choosing a replacement. Apply the forward
 `connector_chat_preferences` schema migration before enabling this feature in a
 deployment. No data is backfilled from saved connections.
+
+### Feishu apps awaiting approval
+
+Apply forward migration `20260904160000_connector_pending_setups` before running
+the updated API. Existing connections, bindings, credentials and permission
+templates are preserved. This migration does not reconstruct old failed attempts
+whose App ID was never recorded.
+
+When a valid registration response supplies an App ID but the app is not ready,
+the Connector saves a separate, non-secret pending record. Approval, publishing
+and availability must be completed in Feishu. The record keeps the original App
+ID/region for 30 days; QR sessions keep their own provider-bounded expiry. Closing
+the window or cancelling a scan does not delete the pending record or external
+app. Removing the pending record cancels only local recovery, and terminal receipts
+are retained for seven days. Capacity is reserved before external creation (20
+pending records per owner, 200 per organization, including active new creations).
+
+Find pending records in the Connector catalog, Feishu details, My connections, or
+the Chat/Agent Connector menu. They are not selectable connections or defaults and
+cannot be used by tools or bound to a conversation. Resuming stays in the existing
+setup panel. A GET reads local state only; “last verification” is not live approval
+status. Successful verification atomically creates one formal connection; only a
+still-current user selection can subsequently attach it through the normal host save.
+
+Same-app QR resume is **enabled for both Feishu and Lark**. From the pending
+record, select **Scan to resume this app**, then explicitly start the scan.
+Opening a record never starts registration. The request fixes the original App ID,
+omits `createOnly`, and supplies only `addons={preset:false}` instead of the creation
+template. A different returned identity or region is rejected; there is no fallback
+to app creation. Existing expiry, ownership, revision and one-active-attempt checks
+still apply. Approval and readiness must pass verification before a connection is saved.
+
+Real-tenant validation of the provider's configuration/permission/Secret side
+effects is still outstanding; enabling this feature is not proof of zero side effects.
+Review the app identity and proposed changes on the official confirmation page.
+The manual fallback verifies the original, locked App ID/region with an App Secret from that
+app's developer console, under **Credentials & Basic Info**. Failed candidate
+Secrets are discarded, not retained for approval polling. Successful credentials
+use the existing encrypted `connector_connections.encrypted_credentials` store;
+there is no renewal-token object or browser credential cache.
+
+Existing connections use **Update application Secret** in their management page;
+the same-app form keeps identity fixed and verification failure preserves the
+current credentials and bindings. Permission configuration remains a separate
+action. A `pending_setup_id` detail link opens the pending view without starting a
+scan. Legacy `connection_id` detail links resolve ownership and open the original
+manual credential dialog through `action=credentials`. They cannot automatically
+switch organizations or recreate a deleted connection.
 
 ### Execution safety
 

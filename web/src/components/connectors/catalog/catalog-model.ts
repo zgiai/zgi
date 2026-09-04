@@ -20,8 +20,16 @@ export interface PartitionedConnectorCatalog {
 
 export function getConnectorCatalogRowState(item: ConnectorCatalogItem): ConnectorCatalogRowState {
   const connectionState = item.connection_summary.state;
-  if (item.connection_summary.count === 0 && supportsConnectorSetup(item) &&
-    item.capabilities.every(capability => capability.usable || !capability.unavailable_reason || capability.unavailable_reason === 'connector_not_verified')) {
+  if (
+    item.connection_summary.count === 0 &&
+    supportsConnectorSetup(item) &&
+    item.capabilities.every(
+      capability =>
+        capability.usable ||
+        !capability.unavailable_reason ||
+        capability.unavailable_reason === 'connector_not_verified'
+    )
+  ) {
     return 'not_connected';
   }
   if (item.connection_summary.count > 0 && connectionState === 'ready') return 'connected';
@@ -61,10 +69,14 @@ function matchesStatus(item: ConnectorCatalogItem, status: ConnectorCatalogStatu
 
 export function filterConnectorCatalog(
   items: readonly ConnectorCatalogItem[],
-  filters: ConnectorCatalogFilters
+  filters: ConnectorCatalogFilters,
+  pendingConnectorIDs: ReadonlySet<string> = new Set()
 ): ConnectorCatalogItem[] {
   return items.filter(
-    item => matchesQuery(item, filters.query) && matchesStatus(item, filters.status)
+    item =>
+      matchesQuery(item, filters.query) &&
+      (matchesStatus(item, filters.status) ||
+        (filters.status === 'needs_attention' && pendingConnectorIDs.has(item.id)))
   );
 }
 

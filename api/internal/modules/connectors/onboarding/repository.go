@@ -109,13 +109,32 @@ func (r *GormRepository) Admit(ctx context.Context, input Flow) (Flow, error) {
  count(*) FILTER (WHERE created_at > ? AND owner_account_id = ?) AS owner_recent,
  count(*) FILTER (WHERE created_at > ?) AS org_recent,
  count(*) FILTER (WHERE state IN ('starting','awaiting_authorization','verifying') AND owner_account_id = ? AND
- ((connection_id IS NULL AND ? IN ('create_app','register_bot','login_session') AND connector_id = ?) OR (connection_id IS NOT NULL AND ? IN ('update_app','reauthorize') AND connection_id = ?))) AS same_intent
+ ((connection_id IS NULL AND ? IN ('create_app','resume_app','register_bot','login_session') AND connector_id = ?) OR (connection_id IS NOT NULL AND ? IN ('update_app','reauthorize') AND connection_id = ?))) AS same_intent
  FROM connector_onboarding_flows WHERE organization_id = ?`, input.OwnerAccountID, r.now().Add(-time.Minute), input.OwnerAccountID, r.now().Add(-time.Minute), input.OwnerAccountID, input.Intent, input.ConnectorID, input.Intent, input.ConnectionID, input.OrganizationID).Scan(&counts).Error
 		if err != nil {
 			return err
 		}
 		if counts.OwnerActive >= 3 || counts.OrgActive >= 20 || counts.OwnerRecent >= 5 || counts.OrgRecent >= 20 || counts.SameIntent > 0 {
 			return registrationError(core.ErrorCodeRateLimited)
+		}
+		pending, err := r.admitPending(tx, input)
+		if err != nil {
+			return err
+		}
+		if pending != nil && pending.State == PendingCompleted {
+			input.State = Ready
+			input.ResultConnectionID = pending.ResultConnectionID
+			result = input
+			return nil
+		}
+		if input.ManualVerification {
+			var activeLeases int64
+			if err = tx.Model(&Flow{}).Where("lease_until > ?", r.now()).Count(&activeLeases).Error; err != nil {
+				return err
+			}
+			if activeLeases >= 32 {
+				return registrationError(core.ErrorCodeRateLimited)
+			}
 		}
 		if err = tx.Create(&input).Error; err != nil {
 			return err
@@ -168,13 +187,16 @@ func (r *GormRepository) terminal(tx *gorm.DB, f *Flow, state State, code core.E
 func (r *GormRepository) cleanup(tx *gorm.DB) error {
 	now := r.now()
 	var stale []Flow
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("state IN ? AND (expires_at <= ? OR lease_until <= ?)", activeStates, now, now).Limit(128).Find(&stale).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("state IN ? AND ((CASE WHEN protocol_version = 0 AND state = 'verifying' AND verification_deadline IS NOT NULL THEN verification_deadline ELSE expires_at END) <= ? OR lease_until <= ?)", activeStates, now, now).Limit(128).Find(&stale).Error; err != nil {
 		return err
 	}
 	for i := range stale {
 		state, code := Expired, core.ErrorCodeFlowExpired
 		if stale[i].LeaseUntil != nil {
 			state, code = RecoveryRequired, core.ErrorCodeOutcomeUnknown
+		}
+		if stale[i].State == Verifying && stale[i].PendingSetupID != nil {
+			state, code = PendingCompletion, core.ErrorCodeOutcomeUnknown
 		}
 		if err := r.terminal(tx, &stale[i], state, code); err != nil {
 			return err
@@ -185,7 +207,10 @@ func (r *GormRepository) cleanup(tx *gorm.DB) error {
 	if err := tx.Where("expires_at <= ?", now).Delete(&DeviceRecord{}).Error; err != nil {
 		return err
 	}
-	return tx.Where("terminal_at < ?", now.Add(-7*24*time.Hour)).Delete(&Flow{}).Error
+	if err := tx.Where("terminal_at < ?", now.Add(-7*24*time.Hour)).Delete(&Flow{}).Error; err != nil {
+		return err
+	}
+	return r.cleanupPending(tx)
 }
 func (r *GormRepository) Claim(ctx context.Context, worker uuid.UUID) (Flow, bool, error) {
 	var result Flow
@@ -245,7 +270,7 @@ func (r *GormRepository) fenced(tx *gorm.DB, lease Flow) (Flow, error) {
 	if err != nil {
 		return f, err
 	}
-	if !f.State.Active() || f.LeaseOwner == nil || lease.LeaseOwner == nil || *f.LeaseOwner != *lease.LeaseOwner || f.Fencing != lease.Fencing || f.Generation != lease.Generation || f.LeaseUntil == nil || !f.LeaseUntil.After(r.now()) || !f.ExpiresAt.After(r.now()) {
+	if !f.State.Active() || f.LeaseOwner == nil || lease.LeaseOwner == nil || *f.LeaseOwner != *lease.LeaseOwner || f.Fencing != lease.Fencing || f.Generation != lease.Generation || f.LeaseUntil == nil || !f.LeaseUntil.After(r.now()) || !f.verificationExpiry().After(r.now()) {
 		return f, registrationError(core.ErrorCodeConflict)
 	}
 	return f, nil
@@ -304,7 +329,7 @@ func (r *GormRepository) Advance(ctx context.Context, lease Flow, region string,
 		if f.State != Awaiting || registrationOrigin(region) == "" || interval < 5 || interval > 300 {
 			return registrationError(core.ErrorCodeConflict)
 		}
-		if f.Intent == "update_app" && region != f.Region {
+		if (f.Intent == "update_app" || f.Intent == "resume_app") && region != f.Region {
 			return registrationError(core.ErrorCodeConflict)
 		}
 		f.Region = region
@@ -329,11 +354,19 @@ func (r *GormRepository) Complete(ctx context.Context, lease Flow, values map[st
 	defer core.DestroySecretValues(values)
 	var id uuid.UUID
 	err := r.transaction(ctx, func(tx *gorm.DB) error {
+		// Every completion and cancellation locks the parent before its flow.
+		pending, err := r.pendingForLease(tx, lease)
+		if err != nil {
+			return err
+		}
 		f, err := r.fenced(tx, lease)
 		if err != nil {
 			return err
 		}
-		if f.State != Awaiting || r.commit == nil {
+		if (f.State != Awaiting && !(f.State == Verifying && pending != nil)) || r.commit == nil {
+			return registrationError(core.ErrorCodeConflict)
+		}
+		if pending != nil && (values["app_id"] != pending.AppID || values["region"] != pending.Region) {
 			return registrationError(core.ErrorCodeConflict)
 		}
 		f.State = Verifying
@@ -344,8 +377,21 @@ func (r *GormRepository) Complete(ctx context.Context, lease Flow, values map[st
 		if err != nil {
 			return err
 		}
-		if id == uuid.Nil || !f.ExpiresAt.After(r.now()) || !f.LeaseUntil.After(r.now()) {
+		if id == uuid.Nil || !f.verificationExpiry().After(r.now()) || !f.LeaseUntil.After(r.now()) || (pending != nil && !pending.ResumeExpiresAt.After(r.now())) {
 			return registrationError(core.ErrorCodeConflict)
+		}
+		if pending != nil {
+			now := r.now()
+			pending.State = PendingCompleted
+			pending.ResultConnectionID = &id
+			pending.SafeReasonCode = nil
+			pending.LastVerificationAt = &now
+			pending.TerminalAt = &now
+			pending.UpdatedAt = now
+			pending.Revision++
+			if err = tx.Save(pending).Error; err != nil {
+				return err
+			}
 		}
 		f.ResultConnectionID = &id
 		return r.terminal(tx, &f, Ready, "")

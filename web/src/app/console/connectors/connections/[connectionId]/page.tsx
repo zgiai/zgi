@@ -8,15 +8,16 @@ export default function PersonalConnectionPage({
   searchParams,
 }: {
   params: Promise<{ connectionId: string }>;
-  searchParams: Promise<{ rename?: string }>;
+  searchParams: Promise<{ rename?: string; action?: string }>;
 }) {
   const { connectionId } = use(params);
-  const { rename } = use(searchParams);
+  const { rename, action } = use(searchParams);
   return (
     <ConnectionManagementPage
       connectionId={connectionId}
       enabled
-      renameInitiallyOpen={rename === '1'}
+      renameInitiallyOpen={action !== 'credentials' && rename === '1'}
+      credentialsInitiallyOpen={action === 'credentials'}
     />
   );
 }

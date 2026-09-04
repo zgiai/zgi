@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
+import { ConnectorPendingRows } from '@/components/connectors/setup/connector-pending-rows';
 import Link from 'next/link';
 import { ArrowRight, KeyRound, Plus } from 'lucide-react';
 import { ConnectorStatusBadge } from '@/components/connectors/connector-status-badge';
@@ -34,6 +36,9 @@ export function ConnectorConnectionsPanel({
 }: ConnectorConnectionsPanelProps) {
   const t = useT('connectors');
   const [adding, setAdding] = useState(false);
+  const [pendingID, setPendingID] = useState<string>();
+  const pendingQuery = usePendingSetups(connector.id);
+  const pendingItems = pendingQuery.data?.data.items ?? [];
 
   return (
     <div className="space-y-4">
@@ -74,7 +79,7 @@ export function ConnectorConnectionsPanel({
                 {t('actions.retry')}
               </Button>
             </div>
-          ) : connections.length === 0 ? (
+          ) : connections.length === 0 && pendingItems.length === 0 ? (
             <div className="rounded-lg border border-dashed px-4 py-6 text-center">
               <KeyRound aria-hidden="true" className="mx-auto size-6 text-muted-foreground" />
               <p className="mt-2 text-sm font-medium">{t('connections.emptyTitle')}</p>
@@ -118,10 +123,33 @@ export function ConnectorConnectionsPanel({
               })}
             </div>
           )}
+          {pendingQuery.isError && (
+            <p className="text-xs text-warning">
+              {t('pending.loadFailed')}{' '}
+              <Button size="sm" variant="ghost" onClick={() => void pendingQuery.refetch()}>
+                {t('actions.retry')}
+              </Button>
+            </p>
+          )}
+          <ConnectorPendingRows
+            items={pendingItems}
+            onContinue={id => {
+              setPendingID(id);
+              setAdding(true);
+            }}
+          />
         </CardContent>
       </Card>
 
-      <ConnectorCreateDialog connector={connector} open={adding} onOpenChange={setAdding} />
+      <ConnectorCreateDialog
+        connector={connector}
+        pendingSetupID={pendingID}
+        open={adding}
+        onOpenChange={open => {
+          setAdding(open);
+          if (!open) setPendingID(undefined);
+        }}
+      />
     </div>
   );
 }

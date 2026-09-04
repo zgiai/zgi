@@ -19,25 +19,38 @@ interface ConnectorCreateDialogProps {
   connector: ConnectorCatalogItem;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  pendingSetupID?: string;
 }
 
 export function ConnectorCreateDialog({
   connector,
   open,
   onOpenChange,
+  pendingSetupID,
 }: ConnectorCreateDialogProps) {
   const t = useT('connectors');
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="md">
         <DialogHeader>
-          <DialogTitle>{t('setup.addTitle', { connector: connector.name })}</DialogTitle>
+          <DialogTitle>
+            {pendingSetupID
+              ? t('pending.continue')
+              : t('setup.addTitle', { connector: connector.name })}
+          </DialogTitle>
           <DialogDescription>
             {t(supportsAppSetup(connector) ? 'app.notice' : 'setup.addDescription')}
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
-          <ConnectorKeySetupPanel connector={connector} embedded submitLabel={t('setup.submit')} />
+          {open && (
+            <ConnectorKeySetupPanel
+              connector={connector}
+              pendingSetupID={pendingSetupID}
+              embedded
+              submitLabel={t('setup.submit')}
+            />
+          )}
         </DialogBody>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

@@ -11,7 +11,7 @@ import (
 func TestRetirementCapabilityIsFixedAndDisjoint(t *testing.T) {
 	retired := RetiredTables()
 	native := NativeTables()
-	if len(retired) != 22 || len(native) != 21 {
+	if len(retired) != 22 || len(native) != 22 {
 		t.Fatal("retirement manifest changed")
 	}
 	seen := map[string]bool{}

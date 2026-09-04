@@ -1,6 +1,7 @@
 'use client';
 
 import { useDeferredValue } from 'react';
+import { usePendingSetups } from '@/hooks/connectors/use-pending-setups';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -47,6 +48,7 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
   const deferredQuery = useDeferredValue(query);
   const status = catalogStatus(searchParams.get('status'));
   const catalogQuery = useConnectorCatalog(undefined, enabled);
+  const pendingQuery = usePendingSetups('feishu', enabled);
   const items = connectorCatalogItems(catalogQuery.data?.data)
     .filter(item => isConnectorListed(item.id))
     .map(item =>
@@ -55,7 +57,11 @@ export function ConnectorCenter({ enabled, featureLoading = false }: ConnectorCe
         capabilityDescription: t('metadata.capabilityDescriptionUnavailable'),
       })
     );
-  const filteredItems = filterConnectorCatalog(items, { query: deferredQuery, status });
+  const filteredItems = filterConnectorCatalog(
+    items,
+    { query: deferredQuery, status },
+    new Set((pendingQuery.data?.data.items ?? []).map(item => item.connector_id))
+  );
   const partitioned = partitionConnectorCatalog(filteredItems);
 
   const updateParams = (values: { q?: string; status?: ConnectorCatalogStatus }) => {

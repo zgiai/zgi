@@ -25,6 +25,7 @@ const feishu = {
   connection_summary: { count: 0 },
 };
 const common = {
+  '@/hooks/connectors/use-pending-setups': { usePendingSetups: () => ({data: {data: {items: [],total_pending: 0}}}) },
   'react/jsx-runtime': jsx,
   'lucide-react': ui,
   '@/components/ui/button': ui,

@@ -18,32 +18,22 @@ func reviewedFeishuTemplateReduction(current, candidate Definition) bool {
 	return err == nil && newDigest == "e3210d6530df705bd67ac11ebd0b84abd03f9afe3358b77247e13121eb14ca5e"
 }
 
-// The v3 template adds the reviewed tenant/message/member/directory scopes to
-// QR setup and one bounded name-search operation. The subsequent 1.2.0 release
-// adds only the reviewed tenant and chat-member reads. Existing operations stay exact.
-// Pin both complete contracts and releases: this must not allow arbitrary
-// permission expansion, runtime changes, or rewrites of existing QR receipts.
-// Catalog admission only updates local metadata, never the external app grants.
+// This one-time v2 -> v3 transition pins the complete reviewed authentication
+// contracts, not an unrelated plugin release or operation set. These digests
+// were frozen from the accepted 1.0.2 authentication and the stable v3 template;
+// do not derive them from the currently loaded manifest. Normal compatibility
+// checks still protect identities, surfaces, and every existing operation.
+// Catalog admission never changes credentials, QR receipts, or external grants.
 func reviewedFeishuTemplateExpansion(current, candidate Definition) bool {
 	if current.ID != "feishu" || candidate.ID != current.ID ||
 		current.PluginID != FeishuPluginID || candidate.PluginID != current.PluginID ||
-		current.PluginVersion != "1.0.2" {
+		current.PluginVersion == candidate.PluginVersion {
 		return false
 	}
-	oldDigest, err := DefinitionContractDigest(current)
-	if err != nil || oldDigest != "8313044f4f770570c1e567ad24af7f30b7b497ae6fa8b19b2eacf3d8a405c430" {
+	oldDigest, err := digestJSON(canonicalAuthentication(current))
+	if err != nil || oldDigest != "e8eb91b5a336036bea786350d1062036efe15faf9c933966c4674c4159fc8063" {
 		return false
 	}
-	newDigest, err := DefinitionContractDigest(candidate)
-	if err != nil {
-		return false
-	}
-	switch candidate.PluginVersion {
-	case "1.1.0":
-		return newDigest == "66d7eea4a48346671b7756a11be144fbb5704c60e82eb9557cb26f731a19ff43"
-	case "1.2.0":
-		return newDigest == "d9db772907e21bf034a8ba78ea6a84f1fa829de397c5c0b0284996968452e2e3"
-	default:
-		return false
-	}
+	newDigest, err := digestJSON(canonicalAuthentication(candidate))
+	return err == nil && newDigest == "fe5d0bc4b8c79a75eb673839e88a6b4de9ab65582b876228bdb95463ed0b74c4"
 }

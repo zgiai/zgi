@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import { useRouter } from 'next/navigation';
@@ -48,6 +48,7 @@ interface ConnectionManagementPageProps {
   enabled: boolean;
   featureLoading?: boolean;
   renameInitiallyOpen?: boolean;
+  credentialsInitiallyOpen?: boolean;
 }
 
 export function ConnectionManagementPage({
@@ -55,6 +56,7 @@ export function ConnectionManagementPage({
   enabled,
   featureLoading = false,
   renameInitiallyOpen = false,
+  credentialsInitiallyOpen = false,
 }: ConnectionManagementPageProps) {
   const t = useT('connectors');
   const locale = useLocale();
@@ -70,6 +72,19 @@ export function ConnectionManagementPage({
   );
   const rawConnector = connectorQuery.data?.data;
   const connector = rawConnector ? localizeConnectorCatalogItem(rawConnector, locale) : undefined;
+  const credentialsOpened = useRef('');
+  useEffect(() => {
+    if (
+      !credentialsInitiallyOpen ||
+      !connection ||
+      !connector ||
+      credentialsOpened.current === connection.id
+    )
+      {return;}
+    credentialsOpened.current = connection.id;
+    setReconnectOpen(true);
+    router.replace(`/console/connectors/connections/${encodeURIComponent(connection.id)}`);
+  }, [credentialsInitiallyOpen, connection, connector, router]);
   const diagnoseMutation = useDiagnosePersonalConnection(connectionId);
   const pageState = getConnectionManagementPageState({
     enabled,

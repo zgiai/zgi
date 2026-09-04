@@ -10,14 +10,15 @@ import (
 type State string
 
 const (
-	Starting         State = "starting"
-	Awaiting         State = "awaiting_authorization"
-	Verifying        State = "verifying"
-	Ready            State = "ready"
-	Cancelled        State = "cancelled"
-	Expired          State = "expired"
-	Failed           State = "failed"
-	RecoveryRequired State = "recovery_required"
+	Starting          State = "starting"
+	Awaiting          State = "awaiting_authorization"
+	Verifying         State = "verifying"
+	Ready             State = "ready"
+	Cancelled         State = "cancelled"
+	Expired           State = "expired"
+	Failed            State = "failed"
+	RecoveryRequired  State = "recovery_required"
+	PendingCompletion State = "pending_completion"
 )
 
 func (s State) Active() bool { return s == Starting || s == Awaiting || s == Verifying }
@@ -31,6 +32,10 @@ type Flow struct {
 	OwnerAccountID             uuid.UUID
 	ConnectorID                string
 	Intent                     string
+	PendingSetupID             *uuid.UUID
+	ExpectedPendingRevision    *int64
+	ManualVerification         bool
+	VerificationDeadline       *time.Time
 	ConnectionID               *uuid.UUID
 	ExpectedConnectionRevision *int
 	ExpectedCredentialVersion  *int
@@ -100,6 +105,8 @@ type Snapshot struct {
 	VerificationURL    string          `json:"verification_url,omitempty"`
 	UserCode           string          `json:"user_code,omitempty"`
 	ResultConnectionID *uuid.UUID      `json:"result_connection_id,omitempty"`
+	PendingSetupID     *uuid.UUID      `json:"pending_setup_id,omitempty"`
+	QRExpiresAt        *time.Time      `json:"qr_expires_at,omitempty"`
 }
 type Repository interface {
 	FindRequest(context.Context, uuid.UUID, uuid.UUID, string) (Flow, bool, error)

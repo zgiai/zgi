@@ -15,10 +15,12 @@ import (
 )
 
 type memoryFlows struct {
-	flow    Flow
-	device  DeviceRecord
-	commits int
-	values  map[string]string
+	pending   PendingSetup
+	commitErr error
+	flow      Flow
+	device    DeviceRecord
+	commits   int
+	values    map[string]string
 }
 
 func (m *memoryFlows) FindRequest(_ context.Context, org, owner uuid.UUID, hash string) (Flow, bool, error) {
@@ -104,6 +106,9 @@ func (m *memoryFlows) Complete(_ context.Context, f Flow, values map[string]stri
 	if !m.flow.State.Active() || m.flow.Fencing != f.Fencing {
 		return uuid.Nil, registrationError(core.ErrorCodeConflict)
 	}
+	if m.commitErr != nil {
+		return uuid.Nil, m.commitErr
+	}
 	m.commits++
 	m.values = map[string]string{}
 	for k, v := range values {
@@ -136,10 +141,12 @@ type registrarFixture struct {
 	beginCalls, pollCalls int
 	poll                  func() (RegistrationResult, error)
 	beginErr              error
+	requests              []RegistrationRequest
 }
 
-func (r *registrarFixture) Begin(context.Context, string, string) (RegistrationSession, error) {
+func (r *registrarFixture) Begin(_ context.Context, request RegistrationRequest) (RegistrationSession, error) {
 	r.beginCalls++
+	r.requests = append(r.requests, request)
 	return RegistrationSession{DeviceCode: "DEVICE-SECRET", VerificationURL: "https://accounts.feishu.cn/app?user_code=ABCD", UserCode: "ABCD", Interval: 5 * time.Second, TTL: 600 * time.Second}, r.beginErr
 }
 func (r *registrarFixture) Poll(context.Context, string, string, bool) (RegistrationResult, error) {
