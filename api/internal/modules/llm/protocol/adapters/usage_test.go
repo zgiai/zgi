@@ -22,3 +22,24 @@ func TestUsageNormalizeCacheTokensSeparatesOpenAIInput(t *testing.T) {
 		t.Fatalf("total tokens = %d, want 1200", usage.TotalTokens)
 	}
 }
+
+func TestUsageNormalizeCacheTokensDerivesCacheCreationTTLTotal(t *testing.T) {
+	usage := &Usage{
+		PromptTokens:     1000,
+		CompletionTokens: 200,
+		PromptTokensDetails: PromptTokensDetails{
+			CachedTokens:          300,
+			CacheCreation5mTokens: 100,
+			CacheCreation1hTokens: 200,
+		},
+	}
+
+	usage.NormalizeCacheTokens()
+
+	if usage.CacheWriteTokens != 300 || usage.CacheWrite5mTokens != 100 || usage.CacheWrite1hTokens != 200 {
+		t.Fatalf("cache write buckets = %d/%d/%d, want 300/100/200", usage.CacheWriteTokens, usage.CacheWrite5mTokens, usage.CacheWrite1hTokens)
+	}
+	if usage.UncachedInputTokens != 400 {
+		t.Fatalf("uncached input tokens = %d, want 400", usage.UncachedInputTokens)
+	}
+}

@@ -358,12 +358,16 @@ type Usage struct {
 	UncachedInputTokens     int                     `json:"uncached_input_tokens,omitempty"`
 	CacheReadTokens         int                     `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens        int                     `json:"cache_write_tokens,omitempty"`
+	CacheWrite5mTokens      int                     `json:"cache_write_5m_tokens,omitempty"`
+	CacheWrite1hTokens      int                     `json:"cache_write_1h_tokens,omitempty"`
 }
 
 type PromptTokensDetails struct {
-	UncachedTokens      int `json:"uncached_tokens,omitempty"`
-	CachedTokens        int `json:"cached_tokens,omitempty"`
-	CacheCreationTokens int `json:"cache_creation_tokens,omitempty"`
+	UncachedTokens        int `json:"uncached_tokens,omitempty"`
+	CachedTokens          int `json:"cached_tokens,omitempty"`
+	CacheCreationTokens   int `json:"cache_creation_tokens,omitempty"`
+	CacheCreation5mTokens int `json:"cache_creation_5m_tokens,omitempty"`
+	CacheCreation1hTokens int `json:"cache_creation_1h_tokens,omitempty"`
 }
 
 type CompletionTokensDetails struct {
@@ -383,6 +387,15 @@ func (u *Usage) NormalizeCacheTokens() {
 	if u.CacheWriteTokens == 0 {
 		u.CacheWriteTokens = maxUsageToken(u.PromptTokensDetails.CacheCreationTokens)
 	}
+	if u.CacheWrite5mTokens == 0 {
+		u.CacheWrite5mTokens = maxUsageToken(u.PromptTokensDetails.CacheCreation5mTokens)
+	}
+	if u.CacheWrite1hTokens == 0 {
+		u.CacheWrite1hTokens = maxUsageToken(u.PromptTokensDetails.CacheCreation1hTokens)
+	}
+	if u.CacheWriteTokens == 0 {
+		u.CacheWriteTokens = u.CacheWrite5mTokens + u.CacheWrite1hTokens
+	}
 	if u.UncachedInputTokens == 0 {
 		if u.PromptTokensDetails.UncachedTokens > 0 {
 			u.UncachedInputTokens = u.PromptTokensDetails.UncachedTokens
@@ -393,6 +406,8 @@ func (u *Usage) NormalizeCacheTokens() {
 	u.PromptTokensDetails.UncachedTokens = u.UncachedInputTokens
 	u.PromptTokensDetails.CachedTokens = u.CacheReadTokens
 	u.PromptTokensDetails.CacheCreationTokens = u.CacheWriteTokens
+	u.PromptTokensDetails.CacheCreation5mTokens = u.CacheWrite5mTokens
+	u.PromptTokensDetails.CacheCreation1hTokens = u.CacheWrite1hTokens
 	componentTotal := u.UncachedInputTokens + u.CacheReadTokens + u.CacheWriteTokens + maxUsageToken(u.CompletionTokens)
 	if u.TotalTokens <= 0 || componentTotal > u.TotalTokens {
 		u.TotalTokens = componentTotal
@@ -408,21 +423,25 @@ func maxUsageToken(value int) int {
 
 // SettlementResult carries console-api settlement data for official traffic.
 type SettlementResult struct {
-	SettlementID                  string `json:"settlement_id"`
-	OfficialPoints                int64  `json:"official_points"`
-	RemainingBalance              int64  `json:"remaining_balance"`
-	Status                        string `json:"status"`
-	TotalCostUSD                  string `json:"total_cost_usd,omitempty"`
-	TotalCostCNY                  string `json:"total_cost_cny,omitempty"`
-	CNYPerUSD                     string `json:"cny_per_usd,omitempty"`
-	InputPriceUSDPer1MTokens      string `json:"input_price_usd_per_1m_tokens,omitempty"`
-	CacheReadPriceUSDPer1MTokens  string `json:"cache_read_price_usd_per_1m_tokens,omitempty"`
-	CacheWritePriceUSDPer1MTokens string `json:"cache_write_price_usd_per_1m_tokens,omitempty"`
-	OutputPriceUSDPer1MTokens     string `json:"output_price_usd_per_1m_tokens,omitempty"`
-	InputCostUSD                  string `json:"input_cost_usd,omitempty"`
-	CacheReadCostUSD              string `json:"cache_read_cost_usd,omitempty"`
-	CacheWriteCostUSD             string `json:"cache_write_cost_usd,omitempty"`
-	OutputCostUSD                 string `json:"output_cost_usd,omitempty"`
+	SettlementID                    string `json:"settlement_id"`
+	OfficialPoints                  int64  `json:"official_points"`
+	RemainingBalance                int64  `json:"remaining_balance"`
+	Status                          string `json:"status"`
+	TotalCostUSD                    string `json:"total_cost_usd,omitempty"`
+	TotalCostCNY                    string `json:"total_cost_cny,omitempty"`
+	CNYPerUSD                       string `json:"cny_per_usd,omitempty"`
+	InputPriceUSDPer1MTokens        string `json:"input_price_usd_per_1m_tokens,omitempty"`
+	CacheReadPriceUSDPer1MTokens    string `json:"cache_read_price_usd_per_1m_tokens,omitempty"`
+	CacheWritePriceUSDPer1MTokens   string `json:"cache_write_price_usd_per_1m_tokens,omitempty"`
+	CacheWrite5mPriceUSDPer1MTokens string `json:"cache_write_5m_price_usd_per_1m_tokens,omitempty"`
+	CacheWrite1hPriceUSDPer1MTokens string `json:"cache_write_1h_price_usd_per_1m_tokens,omitempty"`
+	OutputPriceUSDPer1MTokens       string `json:"output_price_usd_per_1m_tokens,omitempty"`
+	InputCostUSD                    string `json:"input_cost_usd,omitempty"`
+	CacheReadCostUSD                string `json:"cache_read_cost_usd,omitempty"`
+	CacheWriteCostUSD               string `json:"cache_write_cost_usd,omitempty"`
+	CacheWrite5mCostUSD             string `json:"cache_write_5m_cost_usd,omitempty"`
+	CacheWrite1hCostUSD             string `json:"cache_write_1h_cost_usd,omitempty"`
+	OutputCostUSD                   string `json:"output_cost_usd,omitempty"`
 }
 
 // SettlementError carries console-api settlement failure data for official streams.

@@ -143,8 +143,46 @@ export default function PendingModelsList({
                 const priceItems = getModelPriceDisplay({
                   inputPrice: model.input_price,
                   outputPrice: model.output_price,
+                  cacheReadPrice:
+                    model.cache_read_price_override ??
+                    model.cache_read_price ??
+                    model.cached_input_price ??
+                    model.synced_cache_read_price,
+                  cacheWritePrice:
+                    model.cache_write_price_override ??
+                    model.cache_write_price ??
+                    model.synced_cache_write_price,
+                  cacheWrite5mPrice:
+                    model.cache_write_5m_price_override ??
+                    model.cache_write_5m_price ??
+                    model.synced_cache_write_5m_price,
+                  cacheWrite1hPrice:
+                    model.cache_write_1h_price_override ??
+                    model.cache_write_1h_price ??
+                    model.synced_cache_write_1h_price,
                   inputPriceConfigured: model.input_price_configured,
                   outputPriceConfigured: model.output_price_configured,
+                  cacheReadPriceConfigured:
+                    model.cache_read_price_override != null ||
+                    model.cache_read_price_configured ||
+                    isPositiveFiniteNumber(model.cache_read_price) ||
+                    isPositiveFiniteNumber(model.cached_input_price) ||
+                    isPositiveFiniteNumber(model.synced_cache_read_price),
+                  cacheWritePriceConfigured:
+                    model.cache_write_price_override != null ||
+                    model.cache_write_price_configured ||
+                    isPositiveFiniteNumber(model.cache_write_price) ||
+                    isPositiveFiniteNumber(model.synced_cache_write_price),
+                  cacheWrite5mPriceConfigured:
+                    model.cache_write_5m_price_override != null ||
+                    model.cache_write_5m_price_configured ||
+                    isPositiveFiniteNumber(model.cache_write_5m_price) ||
+                    isPositiveFiniteNumber(model.synced_cache_write_5m_price),
+                  cacheWrite1hPriceConfigured:
+                    model.cache_write_1h_price_override != null ||
+                    model.cache_write_1h_price_configured ||
+                    isPositiveFiniteNumber(model.cache_write_1h_price) ||
+                    isPositiveFiniteNumber(model.synced_cache_write_1h_price),
                   pricing: model.pricing,
                   currency: model.currency,
                   useCases: model.use_cases,
@@ -293,4 +331,8 @@ export default function PendingModelsList({
       ) : null}
     </section>
   );
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }

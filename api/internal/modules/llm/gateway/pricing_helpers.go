@@ -78,7 +78,7 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlementUsage(
 	model PricingModelRef,
 	usage TokenUsage,
 ) (PricingQuote, error) {
-	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 {
+	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 && usage.CacheWrite5mTokens == 0 && usage.CacheWrite1hTokens == 0 {
 		return s.quoteTokenPricingForSettlement(ctx, bc, model, usage.InputTokens, usage.OutputTokens)
 	}
 	engine := s.pricing()

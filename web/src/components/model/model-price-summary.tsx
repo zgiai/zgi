@@ -27,7 +27,16 @@ export function hasModelPriceDisplay(model: ModelItem): boolean {
       isFiniteNumber(model.cached_input_price) ||
       isFiniteNumber(model.cache_read_price_override) ||
       isFiniteNumber(model.cache_read_price) ||
+      isFiniteNumber(model.cache_write_price_override) ||
+      isFiniteNumber(model.cache_write_price) ||
+      isFiniteNumber(model.cache_write_5m_price_override) ||
+      isFiniteNumber(model.cache_write_5m_price) ||
+      isFiniteNumber(model.cache_write_1h_price_override) ||
+      isFiniteNumber(model.cache_write_1h_price) ||
       isPositiveNumber(model.synced_cache_read_price) ||
+      isPositiveNumber(model.synced_cache_write_price) ||
+      isPositiveNumber(model.synced_cache_write_5m_price) ||
+      isPositiveNumber(model.synced_cache_write_1h_price) ||
       isFiniteNumber(model.input_price) ||
       isFiniteNumber(model.output_price)
   );
@@ -58,13 +67,38 @@ export const ModelPriceSummary = memo(function ModelPriceSummary({
     syncedPrice: model.synced_cache_read_price,
     configured: model.cache_read_price_configured,
   });
+  const cacheWritePrice = resolvePrice({
+    price: model.cache_write_price,
+    overridePrice: model.cache_write_price_override,
+    syncedPrice: model.synced_cache_write_price,
+    configured: model.cache_write_price_configured,
+  });
+  const cacheWrite5mPrice = resolvePrice({
+    price: model.cache_write_5m_price,
+    overridePrice: model.cache_write_5m_price_override,
+    syncedPrice: model.synced_cache_write_5m_price,
+    configured: model.cache_write_5m_price_configured,
+  });
+  const cacheWrite1hPrice = resolvePrice({
+    price: model.cache_write_1h_price,
+    overridePrice: model.cache_write_1h_price_override,
+    syncedPrice: model.synced_cache_write_1h_price,
+    configured: model.cache_write_1h_price_configured,
+  });
 
   const priceItems = getModelPriceDisplay({
     inputPrice: inputPrice.price,
     outputPrice: outputPrice.price,
-    cachedInputPrice: cachedInputPrice.price,
+    cacheReadPrice: cachedInputPrice.price,
+    cacheWritePrice: cacheWritePrice.price,
+    cacheWrite5mPrice: cacheWrite5mPrice.price,
+    cacheWrite1hPrice: cacheWrite1hPrice.price,
     inputPriceConfigured: inputPrice.configured,
     outputPriceConfigured: outputPrice.configured,
+    cacheReadPriceConfigured: cachedInputPrice.configured,
+    cacheWritePriceConfigured: cacheWritePrice.configured,
+    cacheWrite5mPriceConfigured: cacheWrite5mPrice.configured,
+    cacheWrite1hPriceConfigured: cacheWrite1hPrice.configured,
     useCases: model.use_cases,
     currency: model.currency,
     pricing: model.pricing,
@@ -76,6 +110,10 @@ export const ModelPriceSummary = memo(function ModelPriceSummary({
       image: t('plaza.image'),
       input: t('plaza.input'),
       output: t('plaza.output'),
+      cacheRead: t('plaza.cacheRead'),
+      cacheWrite: t('plaza.cacheWrite'),
+      cacheWrite5m: t('plaza.cacheWrite5m'),
+      cacheWrite1h: t('plaza.cacheWrite1h'),
       speechGeneration: t('plaza.speechGeneration'),
       transcription: t('plaza.transcription'),
       musicGeneration: t('plaza.musicGeneration'),
@@ -111,6 +149,10 @@ export const ModelPriceSummary = memo(function ModelPriceSummary({
               image: t('plaza.image'),
               input: t('plaza.input'),
               output: t('plaza.output'),
+              cacheRead: t('plaza.cacheRead'),
+              cacheWrite: t('plaza.cacheWrite'),
+              cacheWrite5m: t('plaza.cacheWrite5m'),
+              cacheWrite1h: t('plaza.cacheWrite1h'),
               video: t('plaza.video'),
               perImage: t('plaza.perImage'),
               perSecond: t('plaza.perSecond'),
@@ -178,6 +220,10 @@ function ModelPriceChip({
     image: string;
     input: string;
     output: string;
+    cacheRead: string;
+    cacheWrite: string;
+    cacheWrite5m: string;
+    cacheWrite1h: string;
     video: string;
     perImage: string;
     perSecond: string;
@@ -194,7 +240,15 @@ function ModelPriceChip({
         ? labels.input
         : item.label === 'output'
           ? labels.output
-          : labels.video);
+          : item.label === 'cacheRead'
+            ? labels.cacheRead
+            : item.label === 'cacheWrite'
+              ? labels.cacheWrite
+              : item.label === 'cacheWrite5m'
+                ? labels.cacheWrite5m
+                : item.label === 'cacheWrite1h'
+                  ? labels.cacheWrite1h
+                  : labels.video);
   const unit =
     item.unit === 'perImage'
       ? labels.perImage

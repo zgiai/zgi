@@ -69,7 +69,11 @@ function modelManufacturer(model: ModelItem, locale: string): ManufacturerFilter
   return {
     ...(configured ?? { value: vendor }),
     label:
-      nonEmptyText(localizedName) || configured?.label || nonEmptyText(model.vendor) || vendor || '-',
+      nonEmptyText(localizedName) ||
+      configured?.label ||
+      nonEmptyText(model.vendor) ||
+      vendor ||
+      '-',
     iconKey: configured?.iconKey || vendor,
   };
 }
@@ -104,10 +108,7 @@ function getProviderAliases(provider: string, label?: string, rawName?: string):
 
 function modelDisplayName(model: ModelItem): string {
   return (
-    nonEmptyText(model.model_name) ||
-    nonEmptyText(model.model) ||
-    nonEmptyText(model.id) ||
-    '-'
+    nonEmptyText(model.model_name) || nonEmptyText(model.model) || nonEmptyText(model.id) || '-'
   );
 }
 
@@ -115,6 +116,10 @@ function nonEmptyText(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
   return text || undefined;
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 function modelMatchesSearch(
@@ -648,8 +653,44 @@ function ModelCard({
   const priceItems = getModelPriceDisplay({
     inputPrice: model.input_price,
     outputPrice: model.output_price,
+    cacheReadPrice:
+      model.cache_read_price_override ??
+      model.cache_read_price ??
+      model.cached_input_price ??
+      model.synced_cache_read_price,
+    cacheWritePrice:
+      model.cache_write_price_override ?? model.cache_write_price ?? model.synced_cache_write_price,
+    cacheWrite5mPrice:
+      model.cache_write_5m_price_override ??
+      model.cache_write_5m_price ??
+      model.synced_cache_write_5m_price,
+    cacheWrite1hPrice:
+      model.cache_write_1h_price_override ??
+      model.cache_write_1h_price ??
+      model.synced_cache_write_1h_price,
     inputPriceConfigured: model.input_price_configured,
     outputPriceConfigured: model.output_price_configured,
+    cacheReadPriceConfigured:
+      model.cache_read_price_override != null ||
+      model.cache_read_price_configured ||
+      isPositiveFiniteNumber(model.cache_read_price) ||
+      isPositiveFiniteNumber(model.cached_input_price) ||
+      isPositiveFiniteNumber(model.synced_cache_read_price),
+    cacheWritePriceConfigured:
+      model.cache_write_price_override != null ||
+      model.cache_write_price_configured ||
+      isPositiveFiniteNumber(model.cache_write_price) ||
+      isPositiveFiniteNumber(model.synced_cache_write_price),
+    cacheWrite5mPriceConfigured:
+      model.cache_write_5m_price_override != null ||
+      model.cache_write_5m_price_configured ||
+      isPositiveFiniteNumber(model.cache_write_5m_price) ||
+      isPositiveFiniteNumber(model.synced_cache_write_5m_price),
+    cacheWrite1hPriceConfigured:
+      model.cache_write_1h_price_override != null ||
+      model.cache_write_1h_price_configured ||
+      isPositiveFiniteNumber(model.cache_write_1h_price) ||
+      isPositiveFiniteNumber(model.synced_cache_write_1h_price),
     useCases: model.use_cases,
     currency: model.currency,
     pricing: model.pricing,
@@ -661,6 +702,10 @@ function ModelCard({
       image: t('plaza.image'),
       input: t('plaza.input'),
       output: t('plaza.output'),
+      cacheRead: t('plaza.cacheRead'),
+      cacheWrite: t('plaza.cacheWrite'),
+      cacheWrite5m: t('plaza.cacheWrite5m'),
+      cacheWrite1h: t('plaza.cacheWrite1h'),
       speechGeneration: t('plaza.speechGeneration'),
       transcription: t('plaza.transcription'),
       musicGeneration: t('plaza.musicGeneration'),
@@ -781,7 +826,11 @@ function ModelCard({
                       ? t('plaza.input')
                       : item.label === 'output'
                         ? t('plaza.output')
-                        : t('plaza.video'))
+                        : item.label === 'cacheRead'
+                          ? t('plaza.cacheRead')
+                          : item.label === 'cacheWrite'
+                            ? t('plaza.cacheWrite')
+                            : t('plaza.video'))
                 }
                 value={item.formattedValue}
                 unit={

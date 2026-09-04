@@ -49,25 +49,33 @@ type AvailableModel struct {
 	Provider    string    `json:"provider"`
 
 	// Pricing
-	Currency                  string          `json:"currency"`
-	InputPrice                float64         `json:"input_price"`
-	OutputPrice               float64         `json:"output_price"`
-	InputPriceConfigured      bool            `json:"input_price_configured"`
-	OutputPriceConfigured     bool            `json:"output_price_configured"`
-	CachedInputPrice          float64         `json:"cached_input_price"`
-	CacheReadPrice            float64         `json:"cache_read_price"`
-	CacheWritePrice           float64         `json:"cache_write_price"`
-	CacheReadPriceConfigured  bool            `json:"cache_read_price_configured"`
-	CacheWritePriceConfigured bool            `json:"cache_write_price_configured"`
-	SyncedInputPrice          *float64        `json:"synced_input_price"`
-	SyncedOutputPrice         *float64        `json:"synced_output_price"`
-	SyncedCacheReadPrice      *float64        `json:"synced_cache_read_price"`
-	SyncedCacheWritePrice     *float64        `json:"synced_cache_write_price"`
-	InputPriceOverride        *float64        `json:"input_price_override"`
-	OutputPriceOverride       *float64        `json:"output_price_override"`
-	CacheReadPriceOverride    *float64        `json:"cache_read_price_override"`
-	CacheWritePriceOverride   *float64        `json:"cache_write_price_override"`
-	Pricing                   json.RawMessage `json:"pricing,omitempty"`
+	Currency                    string          `json:"currency"`
+	InputPrice                  float64         `json:"input_price"`
+	OutputPrice                 float64         `json:"output_price"`
+	InputPriceConfigured        bool            `json:"input_price_configured"`
+	OutputPriceConfigured       bool            `json:"output_price_configured"`
+	CachedInputPrice            float64         `json:"cached_input_price"`
+	CacheReadPrice              float64         `json:"cache_read_price"`
+	CacheWritePrice             float64         `json:"cache_write_price"`
+	CacheWrite5mPrice           float64         `json:"cache_write_5m_price"`
+	CacheWrite1hPrice           float64         `json:"cache_write_1h_price"`
+	CacheReadPriceConfigured    bool            `json:"cache_read_price_configured"`
+	CacheWritePriceConfigured   bool            `json:"cache_write_price_configured"`
+	CacheWrite5mPriceConfigured bool            `json:"cache_write_5m_price_configured"`
+	CacheWrite1hPriceConfigured bool            `json:"cache_write_1h_price_configured"`
+	SyncedInputPrice            *float64        `json:"synced_input_price"`
+	SyncedOutputPrice           *float64        `json:"synced_output_price"`
+	SyncedCacheReadPrice        *float64        `json:"synced_cache_read_price"`
+	SyncedCacheWritePrice       *float64        `json:"synced_cache_write_price"`
+	SyncedCacheWrite5mPrice     *float64        `json:"synced_cache_write_5m_price"`
+	SyncedCacheWrite1hPrice     *float64        `json:"synced_cache_write_1h_price"`
+	InputPriceOverride          *float64        `json:"input_price_override"`
+	OutputPriceOverride         *float64        `json:"output_price_override"`
+	CacheReadPriceOverride      *float64        `json:"cache_read_price_override"`
+	CacheWritePriceOverride     *float64        `json:"cache_write_price_override"`
+	CacheWrite5mPriceOverride   *float64        `json:"cache_write_5m_price_override"`
+	CacheWrite1hPriceOverride   *float64        `json:"cache_write_1h_price_override"`
+	Pricing                     json.RawMessage `json:"pricing,omitempty"`
 
 	// Context
 	ContextWindow   int `json:"context_window,omitempty"`
@@ -437,12 +445,20 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 		cachedInputPrice, _ := m.CachedInputPrice.Float64()
 		cacheReadPrice, _ := m.CostCacheRead.Float64()
 		cacheWritePrice, _ := m.CostCacheWrite.Float64()
-		var syncedCacheReadPrice, syncedCacheWritePrice *float64
+		cacheWrite5mPrice, _ := m.CostCacheWrite5m.Float64()
+		cacheWrite1hPrice, _ := m.CostCacheWrite1h.Float64()
+		var syncedCacheReadPrice, syncedCacheWritePrice, syncedCacheWrite5mPrice, syncedCacheWrite1hPrice *float64
 		if m.CacheReadPriceConfigured {
 			syncedCacheReadPrice = &cacheReadPrice
 		}
 		if m.CacheWritePriceConfigured {
 			syncedCacheWritePrice = &cacheWritePrice
+		}
+		if m.CacheWrite5mPriceConfigured {
+			syncedCacheWrite5mPrice = &cacheWrite5mPrice
+		}
+		if m.CacheWrite1hPriceConfigured {
+			syncedCacheWrite1hPrice = &cacheWrite1hPrice
 		}
 		capabilities := capabilitiesFromDefaultParameters(m.DefaultParameters)
 		am := &AvailableModel{
@@ -455,21 +471,27 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),
 
 			// Pricing
-			Currency:                  getCurrencyOrDefault(m.Currency),
-			InputPrice:                costInput,
-			OutputPrice:               costOutput,
-			InputPriceConfigured:      m.InputPriceConfigured,
-			OutputPriceConfigured:     m.OutputPriceConfigured,
-			CachedInputPrice:          cachedInputPrice,
-			CacheReadPrice:            cacheReadPrice,
-			CacheWritePrice:           cacheWritePrice,
-			CacheReadPriceConfigured:  m.CacheReadPriceConfigured,
-			CacheWritePriceConfigured: m.CacheWritePriceConfigured,
-			SyncedInputPrice:          &costInput,
-			SyncedOutputPrice:         &costOutput,
-			SyncedCacheReadPrice:      syncedCacheReadPrice,
-			SyncedCacheWritePrice:     syncedCacheWritePrice,
-			Pricing:                   cloneRawJSON(m.Pricing),
+			Currency:                    getCurrencyOrDefault(m.Currency),
+			InputPrice:                  costInput,
+			OutputPrice:                 costOutput,
+			InputPriceConfigured:        m.InputPriceConfigured,
+			OutputPriceConfigured:       m.OutputPriceConfigured,
+			CachedInputPrice:            cachedInputPrice,
+			CacheReadPrice:              cacheReadPrice,
+			CacheWritePrice:             cacheWritePrice,
+			CacheWrite5mPrice:           cacheWrite5mPrice,
+			CacheWrite1hPrice:           cacheWrite1hPrice,
+			CacheReadPriceConfigured:    m.CacheReadPriceConfigured,
+			CacheWritePriceConfigured:   m.CacheWritePriceConfigured,
+			CacheWrite5mPriceConfigured: m.CacheWrite5mPriceConfigured,
+			CacheWrite1hPriceConfigured: m.CacheWrite1hPriceConfigured,
+			SyncedInputPrice:            &costInput,
+			SyncedOutputPrice:           &costOutput,
+			SyncedCacheReadPrice:        syncedCacheReadPrice,
+			SyncedCacheWritePrice:       syncedCacheWritePrice,
+			SyncedCacheWrite5mPrice:     syncedCacheWrite5mPrice,
+			SyncedCacheWrite1hPrice:     syncedCacheWrite1hPrice,
+			Pricing:                     cloneRawJSON(m.Pricing),
 
 			// ModelHub-aligned nested structures
 			Endpoints: model.ModelEndpoints{
@@ -564,6 +586,18 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 				am.CacheWritePrice = override
 				am.CacheWritePriceConfigured = true
 			}
+			if cfg.CacheWrite5mPriceOverride != nil {
+				override, _ := cfg.CacheWrite5mPriceOverride.Float64()
+				am.CacheWrite5mPriceOverride = &override
+				am.CacheWrite5mPrice = override
+				am.CacheWrite5mPriceConfigured = true
+			}
+			if cfg.CacheWrite1hPriceOverride != nil {
+				override, _ := cfg.CacheWrite1hPriceOverride.Float64()
+				am.CacheWrite1hPriceOverride = &override
+				am.CacheWrite1hPrice = override
+				am.CacheWrite1hPriceConfigured = true
+			}
 		}
 
 		result = append(result, am)
@@ -605,6 +639,8 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 		customOutputPrice, _ := m.OutputPrice.Float64()
 		customCacheReadPrice, _ := m.CostCacheRead.Float64()
 		customCacheWritePrice, _ := m.CostCacheWrite.Float64()
+		customCacheWrite5mPrice, _ := m.CostCacheWrite5m.Float64()
+		customCacheWrite1hPrice, _ := m.CostCacheWrite1h.Float64()
 		am := &AvailableModel{
 			ID:              m.ID,
 			Name:            m.Name,
@@ -615,15 +651,19 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),
 
 			// Pricing
-			Currency:                  "USD",
-			InputPrice:                customInputPrice,
-			OutputPrice:               customOutputPrice,
-			InputPriceConfigured:      m.InputPriceConfigured,
-			OutputPriceConfigured:     m.OutputPriceConfigured,
-			CacheReadPrice:            customCacheReadPrice,
-			CacheWritePrice:           customCacheWritePrice,
-			CacheReadPriceConfigured:  m.CacheReadPriceConfigured,
-			CacheWritePriceConfigured: m.CacheWritePriceConfigured,
+			Currency:                    "USD",
+			InputPrice:                  customInputPrice,
+			OutputPrice:                 customOutputPrice,
+			InputPriceConfigured:        m.InputPriceConfigured,
+			OutputPriceConfigured:       m.OutputPriceConfigured,
+			CacheReadPrice:              customCacheReadPrice,
+			CacheWritePrice:             customCacheWritePrice,
+			CacheWrite5mPrice:           customCacheWrite5mPrice,
+			CacheWrite1hPrice:           customCacheWrite1hPrice,
+			CacheReadPriceConfigured:    m.CacheReadPriceConfigured,
+			CacheWritePriceConfigured:   m.CacheWritePriceConfigured,
+			CacheWrite5mPriceConfigured: m.CacheWrite5mPriceConfigured,
+			CacheWrite1hPriceConfigured: m.CacheWrite1hPriceConfigured,
 
 			// ModelHub-aligned nested structures (aligned with global models)
 			Endpoints: model.ModelEndpoints{

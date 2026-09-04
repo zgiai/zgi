@@ -6,7 +6,15 @@ import {
   formatBillingDisplayAmountFromUSD,
 } from '@/utils/billing-display';
 
-export type ModelPriceLabel = 'input' | 'output' | 'image' | 'video';
+export type ModelPriceLabel =
+  | 'input'
+  | 'output'
+  | 'cacheRead'
+  | 'cacheWrite'
+  | 'cacheWrite5m'
+  | 'cacheWrite1h'
+  | 'image'
+  | 'video';
 export type ModelPriceUnit =
   | 'perMillionTokens'
   | 'perImage'
@@ -31,6 +39,10 @@ interface ModelPriceDisplayLabels {
   image?: string;
   input?: string;
   output?: string;
+  cacheRead?: string;
+  cacheWrite?: string;
+  cacheWrite5m?: string;
+  cacheWrite1h?: string;
   speechGeneration?: string;
   transcription?: string;
   musicGeneration?: string;
@@ -70,6 +82,13 @@ interface StructuredModelPricing {
     min_input_tokens?: number | null;
     input_price_per_million?: number | null;
     output_price_per_million?: number | null;
+    cached_input_price_per_million?: number | null;
+    cache_read_price_per_million?: number | null;
+    cache_write_price_per_million?: number | null;
+    cache_write_5m_price_per_million?: number | null;
+    cache_write_1h_price_per_million?: number | null;
+    cache_creation_5m_price_per_million?: number | null;
+    cache_creation_1h_price_per_million?: number | null;
   }> | null;
   metered?: Array<{
     operation?: string | null;
@@ -99,8 +118,16 @@ interface VideoPriceDisplayRow {
 interface GetModelPriceDisplayParams {
   inputPrice?: number | null;
   outputPrice?: number | null;
+  cacheReadPrice?: number | null;
+  cacheWritePrice?: number | null;
+  cacheWrite5mPrice?: number | null;
+  cacheWrite1hPrice?: number | null;
   inputPriceConfigured?: boolean | null;
   outputPriceConfigured?: boolean | null;
+  cacheReadPriceConfigured?: boolean | null;
+  cacheWritePriceConfigured?: boolean | null;
+  cacheWrite5mPriceConfigured?: boolean | null;
+  cacheWrite1hPriceConfigured?: boolean | null;
   pricing?: StructuredModelPricing | null;
   currency: string | null | undefined;
   useCases?: ModelUseCase[] | null;
@@ -138,8 +165,16 @@ export function isInputOnlyPriceModel(useCases?: ModelUseCase[] | null): boolean
 export function getModelPriceDisplay({
   inputPrice,
   outputPrice,
+  cacheReadPrice,
+  cacheWritePrice,
+  cacheWrite5mPrice,
+  cacheWrite1hPrice,
   inputPriceConfigured,
   outputPriceConfigured,
+  cacheReadPriceConfigured,
+  cacheWritePriceConfigured,
+  cacheWrite5mPriceConfigured,
+  cacheWrite1hPriceConfigured,
   pricing,
   currency,
   useCases,
@@ -167,8 +202,22 @@ export function getModelPriceDisplay({
     ];
   }
 
+  const cacheItems = buildCachePriceDisplayItems({
+    cacheReadPrice,
+    cacheWritePrice,
+    cacheWrite5mPrice,
+    cacheWrite1hPrice,
+    cacheReadPriceConfigured,
+    cacheWritePriceConfigured,
+    cacheWrite5mPriceConfigured,
+    cacheWrite1hPriceConfigured,
+    billingDisplay,
+  });
   const structuredItems = getStructuredPriceDisplay(pricing, currency, labels);
-  if (structuredItems.length > 0) return structuredItems;
+  if (structuredItems.length > 0) {
+    const structuredLabels = new Set(structuredItems.map(item => item.label));
+    return [...structuredItems, ...cacheItems.filter(item => !structuredLabels.has(item.label))];
+  }
 
   if (isImageGenerationModel(useCases)) {
     if (outputPriceConfigured) {
@@ -212,6 +261,7 @@ export function getModelPriceDisplay({
       'perMillionTokens',
       billingDisplay
     ),
+    ...cacheItems,
   ];
 }
 
@@ -237,8 +287,7 @@ function getStructuredPriceDisplay(
   const tokenTier = (Array.isArray(pricing.token_tiers) ? pricing.token_tiers : [])
     .filter(isRecord)
     .sort(
-      (left, right) =>
-        finiteNumber(left.min_input_tokens) - finiteNumber(right.min_input_tokens)
+      (left, right) => finiteNumber(left.min_input_tokens) - finiteNumber(right.min_input_tokens)
     )[0];
   if (tokenTier) {
     return [
@@ -253,6 +302,42 @@ function getStructuredPriceDisplay(
         'output',
         labels?.output ?? '输出',
         finiteNumberOrUndefined(tokenTier.output_price_per_million),
+        safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
+        labels?.perMillionTokens ?? '/ 百万 tokens'
+      ),
+      buildOptionalStructuredPriceItem(
+        'cacheRead',
+        labels?.cacheRead ?? '缓存读取',
+        finiteNumberOrUndefined(
+          tokenTier.cache_read_price_per_million ?? tokenTier.cached_input_price_per_million
+        ),
+        safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
+        labels?.perMillionTokens ?? '/ 百万 tokens'
+      ),
+      buildOptionalStructuredPriceItem(
+        'cacheWrite',
+        labels?.cacheWrite ?? '缓存写入',
+        finiteNumberOrUndefined(tokenTier.cache_write_price_per_million),
+        safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
+        labels?.perMillionTokens ?? '/ 百万 tokens'
+      ),
+      buildOptionalStructuredPriceItem(
+        'cacheWrite5m',
+        labels?.cacheWrite5m ?? '缓存写入 5m',
+        finiteNumberOrUndefined(
+          tokenTier.cache_write_5m_price_per_million ??
+            tokenTier.cache_creation_5m_price_per_million
+        ),
+        safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
+        labels?.perMillionTokens ?? '/ 百万 tokens'
+      ),
+      buildOptionalStructuredPriceItem(
+        'cacheWrite1h',
+        labels?.cacheWrite1h ?? '缓存写入 1h',
+        finiteNumberOrUndefined(
+          tokenTier.cache_write_1h_price_per_million ??
+            tokenTier.cache_creation_1h_price_per_million
+        ),
         safeCurrency(fallbackCurrency, pricing.currency, 'USD'),
         labels?.perMillionTokens ?? '/ 百万 tokens'
       ),
@@ -368,6 +453,75 @@ function buildModelPriceDisplayItem(
     isConfigured,
     isFree: isConfigured && (price ?? 0) === 0,
   };
+}
+
+function buildCachePriceDisplayItems({
+  cacheReadPrice,
+  cacheWritePrice,
+  cacheWrite5mPrice,
+  cacheWrite1hPrice,
+  cacheReadPriceConfigured,
+  cacheWritePriceConfigured,
+  cacheWrite5mPriceConfigured,
+  cacheWrite1hPriceConfigured,
+  billingDisplay,
+}: {
+  cacheReadPrice?: number | null;
+  cacheWritePrice?: number | null;
+  cacheWrite5mPrice?: number | null;
+  cacheWrite1hPrice?: number | null;
+  cacheReadPriceConfigured?: boolean | null;
+  cacheWritePriceConfigured?: boolean | null;
+  cacheWrite5mPriceConfigured?: boolean | null;
+  cacheWrite1hPriceConfigured?: boolean | null;
+  billingDisplay: BillingDisplaySettings;
+}): ModelPriceDisplayItem[] {
+  const items: ModelPriceDisplayItem[] = [];
+  if (cacheReadPriceConfigured) {
+    items.push(
+      buildModelPriceDisplayItem(
+        'cacheRead',
+        cacheReadPrice,
+        true,
+        'perMillionTokens',
+        billingDisplay
+      )
+    );
+  }
+  if (cacheWritePriceConfigured) {
+    items.push(
+      buildModelPriceDisplayItem(
+        'cacheWrite',
+        cacheWritePrice,
+        true,
+        'perMillionTokens',
+        billingDisplay
+      )
+    );
+  }
+  if (cacheWrite5mPriceConfigured) {
+    items.push(
+      buildModelPriceDisplayItem(
+        'cacheWrite5m',
+        cacheWrite5mPrice,
+        true,
+        'perMillionTokens',
+        billingDisplay
+      )
+    );
+  }
+  if (cacheWrite1hPriceConfigured) {
+    items.push(
+      buildModelPriceDisplayItem(
+        'cacheWrite1h',
+        cacheWrite1hPrice,
+        true,
+        'perMillionTokens',
+        billingDisplay
+      )
+    );
+  }
+  return items;
 }
 
 function buildSourceCurrencyModelPriceDisplayItem(

@@ -12,7 +12,7 @@ type modelConfigRepository struct {
 	db *gorm.DB
 }
 
-const availableModelConfigColumns = "id, organization_id, model_id, is_enabled, custom_display_name, input_price_override, output_price_override, cache_read_price_override, cache_write_price_override"
+const availableModelConfigColumns = "id, organization_id, model_id, is_enabled, custom_display_name, input_price_override, output_price_override, cache_read_price_override, cache_write_price_override, cache_write_5m_price_override, cache_write_1h_price_override"
 
 // NewModelConfigRepository creates a new model config repository
 func NewModelConfigRepository(db *gorm.DB) ModelConfigRepository {

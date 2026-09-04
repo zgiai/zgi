@@ -305,6 +305,8 @@ const createSchema = (t: (key: string, values?: Record<string, string | number>)
       output_price: z.string().optional(),
       cache_read_price: z.string().optional(),
       cache_write_price: z.string().optional(),
+      cache_write_5m_price: z.string().optional(),
+      cache_write_1h_price: z.string().optional(),
 
       input_modalities: z.array(z.string()).min(1),
       output_modalities: z.array(z.string()).min(1),
@@ -445,6 +447,8 @@ export function CustomModelDialog({
       output_price: '',
       cache_read_price: '',
       cache_write_price: '',
+      cache_write_5m_price: '',
+      cache_write_1h_price: '',
       input_modalities: ['text'],
       output_modalities: ['text'],
       knowledge_cutoff: '',
@@ -580,6 +584,16 @@ export function CustomModelDialog({
           initialData.cache_write_price_configured,
           billingDisplay
         ),
+        cache_write_5m_price: billingDisplayInputValueFromUSD(
+          initialData.cache_write_5m_price,
+          initialData.cache_write_5m_price_configured,
+          billingDisplay
+        ),
+        cache_write_1h_price: billingDisplayInputValueFromUSD(
+          initialData.cache_write_1h_price,
+          initialData.cache_write_1h_price_configured,
+          billingDisplay
+        ),
         input_modalities: initialData.input_modalities || ['text'],
         output_modalities: initialData.output_modalities || ['text'],
         knowledge_cutoff: initialData.training_data?.cutoff_date || '',
@@ -648,6 +662,8 @@ export function CustomModelDialog({
         output_price: '',
         cache_read_price: '',
         cache_write_price: '',
+        cache_write_5m_price: '',
+        cache_write_1h_price: '',
         input_modalities: ['text'],
         output_modalities: ['text'],
         knowledge_cutoff: '',
@@ -719,6 +735,14 @@ export function CustomModelDialog({
       output_price: billingDisplayInputToUSD(values.output_price ?? '', billingDisplay),
       cache_read_price: billingDisplayInputToUSD(values.cache_read_price ?? '', billingDisplay),
       cache_write_price: billingDisplayInputToUSD(values.cache_write_price ?? '', billingDisplay),
+      cache_write_5m_price: billingDisplayInputToUSD(
+        values.cache_write_5m_price ?? '',
+        billingDisplay
+      ),
+      cache_write_1h_price: billingDisplayInputToUSD(
+        values.cache_write_1h_price ?? '',
+        billingDisplay
+      ),
       use_cases: values.use_cases as ModelUseCase[],
       parameters: mappedParameters,
       config_parameters: buildConfigParameters(config_parameters),
@@ -1150,6 +1174,70 @@ export function CustomModelDialog({
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>{t('aiProviders.models.fields.cacheWritePrice')}</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                  {currencySymbol}
+                                </span>
+                                <Input
+                                  className="pl-6 pr-24"
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  {...field}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                  {perMillionUnit}
+                                </span>
+                              </div>
+                            </FormControl>
+                            <FormDescription>
+                              {t('aiProviders.models.fields.priceConfiguredHint')}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="cache_write_5m_price"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              {t('aiProviders.models.fields.cacheWrite5mPrice')}
+                            </FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                  {currencySymbol}
+                                </span>
+                                <Input
+                                  className="pl-6 pr-24"
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  {...field}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                  {perMillionUnit}
+                                </span>
+                              </div>
+                            </FormControl>
+                            <FormDescription>
+                              {t('aiProviders.models.fields.priceConfiguredHint')}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="cache_write_1h_price"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              {t('aiProviders.models.fields.cacheWrite1hPrice')}
+                            </FormLabel>
                             <FormControl>
                               <div className="relative">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">

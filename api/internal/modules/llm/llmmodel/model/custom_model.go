@@ -15,23 +15,25 @@ import (
 
 // ModelConfig represents organization-specific configuration for a global model
 type ModelConfig struct {
-	ID                      uuid.UUID              `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
-	OrganizationID          uuid.UUID              `gorm:"type:uuid;not null;index;column:organization_id" json:"organization_id"`
-	ModelID                 uuid.UUID              `gorm:"type:uuid;not null" json:"model_id"`
-	IsEnabled               bool                   `gorm:"default:true;index" json:"is_enabled"`
-	CustomDisplayName       string                 `gorm:"type:varchar(200)" json:"custom_display_name,omitempty"`
-	InputPriceOverride      *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"input_price_override,omitempty"`
-	OutputPriceOverride     *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"output_price_override,omitempty"`
-	CacheReadPriceOverride  *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_read_price_override,omitempty"`
-	CacheWritePriceOverride *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_price_override,omitempty"`
-	AccessScope             AccessScope            `gorm:"type:varchar(20);default:'all'" json:"access_scope"`
-	VisibleGroups           []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_groups"`
-	VisibleUsers            []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_users"`
-	SortOrder               int                    `gorm:"default:0" json:"sort_order"`
-	Metadata                map[string]interface{} `gorm:"type:jsonb;serializer:json;default:'{}'" json:"metadata,omitempty"`
-	CreatedAt               time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
-	UpdatedAt               time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
-	DeletedAt               gorm.DeletedAt         `gorm:"index" json:"deleted_at,omitempty"`
+	ID                        uuid.UUID              `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()" json:"id"`
+	OrganizationID            uuid.UUID              `gorm:"type:uuid;not null;index;column:organization_id" json:"organization_id"`
+	ModelID                   uuid.UUID              `gorm:"type:uuid;not null" json:"model_id"`
+	IsEnabled                 bool                   `gorm:"default:true;index" json:"is_enabled"`
+	CustomDisplayName         string                 `gorm:"type:varchar(200)" json:"custom_display_name,omitempty"`
+	InputPriceOverride        *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"input_price_override,omitempty"`
+	OutputPriceOverride       *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"output_price_override,omitempty"`
+	CacheReadPriceOverride    *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_read_price_override,omitempty"`
+	CacheWritePriceOverride   *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_price_override,omitempty"`
+	CacheWrite5mPriceOverride *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_5m_price_override,omitempty"`
+	CacheWrite1hPriceOverride *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_1h_price_override,omitempty"`
+	AccessScope               AccessScope            `gorm:"type:varchar(20);default:'all'" json:"access_scope"`
+	VisibleGroups             []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_groups"`
+	VisibleUsers              []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_users"`
+	SortOrder                 int                    `gorm:"default:0" json:"sort_order"`
+	Metadata                  map[string]interface{} `gorm:"type:jsonb;serializer:json;default:'{}'" json:"metadata,omitempty"`
+	CreatedAt                 time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt                 time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
+	DeletedAt                 gorm.DeletedAt         `gorm:"index" json:"deleted_at,omitempty"`
 
 	// Relations
 	Model *LLMModel `gorm:"foreignKey:ModelID" json:"model,omitempty"`
@@ -97,6 +99,26 @@ func (c *ModelConfig) GetEffectiveCacheWritePrice() decimal.Decimal {
 	}
 	if c.Model != nil {
 		return c.Model.CostCacheWrite
+	}
+	return decimal.Zero
+}
+
+func (c *ModelConfig) GetEffectiveCacheWrite5mPrice() decimal.Decimal {
+	if c.CacheWrite5mPriceOverride != nil {
+		return *c.CacheWrite5mPriceOverride
+	}
+	if c.Model != nil {
+		return c.Model.CostCacheWrite5m
+	}
+	return decimal.Zero
+}
+
+func (c *ModelConfig) GetEffectiveCacheWrite1hPrice() decimal.Decimal {
+	if c.CacheWrite1hPriceOverride != nil {
+		return *c.CacheWrite1hPriceOverride
+	}
+	if c.Model != nil {
+		return c.Model.CostCacheWrite1h
 	}
 	return decimal.Zero
 }
@@ -188,14 +210,18 @@ type CustomModel struct {
 	DefaultParameters   JSONObject           `gorm:"column:default_parameters;type:jsonb" json:"default_parameters,omitempty"`
 
 	// Pricing (per million tokens, aligned with LLMModel)
-	InputPrice                decimal.Decimal `gorm:"column:input_price;type:decimal(24,12)" json:"input_price"`
-	OutputPrice               decimal.Decimal `gorm:"column:output_price;type:decimal(24,12)" json:"output_price"`
-	CostCacheRead             decimal.Decimal `gorm:"column:cost_cache_read;type:decimal(24,12)" json:"cache_read_price"`
-	CostCacheWrite            decimal.Decimal `gorm:"column:cost_cache_write;type:decimal(24,12)" json:"cache_write_price"`
-	InputPriceConfigured      bool            `gorm:"column:input_price_configured;default:false" json:"input_price_configured"`
-	OutputPriceConfigured     bool            `gorm:"column:output_price_configured;default:false" json:"output_price_configured"`
-	CacheReadPriceConfigured  bool            `gorm:"column:cache_read_price_configured;default:false" json:"cache_read_price_configured"`
-	CacheWritePriceConfigured bool            `gorm:"column:cache_write_price_configured;default:false" json:"cache_write_price_configured"`
+	InputPrice                  decimal.Decimal `gorm:"column:input_price;type:decimal(24,12)" json:"input_price"`
+	OutputPrice                 decimal.Decimal `gorm:"column:output_price;type:decimal(24,12)" json:"output_price"`
+	CostCacheRead               decimal.Decimal `gorm:"column:cost_cache_read;type:decimal(24,12)" json:"cache_read_price"`
+	CostCacheWrite              decimal.Decimal `gorm:"column:cost_cache_write;type:decimal(24,12)" json:"cache_write_price"`
+	CostCacheWrite5m            decimal.Decimal `gorm:"column:cost_cache_write_5m;type:decimal(24,12)" json:"cache_write_5m_price"`
+	CostCacheWrite1h            decimal.Decimal `gorm:"column:cost_cache_write_1h;type:decimal(24,12)" json:"cache_write_1h_price"`
+	InputPriceConfigured        bool            `gorm:"column:input_price_configured;default:false" json:"input_price_configured"`
+	OutputPriceConfigured       bool            `gorm:"column:output_price_configured;default:false" json:"output_price_configured"`
+	CacheReadPriceConfigured    bool            `gorm:"column:cache_read_price_configured;default:false" json:"cache_read_price_configured"`
+	CacheWritePriceConfigured   bool            `gorm:"column:cache_write_price_configured;default:false" json:"cache_write_price_configured"`
+	CacheWrite5mPriceConfigured bool            `gorm:"column:cache_write_5m_price_configured;default:false" json:"cache_write_5m_price_configured"`
+	CacheWrite1hPriceConfigured bool            `gorm:"column:cache_write_1h_price_configured;default:false" json:"cache_write_1h_price_configured"`
 
 	// Status and ordering
 	IsActive  bool                   `gorm:"default:true;index" json:"is_active"`
@@ -375,25 +401,33 @@ type ModelView struct {
 	OpenWeights   bool   `json:"-"`           // Internal use only
 
 	// Pricing (per million tokens)
-	Currency                  string         `json:"currency"`
-	InputPrice                float64        `json:"input_price"`  // Price per million input tokens
-	OutputPrice               float64        `json:"output_price"` // Price per million output tokens
-	InputPriceConfigured      bool           `json:"input_price_configured"`
-	OutputPriceConfigured     bool           `json:"output_price_configured"`
-	CachedInputPrice          float64        `json:"cached_input_price"`
-	CacheReadPrice            float64        `json:"cache_read_price"`
-	CacheWritePrice           float64        `json:"cache_write_price"`
-	CacheReadPriceConfigured  bool           `json:"cache_read_price_configured"`
-	CacheWritePriceConfigured bool           `json:"cache_write_price_configured"`
-	SyncedInputPrice          *float64       `json:"synced_input_price"`
-	SyncedOutputPrice         *float64       `json:"synced_output_price"`
-	SyncedCacheReadPrice      *float64       `json:"synced_cache_read_price"`
-	SyncedCacheWritePrice     *float64       `json:"synced_cache_write_price"`
-	InputPriceOverride        *float64       `json:"input_price_override"`
-	OutputPriceOverride       *float64       `json:"output_price_override"`
-	CacheReadPriceOverride    *float64       `json:"cache_read_price_override"`
-	CacheWritePriceOverride   *float64       `json:"cache_write_price_override"`
-	Pricing                   datatypes.JSON `json:"pricing,omitempty"`
+	Currency                    string         `json:"currency"`
+	InputPrice                  float64        `json:"input_price"`  // Price per million input tokens
+	OutputPrice                 float64        `json:"output_price"` // Price per million output tokens
+	InputPriceConfigured        bool           `json:"input_price_configured"`
+	OutputPriceConfigured       bool           `json:"output_price_configured"`
+	CachedInputPrice            float64        `json:"cached_input_price"`
+	CacheReadPrice              float64        `json:"cache_read_price"`
+	CacheWritePrice             float64        `json:"cache_write_price"`
+	CacheWrite5mPrice           float64        `json:"cache_write_5m_price"`
+	CacheWrite1hPrice           float64        `json:"cache_write_1h_price"`
+	CacheReadPriceConfigured    bool           `json:"cache_read_price_configured"`
+	CacheWritePriceConfigured   bool           `json:"cache_write_price_configured"`
+	CacheWrite5mPriceConfigured bool           `json:"cache_write_5m_price_configured"`
+	CacheWrite1hPriceConfigured bool           `json:"cache_write_1h_price_configured"`
+	SyncedInputPrice            *float64       `json:"synced_input_price"`
+	SyncedOutputPrice           *float64       `json:"synced_output_price"`
+	SyncedCacheReadPrice        *float64       `json:"synced_cache_read_price"`
+	SyncedCacheWritePrice       *float64       `json:"synced_cache_write_price"`
+	SyncedCacheWrite5mPrice     *float64       `json:"synced_cache_write_5m_price"`
+	SyncedCacheWrite1hPrice     *float64       `json:"synced_cache_write_1h_price"`
+	InputPriceOverride          *float64       `json:"input_price_override"`
+	OutputPriceOverride         *float64       `json:"output_price_override"`
+	CacheReadPriceOverride      *float64       `json:"cache_read_price_override"`
+	CacheWritePriceOverride     *float64       `json:"cache_write_price_override"`
+	CacheWrite5mPriceOverride   *float64       `json:"cache_write_5m_price_override"`
+	CacheWrite1hPriceOverride   *float64       `json:"cache_write_1h_price_override"`
+	Pricing                     datatypes.JSON `json:"pricing,omitempty"`
 
 	// Context
 	ContextWindow   int `json:"context_window"`

@@ -436,8 +436,46 @@ export default function ModelsGroupTable({
                             {getModelPriceDisplay({
                               inputPrice: m.input_price,
                               outputPrice: m.output_price,
+                              cacheReadPrice:
+                                m.cache_read_price_override ??
+                                m.cache_read_price ??
+                                m.cached_input_price ??
+                                m.synced_cache_read_price,
+                              cacheWritePrice:
+                                m.cache_write_price_override ??
+                                m.cache_write_price ??
+                                m.synced_cache_write_price,
+                              cacheWrite5mPrice:
+                                m.cache_write_5m_price_override ??
+                                m.cache_write_5m_price ??
+                                m.synced_cache_write_5m_price,
+                              cacheWrite1hPrice:
+                                m.cache_write_1h_price_override ??
+                                m.cache_write_1h_price ??
+                                m.synced_cache_write_1h_price,
                               inputPriceConfigured: m.input_price_configured,
                               outputPriceConfigured: m.output_price_configured,
+                              cacheReadPriceConfigured:
+                                m.cache_read_price_override != null ||
+                                m.cache_read_price_configured ||
+                                isPositiveFiniteNumber(m.cache_read_price) ||
+                                isPositiveFiniteNumber(m.cached_input_price) ||
+                                isPositiveFiniteNumber(m.synced_cache_read_price),
+                              cacheWritePriceConfigured:
+                                m.cache_write_price_override != null ||
+                                m.cache_write_price_configured ||
+                                isPositiveFiniteNumber(m.cache_write_price) ||
+                                isPositiveFiniteNumber(m.synced_cache_write_price),
+                              cacheWrite5mPriceConfigured:
+                                m.cache_write_5m_price_override != null ||
+                                m.cache_write_5m_price_configured ||
+                                isPositiveFiniteNumber(m.cache_write_5m_price) ||
+                                isPositiveFiniteNumber(m.synced_cache_write_5m_price),
+                              cacheWrite1hPriceConfigured:
+                                m.cache_write_1h_price_override != null ||
+                                m.cache_write_1h_price_configured ||
+                                isPositiveFiniteNumber(m.cache_write_1h_price) ||
+                                isPositiveFiniteNumber(m.synced_cache_write_1h_price),
                               pricing: m.pricing,
                               currency: m.currency,
                               useCases: m.use_cases,
@@ -536,4 +574,8 @@ export default function ModelsGroupTable({
       </div>
     </div>
   );
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }

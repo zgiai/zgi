@@ -130,6 +130,10 @@ type claudeUsage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	CacheCreation            struct {
+		Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation,omitempty"`
 }
 
 type claudeStreamResponse struct {
@@ -1065,6 +1069,7 @@ func mergeClaudeUsage(previous *adapter.Usage, usage claudeUsage) *adapter.Usage
 		OutputTokens:             usage.OutputTokens,
 		CacheCreationInputTokens: usage.CacheCreationInputTokens,
 		CacheReadInputTokens:     usage.CacheReadInputTokens,
+		CacheCreation:            usage.CacheCreation,
 	})
 }
 

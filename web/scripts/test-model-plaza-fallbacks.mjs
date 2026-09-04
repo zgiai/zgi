@@ -25,7 +25,11 @@ const [model] = normalizeModelList([
 assert.ok(model, 'object-shaped model entries should remain renderable');
 assert.deepEqual(model.use_cases, [], 'invalid use_cases must fall back to an empty array');
 assert.deepEqual(model.input_modalities, [], 'invalid input modalities must fall back to an array');
-assert.deepEqual(model.output_modalities, [], 'missing output modalities must fall back to an array');
+assert.deepEqual(
+  model.output_modalities,
+  [],
+  'missing output modalities must fall back to an array'
+);
 assert.deepEqual(model.endpoints, {}, 'invalid endpoint metadata must fall back to an object');
 assert.deepEqual(model.features, {}, 'invalid feature metadata must fall back to an object');
 assert.deepEqual(model.tools, {}, 'missing tool metadata must fall back to an object');
@@ -121,6 +125,61 @@ assert.doesNotThrow(() =>
       metered: 'invalid',
     },
   })
+);
+
+const tokenPriceItems = getModelPriceDisplay({
+  inputPrice: 5,
+  outputPrice: 25,
+  cacheReadPrice: 0.5,
+  inputPriceConfigured: true,
+  outputPriceConfigured: true,
+  cacheReadPriceConfigured: true,
+  useCases: ['text-chat', 'vision'],
+  currency: 'USD',
+});
+assert.deepEqual(
+  tokenPriceItems.map(item => item.label),
+  ['input', 'output', 'cacheRead'],
+  'cache read pricing must not be labelled as video pricing'
+);
+
+const cacheWriteOnlyPriceItems = getModelPriceDisplay({
+  inputPrice: 5,
+  outputPrice: 25,
+  cacheWritePrice: 6.25,
+  inputPriceConfigured: true,
+  outputPriceConfigured: true,
+  cacheWritePriceConfigured: true,
+  useCases: ['text-chat'],
+  currency: 'USD',
+});
+assert.deepEqual(
+  cacheWriteOnlyPriceItems.map(item => item.label),
+  ['input', 'output', 'cacheWrite'],
+  'cache write pricing must display independently when cache read is absent'
+);
+
+const structuredTokenPriceItems = getModelPriceDisplay({
+  useCases: ['text-chat', 'vision'],
+  currency: 'USD',
+  pricing: {
+    token_tiers: [
+      {
+        min_input_tokens: 0,
+        input_price_per_million: 5,
+        output_price_per_million: 25,
+        cached_input_price_per_million: 0.5,
+        cache_write_price_per_million: 6.25,
+        cache_write_5m_price_per_million: 7.5,
+        cache_creation_1h_price_per_million: 10,
+      },
+    ],
+  },
+});
+assert.deepEqual(
+  structuredTokenPriceItems.map(item => item.label),
+  ['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite5m', 'cacheWrite1h'],
+  'structured token cache prices must use cache labels'
 );
 
 console.log('Model plaza fallback checks passed.');
