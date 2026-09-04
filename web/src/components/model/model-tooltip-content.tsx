@@ -109,9 +109,6 @@ export const ModelTooltipContent = memo(function ModelTooltipContent({
         </div>
       )}
 
-      {/* Pricing */}
-      <ModelPriceSummary model={model} />
-
       {/* Use Cases grid */}
       {hasUseCases && (
         <div className="space-y-1.5">
@@ -157,6 +154,9 @@ export const ModelTooltipContent = memo(function ModelTooltipContent({
           </div>
         </div>
       )}
+
+      {/* Pricing */}
+      <ModelPriceSummary model={model} />
     </div>
   );
 });
