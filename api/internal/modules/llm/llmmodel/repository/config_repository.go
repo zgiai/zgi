@@ -12,6 +12,8 @@ type modelConfigRepository struct {
 	db *gorm.DB
 }
 
+const availableModelConfigColumns = "id, organization_id, model_id, is_enabled, custom_display_name, input_price_override, output_price_override, cache_read_price_override, cache_write_price_override"
+
 // NewModelConfigRepository creates a new model config repository
 func NewModelConfigRepository(db *gorm.DB) ModelConfigRepository {
 	return &modelConfigRepository{db: db}
@@ -71,7 +73,7 @@ func (r *modelConfigRepository) ListAvailableConfigs(ctx context.Context, organi
 	var configs []*model.ModelConfig
 	err := r.db.WithContext(ctx).
 		Model(&model.ModelConfig{}).
-		Select("id, organization_id, model_id, is_enabled, custom_display_name").
+		Select(availableModelConfigColumns).
 		Where("organization_id = ?", organizationID).
 		Order("sort_order ASC, created_at DESC").
 		Find(&configs).Error
