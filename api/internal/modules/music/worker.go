@@ -129,7 +129,12 @@ func (w *Worker) Generate(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return w.beginCompensation(ctx, task.ID, ErrorCodeDeliveryUnknown, messageGenerationOutcomeUnknown)
 	}
-	fileID, err := w.assets.Save(ctx, task, audio.Bytes())
+	audioBytes := audio.Bytes()
+	playbackMetadata, metadataErr := extractGeneratedMusicPlaybackMetadata(ctx, audioBytes)
+	if metadataErr != nil {
+		logger.WarnContext(ctx, "failed to extract music playback metadata", "task_id", task.ID.String(), "error", metadataErr)
+	}
+	fileID, err := w.assets.Save(ctx, task, audioBytes)
 	if err != nil {
 		return w.beginCompensation(ctx, task.ID, ErrorCodeDeliveryFailed, messageFileStorageFailed)
 	}
@@ -138,9 +143,16 @@ func (w *Worker) Generate(ctx context.Context, id uuid.UUID) error {
 		_ = w.assets.Delete(ctx, fileID)
 		return w.beginCompensation(ctx, task.ID, ErrorCodeDeliveryFailed, messageFileStorageFailed)
 	}
-	if err := w.repo.Transition(ctx, task.ID, StatusGenerating, StatusSucceeded, TaskUpdate{
+	update := TaskUpdate{
 		FileID: &parsedFileID,
-	}); err != nil {
+	}
+	if playbackMetadata.DurationMS > 0 {
+		update.DurationMS = playbackMetadata.DurationMS
+	}
+	if len(playbackMetadata.WaveformPeaks) > 0 {
+		update.WaveformPeaks = playbackMetadata.WaveformPeaks
+	}
+	if err := w.repo.Transition(ctx, task.ID, StatusGenerating, StatusSucceeded, update); err != nil {
 		if current, getErr := w.repo.Get(ctx, task.ID); getErr == nil && current.Status == StatusSucceeded {
 			return nil
 		}
