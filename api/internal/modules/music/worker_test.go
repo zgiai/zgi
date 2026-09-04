@@ -20,6 +20,9 @@ func TestWorkerCompletesTaskAfterFullMusicIsStored(t *testing.T) {
 	generator := &musicGeneratorStub{audio: []byte("complete-mp3")}
 	compensator := &deliveryCompensatorStub{}
 	assets := &assetStoreStub{fileID: uuid.NewString()}
+	restoreMusicPlaybackMetadataExtractor(t, func(context.Context, []byte) (musicPlaybackMetadata, error) {
+		return musicPlaybackMetadata{}, nil
+	})
 	worker := NewWorker(repo, &dispatcherStub{}, generator, &lyricsGeneratorStub{}, compensator, assets)
 
 	if err := worker.Generate(t.Context(), task.ID); err != nil {
@@ -43,6 +46,70 @@ func TestWorkerCompletesTaskAfterFullMusicIsStored(t *testing.T) {
 	}
 }
 
+func TestWorkerPersistsExtractedPlaybackMetadata(t *testing.T) {
+	task := queuedTask()
+	repo := newMemoryRepository(task)
+	generator := &musicGeneratorStub{audio: []byte("complete-mp3")}
+	assets := &assetStoreStub{fileID: uuid.NewString()}
+	restoreMusicPlaybackMetadataExtractor(t, func(_ context.Context, audio []byte) (musicPlaybackMetadata, error) {
+		if !bytes.Equal(audio, generator.audio) {
+			t.Fatalf("metadata audio = %q, want %q", audio, generator.audio)
+		}
+		return musicPlaybackMetadata{
+			DurationMS:    61_250,
+			WaveformPeaks: []int16{12, 48, 100, 32},
+		}, nil
+	})
+	worker := NewWorker(repo, &dispatcherStub{}, generator, &lyricsGeneratorStub{}, &deliveryCompensatorStub{}, assets)
+
+	if err := worker.Generate(t.Context(), task.ID); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	got := repo.tasks[task.ID]
+	if got.DurationMS != 61_250 || !reflect.DeepEqual([]int16(got.WaveformPeaks), []int16{12, 48, 100, 32}) {
+		t.Fatalf("playback metadata = duration %d peaks %#v", got.DurationMS, got.WaveformPeaks)
+	}
+}
+
+func TestWorkerCompletesTaskWhenPlaybackMetadataExtractionFails(t *testing.T) {
+	task := queuedTask()
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{fileID: uuid.NewString()}
+	restoreMusicPlaybackMetadataExtractor(t, func(context.Context, []byte) (musicPlaybackMetadata, error) {
+		return musicPlaybackMetadata{}, errors.New("ffmpeg unavailable")
+	})
+	worker := NewWorker(repo, &dispatcherStub{}, &musicGeneratorStub{audio: []byte("complete-mp3")}, &lyricsGeneratorStub{}, &deliveryCompensatorStub{}, assets)
+
+	if err := worker.Generate(t.Context(), task.ID); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	got := repo.tasks[task.ID]
+	if got.Status != StatusSucceeded || got.FileID == nil {
+		t.Fatalf("completed task = %#v", got)
+	}
+	if got.DurationMS != 0 || len(got.WaveformPeaks) != 0 {
+		t.Fatalf("playback metadata = duration %d peaks %#v, want empty", got.DurationMS, got.WaveformPeaks)
+	}
+}
+
+func TestWorkerPersistsPartialPlaybackMetadataWhenExtractionWarns(t *testing.T) {
+	task := queuedTask()
+	repo := newMemoryRepository(task)
+	assets := &assetStoreStub{fileID: uuid.NewString()}
+	restoreMusicPlaybackMetadataExtractor(t, func(context.Context, []byte) (musicPlaybackMetadata, error) {
+		return musicPlaybackMetadata{DurationMS: 42_000}, errors.New("waveform unavailable")
+	})
+	worker := NewWorker(repo, &dispatcherStub{}, &musicGeneratorStub{audio: []byte("complete-mp3")}, &lyricsGeneratorStub{}, &deliveryCompensatorStub{}, assets)
+
+	if err := worker.Generate(t.Context(), task.ID); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	got := repo.tasks[task.ID]
+	if got.DurationMS != 42_000 || len(got.WaveformPeaks) != 0 {
+		t.Fatalf("playback metadata = duration %d peaks %#v", got.DurationMS, got.WaveformPeaks)
+	}
+}
+
 func TestWorkerGeneratesAndPersistsLyricsBeforeMusic(t *testing.T) {
 	task := queuedTask()
 	task.Mode = adapter.MusicModeAutoLyrics
@@ -53,6 +120,9 @@ func TestWorkerGeneratesAndPersistsLyricsBeforeMusic(t *testing.T) {
 		Lyrics:    "[Verse]\n雨停在黄昏以后",
 	}}
 	generator := &musicGeneratorStub{audio: []byte("complete-mp3")}
+	restoreMusicPlaybackMetadataExtractor(t, func(context.Context, []byte) (musicPlaybackMetadata, error) {
+		return musicPlaybackMetadata{}, nil
+	})
 	worker := NewWorker(repo, &dispatcherStub{}, generator, lyrics, &deliveryCompensatorStub{}, &assetStoreStub{fileID: uuid.NewString()})
 
 	if err := worker.Generate(t.Context(), task.ID); err != nil {
@@ -111,6 +181,15 @@ func TestGeneratedLyricsRejectRawValuesOutsideProductLimits(t *testing.T) {
 	}
 }
 
+func restoreMusicPlaybackMetadataExtractor(t *testing.T, extractor func(context.Context, []byte) (musicPlaybackMetadata, error)) {
+	t.Helper()
+	original := extractGeneratedMusicPlaybackMetadata
+	extractGeneratedMusicPlaybackMetadata = extractor
+	t.Cleanup(func() {
+		extractGeneratedMusicPlaybackMetadata = original
+	})
+}
+
 func TestMusicBufferRejectsDataBeyondLimit(t *testing.T) {
 	buffer := newMusicBuffer(4)
 	written, err := io.Copy(buffer, io.LimitReader(strings.NewReader("12345"), 5))
@@ -156,6 +235,9 @@ func TestWorkerQueuesCompensationAfterDurableStorageFailure(t *testing.T) {
 	dispatcher := &dispatcherStub{}
 	generator := &musicGeneratorStub{audio: []byte("complete-mp3")}
 	compensator := &deliveryCompensatorStub{}
+	restoreMusicPlaybackMetadataExtractor(t, func(context.Context, []byte) (musicPlaybackMetadata, error) {
+		return musicPlaybackMetadata{}, nil
+	})
 	worker := NewWorker(repo, dispatcher, generator, &lyricsGeneratorStub{}, compensator, &assetStoreStub{saveErr: errors.New("storage unavailable")})
 
 	if err := worker.Generate(t.Context(), task.ID); err != nil {
