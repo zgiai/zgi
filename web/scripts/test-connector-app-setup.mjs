@@ -121,7 +121,7 @@ const connector = {
   setup: {
     handler: 'feishu-app-registration-v1',
     methods: ['manual', 'qr_create', 'qr_update'],
-    template_id: 'feishu-app-template-v2',
+    template_id: 'feishu-app-template-v3',
   },
   credential_fields: [
     { name: 'region' },
@@ -382,7 +382,10 @@ assert.equal(Boolean(templateTree.props.open), false);
 const templateText = JSON.stringify(templateTree);
 assert.doesNotMatch(templateText, /cardkit:card:read/);
 assert.match(templateText, /cardkit:card:write/);
-assert.match(templateText, /2\.0\.0/);
+assert.match(templateText, /3\.0\.0/);
+for (const scope of ['tenant:tenant:readonly', 'im:message.group_msg', 'im:chat.members:read', 'directory:employee:search', 'directory:employee.base.name.name:read']) {
+  assert.ok(templateText.includes(scope), `template preview omits ${scope}`);
+}
 assert.match(templateText, /app.templateIncrementalHint/);
 assert.match(templateText, /app.userEventDependencyHint/);
 for (const dependency of permissionTemplate.user_event_dependencies) {
@@ -401,7 +404,7 @@ saved.set(
   JSON.stringify({
     key: retiredKey,
     flowId: serverFlow.id,
-    request: { intent: 'create_app', region: 'feishu', template_id: 'feishu-app-template-v1' },
+    request: { intent: 'create_app', region: 'feishu', template_id: 'feishu-app-template-v2' },
   })
 );
 const beforeTemplateRecovery = posts.length;
@@ -412,7 +415,7 @@ assert.equal(posts.length, beforeTemplateRecovery, 'recovering a retired flow is
 assert.equal(h.value.flow.state, 'failed');
 await h.value.start('feishu');
 await h.settle();
-assert.equal(posts.at(-1).request.template_id, 'feishu-app-template-v2');
+assert.equal(posts.at(-1).request.template_id, 'feishu-app-template-v3');
 assert.notEqual(posts.at(-1).key, retiredKey, 'explicit new flow must not rewrite an old request');
 h.unmount();
 saved.clear();

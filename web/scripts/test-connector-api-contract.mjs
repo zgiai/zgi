@@ -117,7 +117,31 @@ assert.equal(
   schemas.ConnectorPermissionTemplate.properties.profile_version.const,
   compiledTemplate.profile_version
 );
-assert.equal(addons.scopes.properties.tenant.maxItems, 34);
+assert.equal(addons.scopes.properties.tenant.maxItems, 40);
+// Additive read operations use the same application setup, without new permissions or routes.
+const feishuDefinition = JSON.parse(
+  readFileSync(path.resolve(root, '..', 'api/internal/modules/connectors/catalog/definitions/feishu.json'), 'utf8')
+);
+assert.equal(feishuDefinition.plugin_version, '1.2.0');
+assert.equal(feishuDefinition.operations.length, 38);
+for (const id of ['feishu.tenant.get', 'feishu.chat.members.list']) {
+  const operation = feishuDefinition.operations.find(item => item.id === id);
+  assert.ok(operation, `missing native read ${id}`);
+  assert.equal(operation.effect, 'read');
+  assert.equal(operation.credential_subject, 'app');
+  assert.ok(operation.name_i18n['zh-Hans']);
+  assert.ok(operation.description_i18n['en-US']);
+  assert.equal(operation.input_schema.additionalProperties, false);
+  assert.equal(operation.input_schema.properties.connection_id, undefined);
+  assert.equal(operation.input_schema.properties.app_secret, undefined);
+  assert.ok(contract.info.description.includes(id), `documented catalog omits ${id}`);
+}
+const membersOperation = feishuDefinition.operations.find(item => item.id === 'feishu.chat.members.list');
+assert.equal(membersOperation.input_schema.properties.member_id_type, undefined);
+assert.equal(membersOperation.input_schema.properties.page_size.default, 20);
+assert.equal(membersOperation.input_schema.properties.page_size.maximum, 100);
+assert.equal(membersOperation.required_scopes.length, 1, 'member permissions are alternatives, not four AND requirements');
+assert.ok(membersOperation.required_scopes[0].includes('im:chat.members:read'));
 assert.equal(
   addons.scopes.properties.tenant.maxItems,
   compiledTemplate.addons.scopes.tenant.length

@@ -154,7 +154,7 @@ func (c *Client) InvokeCredentials(ctx context.Context, operation string, input 
 	if err != nil {
 		return providers.Response{}, err
 	}
-	response, requestID, err := c.call(ctx, input, request.method, request.path, request.query, token, request.body, request.write)
+	response, requestID, err := c.callOperation(ctx, operation, input, request.method, request.path, request.query, token, request.body, request.write)
 	if err != nil {
 		return providers.Response{}, err
 	}
@@ -164,6 +164,26 @@ func (c *Client) InvokeCredentials(ctx context.Context, operation string, input 
 	}
 	if data == nil {
 		data = map[string]any{}
+	}
+	if operation == "feishu.tenant.get" || operation == "feishu.chat.members.list" {
+		// These operations require complete, strictly projected results. In
+		// particular, a group page may legitimately exceed 100 members; the
+		// generic boundedValue truncation would lose members before its cursor.
+		clean, err := readActionResult(operation, data, values, []string{token, input.Values["app_secret"]})
+		if err != nil {
+			return providers.Response{}, &providers.Failure{Code: core.ErrorCodeProviderUnavailable, RequestID: requestID}
+		}
+		output := map[string]any{"provider": "feishu", "operation": operation, "data": clean, "truncated": false}
+		if c.schemas.Output(operation, output) != nil {
+			return providers.Response{}, &providers.Failure{Code: core.ErrorCodeProviderUnavailable, RequestID: requestID}
+		}
+		return providers.Response{Value: output, RequestID: requestID}, nil
+	}
+	if operation == "feishu.contact.search" {
+		data, err = searchUsersResult(data, values)
+		if err != nil {
+			return providers.Response{}, err
+		}
 	}
 	if operation == "feishu.contact.basic.get" {
 		user, _ := data["user"].(map[string]any)
@@ -198,6 +218,10 @@ func (c *Client) tenantToken(ctx context.Context, input providers.CredentialInpu
 }
 
 func (c *Client) call(ctx context.Context, input providers.CredentialInput, method, path string, query url.Values, token string, body any, write bool) (map[string]any, string, error) {
+	return c.callOperation(ctx, "", input, method, path, query, token, body, write)
+}
+
+func (c *Client) callOperation(ctx context.Context, operation string, input providers.CredentialInput, method, path string, query url.Values, token string, body any, write bool) (map[string]any, string, error) {
 	if ctx == nil {
 		return nil, "", providers.Invalid()
 	}
@@ -235,10 +259,14 @@ func (c *Client) call(ctx context.Context, input providers.CredentialInput, meth
 	if err != nil {
 		return nil, "", &providers.Failure{Code: core.ErrorCodeProviderUnavailable, Unknown: write}
 	}
-	return c.decodeResponse(res, input, token, write)
+	return c.decodeOperationResponse(res, operation, input, token, write)
 }
 
 func (c *Client) decodeResponse(res *http.Response, input providers.CredentialInput, token string, write bool) (map[string]any, string, error) {
+	return c.decodeOperationResponse(res, "", input, token, write)
+}
+
+func (c *Client) decodeOperationResponse(res *http.Response, operation string, input providers.CredentialInput, token string, write bool) (map[string]any, string, error) {
 	defer res.Body.Close()
 	requestID := providers.SafeRequestID(providers.SafeRequestID(res.Header.Get("X-Tt-Logid"), token), input.Values["app_secret"])
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
@@ -254,7 +282,7 @@ func (c *Client) decodeResponse(res *http.Response, input providers.CredentialIn
 		return nil, requestID, &providers.Failure{Code: core.ErrorCodeProviderUnavailable, Unknown: write, RequestID: requestID}
 	}
 	if code, ok := response["code"].(float64); ok && code != 0 {
-		return nil, requestID, apiFailure(int(code), requestID, write)
+		return nil, requestID, operationAPIFailure(operation, int(code), requestID, write)
 	}
 	if res.StatusCode == 403 {
 		return nil, requestID, &providers.Failure{Code: core.ErrorCodeResourceAccessDenied, RequestID: requestID}

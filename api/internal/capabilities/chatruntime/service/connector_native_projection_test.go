@@ -213,7 +213,13 @@ func TestConnectorNativeProjectionSameProviderConnectionSwitchKeepsOneStableTool
 		t.Fatal(err)
 	}
 	freshDoc, _ := fresh.Get(skills.SkillConnectorRuntime)
-	if !reflect.DeepEqual(freshDoc.Tools, baseDoc.Tools) || len(freshDoc.Tools) != 1 {
+	// Localized catalog names may improve runtime presentation; switching a
+	// connection must not change identities, schemas or operation permissions.
+	expected := append([]skills.SkillToolDefinition(nil), baseDoc.Tools...)
+	if len(expected) == 1 && len(freshDoc.Tools) == 1 {
+		expected[0].RuntimeDescription = freshDoc.Tools[0].RuntimeDescription
+	}
+	if !reflect.DeepEqual(freshDoc.Tools, expected) || len(freshDoc.Tools) != 1 {
 		t.Fatalf("switching the selected Key duplicated or renamed the native tool set: %#v", freshDoc.Tools)
 	}
 	_, projections := splitConnectorNativeToolProjections(fresh)

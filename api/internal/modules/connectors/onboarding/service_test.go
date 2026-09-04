@@ -219,31 +219,35 @@ func TestReadOnlyPollingNeverBeginsRegistrationAndCompletionIsSecretFree(t *test
 }
 
 func TestRegistrationTemplateChangeNeverReplacesFrozenRequest(t *testing.T) {
-	s, repo, registrar, authority, command := serviceFixture(t)
-	ctx := context.Background()
-	oldRequest := command
-	oldRequest.TemplateID = "feishu-app-template-v1"
-	if _, err := s.Start(ctx, oldRequest); !core.IsErrorCode(err, core.ErrorCodeInvalidInput) || repo.flow.ID != uuid.Nil || registrar.beginCalls != 0 {
-		t.Fatal("new requests cannot use the retired template")
-	}
-	first, err := s.Start(ctx, command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// An existing receipt is recoverable under its original request, never
-	// rewritten to the new template using the same idempotency key.
-	repo.flow.TemplateID = oldRequest.TemplateID
-	if _, err := s.Start(ctx, command); !core.IsErrorCode(err, core.ErrorCodeConflict) {
-		t.Fatal("idempotency key changed template")
-	}
-	got, err := s.Start(ctx, oldRequest)
-	if err != nil || got.ID != first.ID || registrar.beginCalls != 0 {
-		t.Fatal("old receipt recovery must not begin another application")
-	}
-	// Production authority rejects the changed definition before begin/poll.
-	authority.err = core.NewError(core.ErrorCodeConnectorUnavailable, false, nil)
-	if _, err := s.ProcessOne(ctx); !core.IsErrorCode(err, core.ErrorCodeConnectorUnavailable) || repo.flow.State != Failed || registrar.beginCalls != 0 || registrar.pollCalls != 0 || repo.commits != 0 {
-		t.Fatal("retired flow reached registration or credential commit")
+	for _, templateID := range []string{"feishu-app-template-v1", "feishu-app-template-v2"} {
+		t.Run(templateID, func(t *testing.T) {
+			s, repo, registrar, authority, command := serviceFixture(t)
+			ctx := context.Background()
+			oldRequest := command
+			oldRequest.TemplateID = templateID
+			if _, err := s.Start(ctx, oldRequest); !core.IsErrorCode(err, core.ErrorCodeInvalidInput) || repo.flow.ID != uuid.Nil || registrar.beginCalls != 0 {
+				t.Fatal("new requests cannot use the retired template")
+			}
+			first, err := s.Start(ctx, command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// An existing receipt is recoverable under its original request, never
+			// rewritten to the new template using the same idempotency key.
+			repo.flow.TemplateID = oldRequest.TemplateID
+			if _, err := s.Start(ctx, command); !core.IsErrorCode(err, core.ErrorCodeConflict) {
+				t.Fatal("idempotency key changed template")
+			}
+			got, err := s.Start(ctx, oldRequest)
+			if err != nil || got.ID != first.ID || registrar.beginCalls != 0 {
+				t.Fatal("old receipt recovery must not begin another application")
+			}
+			// Production authority rejects the changed definition before begin/poll.
+			authority.err = core.NewError(core.ErrorCodeConnectorUnavailable, false, nil)
+			if _, err := s.ProcessOne(ctx); !core.IsErrorCode(err, core.ErrorCodeConnectorUnavailable) || repo.flow.State != Failed || registrar.beginCalls != 0 || registrar.pollCalls != 0 || repo.commits != 0 {
+				t.Fatal("retired flow reached registration or credential commit")
+			}
+		})
 	}
 }
 
@@ -262,6 +266,32 @@ func TestRegistrationReplayKeepsOriginalRegionAfterOfficialSwitch(t *testing.T) 
 	command.Region = "lark"
 	if _, err := s.Start(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeConflict) {
 		t.Fatal("changed original request accepted")
+	}
+}
+
+func TestRegistrationAdditiveActionReleaseKeepsFrozenV3Receipt(t *testing.T) {
+	s, repo, registrar, authority, command := serviceFixture(t)
+	ctx := context.Background()
+	first, err := s.Start(ctx, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Represent a receipt accepted by 1.1.0 using the same v3 permission template.
+	const priorDigest = "66d7eea4a48346671b7756a11be144fbb5704c60e82eb9557cb26f731a19ff43"
+	repo.flow.AcceptedDefinitionDigest = priorDigest
+	fingerprint := repo.flow.RequestFingerprint
+	got, err := s.Start(ctx, command)
+	if err != nil || got.ID != first.ID || repo.flow.AcceptedDefinitionDigest != priorDigest || repo.flow.RequestFingerprint != fingerprint || registrar.beginCalls != 0 {
+		t.Fatal("same-template replay rewrote a frozen accepted action contract")
+	}
+	if got, err := s.Get(ctx, command.OrganizationID, command.OwnerAccountID, first.ID); err != nil || got.ID != first.ID || repo.flow.AcceptedDefinitionDigest != priorDigest {
+		t.Fatal("old receipt is no longer recoverable")
+	}
+	// Production authority detects the changed action digest before any external
+	// registration call. Receipt recovery is not permission to resume on a new contract.
+	authority.err = core.NewError(core.ErrorCodeConflict, false, nil)
+	if _, err := s.ProcessOne(ctx); !core.IsErrorCode(err, core.ErrorCodeConflict) || repo.flow.State != Failed || registrar.beginCalls != 0 || registrar.pollCalls != 0 || repo.commits != 0 || repo.flow.AcceptedDefinitionDigest != priorDigest {
+		t.Fatal("superseded action contract reached external registration or changed receipt")
 	}
 }
 func TestCancellationWinsAgainstLateCredentials(t *testing.T) {

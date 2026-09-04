@@ -17,8 +17,10 @@ import (
 func TestAllJSONOperationsUseFixedRoutesAndSchemas(t *testing.T) {
 	cases := []struct{ id, method, path, args, bodyContains string }{
 		{"bot.get", "GET", "/bot/v3/info", `{}`, ""},
+		{"tenant.get", "GET", "/tenant/v2/tenant/query", `{}`, ""},
 		{"chat.list", "GET", "/im/v1/chats", `{"page_size":2}`, ""},
 		{"chat.get", "GET", "/im/v1/chats/oc_chat", `{"chat_id":"oc_chat"}`, ""},
+		{"chat.members.list", "GET", "/im/v1/chats/oc_chat/members", `{"chat_id":"oc_chat"}`, ""},
 		{"message.list", "GET", "/im/v1/messages", `{"chat_id":"oc_chat"}`, ""},
 		{"message.get", "GET", "/im/v1/messages/om_message", `{"message_id":"om_message"}`, ""},
 		{"document.read", "GET", "/docx/v1/documents/doc_id/raw_content", `{"document_id":"doc_id"}`, ""},
@@ -47,6 +49,7 @@ func TestAllJSONOperationsUseFixedRoutesAndSchemas(t *testing.T) {
 		{"card.update", "PUT", "/cardkit/v1/cards/card_id", `{"card_id":"card_id","sequence":1,"text":"hello"}`, `"sequence":1`},
 		{"document.blocks.convert", "POST", "/docx/v1/documents/blocks/convert", `{"text":"hello"}`, `"content_type":"markdown"`},
 		{"contact.basic.get", "GET", "/contact/v3/users/ou_user", `{"user_id":"ou_user"}`, ""},
+		{"contact.search", "POST", "/directory/v1/employees/search", `{"query":"张三"}`, `"required_fields":["base_info.employee_id","base_info.name.name"]`},
 		{"message.batch_send", "POST", "/message/v4/batch_send/", `{"open_ids":["ou_one","ou_two"],"text":"hello"}`, `"content":{"text":"hello"}`},
 		{"message.system_send", "POST", "/im/v1/messages", `{"open_id":"ou_user","text":"新会话"}`, `"msg_type":"system"`},
 	}
@@ -76,6 +79,12 @@ func TestAllJSONOperationsUseFixedRoutesAndSchemas(t *testing.T) {
 					t.Fatalf("payload %s", body)
 				}
 				switch tc.id {
+				case "tenant.get":
+					return fixtureResponse(tenantFixture), nil
+				case "chat.members.list":
+					return fixtureResponse(memberPageFixture(0, false, "")), nil
+				case "contact.search":
+					return fixtureResponse(`{"code":0,"data":{"employees":[],"page_response":{"has_more":false}}}`), nil
 				case "message.list":
 					if r.URL.Query().Get("container_id_type") != "chat" || r.URL.Query().Get("container_id") != "oc_chat" {
 						t.Fatal("message scope")

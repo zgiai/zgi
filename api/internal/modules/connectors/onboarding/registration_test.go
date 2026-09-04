@@ -88,8 +88,24 @@ func TestRegistrationCreateAndUpdateUseFixedTemplateAndNoSecretDTO(t *testing.T)
 			if err = json.Unmarshal(body, &addons); err != nil {
 				t.Fatal(err)
 			}
-			if addons.Preset || len(addons.Scopes.Tenant) != 34 || len(addons.Scopes.User) != 1 || len(addons.Events.Items.Tenant) != 6 || len(addons.Events.Items.User) != 3 || len(addons.Callbacks.Items) != 1 {
+			if addons.Preset || len(addons.Scopes.Tenant) != 40 || len(addons.Scopes.User) != 1 || len(addons.Events.Items.Tenant) != 6 || len(addons.Events.Items.User) != 3 || len(addons.Callbacks.Items) != 1 {
 				t.Fatal("template drift")
+			}
+			// Assert the actual QR wire payload for both regions and both
+			// intents, not just equality with the same configuration source.
+			seen := make(map[string]bool, len(addons.Scopes.Tenant))
+			for _, scope := range addons.Scopes.Tenant {
+				if seen[scope] || strings.Contains(scope, `\`) {
+					t.Fatalf("duplicate or escaped tenant scope: %q", scope)
+				}
+				seen[scope] = true
+			}
+			for _, scope := range strings.Fields(`tenant:tenant:readonly im:message.p2p_msg:readonly
+im:message im:message:readonly im:message.group_msg im:chat.members:read im:message:send_as_bot
+directory:employee:search directory:employee.base.name.name:read`) {
+				if !seen[scope] || slices.Contains(addons.Scopes.User, scope) {
+					t.Errorf("required application scope missing or placed under user grants: %s", scope)
+				}
 			}
 			if slices.Contains(addons.Scopes.Tenant, "cardkit:card:read") || !slices.Contains(addons.Scopes.Tenant, "cardkit:card:write") {
 				t.Fatal("card read must be removed without disabling card create/update")

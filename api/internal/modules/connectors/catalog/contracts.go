@@ -245,7 +245,8 @@ func CheckCompatibleUpdate(current, candidate Definition) error {
 	if current.UsesCredentials() || candidate.UsesCredentials() {
 		left, leftErr := digestJSON(canonicalAuthentication(current))
 		right, rightErr := digestJSON(canonicalAuthentication(candidate))
-		if leftErr != nil || rightErr != nil || (left != right && !reviewedFeishuTemplateReduction(current, candidate)) {
+		if leftErr != nil || rightErr != nil || (left != right &&
+			!reviewedFeishuTemplateReduction(current, candidate) && !reviewedFeishuTemplateExpansion(current, candidate)) {
 			return incompatible("authentication_contract", "")
 		}
 	}

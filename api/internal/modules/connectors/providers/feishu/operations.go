@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/zgiai/zgi/api/internal/modules/connectors/providers"
 )
@@ -46,10 +47,18 @@ func operationRequest(operation string, args map[string]any) (apiRequest, error)
 		r.body = map[string]any{"receive_id": t("open_id"), "msg_type": "system", "content": string(divider)}
 	case "feishu.bot.get":
 		r.path = "/open-apis/bot/v3/info"
+	case "feishu.tenant.get":
+		r.path = "/open-apis/tenant/v2/tenant/query"
 	case "feishu.chat.list":
 		r.path = "/open-apis/im/v1/chats"
 	case "feishu.chat.get":
 		r.path = "/open-apis/im/v1/chats/" + segment("chat_id")
+	case "feishu.chat.members.list":
+		r.path = "/open-apis/im/v1/chats/" + segment("chat_id") + "/members"
+		r.query.Set("member_id_type", "open_id")
+		if r.query.Get("page_size") == "" {
+			r.query.Set("page_size", "20")
+		}
 	case "feishu.message.get":
 		r.path = messagePath
 	case "feishu.message.list":
@@ -176,6 +185,23 @@ func operationRequest(operation string, args map[string]any) (apiRequest, error)
 	case "feishu.contact.basic.get":
 		r.path = "/open-apis/contact/v3/users/" + segment("user_id")
 		r.query.Set("user_id_type", "open_id")
+	case "feishu.contact.search":
+		if strings.TrimSpace(t("query")) == "" {
+			return apiRequest{}, providers.Invalid()
+		}
+		// Directory search supports app credentials; /search/v1/user requires
+		// user OAuth and must never be used as a tenant-token fallback.
+		r.method, r.path = "POST", "/open-apis/directory/v1/employees/search"
+		r.query = url.Values{"employee_id_type": {"open_id"}}
+		size := providers.Number(args, "page_size")
+		if size == 0 {
+			size = 20
+		}
+		r.body = map[string]any{
+			"query":           strings.TrimSpace(t("query")),
+			"page_request":    map[string]any{"page_size": size, "page_token": t("page_token")},
+			"required_fields": []string{"base_info.employee_id", "base_info.name.name"},
+		}
 	default:
 		return apiRequest{}, providers.Invalid()
 	}

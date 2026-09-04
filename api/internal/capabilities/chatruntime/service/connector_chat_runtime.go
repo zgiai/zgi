@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
@@ -269,6 +270,7 @@ func projectConnectorOperations(
 		skillID     string
 		connectorID string
 		operation   catalog.Operation
+		description string
 	}
 	projections := make([]operationProjection, 0)
 	for _, capability := range snapshot.Capabilities {
@@ -286,6 +288,7 @@ func projectConnectorOperations(
 			}
 			projections = append(projections, operationProjection{
 				skillID: skillID, connectorID: connectorID, operation: operation,
+				description: connectortools.OperationRuntimeDescription(capability.Definition, operation),
 			})
 		}
 	}
@@ -337,17 +340,13 @@ func projectConnectorOperations(
 		if duplicate {
 			continue
 		}
-		description := strings.TrimSpace(projection.operation.Description)
-		if description == "" {
-			description = strings.TrimSpace(projection.operation.Name)
-		}
 		doc.Tools = append(doc.Tools, skills.SkillToolDefinition{
 			Name:                 toolName,
 			ProviderType:         tools.ToolProviderTypeConnector,
 			ProviderID:           projection.connectorID,
 			InputSchema:          cloneConnectorSchema(projection.operation.InputSchema),
 			OutputSchema:         cloneConnectorSchema(projection.operation.OutputSchema),
-			RuntimeDescription:   description,
+			RuntimeDescription:   projection.description,
 			ConnectorNative:      true,
 			ConnectorOperationID: strings.TrimSpace(projection.operation.ID),
 		})

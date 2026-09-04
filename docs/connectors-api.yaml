@@ -6,6 +6,9 @@ info:
     Native personal Connectors. Runtime contains no retired integrations implementation.
     Agent and Workflow mutations use their host save transactions; direct binding and reference
     repair mutations are Chat-only.
+    The Feishu catalog includes feishu.tenant.get and feishu.chat.members.list as app-identity
+    read operations using existing scopes. Membership pagination preserves complete upstream
+    pages within local limits; it does not include robots or silently expand saved allowlists.
 servers:
   - url: /console/api
 paths:
@@ -63,8 +66,8 @@ paths:
                 region:
                   enum: [feishu, lark]
                 template_id:
-                  enum: [feishu-app-template-v2, feishu-app-template-v1]
-                  description: New flows require v2. v1 is accepted only to recover an existing receipt with its original idempotency key.
+                  enum: [feishu-app-template-v3, feishu-app-template-v2, feishu-app-template-v1]
+                  description: New flows require v3. v1/v2 are accepted only to recover an existing receipt with its original idempotency key.
       responses:
         "202":
           $ref: "#/components/responses/ConnectorOnboardingSnapshot"
@@ -96,8 +99,8 @@ paths:
                   type: integer
                   minimum: 1
                 template_id:
-                  enum: [feishu-app-template-v2, feishu-app-template-v1]
-                  description: New flows require v2. v1 is accepted only to recover an existing receipt with its original idempotency key.
+                  enum: [feishu-app-template-v3, feishu-app-template-v2, feishu-app-template-v1]
+                  description: New flows require v3. v1/v2 are accepted only to recover an existing receipt with its original idempotency key.
       responses:
         "202":
           $ref: "#/components/responses/ConnectorOnboardingSnapshot"
@@ -835,8 +838,8 @@ components:
         "description": "Fixed configuration request, not proof of granted permissions or enabled events.",
         "properties":
           {
-            "profile_id": { "const": "feishu-app-template-v2" },
-            "profile_version": { "const": "2.0.0" },
+            "profile_id": { "const": "feishu-app-template-v3" },
+            "profile_version": { "const": "3.0.0" },
             "addons":
               {
                 "type": "object",
@@ -855,8 +858,8 @@ components:
                             "tenant":
                               {
                                 "type": "array",
-                                "minItems": 34,
-                                "maxItems": 34,
+                                "minItems": 40,
+                                "maxItems": 40,
                                 "items": { "type": "string", "maxLength": 128 },
                               },
                             "user":
@@ -1176,7 +1179,7 @@ components:
               items:
                 enum: [manual, qr_create, qr_update]
             template_id:
-              const: feishu-app-template-v2
+              const: feishu-app-template-v3
             template_digest:
               type: string
         permission_template:

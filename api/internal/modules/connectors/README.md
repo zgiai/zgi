@@ -33,10 +33,17 @@ Dependency rules:
    Connection and Binding restrictions both apply, including after a replacement.
 7. Do not add generic `common`, `helpers`, or `utils` packages.
 8. Keep tests beside implementation and run `go test ./internal/modules/connectors/...`.
-9. Feishu registration uses the compiled v2 template (34 application scopes; no
+9. Feishu registration uses the compiled v3 template (40 application scopes; no
    card-read permission). Setup metadata and in-flight requests are version/digest
    pinned. Template updates cannot change a saved credential, auto-start registration,
    revoke an external grant, or authorize an event consumer.
+   Name search uses the tenant-capable Directory API and returns only names/Open IDs
+   within the app's authorized directory. It never uses user OAuth or sends messages.
+   Plugin 1.2.0 adds tenant information and one-page chat user membership reads
+   without changing that template. Member pages may exceed the requested count;
+   their dedicated projection preserves complete pages within the 1,000-member
+   and 1-MiB local limits, rejecting oversized pages rather than losing records.
+   Additive catalog operations do not expand stored Connection/Binding constraints.
 10. DingTalk, WeCom and WeChat use the closed extension 1.2.0 / contract V3.
     Setup handlers and protocol version 1 are compiled registrations. The browser
     cannot select a registration host, source, driver or verification policy.

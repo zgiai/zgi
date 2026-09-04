@@ -55,6 +55,9 @@ func feishuExecutionHarness(t *testing.T, surface core.TargetType, operation str
 	if operation == "feishu.message.send" {
 		request.Input = map[string]any{"receive_id": "ou_user", "receive_id_type": "open_id", "text": "hello"}
 	}
+	if operation == "feishu.contact.search" {
+		request.Input = map[string]any{"query": "张三"}
+	}
 	h.bindings.binding.ConnectorID = "feishu"
 	h.bindings.binding.Target = request.Target
 	h.bindings.binding.Constraint = core.OwnerConstraint(request.OwnerAccountID, []core.Identifier{request.OperationID})
@@ -67,6 +70,34 @@ func feishuExecutionHarness(t *testing.T, surface core.TargetType, operation str
 	c.Constraint = core.OwnerConstraint(request.OwnerAccountID, c.UsableOperationIDs)
 	h.service.catalog = &definitionCatalogStub{definition: d}
 	return h
+}
+
+func TestFeishuNameSearchUsesExistingNativeGatesOnAllSurfaces(t *testing.T) {
+	for _, surface := range []core.TargetType{core.TargetTypeChat, core.TargetTypeAgent, core.TargetTypeWorkflow} {
+		t.Run(string(surface), func(t *testing.T) {
+			for _, state := range []string{"ready", "nonowner", "unbound", "unverified"} {
+				t.Run(state, func(t *testing.T) {
+					h := feishuExecutionHarness(t, surface, "feishu.contact.search")
+					switch state {
+					case "nonowner":
+						h.pinned.Request.ActingPrincipalID = uuid.New()
+					case "unbound":
+						h.bindings.err = core.NewError(core.ErrorCodeNotFound, false, nil)
+					case "unverified":
+						h.connections.connection.UsableOperationIDs = nil
+					}
+					res, err := h.service.InvokeConnector(context.Background(), h.pinned)
+					if state == "ready" {
+						if err != nil || res.Outcome.Status != core.OutcomeStatusSuccessful || h.provider.calls != 1 {
+							t.Fatalf("search not available through native execution: %v", err)
+						}
+					} else if err == nil || h.provider.calls != 0 || h.credentials.calls != 0 {
+						t.Fatal("search bypassed owner, binding or verified-grant gate")
+					}
+				})
+			}
+		})
+	}
 }
 func TestFeishuAllSurfacesUseSharedOwnerBindingAndConfirmationGates(t *testing.T) {
 	for _, surface := range []core.TargetType{core.TargetTypeChat, core.TargetTypeAgent, core.TargetTypeWorkflow} {

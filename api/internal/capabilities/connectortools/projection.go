@@ -53,7 +53,7 @@ func OperationEntity(definition catalog.Definition, id string) (tools.ToolEntity
 					callers = append(callers, tools.ToolInvokeFromWorkflow)
 				}
 			}
-			return tools.ToolEntity{Identity: tools.ToolIdentity{Name: op.ToolName, Provider: definition.ID, Author: definition.PluginID, Icon: definition.Icon, Label: labels(op.Name, op.NameI18n)}, ConnectorOperationID: op.ID, ConnectorOperationEffect: string(op.Effect), Description: tools.ToolDescription{Human: labels(op.Description, op.DescriptionI18n), LLM: op.Description}, Parameters: parameters, InputSchema: op.InputSchema, OutputSchema: op.OutputSchema, WorkflowOutputs: tools.CompileWorkflowOutputs(op.OutputSchema), SupportedCallers: callers, OutputType: "json", Tags: []string{"connector", string(op.Effect)}}, nil
+			return tools.ToolEntity{Identity: tools.ToolIdentity{Name: op.ToolName, Provider: definition.ID, Author: definition.PluginID, Icon: definition.Icon, Label: labels(op.Name, op.NameI18n)}, ConnectorOperationID: op.ID, ConnectorOperationEffect: string(op.Effect), Description: tools.ToolDescription{Human: labels(op.Description, op.DescriptionI18n), LLM: OperationRuntimeDescription(definition, op)}, Parameters: parameters, InputSchema: op.InputSchema, OutputSchema: op.OutputSchema, WorkflowOutputs: tools.CompileWorkflowOutputs(op.OutputSchema), SupportedCallers: callers, OutputType: "json", Tags: []string{"connector", string(op.Effect)}}, nil
 		}
 	}
 	return tools.ToolEntity{}, tools.ErrToolNotFound

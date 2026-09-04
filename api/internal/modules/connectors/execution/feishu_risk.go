@@ -44,6 +44,9 @@ func feishuRiskPolicies() []TrustedOperationRiskPolicy {
 		{"feishu.card.update", "feishu_card_update", RiskHigh},
 		{"feishu.document.blocks.convert", "feishu_document_blocks_convert", RiskHigh},
 		{"feishu.contact.basic.get", "feishu_contact_basic_get", RiskTrustedLow},
+		{"feishu.contact.search", "feishu_contact_search", RiskTrustedLow},
+		{"feishu.tenant.get", "feishu_tenant_get", RiskTrustedLow},
+		{"feishu.chat.members.list", "feishu_chat_members_list", RiskTrustedLow},
 	}
 	result := make([]TrustedOperationRiskPolicy, 0, len(ops))
 	for _, op := range ops {

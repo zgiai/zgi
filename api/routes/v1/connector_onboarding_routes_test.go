@@ -69,7 +69,7 @@ func TestConnectorOnboardingRoutesUseServerOwnerAndReadOnlyGET(t *testing.T) {
 	s := &onboardingRouteFixture{}
 	org, owner, id := uuid.New(), uuid.New(), uuid.New()
 	r := onboardingRouteRouter(t, s, org, owner)
-	res := connectorRouteRequest(t, r, "POST", "/console/api/connectors/feishu/onboarding-flows", `{"intent":"create_app","region":"feishu","template_id":"feishu-app-template-v2"}`, map[string]string{"Idempotency-Key": "fixture-key"})
+	res := connectorRouteRequest(t, r, "POST", "/console/api/connectors/feishu/onboarding-flows", `{"intent":"create_app","region":"feishu","template_id":"feishu-app-template-v3"}`, map[string]string{"Idempotency-Key": "fixture-key"})
 	if res.Code != 202 || s.command.OrganizationID != org || s.command.OwnerAccountID != owner || s.command.IdempotencyKey != "fixture-key" {
 		t.Fatalf("start %d %s", res.Code, res.Body)
 	}
@@ -142,7 +142,7 @@ func TestConnectorFeishuCatalogIsNotVerifiedWithoutPersonalConnection(t *testing
 	if !strings.Contains(body, `"credential_fields"`) || !strings.Contains(body, `"permission_template"`) || strings.Contains(body, `"usable":true`) {
 		t.Fatal("unverified app or missing descriptor")
 	}
-	if strings.Contains(body, `cardkit:card:read`) || !strings.Contains(body, `"profile_id":"feishu-app-template-v2"`) || !strings.Contains(body, `"user_event_dependencies"`) {
+	if strings.Contains(body, `cardkit:card:read`) || !strings.Contains(body, `"profile_id":"feishu-app-template-v3"`) || !strings.Contains(body, `"user_event_dependencies"`) {
 		t.Fatal("catalog must expose the reviewed template and informational event dependencies")
 	}
 }

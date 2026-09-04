@@ -45,7 +45,7 @@ of a different verified app creates a new unbound connection; existing Chat,
 Agent and Workflow bindings remain unchanged. A restored completed registration
 requires an explicit use action before attachment to the current host.
 
-The fixed `feishu-app-template-v2` (profile 2.0.0, plugin 1.0.2) requests 34 application scopes, `offline_access`, six
+The fixed `feishu-app-template-v3` (profile 3.0.0, plugin 1.2.0) requests 40 application scopes, `offline_access`, six
 application events, three user events and one card callback. Requested configuration
 is not a grant. The detail page shows capabilities once, with an expandable list.
 A single collapsed permission section contains application identity and deduplicated
@@ -56,6 +56,24 @@ callbacks are **not consumed by ZGI**. Grant evidence comes from the official
 tenant-grant API (including its documented legacy response without `scope_type`);
 explicit user-subject grants cannot authorize application operations. Feishu's
 resource sharing and ACL checks still apply on every operation.
+
+The v3 permission review preserves the previous 34 application scopes and adds
+`tenant:tenant:readonly`, `im:message`, `im:message.group_msg`,
+`im:chat.members:read`, `directory:employee:search` and
+`directory:employee.base.name.name:read`. The template already included
+`im:message.p2p_msg:readonly`, `im:message:readonly` and `im:message:send_as_bot`.
+All these scopes belong under `addons.scopes.tenant`, with literal underscores.
+The ordinary user grants remain unchanged; `cardkit:card:read` remains excluded.
+
+Permission names and identity requirements were checked against the official
+[tenant information](https://open.feishu.cn/document/server-docs/tenant-v2/query),
+[message reception](https://open.feishu.cn/document/server-docs/im-v1/message/events/receive),
+[chat history](https://open.feishu.cn/document/server-docs/im-v1/message/list),
+[message sending](https://open.feishu.cn/document/server-docs/im-v1/message/create) and
+[chat member](https://open.feishu.cn/document/server-docs/group/chat-member/get) documentation.
+In particular, app-identity group history additionally requires `im:message.group_msg`,
+a sensitive permission; the bot must also belong to that group. Adding the scope
+does not bypass Feishu's approval or resource access checks.
 
 The expandable template preview is available before starting either QR creation
 or configuration. Its permission list is maintained by the platform, not editable
@@ -68,24 +86,80 @@ APIs appear separately as informational dependencies, not requested scopes or AP
 
 Configuration is additive: removing a scope from this template does **not** revoke
 it on an existing Feishu app. Manage existing grants in Feishu and re-run connection
-diagnostics to verify them. Upgrading this built-in plugin permits only the reviewed
-v1 → v2 template reduction; it neither changes saved credentials/bindings nor makes
+diagnostics to verify them. Upgrading this built-in plugin permits the exact reviewed
+v1 → v2 template reduction and the pinned plugin 1.0.2 → 1.1.0 or 1.2.0 / v2 → v3 releases; it neither changes saved credentials/bindings nor makes
 external configuration calls. Existing registration receipts keep their original
 template and idempotency key. Active flows pinned to an older template stop instead
 of silently switching templates or creating another app; check Feishu for any app
 already created before explicitly starting again or using manual entry.
+For an existing app, explicitly choose **Configure application permissions** in
+connection management to request the new template. Complete the provider's approval
+and publishing requirements, then verify the connection again. Permission changes
+require a published version and administrator approval under the official
+[self-built application lifecycle](https://open.feishu.cn/document/home/introduction-to-custom-app-development/self-built-application-development-process).
 
-The native driver currently exposes 35 bounded operations covering bot identity,
-chats, messages, existing document blocks, comments, reactions, pins, CardKit
-creation/update, file metadata, Wiki nodes, basic contacts and IM resources.
+The native driver currently exposes 38 bounded operations covering bot and tenant identity,
+chats and their user members, messages, existing document blocks, comments, reactions, pins, CardKit
+creation/update, file metadata, Wiki nodes, basic contacts, name search and IM resources.
 Batch messages are limited to 20 distinct Open IDs; system messages use only the
 single-user conversation-divider template. Resource operations accept explicit
 message resource IDs or authorized platform file IDs, not arbitrary URLs. Files
 are limited to 10 MiB and JPEG, PNG, WebP, PDF or plain text; downloads become
 private platform references rather than model-visible binary or storage URLs.
 Card reading is outside this release's operation scope; `feishu.card.get` is
-not registered, and template v2 no longer requests `cardkit:card:read`.
+not registered, and the current template does not request `cardkit:card:read`.
 `cardkit:card:write` remains for the existing card creation/update operations.
+
+**Find users by name** (`feishu.contact.search`) calls the official
+[Directory employee search](https://open.feishu.cn/document/directory-v1/employee/search)
+with `tenant_access_token`, `employee_id_type=open_id`, and only
+`base_info.employee_id` / `base_info.name.name` requested. It requires the search
+scope and either the narrow name-reading grant or an already-approved basic-info grant.
+The QR template requests only the narrow name grant, not phone, email or HR fields.
+It returns one page of candidate names and Open IDs (20 by default, at most 50),
+plus an explicit continuation token. Same-name users remain separate candidates;
+no recipient is chosen automatically and no message is sent. Field permission
+failures are not treated as no matches. Results obey the app's directory data
+permissions and do not include external or departed users. The older
+[user search](https://open.feishu.cn/document/server-docs/contact-v3/user/search-users)
+requires `user_access_token` and is not used as a fallback.
+
+**Get tenant information** (`feishu.tenant.get`) queries the selected application's
+own tenant using `tenant:tenant:readonly`, with no arbitrary tenant input. It returns
+the name, display ID, tenant key and, when provided, tenant tag; it does not return
+avatars or request the additional domain-reading permission. Both
+[Feishu](https://open.feishu.cn/document/server-docs/tenant-v2/query) and
+[Lark](https://open.larksuite.com/document/server-docs/tenant-v2/tenant/query)
+document the app-token endpoint.
+
+**List chat members** (`feishu.chat.members.list`) takes a chat ID and optional
+page size/cursor, fixes `member_id_type=open_id`, and returns names/Open IDs of
+user members, not robots. Any one of `im:chat`, `im:chat:readonly`,
+`im:chat.members:read` or `im:chat.group_info:readonly` is sufficient at the scope
+layer; the existing template already requests `im:chat.members:read`. The app's
+bot must already be enabled and in the target chat; internal chats must belong
+to the same tenant. It never joins a chat or sends a message automatically.
+
+The [Feishu](https://open.feishu.cn/document/server-docs/group/chat-member/get)
+and [Lark](https://open.larksuite.com/document/server-docs/group/chat-member/get)
+member APIs default to 20 and allow a requested page size up to 100, but members
+joining together can make the actual page larger. ZGI preserves the complete
+page within its local 1,000-member/1-MiB protection limits rather than silently
+cutting it to 100 and advancing the cursor. An oversized or malformed page fails
+without a success cursor. `has_more`, not page length, determines continuation;
+short or empty pages can have more results. One action fetches one page. Missing
+or non-advancing continuation tokens fail; the stateless driver does not claim
+to detect longer cursor cycles across calls. Member totals and tenant keys are
+not exposed as user-list metadata.
+
+These two reads add operations, not permissions: the v3 template remains at 40
+application scopes. Missing/inaccessible tenants, invalid/dissolved chats, bot
+membership and application-state failures are not successful empty results or
+automatically classified as invalid App Secrets. The plugin's additive operation
+upgrade does not expand existing Connection or Binding allowlists. Reverification
+alone may therefore leave new actions unavailable on older connections; published
+Agent/Workflow bindings are never rewritten. Grant verification and local runtime
+authorization remain separate checks.
 
 Writes use the same native confirmation, authorization, permanent claim and
 audit path as other Connectors. Unattended high-risk writes remain blocked and
@@ -315,6 +389,12 @@ In AIChat and Agent turns, the runtime reads current target bindings and
 provides the selected operations directly as model-callable functions. It
 ranks candidates against the current request and applies the shared tool-count
 and schema budgets; a Skill directory's result limit is not an operation limit.
+Connector function descriptions retain their English usage/safety instructions
+and add bounded Simplified Chinese Connector/action names for Chinese lexical
+matching. Long localized descriptions are not used as extra ranking text: a
+phrase such as "does not send messages" must not promote an unrelated read.
+This does not change ordinary Skill ranking, aliases, continuation priority or
+budget limits, and is not a guarantee of semantic recall for every paraphrase.
 Connector use does not require the model to first search for or activate its
 internal Skill group. Array, nested-object, and date/time parameters retain the
 admitted operation's JSON Schema. A skipped or detached operation is not
