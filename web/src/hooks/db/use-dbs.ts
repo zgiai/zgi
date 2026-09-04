@@ -3,7 +3,7 @@
 // DB hooks powered by React Query
 // All comments are in English for clarity and maintainability
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
@@ -11,7 +11,11 @@ import { dbService } from '@/services';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { AgentBindingMutationConfirmation, ApiResponseData } from '@/services/types/common';
 import type { Db, CreateDbRequest, UpdateDbRequest } from '@/services/types/db';
-import { getErrorMessage } from '@/utils/error-notifications';
+import {
+  getErrorMessage,
+  isAuthSessionError,
+  isCanceledRequestError,
+} from '@/utils/error-notifications';
 
 import { DB_KEYS } from '@/hooks/query-keys';
 import { workspaceInvalidatePredicate } from '@/hooks/query-utils';
@@ -172,10 +176,10 @@ export function useDbsBasic(
     retry: false,
   });
 
-  if (error) {
-    const message = getErrorMessage(error);
-    toast.error(message || 'Failed to load databases');
-  }
+  useEffect(() => {
+    if (!enabled || !error || isAuthSessionError(error) || isCanceledRequestError(error)) return;
+    toast.error(getErrorMessage(error), { id: 'database-list-error' });
+  }, [enabled, error]);
 
   return {
     dbs: data?.data ?? [],
