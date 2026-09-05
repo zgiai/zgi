@@ -362,7 +362,7 @@ func TestDeveloperGrantPreDeductRejectsStaleKeyAuthorizationPeriod(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&accessmodel.Grant{}, &accessmodel.Policy{}, &workspacemodel.Workspace{}); err != nil {
+	if err := db.AutoMigrate(&accessmodel.Grant{}, &accessmodel.Policy{}, &workspacemodel.Organization{}, &workspacemodel.Workspace{}); err != nil {
 		t.Fatal(err)
 	}
 	quota := int64(100)
@@ -377,6 +377,11 @@ func TestDeveloperGrantPreDeductRejectsStaleKeyAuthorizationPeriod(t *testing.T)
 		t.Fatal(err)
 	}
 	organizationID := grant.OrganizationID
+	if err := db.Create(&workspacemodel.Organization{
+		ID: organizationID, Name: "Developer billing organization", Status: workspacemodel.OrganizationStatusActive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Create(&workspacemodel.Workspace{
 		ID: grant.WorkspaceID, Name: "Developer billing workspace", Plan: "basic",
 		Status: workspacemodel.WorkspaceStatusNormal, OrganizationID: &organizationID,
@@ -408,14 +413,18 @@ func TestDeveloperGrantPreDeductRejectsStaleKeyAuthorizationPeriod(t *testing.T)
 func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing.T) {
 	past := time.Now().Add(-time.Minute)
 	for _, testCase := range []struct {
-		name       string
-		status     string
-		expiresAt  *time.Time
-		policyMode string
+		name               string
+		status             string
+		expiresAt          *time.Time
+		policyMode         string
+		workspaceStatus    workspacemodel.WorkspaceStatus
+		organizationStatus workspacemodel.OrganizationStatus
 	}{
-		{name: "inactive", status: "inactive"},
-		{name: "expired", status: "active", expiresAt: &past},
-		{name: "policy disabled", status: "active", policyMode: accessmodel.AccessModeDisabled},
+		{name: "inactive", status: "inactive", workspaceStatus: workspacemodel.WorkspaceStatusNormal, organizationStatus: workspacemodel.OrganizationStatusActive},
+		{name: "expired", status: "active", expiresAt: &past, workspaceStatus: workspacemodel.WorkspaceStatusNormal, organizationStatus: workspacemodel.OrganizationStatusActive},
+		{name: "policy disabled", status: "active", policyMode: accessmodel.AccessModeDisabled, workspaceStatus: workspacemodel.WorkspaceStatusNormal, organizationStatus: workspacemodel.OrganizationStatusActive},
+		{name: "workspace archived", status: "active", workspaceStatus: workspacemodel.WorkspaceStatusArchived, organizationStatus: workspacemodel.OrganizationStatusActive},
+		{name: "organization archived", status: "active", workspaceStatus: workspacemodel.WorkspaceStatusNormal, organizationStatus: workspacemodel.OrganizationStatusArchived},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
@@ -426,6 +435,7 @@ func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing
 				&accessmodel.Grant{},
 				&accessmodel.Policy{},
 				&apikeymodel.TenantAPIKey{},
+				&workspacemodel.Organization{},
 				&workspacemodel.Workspace{},
 				&BillingAttempt{},
 				&BillingAttemptEntry{},
@@ -436,9 +446,14 @@ func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing
 				t.Fatal(err)
 			}
 			organizationID, workspaceID, principalID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+			if err := db.Create(&workspacemodel.Organization{
+				ID: organizationID, Name: "Developer billing organization", Status: testCase.organizationStatus,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
 			if err := db.Create(&workspacemodel.Workspace{
 				ID: workspaceID, Name: "Developer billing workspace", Plan: "basic",
-				Status: workspacemodel.WorkspaceStatusNormal, OrganizationID: &organizationID,
+				Status: testCase.workspaceStatus, OrganizationID: &organizationID,
 			}).Error; err != nil {
 				t.Fatal(err)
 			}

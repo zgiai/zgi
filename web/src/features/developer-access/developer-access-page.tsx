@@ -945,7 +945,7 @@ function RequestAccessDialog({
   const quotaValue = quota === '' ? undefined : Number(quota);
   const ttlHoursValue = ttlHours === '' ? undefined : Number(ttlHours);
   const requestInvalid =
-    (quotaValue !== undefined && (!Number.isFinite(quotaValue) || quotaValue < 0)) ||
+    (quotaValue !== undefined && (!Number.isSafeInteger(quotaValue) || quotaValue < 0)) ||
     (ttlHoursValue !== undefined && (!Number.isFinite(ttlHoursValue) || ttlHoursValue <= 0));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -995,6 +995,7 @@ function RequestAccessDialog({
               id="access-quota"
               type="number"
               min={0}
+              step={1}
               value={quota}
               onChange={event => setQuota(event.target.value)}
               placeholder={t('placeholders.quota')}
@@ -1072,7 +1073,7 @@ function ReviewAccessDialog({
   const quotaInvalid =
     approving &&
     quotaValue !== undefined &&
-    (!Number.isFinite(quotaValue) ||
+    (!Number.isSafeInteger(quotaValue) ||
       quotaValue < 0 ||
       (policy?.max_quota != null && quotaValue > policy.max_quota));
   const maxKeysValue = Number(maxKeys);
@@ -1115,6 +1116,7 @@ function ReviewAccessDialog({
                 id="review-quota"
                 type="number"
                 min={0}
+                step={1}
                 max={policy?.max_quota ?? undefined}
                 value={quota}
                 onChange={event => setQuota(event.target.value)}
@@ -1286,8 +1288,8 @@ function PolicyDialog({
     maxKeysValue < 1 ||
     maxKeysValue > 100 ||
     (defaultQuotaValue !== undefined &&
-      (!Number.isFinite(defaultQuotaValue) || defaultQuotaValue < 0)) ||
-    (maxQuotaValue !== undefined && (!Number.isFinite(maxQuotaValue) || maxQuotaValue < 0)) ||
+      (!Number.isSafeInteger(defaultQuotaValue) || defaultQuotaValue < 0)) ||
+    (maxQuotaValue !== undefined && (!Number.isSafeInteger(maxQuotaValue) || maxQuotaValue < 0)) ||
     (defaultQuotaValue !== undefined &&
       maxQuotaValue !== undefined &&
       defaultQuotaValue > maxQuotaValue) ||
@@ -1328,6 +1330,7 @@ function PolicyDialog({
                 id="policy-quota"
                 type="number"
                 min={0}
+                step={1}
                 value={defaultQuota}
                 onChange={event => setDefaultQuota(event.target.value)}
               />
@@ -1338,6 +1341,7 @@ function PolicyDialog({
                 id="policy-max-quota"
                 type="number"
                 min={0}
+                step={1}
                 value={maxQuota}
                 onChange={event => setMaxQuota(event.target.value)}
               />

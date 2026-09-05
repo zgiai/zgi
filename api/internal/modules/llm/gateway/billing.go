@@ -479,6 +479,15 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 			First(&workspace).Error; err != nil {
 			return ErrAPIKeyInactive
 		}
+		if !workspace.IsNormal() || workspace.OrganizationID == nil || *workspace.OrganizationID != organizationID {
+			return ErrAPIKeyInactive
+		}
+		var organization workspacemodel.Organization
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", organizationID).
+			First(&organization).Error; err != nil || !organization.IsActive() {
+			return ErrAPIKeyInactive
+		}
 		var policy accessmodel.Policy
 		err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("workspace_id = ? AND organization_id = ?", workspaceID, organizationID).
