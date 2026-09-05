@@ -422,7 +422,10 @@ export function DeveloperAccessPage() {
   );
   const personalKeys = (keys.data ?? []).filter(item => item.principal_id === access?.principal_id);
   const memberKeys = (keys.data ?? []).filter(item => item.principal_id !== access?.principal_id);
-  const canCreate = Boolean(access?.can_create_key);
+  const canUseKeys = Boolean(access?.can_create_key);
+  const maxKeys = grant?.max_keys ?? access?.policy.max_keys ?? 0;
+  const hasAvailableKeySlot = (access?.active_key_count ?? 0) < maxKeys;
+  const canCreate = canUseKeys && hasAvailableKeySlot;
   const canRequest = Boolean(access?.can_request_access);
   const primaryAction = canCreate
     ? () => setCreateOpen(true)
@@ -596,8 +599,10 @@ export function DeveloperAccessPage() {
                     <KeyRow
                       key={item.id}
                       item={item}
-                      canRotate={canCreate}
-                      canActivate={canCreate}
+                      canRotate={
+                        canUseKeys && (item.status === 'active' || hasAvailableKeySlot)
+                      }
+                      canActivate={canUseKeys && hasAvailableKeySlot}
                       onStatus={action => {
                         if (action === 'rotate') {
                           setKeyToRotate(item);
@@ -633,7 +638,7 @@ export function DeveloperAccessPage() {
                         item={item}
                         showPrincipal
                         canRotate={false}
-                        canActivate={canCreate}
+                        canActivate={Boolean(access?.can_manage)}
                         onStatus={action => {
                           if (action === 'rotate') return;
                           if (action === 'revoke') {
