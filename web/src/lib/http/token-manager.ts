@@ -7,7 +7,12 @@ import { withBasePath } from '@/lib/config';
 import { captureError } from '@/lib/observability';
 import { consumePendingLogoutRedirect } from '@/utils/logout-redirect';
 import { sessionManager } from '@/lib/auth/session-manager';
-import { isLogoutInProgress, markAuthRedirectInProgress } from '@/lib/auth/logout-state';
+import {
+  isAuthRedirectInProgress,
+  isLogoutInProgress,
+  markAuthRedirectInProgress,
+} from '@/lib/auth/logout-state';
+import { ErrorNotificationService } from '@/utils/error-notifications';
 import type { ExtendedRequestConfig } from './types';
 
 export class StaleTokenRefreshError extends Error {
@@ -82,7 +87,10 @@ export class TokenManager {
   }
 
   redirectToLogin(): void {
+    if (isLogoutInProgress() || isAuthRedirectInProgress()) return;
+
     if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+      ErrorNotificationService.showSessionExpired();
       const pendingLogoutRedirect = consumePendingLogoutRedirect();
       if (pendingLogoutRedirect) {
         markAuthRedirectInProgress();
@@ -101,7 +109,7 @@ export class TokenManager {
    * Proactively refreshes if token is missing or about to expire.
    */
   async ensureValidToken(): Promise<string | null> {
-    if (isLogoutInProgress()) {
+    if (isLogoutInProgress() || isAuthRedirectInProgress()) {
       return null;
     }
 
@@ -110,10 +118,12 @@ export class TokenManager {
 
     // No tokens at all - user needs to login
     if (!token && !refreshToken) {
+      this.clearAuthData();
+      this.redirectToLogin();
       return null;
     }
 
-    // Have access token but lost refresh token - clear and force login
+    // Access-only sessions remain usable until the server rejects the token.
     if (token && !refreshToken) {
       return token;
     }
@@ -160,7 +170,7 @@ export class TokenManager {
     if (!refreshToken) {
       this.clearAuthData();
       this.redirectToLogin();
-      throw new Error('No refresh token available');
+      throw new AxiosError('Authentication session is not available', 'ERR_AUTH_SESSION_MISSING');
     }
 
     this.assertRefreshSessionCurrent(refreshToken);
@@ -170,18 +180,6 @@ export class TokenManager {
 
     try {
       return await refreshPromise;
-    } catch (error) {
-      if (isStaleTokenRefreshError(error)) {
-        throw error;
-      }
-
-      if (isTransientNetworkError(error)) {
-        throw error;
-      }
-
-      this.clearAuthData();
-      this.redirectToLogin();
-      throw error;
     } finally {
       if (sharedRefreshPromise === refreshPromise) {
         sharedRefreshPromise = null;
@@ -239,8 +237,14 @@ export class TokenManager {
           (error.response?.data as { code?: string; errorCode?: string })?.code ||
           (error.response?.data as { errorCode?: string })?.errorCode;
 
-        if (status === 401 || status === 403 || (status === 400 && code === '212012')) {
-          throw new Error('Refresh token is invalid or expired');
+        if (
+          status === 401 ||
+          status === 403 ||
+          (status === 400 && ['401002', '212012'].includes(String(code)))
+        ) {
+          this.clearAuthData();
+          this.redirectToLogin();
+          throw AxiosError.from(error, 'ERR_AUTH_SESSION_MISSING');
         }
 
         if (isTransientNetworkError(error)) {

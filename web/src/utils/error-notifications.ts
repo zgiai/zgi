@@ -120,7 +120,10 @@ function getCommonMessages() {
   return getIsZhHans() ? zhHans : enUS;
 }
 
-function normalizeBackendMessage(message: string | null | undefined, status?: number): string | null {
+function normalizeBackendMessage(
+  message: string | null | undefined,
+  status?: number
+): string | null {
   const commonMessages = getCommonMessages();
   const normalized = message?.trim().toLowerCase();
 
@@ -160,6 +163,15 @@ const NETWORK_ERROR_DEDUPE_MS = 5_000;
 let lastNetworkErrorAt = 0;
 
 export class ErrorNotificationService {
+  static showSessionExpired(): void {
+    safeToast({
+      title: getCommonMessages().requestErrors.sessionExpired,
+      variant: 'destructive',
+      duration: 5000,
+      id: 'auth-session-expired',
+    });
+  }
+
   /**
    * Show network error with i18n support
    */
@@ -209,6 +221,10 @@ export class ErrorNotificationService {
  * Extract error message from unknown error types
  */
 export function getErrorMessage(error: unknown): string {
+  if (isAuthSessionError(error)) {
+    return getCommonMessages().requestErrors.sessionExpired;
+  }
+
   if (error instanceof AxiosError) {
     if (
       error.code === 'NETWORK_ERROR' ||
@@ -232,6 +248,14 @@ export function getErrorMessage(error: unknown): string {
     return normalizeBackendMessage(error) || getCommonMessages().requestErrors.generic;
   }
   return getCommonMessages().requestErrors.generic;
+}
+
+export function isAuthSessionError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: string }).code === 'ERR_AUTH_SESSION_MISSING'
+  );
 }
 
 /**
