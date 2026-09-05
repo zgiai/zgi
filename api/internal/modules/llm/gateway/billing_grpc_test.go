@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -108,6 +109,31 @@ func openRemoteBillingTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func seedRemoteBillingPersonalKey(t *testing.T, db *gorm.DB, grant *accessmodel.Grant, bc *BillingContext, status string) apikeymodel.TenantAPIKey {
+	t.Helper()
+	if err := db.AutoMigrate(&apikeymodel.TenantAPIKey{}); err != nil {
+		t.Fatalf("migrate personal api key: %v", err)
+	}
+	principalType, workspaceID := accessmodel.PrincipalTypeUser, grant.WorkspaceID
+	key := apikeymodel.TenantAPIKey{
+		OrganizationID:       grant.OrganizationID,
+		WorkspaceID:          &workspaceID,
+		PrincipalType:        &principalType,
+		PrincipalID:          &grant.PrincipalID,
+		AccessGrantID:        &grant.ID,
+		KeyHash:              uuid.NewString(),
+		Name:                 "remote billing personal key",
+		Status:               status,
+		SecretVersion:        2,
+		AuthorizationVersion: grant.AuthorizationVersion,
+	}
+	if err := db.Omit("Key").Create(&key).Error; err != nil {
+		t.Fatalf("create personal api key: %v", err)
+	}
+	bc.APIKeyID = key.ID
+	return key
+}
+
 func TestRemoteBillingMarkAttemptSettleFailedWritesPartialUsageBill(t *testing.T) {
 	db := openRemoteBillingTestDB(t)
 	remote := &RemoteBilling{localService: &BillingService{db: db}}
@@ -163,6 +189,7 @@ func TestRemoteBillingEmptyDeductionIDRollsBackLocalGrantReservation(t *testing.
 		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
 		EstimatedCredits: 100,
 	}
+	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
 	remote := &RemoteBilling{localService: &BillingService{db: db}, grpcClient: emptyDeductionIDQuotaClient{}}
 	if err := remote.preDeductViaGRPC(context.Background(), bc); err == nil {
 		t.Fatal("empty remote deduction ID unexpectedly succeeded")
@@ -179,6 +206,46 @@ func TestRemoteBillingEmptyDeductionIDRollsBackLocalGrantReservation(t *testing.
 	}
 	if attempt.Status != billingAttemptStatusPredeductFailed || attempt.ErrorCode == nil || *attempt.ErrorCode != "PREDEDUCT_INVALID_RESPONSE" {
 		t.Fatalf("invalid response attempt state = %#v", attempt)
+	}
+}
+
+func TestRemoteBillingRejectsInactivePersonalKeyAndRollsBackGrantReservation(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatalf("migrate developer grant: %v", err)
+	}
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1,
+		AllowedModels: []string{}, AuthorizationVersion: 2,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	version := grant.AuthorizationVersion
+	bc := &BillingContext{
+		OrganizationID: grant.OrganizationID, WorkspaceID: grant.WorkspaceID,
+		AttemptID: uuid.NewString(), RequestID: uuid.NewString(),
+		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+		InvocationSource: InvocationSourceAPI, AuthMethod: "personal_api_key",
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
+		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		EstimatedCredits: 25,
+	}
+	seedRemoteBillingPersonalKey(t, db, &grant, bc, "inactive")
+	remote := &RemoteBilling{localService: &BillingService{db: db}}
+	if err := remote.preDeductLocalSubjectQuota(context.Background(), bc); !errors.Is(err, ErrAPIKeyInactive) {
+		t.Fatalf("inactive remote personal key pre-deduct error = %v, want %v", err, ErrAPIKeyInactive)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 0 || grant.RemainQuota != quota {
+		t.Fatalf("inactive remote personal key left a grant reservation: used/remain=%d/%d", grant.UsedQuota, grant.RemainQuota)
 	}
 }
 
@@ -209,6 +276,7 @@ func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
 		EstimatedCredits: quota,
 	}
+	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
 	remote := &RemoteBilling{localService: &BillingService{db: db}}
 	if err := remote.preDeductLocalSubjectQuota(context.Background(), bc); err != nil {
 		t.Fatal(err)
@@ -294,6 +362,7 @@ func TestRemoteBillingPersistsAndRetriesFailedLateDeductionCompensation(t *testi
 		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
 		EstimatedCredits: quota, SubjectReservedCredits: quota,
 	}
+	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
 	client := &lateDeductionQuotaClient{}
 	remote := &RemoteBilling{localService: &BillingService{db: db}, grpcClient: client}
 	requestCtx, cancelRequest := context.WithCancel(context.Background())

@@ -1067,6 +1067,26 @@ func (s *RemoteBilling) preDeductLocalSubjectQuota(ctx context.Context, bc *Bill
 				return fmt.Errorf("missing or mismatched developer grant subject")
 			}
 			preDeductErr = s.localService.preDeductSubjectQuota(ctx, tx, bc, nil)
+			if preDeductErr == nil {
+				apiKeyID := strings.TrimSpace(bc.APIKeyID)
+				if bc.AuthMethod != "personal_api_key" || apiKeyID == "" {
+					return fmt.Errorf("developer grant subject requires a personal api key")
+				}
+				// Keep the same Grant -> Key lock order as local billing and
+				// developer-access mutations. A lifecycle change committed after
+				// authentication must stop this request before the remote reservation.
+				var apiKey apikeymodel.TenantAPIKey
+				if err := tx.WithContext(ctx).
+					Clauses(clause.Locking{Strength: "UPDATE"}).
+					Where("id = ? AND organization_id = ?", apiKeyID, bc.OrganizationID).
+					First(&apiKey).Error; err != nil {
+					return fmt.Errorf("load personal api key for developer grant pre-deduct: %w", err)
+				}
+				if apiKey.Status != "active" || apiKey.AccessGrantID == nil || strings.TrimSpace(*apiKey.AccessGrantID) != strings.TrimSpace(bc.AccessGrantID) ||
+					bc.GrantAuthorizationVersion == nil || apiKey.AuthorizationVersion != *bc.GrantAuthorizationVersion {
+					return ErrAPIKeyInactive
+				}
+			}
 
 		case quotaSubjectTypeWorkspace:
 			if strings.TrimSpace(bc.QuotaSubjectID) == "" {

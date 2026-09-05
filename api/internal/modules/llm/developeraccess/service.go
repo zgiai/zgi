@@ -501,21 +501,30 @@ func (s *Service) lockScopeForUpdate(ctx context.Context, tx *gorm.DB, expected 
 		return nil, ErrForbidden
 	}
 
+	var organizationMember workspacemodel.OrganizationMember
+	organizationMemberErr := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("organization_id = ? AND account_id = ?", organization.ID, accountID).
+		First(&organizationMember).Error
+	if organizationMemberErr != nil && !errors.Is(organizationMemberErr, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("revalidate developer access organization member: %w", organizationMemberErr)
+	}
+
 	var member workspacemodel.WorkspaceMember
 	memberErr := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("workspace_id = ? AND account_id = ?", workspace.ID, accountID).First(&member).Error
 	if memberErr != nil && !errors.Is(memberErr, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("revalidate developer access member: %w", memberErr)
 	}
-	canManage := memberErr == nil && member.Role.IsAdminRole()
-	if !canManage && s.organizationService != nil {
-		allowed, err := s.organizationService.CheckWorkspacePermission(
-			ctx, *workspace.OrganizationID, workspace.ID, accountID, workspacemodel.WorkspacePermissionWorkspaceManage,
+	canManage := organizationMemberErr == nil && organizationMember.Status == workspacemodel.OrganizationMemberStatusActive &&
+		(organizationMember.Role == workspacemodel.OrganizationRoleOwner || organizationMember.Role == workspacemodel.OrganizationRoleAdmin)
+	if !canManage && memberErr == nil {
+		canManage = workspacemodel.WorkspaceMemberAllowsPermission(
+			member.Role,
+			member.RoleID,
+			member.Permissions,
+			member.PermissionSource,
+			workspacemodel.WorkspacePermissionWorkspaceManage,
 		)
-		if err != nil {
-			return nil, fmt.Errorf("revalidate developer access permission: %w", err)
-		}
-		canManage = allowed
 	}
 	if errors.Is(memberErr, gorm.ErrRecordNotFound) && !canManage {
 		return nil, ErrForbidden

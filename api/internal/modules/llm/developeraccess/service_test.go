@@ -24,6 +24,7 @@ func openDeveloperAccessTestDB(t *testing.T) *gorm.DB {
 	}
 	if err := db.AutoMigrate(
 		&workspacemodel.Organization{},
+		&workspacemodel.OrganizationMember{},
 		&workspacemodel.Workspace{},
 		&workspacemodel.WorkspaceMember{},
 		&accessmodel.Policy{},
@@ -105,6 +106,45 @@ func TestPutPolicyRevalidatesManagementPermission(t *testing.T) {
 	_, err = service.putPolicy(context.Background(), scope, ownerID, PolicyInput{Mode: accessmodel.AccessModeSelfService, MaxKeys: 2})
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("putPolicy error = %v, want forbidden after role downgrade", err)
+	}
+}
+
+func TestPutPolicyRevalidatesOrganizationAdminRoleInTransaction(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, _, _ := seedDeveloperWorkspace(t, db)
+	organizationAdminID := uuid.NewString()
+	if err := db.Create(&workspacemodel.OrganizationMember{
+		OrganizationID: organizationID,
+		AccountID:      organizationAdminID,
+		Role:           workspacemodel.OrganizationRoleAdmin,
+		Status:         workspacemodel.OrganizationMemberStatusActive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var workspace workspacemodel.Workspace
+	if err := db.First(&workspace, "id = ?", workspaceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	staleScope := &workspaceScope{Workspace: &workspace, CanManage: true}
+	if err := db.Model(&workspacemodel.OrganizationMember{}).
+		Where("organization_id = ? AND account_id = ?", organizationID, organizationAdminID).
+		Update("role", workspacemodel.OrganizationRoleNormal).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	_, err := service.putPolicy(context.Background(), staleScope, organizationAdminID, PolicyInput{
+		Mode: accessmodel.AccessModeSelfService, MaxKeys: 2,
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("putPolicy with stale organization admin role error = %v, want forbidden", err)
+	}
+	var policies int64
+	if err := db.Model(&accessmodel.Policy{}).Where("workspace_id = ?", workspaceID).Count(&policies).Error; err != nil {
+		t.Fatal(err)
+	}
+	if policies != 0 {
+		t.Fatalf("stale organization admin created %d policies", policies)
 	}
 }
 
