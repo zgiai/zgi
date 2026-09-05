@@ -933,7 +933,6 @@ export function AIChatShell({
         model: {
           provider: modelSelectorValue.provider,
           model: modelSelectorValue.model,
-          routingStrategy: modelSelectorValue.routing_strategy,
           parameters: modelSelectorValue.params,
         },
         useMemory: forcedUseMemory ?? useMemory,
@@ -1036,7 +1035,6 @@ export function AIChatShell({
         {
           provider: modelSelectorValue.provider,
           model: modelSelectorValue.model,
-          routingStrategy: modelSelectorValue.routing_strategy,
           parameters: modelSelectorValue.params,
         },
         {
@@ -1146,7 +1144,6 @@ export function AIChatShell({
           model: {
             provider: modelSelectorValue.provider,
             model: modelSelectorValue.model,
-            routingStrategy: modelSelectorValue.routing_strategy,
             parameters: modelSelectorValue.params,
           },
           operationContext: toolGovernanceOperationContext,
@@ -1161,7 +1158,6 @@ export function AIChatShell({
         model: {
           provider: modelSelectorValue.provider,
           model: modelSelectorValue.model,
-          routingStrategy: modelSelectorValue.routing_strategy,
           parameters: modelSelectorValue.params,
         },
         useMemory: Boolean(message.metadata?.use_memory),

@@ -42,6 +42,26 @@ func TestPrivateChannelDoesNotReceiveRoutingHeaders(t *testing.T) {
 	}
 }
 
+func TestPlatformProxyRoutingHeadersPreserveZeroOutputEstimate(t *testing.T) {
+	bc := &BillingContext{
+		BillingLane:          UsageBillingLanePlatform,
+		RoutingStrategy:      "price",
+		EstimatedInputTokens: 120,
+	}
+	req, err := http.NewRequestWithContext(withPlatformProxyMetadata(context.Background(), bc), http.MethodPost, "http://console.internal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyPlatformProxyHeaders(req)
+
+	if got := req.Header.Get(headerZGIEstimatedInputTokens); got != "120" {
+		t.Fatalf("estimated input header = %q, want 120", got)
+	}
+	if got := req.Header.Get(headerZGIEstimatedOutputTokens); got != "0" {
+		t.Fatalf("estimated output header = %q, want 0", got)
+	}
+}
+
 func TestNormalizeConsoleRoutingStrategy(t *testing.T) {
 	tests := map[string]string{
 		"": "stability", "balanced": "stability", "unexpected": "stability",

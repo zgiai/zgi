@@ -43,6 +43,28 @@ const messages: SettingsMessages = {
     saving: '保存中...',
     saved: '已保存',
   },
+  modelRouting: {
+    title: '模型调用策略',
+    description:
+      '统一控制本组织所有平台模型调用。智能体、工作流、知识库和后台任务都会使用这里设置的策略。',
+    save: '保存策略',
+    saving: '保存中...',
+    saved: '已保存',
+    options: {
+      stability: {
+        label: '稳定优先',
+        description: '优先选择近期成功率更高、连续失败更少的渠道。',
+      },
+      speed: {
+        label: '速度优先',
+        description: '优先选择首 Token 更快、生成速度更高的渠道。',
+      },
+      price: {
+        label: '价格优先',
+        description: '按模型对外配置价格和预计用量，优先选择预计费用更低的渠道。',
+      },
+    },
+  },
   pricingFallback: {
     title: '模型缺价计费策略',
     description: '模型已配置价格时优先使用模型价格；缺少价格时，按管理配置和系统默认策略计费。',

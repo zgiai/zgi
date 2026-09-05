@@ -75,6 +75,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 	if err != nil {
 		return nil, err
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", effectiveReq.Model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, effectiveReq.Model, organizationID.String(), shadowOrganizationID.String())
@@ -117,6 +118,8 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			continue
 		}
 		lockTokenPricingQuote(billingCtx, quote)
+		billingCtx.EstimatedInputTokens = promptTokens
+		billingCtx.EstimatedOutputTokens = completionTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.responses")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -220,6 +223,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 	if err != nil {
 		return nil, err
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, 0, PricingOperationEmbedding)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, req.Provider, req.Model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
@@ -265,6 +269,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 		}
 		billingCtx.PricingOperation = PricingOperationEmbedding
 		lockTokenPricingQuote(billingCtx, quote)
+		billingCtx.EstimatedInputTokens = promptTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.embeddings")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -353,6 +358,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 	if err != nil {
 		return nil, err
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, 0, PricingOperationRerank)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", req.Model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
@@ -398,6 +404,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 		}
 		billingCtx.PricingOperation = PricingOperationRerank
 		lockTokenPricingQuote(billingCtx, quote)
+		billingCtx.EstimatedInputTokens = promptTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.rerank")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 

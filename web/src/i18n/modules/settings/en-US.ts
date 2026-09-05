@@ -47,6 +47,31 @@ const messages = {
     saving: 'Saving...',
     saved: 'Saved',
   },
+  modelRouting: {
+    title: 'Model routing strategy',
+    description:
+      'Controls all platform model calls for this organization, including agents, workflows, datasets, and background jobs.',
+    save: 'Save strategy',
+    saving: 'Saving...',
+    saved: 'Saved',
+    options: {
+      stability: {
+        label: 'Stability first',
+        description:
+          'Prefers channels with higher recent success rates and fewer consecutive failures.',
+      },
+      speed: {
+        label: 'Speed first',
+        description:
+          'Prefers channels with faster time to first token and higher generation throughput.',
+      },
+      price: {
+        label: 'Price first',
+        description:
+          'Uses configured sale prices and estimated usage to prefer the lowest expected cost.',
+      },
+    },
+  },
   pricingFallback: {
     title: 'Missing-price billing policy',
     description:

@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
@@ -40,6 +41,8 @@ type ChannelRouter struct {
 	channelProvider         platformchannel.ChannelProvider // Platform official channels
 	privateModels           llmmodelsvc.PrivateModelLookupService
 	upstreamState           *upstreamstate.Service
+	routingResolver         *RoutingStrategyResolver
+	now                     func() time.Time
 }
 
 type channelModelSource string
@@ -85,6 +88,7 @@ type ProviderSelection struct {
 	UpstreamProbe               bool
 	UpstreamProbeRequiresBackup bool
 	UpstreamProbeHasBackup      bool
+	RoutingStrategy             string
 }
 
 var errAmbiguousActiveCatalogModel = errors.New("ambiguous active catalog model")
@@ -121,6 +125,7 @@ type ChannelSelection struct {
 	UpstreamHalfOpen            bool
 	UpstreamProbe               bool
 	UpstreamProbeRequiresBackup bool
+	RoutingStrategy             string
 }
 
 // NewChannelRouter creates a new channel router using V2 architecture
@@ -133,6 +138,8 @@ func NewChannelRouter(db *gorm.DB, cryptoService shared.CryptoService, privateMo
 		strategyFactory:         NewStrategyFactory(),
 		privateModels:           privateModels,
 		upstreamState:           upstreamstate.NewService(db, cryptoService),
+		routingResolver:         NewRoutingStrategyResolver(db),
+		now:                     func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -265,7 +272,12 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	logger.DebugContext(logCtx, "valid LLM routes filtered",
 		zap.Int("valid_route_count", len(validRoutes)),
 	)
-	selectedRoutes := r.selectRoutesByPriorityAndWeight(validRoutes, maxSelections)
+	resolver := r.routingResolver
+	if resolver == nil {
+		resolver = NewRoutingStrategyResolver(r.db)
+	}
+	policy := resolver.Resolve(ctx, organizationID)
+	selectedRoutes := r.selectRoutesByRoutingPolicy(ctx, organizationID, modelName, privateModel, validRoutes, maxSelections, policy)
 
 	for i, route := range selectedRoutes {
 		logger.DebugContext(logCtx, "selected LLM route",
@@ -274,6 +286,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 			zap.String("route_type", string(route.Type)),
 			zap.Int("priority", route.Priority),
 			zap.Int("weight", route.Weight),
+			zap.String("routing_strategy", policy.Strategy),
 		)
 	}
 
@@ -289,6 +302,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 			)
 			continue
 		}
+		selection.RoutingStrategy = policy.Strategy
 		selections = append(selections, selection)
 	}
 
@@ -1150,6 +1164,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 			UpstreamHalfOpen:            cs.UpstreamHalfOpen,
 			UpstreamProbe:               cs.UpstreamProbe,
 			UpstreamProbeRequiresBackup: cs.UpstreamProbeRequiresBackup,
+			RoutingStrategy:             cs.RoutingStrategy,
 		}, nil
 	}
 
@@ -1217,6 +1232,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 		UpstreamHalfOpen:            cs.UpstreamHalfOpen,
 		UpstreamProbe:               cs.UpstreamProbe,
 		UpstreamProbeRequiresBackup: cs.UpstreamProbeRequiresBackup,
+		RoutingStrategy:             cs.RoutingStrategy,
 	}
 	if err := hydratePlatformModelIdentity(ctx, db, selection); err != nil {
 		return nil, err

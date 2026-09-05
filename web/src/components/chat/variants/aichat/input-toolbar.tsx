@@ -167,7 +167,6 @@ function getToolGovernanceTierDisplay(
  */
 export function AIChatInputToolbar({
   modelSelectorValue,
-  modelProps,
   modelSelectorWarning = false,
   isModelInitializing = false,
   modelMissing,
@@ -225,7 +224,6 @@ export function AIChatInputToolbar({
   const showStopButton = canStop ?? isSending;
   const activeGovernanceTier = getToolGovernanceTierDisplay(toolGovernancePermissionTier, t);
   const ActiveGovernanceIcon = activeGovernanceTier.Icon;
-  const routingStrategy = modelSelectorValue.routing_strategy ?? 'price';
   return (
     <div className="flex items-center justify-between gap-2 px-1">
       <div className="flex min-w-0 items-center gap-1.5">
@@ -253,39 +251,6 @@ export function AIChatInputToolbar({
               />
             )}
           </div>
-        ) : null}
-        {showModelSelector && modelProps?.is_custom !== true ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-8 shrink-0 rounded-full border border-border/70 bg-background px-3 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                disabled={isModelInitializing || !modelSelectorValue.model}
-              >
-                {t(`consoleChat.routingStrategy.options.${routingStrategy}`)}
-                <ChevronDown className="ml-1 h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuLabel>{t('consoleChat.routingStrategy.label')}</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={routingStrategy}
-                onValueChange={value =>
-                  onModelChange({
-                    ...modelSelectorValue,
-                    routing_strategy: value as ModelSelectorValue['routing_strategy'],
-                  })
-                }
-              >
-                {(['speed', 'price', 'stability'] as const).map(strategy => (
-                  <DropdownMenuRadioItem key={strategy} value={strategy}>
-                    {t(`consoleChat.routingStrategy.options.${strategy}`)}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
         ) : null}
         {showToolGovernancePermissionControl && onToolGovernancePermissionTierChange ? (
           <DropdownMenu>

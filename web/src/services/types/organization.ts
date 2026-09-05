@@ -7,9 +7,12 @@ export interface Organization {
   status: 'active' | 'inactive';
   billing_display_currency?: 'USD' | 'CNY';
   usd_to_cny_rate?: number | string | null;
+  llm_routing_strategy?: LLMRoutingStrategy;
   created_at: number;
   organization_role?: 'owner' | 'admin' | 'normal';
 }
+
+export type LLMRoutingStrategy = 'price' | 'stability' | 'speed';
 
 export interface OrganizationCreateRequest {
   name: string;
@@ -22,6 +25,7 @@ export interface OrganizationUpdateRequest {
   status?: 'active' | 'inactive';
   billing_display_currency?: 'USD' | 'CNY';
   usd_to_cny_rate?: number;
+  llm_routing_strategy?: LLMRoutingStrategy;
 }
 
 export type OrganizationMemberRole = 'owner' | 'admin' | 'normal';

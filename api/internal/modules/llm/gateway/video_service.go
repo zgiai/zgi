@@ -791,6 +791,7 @@ func (s *llmGatewayServiceImpl) videoBillingContextFromTask(
 		attemptID,
 	)
 	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
+	billingCtx.RoutingStrategy = selection.RoutingStrategy
 	_ = ownerID
 	return billingCtx, nil
 }

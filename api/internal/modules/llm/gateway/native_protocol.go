@@ -201,6 +201,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	if err != nil {
 		return nil, err
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, model, organizationID.String(), shadowOrganizationID.String())
@@ -240,6 +241,8 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 		}
 		billingCtx.PromptTokens = promptTokens
 		billingCtx.CompletionTokens = completionTokens
+		billingCtx.EstimatedInputTokens = promptTokens
+		billingCtx.EstimatedOutputTokens = completionTokens
 		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
@@ -374,6 +377,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	if err != nil {
 		return nil, err
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, model, organizationID.String(), shadowOrganizationID.String())
@@ -414,6 +418,8 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		lockTokenPricingQuote(billingCtx, quote)
 		billingCtx.PromptTokens = promptTokens
 		billingCtx.CompletionTokens = completionTokens
+		billingCtx.EstimatedInputTokens = promptTokens
+		billingCtx.EstimatedOutputTokens = completionTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 		traceCtx = ctx

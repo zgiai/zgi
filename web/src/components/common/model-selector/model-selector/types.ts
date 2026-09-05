@@ -3,10 +3,7 @@ import type { ModelItem } from '@/services/types/model';
 export interface ModelSelectorValue {
   provider: string;
   model: string;
-  routing_strategy?: RoutingStrategy;
 }
-
-export type RoutingStrategy = 'speed' | 'price' | 'stability';
 
 // Expose full selected model props including provider for external control
 export type ModelSelectorModelProps = ModelItem;

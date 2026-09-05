@@ -1,10 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type {
-  ModelSelectorValue,
-  RoutingStrategy,
-} from '@/components/common/model-selector';
+import type { ModelSelectorValue } from '@/components/common/model-selector';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
@@ -23,20 +20,8 @@ import {
 const EMPTY_MODEL_VALUE: AIChatModelValue = {
   provider: '',
   model: '',
-  routing_strategy: 'stability',
   params: {},
 };
-
-function normalizeRoutingStrategy(value: string | undefined): RoutingStrategy {
-  switch (value) {
-    case 'speed':
-    case 'price':
-    case 'stability':
-      return value;
-    default:
-      return 'stability';
-  }
-}
 
 function modelMatches(
   candidate: Pick<AIChatModelValue, 'provider' | 'model'> | null | undefined,
@@ -71,7 +56,6 @@ function toAIChatModelValue(value: DefaultModelValue): AIChatModelValue {
   return {
     provider: value.provider,
     model: value.model,
-    routing_strategy: 'stability',
     params: value.params,
   };
 }
@@ -82,7 +66,6 @@ function firstAvailableAIChatModel(models: ModelItem[]): AIChatModelValue | null
   return {
     provider: candidate.provider,
     model: candidate.model,
-    routing_strategy: 'stability',
     params: {},
   };
 }
@@ -111,7 +94,6 @@ export function usePersistedAIChatModelSelection({
       ? {
           provider: saved.provider,
           model: saved.model,
-          routing_strategy: normalizeRoutingStrategy(saved.routing_strategy),
           params: {},
         }
       : EMPTY_MODEL_VALUE;
@@ -180,7 +162,6 @@ export function usePersistedAIChatModelSelection({
         setModelSelectorValue({
           provider: saved.provider,
           model: saved.model,
-          routing_strategy: normalizeRoutingStrategy(saved.routing_strategy),
           params: {},
         });
         setIsInitialModelResolved(true);
@@ -189,9 +170,7 @@ export function usePersistedAIChatModelSelection({
     }
 
     const legacySaved =
-      legacyScope && legacyScope !== scope
-        ? getLastSelectedAiModel(accountId, legacyScope)
-        : null;
+      legacyScope && legacyScope !== scope ? getLastSelectedAiModel(accountId, legacyScope) : null;
     if (
       legacySaved?.provider &&
       legacySaved.model &&
@@ -200,7 +179,6 @@ export function usePersistedAIChatModelSelection({
       const next: AIChatModelValue = {
         provider: legacySaved.provider,
         model: legacySaved.model,
-        routing_strategy: normalizeRoutingStrategy(legacySaved.routing_strategy),
         params: {},
       };
       saveLastSelectedAiModel(accountId, scope, {
@@ -256,26 +234,21 @@ export function usePersistedAIChatModelSelection({
 
   const handleModelChange = useCallback(
     (value: ModelSelectorValue) => {
-      const routingStrategy = normalizeRoutingStrategy(
-        value.routing_strategy ?? modelSelectorValue.routing_strategy
-      );
       setModelSelectorValue(previous => ({
         ...previous,
         provider: value.provider,
         model: value.model,
-        routing_strategy: routingStrategy,
       }));
 
       if (accountId) {
         saveLastSelectedAiModel(accountId, scope, {
           provider: value.provider,
           model: value.model,
-          routing_strategy: routingStrategy,
         });
       }
       setIsInitialModelResolved(true);
     },
-    [accountId, modelSelectorValue.routing_strategy, scope]
+    [accountId, scope]
   );
 
   return useMemo(

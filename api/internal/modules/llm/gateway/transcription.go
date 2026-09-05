@@ -118,6 +118,7 @@ func (s *llmGatewayServiceImpl) Transcribe(
 				APIKeyID:              strings.TrimSpace(apiKey.ID),
 				ModelName:             request.Model,
 				ProviderName:          selection.Provider.Provider,
+				RoutingStrategy:       selection.RoutingStrategy,
 			})
 			result, err := transcriptionAdapter.Transcribe(callContext, &adapter.TranscriptionRequest{
 				RequestID: requestID,

@@ -112,6 +112,7 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 				APIKeyID:              strings.TrimSpace(apiKey.ID),
 				ModelName:             request.Model,
 				ProviderName:          selection.Provider.Provider,
+				RoutingStrategy:       selection.RoutingStrategy,
 			})
 			result, err := lyricsAdapter.GenerateLyrics(callContext, &adapter.LyricsRequest{
 				RequestID: request.RequestID,
@@ -261,6 +262,7 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 				ModelName:             request.Model,
 				ProviderName:          selection.Provider.Provider,
 				IsStreaming:           true,
+				RoutingStrategy:       selection.RoutingStrategy,
 			})
 		}
 		destination := &musicDestinationWriter{dst: dst}

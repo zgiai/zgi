@@ -13,13 +13,110 @@ import { useOrganizationActions } from '@/hooks/organization/use-organization-ac
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import type { BillingDisplayCurrency } from '@/utils/billing-display';
 import { DEFAULT_BILLING_DISPLAY, getBillingDisplaySettings } from '@/utils/billing-display';
+import type { LLMRoutingStrategy } from '@/services/types/organization';
+
+const DEFAULT_LLM_ROUTING_STRATEGY: LLMRoutingStrategy = 'stability';
+const LLM_ROUTING_STRATEGIES: LLMRoutingStrategy[] = ['stability', 'speed', 'price'];
 
 export default function PricingSettingsPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <BillingDisplayPanel />
+      <ModelRoutingStrategyPanel />
       <PricingFallbackPanel />
     </div>
+  );
+}
+
+function ModelRoutingStrategyPanel() {
+  const t = useT();
+  const { currentOrganization, isLoading } = useOrganizations(true);
+  const { updateOrganization, isUpdatingOrganization } = useOrganizationActions();
+  const [strategy, setStrategy] = useState<LLMRoutingStrategy>(DEFAULT_LLM_ROUTING_STRATEGY);
+  const [savedVisible, setSavedVisible] = useState(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canEdit = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
+  const currentStrategy = currentOrganization?.llm_routing_strategy ?? DEFAULT_LLM_ROUTING_STRATEGY;
+  const isSaving = isUpdatingOrganization || isLoading;
+
+  useEffect(() => {
+    setStrategy(currentStrategy);
+    setSavedVisible(false);
+  }, [currentOrganization?.id, currentStrategy]);
+
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!currentOrganization || !canEdit || strategy === currentStrategy) return;
+    await updateOrganization({
+      name: currentOrganization.name,
+      llm_routing_strategy: strategy,
+    });
+    setSavedVisible(true);
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = setTimeout(() => setSavedVisible(false), 1800);
+  };
+
+  return (
+    <form
+      className="rounded-md border border-border bg-background p-5 shadow-sm"
+      onSubmit={handleSubmit}
+    >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0 flex-1 space-y-4">
+          <div>
+            <h3 className="text-sm font-medium">{t('settings.modelRouting.title')}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t('settings.modelRouting.description')}
+            </p>
+          </div>
+          <div className="grid gap-2 md:grid-cols-3">
+            {LLM_ROUTING_STRATEGIES.map(option => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={strategy === option}
+                disabled={!canEdit || isSaving}
+                className={`rounded-lg border p-3 text-left transition-colors ${
+                  strategy === option
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border bg-bg-canvas/40 hover:border-primary/40'
+                }`}
+                onClick={() => {
+                  setStrategy(option);
+                  setSavedVisible(false);
+                }}
+              >
+                <span className="block text-sm font-medium">
+                  {t(`settings.modelRouting.options.${option}.label`)}
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                  {t(`settings.modelRouting.options.${option}.description`)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={!currentOrganization || !canEdit || strategy === currentStrategy || isSaving}
+          className="h-9 gap-1.5"
+        >
+          <Save className="size-3.5" />
+          {isUpdatingOrganization
+            ? t('settings.modelRouting.saving')
+            : savedVisible
+              ? t('settings.modelRouting.saved')
+              : t('settings.modelRouting.save')}
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -38,7 +135,7 @@ function BillingDisplayPanel() {
   const canEdit = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
   const currentBillingDisplay = useMemo(
     () => getBillingDisplaySettings(currentOrganization),
-    [currentOrganization?.billing_display_currency, currentOrganization?.usd_to_cny_rate]
+    [currentOrganization]
   );
   const parsedRate = Number(usdToCnyRate.trim());
   const isRateInvalid =
@@ -54,11 +151,7 @@ function BillingDisplayPanel() {
     setCurrency(billingDisplay.currency);
     setUsdToCnyRate(String(billingDisplay.usdToCnyRate));
     setRateError('');
-  }, [
-    currentOrganization?.id,
-    currentOrganization?.billing_display_currency,
-    currentOrganization?.usd_to_cny_rate,
-  ]);
+  }, [currentOrganization]);
 
   useEffect(() => {
     return () => {

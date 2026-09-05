@@ -95,10 +95,8 @@ func applyPlatformProxyHeaders(req *http.Request) {
 	setHeaderIfNotEmpty(req, headerZGIModelName, meta.ModelName)
 	setHeaderIfNotEmpty(req, headerZGIProviderName, meta.ProviderName)
 	setHeaderIfNotEmpty(req, headerZGIRoutingStrategy, meta.RoutingStrategy)
-	if meta.EstimatedInputTokens > 0 {
+	if meta.EstimatedInputTokens > 0 || meta.EstimatedOutputTokens > 0 {
 		req.Header.Set(headerZGIEstimatedInputTokens, strconv.Itoa(meta.EstimatedInputTokens))
-	}
-	if meta.EstimatedOutputTokens > 0 {
 		req.Header.Set(headerZGIEstimatedOutputTokens, strconv.Itoa(meta.EstimatedOutputTokens))
 	}
 	if meta.IsStreaming {

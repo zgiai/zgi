@@ -1971,6 +1971,9 @@ func (s *organizationService) UpdateOrganization(ctx context.Context, id, accoun
 	if req.USDToCNYRate != nil && (*req.USDToCNYRate <= 0 || math.IsNaN(*req.USDToCNYRate) || math.IsInf(*req.USDToCNYRate, 0)) {
 		return nil, ErrInvalidOrganizationBillingDisplayConfig
 	}
+	if req.LLMRoutingStrategy != nil && !isValidLLMRoutingStrategy(*req.LLMRoutingStrategy) {
+		return nil, ErrInvalidOrganizationBillingDisplayConfig
+	}
 
 	organization, err := s.organizationRepo.GetByID(ctx, id)
 	if err != nil {
@@ -2015,6 +2018,9 @@ func (s *organizationService) UpdateOrganization(ctx context.Context, id, accoun
 	if req.USDToCNYRate != nil {
 		organization.USDToCNYRate = decimal.NewFromFloat(*req.USDToCNYRate)
 	}
+	if req.LLMRoutingStrategy != nil {
+		organization.LLMRoutingStrategy = *req.LLMRoutingStrategy
+	}
 
 	if err := s.organizationRepo.Update(ctx, organization); err != nil {
 		return nil, fmt.Errorf("failed to update organization: %w", err)
@@ -2026,6 +2032,19 @@ func (s *organizationService) UpdateOrganization(ctx context.Context, id, accoun
 
 func isValidBillingDisplayCurrency(currency model.BillingDisplayCurrency) bool {
 	return currency == model.BillingDisplayCurrencyUSD || currency == model.BillingDisplayCurrencyCNY
+}
+
+func isValidLLMRoutingStrategy(strategy model.LLMRoutingStrategy) bool {
+	return strategy == model.LLMRoutingStrategySpeed ||
+		strategy == model.LLMRoutingStrategyPrice ||
+		strategy == model.LLMRoutingStrategyStability
+}
+
+func organizationLLMRoutingStrategy(organization *model.Organization) model.LLMRoutingStrategy {
+	if organization == nil || !isValidLLMRoutingStrategy(organization.LLMRoutingStrategy) {
+		return model.LLMRoutingStrategyStability
+	}
+	return organization.LLMRoutingStrategy
 }
 
 func organizationBillingDisplayCurrency(organization *model.Organization) model.BillingDisplayCurrency {
@@ -2054,6 +2073,7 @@ func organizationWithRoleResponse(organization *model.Organization, role model.O
 		Status:                 organization.Status,
 		BillingDisplayCurrency: organizationBillingDisplayCurrency(organization),
 		USDToCNYRate:           organizationUSDToCNYRate(organization),
+		LLMRoutingStrategy:     organizationLLMRoutingStrategy(organization),
 		CreatedAt:              organization.CreatedAt.Unix(),
 		OrganizationRole:       role,
 	}
@@ -2067,6 +2087,7 @@ func currentOrganizationResponse(organization *model.Organization, role model.Or
 		Status:                 organization.Status,
 		BillingDisplayCurrency: organizationBillingDisplayCurrency(organization),
 		USDToCNYRate:           organizationUSDToCNYRate(organization),
+		LLMRoutingStrategy:     organizationLLMRoutingStrategy(organization),
 		CreatedAt:              organization.CreatedAt.Unix(),
 		OrganizationRole:       role,
 	}

@@ -199,6 +199,7 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		ChannelProvider:      providerSelection.ChannelProvider,
 		UpstreamWouldGuard:   providerSelection.UpstreamWouldGuard,
 		UpstreamHalfOpen:     providerSelection.UpstreamHalfOpen,
+		RoutingStrategy:      normalizeConsoleRoutingStrategy(providerSelection.RoutingStrategy),
 		EstimatedCredits:     estimatedCredits,
 		BillingLane:          billingLane,
 		UseSystemProvider:    usageBillingLaneUsesSystemProvider(billingLane),
@@ -301,7 +302,6 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 	if err != nil {
 		return nil, wrapBillingLaneMismatchError(err)
 	}
-
 	logBillingEvent(
 		billingCode("BILLING_LANE_SELECTED", decision.UseSystemProvider),
 		billingCtx,

@@ -119,6 +119,7 @@ func (s *llmGatewayServiceImpl) GenerateSpeech(
 				ModelName:             request.Model,
 				ProviderName:          selection.Provider.Provider,
 				IsStreaming:           true,
+				RoutingStrategy:       selection.RoutingStrategy,
 			})
 			adapterRequest := &adapter.SpeechRequest{
 				RequestID:      requestID,

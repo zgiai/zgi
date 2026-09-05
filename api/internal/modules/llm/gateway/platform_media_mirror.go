@@ -34,6 +34,7 @@ func (s *llmGatewayServiceImpl) mirrorPlatformMediaSettlement(
 	}
 	bc := s.createBillingContext(apiKey, nil, selection, getChannelID(selection), billingOrganizationID, 0, streaming, startedAt, requestID, attemptID)
 	bc.PricingOperation = operation
+	bc.RoutingStrategy = selection.RoutingStrategy
 	bc.ResponseTime = time.Since(startedAt).Milliseconds()
 	bc.DeductionID = settlement.SettlementID
 	return mirrorer.MirrorPlatformMediaSettlement(ctx, bc, settlement)

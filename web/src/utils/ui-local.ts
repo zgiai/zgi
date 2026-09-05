@@ -60,7 +60,6 @@ export type UiLocalBanners = Partial<Record<BannerKey, boolean>>;
 export interface AiModelSelection {
   provider: string;
   model: string;
-  routing_strategy?: 'speed' | 'price' | 'stability';
 }
 
 // Scope types for AI model selection

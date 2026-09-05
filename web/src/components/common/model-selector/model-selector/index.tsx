@@ -251,13 +251,14 @@ export function ModelSelector({
       groupMap.set(displayProvider, existing);
     });
     return Array.from(groupMap.entries()).map(([provider, items]) => {
-      const catalogLabel = locale === 'zh-Hans'
-        ? items.find(item => item.vendor_cn_name)?.vendor_cn_name ||
-          items.find(item => item.vendor_name)?.vendor_name ||
-          items.find(item => item.vendor_en_name)?.vendor_en_name
-        : items.find(item => item.vendor_en_name)?.vendor_en_name ||
-          items.find(item => item.vendor_name)?.vendor_name ||
-          items.find(item => item.vendor_cn_name)?.vendor_cn_name;
+      const catalogLabel =
+        locale === 'zh-Hans'
+          ? items.find(item => item.vendor_cn_name)?.vendor_cn_name ||
+            items.find(item => item.vendor_name)?.vendor_name ||
+            items.find(item => item.vendor_en_name)?.vendor_en_name
+          : items.find(item => item.vendor_en_name)?.vendor_en_name ||
+            items.find(item => item.vendor_name)?.vendor_name ||
+            items.find(item => item.vendor_cn_name)?.vendor_cn_name;
       return {
         provider,
         label: catalogLabel || getProviderName(provider),
@@ -801,9 +802,4 @@ export function ModelSelector({
   );
 }
 
-export type {
-  ModelSelectorValue,
-  ModelSelectorModelProps,
-  FeatureLabels,
-  RoutingStrategy,
-} from './types';
+export type { ModelSelectorValue, ModelSelectorModelProps, FeatureLabels } from './types';

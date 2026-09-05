@@ -94,6 +94,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
@@ -198,7 +199,6 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		return nil, err
 	}
 	lockTokenPricingQuote(billingCtx, quote)
-	billingCtx.RoutingStrategy = normalizeConsoleRoutingStrategy(req.RoutingStrategy)
 	billingCtx.EstimatedInputTokens = promptTokens
 	billingCtx.EstimatedOutputTokens = completionTokens
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat")
@@ -339,6 +339,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
@@ -447,7 +448,6 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		return nil, err
 	}
 	lockTokenPricingQuote(billingCtx, quote)
-	billingCtx.RoutingStrategy = normalizeConsoleRoutingStrategy(req.RoutingStrategy)
 	billingCtx.EstimatedInputTokens = promptTokens
 	billingCtx.EstimatedOutputTokens = completionTokens
 	billingCtx.PromptTokens = promptTokens
