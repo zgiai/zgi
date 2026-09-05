@@ -616,14 +616,28 @@ func upsertGrant(tx *gorm.DB, scope *workspaceScope, principalID, actorID, sourc
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	startsNewPeriod := errors.Is(err, gorm.ErrRecordNotFound) || !grant.IsActive(now)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		grant = accessmodel.Grant{OrganizationID: *scope.Workspace.OrganizationID, WorkspaceID: scope.Workspace.ID, PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID, Source: source, Status: accessmodel.GrantStatusActive, MaxKeys: maxKeys, AllowedModels: unique(models), ExpiresAt: expiresAt, CreatedByAccountID: &actorID, UpdatedByAccountID: &actorID, AuthorizationVersion: 1}
-	} else {
-		grant.Source, grant.Status, grant.MaxKeys, grant.AllowedModels, grant.ExpiresAt = source, accessmodel.GrantStatusActive, maxKeys, unique(models), expiresAt
-		grant.UpdatedByAccountID = &actorID
-		grant.AuthorizationVersion++
+		applyGrantLimits(&grant, quota, true)
+		created, err := createGrantOrReloadForUpdate(tx, &grant)
+		if err != nil {
+			return err
+		}
+		if created {
+			return nil
+		}
+		// Approval is authoritative. If self-service creation won the insert
+		// race, apply the reviewer's narrower limits to the locked winner.
 	}
+	startsNewPeriod := !grant.IsActive(now)
+	grant.Source, grant.Status, grant.MaxKeys, grant.AllowedModels, grant.ExpiresAt = source, accessmodel.GrantStatusActive, maxKeys, unique(models), expiresAt
+	grant.UpdatedByAccountID = &actorID
+	grant.AuthorizationVersion++
+	applyGrantLimits(&grant, quota, startsNewPeriod)
+	return tx.Save(&grant).Error
+}
+
+func applyGrantLimits(grant *accessmodel.Grant, quota *int64, startsNewPeriod bool) {
 	if startsNewPeriod {
 		grant.UsedQuota = 0
 	}
@@ -635,19 +649,15 @@ func upsertGrant(tx *gorm.DB, scope *workspaceScope, principalID, actorID, sourc
 	} else {
 		grant.RemainQuota = 0
 	}
-	if grant.ID == "" {
-		return createGrantOrReloadForUpdate(tx, &grant)
-	}
-	return tx.Save(&grant).Error
 }
 
-func createGrantOrReloadForUpdate(tx *gorm.DB, grant *accessmodel.Grant) error {
+func createGrantOrReloadForUpdate(tx *gorm.DB, grant *accessmodel.Grant) (bool, error) {
 	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(grant)
 	if result.Error != nil {
-		return result.Error
+		return false, result.Error
 	}
 	if result.RowsAffected == 1 {
-		return nil
+		return true, nil
 	}
 	// A concurrent first-key or approval request may have inserted the same
 	// principal grant after our initial lookup. Lock and reuse that winning row
@@ -656,10 +666,23 @@ func createGrantOrReloadForUpdate(tx *gorm.DB, grant *accessmodel.Grant) error {
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("workspace_id = ? AND principal_type = ? AND principal_id = ?", grant.WorkspaceID, grant.PrincipalType, grant.PrincipalID).
 		First(&winner).Error; err != nil {
-		return err
+		return false, err
 	}
 	*grant = winner
-	return nil
+	return false, nil
+}
+
+func createGrantIfAbsent(tx *gorm.DB, scope *workspaceScope, principalID, actorID, source string, quota *int64, maxKeys int, models []string, expiresAt *time.Time) error {
+	grant := accessmodel.Grant{
+		OrganizationID: *scope.Workspace.OrganizationID, WorkspaceID: scope.Workspace.ID,
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,
+		Source: source, Status: accessmodel.GrantStatusActive, MaxKeys: maxKeys,
+		AllowedModels: unique(models), ExpiresAt: expiresAt,
+		CreatedByAccountID: &actorID, UpdatedByAccountID: &actorID, AuthorizationVersion: 1,
+	}
+	applyGrantLimits(&grant, quota, true)
+	_, err := createGrantOrReloadForUpdate(tx, &grant)
+	return err
 }
 
 func revokePrincipalKeys(tx *gorm.DB, workspaceID, principalID, actorID, reason string, now time.Time) error {
@@ -741,7 +764,7 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 	}
 	now := s.now()
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return upsertGrant(tx, scope, accountID, accountID, source, policy.DefaultQuota, policy.MaxKeys, policy.AllowedModels, ttlExpiry(now, policy.DefaultTTLSeconds), now)
+		return createGrantIfAbsent(tx, scope, accountID, accountID, source, policy.DefaultQuota, policy.MaxKeys, policy.AllowedModels, ttlExpiry(now, policy.DefaultTTLSeconds))
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create self-service grant: %w", err)

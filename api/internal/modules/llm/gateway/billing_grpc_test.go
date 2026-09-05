@@ -48,6 +48,22 @@ func (c *capturingFailingSettleQuotaClient) CheckCreditBalance(context.Context, 
 
 func (c *capturingFailingSettleQuotaClient) Close() error { return nil }
 
+type emptyDeductionIDQuotaClient struct{}
+
+func (emptyDeductionIDQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
+	return &PreDeductQuotaResponse{Success: true}, nil
+}
+
+func (emptyDeductionIDQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
+	return nil, errors.New("unexpected settle")
+}
+
+func (emptyDeductionIDQuotaClient) CheckCreditBalance(context.Context, string, int64) (bool, int64, error) {
+	return false, 0, errors.New("unexpected balance check")
+}
+
+func (emptyDeductionIDQuotaClient) Close() error { return nil }
+
 func openRemoteBillingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -88,6 +104,52 @@ func TestRemoteBillingMarkAttemptSettleFailedWritesPartialUsageBill(t *testing.T
 	}
 	if bill.ErrorCode == nil || *bill.ErrorCode != "SETTLE_FAILED" {
 		t.Fatalf("usage bill error code = %v, want SETTLE_FAILED", bill.ErrorCode)
+	}
+}
+
+func TestRemoteBillingEmptyDeductionIDRollsBackLocalGrantReservation(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatalf("migrate developer grant: %v", err)
+	}
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1,
+		AllowedModels: []string{}, AuthorizationVersion: 1,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	version := grant.AuthorizationVersion
+	bc := &BillingContext{
+		OrganizationID: grant.OrganizationID, WorkspaceID: grant.WorkspaceID,
+		AttemptID: uuid.NewString(), RequestID: uuid.NewString(),
+		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+		InvocationSource: InvocationSourceAPI, AuthMethod: "personal_api_key",
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
+		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		EstimatedCredits: 100,
+	}
+	remote := &RemoteBilling{localService: &BillingService{db: db}, grpcClient: emptyDeductionIDQuotaClient{}}
+	if err := remote.preDeductViaGRPC(context.Background(), bc); err == nil {
+		t.Fatal("empty remote deduction ID unexpectedly succeeded")
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 0 || grant.RemainQuota != quota {
+		t.Fatalf("invalid remote response leaked grant reservation: used/remain=%d/%d", grant.UsedQuota, grant.RemainQuota)
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusPredeductFailed || attempt.ErrorCode == nil || *attempt.ErrorCode != "PREDEDUCT_INVALID_RESPONSE" {
+		t.Fatalf("invalid response attempt state = %#v", attempt)
 	}
 }
 

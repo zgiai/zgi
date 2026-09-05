@@ -390,10 +390,16 @@ func TestCreateGrantReloadsConcurrentWinner(t *testing.T) {
 		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 3,
 		AllowedModels: []string{}, AuthorizationVersion: 1,
 	}
+	var created bool
 	if err := db.Transaction(func(tx *gorm.DB) error {
-		return createGrantOrReloadForUpdate(tx, &candidate)
+		var err error
+		created, err = createGrantOrReloadForUpdate(tx, &candidate)
+		return err
 	}); err != nil {
 		t.Fatalf("reuse concurrent grant winner: %v", err)
+	}
+	if created {
+		t.Fatal("conflicting candidate reported a new grant")
 	}
 	if candidate.ID != winner.ID || candidate.AuthorizationVersion != winner.AuthorizationVersion {
 		t.Fatalf("candidate did not reload winner: got %#v want id=%s version=%d", candidate, winner.ID, winner.AuthorizationVersion)
@@ -406,6 +412,39 @@ func TestCreateGrantReloadsConcurrentWinner(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("grant count = %d, want 1", count)
+	}
+}
+
+func TestApprovalAppliesLimitsToExistingSelfServiceGrant(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	oldQuota := int64(5000)
+	winner := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: memberID,
+		Source: "self_service", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &oldQuota, UsedQuota: 400, RemainQuota: 4600, MaxKeys: 5,
+		AllowedModels: []string{"broad-model"}, AuthorizationVersion: 1,
+	}
+	if err := db.Create(&winner).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	approvedQuota := int64(1000)
+	expiresAt := time.Now().Add(time.Hour)
+	scope := &workspaceScope{Workspace: &workspacemodel.Workspace{ID: workspaceID, OrganizationID: &organizationID}}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return upsertGrant(tx, scope, memberID, ownerID, "approved_request", &approvedQuota, 2, []string{"approved-model"}, &expiresAt, time.Now())
+	}); err != nil {
+		t.Fatalf("apply approved grant settings: %v", err)
+	}
+	if err := db.First(&winner, "id = ?", winner.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if winner.Source != "approved_request" || winner.QuotaLimit == nil || *winner.QuotaLimit != approvedQuota ||
+		winner.UsedQuota != 400 || winner.RemainQuota != 600 || winner.MaxKeys != 2 ||
+		len(winner.AllowedModels) != 1 || winner.AllowedModels[0] != "approved-model" || winner.AuthorizationVersion != 2 {
+		t.Fatalf("approval settings were not applied to existing grant: %#v", winner)
 	}
 }
 

@@ -157,10 +157,18 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 		}
 	}
 
-	if resp.DeductionID == "" {
-		return fmt.Errorf("pre-deduct succeeded but deduction_id is empty (request_id=%s)", bc.RequestID)
+	if strings.TrimSpace(resp.DeductionID) == "" {
+		invalidResponseErr := fmt.Errorf("pre-deduct succeeded but deduction_id is empty (request_id=%s)", bc.RequestID)
+		rollbackErr := s.rollbackLocalSubjectQuota(ctx, bc)
+		if markErr := s.markAttemptPreDeductFailed(ctx, bc, "PREDEDUCT_INVALID_RESPONSE", invalidResponseErr.Error()); markErr != nil {
+			return fmt.Errorf("%v (rollback_err=%v, mark_err=%w)", invalidResponseErr, rollbackErr, markErr)
+		}
+		if rollbackErr != nil {
+			return fmt.Errorf("%v (local subject rollback failed: %w)", invalidResponseErr, rollbackErr)
+		}
+		return invalidResponseErr
 	}
-	bc.DeductionID = resp.DeductionID
+	bc.DeductionID = strings.TrimSpace(resp.DeductionID)
 	if err := s.localService.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.localService.bindRemoteDeductionID(ctx, tx, bc); err != nil {
 			return err
