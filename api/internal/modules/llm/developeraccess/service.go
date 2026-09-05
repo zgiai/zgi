@@ -366,50 +366,18 @@ func (s *Service) PutPolicy(ctx context.Context, workspaceID, accountID string, 
 func (s *Service) putPolicy(ctx context.Context, scope *workspaceScope, accountID string, input PolicyInput) (*accessmodel.Policy, error) {
 	var result accessmodel.Policy
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var workspace workspacemodel.Workspace
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", scope.Workspace.ID).First(&workspace).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrNotFound
-			}
-			return fmt.Errorf("lock workspace for developer access policy: %w", err)
+		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+		if err != nil {
+			return err
 		}
-		if !workspace.IsNormal() || workspace.OrganizationID == nil || scope.Workspace.OrganizationID == nil ||
-			*workspace.OrganizationID != *scope.Workspace.OrganizationID {
-			return ErrConflict
-		}
-
-		var organization workspacemodel.Organization
-		if err := tx.Where("id = ?", *workspace.OrganizationID).First(&organization).Error; err != nil || !organization.IsActive() {
+		if !lockedScope.CanManage {
 			return ErrForbidden
 		}
-		var member workspacemodel.WorkspaceMember
-		memberErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("workspace_id = ? AND account_id = ?", workspace.ID, accountID).
-			First(&member).Error
-		if memberErr != nil && !errors.Is(memberErr, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("revalidate workspace member: %w", memberErr)
+		current, err := policyForUpdate(ctx, tx, lockedScope)
+		if err != nil {
+			return err
 		}
-		canManage := memberErr == nil && member.Role.IsAdminRole()
-		if !canManage && s.organizationService != nil {
-			allowed, permissionErr := s.organizationService.CheckWorkspacePermission(ctx, *workspace.OrganizationID, workspace.ID, accountID, workspacemodel.WorkspacePermissionWorkspaceManage)
-			if permissionErr != nil {
-				return fmt.Errorf("revalidate workspace permission: %w", permissionErr)
-			}
-			canManage = allowed
-		}
-		if !canManage {
-			return ErrForbidden
-		}
-
-		err := tx.Where("workspace_id = ?", workspace.ID).First(&result).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			lockedScope := &workspaceScope{Workspace: &workspace, Member: &member, CanManage: true}
-			result = *defaultPolicy(lockedScope)
-		} else if err != nil {
-			return fmt.Errorf("load developer access policy: %w", err)
-		} else if result.OrganizationID != *workspace.OrganizationID {
-			return ErrConflict
-		}
+		result = *current
 		result.Mode, result.DefaultQuota, result.MaxQuota, result.MaxKeys = input.Mode, input.DefaultQuota, input.MaxQuota, input.MaxKeys
 		result.DefaultTTLSeconds, result.MaxTTLSeconds = input.DefaultTTLSeconds, input.MaxTTLSeconds
 		result.AllowedModels, result.UpdatedByAccountID = unique(input.AllowedModels), &accountID
@@ -524,6 +492,70 @@ func lockWorkspaceMembership(tx *gorm.DB, workspaceID, accountID string) error {
 	return nil
 }
 
+func (s *Service) lockScopeForUpdate(ctx context.Context, tx *gorm.DB, expected *workspaceScope, accountID string) (*workspaceScope, error) {
+	var workspace workspacemodel.Workspace
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", expected.Workspace.ID).First(&workspace).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("lock developer access workspace: %w", err)
+	}
+	if !workspace.IsNormal() || workspace.OrganizationID == nil || expected.Workspace.OrganizationID == nil ||
+		*workspace.OrganizationID != *expected.Workspace.OrganizationID {
+		return nil, ErrConflict
+	}
+	var organization workspacemodel.Organization
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", *workspace.OrganizationID).First(&organization).Error; err != nil {
+		return nil, fmt.Errorf("revalidate developer access organization: %w", err)
+	}
+	if !organization.IsActive() {
+		return nil, ErrForbidden
+	}
+
+	var member workspacemodel.WorkspaceMember
+	memberErr := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("workspace_id = ? AND account_id = ?", workspace.ID, accountID).First(&member).Error
+	if memberErr != nil && !errors.Is(memberErr, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("revalidate developer access member: %w", memberErr)
+	}
+	canManage := memberErr == nil && member.Role.IsAdminRole()
+	if !canManage && s.organizationService != nil {
+		allowed, err := s.organizationService.CheckWorkspacePermission(
+			ctx, *workspace.OrganizationID, workspace.ID, accountID, workspacemodel.WorkspacePermissionWorkspaceManage,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("revalidate developer access permission: %w", err)
+		}
+		canManage = allowed
+	}
+	if errors.Is(memberErr, gorm.ErrRecordNotFound) && !canManage {
+		return nil, ErrForbidden
+	}
+	current := &workspaceScope{Workspace: &workspace, CanManage: canManage}
+	if memberErr == nil {
+		current.Member = &member
+	}
+	return current, nil
+}
+
+func policyForUpdate(ctx context.Context, tx *gorm.DB, scope *workspaceScope) (*accessmodel.Policy, error) {
+	var policy accessmodel.Policy
+	err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("workspace_id = ?", scope.Workspace.ID).First(&policy).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return defaultPolicy(scope), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock developer access policy: %w", err)
+	}
+	if scope.Workspace.OrganizationID == nil || policy.OrganizationID != *scope.Workspace.OrganizationID {
+		return nil, ErrConflict
+	}
+	return &policy, nil
+}
+
 func (s *Service) CreateRequest(ctx context.Context, workspaceID, accountID string, input CreateRequestInput) (*accessmodel.AccessRequest, error) {
 	input.Purpose = strings.TrimSpace(input.Purpose)
 	if input.Purpose == "" || len(input.Purpose) > 2000 {
@@ -610,12 +642,27 @@ func (s *Service) ReviewRequest(ctx context.Context, workspaceID, accountID, req
 	if !scope.CanManage {
 		return nil, ErrForbidden
 	}
-	policy, err := s.policy(ctx, scope)
-	if err != nil {
-		return nil, err
-	}
+	return s.reviewRequest(ctx, scope, accountID, requestID, approve, input)
+}
+
+func (s *Service) reviewRequest(ctx context.Context, scope *workspaceScope, accountID, requestID string, approve bool, input ReviewRequestInput) (*accessmodel.AccessRequest, error) {
+	workspaceID := scope.Workspace.ID
 	var request accessmodel.AccessRequest
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+		if err != nil {
+			return err
+		}
+		if !lockedScope.CanManage {
+			return ErrForbidden
+		}
+		policy, err := policyForUpdate(ctx, tx, lockedScope)
+		if err != nil {
+			return err
+		}
+		if policy.Mode == accessmodel.AccessModeDisabled {
+			return ErrAccessDisabled
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND workspace_id = ?", requestID, workspaceID).First(&request).Error; err != nil {
 			return err
 		}
@@ -676,7 +723,7 @@ func (s *Service) ReviewRequest(ctx context.Context, workspaceID, accountID, req
 		if expiresAt != nil && policy.MaxTTLSeconds != nil && expiresAt.After(now.Add(time.Duration(*policy.MaxTTLSeconds)*time.Second)) {
 			return ErrInvalid
 		}
-		if err := upsertGrant(tx, scope, request.RequesterAccountID, accountID, "approved_request", quota, maxKeys, models, expiresAt, now); err != nil {
+		if err := upsertGrant(tx, lockedScope, request.RequesterAccountID, accountID, "approved_request", quota, maxKeys, models, expiresAt, now); err != nil {
 			return err
 		}
 		if err := revokePrincipalKeys(tx, workspaceID, request.RequesterAccountID, accountID, "grant_updated", now); err != nil {
@@ -805,28 +852,26 @@ func revokePrincipalKeys(tx *gorm.DB, workspaceID, principalID, actorID, reason 
 		}).Error
 }
 
-func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accountID string, policy *accessmodel.Policy) (*accessmodel.Grant, error) {
+func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accountID string) (*accessmodel.Grant, error) {
 	var grant accessmodel.Grant
 	err := s.db.WithContext(ctx).Where("workspace_id = ? AND principal_type = ? AND principal_id = ?", scope.Workspace.ID, accessmodel.PrincipalTypeUser, accountID).First(&grant).Error
 	if err == nil {
 		if grant.IsActive(s.now()) {
 			return &grant, nil
 		}
-		if !grantCanStartNewPeriod(&grant, scope, policy, s.now()) {
-			return nil, ErrApprovalNeeded
-		}
-		if !quotaHasAvailableBalance(policy.DefaultQuota) {
-			return nil, ErrQuotaExceeded
-		}
-		source := "self_service"
-		if scope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
-			source = "workspace_admin"
-		}
 		// Expiry ends one budget period. Renew an eligible self-service or
 		// workspace-manager principal atomically, reset period usage, and bump
 		// authorization so old keys remain stale until a replacement is created.
 		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := lockWorkspaceMembership(tx, scope.Workspace.ID, accountID); err != nil {
+			lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+			if err != nil {
+				return err
+			}
+			if lockedScope.Member == nil {
+				return ErrForbidden
+			}
+			policy, err := policyForUpdate(ctx, tx, lockedScope)
+			if err != nil {
 				return err
 			}
 			var locked accessmodel.Grant
@@ -835,10 +880,21 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 			}
 			now := s.now()
 			if locked.IsActive(now) {
+				grant = locked
 				return nil
 			}
-			if !grantCanStartNewPeriod(&locked, scope, policy, now) {
+			if policy.Mode == accessmodel.AccessModeDisabled {
+				return ErrAccessDisabled
+			}
+			if !grantCanStartNewPeriod(&locked, lockedScope, policy, now) {
 				return ErrApprovalNeeded
+			}
+			if !quotaHasAvailableBalance(policy.DefaultQuota) {
+				return ErrQuotaExceeded
+			}
+			source := "self_service"
+			if lockedScope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
+				source = "workspace_admin"
 			}
 			locked.Source, locked.Status = source, accessmodel.GrantStatusActive
 			applyGrantLimits(&locked, policy.DefaultQuota, true)
@@ -850,35 +906,44 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 			if err := tx.Save(&locked).Error; err != nil {
 				return err
 			}
-			return revokePrincipalKeys(tx, scope.Workspace.ID, accountID, accountID, "grant_renewed", now)
+			grant = locked
+			return revokePrincipalKeys(tx, lockedScope.Workspace.ID, accountID, accountID, "grant_renewed", now)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("renew developer access grant: %w", err)
-		}
-		if err := s.db.WithContext(ctx).First(&grant, "id = ?", grant.ID).Error; err != nil {
-			return nil, err
 		}
 		return &grant, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("load developer access grant: %w", err)
 	}
-	if !scope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
-		return nil, ErrApprovalNeeded
-	}
-	if !quotaHasAvailableBalance(policy.DefaultQuota) {
-		return nil, ErrQuotaExceeded
-	}
-	source := "self_service"
-	if scope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
-		source = "workspace_admin"
-	}
-	now := s.now()
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockWorkspaceMembership(tx, scope.Workspace.ID, accountID); err != nil {
+		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+		if err != nil {
 			return err
 		}
-		return createGrantIfAbsent(tx, scope, accountID, accountID, source, policy.DefaultQuota, policy.MaxKeys, policy.AllowedModels, ttlExpiry(now, policy.DefaultTTLSeconds))
+		if lockedScope.Member == nil {
+			return ErrForbidden
+		}
+		policy, err := policyForUpdate(ctx, tx, lockedScope)
+		if err != nil {
+			return err
+		}
+		if policy.Mode == accessmodel.AccessModeDisabled {
+			return ErrAccessDisabled
+		}
+		if !lockedScope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
+			return ErrApprovalNeeded
+		}
+		if !quotaHasAvailableBalance(policy.DefaultQuota) {
+			return ErrQuotaExceeded
+		}
+		source := "self_service"
+		if lockedScope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
+			source = "workspace_admin"
+		}
+		now := s.now()
+		return createGrantIfAbsent(tx, lockedScope, accountID, accountID, source, policy.DefaultQuota, policy.MaxKeys, policy.AllowedModels, ttlExpiry(now, policy.DefaultTTLSeconds))
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create self-service grant: %w", err)
@@ -928,7 +993,7 @@ func (s *Service) CreateKey(ctx context.Context, workspaceID, accountID string, 
 	if policy.Mode == accessmodel.AccessModeDisabled {
 		return nil, ErrAccessDisabled
 	}
-	grant, err := s.ensureGrant(ctx, scope, accountID, policy)
+	grant, err := s.ensureGrant(ctx, scope, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -969,6 +1034,20 @@ func (s *Service) CreateKey(ctx context.Context, workspaceID, accountID string, 
 		AuthorizationVersion: grant.AuthorizationVersion,
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+		if err != nil {
+			return err
+		}
+		if lockedScope.Member == nil {
+			return ErrForbidden
+		}
+		lockedPolicy, err := policyForUpdate(ctx, tx, lockedScope)
+		if err != nil {
+			return err
+		}
+		if lockedPolicy.Mode == accessmodel.AccessModeDisabled {
+			return ErrAccessDisabled
+		}
 		var lockedGrant accessmodel.Grant
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", grant.ID).First(&lockedGrant).Error; err != nil {
 			return err

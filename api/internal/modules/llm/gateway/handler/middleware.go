@@ -39,12 +39,10 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.Handler
 			return
 		}
 
-		// 5. Check if API key is active
-		if !keyInfo.IsActive() {
-			abortWithProtocolError(c, invalidAPIKeyProtocolError("API key is inactive or expired"))
-			return
-		}
-		if keyInfo.PrincipalType != nil {
+		// Personal keys must be reloaded before trusting cached lifecycle state.
+		// This handles both revocation and re-enabling when Redis invalidation is
+		// delayed or unavailable.
+		if keyInfo.PrincipalType != nil || keyInfo.PrincipalID != nil {
 			validator, supported := apiKeyRepo.(principalAccessValidator)
 			if !supported {
 				logger.WarnContext(c.Request.Context(), "API key principal access validator is unavailable")
@@ -56,6 +54,13 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.Handler
 				abortWithProtocolError(c, invalidAPIKeyProtocolError("API key access has been revoked"))
 				return
 			}
+		}
+
+		// 5. Check if API key is active. Personal keys now contain the
+		// authoritative row returned by ValidatePrincipalAccess.
+		if !keyInfo.IsActive() {
+			abortWithProtocolError(c, invalidAPIKeyProtocolError("API key is inactive or expired"))
+			return
 		}
 
 		// 6. Check if API key has quota

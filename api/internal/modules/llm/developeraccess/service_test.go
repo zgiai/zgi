@@ -108,6 +108,72 @@ func TestPutPolicyRevalidatesManagementPermission(t *testing.T) {
 	}
 }
 
+func TestReviewRequestRevalidatesReviewerAuthorityInTransaction(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	request, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Review race"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleScope, err := service.scope(context.Background(), workspaceID, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&workspacemodel.WorkspaceMember{}).
+		Where("workspace_id = ? AND account_id = ?", workspaceID, ownerID).
+		Update("role", workspacemodel.WorkspaceRoleMember).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.reviewRequest(context.Background(), staleScope, ownerID, request.ID, true, ReviewRequestInput{}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("review with stale manager scope error = %v, want forbidden", err)
+	}
+	if err := db.First(request, "id = ?", request.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if request.Status != accessmodel.RequestStatusPending {
+		t.Fatalf("unauthorized review changed request status to %q", request.Status)
+	}
+	var grants int64
+	if err := db.Model(&accessmodel.Grant{}).Where("workspace_id = ? AND principal_id = ?", workspaceID, memberID).Count(&grants).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grants != 0 {
+		t.Fatalf("unauthorized review created %d grants", grants)
+	}
+}
+
+func TestEnsureGrantRevalidatesSelfServicePolicyInTransaction(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	if _, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
+		Mode: accessmodel.AccessModeSelfService, MaxKeys: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staleScope, err := service.scope(context.Background(), workspaceID, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&accessmodel.Policy{}).Where("workspace_id = ?", workspaceID).
+		Updates(map[string]any{"mode": accessmodel.AccessModeApprovalRequired, "version": gorm.Expr("version + 1")}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.ensureGrant(context.Background(), staleScope, memberID); !errors.Is(err, ErrApprovalNeeded) {
+		t.Fatalf("ensureGrant with stale self-service policy error = %v, want approval required", err)
+	}
+	var grants int64
+	if err := db.Model(&accessmodel.Grant{}).Where("workspace_id = ? AND principal_id = ?", workspaceID, memberID).Count(&grants).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grants != 0 {
+		t.Fatalf("stale self-service policy created %d grants", grants)
+	}
+}
+
 func TestSelfServiceRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
