@@ -1350,8 +1350,32 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 			return nil, ErrAccessDisabled
 		}
 	}
+	var candidate apikeymodel.TenantAPIKey
+	if status == "active" {
+		query := s.db.WithContext(ctx).Where("id = ? AND workspace_id = ? AND principal_type = ?", keyID, scope.Workspace.ID, accessmodel.PrincipalTypeUser)
+		if !scope.CanManage {
+			query = query.Where("principal_id = ?", accountID)
+		}
+		if err := query.First(&candidate).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, ErrNotFound
+			}
+			return nil, err
+		}
+		if candidate.AccessGrantID == nil {
+			return nil, ErrApprovalNeeded
+		}
+	}
 	var key apikeymodel.TenantAPIKey
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var grant accessmodel.Grant
+		// Approval updates lock the grant before revoking its keys. Activation
+		// must use the same order to avoid a grant/key deadlock cycle.
+		if status == "active" {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *candidate.AccessGrantID).First(&grant).Error; err != nil {
+				return ErrApprovalNeeded
+			}
+		}
 		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND workspace_id = ? AND principal_type = ?", keyID, scope.Workspace.ID, accessmodel.PrincipalTypeUser)
 		if !scope.CanManage {
 			query = query.Where("principal_id = ?", accountID)
@@ -1369,11 +1393,10 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 			if key.ExpiresAt != nil && !key.ExpiresAt.After(s.now()) {
 				return ErrConflict
 			}
-			if key.AccessGrantID == nil {
+			if key.AccessGrantID == nil || *key.AccessGrantID != grant.ID {
 				return ErrApprovalNeeded
 			}
-			var grant accessmodel.Grant
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *key.AccessGrantID).First(&grant).Error; err != nil || !grant.IsActive(s.now()) || grant.AuthorizationVersion != key.AuthorizationVersion {
+			if !grant.IsActive(s.now()) || grant.AuthorizationVersion != key.AuthorizationVersion {
 				return ErrApprovalNeeded
 			}
 			if !grantHasAvailableQuota(&grant) {
@@ -1427,6 +1450,18 @@ func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID s
 	if policy.Mode == accessmodel.AccessModeDisabled {
 		return nil, ErrAccessDisabled
 	}
+	var candidate apikeymodel.TenantAPIKey
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND workspace_id = ? AND principal_type = ? AND principal_id = ?", keyID, workspaceID, accessmodel.PrincipalTypeUser, accountID).
+		First(&candidate).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if candidate.Status == "revoked" || candidate.AccessGrantID == nil {
+		return nil, ErrConflict
+	}
 	secret, err := generateSecret()
 	if err != nil {
 		return nil, fmt.Errorf("generate rotated API key: %w", err)
@@ -1434,18 +1469,20 @@ func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID s
 	var replacement apikeymodel.TenantAPIKey
 	var oldHash string
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// ReviewRequest locks the grant and then revokes its keys. Rotation uses
+		// the same grant-before-key order so the two paths cannot deadlock.
+		var grant accessmodel.Grant
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *candidate.AccessGrantID).First(&grant).Error; err != nil {
+			return err
+		}
 		var current apikeymodel.TenantAPIKey
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ? AND workspace_id = ? AND principal_type = ? AND principal_id = ?", keyID, workspaceID, accessmodel.PrincipalTypeUser, accountID).
 			First(&current).Error; err != nil {
 			return err
 		}
-		if current.Status == "revoked" || current.AccessGrantID == nil {
+		if current.Status == "revoked" || current.AccessGrantID == nil || *current.AccessGrantID != grant.ID {
 			return ErrConflict
-		}
-		var grant accessmodel.Grant
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *current.AccessGrantID).First(&grant).Error; err != nil {
-			return err
 		}
 		if !grant.IsActive(s.now()) || grant.AuthorizationVersion != current.AuthorizationVersion {
 			return ErrApprovalNeeded
