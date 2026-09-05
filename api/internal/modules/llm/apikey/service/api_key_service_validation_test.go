@@ -22,9 +22,11 @@ func TestValidateAPIKeyRejectsInactivePrincipalGrant(t *testing.T) {
 		keyVersion   int64
 		grantQuota   *int64
 		remaining    int64
+		orgStatus    workspacemodel.OrganizationStatus
 	}{
-		{name: "stale authorization period", grantVersion: 2, keyVersion: 1},
-		{name: "exhausted bounded grant", grantVersion: 1, keyVersion: 1, grantQuota: &quotaLimit, remaining: 0},
+		{name: "stale authorization period", grantVersion: 2, keyVersion: 1, orgStatus: workspacemodel.OrganizationStatusActive},
+		{name: "exhausted bounded grant", grantVersion: 1, keyVersion: 1, grantQuota: &quotaLimit, remaining: 0, orgStatus: workspacemodel.OrganizationStatusActive},
+		{name: "archived organization", grantVersion: 1, keyVersion: 1, remaining: 100, orgStatus: workspacemodel.OrganizationStatusArchived},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -34,6 +36,7 @@ func TestValidateAPIKeyRejectsInactivePrincipalGrant(t *testing.T) {
 			}
 			if err := db.AutoMigrate(
 				&apikeymodel.TenantAPIKey{},
+				&workspacemodel.Organization{},
 				&workspacemodel.Workspace{},
 				&workspacemodel.WorkspaceMember{},
 				&accessmodel.Grant{},
@@ -42,6 +45,9 @@ func TestValidateAPIKeyRejectsInactivePrincipalGrant(t *testing.T) {
 				t.Fatal(err)
 			}
 			organizationID, workspaceID, principalID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+			if err := db.Create(&workspacemodel.Organization{ID: organizationID, Name: "Validation organization", Status: tt.orgStatus}).Error; err != nil {
+				t.Fatal(err)
+			}
 			workspace := workspacemodel.Workspace{ID: workspaceID, OrganizationID: &organizationID, Name: "Validation workspace", Status: "normal"}
 			if err := db.Create(&workspace).Error; err != nil {
 				t.Fatal(err)

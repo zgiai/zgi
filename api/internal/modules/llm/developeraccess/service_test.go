@@ -23,6 +23,7 @@ func openDeveloperAccessTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open database: %v", err)
 	}
 	if err := db.AutoMigrate(
+		&workspacemodel.Organization{},
 		&workspacemodel.Workspace{},
 		&workspacemodel.WorkspaceMember{},
 		&accessmodel.Policy{},
@@ -244,6 +245,37 @@ func TestApprovalManagerRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	}
 }
 
+func TestApprovalManagerRejoinedAfterRemovalRenewsRevokedGrant(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, _ := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	quota, ttl := int64(700), int64(3600)
+	if _, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
+		Mode: accessmodel.AccessModeApprovalRequired, DefaultQuota: &quota, MaxKeys: 2, DefaultTTLSeconds: &ttl,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldQuota := int64(300)
+	grant := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
+		PrincipalID: ownerID, Source: "workspace_admin", Status: accessmodel.GrantStatusRevoked,
+		QuotaLimit: &oldQuota, UsedQuota: 200, RemainQuota: 100, MaxKeys: 1, AuthorizationVersion: 4,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateKey(context.Background(), workspaceID, ownerID, CreateKeyInput{Name: "manager after rejoin"}); err != nil {
+		t.Fatalf("rejoined manager should renew without self-approval: %v", err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.Source != "workspace_admin" || grant.Status != accessmodel.GrantStatusActive || grant.QuotaLimit == nil ||
+		*grant.QuotaLimit != quota || grant.UsedQuota != 0 || grant.RemainQuota != quota || grant.MaxKeys != 2 || grant.AuthorizationVersion != 5 {
+		t.Fatalf("unexpected renewed rejoined-manager grant: %#v", grant)
+	}
+}
+
 func TestApprovalOfExpiredGrantStartsNewBudgetPeriod(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
@@ -376,7 +408,7 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`CREATE TABLE billing_attempt_entries (
-		attempt_id TEXT, entry_type TEXT, actual_amount INTEGER
+		attempt_id TEXT, entry_type TEXT, reserved_amount INTEGER, actual_amount INTEGER, refunded_amount INTEGER
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -389,29 +421,77 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		"personal_api_key", key.ID, "qwen-test", "qwen", "success", 10, 5, 15, 20, 100, time.Now()).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, actual_amount)
-		VALUES (?, ?, ?)`, "attempt-1", "subject", 15).Error; err != nil {
+	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, reserved_amount, actual_amount, refunded_amount)
+		VALUES (?, ?, ?, ?, ?)`, "attempt-1", "subject", 20, 15, 5).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO llm_usage_bills
+		(attempt_id, request_id, organization_id, workspace_id, principal_type, principal_id, auth_method,
+		 api_key_id, model_name, provider_name, status, prompt_tokens, completion_tokens, total_tokens,
+		 total_points, response_time_ms, request_created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"attempt-compensated", "request-compensated", organizationID, workspaceID, accessmodel.PrincipalTypeUser, memberID,
+		"personal_api_key", key.ID, "music-test", "music-provider", "success", 0, 0, 0, 0, 100, time.Now().Add(time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, reserved_amount, actual_amount, refunded_amount)
+		VALUES (?, ?, ?, ?, ?)`, "attempt-compensated", "subject", 20, 15, 20).Error; err != nil {
 		t.Fatal(err)
 	}
 	adminPage, err := service.ListAudit(context.Background(), workspaceID, ownerID, AuditQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adminPage.Total != 1 || len(adminPage.Items) != 1 || adminPage.Items[0].PrincipalEmail != "member@example.test" || adminPage.Items[0].APIKeyName != "audited key" || adminPage.Items[0].QuotaChargedPoints != 15 || adminPage.Items[0].QuotaOveragePoints != 5 {
+	if adminPage.Total != 2 || len(adminPage.Items) != 2 {
 		t.Fatalf("unexpected admin audit page: %#v", adminPage)
+	}
+	itemsByAttempt := make(map[string]AuditItem, len(adminPage.Items))
+	for _, item := range adminPage.Items {
+		itemsByAttempt[item.AttemptID] = item
+	}
+	ordinary := itemsByAttempt["attempt-1"]
+	if ordinary.PrincipalEmail != "member@example.test" || ordinary.APIKeyName != "audited key" || ordinary.QuotaChargedPoints != 15 || ordinary.QuotaOveragePoints != 5 {
+		t.Fatalf("unexpected ordinary audit item: %#v", ordinary)
+	}
+	compensated := itemsByAttempt["attempt-compensated"]
+	if compensated.QuotaChargedPoints != 0 || compensated.QuotaOveragePoints != 0 || compensated.TotalPoints != 0 {
+		t.Fatalf("compensated audit item still reports a charge: %#v", compensated)
 	}
 	memberPage, err := service.ListAudit(context.Background(), workspaceID, memberID, AuditQuery{PrincipalID: ownerID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if memberPage.Total != 1 || memberPage.Items[0].PrincipalID != memberID {
+	if memberPage.Total != 2 || len(memberPage.Items) != 2 || memberPage.Items[0].PrincipalID != memberID || memberPage.Items[1].PrincipalID != memberID {
 		t.Fatalf("member escaped own audit scope: %#v", memberPage)
+	}
+}
+
+func TestNetSubjectChargeSubtractsOnlyCompensationRefund(t *testing.T) {
+	tests := []struct {
+		name                       string
+		reserved, actual, refunded int64
+		want                       int64
+	}{
+		{name: "ordinary estimate refund", reserved: 20, actual: 15, refunded: 5, want: 15},
+		{name: "full delivery compensation", reserved: 20, actual: 15, refunded: 20, want: 0},
+		{name: "actual exceeds estimate", reserved: 10, actual: 15, refunded: 0, want: 15},
+		{name: "malformed over-refund clamps", reserved: 10, actual: 5, refunded: 99, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := netSubjectCharge(tt.reserved, tt.actual, tt.refunded); got != tt.want {
+				t.Fatalf("netSubjectCharge(%d, %d, %d) = %d, want %d", tt.reserved, tt.actual, tt.refunded, got, tt.want)
+			}
+		})
 	}
 }
 
 func seedDeveloperWorkspace(t *testing.T, db *gorm.DB) (workspaceID, organizationID, ownerID, memberID string) {
 	t.Helper()
 	workspaceID, organizationID, ownerID, memberID = uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	if err := db.Create(&workspacemodel.Organization{ID: organizationID, Name: "Developer Organization", Status: workspacemodel.OrganizationStatusActive}).Error; err != nil {
+		t.Fatal(err)
+	}
 	workspace := workspacemodel.Workspace{ID: workspaceID, Name: "Developer Workspace", Plan: "basic", Status: workspacemodel.WorkspaceStatusNormal, OrganizationID: &organizationID}
 	if err := db.Create(&workspace).Error; err != nil {
 		t.Fatal(err)

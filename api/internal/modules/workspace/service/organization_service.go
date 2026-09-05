@@ -2122,9 +2122,6 @@ func (s *organizationService) AddWorkspace(ctx context.Context, req *shared_dto.
 		return errors.New("workspace already belongs to an organization")
 	}
 
-	// Update tenant organization info
-	workspace.OrganizationID = &req.OrganizationID
-
 	if req.APIKeyID != nil && *req.APIKeyID != "" {
 		db := s.organizationRepo.GetDB()
 		workspaceIDs := []string{req.OrganizationID}
@@ -2153,7 +2150,34 @@ func (s *organizationService) AddWorkspace(ctx context.Context, req *shared_dto.
 		workspace.ApiKeyID = req.APIKeyID
 	}
 
-	if err := s.workspaceRepo.Update(ctx, workspace); err != nil {
+	db := s.organizationRepo.GetDB()
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var locked model.Workspace
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", workspaceID).First(&locked).Error; err != nil {
+			return fmt.Errorf("reload workspace for organization add: %w", err)
+		}
+		if locked.OrganizationID != nil && *locked.OrganizationID != "" {
+			if *locked.OrganizationID == req.OrganizationID {
+				return errors.New("workspace already exists in organization")
+			}
+			return errors.New("workspace already belongs to an organization")
+		}
+		if err := retireWorkspaceDeveloperAccessForOrganizationChange(ctx, tx, workspaceID); err != nil {
+			return err
+		}
+		updates := map[string]any{"organization_id": req.OrganizationID, "department_id": nil, "api_key_id": nil, "updated_at": time.Now()}
+		if req.APIKeyID != nil && *req.APIKeyID != "" {
+			updates["api_key_id"] = workspace.ApiKeyID
+		}
+		res := tx.WithContext(ctx).Model(&model.Workspace{}).Where("id = ? AND organization_id IS NULL", workspaceID).Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return errors.New("workspace organization changed concurrently")
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("failed to add workspace to organization: %w", err)
 	}
 
@@ -2230,11 +2254,31 @@ func (s *organizationService) RemoveWorkspace(ctx context.Context, organizationI
 		return errors.New("workspace does not exist in organization")
 	}
 
-	workspace.OrganizationID = nil
-	workspace.DepartmentID = nil
-	workspace.ApiKeyID = nil
-
-	if err := s.workspaceRepo.Update(ctx, workspace); err != nil {
+	db := s.organizationRepo.GetDB()
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var locked model.Workspace
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", workspaceID).First(&locked).Error; err != nil {
+			return fmt.Errorf("reload workspace for organization removal: %w", err)
+		}
+		if locked.OrganizationID == nil || *locked.OrganizationID != organizationID {
+			return errors.New("workspace does not exist in organization")
+		}
+		if err := retireWorkspaceDeveloperAccessForOrganizationChange(ctx, tx, workspaceID); err != nil {
+			return err
+		}
+		res := tx.WithContext(ctx).Model(&model.Workspace{}).
+			Where("id = ? AND organization_id = ?", workspaceID, organizationID).
+			Updates(map[string]any{
+				"organization_id": nil, "department_id": nil, "api_key_id": nil, "updated_at": time.Now(),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return errors.New("workspace organization changed concurrently")
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("failed to remove workspace from organization: %w", err)
 	}
 

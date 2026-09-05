@@ -199,6 +199,13 @@ func (s *Service) scope(ctx context.Context, workspaceID, accountID string) (*wo
 	if !workspace.IsNormal() {
 		return nil, ErrForbidden
 	}
+	var organization workspacemodel.Organization
+	if err := s.db.WithContext(ctx).Where("id = ?", *workspace.OrganizationID).First(&organization).Error; err != nil {
+		return nil, fmt.Errorf("load workspace organization: %w", err)
+	}
+	if !organization.IsActive() {
+		return nil, ErrForbidden
+	}
 	member, err := s.members.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("load workspace member: %w", err)
@@ -682,10 +689,11 @@ func grantCanStartNewPeriod(grant *accessmodel.Grant, scope *workspaceScope, pol
 		return false
 	}
 	// Revoked grants currently represent membership removal. A member who has
-	// rejoined a self-service workspace may start a fresh authorization period;
-	// the version bump below keeps every key from the old membership revoked.
+	// rejoined a self-service workspace, or a rejoined workspace manager, may
+	// start a fresh authorization period; the version bump below keeps every
+	// key from the old membership revoked.
 	if grant.Status == accessmodel.GrantStatusRevoked {
-		return policy.Mode == accessmodel.AccessModeSelfService
+		return policy.Mode == accessmodel.AccessModeSelfService || scope.CanManage
 	}
 	return grant.Status == accessmodel.GrantStatusActive &&
 		grant.ExpiresAt != nil && !grant.ExpiresAt.After(now) &&
@@ -1082,8 +1090,10 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, 
 		keysByID[keys[i].ID] = keyToView(&keys[i])
 	}
 	type subjectCharge struct {
-		AttemptID    string `gorm:"column:attempt_id"`
-		ActualAmount int64  `gorm:"column:actual_amount"`
+		AttemptID      string `gorm:"column:attempt_id"`
+		ReservedAmount int64  `gorm:"column:reserved_amount"`
+		ActualAmount   int64  `gorm:"column:actual_amount"`
+		RefundedAmount int64  `gorm:"column:refunded_amount"`
 	}
 	attemptIDs := make([]string, 0, len(items))
 	for _, item := range items {
@@ -1095,13 +1105,13 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, 
 	if len(attemptIDs) > 0 {
 		var charges []subjectCharge
 		if err := s.db.WithContext(ctx).Table("billing_attempt_entries").
-			Select("attempt_id", "actual_amount").
+			Select("attempt_id", "reserved_amount", "actual_amount", "refunded_amount").
 			Where("attempt_id IN ? AND entry_type = ?", unique(attemptIDs), "subject").
 			Scan(&charges).Error; err != nil {
 			return nil, fmt.Errorf("load developer access quota charges: %w", err)
 		}
 		for _, charge := range charges {
-			chargesByAttempt[charge.AttemptID] = charge.ActualAmount
+			chargesByAttempt[charge.AttemptID] = netSubjectCharge(charge.ReservedAmount, charge.ActualAmount, charge.RefundedAmount)
 		}
 	}
 	for i := range items {
@@ -1118,6 +1128,22 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, 
 		}
 	}
 	return &AuditPage{Items: items, Total: total, Page: input.Page, PageSize: input.PageSize}, nil
+}
+
+func netSubjectCharge(reserved, actual, refunded int64) int64 {
+	unusedReservationRefund := reserved - actual
+	if unusedReservationRefund < 0 {
+		unusedReservationRefund = 0
+	}
+	compensatedRefund := refunded - unusedReservationRefund
+	if compensatedRefund < 0 {
+		compensatedRefund = 0
+	}
+	net := actual - compensatedRefund
+	if net < 0 {
+		return 0
+	}
+	return net
 }
 
 func (s *Service) ownedKey(ctx context.Context, scope *workspaceScope, accountID, keyID string) (*apikeymodel.TenantAPIKey, error) {

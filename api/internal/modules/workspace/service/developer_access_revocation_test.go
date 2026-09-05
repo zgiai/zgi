@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -15,7 +16,7 @@ func TestRevokeWorkspaceDeveloperAccessInvalidatesMembershipAuthority(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&accessmodel.Grant{}, &accessmodel.AccessRequest{}, &apikeymodel.TenantAPIKey{}); err != nil {
+	if err := db.AutoMigrate(&accessmodel.Policy{}, &accessmodel.Grant{}, &accessmodel.AccessRequest{}, &apikeymodel.TenantAPIKey{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -143,5 +144,154 @@ func TestRevokeWorkspaceDeveloperAccessInvalidatesMembershipAuthority(t *testing
 	}
 	if reloadedApproved.Status != accessmodel.RequestStatusApproved {
 		t.Fatalf("approved request status = %s, want unchanged approved", reloadedApproved.Status)
+	}
+}
+
+func TestRetireWorkspaceDeveloperAccessForOrganizationChange(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&accessmodel.Policy{}, &accessmodel.Grant{}, &accessmodel.AccessRequest{}, &apikeymodel.TenantAPIKey{}); err != nil {
+		t.Fatal(err)
+	}
+	organizationID, workspaceID, accountID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	policy := accessmodel.Policy{
+		OrganizationID: organizationID, WorkspaceID: workspaceID, Mode: accessmodel.AccessModeApprovalRequired,
+		MaxKeys: 2, AllowedModels: []string{}, Version: 1,
+	}
+	grant := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
+		PrincipalID: accountID, Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		MaxKeys: 2, AllowedModels: []string{}, AuthorizationVersion: 6,
+	}
+	request := accessmodel.AccessRequest{
+		OrganizationID: organizationID, WorkspaceID: workspaceID, RequesterAccountID: accountID,
+		Purpose: "move workspace", Environment: "development", Status: accessmodel.RequestStatusPending,
+		RequestedModels: []string{},
+	}
+	if err := db.Create(&policy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&request).Error; err != nil {
+		t.Fatal(err)
+	}
+	principalType := accessmodel.PrincipalTypeUser
+	key := apikeymodel.TenantAPIKey{
+		OrganizationID: organizationID, WorkspaceID: &workspaceID, PrincipalType: &principalType,
+		PrincipalID: &accountID, AccessGrantID: &grant.ID, KeyHash: "organization-transfer-key",
+		Name: "old organization key", Status: "active", AuthorizationVersion: grant.AuthorizationVersion,
+	}
+	if err := db.Create(&key).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return retireWorkspaceDeveloperAccessForOrganizationChange(t.Context(), tx, workspaceID)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return retireWorkspaceDeveloperAccessForOrganizationChange(t.Context(), tx, workspaceID)
+	}); err != nil {
+		t.Fatalf("second retirement must be idempotent: %v", err)
+	}
+
+	for name, record := range map[string]struct {
+		value any
+		id    string
+	}{
+		"policy":  {value: &accessmodel.Policy{}, id: policy.ID},
+		"grant":   {value: &accessmodel.Grant{}, id: grant.ID},
+		"request": {value: &accessmodel.AccessRequest{}, id: request.ID},
+	} {
+		if err := db.Unscoped().First(record.value, "id = ?", record.id).Error; err != nil {
+			t.Fatalf("load retired %s: %v", name, err)
+		}
+		var visible int64
+		if err := db.Model(record.value).Where("id = ?", record.id).Count(&visible).Error; err != nil {
+			t.Fatal(err)
+		}
+		if visible != 0 {
+			t.Fatalf("retired %s remains visible", name)
+		}
+	}
+	if err := db.First(&key, "id = ?", key.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if key.Status != "revoked" || key.RevokedAt == nil || key.RevokedReason == nil || *key.RevokedReason != workspaceOrganizationChangedReason {
+		t.Fatalf("organization-transfer key was not revoked: %#v", key)
+	}
+}
+
+func TestOrganizationManagementTransferRetiresDeveloperAccess(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(
+		&workspacemodel.Organization{}, &workspacemodel.Workspace{},
+		&accessmodel.Policy{}, &accessmodel.Grant{}, &accessmodel.AccessRequest{}, &apikeymodel.TenantAPIKey{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	oldOrganizationID, newOrganizationID, workspaceID, accountID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	for _, organization := range []workspacemodel.Organization{
+		{ID: oldOrganizationID, Name: "Old", Status: workspacemodel.OrganizationStatusActive},
+		{ID: newOrganizationID, Name: "New", Status: workspacemodel.OrganizationStatusActive},
+	} {
+		if err := db.Create(&organization).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspace := workspacemodel.Workspace{
+		ID: workspaceID, Name: "Transferred", Plan: "basic", Status: workspacemodel.WorkspaceStatusNormal,
+		OrganizationID: &oldOrganizationID,
+	}
+	if err := db.Create(&workspace).Error; err != nil {
+		t.Fatal(err)
+	}
+	grant := accessmodel.Grant{
+		OrganizationID: oldOrganizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
+		PrincipalID: accountID, Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		MaxKeys: 1, AllowedModels: []string{}, AuthorizationVersion: 2,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	principalType := accessmodel.PrincipalTypeUser
+	key := apikeymodel.TenantAPIKey{
+		OrganizationID: oldOrganizationID, WorkspaceID: &workspaceID, PrincipalType: &principalType,
+		PrincipalID: &accountID, AccessGrantID: &grant.ID, KeyHash: "transferred-key",
+		Name: "old key", Status: "active", AuthorizationVersion: 2,
+	}
+	if err := db.Create(&key).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	service := &OrganizationServiceImpl{db: db}
+	if err := service.AddWorkspace(t.Context(), newOrganizationID, workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&workspace, "id = ?", workspaceID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if workspace.OrganizationID == nil || *workspace.OrganizationID != newOrganizationID {
+		t.Fatalf("workspace organization = %v, want %s", workspace.OrganizationID, newOrganizationID)
+	}
+	var visibleGrants int64
+	if err := db.Model(&accessmodel.Grant{}).Where("workspace_id = ?", workspaceID).Count(&visibleGrants).Error; err != nil {
+		t.Fatal(err)
+	}
+	if visibleGrants != 0 {
+		t.Fatalf("old organization grant remains visible after transfer")
+	}
+	if err := db.First(&key, "id = ?", key.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if key.Status != "revoked" || key.RevokedReason == nil || *key.RevokedReason != workspaceOrganizationChangedReason {
+		t.Fatalf("old organization key remains usable after transfer: %#v", key)
 	}
 }

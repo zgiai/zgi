@@ -153,6 +153,91 @@ func TestRemoteBillingEmptyDeductionIDRollsBackLocalGrantReservation(t *testing.
 	}
 }
 
+func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatalf("migrate developer grant: %v", err)
+	}
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1,
+		AllowedModels: []string{}, AuthorizationVersion: 3,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	version := grant.AuthorizationVersion
+	bc := &BillingContext{
+		OrganizationID: grant.OrganizationID, WorkspaceID: grant.WorkspaceID,
+		AttemptID: uuid.NewString(), RequestID: uuid.NewString(),
+		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+		InvocationSource: InvocationSourceAPI, AuthMethod: "personal_api_key",
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
+		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		EstimatedCredits: quota,
+	}
+	remote := &RemoteBilling{localService: &BillingService{db: db}}
+	if err := remote.preDeductLocalSubjectQuota(context.Background(), bc); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.RemainQuota != 0 {
+		t.Fatalf("pre-deduct grant remain = %d, want 0", grant.RemainQuota)
+	}
+	staleAt := time.Now().Add(-defaultRemoteInitTimeout - time.Minute)
+	if err := db.Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Update("updated_at", staleAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.recoverStaleRemoteInitAttempts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.rollbackLocalSubjectQuotaAndMarkFailed(context.Background(), bc, "LATE_GRPC_FAILURE", "late response"); err != nil {
+		t.Fatalf("late gRPC failure handling must be idempotent: %v", err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 0 || grant.RemainQuota != quota {
+		t.Fatalf("stale INIT recovery grant used/remain = %d/%d, want 0/%d", grant.UsedQuota, grant.RemainQuota, quota)
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusPredeductFailed || attempt.ErrorCode == nil || *attempt.ErrorCode != "REMOTE_PREDEDUCT_TIMEOUT_NO_DEDUCTION_ID" {
+		t.Fatalf("stale INIT recovery attempt = %#v", attempt)
+	}
+	var subjectEntry, fundEntry BillingAttemptEntry
+	if err := db.Where("attempt_id = ? AND entry_type = ?", bc.AttemptID, billingEntryTypeSubject).First(&subjectEntry).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("attempt_id = ? AND entry_type = ?", bc.AttemptID, billingEntryTypeFund).First(&fundEntry).Error; err != nil {
+		t.Fatal(err)
+	}
+	if subjectEntry.Status != billingEntryStatusRolled || subjectEntry.ActualAmount != 0 || subjectEntry.RefundedAmount != quota {
+		t.Fatalf("stale INIT subject entry = %#v", subjectEntry)
+	}
+	if fundEntry.Status != billingEntryStatusFailed || fundEntry.RefundedAmount != 0 {
+		t.Fatalf("stale INIT unbound fund entry = %#v", fundEntry)
+	}
+	// Recovery is idempotent and must not credit the Grant twice.
+	if err := remote.recoverStaleRemoteInitAttempts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.RemainQuota != quota {
+		t.Fatalf("second stale INIT recovery changed grant remain to %d", grant.RemainQuota)
+	}
+}
+
 func TestRemoteBillingFinalizationIsIdempotentUnderAttemptLock(t *testing.T) {
 	db := openRemoteBillingTestDB(t)
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {

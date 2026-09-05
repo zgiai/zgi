@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -87,7 +88,23 @@ func (s *OrganizationServiceImpl) UpsertOrganizationRole(ctx context.Context, or
 
 // AddWorkspace adds a tenant to a organization
 func (s *OrganizationServiceImpl) AddWorkspace(ctx context.Context, organizationID string, workspaceID string) error {
-	if err := s.db.WithContext(ctx).Table("workspaces").Where("id = ?", workspaceID).Update("organization_id", organizationID).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var workspace model.Workspace
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", workspaceID).First(&workspace).Error; err != nil {
+			return err
+		}
+		if workspace.OrganizationID != nil && *workspace.OrganizationID == organizationID {
+			return nil
+		}
+		if err := retireWorkspaceDeveloperAccessForOrganizationChange(ctx, tx, workspaceID); err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Model(&model.Workspace{}).Where("id = ?", workspaceID).Updates(map[string]any{
+			"organization_id": organizationID,
+			"department_id":   nil,
+			"api_key_id":      nil,
+		}).Error
+	}); err != nil {
 		return fmt.Errorf("failed to add tenant to organization: %w", err)
 	}
 

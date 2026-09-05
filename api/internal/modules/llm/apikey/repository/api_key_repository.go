@@ -137,6 +137,15 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 	if !workspace.IsNormal() {
 		return errors.New("API key workspace is archived")
 	}
+	var organization workspacemodel.Organization
+	if err := r.db.WithContext(ctx).
+		Where("id = ?", apiKey.OrganizationID).
+		First(&organization).Error; err != nil {
+		return err
+	}
+	if !organization.IsActive() {
+		return errors.New("API key organization is inactive or archived")
+	}
 	var grant accessmodel.Grant
 	err := r.db.WithContext(ctx).
 		Where("id = ? AND organization_id = ? AND workspace_id = ? AND principal_type = ? AND principal_id = ?", *apiKey.AccessGrantID, apiKey.OrganizationID, *apiKey.WorkspaceID, *apiKey.PrincipalType, *apiKey.PrincipalID).
