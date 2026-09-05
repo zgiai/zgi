@@ -44,4 +44,12 @@ The console UI is available at `/console/api-keys`. Members see their own keys, 
 
 ## Runtime attribution
 
+### Quota units
+
+The console displays and accepts quota in points, consistently with workspace quotas. One displayed point equals 1,000 internal credits. The console preserves three decimal places (0.001 point is one internal credit), including in personal balances, access requests, approvals, policy limits, and call audit. Points are not tokens or a currency amount.
+
+Console API quota fields and audit `*_points` fields retain their existing integer internal-credit contract. For example, a 100-point request is sent as `requested_quota: 100000`; an audit value of `total_points: 1234` displays as 1.234 points. API clients must not send UI point values directly. Missing or null limits retain their default/unlimited semantics; zero remains zero. This display conversion does not rescale stored grants, change billing, or replenish any balance.
+
+### Shared billing subject
+
 Gateway usage records include the workspace account, principal type and ID, access grant ID, API key ID, and authentication method. Personal-key calls are charged against the shared developer grant rather than an independent per-key balance. This keeps key rotation from resetting a user's assigned quota and lets administrators audit usage across all keys owned by one user. Billing retry and reconciliation records persist the same attribution so failure recovery does not downgrade a personal-key call to legacy-key usage.

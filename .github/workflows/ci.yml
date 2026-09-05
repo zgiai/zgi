@@ -76,6 +76,9 @@ jobs:
       - name: Check developer access error states
         run: pnpm test:developer-access-load-error
 
+      - name: Check developer access quota units
+        run: pnpm test:developer-access-credits
+
       - name: Clean generated web files
         if: always()
         run: |

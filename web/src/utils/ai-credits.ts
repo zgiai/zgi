@@ -14,6 +14,15 @@ import type {
 } from '@/services/types/pay';
 import type { WorkspaceQuota, WorkspaceQuotaList } from '@/services/types/workspace-quota';
 import type {
+  CreateAccessRequestInput,
+  DeveloperAccessAuditPage,
+  DeveloperAccessMe,
+  DeveloperAccessPolicy,
+  DeveloperAccessRequest,
+  DeveloperAccessRequestPage,
+  ReviewAccessRequestInput,
+} from '@/services/developer-access.service';
+import type {
   ModelUsageByAppTypeItem,
   ModelUsageByModelItem,
   ModelUsageDailyItem,
@@ -30,6 +39,119 @@ export const MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION = 3;
 export const MODEL_USAGE_AI_CREDITS_DISPLAY_PRECISION = 2;
 export const CHANNEL_POINTS_PER_USD = 1_000;
 export const USD_TO_CNY_ESTIMATE_RATE = 7;
+
+// Grants and usage bills store internal credits, like workspace quotas. Preserve
+// three display decimals so one internal credit never disappears as zero.
+export const DEVELOPER_ACCESS_QUOTA_STEP = 1 / AI_CREDITS_SCALE;
+
+function developerQuotaToPoints(value?: number | null): number | null | undefined {
+  if (value == null) return value;
+  const points = normalizeAiCreditValue(value, { precision: 3, preserveUnlimitedSentinel: false });
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    points == null ||
+    Math.round(points * AI_CREDITS_SCALE) !== value
+  ) {
+    throw new RangeError('Developer access quota cannot be represented without precision loss');
+  }
+  return points;
+}
+
+export function isValidDeveloperAccessQuota(value: number): boolean {
+  const internal = Math.round(value * AI_CREDITS_SCALE);
+  return (
+    Number.isFinite(value) &&
+    value >= 0 &&
+    Number.isSafeInteger(internal) &&
+    internal / AI_CREDITS_SCALE === value
+  );
+}
+
+function developerQuotaToInternal(value?: number | null): number | null | undefined {
+  if (value == null) return value;
+  if (!isValidDeveloperAccessQuota(value)) throw new RangeError('Invalid developer access quota');
+  return Math.round(value * AI_CREDITS_SCALE);
+}
+
+export function normalizeDeveloperAccessPolicy(
+  policy: DeveloperAccessPolicy
+): DeveloperAccessPolicy {
+  return {
+    ...policy,
+    default_quota: developerQuotaToPoints(policy.default_quota),
+    max_quota: developerQuotaToPoints(policy.max_quota),
+  };
+}
+
+export function normalizeDeveloperAccessRequest(
+  request: DeveloperAccessRequest
+): DeveloperAccessRequest {
+  return { ...request, requested_quota: developerQuotaToPoints(request.requested_quota) };
+}
+
+export function normalizeDeveloperAccessMe(access: DeveloperAccessMe): DeveloperAccessMe {
+  return {
+    ...access,
+    policy: normalizeDeveloperAccessPolicy(access.policy),
+    grant: access.grant
+      ? {
+          ...access.grant,
+          quota_limit: developerQuotaToPoints(access.grant.quota_limit),
+          used_quota: developerQuotaToPoints(access.grant.used_quota) ?? 0,
+          remain_quota: developerQuotaToPoints(access.grant.remain_quota) ?? 0,
+        }
+      : access.grant,
+    pending_request: access.pending_request
+      ? normalizeDeveloperAccessRequest(access.pending_request)
+      : access.pending_request,
+  };
+}
+
+export function normalizeDeveloperAccessRequests(
+  page: DeveloperAccessRequestPage
+): DeveloperAccessRequestPage {
+  return { ...page, items: page.items.map(normalizeDeveloperAccessRequest) };
+}
+
+export function normalizeDeveloperAccessAudit(
+  page: DeveloperAccessAuditPage
+): DeveloperAccessAuditPage {
+  return {
+    ...page,
+    items: page.items.map(item => ({
+      ...item,
+      total_points: developerQuotaToPoints(item.total_points) ?? 0,
+      quota_charged_points: developerQuotaToPoints(item.quota_charged_points) ?? 0,
+      quota_overage_points: developerQuotaToPoints(item.quota_overage_points) ?? 0,
+    })),
+  };
+}
+
+export function denormalizeDeveloperAccessRequest(
+  input: CreateAccessRequestInput
+): CreateAccessRequestInput {
+  return {
+    ...input,
+    requested_quota: developerQuotaToInternal(input.requested_quota) ?? undefined,
+  };
+}
+
+export function denormalizeDeveloperAccessReview(
+  input: ReviewAccessRequestInput
+): ReviewAccessRequestInput {
+  return { ...input, quota_limit: developerQuotaToInternal(input.quota_limit) ?? undefined };
+}
+
+export function denormalizeDeveloperAccessPolicy(
+  input: Omit<DeveloperAccessPolicy, 'id' | 'workspace_id' | 'organization_id' | 'version'>
+): typeof input {
+  return {
+    ...input,
+    default_quota: developerQuotaToInternal(input.default_quota),
+    max_quota: developerQuotaToInternal(input.max_quota),
+  };
+}
 
 const AI_CREDITS_PRECISION = 1;
 

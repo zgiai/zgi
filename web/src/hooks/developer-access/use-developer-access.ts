@@ -4,6 +4,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import {
+  denormalizeDeveloperAccessPolicy,
+  denormalizeDeveloperAccessRequest,
+  denormalizeDeveloperAccessReview,
+  normalizeDeveloperAccessAudit,
+  normalizeDeveloperAccessMe,
+  normalizeDeveloperAccessPolicy,
+  normalizeDeveloperAccessRequest,
+  normalizeDeveloperAccessRequests,
+} from '@/utils/ai-credits';
+import {
   developerAccessService,
   type AccessRequestStatus,
   type CreateAccessRequestInput,
@@ -79,6 +89,7 @@ export function useDeveloperAccess(
   const me = useQuery({
     queryKey: DEVELOPER_ACCESS_KEYS.me(workspaceId ?? ''),
     queryFn: async () => (await developerAccessService.getMe(workspaceId ?? '')).data,
+    select: normalizeDeveloperAccessMe,
     enabled,
     staleTime: 30_000,
   });
@@ -109,6 +120,7 @@ export function useDeveloperAccess(
     staleTime: 15_000,
   });
   const requests = useQuery({
+    select: normalizeDeveloperAccessRequests,
     queryKey: DEVELOPER_ACCESS_KEYS.requests(
       workspaceId ?? '',
       'mine',
@@ -127,6 +139,7 @@ export function useDeveloperAccess(
     staleTime: 15_000,
   });
   const memberRequests = useQuery({
+    select: normalizeDeveloperAccessRequests,
     queryKey: DEVELOPER_ACCESS_KEYS.requests(
       workspaceId ?? '',
       'members',
@@ -145,6 +158,7 @@ export function useDeveloperAccess(
     staleTime: 15_000,
   });
   const audit = useQuery({
+    select: normalizeDeveloperAccessAudit,
     queryKey: DEVELOPER_ACCESS_KEYS.audit(workspaceId ?? '', auditPage, auditPageSize),
     queryFn: async () =>
       (
@@ -192,14 +206,23 @@ export function useDeveloperAccessActions(workspaceId?: string) {
   const createRequest = useWorkspaceMutation(
     workspaceId,
     async (input: CreateAccessRequestInput) =>
-      (await developerAccessService.createRequest(workspaceId ?? '', input)).data,
+      normalizeDeveloperAccessRequest(
+        (
+          await developerAccessService.createRequest(
+            workspaceId ?? '',
+            denormalizeDeveloperAccessRequest(input)
+          )
+        ).data
+      ),
     t('requestSubmitted'),
     t('requestFailed')
   );
   const cancelRequest = useWorkspaceMutation(
     workspaceId,
     async (input: { requestId: string }) =>
-      (await developerAccessService.cancelRequest(workspaceId ?? '', input.requestId)).data,
+      normalizeDeveloperAccessRequest(
+        (await developerAccessService.cancelRequest(workspaceId ?? '', input.requestId)).data
+      ),
     t('requestCancelled'),
     t('requestFailed')
   );
@@ -210,14 +233,16 @@ export function useDeveloperAccessActions(workspaceId?: string) {
       decision: 'approve' | 'reject';
       review: ReviewAccessRequestInput;
     }) =>
-      (
-        await developerAccessService.reviewRequest(
-          workspaceId ?? '',
-          input.requestId,
-          input.decision,
-          input.review
-        )
-      ).data,
+      normalizeDeveloperAccessRequest(
+        (
+          await developerAccessService.reviewRequest(
+            workspaceId ?? '',
+            input.requestId,
+            input.decision,
+            denormalizeDeveloperAccessReview(input.review)
+          )
+        ).data
+      ),
     t('requestUpdated'),
     t('requestFailed')
   );
@@ -225,7 +250,15 @@ export function useDeveloperAccessActions(workspaceId?: string) {
     workspaceId,
     async (
       input: Omit<DeveloperAccessPolicy, 'id' | 'workspace_id' | 'organization_id' | 'version'>
-    ) => (await developerAccessService.updatePolicy(workspaceId ?? '', input)).data,
+    ) =>
+      normalizeDeveloperAccessPolicy(
+        (
+          await developerAccessService.updatePolicy(
+            workspaceId ?? '',
+            denormalizeDeveloperAccessPolicy(input)
+          )
+        ).data
+      ),
     t('policyUpdated'),
     t('requestFailed')
   );

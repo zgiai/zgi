@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { API_URL } from '@/lib/config';
+import { DEVELOPER_ACCESS_QUOTA_STEP, isValidDeveloperAccessQuota } from '@/utils/ai-credits';
 import { useCurrentWorkspace, useWorkspaceContextStatus } from '@/store/workspace-store';
 import {
   useDeveloperAccess,
@@ -1137,8 +1138,7 @@ function RequestAccessDialog({
   );
   const requestInvalid =
     (quotaValue !== undefined &&
-      (!Number.isSafeInteger(quotaValue) ||
-        quotaValue < 0 ||
+      (!isValidDeveloperAccessQuota(quotaValue) ||
         (policy?.max_quota != null && quotaValue > policy.max_quota))) ||
     (ttlSecondsValue !== undefined &&
       (!Number.isFinite(ttlSecondsValue) ||
@@ -1206,7 +1206,7 @@ function RequestAccessDialog({
               type="number"
               min={0}
               max={policy?.max_quota ?? undefined}
-              step={1}
+              step={DEVELOPER_ACCESS_QUOTA_STEP}
               value={quota}
               onChange={event => setQuota(event.target.value)}
               placeholder={t('placeholders.quota')}
@@ -1283,8 +1283,7 @@ function ReviewAccessDialog({
   const quotaInvalid =
     approving &&
     quotaValue !== undefined &&
-    (!Number.isSafeInteger(quotaValue) ||
-      quotaValue < 0 ||
+    (!isValidDeveloperAccessQuota(quotaValue) ||
       (policy?.max_quota != null && quotaValue > policy.max_quota));
   const maxKeysValue = Number(maxKeys);
   const expiryValue = expiresAt ? new Date(expiresAt) : undefined;
@@ -1326,7 +1325,7 @@ function ReviewAccessDialog({
                 id="review-quota"
                 type="number"
                 min={0}
-                step={1}
+                step={DEVELOPER_ACCESS_QUOTA_STEP}
                 max={policy?.max_quota ?? undefined}
                 value={quota}
                 onChange={event => setQuota(event.target.value)}
@@ -1497,9 +1496,8 @@ function PolicyDialog({
     !Number.isInteger(maxKeysValue) ||
     maxKeysValue < 1 ||
     maxKeysValue > 100 ||
-    (defaultQuotaValue !== undefined &&
-      (!Number.isSafeInteger(defaultQuotaValue) || defaultQuotaValue < 0)) ||
-    (maxQuotaValue !== undefined && (!Number.isSafeInteger(maxQuotaValue) || maxQuotaValue < 0)) ||
+    (defaultQuotaValue !== undefined && !isValidDeveloperAccessQuota(defaultQuotaValue)) ||
+    (maxQuotaValue !== undefined && !isValidDeveloperAccessQuota(maxQuotaValue)) ||
     (defaultQuotaValue !== undefined &&
       maxQuotaValue !== undefined &&
       defaultQuotaValue > maxQuotaValue) ||
@@ -1547,7 +1545,7 @@ function PolicyDialog({
                 id="policy-quota"
                 type="number"
                 min={0}
-                step={1}
+                step={DEVELOPER_ACCESS_QUOTA_STEP}
                 value={defaultQuota}
                 onChange={event => setDefaultQuota(event.target.value)}
               />
@@ -1558,7 +1556,7 @@ function PolicyDialog({
                 id="policy-max-quota"
                 type="number"
                 min={0}
-                step={1}
+                step={DEVELOPER_ACCESS_QUOTA_STEP}
                 value={maxQuota}
                 onChange={event => setMaxQuota(event.target.value)}
               />
