@@ -946,7 +946,10 @@ function RequestAccessDialog({
   const ttlHoursValue = ttlHours === '' ? undefined : Number(ttlHours);
   const requestInvalid =
     (quotaValue !== undefined && (!Number.isSafeInteger(quotaValue) || quotaValue < 0)) ||
-    (ttlHoursValue !== undefined && (!Number.isFinite(ttlHoursValue) || ttlHoursValue <= 0));
+    (ttlHoursValue !== undefined &&
+      (!Number.isFinite(ttlHoursValue) ||
+        ttlHoursValue <= 0 ||
+        !Number.isSafeInteger(ttlHoursValue * 3600)));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="lg">
@@ -1294,8 +1297,13 @@ function PolicyDialog({
       maxQuotaValue !== undefined &&
       defaultQuotaValue > maxQuotaValue) ||
     (defaultTTLValue !== undefined &&
-      (!Number.isFinite(defaultTTLValue) || defaultTTLValue <= 0)) ||
-    (maxTTLValue !== undefined && (!Number.isFinite(maxTTLValue) || maxTTLValue <= 0)) ||
+      (!Number.isFinite(defaultTTLValue) ||
+        defaultTTLValue <= 0 ||
+        !Number.isSafeInteger(defaultTTLValue * 3600))) ||
+    (maxTTLValue !== undefined &&
+      (!Number.isFinite(maxTTLValue) ||
+        maxTTLValue <= 0 ||
+        !Number.isSafeInteger(maxTTLValue * 3600))) ||
     (defaultTTLValue !== undefined && maxTTLValue !== undefined && defaultTTLValue > maxTTLValue);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
