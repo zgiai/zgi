@@ -1113,7 +1113,12 @@ func (s *Service) ListKeys(ctx context.Context, workspaceID, accountID string) (
 	if err != nil {
 		return nil, err
 	}
-	query := s.db.WithContext(ctx).Where("workspace_id = ? AND principal_type = ?", workspaceID, accessmodel.PrincipalTypeUser)
+	query := s.db.WithContext(ctx).Where(
+		"workspace_id = ? AND organization_id = ? AND principal_type = ?",
+		workspaceID,
+		*scope.Workspace.OrganizationID,
+		accessmodel.PrincipalTypeUser,
+	)
 	if !scope.CanManage {
 		query = query.Where("principal_id = ?", accountID)
 	}
@@ -1258,7 +1263,13 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, 
 	}
 
 	query := s.db.WithContext(ctx).Table("llm_usage_bills").
-		Where("workspace_id = ? AND principal_type = ? AND auth_method = ?", workspaceID, accessmodel.PrincipalTypeUser, "personal_api_key")
+		Where(
+			"workspace_id = ? AND organization_id = ? AND principal_type = ? AND auth_method = ?",
+			workspaceID,
+			*scope.Workspace.OrganizationID,
+			accessmodel.PrincipalTypeUser,
+			"personal_api_key",
+		)
 	if !scope.CanManage {
 		query = query.Where("principal_id = ?", accountID)
 	} else if principalID := strings.TrimSpace(input.PrincipalID); principalID != "" {

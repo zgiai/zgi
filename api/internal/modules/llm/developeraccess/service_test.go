@@ -592,7 +592,7 @@ func TestDeveloperAccessRequestCapabilityIsExplicit(t *testing.T) {
 
 func TestManagerKeyListIncludesPrincipalIdentity(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
-	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
 	request, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Member experiment"})
 	if err != nil {
@@ -604,12 +604,26 @@ func TestManagerKeyListIncludesPrincipalIdentity(t *testing.T) {
 	if _, err := service.CreateKey(context.Background(), workspaceID, memberID, CreateKeyInput{Name: "member key"}); err != nil {
 		t.Fatal(err)
 	}
+	previousOrganizationID := uuid.NewString()
+	principalType := accessmodel.PrincipalTypeUser
+	if err := db.Omit("Key").Create(&apikeymodel.TenantAPIKey{
+		OrganizationID: previousOrganizationID,
+		WorkspaceID:    &workspaceID,
+		PrincipalType:  &principalType,
+		PrincipalID:    &memberID,
+		KeyHash:        uuid.NewString(),
+		Name:           "retained key from previous organization",
+		Status:         "revoked",
+		SecretVersion:  2,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	keys, err := service.ListKeys(context.Background(), workspaceID, ownerID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(keys) != 1 || keys[0].PrincipalName != "Research Member" || keys[0].PrincipalEmail != "member@example.test" {
-		t.Fatalf("principal identity missing from manager list: %#v", keys)
+		t.Fatalf("principal identity missing or cross-organization key leaked for organization %s: %#v", organizationID, keys)
 	}
 }
 
@@ -661,6 +675,16 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"attempt-compensated", "request-compensated", organizationID, workspaceID, accessmodel.PrincipalTypeUser, memberID,
 		"personal_api_key", key.ID, "music-test", "music-provider", "success", 0, 0, 0, 0, 100, time.Now().Add(time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO llm_usage_bills
+		(attempt_id, request_id, organization_id, workspace_id, principal_type, principal_id, auth_method,
+		 api_key_id, model_name, provider_name, status, prompt_tokens, completion_tokens, total_tokens,
+		 total_points, response_time_ms, request_created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"attempt-previous-organization", "request-previous-organization", uuid.NewString(), workspaceID,
+		accessmodel.PrincipalTypeUser, memberID, "personal_api_key", key.ID, "private-model", "private-provider",
+		"success", 100, 50, 150, 200, 300, time.Now().Add(2*time.Second)).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, reserved_amount, actual_amount, refunded_amount)
