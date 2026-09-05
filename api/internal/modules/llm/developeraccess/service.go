@@ -282,7 +282,11 @@ func (s *Service) GetMe(ctx context.Context, workspaceID, accountID string) (*Me
 	// Personal keys always belong to a workspace member. A broader organization
 	// management entitlement may administer the workspace, but it must not mint
 	// a user key that runtime membership validation would immediately reject.
-	view.CanCreateKey = scope.Member != nil && policy.Mode != accessmodel.AccessModeDisabled && (scope.CanManage || (view.Grant != nil && view.Grant.IsActive(s.now())) || policy.Mode == accessmodel.AccessModeSelfService)
+	now := s.now()
+	hasUsableGrant := view.Grant != nil && view.Grant.IsActive(now) && grantHasAvailableQuota(view.Grant)
+	canStartGrant := view.Grant == nil && (scope.CanManage || policy.Mode == accessmodel.AccessModeSelfService)
+	canRenewGrant := view.Grant != nil && grantCanStartNewPeriod(view.Grant, scope, policy, now)
+	view.CanCreateKey = scope.Member != nil && policy.Mode != accessmodel.AccessModeDisabled && (hasUsableGrant || canStartGrant || canRenewGrant)
 	view.CanRequestAccess = canRequestDeveloperAccess(scope, policy, view.CanCreateKey, view.PendingRequest != nil)
 	return view, nil
 }
@@ -669,6 +673,25 @@ func applyGrantLimits(grant *accessmodel.Grant, quota *int64, startsNewPeriod bo
 	}
 }
 
+func grantHasAvailableQuota(grant *accessmodel.Grant) bool {
+	return grant != nil && (grant.QuotaLimit == nil || grant.RemainQuota > 0)
+}
+
+func grantCanStartNewPeriod(grant *accessmodel.Grant, scope *workspaceScope, policy *accessmodel.Policy, now time.Time) bool {
+	if grant == nil {
+		return false
+	}
+	// Revoked grants currently represent membership removal. A member who has
+	// rejoined a self-service workspace may start a fresh authorization period;
+	// the version bump below keeps every key from the old membership revoked.
+	if grant.Status == accessmodel.GrantStatusRevoked {
+		return policy.Mode == accessmodel.AccessModeSelfService
+	}
+	return grant.Status == accessmodel.GrantStatusActive &&
+		grant.ExpiresAt != nil && !grant.ExpiresAt.After(now) &&
+		(policy.Mode == accessmodel.AccessModeSelfService || scope.CanManage)
+}
+
 func createGrantOrReloadForUpdate(tx *gorm.DB, grant *accessmodel.Grant) (bool, error) {
 	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(grant)
 	if result.Error != nil {
@@ -722,8 +745,7 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 		if grant.IsActive(s.now()) {
 			return &grant, nil
 		}
-		canRenew := policy.Mode == accessmodel.AccessModeSelfService || scope.CanManage
-		if !canRenew || grant.Status != accessmodel.GrantStatusActive || grant.ExpiresAt == nil || grant.ExpiresAt.After(s.now()) {
+		if !grantCanStartNewPeriod(&grant, scope, policy, s.now()) {
 			return nil, ErrApprovalNeeded
 		}
 		source := "self_service"
@@ -741,20 +763,15 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", grant.ID).First(&locked).Error; err != nil {
 				return err
 			}
-			if locked.IsActive(s.now()) {
+			now := s.now()
+			if locked.IsActive(now) {
 				return nil
 			}
-			if locked.Status != accessmodel.GrantStatusActive || locked.ExpiresAt == nil || locked.ExpiresAt.After(s.now()) {
+			if !grantCanStartNewPeriod(&locked, scope, policy, now) {
 				return ErrApprovalNeeded
 			}
-			now := s.now()
-			locked.Source = source
-			locked.QuotaLimit = policy.DefaultQuota
-			locked.UsedQuota = 0
-			locked.RemainQuota = 0
-			if policy.DefaultQuota != nil {
-				locked.RemainQuota = *policy.DefaultQuota
-			}
+			locked.Source, locked.Status = source, accessmodel.GrantStatusActive
+			applyGrantLimits(&locked, policy.DefaultQuota, true)
 			locked.MaxKeys = policy.MaxKeys
 			locked.AllowedModels = unique(policy.AllowedModels)
 			locked.ExpiresAt = ttlExpiry(now, policy.DefaultTTLSeconds)
@@ -842,6 +859,9 @@ func (s *Service) CreateKey(ctx context.Context, workspaceID, accountID string, 
 	if err != nil {
 		return nil, err
 	}
+	if !grantHasAvailableQuota(grant) {
+		return nil, ErrQuotaExceeded
+	}
 	if !modelsWithin(input.ModelNames, grant.AllowedModels) {
 		return nil, ErrInvalid
 	}
@@ -882,6 +902,9 @@ func (s *Service) CreateKey(ctx context.Context, workspaceID, accountID string, 
 		}
 		if !lockedGrant.IsActive(s.now()) || lockedGrant.AuthorizationVersion != grant.AuthorizationVersion {
 			return ErrApprovalNeeded
+		}
+		if !grantHasAvailableQuota(&lockedGrant) {
+			return ErrQuotaExceeded
 		}
 		var active int64
 		if err := activePersonalKeysQuery(tx, s.now()).
@@ -1186,6 +1209,9 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *key.AccessGrantID).First(&grant).Error; err != nil || !grant.IsActive(s.now()) || grant.AuthorizationVersion != key.AuthorizationVersion {
 				return ErrApprovalNeeded
 			}
+			if !grantHasAvailableQuota(&grant) {
+				return ErrQuotaExceeded
+			}
 			var active int64
 			if err := activePersonalKeysQuery(tx, s.now()).
 				Where("access_grant_id = ? AND id <> ?", grant.ID, key.ID).
@@ -1256,6 +1282,9 @@ func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID s
 		}
 		if !grant.IsActive(s.now()) || grant.AuthorizationVersion != current.AuthorizationVersion {
 			return ErrApprovalNeeded
+		}
+		if !grantHasAvailableQuota(&grant) {
+			return ErrQuotaExceeded
 		}
 		expiresAt := input.ExpiresAt
 		if expiresAt == nil {

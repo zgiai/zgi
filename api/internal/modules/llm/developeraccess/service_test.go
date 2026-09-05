@@ -98,6 +98,121 @@ func TestSelfServiceRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	}
 }
 
+func TestSelfServiceRejoinedMemberRenewsRevokedGrantAsNewBudgetPeriod(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	quota, ttl := int64(900), int64(3600)
+	if _, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
+		Mode: accessmodel.AccessModeSelfService, DefaultQuota: &quota, MaxKeys: 2, DefaultTTLSeconds: &ttl,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldQuota := int64(400)
+	grant := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
+		PrincipalID: memberID, Source: "self_service", Status: accessmodel.GrantStatusRevoked,
+		QuotaLimit: &oldQuota, UsedQuota: 300, RemainQuota: 100, MaxKeys: 1, AuthorizationVersion: 5,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	principalType := accessmodel.PrincipalTypeUser
+	oldKey := apikeymodel.TenantAPIKey{
+		OrganizationID: organizationID, WorkspaceID: &workspaceID, PrincipalType: &principalType,
+		PrincipalID: &memberID, AccessGrantID: &grant.ID, CreatedByID: &memberID,
+		KeyHash: "old-rejoined-key", KeyPrefix: "zgi_old", KeySuffix: "old1", SecretVersion: 2,
+		Name: "before leaving", Status: "revoked", Environment: "development", AuthorizationVersion: 5,
+	}
+	if err := db.Omit("Key").Create(&oldKey).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	me, err := service.GetMe(context.Background(), workspaceID, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !me.CanCreateKey {
+		t.Fatal("rejoined member should be able to start a new self-service period")
+	}
+	created, err := service.CreateKey(context.Background(), workspaceID, memberID, CreateKeyInput{Name: "after rejoining"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.Status != accessmodel.GrantStatusActive || grant.QuotaLimit == nil || *grant.QuotaLimit != quota ||
+		grant.UsedQuota != 0 || grant.RemainQuota != quota || grant.MaxKeys != 2 || grant.AuthorizationVersion != 6 {
+		t.Fatalf("unexpected renewed grant: %#v", grant)
+	}
+	var previous, replacement apikeymodel.TenantAPIKey
+	if err := db.First(&previous, "id = ?", oldKey.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&replacement, "id = ?", created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if previous.Status != "revoked" || replacement.AuthorizationVersion != 6 {
+		t.Fatalf("old/new key authorization state = %s/%d", previous.Status, replacement.AuthorizationVersion)
+	}
+}
+
+func TestExhaustedGrantRejectsKeyCreationReactivationAndRotation(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, _, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID, PrincipalType: accessmodel.PrincipalTypeUser,
+		PrincipalID: memberID, Source: "approval", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, UsedQuota: quota, RemainQuota: 0, MaxKeys: 3, AuthorizationVersion: 2,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	principalType := accessmodel.PrincipalTypeUser
+	inactiveKey := apikeymodel.TenantAPIKey{
+		OrganizationID: organizationID, WorkspaceID: &workspaceID, PrincipalType: &principalType,
+		PrincipalID: &memberID, AccessGrantID: &grant.ID, CreatedByID: &memberID,
+		KeyHash: "exhausted-grant-key", KeyPrefix: "zgi_exh", KeySuffix: "sted", SecretVersion: 2,
+		Name: "exhausted", Status: "inactive", Environment: "development", AuthorizationVersion: 2,
+	}
+	if err := db.Omit("Key").Create(&inactiveKey).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	me, err := service.GetMe(context.Background(), workspaceID, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if me.CanCreateKey {
+		t.Fatal("exhausted finite grant must not advertise key creation")
+	}
+	if _, err := service.CreateKey(context.Background(), workspaceID, memberID, CreateKeyInput{Name: "unusable"}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("CreateKey error = %v, want quota exceeded", err)
+	}
+	if _, err := service.SetKeyStatus(context.Background(), workspaceID, memberID, inactiveKey.ID, "active", ""); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("SetKeyStatus error = %v, want quota exceeded", err)
+	}
+	if _, err := service.RotateKey(context.Background(), workspaceID, memberID, inactiveKey.ID, RotateKeyInput{}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("RotateKey error = %v, want quota exceeded", err)
+	}
+	var keys int64
+	if err := db.Model(&apikeymodel.TenantAPIKey{}).Where("workspace_id = ? AND principal_id = ?", workspaceID, memberID).Count(&keys).Error; err != nil {
+		t.Fatal(err)
+	}
+	if keys != 1 {
+		t.Fatalf("key count = %d, want 1", keys)
+	}
+	if err := db.First(&inactiveKey, "id = ?", inactiveKey.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if inactiveKey.Status != "inactive" || inactiveKey.RevokedAt != nil {
+		t.Fatalf("failed mutations changed exhausted key: %#v", inactiveKey)
+	}
+}
+
 func TestApprovalManagerRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, _ := seedDeveloperWorkspace(t, db)
