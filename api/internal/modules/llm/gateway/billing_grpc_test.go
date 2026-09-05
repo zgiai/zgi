@@ -64,6 +64,35 @@ func (emptyDeductionIDQuotaClient) CheckCreditBalance(context.Context, string, i
 
 func (emptyDeductionIDQuotaClient) Close() error { return nil }
 
+type lateDeductionQuotaClient struct {
+	onPreDeduct func(context.Context)
+	settleCalls int
+	requests    []*SettleQuotaRequest
+}
+
+func (c *lateDeductionQuotaClient) PreDeductQuota(ctx context.Context, _ *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
+	if c.onPreDeduct != nil {
+		c.onPreDeduct(ctx)
+	}
+	return &PreDeductQuotaResponse{Success: true, DeductionID: "remote-deduction-after-timeout"}, nil
+}
+
+func (c *lateDeductionQuotaClient) SettleQuota(_ context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error) {
+	copy := *req
+	c.requests = append(c.requests, &copy)
+	c.settleCalls++
+	if c.settleCalls == 1 {
+		return nil, errors.New("temporary compensation outage")
+	}
+	return &SettleQuotaResponse{Success: true, SettledCredits: 0}, nil
+}
+
+func (c *lateDeductionQuotaClient) CheckCreditBalance(context.Context, string, int64) (bool, int64, error) {
+	return false, 0, errors.New("unexpected balance check")
+}
+
+func (c *lateDeductionQuotaClient) Close() error { return nil }
+
 func openRemoteBillingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -235,6 +264,106 @@ func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 	}
 	if grant.RemainQuota != quota {
 		t.Fatalf("second stale INIT recovery changed grant remain to %d", grant.RemainQuota)
+	}
+}
+
+func TestRemoteBillingPersistsAndRetriesFailedLateDeductionCompensation(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatalf("migrate developer grant: %v", err)
+	}
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1,
+		AllowedModels: []string{}, AuthorizationVersion: 5,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	version := grant.AuthorizationVersion
+	bc := &BillingContext{
+		OrganizationID: grant.OrganizationID, WorkspaceID: grant.WorkspaceID,
+		AttemptID: uuid.NewString(), RequestID: uuid.NewString(),
+		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+		InvocationSource: InvocationSourceAPI, AuthMethod: "personal_api_key",
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
+		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		EstimatedCredits: quota, SubjectReservedCredits: quota,
+	}
+	client := &lateDeductionQuotaClient{}
+	remote := &RemoteBilling{localService: &BillingService{db: db}, grpcClient: client}
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	client.onPreDeduct = func(ctx context.Context) {
+		staleAt := time.Now().Add(-defaultRemoteInitTimeout - time.Minute)
+		if err := db.Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Update("updated_at", staleAt).Error; err != nil {
+			t.Fatalf("mark attempt stale: %v", err)
+		}
+		if err := remote.recoverStaleRemoteInitAttempt(ctx, bc.AttemptID, time.Now()); err != nil {
+			t.Fatalf("recover stale attempt during remote call: %v", err)
+		}
+		cancelRequest()
+	}
+
+	if err := remote.preDeductViaGRPC(requestCtx, bc); err == nil {
+		t.Fatal("late remote deduction unexpectedly succeeded")
+	}
+	if client.settleCalls != 1 {
+		t.Fatalf("immediate compensation calls = %d, want 1", client.settleCalls)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 0 || grant.RemainQuota != quota {
+		t.Fatalf("late deduction changed grant after local timeout: used/remain=%d/%d", grant.UsedQuota, grant.RemainQuota)
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusCompensationPending || attempt.NextReconcileAt == nil {
+		t.Fatalf("failed remote compensation was not queued: %#v", attempt)
+	}
+	var fundEntry BillingAttemptEntry
+	if err := db.Where("attempt_id = ? AND entry_type = ?", bc.AttemptID, billingEntryTypeFund).First(&fundEntry).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fundEntry.IdempotencyKey == nil || *fundEntry.IdempotencyKey != bc.DeductionID || fundEntry.Status != billingEntryStatusPending {
+		t.Fatalf("remote deduction identity was not persisted: %#v", fundEntry)
+	}
+
+	if err := remote.reconcilePendingRemoteCompensations(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.settleCalls != 2 {
+		t.Fatalf("compensation calls after reconcile = %d, want 2", client.settleCalls)
+	}
+	if got := client.requests[1]; got.DeductionID != bc.DeductionID || got.ActualCredits != 0 || got.Status != "error" {
+		t.Fatalf("retry compensation request = %#v", got)
+	}
+	attempt = BillingAttempt{}
+	if err := db.First(&attempt, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusCompensated || attempt.NextReconcileAt != nil || attempt.ReconcileAttempts != 1 {
+		t.Fatalf("reconciled compensation attempt = %#v", attempt)
+	}
+	fundEntryID := fundEntry.ID
+	fundEntry = BillingAttemptEntry{}
+	if err := db.First(&fundEntry, "id = ?", fundEntryID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fundEntry.Status != billingEntryStatusRolled || fundEntry.ActualAmount != 0 || fundEntry.RefundedAmount != quota {
+		t.Fatalf("reconciled compensation fund entry = %#v", fundEntry)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 0 || grant.RemainQuota != quota {
+		t.Fatalf("compensation retry changed grant twice: used/remain=%d/%d", grant.UsedQuota, grant.RemainQuota)
 	}
 }
 
