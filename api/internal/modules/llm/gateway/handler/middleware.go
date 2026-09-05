@@ -46,7 +46,13 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.Handler
 		}
 		if keyInfo.PrincipalType != nil {
 			validator, supported := apiKeyRepo.(principalAccessValidator)
-			if !supported || validator.ValidatePrincipalAccess(c.Request.Context(), keyInfo) != nil {
+			if !supported {
+				logger.WarnContext(c.Request.Context(), "API key principal access validator is unavailable")
+				abortWithProtocolError(c, invalidAPIKeyProtocolError("API key access has been revoked"))
+				return
+			}
+			if err := validator.ValidatePrincipalAccess(c.Request.Context(), keyInfo); err != nil {
+				logger.WarnContext(c.Request.Context(), "API key principal access validation failed", err)
 				abortWithProtocolError(c, invalidAPIKeyProtocolError("API key access has been revoked"))
 				return
 			}

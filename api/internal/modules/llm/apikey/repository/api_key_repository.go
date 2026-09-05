@@ -77,6 +77,10 @@ func (r *apiKeyRepositoryImpl) GetByKeyHash(ctx context.Context, keyHash string)
 		if cached, err := redis.GetString(ctx, cacheKey); err == nil && cached != "" {
 			var apiKey model.TenantAPIKey
 			if err := json.Unmarshal([]byte(cached), &apiKey); err == nil {
+				// KeyHash is intentionally excluded from JSON so it never appears in
+				// cached values or API responses. Restore it from the trusted cache
+				// lookup key for the authoritative principal-access recheck.
+				apiKey.KeyHash = keyHash
 				return &apiKey, nil
 			}
 		}
@@ -121,7 +125,7 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 	if err := r.db.WithContext(ctx).
 		Where("id = ? AND key_hash = ?", apiKey.ID, apiKey.KeyHash).
 		First(&persisted).Error; err != nil {
-		return err
+		return fmt.Errorf("reload personal API key: %w", err)
 	}
 	if !persisted.IsActive() {
 		return errors.New("personal API key is inactive or expired")
@@ -132,7 +136,7 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 	if err := r.db.WithContext(ctx).
 		Where("id = ? AND organization_id = ?", *apiKey.WorkspaceID, apiKey.OrganizationID).
 		First(&workspace).Error; err != nil {
-		return err
+		return fmt.Errorf("load personal API key workspace: %w", err)
 	}
 	if !workspace.IsNormal() {
 		return errors.New("API key workspace is archived")
@@ -141,7 +145,7 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 	if err := r.db.WithContext(ctx).
 		Where("id = ?", apiKey.OrganizationID).
 		First(&organization).Error; err != nil {
-		return err
+		return fmt.Errorf("load personal API key organization: %w", err)
 	}
 	if !organization.IsActive() {
 		return errors.New("API key organization is inactive or archived")
@@ -151,7 +155,7 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 		Where("id = ? AND organization_id = ? AND workspace_id = ? AND principal_type = ? AND principal_id = ?", *apiKey.AccessGrantID, apiKey.OrganizationID, *apiKey.WorkspaceID, *apiKey.PrincipalType, *apiKey.PrincipalID).
 		First(&grant).Error
 	if err != nil {
-		return err
+		return fmt.Errorf("load personal API key grant: %w", err)
 	}
 	if !grant.IsActive(time.Now()) || grant.AuthorizationVersion != apiKey.AuthorizationVersion {
 		return errors.New("developer access grant is inactive or stale")
@@ -164,7 +168,7 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 		Where("workspace_id = ?", *apiKey.WorkspaceID).
 		First(&policy).Error
 	if policyErr != nil && !errors.Is(policyErr, gorm.ErrRecordNotFound) {
-		return policyErr
+		return fmt.Errorf("load personal API key policy: %w", policyErr)
 	}
 	if policyErr == nil && policy.Mode == accessmodel.AccessModeDisabled {
 		return errors.New("developer access is disabled for the workspace")
@@ -174,7 +178,7 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 		if err := r.db.WithContext(ctx).Table("workspace_members").
 			Where("workspace_id = ? AND account_id = ?", *apiKey.WorkspaceID, *apiKey.PrincipalID).
 			Count(&count).Error; err != nil {
-			return err
+			return fmt.Errorf("count personal API key workspace membership: %w", err)
 		}
 		if count == 0 {
 			return errors.New("API key principal is no longer a workspace member")
