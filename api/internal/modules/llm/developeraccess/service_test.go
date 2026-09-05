@@ -108,6 +108,38 @@ func TestPutPolicyRevalidatesManagementPermission(t *testing.T) {
 	}
 }
 
+func TestCreateRequestRejectsStaleWorkspaceScopeAfterOrganizationChange(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, _, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	staleScope, err := service.scope(context.Background(), workspaceID, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOrganizationID := uuid.NewString()
+	if err := db.Create(&workspacemodel.Organization{
+		ID: newOrganizationID, Name: "Transferred Organization", Status: workspacemodel.OrganizationStatusActive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&workspacemodel.Workspace{}).Where("id = ?", workspaceID).
+		Update("organization_id", newOrganizationID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.createRequest(context.Background(), staleScope, memberID, "development", CreateRequestInput{Purpose: "stale transfer"})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("create request with stale workspace scope error = %v, want conflict", err)
+	}
+	var requests int64
+	if err := db.Model(&accessmodel.AccessRequest{}).Where("workspace_id = ?", workspaceID).Count(&requests).Error; err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatalf("stale workspace scope created %d access requests", requests)
+	}
+}
+
 func TestReviewRequestRevalidatesReviewerAuthorityInTransaction(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)

@@ -479,19 +479,6 @@ func modelsWithin(requested, allowed []string) bool {
 	return true
 }
 
-func lockWorkspaceMembership(tx *gorm.DB, workspaceID, accountID string) error {
-	var member workspacemodel.WorkspaceMember
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("workspace_id = ? AND account_id = ?", workspaceID, accountID).
-		First(&member).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrForbidden
-		}
-		return err
-	}
-	return nil
-}
-
 func (s *Service) lockScopeForUpdate(ctx context.Context, tx *gorm.DB, expected *workspaceScope, accountID string) (*workspaceScope, error) {
 	var workspace workspacemodel.Workspace
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -572,50 +559,67 @@ func (s *Service) CreateRequest(ctx context.Context, workspaceID, accountID stri
 	if scope.Member == nil {
 		return nil, ErrForbidden
 	}
-	policy, err := s.policy(ctx, scope)
-	if err != nil {
-		return nil, err
-	}
-	if policy.Mode == accessmodel.AccessModeDisabled {
-		return nil, ErrAccessDisabled
-	}
-	if policy.Mode == accessmodel.AccessModeSelfService {
-		return nil, ErrConflict
-	}
-	if input.RequestedQuota != nil && (*input.RequestedQuota < 0 || (policy.MaxQuota != nil && *input.RequestedQuota > *policy.MaxQuota)) {
-		return nil, ErrInvalid
-	}
-	if input.RequestedTTLSeconds != nil && (*input.RequestedTTLSeconds <= 0 || (policy.MaxTTLSeconds != nil && *input.RequestedTTLSeconds > *policy.MaxTTLSeconds)) {
-		return nil, ErrInvalid
-	}
-	if !modelsWithin(input.RequestedModels, policy.AllowedModels) {
-		return nil, ErrInvalid
-	}
-	request := &accessmodel.AccessRequest{
-		OrganizationID: *scope.Workspace.OrganizationID, WorkspaceID: workspaceID, RequesterAccountID: accountID,
-		Purpose: input.Purpose, Environment: environment, RequestedQuota: input.RequestedQuota,
-		RequestedModels: unique(input.RequestedModels), RequestedTTLSeconds: input.RequestedTTLSeconds, Status: accessmodel.RequestStatusPending,
-	}
+	return s.createRequest(ctx, scope, accountID, environment, input)
+}
+
+func (s *Service) createRequest(ctx context.Context, scope *workspaceScope, accountID, environment string, input CreateRequestInput) (*accessmodel.AccessRequest, error) {
+	var request accessmodel.AccessRequest
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockWorkspaceMembership(tx, workspaceID, accountID); err != nil {
+		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+		if err != nil {
 			return err
 		}
-		return tx.Create(request).Error
+		if lockedScope.Member == nil || lockedScope.Workspace.OrganizationID == nil {
+			return ErrForbidden
+		}
+		policy, err := policyForUpdate(ctx, tx, lockedScope)
+		if err != nil {
+			return err
+		}
+		if policy.Mode == accessmodel.AccessModeDisabled {
+			return ErrAccessDisabled
+		}
+		if policy.Mode == accessmodel.AccessModeSelfService {
+			return ErrConflict
+		}
+		if input.RequestedQuota != nil && (*input.RequestedQuota < 0 || (policy.MaxQuota != nil && *input.RequestedQuota > *policy.MaxQuota)) {
+			return ErrInvalid
+		}
+		if input.RequestedTTLSeconds != nil && (*input.RequestedTTLSeconds <= 0 || (policy.MaxTTLSeconds != nil && *input.RequestedTTLSeconds > *policy.MaxTTLSeconds)) {
+			return ErrInvalid
+		}
+		if !modelsWithin(input.RequestedModels, policy.AllowedModels) {
+			return ErrInvalid
+		}
+		request = accessmodel.AccessRequest{
+			OrganizationID: *lockedScope.Workspace.OrganizationID, WorkspaceID: lockedScope.Workspace.ID, RequesterAccountID: accountID,
+			Purpose: input.Purpose, Environment: environment, RequestedQuota: input.RequestedQuota,
+			RequestedModels: unique(input.RequestedModels), RequestedTTLSeconds: input.RequestedTTLSeconds, Status: accessmodel.RequestStatusPending,
+		}
+		return tx.Create(&request).Error
 	}); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return nil, ErrConflict
 		}
 		return nil, fmt.Errorf("create access request: %w", err)
 	}
-	return request, nil
+	return &request, nil
 }
 
 func (s *Service) CancelRequest(ctx context.Context, workspaceID, accountID, requestID string) (*accessmodel.AccessRequest, error) {
-	if _, err := s.scope(ctx, workspaceID, accountID); err != nil {
+	scope, err := s.scope(ctx, workspaceID, accountID)
+	if err != nil {
 		return nil, err
 	}
 	var request accessmodel.AccessRequest
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+		if err != nil {
+			return err
+		}
+		if lockedScope.Member == nil {
+			return ErrForbidden
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND workspace_id = ? AND requester_account_id = ?", requestID, workspaceID, accountID).First(&request).Error; err != nil {
 			return err
 		}

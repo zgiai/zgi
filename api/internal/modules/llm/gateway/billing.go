@@ -170,8 +170,18 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 		if err := b.upsertAttemptInit(ctx, tx, bc); err != nil {
 			return fmt.Errorf("failed to init billing attempt: %w", err)
 		}
+		grantSubject := strings.TrimSpace(bc.QuotaSubjectType) == quotaSubjectTypeAccessGrant
+		if grantSubject {
+			// Developer-access mutations lock Grant before Key. Match that order
+			// here so pre-deduction cannot deadlock with approval or renewal. Any
+			// later key-validation failure rolls this reservation back atomically.
+			if err := b.preDeductAccessGrantQuota(ctx, tx, bc); err != nil {
+				return fmt.Errorf("failed to pre-deduct subject quota: %w", err)
+			}
+		}
 
-		// 1. Lock and get API key
+		// 1. Lock and get API key. Grant-backed subjects have already acquired
+		// their Grant lock above, preserving the global Grant -> Key order.
 		var apiKey apikeymodel.TenantAPIKey
 		if err := tx.WithContext(ctx).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -185,9 +195,12 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 			return ErrAPIKeyInactive
 		}
 
-		// 3. Pre-deduct subject quota (key/workspace)
-		if err := b.preDeductSubjectQuota(ctx, tx, bc, &apiKey); err != nil {
-			return fmt.Errorf("failed to pre-deduct subject quota: %w", err)
+		// 3. Pre-deduct non-grant subject quota (key/workspace). Grant quota was
+		// reserved before the API key lock to preserve the lock hierarchy.
+		if !grantSubject {
+			if err := b.preDeductSubjectQuota(ctx, tx, bc, &apiKey); err != nil {
+				return fmt.Errorf("failed to pre-deduct subject quota: %w", err)
+			}
 		}
 		// Grant pre-deduction may establish a subject reservation and grant
 		// authorization snapshot that differ from the initial estimate. Persist
