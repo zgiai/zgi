@@ -1082,7 +1082,7 @@ func (s *RemoteBilling) preDeductLocalSubjectQuota(ctx context.Context, bc *Bill
 					First(&apiKey).Error; err != nil {
 					return fmt.Errorf("load personal api key for developer grant pre-deduct: %w", err)
 				}
-				if apiKey.Status != "active" || apiKey.AccessGrantID == nil || strings.TrimSpace(*apiKey.AccessGrantID) != strings.TrimSpace(bc.AccessGrantID) ||
+				if !apiKey.IsActive() || apiKey.AccessGrantID == nil || strings.TrimSpace(*apiKey.AccessGrantID) != strings.TrimSpace(bc.AccessGrantID) ||
 					bc.GrantAuthorizationVersion == nil || apiKey.AuthorizationVersion != *bc.GrantAuthorizationVersion {
 					return ErrAPIKeyInactive
 				}

@@ -249,6 +249,51 @@ func TestRemoteBillingRejectsInactivePersonalKeyAndRollsBackGrantReservation(t *
 	}
 }
 
+func TestRemoteBillingRejectsExpiredPersonalKeyAndRollsBackGrantReservation(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatalf("migrate developer grant: %v", err)
+	}
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1,
+		AllowedModels: []string{}, AuthorizationVersion: 2,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	version := grant.AuthorizationVersion
+	bc := &BillingContext{
+		OrganizationID: grant.OrganizationID, WorkspaceID: grant.WorkspaceID,
+		AttemptID: uuid.NewString(), RequestID: uuid.NewString(),
+		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+		InvocationSource: InvocationSourceAPI, AuthMethod: "personal_api_key",
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
+		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		EstimatedCredits: 25,
+	}
+	key := seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
+	expiredAt := time.Now().Add(-time.Minute)
+	if err := db.Model(&apikeymodel.TenantAPIKey{}).Where("id = ?", key.ID).Update("expires_at", expiredAt).Error; err != nil {
+		t.Fatalf("expire personal api key: %v", err)
+	}
+
+	remote := &RemoteBilling{localService: &BillingService{db: db}}
+	if err := remote.preDeductLocalSubjectQuota(context.Background(), bc); !errors.Is(err, ErrAPIKeyInactive) {
+		t.Fatalf("expired remote personal key pre-deduct error = %v, want %v", err, ErrAPIKeyInactive)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 0 || grant.RemainQuota != quota {
+		t.Fatalf("expired remote personal key left a grant reservation: used/remain=%d/%d", grant.UsedQuota, grant.RemainQuota)
+	}
+}
+
 func TestRemoteBillingRecoversStaleInitWithoutBoundDeduction(t *testing.T) {
 	db := openRemoteBillingTestDB(t)
 	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
