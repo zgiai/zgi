@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { describeAccessLoadError } from '../src/features/developer-access/load-error.ts';
+import { readFile } from 'node:fs/promises';
+import { URL } from 'node:url';
+import {
+  describeAccessLoadError,
+  describePermissionLoadError,
+  observePermissionLoad,
+} from '../src/utils/access-load-error.ts';
 
 for (const [status, kind] of [
   [401, 'session'],
@@ -52,4 +58,80 @@ assert.deepEqual(
     requestId: undefined,
   }
 );
-console.log('Developer access load error checks passed.');
+const secret = 'private-test-value';
+const unsafeError = {
+  code: secret,
+  message: secret,
+  config: { headers: { Authorization: secret }, data: secret },
+  response: { status: 503, data: { code: secret, message: secret }, headers: {} },
+};
+assert.deepEqual(describePermissionLoadError(unsafeError), {
+  kind: 'server',
+  status: 503,
+  code: undefined,
+  requestId: undefined,
+  clientCode: 'unknown',
+});
+for (const code of ['ERR_NETWORK', 'ERR_AUTH_SESSION_MISSING', 'ERR_CANCELED', 'ERR_BUSINESS']) {
+  assert.equal(describePermissionLoadError({ code }).clientCode, code);
+}
+
+const events = [];
+const payload = Object.freeze({ permissions: Object.freeze(['asset.read']) });
+assert.equal(
+  await observePermissionLoad(
+    async () => payload,
+    event => events.push(event)
+  ),
+  payload
+);
+assert.equal(events.length, 0, 'successful reads do not create failure events');
+await assert.rejects(
+  observePermissionLoad(
+    async () => {
+      throw unsafeError;
+    },
+    event => events.push(event)
+  ),
+  error => error === unsafeError,
+  'diagnostics must preserve the original failure and fail closed'
+);
+assert.equal(events.length, 1);
+assert.ok(!JSON.stringify(events).includes(secret));
+await assert.rejects(
+  observePermissionLoad(
+    async () => {
+      throw unsafeError;
+    },
+    () => {
+      throw new Error('reporter failed');
+    }
+  ),
+  error => error === unsafeError,
+  'reporter failures must not replace the original failure'
+);
+await assert.rejects(
+  observePermissionLoad(
+    async () => undefined,
+    event => events.push(event)
+  ),
+  error => error.code === 'ERR_PERMISSION_RESPONSE_EMPTY'
+);
+assert.equal(events.at(-1).clientCode, 'ERR_PERMISSION_RESPONSE_EMPTY');
+const hook = await readFile(
+  new URL('../src/hooks/organization/use-account-permissions.ts', import.meta.url),
+  'utf8'
+);
+assert.match(hook, /observePermissionLoad\(/);
+assert.match(hook, /console\.warn\('workspace\.permissions\.load_failed', attributes\)/);
+assert.match(hook, /captureEvent\('workspace\.permissions\.load_failed'/);
+assert.match(hook, /retry: false/);
+const compatibilityExport = await readFile(
+  new URL('../src/features/developer-access/load-error.ts', import.meta.url),
+  'utf8'
+);
+assert.match(
+  compatibilityExport,
+  /export \{ describeAccessLoadError \} from '@\/utils\/access-load-error'/
+);
+console.log('Developer access error and permission load diagnostic checks passed.');

@@ -11,6 +11,9 @@ import type { PermissionState } from '@/store/workspace-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
 import type { PermissionCode } from '@/constants/permissions';
+import { observePermissionLoad } from '@/utils/access-load-error';
+import { captureEvent } from '@/lib/observability';
+import { useAuthStore } from '@/store/auth-store';
 
 interface UseAccountPermissionsOptions {
   /** Organization ID, defaults to 'current' */
@@ -43,8 +46,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   const clearPermissions = useWorkspaceStore.use.clearPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const isSwitchingOrganization =
-    useOrganizationStore.use.isSwitchingOrganization();
+  const isSwitchingOrganization = useOrganizationStore.use.isSwitchingOrganization();
 
   // Determine effective workspace ID
   const effectiveWorkspaceId =
@@ -56,8 +58,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   // Skip query when no workspace context is usable.
   const shouldSkip =
     isSwitchingOrganization ||
-    (skipInOrgMode &&
-      (isWorkspaceRequired || isWorkspaceLoading || isMissingCurrentWorkspace));
+    (skipInOrgMode && (isWorkspaceRequired || isWorkspaceLoading || isMissingCurrentWorkspace));
 
   const {
     data: permissionsData,
@@ -68,10 +69,24 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   } = useQuery({
     queryKey: WORKSPACE_KEYS.permissions(organizationId, effectiveWorkspaceId, accountId),
     queryFn: async () => {
-      return await workspaceService.getAccountPermissions(
-        organizationId,
-        effectiveWorkspaceId,
-        accountId
+      return await observePermissionLoad(
+        () =>
+          workspaceService.getAccountPermissions(organizationId, effectiveWorkspaceId, accountId),
+        diagnostic => {
+          const attributes = {
+            ...diagnostic,
+            session_status: useAuthStore.getState().sessionStatus,
+            workspace_status: useWorkspaceStore.getState().contextStatus,
+            switching_organization: useOrganizationStore.getState().isSwitchingOrganization,
+          };
+          // Keep a local diagnostic even when no external reporter is configured.
+          // Never pass the raw error, credentials, response body or account IDs.
+          console.warn('workspace.permissions.load_failed', attributes);
+          captureEvent('workspace.permissions.load_failed', {
+            level: 'warning',
+            attributes,
+          });
+        }
       );
     },
     enabled: !shouldSkip && effectiveWorkspaceId !== 'current',
@@ -156,16 +171,12 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
       return permissions.every(p => permissionsData?.permissions.includes(p) ?? false);
     },
     isAdmin: () => {
-      const gRole = hasUsableWorkspaceContext
-        ? (permissionsData?.organization_role ?? null)
-        : null;
+      const gRole = hasUsableWorkspaceContext ? (permissionsData?.organization_role ?? null) : null;
       return gRole === 'owner' || gRole === 'admin';
     },
     hasWorkspaceAccess: () => hasUsableWorkspaceContext,
     isWorkspaceManager: () => {
-      const gRole = hasUsableWorkspaceContext
-        ? (permissionsData?.organization_role ?? null)
-        : null;
+      const gRole = hasUsableWorkspaceContext ? (permissionsData?.organization_role ?? null) : null;
       if (gRole === 'owner' || gRole === 'admin') {
         return true;
       }
