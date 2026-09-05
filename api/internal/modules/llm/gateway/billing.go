@@ -190,8 +190,9 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 			return err
 		}
 
-		// 2. Check API key status - SECURITY: reject inactive keys
-		if apiKey.Status != "active" {
+		// 2. Check the complete API key lifecycle - SECURITY: reject disabled,
+		// revoked, and expired keys that changed after gateway authentication.
+		if !apiKey.IsActive() {
 			return ErrAPIKeyInactive
 		}
 

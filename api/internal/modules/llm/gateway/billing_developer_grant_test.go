@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
@@ -395,61 +396,73 @@ func TestDeveloperGrantPreDeductRejectsStaleKeyAuthorizationPeriod(t *testing.T)
 	}
 }
 
-func TestDeveloperGrantReservationRollsBackWhenKeyIsInactive(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(
-		&accessmodel.Grant{},
-		&apikeymodel.TenantAPIKey{},
-		&BillingAttempt{},
-		&BillingAttemptEntry{},
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Exec(`CREATE UNIQUE INDEX uq_inactive_key_billing_entry ON billing_attempt_entries (attempt_id, entry_type, ledger_type)`).Error; err != nil {
-		t.Fatal(err)
-	}
-	organizationID, workspaceID, principalID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	quota := int64(100)
-	grant := accessmodel.Grant{
-		OrganizationID: organizationID, WorkspaceID: workspaceID,
-		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,
-		Source: "approved_request", Status: accessmodel.GrantStatusActive,
-		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1, AuthorizationVersion: 3,
-	}
-	if err := db.Create(&grant).Error; err != nil {
-		t.Fatal(err)
-	}
-	principalType := accessmodel.PrincipalTypeUser
-	key := apikeymodel.TenantAPIKey{
-		OrganizationID: organizationID, WorkspaceID: &workspaceID,
-		PrincipalType: &principalType, PrincipalID: &principalID, AccessGrantID: &grant.ID,
-		KeyHash: "inactive-key-after-grant-lock", Name: "inactive", Status: "inactive",
-		SecretVersion: 2, AuthorizationVersion: grant.AuthorizationVersion,
-	}
-	if err := db.Omit("Key").Create(&key).Error; err != nil {
-		t.Fatal(err)
-	}
-	version := grant.AuthorizationVersion
-	billing := &BillingContext{
-		AttemptID: uuid.NewString() + "-a1", RequestID: uuid.NewString(),
-		OrganizationID: organizationID, WorkspaceID: workspaceID, APIKeyID: key.ID,
-		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,
-		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version, AuthMethod: "personal_api_key",
-		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
-		EstimatedCredits: 10, BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
-	}
-	service := &BillingService{db: db}
-	if err := service.PreDeduct(context.Background(), billing); err != ErrAPIKeyInactive {
-		t.Fatalf("pre-deduct inactive key error = %v, want %v", err, ErrAPIKeyInactive)
-	}
-	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if grant.UsedQuota != 0 || grant.RemainQuota != quota {
-		t.Fatalf("inactive key left a grant reservation: used/remain = %d/%d", grant.UsedQuota, grant.RemainQuota)
+func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing.T) {
+	past := time.Now().Add(-time.Minute)
+	for _, testCase := range []struct {
+		name      string
+		status    string
+		expiresAt *time.Time
+	}{
+		{name: "inactive", status: "inactive"},
+		{name: "expired", status: "active", expiresAt: &past},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.AutoMigrate(
+				&accessmodel.Grant{},
+				&apikeymodel.TenantAPIKey{},
+				&BillingAttempt{},
+				&BillingAttemptEntry{},
+			); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Exec(`CREATE UNIQUE INDEX uq_inactive_key_billing_entry ON billing_attempt_entries (attempt_id, entry_type, ledger_type)`).Error; err != nil {
+				t.Fatal(err)
+			}
+			organizationID, workspaceID, principalID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+			quota := int64(100)
+			grant := accessmodel.Grant{
+				OrganizationID: organizationID, WorkspaceID: workspaceID,
+				PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,
+				Source: "approved_request", Status: accessmodel.GrantStatusActive,
+				QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1, AuthorizationVersion: 3,
+			}
+			if err := db.Create(&grant).Error; err != nil {
+				t.Fatal(err)
+			}
+			principalType := accessmodel.PrincipalTypeUser
+			key := apikeymodel.TenantAPIKey{
+				OrganizationID: organizationID, WorkspaceID: &workspaceID,
+				PrincipalType: &principalType, PrincipalID: &principalID, AccessGrantID: &grant.ID,
+				KeyHash: uuid.NewString(), Name: testCase.name, Status: testCase.status, ExpiresAt: testCase.expiresAt,
+				SecretVersion: 2, AuthorizationVersion: grant.AuthorizationVersion,
+			}
+			if err := db.Omit("Key").Create(&key).Error; err != nil {
+				t.Fatal(err)
+			}
+			version := grant.AuthorizationVersion
+			billing := &BillingContext{
+				AttemptID: uuid.NewString() + "-a1", RequestID: uuid.NewString(),
+				OrganizationID: organizationID, WorkspaceID: workspaceID, APIKeyID: key.ID,
+				PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,
+				AccessGrantID: grant.ID, GrantAuthorizationVersion: &version, AuthMethod: "personal_api_key",
+				QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+				EstimatedCredits: 10, BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+			}
+			service := &BillingService{db: db}
+			if err := service.PreDeduct(context.Background(), billing); err != ErrAPIKeyInactive {
+				t.Fatalf("pre-deduct %s key error = %v, want %v", testCase.name, err, ErrAPIKeyInactive)
+			}
+			if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if grant.UsedQuota != 0 || grant.RemainQuota != quota {
+				t.Fatalf("%s key left a grant reservation: used/remain = %d/%d", testCase.name, grant.UsedQuota, grant.RemainQuota)
+			}
+		})
 	}
 }
 

@@ -1057,7 +1057,7 @@ func (s *RemoteBilling) preDeductLocalSubjectQuota(ctx context.Context, bc *Bill
 				First(&apiKey).Error; err != nil {
 				return fmt.Errorf("load api key for subject pre-deduct: %w", err)
 			}
-			if apiKey.Status != "active" {
+			if !apiKey.IsActive() {
 				return ErrAPIKeyInactive
 			}
 			preDeductErr = s.localService.preDeductSubjectQuota(ctx, tx, bc, &apiKey)
