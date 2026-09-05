@@ -563,6 +563,142 @@ func TestOwnerCanCreateKeyUnderDefaultMemberApprovalPolicy(t *testing.T) {
 	}
 }
 
+func TestZeroDefaultQuotaDoesNotAdvertiseOrCreateGrant(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, _, memberID := seedDeveloperWorkspace(t, db)
+	zero := int64(0)
+	policy := accessmodel.Policy{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		Mode: accessmodel.AccessModeSelfService, DefaultQuota: &zero,
+		MaxKeys: 2, AllowedModels: []string{}, Version: 1,
+	}
+	if err := db.Create(&policy).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+
+	me, err := service.GetMe(context.Background(), workspaceID, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if me.CanCreateKey {
+		t.Fatal("zero-quota policy must not advertise key creation")
+	}
+	if _, err := service.CreateKey(context.Background(), workspaceID, memberID, CreateKeyInput{Name: "zero quota"}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("CreateKey error = %v, want quota exceeded", err)
+	}
+	var grantCount int64
+	if err := db.Model(&accessmodel.Grant{}).Where("workspace_id = ? AND principal_id = ?", workspaceID, memberID).Count(&grantCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grantCount != 0 {
+		t.Fatalf("zero-quota creation persisted %d grants, want 0", grantCount)
+	}
+
+	revoked := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: memberID,
+		Source: "self_service", Status: accessmodel.GrantStatusRevoked,
+		QuotaLimit: &zero, RemainQuota: 0, MaxKeys: 2,
+		AllowedModels: []string{}, AuthorizationVersion: 4,
+	}
+	if err := db.Create(&revoked).Error; err != nil {
+		t.Fatal(err)
+	}
+	me, err = service.GetMe(context.Background(), workspaceID, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if me.CanCreateKey {
+		t.Fatal("zero-quota renewal must not advertise key creation")
+	}
+	if _, err := service.CreateKey(context.Background(), workspaceID, memberID, CreateKeyInput{Name: "zero quota renewal"}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("renewal CreateKey error = %v, want quota exceeded", err)
+	}
+	if err := db.First(&revoked, "id = ?", revoked.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if revoked.Status != accessmodel.GrantStatusRevoked || revoked.AuthorizationVersion != 4 {
+		t.Fatalf("failed zero-quota renewal mutated grant: %#v", revoked)
+	}
+}
+
+func TestListKeysReportsAuthoritativeActivationCapability(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	quota := int64(100)
+	policy := accessmodel.Policy{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		Mode: accessmodel.AccessModeApprovalRequired, DefaultQuota: &quota,
+		MaxKeys: 2, AllowedModels: []string{}, Version: 1,
+	}
+	grant := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: memberID,
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 2,
+		AllowedModels: []string{}, AuthorizationVersion: 3,
+	}
+	if err := db.Create(&policy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	principalType := accessmodel.PrincipalTypeUser
+	active := apikeymodel.TenantAPIKey{
+		OrganizationID: organizationID, WorkspaceID: &workspaceID, PrincipalType: &principalType,
+		PrincipalID: &memberID, AccessGrantID: &grant.ID, KeyHash: "activation-active",
+		Name: "active", Status: "active", AuthorizationVersion: grant.AuthorizationVersion,
+	}
+	inactive := apikeymodel.TenantAPIKey{
+		OrganizationID: organizationID, WorkspaceID: &workspaceID, PrincipalType: &principalType,
+		PrincipalID: &memberID, AccessGrantID: &grant.ID, KeyHash: "activation-inactive",
+		Name: "inactive", Status: "inactive", AuthorizationVersion: grant.AuthorizationVersion,
+	}
+	if err := db.Omit("Key").Create(&active).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Omit("Key").Create(&inactive).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	activation := func() bool {
+		items, err := service.ListKeys(context.Background(), workspaceID, ownerID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range items {
+			if item.ID == inactive.ID {
+				return item.CanActivate
+			}
+		}
+		t.Fatal("inactive member key missing from manager list")
+		return false
+	}
+	if !activation() {
+		t.Fatal("eligible inactive member key should be activatable")
+	}
+	if err := db.Model(&grant).Update("max_keys", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if activation() {
+		t.Fatal("key limit must suppress activation")
+	}
+	if err := db.Model(&grant).Updates(map[string]any{"max_keys": 2, "remain_quota": 0}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if activation() {
+		t.Fatal("exhausted grant must suppress activation")
+	}
+	if err := db.Model(&grant).Updates(map[string]any{"remain_quota": quota, "authorization_version": 4}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if activation() {
+		t.Fatal("stale key authorization must suppress activation")
+	}
+}
+
 func TestCreateGrantReloadsConcurrentWinner(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, _ := seedDeveloperWorkspace(t, db)

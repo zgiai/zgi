@@ -205,7 +205,7 @@ func refundPrivateMusicSubject(ctx context.Context, tx *gorm.DB, attempt Billing
 		return tx.WithContext(ctx).Save(&quota).Error
 	case quotaSubjectTypeAccessGrant:
 		var grant accessmodel.Grant
-		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		if err := tx.WithContext(ctx).Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ? AND organization_id = ?", attempt.QuotaSubjectID, attempt.OrganizationID).
 			First(&grant).Error; err != nil {
 			return fmt.Errorf("load developer grant for music compensation: %w", err)
@@ -225,7 +225,7 @@ func refundPrivateMusicSubject(ctx context.Context, tx *gorm.DB, attempt Billing
 		if grant.QuotaLimit != nil {
 			grant.RemainQuota += amount
 		}
-		return tx.WithContext(ctx).Save(&grant).Error
+		return tx.WithContext(ctx).Unscoped().Save(&grant).Error
 	case quotaSubjectTypeOrganization:
 		return nil
 	default:

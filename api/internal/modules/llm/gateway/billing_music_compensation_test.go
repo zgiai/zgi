@@ -204,6 +204,60 @@ func TestBillingServiceCompensatePrivateMusicDeliveryRefundsFundWhenGrantRenewed
 	}
 }
 
+func TestBillingServiceFinalizesPrivateMusicAfterGrantRetirement(t *testing.T) {
+	service, db, billing, organizationID, grantID, channelID, requestID := newMusicCompensationFixtureForSubjectState(t, true, false)
+
+	if err := db.Model(&accessmodel.Grant{}).Where("id = ?", grantID).Updates(map[string]any{
+		"status":                accessmodel.GrantStatusRevoked,
+		"authorization_version": 2,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Delete(&accessmodel.Grant{}, "id = ?", grantID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Settle(t.Context(), billing); err != nil {
+		t.Fatalf("Settle() after grant retirement error = %v", err)
+	}
+
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusSettled {
+		t.Fatalf("attempt status = %q, want %q", attempt.Status, billingAttemptStatusSettled)
+	}
+	var wallet ChannelWallet
+	if err := db.First(&wallet, "channel_id = ?", channelID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if wallet.Balance != 83 {
+		t.Fatalf("wallet balance after settlement = %d, want 83", wallet.Balance)
+	}
+	if err := service.CompensatePrivateMusicDelivery(t.Context(), organizationID, requestID); err != nil {
+		t.Fatalf("CompensatePrivateMusicDelivery() after grant retirement error = %v", err)
+	}
+	if err := db.First(&wallet, "channel_id = ?", channelID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if wallet.Balance != 100 || wallet.Status != channelWalletStatusActive {
+		t.Fatalf("wallet balance/status after compensation = %d/%s, want 100/ACTIVE", wallet.Balance, wallet.Status)
+	}
+	if err := db.First(&attempt, "attempt_id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusCompensated {
+		t.Fatalf("attempt status after compensation = %q, want %q", attempt.Status, billingAttemptStatusCompensated)
+	}
+	var retired accessmodel.Grant
+	if err := db.Unscoped().First(&retired, "id = ?", grantID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !retired.DeletedAt.Valid || retired.Status != accessmodel.GrantStatusRevoked || retired.AuthorizationVersion != 2 || retired.UsedQuota != 0 {
+		t.Fatalf("retired grant was unexpectedly mutated: %#v", retired)
+	}
+}
+
 func newMusicCompensationFixture(t *testing.T) (*BillingService, *gorm.DB, *BillingContext, uuid.UUID, string, uuid.UUID, string) {
 	return newMusicCompensationFixtureForSubject(t, false)
 }

@@ -94,6 +94,7 @@ type KeyView struct {
 	AccessedAt     *time.Time `json:"accessed_at,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+	CanActivate    bool       `json:"can_activate"`
 }
 
 type AuditQuery struct {
@@ -293,7 +294,9 @@ func (s *Service) GetMe(ctx context.Context, workspaceID, accountID string) (*Me
 	hasUsableGrant := view.Grant != nil && view.Grant.IsActive(now) && grantHasAvailableQuota(view.Grant)
 	canStartGrant := view.Grant == nil && (scope.CanManage || policy.Mode == accessmodel.AccessModeSelfService)
 	canRenewGrant := view.Grant != nil && grantCanStartNewPeriod(view.Grant, scope, policy, now)
-	view.CanCreateKey = scope.Member != nil && policy.Mode != accessmodel.AccessModeDisabled && (hasUsableGrant || canStartGrant || canRenewGrant)
+	canFundNewPeriod := quotaHasAvailableBalance(policy.DefaultQuota)
+	view.CanCreateKey = scope.Member != nil && policy.Mode != accessmodel.AccessModeDisabled &&
+		(hasUsableGrant || (canFundNewPeriod && (canStartGrant || canRenewGrant)))
 	view.CanRequestAccess = canRequestDeveloperAccess(scope, policy, view.CanCreateKey, view.PendingRequest != nil)
 	return view, nil
 }
@@ -684,6 +687,10 @@ func grantHasAvailableQuota(grant *accessmodel.Grant) bool {
 	return grant != nil && (grant.QuotaLimit == nil || grant.RemainQuota > 0)
 }
 
+func quotaHasAvailableBalance(quota *int64) bool {
+	return quota == nil || *quota > 0
+}
+
 func grantCanStartNewPeriod(grant *accessmodel.Grant, scope *workspaceScope, policy *accessmodel.Policy, now time.Time) bool {
 	if grant == nil {
 		return false
@@ -756,6 +763,9 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 		if !grantCanStartNewPeriod(&grant, scope, policy, s.now()) {
 			return nil, ErrApprovalNeeded
 		}
+		if !quotaHasAvailableBalance(policy.DefaultQuota) {
+			return nil, ErrQuotaExceeded
+		}
 		source := "self_service"
 		if scope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
 			source = "workspace_admin"
@@ -803,6 +813,9 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 	}
 	if !scope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
 		return nil, ErrApprovalNeeded
+	}
+	if !quotaHasAvailableBalance(policy.DefaultQuota) {
+		return nil, ErrQuotaExceeded
 	}
 	source := "self_service"
 	if scope.CanManage && policy.Mode != accessmodel.AccessModeSelfService {
@@ -971,7 +984,73 @@ func (s *Service) ListKeys(ctx context.Context, workspaceID, accountID string) (
 	if err := s.hydrateKeyPrincipals(ctx, views); err != nil {
 		return nil, err
 	}
+	policy, err := s.policy(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.hydrateKeyActivationCapabilities(ctx, policy, rows, views); err != nil {
+		return nil, err
+	}
 	return views, nil
+}
+
+func (s *Service) hydrateKeyActivationCapabilities(ctx context.Context, policy *accessmodel.Policy, keys []apikeymodel.TenantAPIKey, views []KeyView) error {
+	if policy == nil || policy.Mode == accessmodel.AccessModeDisabled || len(keys) == 0 {
+		return nil
+	}
+	now := s.now()
+	grantIDs := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for i := range keys {
+		key := &keys[i]
+		if key.Status != "inactive" || key.AccessGrantID == nil || (key.ExpiresAt != nil && !key.ExpiresAt.After(now)) {
+			continue
+		}
+		if _, ok := seen[*key.AccessGrantID]; ok {
+			continue
+		}
+		seen[*key.AccessGrantID] = struct{}{}
+		grantIDs = append(grantIDs, *key.AccessGrantID)
+	}
+	if len(grantIDs) == 0 {
+		return nil
+	}
+	var grants []accessmodel.Grant
+	if err := s.db.WithContext(ctx).Where("id IN ?", grantIDs).Find(&grants).Error; err != nil {
+		return fmt.Errorf("load API key grants: %w", err)
+	}
+	grantsByID := make(map[string]accessmodel.Grant, len(grants))
+	for i := range grants {
+		grantsByID[grants[i].ID] = grants[i]
+	}
+	type grantKeyCount struct {
+		GrantID string `gorm:"column:grant_id"`
+		Count   int64  `gorm:"column:key_count"`
+	}
+	var counts []grantKeyCount
+	if err := activePersonalKeysQuery(s.db.WithContext(ctx), now).
+		Select("access_grant_id AS grant_id, COUNT(*) AS key_count").
+		Where("access_grant_id IN ?", grantIDs).
+		Group("access_grant_id").
+		Scan(&counts).Error; err != nil {
+		return fmt.Errorf("count active grant API keys: %w", err)
+	}
+	activeByGrant := make(map[string]int64, len(counts))
+	for _, item := range counts {
+		activeByGrant[item.GrantID] = item.Count
+	}
+	for i := range keys {
+		key := &keys[i]
+		if key.Status != "inactive" || key.AccessGrantID == nil || (key.ExpiresAt != nil && !key.ExpiresAt.After(now)) {
+			continue
+		}
+		grant, ok := grantsByID[*key.AccessGrantID]
+		if !ok || !grant.IsActive(now) || grant.AuthorizationVersion != key.AuthorizationVersion || !grantHasAvailableQuota(&grant) {
+			continue
+		}
+		views[i].CanActivate = activeByGrant[grant.ID] < int64(grant.MaxKeys)
+	}
+	return nil
 }
 
 func (s *Service) hydrateKeyPrincipals(ctx context.Context, items []KeyView) error {

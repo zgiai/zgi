@@ -593,7 +593,7 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 		return ErrInvalidRequest
 	}
 	var grant accessmodel.Grant
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+	if err := tx.WithContext(ctx).Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("id = ? AND organization_id = ?", grantID, bc.OrganizationID).First(&grant).Error; err != nil {
 		return err
 	}
