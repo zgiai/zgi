@@ -61,6 +61,53 @@ func TestReviewerCannotApproveOwnRequest(t *testing.T) {
 	}
 }
 
+func TestPutPolicyRejectsStaleWorkspaceScopeAfterOrganizationChange(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	scope, err := service.scope(context.Background(), workspaceID, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOrganizationID := uuid.NewString()
+	if err := db.Create(&workspacemodel.Organization{ID: newOrganizationID, Name: "New Organization", Status: workspacemodel.OrganizationStatusActive}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&workspacemodel.Workspace{}).Where("id = ?", workspaceID).Update("organization_id", newOrganizationID).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.putPolicy(context.Background(), scope, ownerID, PolicyInput{Mode: accessmodel.AccessModeSelfService, MaxKeys: 2})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("putPolicy error = %v, want stale organization conflict", err)
+	}
+	var count int64
+	if err := db.Model(&accessmodel.Policy{}).Where("workspace_id = ?", workspaceID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("stale policy count = %d, want 0", count)
+	}
+}
+
+func TestPutPolicyRevalidatesManagementPermission(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	scope, err := service.scope(context.Background(), workspaceID, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&workspacemodel.WorkspaceMember{}).
+		Where("workspace_id = ? AND account_id = ?", workspaceID, ownerID).
+		Update("role", workspacemodel.WorkspaceRoleMember).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.putPolicy(context.Background(), scope, ownerID, PolicyInput{Mode: accessmodel.AccessModeSelfService, MaxKeys: 2})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("putPolicy error = %v, want forbidden after role downgrade", err)
+	}
+}
+
 func TestSelfServiceRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
@@ -663,39 +710,61 @@ func TestListKeysReportsAuthoritativeActivationCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
-	activation := func() bool {
-		items, err := service.ListKeys(context.Background(), workspaceID, ownerID)
+	keyView := func(accountID, keyID string) KeyView {
+		items, err := service.ListKeys(context.Background(), workspaceID, accountID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, item := range items {
-			if item.ID == inactive.ID {
-				return item.CanActivate
+			if item.ID == keyID {
+				return item
 			}
 		}
-		t.Fatal("inactive member key missing from manager list")
-		return false
+		t.Fatalf("key %s missing from list", keyID)
+		return KeyView{}
 	}
-	if !activation() {
+	if view := keyView(ownerID, inactive.ID); !view.CanActivate || view.CanRotate {
+		t.Fatalf("manager capabilities for eligible member key = %#v", view)
+	}
+	if view := keyView(memberID, inactive.ID); !view.CanActivate || !view.CanRotate {
+		t.Fatalf("member capabilities for eligible own key = %#v", view)
+	}
+	if view := keyView(memberID, active.ID); !view.CanRotate {
+		t.Fatalf("active key should remain rotatable at capacity: %#v", view)
+	}
+	if !keyView(ownerID, inactive.ID).CanActivate {
 		t.Fatal("eligible inactive member key should be activatable")
 	}
 	if err := db.Model(&grant).Update("max_keys", 1).Error; err != nil {
 		t.Fatal(err)
 	}
-	if activation() {
+	if view := keyView(memberID, inactive.ID); view.CanActivate || view.CanRotate {
 		t.Fatal("key limit must suppress activation")
+	}
+	if view := keyView(memberID, active.ID); !view.CanRotate {
+		t.Fatal("rotation must exclude the active key being replaced from the key limit")
 	}
 	if err := db.Model(&grant).Updates(map[string]any{"max_keys": 2, "remain_quota": 0}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if activation() {
+	if view := keyView(memberID, inactive.ID); view.CanActivate || view.CanRotate {
 		t.Fatal("exhausted grant must suppress activation")
 	}
 	if err := db.Model(&grant).Updates(map[string]any{"remain_quota": quota, "authorization_version": 4}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if activation() {
+	if view := keyView(memberID, inactive.ID); view.CanActivate || view.CanRotate {
 		t.Fatal("stale key authorization must suppress activation")
+	}
+	if err := db.Model(&grant).Update("authorization_version", 3).Error; err != nil {
+		t.Fatal(err)
+	}
+	expiredAt := time.Now().Add(-time.Minute)
+	if err := db.Model(&inactive).Update("expires_at", expiredAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if view := keyView(memberID, inactive.ID); view.CanActivate || view.CanRotate {
+		t.Fatalf("expired key exposed a lifecycle action: %#v", view)
 	}
 }
 

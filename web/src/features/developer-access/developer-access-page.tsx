@@ -599,9 +599,7 @@ export function DeveloperAccessPage() {
                     <KeyRow
                       key={item.id}
                       item={item}
-                      canRotate={
-                        canUseKeys && (item.status === 'active' || hasAvailableKeySlot)
-                      }
+                      canRotate={item.can_rotate}
                       canActivate={item.can_activate}
                       onStatus={action => {
                         if (action === 'rotate') {

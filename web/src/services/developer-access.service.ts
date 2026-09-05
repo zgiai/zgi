@@ -77,6 +77,7 @@ export interface PersonalApiKey {
   expires_at?: string | null;
   revoked_at?: string | null;
   can_activate: boolean;
+  can_rotate: boolean;
 }
 
 export interface DeveloperAccessAuditItem {

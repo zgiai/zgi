@@ -95,6 +95,7 @@ type KeyView struct {
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
 	CanActivate    bool       `json:"can_activate"`
+	CanRotate      bool       `json:"can_rotate"`
 }
 
 type AuditQuery struct {
@@ -359,22 +360,73 @@ func (s *Service) PutPolicy(ctx context.Context, workspaceID, accountID string, 
 	if !scope.CanManage {
 		return nil, ErrForbidden
 	}
-	policy, err := s.policy(ctx, scope)
+	return s.putPolicy(ctx, scope, accountID, input)
+}
+
+func (s *Service) putPolicy(ctx context.Context, scope *workspaceScope, accountID string, input PolicyInput) (*accessmodel.Policy, error) {
+	var result accessmodel.Policy
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var workspace workspacemodel.Workspace
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", scope.Workspace.ID).First(&workspace).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("lock workspace for developer access policy: %w", err)
+		}
+		if !workspace.IsNormal() || workspace.OrganizationID == nil || scope.Workspace.OrganizationID == nil ||
+			*workspace.OrganizationID != *scope.Workspace.OrganizationID {
+			return ErrConflict
+		}
+
+		var organization workspacemodel.Organization
+		if err := tx.Where("id = ?", *workspace.OrganizationID).First(&organization).Error; err != nil || !organization.IsActive() {
+			return ErrForbidden
+		}
+		var member workspacemodel.WorkspaceMember
+		memberErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("workspace_id = ? AND account_id = ?", workspace.ID, accountID).
+			First(&member).Error
+		if memberErr != nil && !errors.Is(memberErr, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("revalidate workspace member: %w", memberErr)
+		}
+		canManage := memberErr == nil && member.Role.IsAdminRole()
+		if !canManage && s.organizationService != nil {
+			allowed, permissionErr := s.organizationService.CheckWorkspacePermission(ctx, *workspace.OrganizationID, workspace.ID, accountID, workspacemodel.WorkspacePermissionWorkspaceManage)
+			if permissionErr != nil {
+				return fmt.Errorf("revalidate workspace permission: %w", permissionErr)
+			}
+			canManage = allowed
+		}
+		if !canManage {
+			return ErrForbidden
+		}
+
+		err := tx.Where("workspace_id = ?", workspace.ID).First(&result).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			lockedScope := &workspaceScope{Workspace: &workspace, Member: &member, CanManage: true}
+			result = *defaultPolicy(lockedScope)
+		} else if err != nil {
+			return fmt.Errorf("load developer access policy: %w", err)
+		} else if result.OrganizationID != *workspace.OrganizationID {
+			return ErrConflict
+		}
+		result.Mode, result.DefaultQuota, result.MaxQuota, result.MaxKeys = input.Mode, input.DefaultQuota, input.MaxQuota, input.MaxKeys
+		result.DefaultTTLSeconds, result.MaxTTLSeconds = input.DefaultTTLSeconds, input.MaxTTLSeconds
+		result.AllowedModels, result.UpdatedByAccountID = unique(input.AllowedModels), &accountID
+		result.Version++
+		if result.ID == "" {
+			if err := tx.Create(&result).Error; err != nil {
+				return fmt.Errorf("create developer access policy: %w", err)
+			}
+		} else if err := tx.Save(&result).Error; err != nil {
+			return fmt.Errorf("update developer access policy: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	policy.Mode, policy.DefaultQuota, policy.MaxQuota, policy.MaxKeys = input.Mode, input.DefaultQuota, input.MaxQuota, input.MaxKeys
-	policy.DefaultTTLSeconds, policy.MaxTTLSeconds = input.DefaultTTLSeconds, input.MaxTTLSeconds
-	policy.AllowedModels, policy.UpdatedByAccountID = unique(input.AllowedModels), &accountID
-	policy.Version++
-	if policy.ID == "" {
-		if err := s.db.WithContext(ctx).Create(policy).Error; err != nil {
-			return nil, fmt.Errorf("create developer access policy: %w", err)
-		}
-	} else if err := s.db.WithContext(ctx).Save(policy).Error; err != nil {
-		return nil, fmt.Errorf("update developer access policy: %w", err)
-	}
-	return policy, nil
+	return &result, nil
 }
 
 func (s *Service) ListRequests(ctx context.Context, workspaceID, accountID, status string) ([]accessmodel.AccessRequest, error) {
@@ -988,13 +1040,13 @@ func (s *Service) ListKeys(ctx context.Context, workspaceID, accountID string) (
 	if err != nil {
 		return nil, err
 	}
-	if err := s.hydrateKeyActivationCapabilities(ctx, policy, rows, views); err != nil {
+	if err := s.hydrateKeyCapabilities(ctx, policy, accountID, rows, views); err != nil {
 		return nil, err
 	}
 	return views, nil
 }
 
-func (s *Service) hydrateKeyActivationCapabilities(ctx context.Context, policy *accessmodel.Policy, keys []apikeymodel.TenantAPIKey, views []KeyView) error {
+func (s *Service) hydrateKeyCapabilities(ctx context.Context, policy *accessmodel.Policy, accountID string, keys []apikeymodel.TenantAPIKey, views []KeyView) error {
 	if policy == nil || policy.Mode == accessmodel.AccessModeDisabled || len(keys) == 0 {
 		return nil
 	}
@@ -1003,7 +1055,7 @@ func (s *Service) hydrateKeyActivationCapabilities(ctx context.Context, policy *
 	seen := make(map[string]struct{}, len(keys))
 	for i := range keys {
 		key := &keys[i]
-		if key.Status != "inactive" || key.AccessGrantID == nil || (key.ExpiresAt != nil && !key.ExpiresAt.After(now)) {
+		if key.Status == "revoked" || key.AccessGrantID == nil || (key.ExpiresAt != nil && !key.ExpiresAt.After(now)) {
 			continue
 		}
 		if _, ok := seen[*key.AccessGrantID]; ok {
@@ -1041,14 +1093,24 @@ func (s *Service) hydrateKeyActivationCapabilities(ctx context.Context, policy *
 	}
 	for i := range keys {
 		key := &keys[i]
-		if key.Status != "inactive" || key.AccessGrantID == nil || (key.ExpiresAt != nil && !key.ExpiresAt.After(now)) {
+		if key.Status == "revoked" || key.AccessGrantID == nil || (key.ExpiresAt != nil && !key.ExpiresAt.After(now)) {
 			continue
 		}
 		grant, ok := grantsByID[*key.AccessGrantID]
 		if !ok || !grant.IsActive(now) || grant.AuthorizationVersion != key.AuthorizationVersion || !grantHasAvailableQuota(&grant) {
 			continue
 		}
-		views[i].CanActivate = activeByGrant[grant.ID] < int64(grant.MaxKeys)
+		active := activeByGrant[grant.ID]
+		if key.Status == "inactive" {
+			views[i].CanActivate = active < int64(grant.MaxKeys)
+		}
+		if key.PrincipalID != nil && *key.PrincipalID == accountID {
+			otherActive := active
+			if key.Status == "active" {
+				otherActive--
+			}
+			views[i].CanRotate = otherActive < int64(grant.MaxKeys)
+		}
 	}
 	return nil
 }
