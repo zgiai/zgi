@@ -57,6 +57,7 @@ export type PaymentSubMethod = 'qrcode' | 'native' | 'wap' | 'app' | string;
 export interface RechargePaymentRequest {
   amount: number;
   payment_method: PaymentMethod;
+  payment_sub_method?: PaymentSubMethod;
   currency?: string;
 }
 
@@ -93,7 +94,7 @@ export type OrderStatus =
   | 'pending'
   | 'paid'
   | 'completed'
-  | 'cancelled'
+  | 'canceled'
   | 'expired'
   | 'failed'
   | 'refunded';

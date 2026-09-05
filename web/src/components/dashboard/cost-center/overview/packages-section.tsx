@@ -12,6 +12,7 @@ import { useAiCredits } from '@/hooks/pay/use-ai-credits';
 import type { AiCreditProduct, PaymentMethod } from '@/services/types/pay';
 import { formatCatalogCurrencyAmount, getBillingDisplaySettings } from '@/utils/billing-display';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
+import { toast } from 'sonner';
 
 export function PackagesSection() {
   const t = useT('dashboard');
@@ -65,6 +66,7 @@ export function PackagesSection() {
       {
         product_id: buyDialog.product.id,
         payment_method: paymentMethod,
+        payment_sub_method: paymentMethod === 'wechat' ? 'native' : 'qrcode',
         use_wallet_balance: useBalance,
         wallet_deduction_amount: balanceAmount || 0,
         quantity: 1,
@@ -80,7 +82,7 @@ export function PackagesSection() {
               qrcodeUrl: payment.qr_code_content || null,
               paymentMethod: paymentMethod,
             }));
-          } else {
+          } else if (data.order.status === 'completed') {
             handlePaymentSuccess();
             setBuyDialog({
               open: false,
@@ -88,6 +90,10 @@ export function PackagesSection() {
               orderNo: null,
               qrcodeUrl: null,
               paymentMethod: undefined,
+            });
+          } else {
+            toast.error(t('costCenter.rechargeDialog.payment.fetchQrCodeFailed'), {
+              description: t('costCenter.rechargeDialog.payment.fetchQrCodeFailedDesc'),
             });
           }
         },

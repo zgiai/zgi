@@ -61,13 +61,10 @@ class PayService extends BaseService {
 
   /**
    * Get AI credit products
-   * GET /v1/public/credit-products
+   * GET /console/api/ai-credit-products
    */
   getAiCreditProducts(): Promise<ApiResponseData<AiCreditProduct[]>> {
-    return this.request('get', 'v1/public/credit-products', undefined, {
-      endpoint: 'market',
-      skipAuth: true,
-    });
+    return this.request('get', '/ai-credit-products');
   }
 
   /**

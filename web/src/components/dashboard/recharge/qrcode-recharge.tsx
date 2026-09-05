@@ -31,7 +31,7 @@ const RECHARGE_AMOUNTS = [
   { cny: 10000 },
 ];
 
-const MIN_CUSTOM_AMOUNT = 10;
+const MIN_CUSTOM_AMOUNT = 1;
 const ORDER_TIMEOUT_SECONDS = 600; // 10 minutes
 
 const PAYMENT_METHODS: Array<{
@@ -42,14 +42,14 @@ const PAYMENT_METHODS: Array<{
     inactive: { border: string; text: string };
   };
 }> = [
-  // {
-  //   value: 'wechat',
-  //   label: 'payment.wechat',
-  //   colors: {
-  //     active: { border: 'border-green-500', bg: 'bg-green-50', text: 'text-green-600' },
-  //     inactive: { border: 'border-gray-200', text: 'text-gray-400' },
-  //   },
-  // },
+  {
+    value: 'wechat',
+    label: 'payment.wechat',
+    colors: {
+      active: { border: 'border-green-500', bg: 'bg-green-50', text: 'text-green-600' },
+      inactive: { border: 'border-gray-200', text: 'text-gray-400' },
+    },
+  },
   {
     value: 'alipay',
     label: 'payment.alipay',
@@ -115,7 +115,7 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
     () =>
       order.status === 'completed' ||
       order.status === 'failed' ||
-      order.status === 'cancelled' ||
+      order.status === 'canceled' ||
       order.status === 'expired',
     [order.status]
   );
@@ -180,7 +180,12 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
     setOrder({ orderNo: null, qrcodeUrl: null, status: null });
 
     createPayment(
-      { amount: finalAmount, payment_method: paymentMethod, currency: 'CNY' },
+      {
+        amount: finalAmount,
+        payment_method: paymentMethod,
+        payment_sub_method: paymentMethod === 'wechat' ? 'native' : 'qrcode',
+        currency: 'CNY',
+      },
       {
         onSuccess: data => {
           if (!data.payment.qr_code_content) {
