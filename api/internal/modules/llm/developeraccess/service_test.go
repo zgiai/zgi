@@ -174,6 +174,50 @@ func TestEnsureGrantRevalidatesSelfServicePolicyInTransaction(t *testing.T) {
 	}
 }
 
+func TestSetKeyStatusRevalidatesManagerAuthorityInTransaction(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	grant := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: memberID,
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		MaxKeys: 2, AuthorizationVersion: 1,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	principalType := accessmodel.PrincipalTypeUser
+	key := apikeymodel.TenantAPIKey{
+		OrganizationID: organizationID, WorkspaceID: &workspaceID,
+		PrincipalType: &principalType, PrincipalID: &memberID, AccessGrantID: &grant.ID,
+		KeyHash: "member-key-manager-race", KeyPrefix: "zgi_race", KeySuffix: "race",
+		SecretVersion: 2, Name: "member key", Status: "active", AuthorizationVersion: 1,
+	}
+	if err := db.Omit("Key").Create(&key).Error; err != nil {
+		t.Fatal(err)
+	}
+	staleScope, err := service.scope(context.Background(), workspaceID, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&workspacemodel.WorkspaceMember{}).
+		Where("workspace_id = ? AND account_id = ?", workspaceID, ownerID).
+		Update("role", workspacemodel.WorkspaceRoleMember).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.setKeyStatus(context.Background(), staleScope, ownerID, key.ID, "inactive", "stale manager"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("status change with stale manager scope error = %v, want not found", err)
+	}
+	if err := db.First(&key, "id = ?", key.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if key.Status != "active" {
+		t.Fatalf("stale manager changed member key status to %q", key.Status)
+	}
+}
+
 func TestSelfServiceRenewsExpiredGrantAsNewBudgetPeriod(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)

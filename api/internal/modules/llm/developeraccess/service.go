@@ -1366,9 +1366,10 @@ func netSubjectCharge(reserved, actual, refunded int64) int64 {
 	return net
 }
 
-func (s *Service) ownedKey(ctx context.Context, scope *workspaceScope, accountID, keyID string) (*apikeymodel.TenantAPIKey, error) {
+func personalKeyForUpdate(ctx context.Context, tx *gorm.DB, scope *workspaceScope, accountID, keyID string) (*apikeymodel.TenantAPIKey, error) {
 	var key apikeymodel.TenantAPIKey
-	query := s.db.WithContext(ctx).Where("id = ? AND workspace_id = ? AND principal_type = ?", keyID, scope.Workspace.ID, accessmodel.PrincipalTypeUser)
+	query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND workspace_id = ? AND principal_type = ?", keyID, scope.Workspace.ID, accessmodel.PrincipalTypeUser)
 	if !scope.CanManage {
 		query = query.Where("principal_id = ?", accountID)
 	}
@@ -1390,17 +1391,25 @@ func (s *Service) UpdateKey(ctx context.Context, workspaceID, accountID, keyID s
 	if err != nil {
 		return nil, err
 	}
-	key, err := s.ownedKey(ctx, scope, accountID, keyID)
-	if err != nil {
-		return nil, err
-	}
-	key.Name = input.Name
-	// Update only the mutable field. Loading a NULL legacy plaintext key into
-	// the string model yields ""; saving the whole row would write that value
-	// back and can collide with the legacy partial unique index.
-	if err := s.db.WithContext(ctx).Model(&apikeymodel.TenantAPIKey{}).
-		Where("id = ?", key.ID).
-		Update("name", input.Name).Error; err != nil {
+	var key apikeymodel.TenantAPIKey
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+		if err != nil {
+			return err
+		}
+		current, err := personalKeyForUpdate(ctx, tx, lockedScope, accountID, keyID)
+		if err != nil {
+			return err
+		}
+		key = *current
+		key.Name = input.Name
+		// Update only the mutable field. Loading a NULL legacy plaintext key into
+		// the string model yields ""; saving the whole row would write that value
+		// back and can collide with the legacy partial unique index.
+		return tx.WithContext(ctx).Model(&apikeymodel.TenantAPIKey{}).
+			Where("id = ?", key.ID).
+			Update("name", input.Name).Error
+	}); err != nil {
 		return nil, err
 	}
 	if invalidator, ok := s.keys.(interface {
@@ -1408,7 +1417,7 @@ func (s *Service) UpdateKey(ctx context.Context, workspaceID, accountID, keyID s
 	}); ok {
 		invalidator.InvalidateKeyCache(ctx, key.KeyHash)
 	}
-	view := keyToView(key)
+	view := keyToView(&key)
 	return &view, nil
 }
 
@@ -1420,6 +1429,10 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 	if err != nil {
 		return nil, err
 	}
+	return s.setKeyStatus(ctx, scope, accountID, keyID, status, reason)
+}
+
+func (s *Service) setKeyStatus(ctx context.Context, scope *workspaceScope, accountID, keyID, status, reason string) (*KeyView, error) {
 	if status == "active" {
 		policy, err := s.policy(ctx, scope)
 		if err != nil {
@@ -1446,25 +1459,31 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 		}
 	}
 	var key apikeymodel.TenantAPIKey
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+		if err != nil {
+			return err
+		}
 		var grant accessmodel.Grant
 		// Approval updates lock the grant before revoking its keys. Activation
 		// must use the same order to avoid a grant/key deadlock cycle.
 		if status == "active" {
+			policy, err := policyForUpdate(ctx, tx, lockedScope)
+			if err != nil {
+				return err
+			}
+			if policy.Mode == accessmodel.AccessModeDisabled {
+				return ErrAccessDisabled
+			}
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *candidate.AccessGrantID).First(&grant).Error; err != nil {
 				return ErrApprovalNeeded
 			}
 		}
-		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND workspace_id = ? AND principal_type = ?", keyID, scope.Workspace.ID, accessmodel.PrincipalTypeUser)
-		if !scope.CanManage {
-			query = query.Where("principal_id = ?", accountID)
-		}
-		if err := query.First(&key).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrNotFound
-			}
+		current, err := personalKeyForUpdate(ctx, tx, lockedScope, accountID, keyID)
+		if err != nil {
 			return err
 		}
+		key = *current
 		if key.Status == "revoked" {
 			return ErrConflict
 		}
@@ -1548,6 +1567,20 @@ func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID s
 	var replacement apikeymodel.TenantAPIKey
 	var oldHash string
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
+		if err != nil {
+			return err
+		}
+		if lockedScope.Member == nil {
+			return ErrForbidden
+		}
+		lockedPolicy, err := policyForUpdate(ctx, tx, lockedScope)
+		if err != nil {
+			return err
+		}
+		if lockedPolicy.Mode == accessmodel.AccessModeDisabled {
+			return ErrAccessDisabled
+		}
 		// ReviewRequest locks the grant and then revokes its keys. Rotation uses
 		// the same grant-before-key order so the two paths cannot deadlock.
 		var grant accessmodel.Grant
