@@ -39,6 +39,10 @@ func openDeveloperAccessTestDB(t *testing.T) *gorm.DB {
 		ON llm_organization_api_keys (key) WHERE deleted_at IS NULL`).Error; err != nil {
 		t.Fatalf("create legacy key index: %v", err)
 	}
+	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_developer_access_grants_principal
+		ON llm_developer_access_grants (workspace_id, principal_type, principal_id) WHERE deleted_at IS NULL`).Error; err != nil {
+		t.Fatalf("create developer grant principal index: %v", err)
+	}
 	return db
 }
 
@@ -361,6 +365,47 @@ func TestOwnerCanCreateKeyUnderDefaultMemberApprovalPolicy(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].KeyMasked == created.Secret {
 		t.Fatalf("list leaked or lost the key: %#v", listed)
+	}
+}
+
+func TestCreateGrantReloadsConcurrentWinner(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, _ := seedDeveloperWorkspace(t, db)
+	quota := int64(1000)
+	winner := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: ownerID,
+		Source: "self_service", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 3,
+		AllowedModels: []string{}, AuthorizationVersion: 1,
+	}
+	if err := db.Create(&winner).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	candidate := accessmodel.Grant{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: ownerID,
+		Source: "self_service", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 3,
+		AllowedModels: []string{}, AuthorizationVersion: 1,
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return createGrantOrReloadForUpdate(tx, &candidate)
+	}); err != nil {
+		t.Fatalf("reuse concurrent grant winner: %v", err)
+	}
+	if candidate.ID != winner.ID || candidate.AuthorizationVersion != winner.AuthorizationVersion {
+		t.Fatalf("candidate did not reload winner: got %#v want id=%s version=%d", candidate, winner.ID, winner.AuthorizationVersion)
+	}
+	var count int64
+	if err := db.Model(&accessmodel.Grant{}).
+		Where("workspace_id = ? AND principal_type = ? AND principal_id = ?", workspaceID, accessmodel.PrincipalTypeUser, ownerID).
+		Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("grant count = %d, want 1", count)
 	}
 }
 

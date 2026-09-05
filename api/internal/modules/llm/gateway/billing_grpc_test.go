@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -87,6 +88,92 @@ func TestRemoteBillingMarkAttemptSettleFailedWritesPartialUsageBill(t *testing.T
 	}
 	if bill.ErrorCode == nil || *bill.ErrorCode != "SETTLE_FAILED" {
 		t.Fatalf("usage bill error code = %v, want SETTLE_FAILED", bill.ErrorCode)
+	}
+}
+
+func TestRemoteBillingFinalizationIsIdempotentUnderAttemptLock(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatalf("migrate developer grant: %v", err)
+	}
+	organizationID := uuid.New()
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: organizationID.String(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, UsedQuota: 20, RemainQuota: 70, MaxKeys: 2,
+		AllowedModels: []string{}, AuthorizationVersion: 4,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	attemptID, requestID := uuid.NewString(), uuid.NewString()
+	version := grant.AuthorizationVersion
+	attempt := BillingAttempt{
+		AttemptID: attemptID, RequestID: requestID, OrganizationID: organizationID,
+		Lane: billingAttemptLaneRemote, InvocationSource: InvocationSourceAPI,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		GrantAuthorizationVersion: &version, AuthMethod: "personal_api_key",
+		Status: billingAttemptStatusSettlePending, CreatedAt: now, UpdatedAt: now,
+	}
+	entries := []BillingAttemptEntry{
+		{AttemptID: attemptID, EntryType: billingEntryTypeSubject, LedgerType: billingLedgerTypeGrantQuota, LedgerRefID: grant.ID, ReservedAmount: 10, Status: billingEntryStatusPending, CreatedAt: now, UpdatedAt: now},
+		{AttemptID: attemptID, EntryType: billingEntryTypeFund, LedgerType: billingLedgerTypeOrgFunds, LedgerRefID: organizationID.String(), ReservedAmount: 10, Status: billingEntryStatusPending, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := db.Create(&attempt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&entries).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	bc := &BillingContext{
+		OrganizationID: organizationID.String(), AttemptID: attemptID, RequestID: requestID,
+		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID, AccessGrantID: grant.ID,
+		GrantAuthorizationVersion: &version, AuthMethod: "personal_api_key",
+		EstimatedCredits: 10, SubjectReservedCredits: 10, ActualCredits: 3, Status: "success",
+	}
+	remote := &RemoteBilling{localService: &BillingService{db: db}}
+	if err := remote.finalizeRemoteSettlement(context.Background(), bc); err != nil {
+		t.Fatalf("first finalization: %v", err)
+	}
+	if err := remote.finalizeRemoteSettlement(context.Background(), bc); err != nil {
+		t.Fatalf("duplicate finalization: %v", err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 23 || grant.RemainQuota != 77 {
+		t.Fatalf("duplicate finalization changed grant twice: used/remain = %d/%d, want 23/77", grant.UsedQuota, grant.RemainQuota)
+	}
+
+	alreadyFinalized, err := remote.prepareRemoteSettlement(context.Background(), bc)
+	if err != nil {
+		t.Fatalf("prepare after terminal settlement: %v", err)
+	}
+	if !alreadyFinalized {
+		t.Fatal("terminal attempt was reopened by a later finalizer")
+	}
+	if err := remote.markAttemptSettleFailed(context.Background(), bc, "LATE_FAILURE", "stale finalizer"); err != nil {
+		t.Fatalf("late failure marker: %v", err)
+	}
+	var storedAttempt BillingAttempt
+	if err := db.First(&storedAttempt, "attempt_id = ?", attemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedAttempt.Status != billingAttemptStatusSettled {
+		t.Fatalf("attempt status = %q, want settled", storedAttempt.Status)
+	}
+	var subjectEntry BillingAttemptEntry
+	if err := db.Where("attempt_id = ? AND entry_type = ?", attemptID, billingEntryTypeSubject).First(&subjectEntry).Error; err != nil {
+		t.Fatal(err)
+	}
+	if subjectEntry.Status != billingEntryStatusSettled || subjectEntry.ActualAmount != 3 || subjectEntry.RefundedAmount != 7 {
+		t.Fatalf("terminal subject ledger was reopened: %#v", subjectEntry)
 	}
 }
 

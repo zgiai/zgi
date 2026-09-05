@@ -221,17 +221,12 @@ func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) e
 	}
 	bc.SettledAt = time.Now().UTC()
 
-	if err := s.localService.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.localService.upsertAttemptInit(ctx, tx, bc); err != nil {
-			return err
-		}
-		if err := s.localService.recordAttemptSettleInput(ctx, tx, bc); err != nil {
-			return err
-		}
-		invocation := invocationResultFromBillingStatus(bc.Status)
-		return s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusSettlePending, &invocation, nil, nil)
-	}); err != nil {
+	alreadyFinalized, err := s.prepareRemoteSettlement(ctx, bc)
+	if err != nil {
 		return fmt.Errorf("prepare settle pending state failed: %w", err)
+	}
+	if alreadyFinalized {
+		return nil
 	}
 
 	req := &SettleQuotaRequest{
@@ -297,7 +292,48 @@ func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) e
 		return err
 	}
 
-	if err := s.localService.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.finalizeRemoteSettlement(ctx, bc); err != nil {
+		if markErr := s.markAttemptSettleFailed(ctx, bc, "LOCAL_SUBJECT_SETTLE_FAILED", err.Error()); markErr != nil {
+			return fmt.Errorf("finalize settle failed: %v (additionally failed to mark partial: %w)", err, markErr)
+		}
+		return fmt.Errorf("finalize settle failed: %w", err)
+	}
+
+	return nil
+}
+
+func (s *RemoteBilling) prepareRemoteSettlement(ctx context.Context, bc *BillingContext) (bool, error) {
+	alreadyFinalized := false
+	err := s.localService.db.Transaction(func(tx *gorm.DB) error {
+		terminal, err := s.localService.lockAttemptForFinalization(ctx, tx, bc.AttemptID)
+		if err != nil {
+			return err
+		}
+		if terminal {
+			alreadyFinalized = true
+			return nil
+		}
+		if err := s.localService.upsertAttemptInit(ctx, tx, bc); err != nil {
+			return err
+		}
+		if err := s.localService.recordAttemptSettleInput(ctx, tx, bc); err != nil {
+			return err
+		}
+		invocation := invocationResultFromBillingStatus(bc.Status)
+		return s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusSettlePending, &invocation, nil, nil)
+	})
+	return alreadyFinalized, err
+}
+
+func (s *RemoteBilling) finalizeRemoteSettlement(ctx context.Context, bc *BillingContext) error {
+	return s.localService.db.Transaction(func(tx *gorm.DB) error {
+		terminal, err := s.localService.lockAttemptForFinalization(ctx, tx, bc.AttemptID)
+		if err != nil {
+			return err
+		}
+		if terminal {
+			return nil
+		}
 		if err := s.localService.settleSubjectQuota(ctx, tx, bc); err != nil {
 			return fmt.Errorf("settle subject quota: %w", err)
 		}
@@ -329,14 +365,7 @@ func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) e
 			}
 		}
 		return nil
-	}); err != nil {
-		if markErr := s.markAttemptSettleFailed(ctx, bc, "LOCAL_SUBJECT_SETTLE_FAILED", err.Error()); markErr != nil {
-			return fmt.Errorf("finalize settle failed: %v (additionally failed to mark partial: %w)", err, markErr)
-		}
-		return fmt.Errorf("finalize settle failed: %w", err)
-	}
-
-	return nil
+	})
 }
 
 func shouldMirrorRemoteUsageBill(bc *BillingContext) bool {
@@ -786,6 +815,13 @@ func (s *RemoteBilling) markAttemptPreDeductFailed(ctx context.Context, bc *Bill
 
 func (s *RemoteBilling) markAttemptSettleFailed(ctx context.Context, bc *BillingContext, code, msg string) error {
 	return s.localService.db.Transaction(func(tx *gorm.DB) error {
+		terminal, err := s.localService.lockAttemptForFinalization(ctx, tx, bc.AttemptID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if terminal {
+			return nil
+		}
 		if err := s.localService.upsertAttemptInit(ctx, tx, bc); err != nil {
 			return err
 		}

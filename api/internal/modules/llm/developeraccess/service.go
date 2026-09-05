@@ -636,9 +636,30 @@ func upsertGrant(tx *gorm.DB, scope *workspaceScope, principalID, actorID, sourc
 		grant.RemainQuota = 0
 	}
 	if grant.ID == "" {
-		return tx.Create(&grant).Error
+		return createGrantOrReloadForUpdate(tx, &grant)
 	}
 	return tx.Save(&grant).Error
+}
+
+func createGrantOrReloadForUpdate(tx *gorm.DB, grant *accessmodel.Grant) error {
+	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(grant)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 1 {
+		return nil
+	}
+	// A concurrent first-key or approval request may have inserted the same
+	// principal grant after our initial lookup. Lock and reuse that winning row
+	// instead of exposing a duplicate-key failure to the caller.
+	var winner accessmodel.Grant
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("workspace_id = ? AND principal_type = ? AND principal_id = ?", grant.WorkspaceID, grant.PrincipalType, grant.PrincipalID).
+		First(&winner).Error; err != nil {
+		return err
+	}
+	*grant = winner
+	return nil
 }
 
 func revokePrincipalKeys(tx *gorm.DB, workspaceID, principalID, actorID, reason string, now time.Time) error {

@@ -27,6 +27,30 @@ func (b *BillingService) ensureAttemptID(bc *BillingContext) (string, error) {
 	return attemptID, nil
 }
 
+// lockAttemptForFinalization serializes every local finalizer for one remote
+// billing attempt. Callers must check the returned terminal flag before
+// changing quota, ledger entries, or attempt state in the same transaction.
+func (b *BillingService) lockAttemptForFinalization(
+	ctx context.Context,
+	tx *gorm.DB,
+	attemptID string,
+) (bool, error) {
+	attemptID = strings.TrimSpace(attemptID)
+	if attemptID == "" {
+		return false, fmt.Errorf("missing attempt_id for billing finalization")
+	}
+
+	var attempt BillingAttempt
+	if err := tx.WithContext(ctx).
+		Select("attempt_id", "status").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("attempt_id = ?", attemptID).
+		First(&attempt).Error; err != nil {
+		return false, fmt.Errorf("lock billing attempt for finalization: %w", err)
+	}
+	return billingAttemptStatusIsFinalized(attempt.Status), nil
+}
+
 func (b *BillingService) upsertAttemptInit(ctx context.Context, tx *gorm.DB, bc *BillingContext) error {
 	orgID, err := uuid.Parse(bc.OrganizationID)
 	if err != nil {
