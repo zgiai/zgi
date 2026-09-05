@@ -30,6 +30,38 @@ func (failingSettleQuotaClient) CheckCreditBalance(context.Context, string, int6
 
 func (failingSettleQuotaClient) Close() error { return nil }
 
+type successfulPreDeductFailingSettleClient struct{}
+
+func (successfulPreDeductFailingSettleClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
+	return &PreDeductQuotaResponse{Success: true, DeductionID: uuid.NewString()}, nil
+}
+
+func (successfulPreDeductFailingSettleClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
+	return nil, errors.New("temporary quota service outage")
+}
+
+func (successfulPreDeductFailingSettleClient) CheckCreditBalance(context.Context, string, int64) (bool, int64, error) {
+	return false, 0, errors.New("unexpected balance check")
+}
+
+func (successfulPreDeductFailingSettleClient) Close() error { return nil }
+
+type successfulSettleQuotaClient struct{ settledCredits int64 }
+
+func (successfulSettleQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
+	return nil, errors.New("unexpected pre-deduct")
+}
+
+func (c successfulSettleQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
+	return &SettleQuotaResponse{Success: true, SettledCredits: c.settledCredits}, nil
+}
+
+func (successfulSettleQuotaClient) CheckCreditBalance(context.Context, string, int64) (bool, int64, error) {
+	return false, 0, errors.New("unexpected balance check")
+}
+
+func (successfulSettleQuotaClient) Close() error { return nil }
+
 type capturingFailingSettleQuotaClient struct {
 	settleRequest *SettleQuotaRequest
 }
@@ -172,6 +204,77 @@ func TestRemoteBillingMarkAttemptSettleFailedWritesPartialUsageBill(t *testing.T
 	}
 	if bill.ErrorCode == nil || *bill.ErrorCode != "SETTLE_FAILED" {
 		t.Fatalf("usage bill error code = %v, want SETTLE_FAILED", bill.ErrorCode)
+	}
+}
+
+func TestRemoteBillingReconcileFinalizesPartialUsageBill(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatalf("migrate developer grant: %v", err)
+	}
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1,
+		AllowedModels: []string{"gpt-4o-mini"}, AuthorizationVersion: 1,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	version := grant.AuthorizationVersion
+	bc := &BillingContext{
+		OrganizationID: grant.OrganizationID, WorkspaceID: grant.WorkspaceID,
+		AttemptID: uuid.NewString(), RequestID: uuid.NewString(),
+		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+		InvocationSource: InvocationSourceAPI, AuthMethod: "personal_api_key",
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
+		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		ModelID: uuid.New(), ModelName: "gpt-4o-mini", ProviderID: uuid.New(), ProviderName: "openai",
+		EstimatedCredits: 10, ActualCredits: 7, PromptTokens: 5, CompletionTokens: 2, TotalTokens: 7,
+		Status: "success", RequestCreatedAt: time.Now().Add(-time.Second),
+	}
+	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
+	remote := &RemoteBilling{
+		localService: &BillingService{db: db},
+		grpcClient:   successfulPreDeductFailingSettleClient{},
+	}
+	if err := remote.preDeductViaGRPC(context.Background(), bc); err != nil {
+		t.Fatalf("pre-deduct remote quota: %v", err)
+	}
+	if err := remote.settleViaGRPC(context.Background(), bc); err == nil {
+		t.Fatal("expected initial remote settlement failure")
+	}
+	var partial UsageBill
+	if err := db.Where("attempt_id = ?", bc.AttemptID).First(&partial).Error; err != nil {
+		t.Fatalf("load partial usage bill: %v", err)
+	}
+	if partial.Status != usageBillStatusPartial || partial.ErrorCode == nil {
+		t.Fatalf("initial usage bill is not partial: %#v", partial)
+	}
+
+	remote.grpcClient = successfulSettleQuotaClient{settledCredits: 7}
+	if err := remote.reconcileAttempt(context.Background(), bc.AttemptID); err != nil {
+		t.Fatalf("reconcile partial settlement: %v", err)
+	}
+	var bill UsageBill
+	if err := db.Where("attempt_id = ?", bc.AttemptID).First(&bill).Error; err != nil {
+		t.Fatalf("load finalized usage bill: %v", err)
+	}
+	if bill.Status != usageBillStatusSuccess || bill.ErrorCode != nil || bill.ErrorMessage != nil {
+		t.Fatalf("finalized usage bill retained partial state: %#v", bill)
+	}
+	if bill.ModelName != "gpt-4o-mini" || bill.ProviderName != "openai" || bill.TotalTokens != 7 || bill.OfficialPoints != 7 || bill.TotalPoints != 7 {
+		t.Fatalf("finalized usage bill lost request metadata: %#v", bill)
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusSettled || attempt.ErrorCode != nil || attempt.ErrorMessage != nil {
+		t.Fatalf("reconciled attempt state = %#v", attempt)
 	}
 }
 

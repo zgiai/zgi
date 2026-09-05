@@ -59,6 +59,21 @@ type CreateRequestInput struct {
 	RequestedTTLSeconds *int64   `json:"requested_ttl_seconds"`
 }
 
+type RequestQuery struct {
+	Status   string `form:"status"`
+	Scope    string `form:"scope"`
+	Page     int    `form:"page"`
+	PageSize int    `form:"page_size"`
+}
+
+type RequestPage struct {
+	Items        []accessmodel.AccessRequest `json:"items"`
+	Total        int64                       `json:"total"`
+	PendingTotal int64                       `json:"pending_total"`
+	Page         int                         `json:"page"`
+	PageSize     int                         `json:"page_size"`
+}
+
 type ReviewRequestInput struct {
 	QuotaLimit    *int64     `json:"quota_limit"`
 	MaxKeys       *int       `json:"max_keys"`
@@ -417,26 +432,63 @@ func (s *Service) putPolicy(ctx context.Context, scope *workspaceScope, accountI
 	return &result, nil
 }
 
-func (s *Service) ListRequests(ctx context.Context, workspaceID, accountID, status string) ([]accessmodel.AccessRequest, error) {
+func (s *Service) ListRequests(ctx context.Context, workspaceID, accountID string, input RequestQuery) (*RequestPage, error) {
 	scope, err := s.scope(ctx, workspaceID, accountID)
 	if err != nil {
 		return nil, err
 	}
-	query := s.db.WithContext(ctx).Where("workspace_id = ?", workspaceID)
-	if !scope.CanManage {
-		query = query.Where("requester_account_id = ?", accountID)
+	input.Page, input.PageSize, err = normalizePagination(input.Page, input.PageSize)
+	if err != nil {
+		return nil, err
 	}
-	if strings.TrimSpace(status) != "" {
-		query = query.Where("status = ?", status)
+	input.Scope = strings.TrimSpace(input.Scope)
+	input.Status = strings.TrimSpace(input.Status)
+	if input.Scope != "" && input.Scope != "all" && input.Scope != "mine" && input.Scope != "members" {
+		return nil, ErrInvalid
+	}
+	if !scope.CanManage && input.Scope == "members" {
+		return nil, ErrForbidden
+	}
+	if input.Status != "" && input.Status != accessmodel.RequestStatusPending && input.Status != accessmodel.RequestStatusApproved &&
+		input.Status != accessmodel.RequestStatusRejected && input.Status != accessmodel.RequestStatusCancelled {
+		return nil, ErrInvalid
+	}
+
+	query := s.db.WithContext(ctx).Model(&accessmodel.AccessRequest{}).Where(
+		"workspace_id = ? AND organization_id = ?",
+		workspaceID,
+		*scope.Workspace.OrganizationID,
+	)
+	if !scope.CanManage || input.Scope == "mine" {
+		query = query.Where("requester_account_id = ?", accountID)
+	} else if input.Scope == "members" {
+		query = query.Where("requester_account_id <> ?", accountID)
+	}
+
+	var pendingTotal int64
+	if err := query.Session(&gorm.Session{}).Where("status = ?", accessmodel.RequestStatusPending).Count(&pendingTotal).Error; err != nil {
+		return nil, fmt.Errorf("count pending access requests: %w", err)
+	}
+	if input.Status != "" {
+		query = query.Where("status = ?", input.Status)
+	}
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return nil, fmt.Errorf("count access requests: %w", err)
 	}
 	var items []accessmodel.AccessRequest
-	if err := query.Order("created_at DESC").Find(&items).Error; err != nil {
+	if err := query.
+		Order(clause.Expr{SQL: "CASE WHEN status = ? THEN 0 ELSE 1 END", Vars: []interface{}{accessmodel.RequestStatusPending}}).
+		Order("created_at DESC").
+		Limit(input.PageSize).
+		Offset((input.Page - 1) * input.PageSize).
+		Find(&items).Error; err != nil {
 		return nil, fmt.Errorf("list access requests: %w", err)
 	}
 	if err := s.hydrateRequesters(ctx, items); err != nil {
 		return nil, err
 	}
-	return items, nil
+	return &RequestPage{Items: items, Total: total, PendingTotal: pendingTotal, Page: input.Page, PageSize: input.PageSize}, nil
 }
 
 func (s *Service) hydrateRequesters(ctx context.Context, items []accessmodel.AccessRequest) error {

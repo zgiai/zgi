@@ -199,6 +199,8 @@ const messages: ApikeysMessages = {
     emptyMemberKeys: '暂无成员密钥',
     emptyMemberKeysDescription: '工作空间成员获批并创建密钥后，将显示在这里。',
     keysPagination: '第 {page} / {totalPages} 页，共 {total} 个密钥',
+    requestsPagination: '第 {page} / {totalPages} 页，共 {total} 条申请',
+    requestPolicyLimits: '工作空间上限：额度 {quota} · 有效期 {ttl} · 模型 {models}',
     emptyRequests: '暂无申请记录',
     emptyApprovals: '当前没有待审批申请',
     labels: {

@@ -202,6 +202,8 @@ const messages = {
     emptyMemberKeys: 'No member keys yet',
     emptyMemberKeysDescription: 'Keys created by approved workspace members will appear here.',
     keysPagination: 'Page {page} of {totalPages} · {total} keys',
+    requestsPagination: 'Page {page} of {totalPages} · {total} requests',
+    requestPolicyLimits: 'Workspace limits: quota {quota} · validity {ttl} · models {models}',
     emptyRequests: 'No access requests yet',
     emptyApprovals: 'No requests are waiting for approval',
     labels: {

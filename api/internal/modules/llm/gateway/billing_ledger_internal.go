@@ -265,12 +265,10 @@ func (b *BillingService) upsertAttemptEntry(
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"ledger_ref_id":   entry.LedgerRefID,
 				"reserved_amount": entry.ReservedAmount,
-				"actual_amount":   entry.ActualAmount,
-				"refunded_amount": entry.RefundedAmount,
-				"status":          entry.Status,
-				"error_code":      entry.ErrorCode,
-				"error_message":   entry.ErrorMessage,
-				"idempotency_key": entry.IdempotencyKey,
+				// A later settle/failure path also calls upsertAttemptInit to
+				// tolerate interrupted initialization. Preserve the recorded
+				// settlement state and remote deduction binding in that case.
+				"idempotency_key": gorm.Expr("COALESCE(?, billing_attempt_entries.idempotency_key)", entry.IdempotencyKey),
 				"updated_at":      now,
 			}),
 		}).

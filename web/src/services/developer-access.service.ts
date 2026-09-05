@@ -46,6 +46,21 @@ export interface DeveloperAccessRequest {
   created_at: string;
 }
 
+export interface DeveloperAccessRequestPage {
+  items: DeveloperAccessRequest[];
+  total: number;
+  pending_total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DeveloperAccessRequestParams {
+  status?: AccessRequestStatus;
+  scope?: 'all' | 'mine' | 'members';
+  page?: number;
+  page_size?: number;
+}
+
 export interface DeveloperAccessMe {
   workspace_id: string;
   organization_id: string;
@@ -187,10 +202,10 @@ class DeveloperAccessService extends BaseService {
 
   listRequests(
     workspaceId: string,
-    status?: AccessRequestStatus
-  ): Promise<ApiResponseData<DeveloperAccessRequest[]>> {
+    params?: DeveloperAccessRequestParams
+  ): Promise<ApiResponseData<DeveloperAccessRequestPage>> {
     return this.request('get', this.workspacePath(workspaceId, '/access-requests'), undefined, {
-      params: status ? { status } : undefined,
+      params,
     });
   }
 

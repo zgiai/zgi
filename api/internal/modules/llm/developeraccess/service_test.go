@@ -703,6 +703,74 @@ func TestKeyListIsPaginatedAndSeparatedByOwnership(t *testing.T) {
 	}
 }
 
+func TestAccessRequestListIsPaginatedAndSeparatedByOwnership(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	createdAt := time.Now().Add(-time.Hour)
+	for i := 0; i < 25; i++ {
+		status := accessmodel.RequestStatusApproved
+		if i < 3 {
+			status = accessmodel.RequestStatusPending
+		}
+		request := accessmodel.AccessRequest{
+			OrganizationID: organizationID, WorkspaceID: workspaceID,
+			RequesterAccountID: memberID, Purpose: uuid.NewString(), Environment: "development",
+			RequestedModels: []string{}, Status: status, CreatedAt: createdAt.Add(time.Duration(i) * time.Second),
+		}
+		if err := db.Create(&request).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		request := accessmodel.AccessRequest{
+			OrganizationID: organizationID, WorkspaceID: workspaceID,
+			RequesterAccountID: ownerID, Purpose: uuid.NewString(), Environment: "development",
+			RequestedModels: []string{}, Status: accessmodel.RequestStatusCancelled,
+		}
+		if err := db.Create(&request).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	retained := accessmodel.AccessRequest{
+		OrganizationID: uuid.NewString(), WorkspaceID: workspaceID,
+		RequesterAccountID: memberID, Purpose: "retained request from previous organization", Environment: "development",
+		RequestedModels: []string{}, Status: accessmodel.RequestStatusPending,
+	}
+	if err := db.Create(&retained).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	membersPage, err := service.ListRequests(context.Background(), workspaceID, ownerID, RequestQuery{Scope: "members", Page: 2, PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membersPage.Total != 25 || membersPage.PendingTotal != 3 || len(membersPage.Items) != 10 || membersPage.Page != 2 || membersPage.PageSize != 10 {
+		t.Fatalf("unexpected member request page: %#v", membersPage)
+	}
+	for _, item := range membersPage.Items {
+		if item.RequesterAccountID != memberID || item.OrganizationID != organizationID {
+			t.Fatalf("member request page leaked item: %#v", item)
+		}
+	}
+	minePage, err := service.ListRequests(context.Background(), workspaceID, ownerID, RequestQuery{Scope: "mine", PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if minePage.Total != 2 || len(minePage.Items) != 2 {
+		t.Fatalf("unexpected owner request page: %#v", minePage)
+	}
+	if _, err := service.ListRequests(context.Background(), workspaceID, memberID, RequestQuery{Scope: "members"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-manager request scope error = %v, want forbidden", err)
+	}
+	if _, err := service.ListRequests(context.Background(), workspaceID, ownerID, RequestQuery{Page: maxDeveloperAccessPage + 1}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("oversized request page error = %v, want invalid", err)
+	}
+	if _, err := service.ListRequests(context.Background(), workspaceID, ownerID, RequestQuery{Status: "unknown"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid request status error = %v, want invalid", err)
+	}
+}
+
 func TestKeyMutationRejectsRetainedKeyFromPreviousOrganization(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
@@ -1174,11 +1242,11 @@ func TestMemberApprovalCreatesGrantBeforePersonalKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requests, err := service.ListRequests(context.Background(), workspaceID, ownerID, "pending")
+	requests, err := service.ListRequests(context.Background(), workspaceID, ownerID, RequestQuery{Status: "pending"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) != 1 || requests[0].RequesterName != "Research Member" || requests[0].RequesterEmail != "member@example.test" {
+	if len(requests.Items) != 1 || requests.Total != 1 || requests.PendingTotal != 1 || requests.Items[0].RequesterName != "Research Member" || requests.Items[0].RequesterEmail != "member@example.test" {
 		t.Fatalf("requester identity was not hydrated: %#v", requests)
 	}
 	if _, err := service.ReviewRequest(context.Background(), workspaceID, ownerID, request.ID, true, ReviewRequestInput{}); err != nil {

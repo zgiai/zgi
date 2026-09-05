@@ -923,8 +923,69 @@ func (s *RemoteBilling) reconcileAttempt(ctx context.Context, attemptID string) 
 	if attempt.RouteID != nil {
 		bc.ChannelID = attempt.RouteID
 	}
+	if err := s.restorePartialUsageBillContext(ctx, bc); err != nil {
+		return err
+	}
 
 	return s.settleViaGRPC(ctx, bc)
+}
+
+// restorePartialUsageBillContext reloads request/model/usage metadata that is
+// intentionally not duplicated in billing_attempts. A failed remote settle has
+// already persisted that metadata in the partial usage bill, so reconciliation
+// can use it to replace the partial audit record with the final result.
+func (s *RemoteBilling) restorePartialUsageBillContext(ctx context.Context, bc *BillingContext) error {
+	var bill UsageBill
+	err := s.localService.db.WithContext(ctx).Where("attempt_id = ?", bc.AttemptID).First(&bill).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load partial usage bill: %w", err)
+	}
+
+	bc.RequestID = bill.RequestID
+	bc.OrganizationID = bill.OrganizationID
+	bc.AppID, bc.AppType = bill.AppID, bill.AppType
+	bc.InvocationSource = bill.InvocationSource
+	if bill.WorkspaceID != nil {
+		bc.WorkspaceID = *bill.WorkspaceID
+	}
+	bc.AccountID = bill.AccountID
+	if bill.PrincipalType != nil {
+		bc.PrincipalType = *bill.PrincipalType
+	}
+	if bill.PrincipalID != nil {
+		bc.PrincipalID = *bill.PrincipalID
+	}
+	if bill.AccessGrantID != nil {
+		bc.AccessGrantID = bill.AccessGrantID.String()
+	}
+	bc.AuthMethod = bill.AuthMethod
+	bc.APIKeyID = bill.APIKeyID
+	if bill.QuotaSubjectType != nil {
+		bc.QuotaSubjectType = *bill.QuotaSubjectType
+	}
+	if bill.QuotaSubjectID != nil {
+		bc.QuotaSubjectID = *bill.QuotaSubjectID
+	}
+	bc.ModelID, bc.ModelName = bill.ModelID, bill.ModelName
+	bc.ProviderID, bc.ProviderName = bill.ProviderID, bill.ProviderName
+	bc.RouteID, bc.ChannelID = bill.RouteID, bill.ChannelID
+	bc.BillingLane, bc.UseSystemProvider = bill.BillingLane, bill.UseSystemProvider
+	if bill.RemoteDeductionID != nil {
+		bc.DeductionID = *bill.RemoteDeductionID
+	}
+	bc.PromptTokens = int(bill.PromptTokens)
+	bc.CacheReadTokens = int(bill.CacheReadTokens)
+	bc.CacheWriteTokens = int(bill.CacheWriteTokens)
+	bc.CompletionTokens = int(bill.CompletionTokens)
+	bc.TotalTokens = int(bill.TotalTokens)
+	bc.PricingSource, bc.UsageSource = bill.PricingSource, bill.UsageSource
+	bc.PricingSnapshot = bill.PricingSnapshot
+	bc.ResponseTime = bill.ResponseTimeMS
+	bc.RequestCreatedAt = bill.RequestCreatedAt
+	return nil
 }
 
 func (s *RemoteBilling) markAttemptDeadLetter(ctx context.Context, attemptID string, reason string) error {

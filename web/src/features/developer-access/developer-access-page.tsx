@@ -24,6 +24,7 @@ import {
 import type {
   CreatedPersonalApiKey,
   DeveloperAccessMode,
+  DeveloperAccessPolicy,
   DeveloperAccessRequest,
   DeveloperAccessAuditItem,
   PersonalApiKey,
@@ -180,25 +181,25 @@ function KeyRow({
   );
 }
 
-function KeyPagination({
+function ListPagination({
   total,
   page,
   pageSize,
   onPageChange,
+  summary,
 }: {
   total: number;
   page: number;
   pageSize: number;
   onPageChange: (page: number) => void;
+  summary: React.ReactNode;
 }) {
   const t = useT('apikeys.developerAccess');
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   if (totalPages <= 1 && page <= 1) return null;
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-      <p className="text-sm text-muted-foreground">
-        {t('keysPagination', { page, totalPages, total })}
-      </p>
+      <p className="text-sm text-muted-foreground">{summary}</p>
       <div className="flex gap-2">
         <Button
           variant="outline"
@@ -406,21 +407,28 @@ export function DeveloperAccessPage() {
   const workspaceId = workspace?.id;
   const [keyPage, setKeyPage] = React.useState(1);
   const [memberKeyPage, setMemberKeyPage] = React.useState(1);
+  const [requestPage, setRequestPage] = React.useState(1);
+  const [memberRequestPage, setMemberRequestPage] = React.useState(1);
   const [auditPage, setAuditPage] = React.useState(1);
   const keyPageSize = 20;
+  const requestPageSize = 20;
   const auditPageSize = 50;
   const {
     me,
     keys,
     memberKeys: memberKeyQuery,
     requests,
+    memberRequests: memberRequestQuery,
     audit,
   } = useDeveloperAccess(
     workspaceId,
     keyPage,
     memberKeyPage,
+    requestPage,
+    memberRequestPage,
     auditPage,
     keyPageSize,
+    requestPageSize,
     auditPageSize
   );
   const actions = useDeveloperAccessActions(workspaceId);
@@ -439,6 +447,8 @@ export function DeveloperAccessPage() {
   React.useEffect(() => {
     setKeyPage(1);
     setMemberKeyPage(1);
+    setRequestPage(1);
+    setMemberRequestPage(1);
     setAuditPage(1);
   }, [workspaceId]);
   React.useEffect(() => setCopied(false), [createdKey?.id]);
@@ -473,17 +483,20 @@ export function DeveloperAccessPage() {
   }
 
   const access = me.data;
-  const grant = access?.grant;
+  const persistedGrant = access?.grant;
+  const grant =
+    persistedGrant?.status === 'active' &&
+    (!persistedGrant.expires_at || new Date(persistedGrant.expires_at).getTime() > Date.now())
+      ? persistedGrant
+      : undefined;
   const hasGrant = Boolean(grant);
   const quotaUnlimited = hasGrant && grant?.quota_limit == null;
   const quotaPercent =
     grant?.quota_limit && grant.quota_limit > 0
       ? Math.min(100, Math.round((grant.used_quota / grant.quota_limit) * 100))
       : 0;
-  const pendingApprovals = (requests.data ?? []).filter(item => item.status === 'pending');
-  const ownRequests = (requests.data ?? []).filter(
-    item => item.requester_account_id === access?.principal_id
-  );
+  const ownRequests = requests.data?.items ?? [];
+  const memberRequests = memberRequestQuery.data?.items ?? [];
   const personalKeys = keys.data?.items ?? [];
   const memberKeys = memberKeyQuery.data?.items ?? [];
   const canUseKeys = Boolean(access?.can_create_key);
@@ -497,6 +510,9 @@ export function DeveloperAccessPage() {
       ? () => setRequestOpen(true)
       : null;
   const primaryLabel = canCreate ? t('createKey') : t('requestAccess');
+  const availableModels = grant?.allowed_models?.length
+    ? grant.allowed_models
+    : (access?.policy.allowed_models ?? []);
   const quickstartModel =
     createdKey?.model_names?.[0] ?? grant?.allowed_models?.[0] ?? 'YOUR_MODEL';
 
@@ -604,15 +620,19 @@ export function DeveloperAccessPage() {
           </CardHeader>
           <CardContent className="flex items-end justify-between">
             <p className="text-lg font-semibold">
-              {grant?.allowed_models?.length ? grant.allowed_models.length : t('allModels')}
+              {availableModels.length ? availableModels.length : t('allModels')}
             </p>
             <ShieldCheck className="size-5 text-muted-foreground" />
           </CardContent>
-          {grant ? (
+          {grant || availableModels.length ? (
             <p className="px-6 pb-5 text-xs text-muted-foreground">
-              {grant.allowed_models.length ? grant.allowed_models.join(', ') : t('allModels')}
-              {' · '}
-              {t('labels.expires')}: {formatDate(grant.expires_at)}
+              {availableModels.length ? availableModels.join(', ') : t('allModels')}
+              {grant ? (
+                <>
+                  {' · '}
+                  {t('labels.expires')}: {formatDate(grant.expires_at)}
+                </>
+              ) : null}
             </p>
           ) : null}
         </Card>
@@ -638,9 +658,9 @@ export function DeveloperAccessPage() {
               {access?.can_manage ? (
                 <TabsTrigger value="approvals">
                   {t('tabs.approvals')}
-                  {pendingApprovals.length ? (
+                  {(memberRequestQuery.data?.pending_total ?? 0) > 0 ? (
                     <Badge className="ml-2" variant="warning">
-                      {pendingApprovals.length}
+                      {memberRequestQuery.data?.pending_total}
                     </Badge>
                   ) : null}
                 </TabsTrigger>
@@ -678,11 +698,19 @@ export function DeveloperAccessPage() {
                       }}
                     />
                   ))}
-                  <KeyPagination
+                  <ListPagination
                     total={keys.data?.total ?? 0}
                     page={keys.data?.page ?? keyPage}
                     pageSize={keys.data?.page_size ?? keyPageSize}
                     onPageChange={setKeyPage}
+                    summary={t('keysPagination', {
+                      page: keys.data?.page ?? keyPage,
+                      totalPages: Math.max(
+                        1,
+                        Math.ceil((keys.data?.total ?? 0) / (keys.data?.page_size ?? keyPageSize))
+                      ),
+                      total: keys.data?.total ?? 0,
+                    })}
                   />
                 </div>
               )}
@@ -717,11 +745,22 @@ export function DeveloperAccessPage() {
                         }}
                       />
                     ))}
-                    <KeyPagination
+                    <ListPagination
                       total={memberKeyQuery.data?.total ?? 0}
                       page={memberKeyQuery.data?.page ?? memberKeyPage}
                       pageSize={memberKeyQuery.data?.page_size ?? keyPageSize}
                       onPageChange={setMemberKeyPage}
+                      summary={t('keysPagination', {
+                        page: memberKeyQuery.data?.page ?? memberKeyPage,
+                        totalPages: Math.max(
+                          1,
+                          Math.ceil(
+                            (memberKeyQuery.data?.total ?? 0) /
+                              (memberKeyQuery.data?.page_size ?? keyPageSize)
+                          )
+                        ),
+                        total: memberKeyQuery.data?.total ?? 0,
+                      })}
                     />
                   </div>
                 )}
@@ -730,6 +769,8 @@ export function DeveloperAccessPage() {
             <TabsContent value="requests" className="mt-5">
               {requests.isError ? (
                 <EmptyState title={t('loadError')} description={t('loadErrorDescription')} />
+              ) : requests.isLoading ? (
+                <Skeleton className="h-48 w-full" />
               ) : ownRequests.length === 0 ? (
                 <EmptyState title={t('emptyRequests')} />
               ) : (
@@ -742,25 +783,61 @@ export function DeveloperAccessPage() {
                       onReview={() => undefined}
                     />
                   ))}
+                  <ListPagination
+                    total={requests.data?.total ?? 0}
+                    page={requests.data?.page ?? requestPage}
+                    pageSize={requests.data?.page_size ?? requestPageSize}
+                    onPageChange={setRequestPage}
+                    summary={t('requestsPagination', {
+                      page: requests.data?.page ?? requestPage,
+                      totalPages: Math.max(
+                        1,
+                        Math.ceil(
+                          (requests.data?.total ?? 0) /
+                            (requests.data?.page_size ?? requestPageSize)
+                        )
+                      ),
+                      total: requests.data?.total ?? 0,
+                    })}
+                  />
                 </div>
               )}
             </TabsContent>
             {access?.can_manage ? (
               <TabsContent value="approvals" className="mt-5">
-                {requests.isError ? (
+                {memberRequestQuery.isError ? (
                   <EmptyState title={t('loadError')} description={t('loadErrorDescription')} />
-                ) : (requests.data ?? []).length === 0 ? (
+                ) : memberRequestQuery.isLoading ? (
+                  <Skeleton className="h-48 w-full" />
+                ) : memberRequests.length === 0 ? (
                   <EmptyState title={t('emptyApprovals')} />
                 ) : (
                   <div>
-                    {(requests.data ?? []).map(item => (
+                    {memberRequests.map(item => (
                       <AccessRequestRow
                         key={item.id}
                         item={item}
-                        canReview={item.requester_account_id !== access?.principal_id}
+                        canReview
                         onReview={decision => setReviewTarget({ request: item, decision })}
                       />
                     ))}
+                    <ListPagination
+                      total={memberRequestQuery.data?.total ?? 0}
+                      page={memberRequestQuery.data?.page ?? memberRequestPage}
+                      pageSize={memberRequestQuery.data?.page_size ?? requestPageSize}
+                      onPageChange={setMemberRequestPage}
+                      summary={t('requestsPagination', {
+                        page: memberRequestQuery.data?.page ?? memberRequestPage,
+                        totalPages: Math.max(
+                          1,
+                          Math.ceil(
+                            (memberRequestQuery.data?.total ?? 0) /
+                              (memberRequestQuery.data?.page_size ?? requestPageSize)
+                          )
+                        ),
+                        total: memberRequestQuery.data?.total ?? 0,
+                      })}
+                    />
                   </div>
                 )}
               </TabsContent>
@@ -794,6 +871,7 @@ export function DeveloperAccessPage() {
       <RequestAccessDialog
         open={requestOpen}
         onOpenChange={setRequestOpen}
+        policy={access?.policy}
         pending={actions.createRequest.isPending}
         onSubmit={async input => {
           await actions.createRequest.mutateAsync(input);
@@ -992,11 +1070,13 @@ function CreateKeyDialog({
 function RequestAccessDialog({
   open,
   onOpenChange,
+  policy,
   pending,
   onSubmit,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  policy?: DeveloperAccessPolicy;
   pending: boolean;
   onSubmit: (input: {
     purpose: string;
@@ -1020,13 +1100,26 @@ function RequestAccessDialog({
   }, [open]);
   const quotaValue = quota === '' ? undefined : Number(quota);
   const ttlHoursValue = ttlHours === '' ? undefined : Number(ttlHours);
+  const ttlSecondsValue = ttlHoursValue === undefined ? undefined : ttlHoursValue * 3600;
+  const requestedModels = splitModels(models);
+  const allowedModels = new Set(policy?.allowed_models ?? []);
+  const modelOutsidePolicy =
+    allowedModels.size > 0 && requestedModels.some(model => !allowedModels.has(model));
+  const maxTTLSeconds = Math.min(
+    MAX_DEVELOPER_ACCESS_TTL_SECONDS,
+    policy?.max_ttl_seconds ?? MAX_DEVELOPER_ACCESS_TTL_SECONDS
+  );
   const requestInvalid =
-    (quotaValue !== undefined && (!Number.isSafeInteger(quotaValue) || quotaValue < 0)) ||
-    (ttlHoursValue !== undefined &&
-      (!Number.isFinite(ttlHoursValue) ||
-        ttlHoursValue <= 0 ||
-        !Number.isSafeInteger(ttlHoursValue * 3600) ||
-        ttlHoursValue * 3600 > MAX_DEVELOPER_ACCESS_TTL_SECONDS));
+    (quotaValue !== undefined &&
+      (!Number.isSafeInteger(quotaValue) ||
+        quotaValue < 0 ||
+        (policy?.max_quota != null && quotaValue > policy.max_quota))) ||
+    (ttlSecondsValue !== undefined &&
+      (!Number.isFinite(ttlSecondsValue) ||
+        ttlSecondsValue <= 0 ||
+        !Number.isSafeInteger(ttlSecondsValue) ||
+        ttlSecondsValue > maxTTLSeconds)) ||
+    modelOutsidePolicy;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="lg">
@@ -1060,7 +1153,7 @@ function RequestAccessDialog({
                 id="access-ttl"
                 type="number"
                 min={1}
-                max={MAX_DEVELOPER_ACCESS_TTL_HOURS}
+                max={maxTTLSeconds / 3600}
                 step={1}
                 value={ttlHours}
                 onChange={event => setTTLHours(event.target.value)}
@@ -1069,7 +1162,16 @@ function RequestAccessDialog({
             </div>
           </div>
           <p className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
-            {t('personalKeyScope')}
+            {t('requestPolicyLimits', {
+              quota: policy?.max_quota == null ? t('unlimited') : policy.max_quota.toLocaleString(),
+              ttl:
+                policy?.max_ttl_seconds == null
+                  ? t('unlimited')
+                  : `${(policy.max_ttl_seconds / 3600).toLocaleString()} h`,
+              models: policy?.allowed_models.length
+                ? policy.allowed_models.join(', ')
+                : t('allModels'),
+            })}
           </p>
           <div className="space-y-2">
             <Label htmlFor="access-quota">{t('labels.requestedQuota')}</Label>
@@ -1077,6 +1179,7 @@ function RequestAccessDialog({
               id="access-quota"
               type="number"
               min={0}
+              max={policy?.max_quota ?? undefined}
               step={1}
               value={quota}
               onChange={event => setQuota(event.target.value)}
@@ -1095,9 +1198,8 @@ function RequestAccessDialog({
                 purpose: purpose.trim(),
                 environment: 'development',
                 requested_quota: quotaValue,
-                requested_models: splitModels(models),
-                requested_ttl_seconds:
-                  ttlHoursValue === undefined ? undefined : ttlHoursValue * 3600,
+                requested_models: requestedModels,
+                requested_ttl_seconds: ttlSecondsValue,
               })
             }
           >
