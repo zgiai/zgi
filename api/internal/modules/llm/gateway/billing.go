@@ -17,6 +17,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	paymentModel "github.com/zgiai/zgi/api/internal/modules/payment/model"
 	paymentRepo "github.com/zgiai/zgi/api/internal/modules/payment/repository"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -461,6 +462,33 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	grantID := strings.TrimSpace(bc.QuotaSubjectID)
 	if grantID == "" || strings.TrimSpace(bc.AccessGrantID) != grantID {
 		return ErrInvalidRequest
+	}
+	if bc.AuthMethod == "personal_api_key" {
+		workspaceID := strings.TrimSpace(bc.WorkspaceID)
+		organizationID := strings.TrimSpace(bc.OrganizationID)
+		if workspaceID == "" || organizationID == "" {
+			return ErrInvalidRequest
+		}
+		// Developer-access administration locks Workspace -> Policy -> Grant ->
+		// Key. Match that order here so a committed kill-switch change is
+		// authoritative at the final pre-provider boundary, including when the
+		// workspace previously relied on its implicit default policy.
+		var workspace workspacemodel.Workspace
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND organization_id = ?", workspaceID, organizationID).
+			First(&workspace).Error; err != nil {
+			return ErrAPIKeyInactive
+		}
+		var policy accessmodel.Policy
+		err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("workspace_id = ? AND organization_id = ?", workspaceID, organizationID).
+			First(&policy).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err == nil && policy.Mode == accessmodel.AccessModeDisabled {
+			return ErrAPIKeyInactive
+		}
 	}
 	var grant accessmodel.Grant
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).

@@ -627,6 +627,37 @@ func TestManagerKeyListIncludesPrincipalIdentity(t *testing.T) {
 	}
 }
 
+func TestKeyMutationRejectsRetainedKeyFromPreviousOrganization(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
+	previousOrganizationID := uuid.NewString()
+	principalType := accessmodel.PrincipalTypeUser
+	key := apikeymodel.TenantAPIKey{
+		OrganizationID: previousOrganizationID,
+		WorkspaceID:    &workspaceID,
+		PrincipalType:  &principalType,
+		PrincipalID:    &ownerID,
+		KeyHash:        uuid.NewString(),
+		Name:           "retained historical key",
+		Status:         "revoked",
+		SecretVersion:  2,
+	}
+	if err := db.Omit("Key").Create(&key).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	if _, err := service.UpdateKey(context.Background(), workspaceID, ownerID, key.ID, UpdateKeyInput{Name: "must not change"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("UpdateKey error = %v, want not found for previous-organization key", err)
+	}
+	var stored apikeymodel.TenantAPIKey
+	if err := db.First(&stored, "id = ?", key.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != key.Name {
+		t.Fatalf("previous-organization key name changed to %q", stored.Name)
+	}
+}
+
 func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)

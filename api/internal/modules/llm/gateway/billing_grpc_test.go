@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -100,7 +101,7 @@ func openRemoteBillingTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
-	if err := db.AutoMigrate(&BillingAttempt{}, &BillingAttemptEntry{}, &UsageBill{}); err != nil {
+	if err := db.AutoMigrate(&BillingAttempt{}, &BillingAttemptEntry{}, &UsageBill{}, &accessmodel.Policy{}, &workspacemodel.Workspace{}); err != nil {
 		t.Fatalf("automigrate billing tables: %v", err)
 	}
 	if err := db.Exec(`CREATE UNIQUE INDEX uq_billing_attempt_entry ON billing_attempt_entries (attempt_id, entry_type, ledger_type)`).Error; err != nil {
@@ -113,6 +114,13 @@ func seedRemoteBillingPersonalKey(t *testing.T, db *gorm.DB, grant *accessmodel.
 	t.Helper()
 	if err := db.AutoMigrate(&apikeymodel.TenantAPIKey{}); err != nil {
 		t.Fatalf("migrate personal api key: %v", err)
+	}
+	organizationID := grant.OrganizationID
+	if err := db.FirstOrCreate(&workspacemodel.Workspace{
+		ID: grant.WorkspaceID, Name: "Remote billing workspace", Plan: "basic",
+		Status: workspacemodel.WorkspaceStatusNormal, OrganizationID: &organizationID,
+	}, "id = ?", grant.WorkspaceID).Error; err != nil {
+		t.Fatalf("create remote billing workspace: %v", err)
 	}
 	principalType, workspaceID := accessmodel.PrincipalTypeUser, grant.WorkspaceID
 	key := apikeymodel.TenantAPIKey{

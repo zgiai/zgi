@@ -2,12 +2,14 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -360,7 +362,7 @@ func TestDeveloperGrantPreDeductRejectsStaleKeyAuthorizationPeriod(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+	if err := db.AutoMigrate(&accessmodel.Grant{}, &accessmodel.Policy{}, &workspacemodel.Workspace{}); err != nil {
 		t.Fatal(err)
 	}
 	quota := int64(100)
@@ -374,9 +376,16 @@ func TestDeveloperGrantPreDeductRejectsStaleKeyAuthorizationPeriod(t *testing.T)
 	if err := db.Create(&grant).Error; err != nil {
 		t.Fatal(err)
 	}
+	organizationID := grant.OrganizationID
+	if err := db.Create(&workspacemodel.Workspace{
+		ID: grant.WorkspaceID, Name: "Developer billing workspace", Plan: "basic",
+		Status: workspacemodel.WorkspaceStatusNormal, OrganizationID: &organizationID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	staleVersion := int64(1)
 	billing := &BillingContext{
-		OrganizationID: grant.OrganizationID, AccessGrantID: grant.ID,
+		OrganizationID: grant.OrganizationID, WorkspaceID: grant.WorkspaceID, AccessGrantID: grant.ID,
 		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
 		GrantAuthorizationVersion: &staleVersion, AuthMethod: "personal_api_key",
 		EstimatedCredits: 10, BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
@@ -399,12 +408,14 @@ func TestDeveloperGrantPreDeductRejectsStaleKeyAuthorizationPeriod(t *testing.T)
 func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing.T) {
 	past := time.Now().Add(-time.Minute)
 	for _, testCase := range []struct {
-		name      string
-		status    string
-		expiresAt *time.Time
+		name       string
+		status     string
+		expiresAt  *time.Time
+		policyMode string
 	}{
 		{name: "inactive", status: "inactive"},
 		{name: "expired", status: "active", expiresAt: &past},
+		{name: "policy disabled", status: "active", policyMode: accessmodel.AccessModeDisabled},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
@@ -413,7 +424,9 @@ func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing
 			}
 			if err := db.AutoMigrate(
 				&accessmodel.Grant{},
+				&accessmodel.Policy{},
 				&apikeymodel.TenantAPIKey{},
+				&workspacemodel.Workspace{},
 				&BillingAttempt{},
 				&BillingAttemptEntry{},
 			); err != nil {
@@ -423,6 +436,20 @@ func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing
 				t.Fatal(err)
 			}
 			organizationID, workspaceID, principalID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+			if err := db.Create(&workspacemodel.Workspace{
+				ID: workspaceID, Name: "Developer billing workspace", Plan: "basic",
+				Status: workspacemodel.WorkspaceStatusNormal, OrganizationID: &organizationID,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if testCase.policyMode != "" {
+				if err := db.Create(&accessmodel.Policy{
+					OrganizationID: organizationID, WorkspaceID: workspaceID, Mode: testCase.policyMode,
+					MaxKeys: 1, AllowedModels: []string{}, Version: 1,
+				}).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
 			quota := int64(100)
 			grant := accessmodel.Grant{
 				OrganizationID: organizationID, WorkspaceID: workspaceID,
@@ -453,7 +480,7 @@ func TestDeveloperGrantReservationRollsBackWhenKeyIsInactiveOrExpired(t *testing
 				EstimatedCredits: 10, BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
 			}
 			service := &BillingService{db: db}
-			if err := service.PreDeduct(context.Background(), billing); err != ErrAPIKeyInactive {
+			if err := service.PreDeduct(context.Background(), billing); !errors.Is(err, ErrAPIKeyInactive) {
 				t.Fatalf("pre-deduct %s key error = %v, want %v", testCase.name, err, ErrAPIKeyInactive)
 			}
 			if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {

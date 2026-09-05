@@ -1393,7 +1393,13 @@ func netSubjectCharge(reserved, actual, refunded int64) int64 {
 func personalKeyForUpdate(ctx context.Context, tx *gorm.DB, scope *workspaceScope, accountID, keyID string) (*apikeymodel.TenantAPIKey, error) {
 	var key apikeymodel.TenantAPIKey
 	query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? AND workspace_id = ? AND principal_type = ?", keyID, scope.Workspace.ID, accessmodel.PrincipalTypeUser)
+		Where(
+			"id = ? AND workspace_id = ? AND organization_id = ? AND principal_type = ?",
+			keyID,
+			scope.Workspace.ID,
+			*scope.Workspace.OrganizationID,
+			accessmodel.PrincipalTypeUser,
+		)
 	if !scope.CanManage {
 		query = query.Where("principal_id = ?", accountID)
 	}
@@ -1431,7 +1437,7 @@ func (s *Service) UpdateKey(ctx context.Context, workspaceID, accountID, keyID s
 		// the string model yields ""; saving the whole row would write that value
 		// back and can collide with the legacy partial unique index.
 		return tx.WithContext(ctx).Model(&apikeymodel.TenantAPIKey{}).
-			Where("id = ?", key.ID).
+			Where("id = ? AND organization_id = ?", key.ID, key.OrganizationID).
 			Update("name", input.Name).Error
 	}); err != nil {
 		return nil, err
@@ -1468,7 +1474,13 @@ func (s *Service) setKeyStatus(ctx context.Context, scope *workspaceScope, accou
 	}
 	var candidate apikeymodel.TenantAPIKey
 	if status == "active" {
-		query := s.db.WithContext(ctx).Where("id = ? AND workspace_id = ? AND principal_type = ?", keyID, scope.Workspace.ID, accessmodel.PrincipalTypeUser)
+		query := s.db.WithContext(ctx).Where(
+			"id = ? AND workspace_id = ? AND organization_id = ? AND principal_type = ?",
+			keyID,
+			scope.Workspace.ID,
+			*scope.Workspace.OrganizationID,
+			accessmodel.PrincipalTypeUser,
+		)
 		if !scope.CanManage {
 			query = query.Where("principal_id = ?", accountID)
 		}
@@ -1574,7 +1586,7 @@ func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID s
 	}
 	var candidate apikeymodel.TenantAPIKey
 	if err := s.db.WithContext(ctx).
-		Where("id = ? AND workspace_id = ? AND principal_type = ? AND principal_id = ?", keyID, workspaceID, accessmodel.PrincipalTypeUser, accountID).
+		Where("id = ? AND workspace_id = ? AND organization_id = ? AND principal_type = ? AND principal_id = ?", keyID, workspaceID, *scope.Workspace.OrganizationID, accessmodel.PrincipalTypeUser, accountID).
 		First(&candidate).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
@@ -1608,12 +1620,14 @@ func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID s
 		// ReviewRequest locks the grant and then revokes its keys. Rotation uses
 		// the same grant-before-key order so the two paths cannot deadlock.
 		var grant accessmodel.Grant
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *candidate.AccessGrantID).First(&grant).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND organization_id = ?", *candidate.AccessGrantID, *lockedScope.Workspace.OrganizationID).
+			First(&grant).Error; err != nil {
 			return err
 		}
 		var current apikeymodel.TenantAPIKey
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ? AND workspace_id = ? AND principal_type = ? AND principal_id = ?", keyID, workspaceID, accessmodel.PrincipalTypeUser, accountID).
+			Where("id = ? AND workspace_id = ? AND organization_id = ? AND principal_type = ? AND principal_id = ?", keyID, workspaceID, *lockedScope.Workspace.OrganizationID, accessmodel.PrincipalTypeUser, accountID).
 			First(&current).Error; err != nil {
 			return err
 		}
