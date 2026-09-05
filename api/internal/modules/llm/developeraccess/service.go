@@ -1127,6 +1127,15 @@ func (s *Service) SetKeyStatus(ctx context.Context, workspaceID, accountID, keyI
 	if err != nil {
 		return nil, err
 	}
+	if status == "active" {
+		policy, err := s.policy(ctx, scope)
+		if err != nil {
+			return nil, err
+		}
+		if policy.Mode == accessmodel.AccessModeDisabled {
+			return nil, ErrAccessDisabled
+		}
+	}
 	var key apikeymodel.TenantAPIKey
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND workspace_id = ? AND principal_type = ?", keyID, scope.Workspace.ID, accessmodel.PrincipalTypeUser)
@@ -1193,6 +1202,13 @@ func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID s
 	}
 	if scope.Member == nil {
 		return nil, ErrForbidden
+	}
+	policy, err := s.policy(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if policy.Mode == accessmodel.AccessModeDisabled {
+		return nil, ErrAccessDisabled
 	}
 	secret, err := generateSecret()
 	if err != nil {

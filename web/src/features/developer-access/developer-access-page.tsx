@@ -110,11 +110,13 @@ function KeyRow({
   onStatus,
   showPrincipal = false,
   canRotate = true,
+  canActivate = true,
 }: {
   item: PersonalApiKey;
   onStatus: (action: 'enable' | 'disable' | 'revoke' | 'rotate') => void;
   showPrincipal?: boolean;
   canRotate?: boolean;
+  canActivate?: boolean;
 }) {
   const t = useT('apikeys.developerAccess');
   return (
@@ -159,7 +161,7 @@ function KeyRow({
             <DropdownMenuItem onClick={() => onStatus('disable')}>
               {t('actions.disable')}
             </DropdownMenuItem>
-          ) : item.status === 'inactive' ? (
+          ) : item.status === 'inactive' && canActivate ? (
             <DropdownMenuItem onClick={() => onStatus('enable')}>
               {t('actions.enable')}
             </DropdownMenuItem>
@@ -594,6 +596,8 @@ export function DeveloperAccessPage() {
                     <KeyRow
                       key={item.id}
                       item={item}
+                      canRotate={canCreate}
+                      canActivate={canCreate}
                       onStatus={action => {
                         if (action === 'rotate') {
                           setKeyToRotate(item);
@@ -629,6 +633,7 @@ export function DeveloperAccessPage() {
                         item={item}
                         showPrincipal
                         canRotate={false}
+                        canActivate={canCreate}
                         onStatus={action => {
                           if (action === 'rotate') return;
                           if (action === 'revoke') {

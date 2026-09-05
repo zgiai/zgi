@@ -454,6 +454,16 @@ func (s *apiKeyServiceImpl) ValidateAPIKey(ctx context.Context, key string) (*dt
 		}, nil
 	}
 
+	// Principal-bound keys depend on live workspace, grant, policy, and
+	// membership state. Apply the same authoritative checks as the gateway so
+	// this endpoint never reports a key as valid when an invocation rejects it.
+	if err := s.apiKeyRepo.ValidatePrincipalAccess(ctx, apiKey); err != nil {
+		return &dto.ValidateAPIKeyResponse{
+			Valid:   false,
+			Message: "API key principal access is not active",
+		}, nil
+	}
+
 	if !apiKey.HasQuota() {
 		return &dto.ValidateAPIKeyResponse{
 			Valid:   false,

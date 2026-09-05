@@ -705,6 +705,50 @@ func TestMemberCanRotateOnlyOwnKey(t *testing.T) {
 	}
 }
 
+func TestDisabledPolicyRejectsKeyReactivationAndRotation(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	request, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "Test disabled lifecycle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReviewRequest(context.Background(), workspaceID, ownerID, request.ID, true, ReviewRequestInput{}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.CreateKey(context.Background(), workspaceID, memberID, CreateKeyInput{Name: "disabled lifecycle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetKeyStatus(context.Background(), workspaceID, memberID, created.ID, "inactive", ""); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := service.GetPolicy(context.Background(), workspaceID, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
+		Mode: accessmodel.AccessModeDisabled, DefaultQuota: policy.DefaultQuota, MaxQuota: policy.MaxQuota,
+		MaxKeys: policy.MaxKeys, DefaultTTLSeconds: policy.DefaultTTLSeconds, MaxTTLSeconds: policy.MaxTTLSeconds,
+		AllowedModels: policy.AllowedModels,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetKeyStatus(context.Background(), workspaceID, memberID, created.ID, "active", ""); !errors.Is(err, ErrAccessDisabled) {
+		t.Fatalf("reactivate error = %v, want disabled policy", err)
+	}
+	if _, err := service.RotateKey(context.Background(), workspaceID, memberID, created.ID, RotateKeyInput{}); !errors.Is(err, ErrAccessDisabled) {
+		t.Fatalf("rotate error = %v, want disabled policy", err)
+	}
+	var stored apikeymodel.TenantAPIKey
+	if err := db.First(&stored, "id = ?", created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "inactive" || stored.RevokedAt != nil {
+		t.Fatalf("disabled lifecycle mutation changed key: %#v", stored)
+	}
+}
+
 func TestExpiredActiveKeyDoesNotConsumeGrantSlot(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
