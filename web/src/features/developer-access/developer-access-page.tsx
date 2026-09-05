@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { describeAccessLoadError } from './load-error';
 import {
   Activity,
   Check,
@@ -472,10 +473,35 @@ export function DeveloperAccessPage() {
   }
 
   if (me.isError) {
+    const failure = describeAccessLoadError(me.error);
     return (
       <div className="mx-auto flex min-h-[60vh] max-w-xl flex-col justify-center gap-4 p-6">
-        <EmptyState title={t('loadError')} description={t('loadErrorDescription')} />
-        <Button variant="outline" onClick={() => void me.refetch()}>
+        <div role="alert">
+          <EmptyState title={t('loadError')} description={t(`loadErrors.${failure.kind}`)} />
+          {(failure.status || failure.code || failure.requestId) && (
+            <dl className="mt-4 space-y-1 break-all text-sm text-muted-foreground">
+              {failure.status && (
+                <div>
+                  <dt className="inline">HTTP: </dt>
+                  <dd className="inline">{failure.status}</dd>
+                </div>
+              )}
+              {failure.code && (
+                <div>
+                  <dt className="inline">{t('loadErrors.code')}: </dt>
+                  <dd className="inline">{failure.code}</dd>
+                </div>
+              )}
+              {failure.requestId && (
+                <div>
+                  <dt className="inline">{t('loadErrors.requestId')}: </dt>
+                  <dd className="inline">{failure.requestId}</dd>
+                </div>
+              )}
+            </dl>
+          )}
+        </div>
+        <Button variant="outline" disabled={me.isFetching} onClick={() => void me.refetch()}>
           {t('actions.retry')}
         </Button>
       </div>

@@ -73,6 +73,9 @@ jobs:
       - name: Run registration frontend and type checks
         run: ../scripts/check-registration-auth.sh --frontend-only
 
+      - name: Check developer access error states
+        run: pnpm test:developer-access-load-error
+
       - name: Clean generated web files
         if: always()
         run: |

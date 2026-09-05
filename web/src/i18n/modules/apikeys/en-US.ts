@@ -289,7 +289,22 @@ const messages = {
       '“{name}” will stop working immediately and a replacement secret will be shown once.',
     loadError: 'Developer access could not be loaded',
     loadErrorDescription:
-      'Check your connection and try again. Contact a workspace administrator if the problem continues.',
+      'Loading failed. Try again, or contact a workspace administrator if the problem continues.',
+    loadErrors: {
+      session: 'Your session is no longer valid. Sign in again and retry.',
+      forbidden:
+        'Your account cannot access developer access information in this workspace. Switch workspaces or ask an administrator to check your membership permissions.',
+      notFound:
+        'The workspace or developer access endpoint was not found. Refresh your workspace list; if this persists, ask an administrator to check frontend and backend deployment versions.',
+      server:
+        'The developer access service could not complete the request. Retry; if this persists, ask an administrator to check service logs and database migrations using the request ID.',
+      network:
+        'The developer access service could not be reached. Check your connection and retry; if other pages work, ask an administrator to check API connectivity.',
+      unknown:
+        'Developer access information could not be read. Retry; if this persists, share the diagnostic details below with an administrator.',
+      code: 'Error code',
+      requestId: 'Request ID',
+    },
     quickstart: 'Quickstart',
     requestFrom: 'Requester {id}',
     requestPurpose: 'Purpose',

@@ -283,7 +283,21 @@ const messages: ApikeysMessages = {
     rotateTitle: '轮换 API 密钥？',
     rotateDescription: '“{name}”将立即失效，系统会生成替代密钥，完整密钥只显示一次。',
     loadError: '暂时无法加载开发者接入信息',
-    loadErrorDescription: '请检查网络连接后重试。如果问题持续，请联系工作空间管理员。',
+    loadErrorDescription: '信息加载失败，请重试。如果问题持续，请联系工作空间管理员。',
+    loadErrors: {
+      session: '登录状态已失效，请重新登录后再试。',
+      forbidden:
+        '当前账号无法访问此工作空间的开发者接入信息。请切换工作空间或联系管理员核对成员权限。',
+      notFound:
+        '未找到工作空间或开发者接入接口。请刷新工作空间列表；若问题持续，请管理员核对前后端部署版本。',
+      server:
+        '开发者接入服务处理失败。请重试；若问题持续，请管理员根据请求编号检查服务日志和数据库迁移状态。',
+      network:
+        '未能连接开发者接入服务。请检查网络后重试；若其他页面正常，请管理员检查 API 服务连通性。',
+      unknown: '未能读取开发者接入信息。请重试；若问题持续，请将下方诊断信息提供给管理员。',
+      code: '错误码',
+      requestId: '请求编号',
+    },
     quickstart: '快速接入',
     requestFrom: '申请人 {id}',
     requestPurpose: '申请用途',
