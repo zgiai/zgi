@@ -73,17 +73,21 @@ func (b *BillingService) CompensatePrivateMusicDelivery(ctx context.Context, org
 		if err != nil {
 			return err
 		}
-		refundCredits := subjectEntry.ActualAmount
-		if fundEntry.ActualAmount != refundCredits || bill.PrivatePoints != refundCredits || bill.TotalPoints != refundCredits || bill.OfficialPoints != 0 {
+		subjectRefundCredits := subjectEntry.ActualAmount
+		fundRefundCredits := fundEntry.ActualAmount
+		// The member allowance and channel wallet are independent ledgers. A
+		// stale grant period intentionally settles the subject entry at zero
+		// while the organization still pays the full provider cost.
+		if subjectRefundCredits > fundRefundCredits || bill.PrivatePoints != fundRefundCredits || bill.TotalPoints != fundRefundCredits || bill.OfficialPoints != 0 {
 			return fmt.Errorf("private music compensation amount mismatch for attempt %s", attempt.AttemptID)
 		}
-		if err := refundPrivateMusicSubject(ctx, tx, attempt, refundCredits); err != nil {
+		if err := refundPrivateMusicSubject(ctx, tx, attempt, subjectRefundCredits); err != nil {
 			return err
 		}
-		if err := b.refundPrivateMusicWallet(ctx, tx, attempt, fundEntry, refundCredits); err != nil {
+		if err := b.refundPrivateMusicWallet(ctx, tx, attempt, fundEntry, fundRefundCredits); err != nil {
 			return err
 		}
-		if err := markPrivateMusicEntriesRefunded(ctx, tx, subjectEntry, fundEntry, refundCredits); err != nil {
+		if err := markPrivateMusicEntriesRefunded(ctx, tx, subjectEntry, fundEntry, subjectRefundCredits, fundRefundCredits); err != nil {
 			return err
 		}
 		if err := markPrivateMusicUsageBillCompensated(ctx, tx, bill); err != nil {
@@ -292,13 +296,22 @@ func markPrivateMusicEntriesRefunded(
 	tx *gorm.DB,
 	subjectEntry *BillingAttemptEntry,
 	fundEntry *BillingAttemptEntry,
-	amount int64,
+	subjectAmount int64,
+	fundAmount int64,
 ) error {
-	for _, entry := range []*BillingAttemptEntry{subjectEntry, fundEntry} {
+	entries := []struct {
+		entry  *BillingAttemptEntry
+		amount int64
+	}{
+		{entry: subjectEntry, amount: subjectAmount},
+		{entry: fundEntry, amount: fundAmount},
+	}
+	for _, item := range entries {
+		entry := item.entry
 		result := tx.WithContext(ctx).Model(&BillingAttemptEntry{}).
 			Where("id = ? AND attempt_id = ?", entry.ID, entry.AttemptID).
 			Updates(map[string]any{
-				"refunded_amount": entry.RefundedAmount + amount,
+				"refunded_amount": entry.RefundedAmount + item.amount,
 				"status":          billingEntryStatusRefunded,
 				"updated_at":      time.Now(),
 			})

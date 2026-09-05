@@ -135,11 +135,84 @@ func TestBillingServiceCompensatePrivateMusicDeliveryDoesNotRefundRenewedGrant(t
 	}
 }
 
+func TestBillingServiceCompensatePrivateMusicDeliveryRefundsFundWhenGrantRenewedBeforeSettlement(t *testing.T) {
+	service, db, billing, organizationID, grantID, channelID, requestID := newMusicCompensationFixtureForSubjectState(t, true, false)
+
+	if err := db.Model(&accessmodel.Grant{}).Where("id = ?", grantID).Updates(map[string]any{
+		"authorization_version": 2,
+		"used_quota":            0,
+		"remain_quota":          1000,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Settle(t.Context(), billing); err != nil {
+		t.Fatalf("Settle() after grant renewal error = %v", err)
+	}
+
+	var beforeEntries []BillingAttemptEntry
+	if err := db.Order("entry_type DESC").Find(&beforeEntries, "attempt_id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeEntries) != 2 {
+		t.Fatalf("entry count before compensation = %d, want 2", len(beforeEntries))
+	}
+	var subjectBefore, fundBefore *BillingAttemptEntry
+	for i := range beforeEntries {
+		switch beforeEntries[i].EntryType {
+		case billingEntryTypeSubject:
+			subjectBefore = &beforeEntries[i]
+		case billingEntryTypeFund:
+			fundBefore = &beforeEntries[i]
+		}
+	}
+	if subjectBefore == nil || fundBefore == nil || subjectBefore.ActualAmount != 0 || subjectBefore.RefundedAmount != 17 || fundBefore.ActualAmount != 17 || fundBefore.RefundedAmount != 0 {
+		t.Fatalf("unexpected stale-period settlement entries: subject=%#v fund=%#v", subjectBefore, fundBefore)
+	}
+
+	if err := service.CompensatePrivateMusicDelivery(t.Context(), organizationID, requestID); err != nil {
+		t.Fatalf("CompensatePrivateMusicDelivery() error = %v", err)
+	}
+
+	var grant accessmodel.Grant
+	if err := db.First(&grant, "id = ?", grantID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.AuthorizationVersion != 2 || grant.UsedQuota != 0 || grant.RemainQuota != 1000 {
+		t.Fatalf("renewed grant version/used/remain = %d/%d/%d, want 2/0/1000", grant.AuthorizationVersion, grant.UsedQuota, grant.RemainQuota)
+	}
+	var wallet ChannelWallet
+	if err := db.First(&wallet, "channel_id = ?", channelID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if wallet.Balance != 100 || wallet.Status != channelWalletStatusActive {
+		t.Fatalf("wallet balance/status = %d/%s, want 100/ACTIVE", wallet.Balance, wallet.Status)
+	}
+	var afterEntries []BillingAttemptEntry
+	if err := db.Find(&afterEntries, "attempt_id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range afterEntries {
+		if entry.Status != billingEntryStatusRefunded {
+			t.Fatalf("entry status = %s, want refunded", entry.Status)
+		}
+		if entry.EntryType == billingEntryTypeSubject && (entry.ActualAmount != 0 || entry.RefundedAmount != 17) {
+			t.Fatalf("subject entry after compensation = %#v", entry)
+		}
+		if entry.EntryType == billingEntryTypeFund && (entry.ActualAmount != 17 || entry.RefundedAmount != 17) {
+			t.Fatalf("fund entry after compensation = %#v", entry)
+		}
+	}
+}
+
 func newMusicCompensationFixture(t *testing.T) (*BillingService, *gorm.DB, *BillingContext, uuid.UUID, string, uuid.UUID, string) {
 	return newMusicCompensationFixtureForSubject(t, false)
 }
 
 func newMusicCompensationFixtureForSubject(t *testing.T, useGrant bool) (*BillingService, *gorm.DB, *BillingContext, uuid.UUID, string, uuid.UUID, string) {
+	return newMusicCompensationFixtureForSubjectState(t, useGrant, true)
+}
+
+func newMusicCompensationFixtureForSubjectState(t *testing.T, useGrant, settle bool) (*BillingService, *gorm.DB, *BillingContext, uuid.UUID, string, uuid.UUID, string) {
 	t.Helper()
 	dsn := "file:" + uuid.NewString() + "?mode=memory&cache=shared"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -240,8 +313,10 @@ func newMusicCompensationFixtureForSubject(t *testing.T, useGrant bool) (*Billin
 	if err := service.PreDeduct(t.Context(), billing); err != nil {
 		t.Fatalf("PreDeduct() error = %v", err)
 	}
-	if err := service.Settle(t.Context(), billing); err != nil {
-		t.Fatalf("Settle() error = %v", err)
+	if settle {
+		if err := service.Settle(t.Context(), billing); err != nil {
+			t.Fatalf("Settle() error = %v", err)
+		}
 	}
 	return service, db, billing, organizationID, quotaSubjectID, channelID, requestID
 }

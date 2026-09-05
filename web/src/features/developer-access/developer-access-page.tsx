@@ -638,7 +638,7 @@ export function DeveloperAccessPage() {
                         item={item}
                         showPrincipal
                         canRotate={false}
-                        canActivate={Boolean(access?.can_manage)}
+                        canActivate={Boolean(access?.can_manage) && access?.mode !== 'disabled'}
                         onStatus={action => {
                           if (action === 'rotate') return;
                           if (action === 'revoke') {
