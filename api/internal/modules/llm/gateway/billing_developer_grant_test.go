@@ -202,4 +202,155 @@ func TestDeveloperGrantZeroCreditReservationHonorsBoundedExhaustion(t *testing.T
 	}
 }
 
+func TestDeveloperGrantUnknownPlatformCostSerializesBoundedRequests(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&accessmodel.Grant{}, &BillingAttempt{}, &BillingAttemptEntry{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX uq_billing_attempt_entry ON billing_attempt_entries (attempt_id, entry_type, ledger_type)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, UsedQuota: 90, RemainQuota: 10,
+		MaxKeys: 1, AllowedModels: []string{}, AuthorizationVersion: 4,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := &BillingService{db: db}
+	first := &BillingContext{
+		OrganizationID: grant.OrganizationID, AccessGrantID: grant.ID,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		EstimatedCredits: 0, BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+		AttemptID: uuid.NewString(), RequestID: uuid.NewString(),
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := service.preDeductSubjectQuota(context.Background(), tx, first, nil); err != nil {
+			return err
+		}
+		return service.upsertAttemptInit(context.Background(), tx, first)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if first.SubjectReservedCredits != 10 || first.GrantAuthorizationVersion == nil || *first.GrantAuthorizationVersion != 4 {
+		t.Fatalf("reservation/version = %d/%v, want 10/4", first.SubjectReservedCredits, first.GrantAuthorizationVersion)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.RemainQuota != 0 {
+		t.Fatalf("remain after unknown-cost reservation = %d, want 0", grant.RemainQuota)
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", first.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.GrantAuthorizationVersion == nil || *attempt.GrantAuthorizationVersion != 4 {
+		t.Fatalf("persisted grant version = %v, want 4", attempt.GrantAuthorizationVersion)
+	}
+	var entries []BillingAttemptEntry
+	if err := db.Where("attempt_id = ?", first.AttemptID).Find(&entries).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("attempt entries = %d, want 2", len(entries))
+	}
+	for _, entry := range entries {
+		if entry.EntryType == billingEntryTypeSubject && entry.ReservedAmount != 10 {
+			t.Fatalf("subject reservation = %d, want 10", entry.ReservedAmount)
+		}
+		if entry.EntryType == billingEntryTypeFund && entry.ReservedAmount != 0 {
+			t.Fatalf("organization fund reservation = %d, want 0", entry.ReservedAmount)
+		}
+	}
+
+	second := &BillingContext{
+		OrganizationID: grant.OrganizationID, AccessGrantID: grant.ID,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		EstimatedCredits: 0, BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+	}
+	err = db.Transaction(func(tx *gorm.DB) error {
+		return service.preDeductSubjectQuota(context.Background(), tx, second, nil)
+	})
+	if err != ErrInsufficientQuota {
+		t.Fatalf("second unknown-cost pre-deduct error = %v, want %v", err, ErrInsufficientQuota)
+	}
+
+	first.ActualCredits = 3
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return service.settleSubjectQuota(context.Background(), tx, first)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 93 || grant.RemainQuota != 7 {
+		t.Fatalf("settled unknown-cost grant used/remain = %d/%d, want 93/7", grant.UsedQuota, grant.RemainQuota)
+	}
+}
+
+func TestDeveloperGrantSettlementDoesNotMutateNewAuthorizationPeriod(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatal(err)
+	}
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1,
+		AllowedModels: []string{}, AuthorizationVersion: 1,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	billing := &BillingContext{
+		OrganizationID: grant.OrganizationID, AccessGrantID: grant.ID,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		EstimatedCredits: 20, ActualCredits: 10,
+	}
+	service := &BillingService{db: db}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return service.preDeductSubjectQuota(context.Background(), tx, billing, nil)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if billing.GrantAuthorizationVersion == nil || *billing.GrantAuthorizationVersion != 1 {
+		t.Fatalf("captured grant version = %v, want 1", billing.GrantAuthorizationVersion)
+	}
+	if err := db.Model(&accessmodel.Grant{}).Where("id = ?", grant.ID).Updates(map[string]any{
+		"authorization_version": 2,
+		"used_quota":            0,
+		"remain_quota":          quota,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return service.settleSubjectQuota(context.Background(), tx, billing)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.AuthorizationVersion != 2 || grant.UsedQuota != 0 || grant.RemainQuota != quota {
+		t.Fatalf("new authorization period was mutated: %#v", grant)
+	}
+	if billing.QuotaChargedCredits == nil || *billing.QuotaChargedCredits != 0 {
+		t.Fatalf("stale-period quota charge = %v, want 0", billing.QuotaChargedCredits)
+	}
+}
+
 func int64Ptr(value int64) *int64 { return &value }

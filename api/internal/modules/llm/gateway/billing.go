@@ -81,7 +81,16 @@ type BillingContext struct {
 	UpstreamHalfOpen     bool
 	AccountProviderID    *uint // Deprecated, kept for compatibility
 	EstimatedCredits     int64 // Estimated credits to deduct
-	ActualCredits        int64 // Actual credits used
+	// SubjectReservedCredits is the amount reserved from the quota subject.
+	// It can differ from EstimatedCredits when a platform-priced request has no
+	// local quote: a bounded developer grant reserves its remaining allowance to
+	// serialize unknown-cost requests without over-reserving organization funds.
+	// It is runtime-only; the subject ledger entry persists the reservation.
+	SubjectReservedCredits int64
+	// GrantAuthorizationVersion snapshots the developer grant period used for
+	// pre-deduction. Settlement must not mutate a renewed or re-authorized grant.
+	GrantAuthorizationVersion *int64
+	ActualCredits             int64 // Actual credits used
 	// QuotaChargedCredits is the amount charged to the quota subject after
 	// applying its hard limit. Nil means the subject charge equals ActualCredits.
 	// It is runtime-only; the subject ledger entry persists the final value.
@@ -117,6 +126,16 @@ type BillingContext struct {
 	ErrorMessage        string
 	IPAddress           string
 	UserAgent           string
+}
+
+func subjectReservedCredits(bc *BillingContext) int64 {
+	if bc == nil {
+		return 0
+	}
+	if bc.SubjectReservedCredits > 0 {
+		return bc.SubjectReservedCredits
+	}
+	return bc.EstimatedCredits
 }
 
 // NewBillingService creates a new billing service
@@ -169,6 +188,12 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 		// 3. Pre-deduct subject quota (key/workspace)
 		if err := b.preDeductSubjectQuota(ctx, tx, bc, &apiKey); err != nil {
 			return fmt.Errorf("failed to pre-deduct subject quota: %w", err)
+		}
+		// Grant pre-deduction may establish a subject reservation and grant
+		// authorization snapshot that differ from the initial estimate. Persist
+		// both before any external settlement can observe this attempt.
+		if err := b.upsertAttemptInit(ctx, tx, bc); err != nil {
+			return fmt.Errorf("failed to persist subject reservation: %w", err)
 		}
 
 		if !useSystemProvider {
@@ -431,6 +456,8 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if !grant.IsActive(time.Now()) {
 		return ErrAPIKeyInactive
 	}
+	version := grant.AuthorizationVersion
+	bc.GrantAuthorizationVersion = &version
 	if grant.QuotaLimit == nil {
 		return nil
 	}
@@ -442,13 +469,23 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if availableQuota > remainingByLimit {
 		availableQuota = remainingByLimit
 	}
+	reservation := bc.EstimatedCredits
+	usageLane, err := normalizeBillingContextUsageLane(bc)
+	if err != nil {
+		return err
+	}
 	// Platform-priced routes may not have a local token quote and therefore
-	// reserve zero credits. A bounded grant at zero must still be terminal;
-	// otherwise every later request would reach the provider at organization cost.
-	if availableQuota <= 0 || availableQuota < bc.EstimatedCredits {
+	// estimate zero credits. Reserve the bounded grant's remaining allowance so
+	// only one unknown-cost request can be in flight, while the organization fund
+	// reservation remains based on the original estimate.
+	if usageBillingLaneUsesSystemProvider(usageLane) && reservation <= 0 {
+		reservation = availableQuota
+	}
+	if availableQuota <= 0 || availableQuota < reservation {
 		return ErrInsufficientQuota
 	}
-	grant.RemainQuota = availableQuota - bc.EstimatedCredits
+	bc.SubjectReservedCredits = reservation
+	grant.RemainQuota = availableQuota - reservation
 	return tx.WithContext(ctx).Save(&grant).Error
 }
 
@@ -553,6 +590,14 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 		Where("id = ? AND organization_id = ?", grantID, bc.OrganizationID).First(&grant).Error; err != nil {
 		return err
 	}
+	// A grant update or renewal revokes old keys and starts a new authorization
+	// period. A delayed response from the old period is still an organization
+	// cost, but must never consume or refund the new period's member allowance.
+	if bc.GrantAuthorizationVersion == nil || grant.AuthorizationVersion != *bc.GrantAuthorizationVersion {
+		charged := int64(0)
+		bc.QuotaChargedCredits = &charged
+		return nil
+	}
 	if grant.QuotaLimit == nil {
 		grant.UsedQuota += bc.ActualCredits
 		charged := bc.ActualCredits
@@ -563,7 +608,8 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 	// amount this attempt may charge is therefore the post-reservation balance
 	// plus its own reservation. Provider usage can exceed an estimate (notably
 	// hidden reasoning tokens), but a member grant must remain a hard boundary.
-	availableForAttempt := grant.RemainQuota + bc.EstimatedCredits
+	reservedCredits := subjectReservedCredits(bc)
+	availableForAttempt := grant.RemainQuota + reservedCredits
 	if availableForAttempt < 0 {
 		availableForAttempt = 0
 	}
@@ -582,7 +628,7 @@ func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB
 		charged = 0
 	}
 	bc.QuotaChargedCredits = &charged
-	diff := bc.EstimatedCredits - charged
+	diff := reservedCredits - charged
 	grant.RemainQuota = clampQuotaRemainAtZero(grant.RemainQuota + diff)
 	grant.UsedQuota += charged
 	if grant.QuotaLimit != nil && grant.UsedQuota > *grant.QuotaLimit {

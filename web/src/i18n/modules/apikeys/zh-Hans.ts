@@ -172,6 +172,8 @@ const messages: ApikeysMessages = {
     requestAccess: '申请 API 权限',
     policy: '访问策略',
     policyDescription: '控制工作空间成员可以直接创建密钥，还是必须先提交申请。',
+    policyOpenDefaultsWarning:
+      '当前策略包含不限额度、长期有效或全部模型。保存前请确认这是有意的企业策略。',
     configure: '配置',
     mode: '访问模式',
     modes: {
@@ -240,6 +242,7 @@ const messages: ApikeysMessages = {
       close: '完成',
       keyActions: '密钥操作',
       cancel: '取消',
+      cancelRequest: '取消申请',
       confirmRevoke: '确认撤销',
       confirmRotate: '确认轮换',
       retry: '重试',
@@ -262,11 +265,14 @@ const messages: ApikeysMessages = {
       keyRotated: 'API 密钥已轮换',
       requestSubmitted: 'API 权限申请已提交',
       requestUpdated: 'API 权限申请已处理',
+      requestCancelled: 'API 权限申请已取消',
       policyUpdated: '开发者访问策略已更新',
       requestFailed: '操作失败，请稍后重试',
     },
     pendingTitle: '正在等待审批',
     pendingDescription: '工作空间管理员审批后，你就可以创建个人 API 密钥。',
+    personalKeyScope:
+      '个人密钥仅用于开发和实验。生产应用请由工作空间管理员统一管理，不要使用个人密钥。',
     secretTitle: '请立即保存密钥',
     secretDescription: '完整密钥只显示这一次。请存入密钥管理工具，不要写进源代码。',
     revokeTitle: '撤销 API 密钥？',
@@ -288,6 +294,9 @@ const messages: ApikeysMessages = {
       maxKeys: '工作空间最多允许：{max}',
       expiryHint: '留空表示长期有效，同时仍受工作空间最长有效期约束。',
       modelsHint: '多个模型名用逗号分隔；留空表示工作空间允许的全部模型。',
+      unlimitedQuotaWarning: '本次批准将不限制个人额度。',
+      noExpiryWarning: '本次批准将长期有效。',
+      allModelsWarning: '本次批准将开放工作空间允许的全部模型。',
     },
     audit: {
       empty: '暂无个人密钥调用记录',

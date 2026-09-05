@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestBillingAttemptPrincipalAttributionRollbackPreservesGrantCascade(t *testing.T) {
+func TestPostConnectorBillingAttemptPrincipalAttributionRollbackPreservesGrantCascade(t *testing.T) {
 	upper := strings.ToUpper(rollbackBillingAttemptPrincipalAttributionSQL)
 	if strings.Contains(upper, "ON DELETE RESTRICT") {
 		t.Fatal("rollback must not restore the access-grant foreign key as RESTRICT")

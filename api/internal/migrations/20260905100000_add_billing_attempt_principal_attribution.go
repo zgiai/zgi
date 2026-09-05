@@ -2,7 +2,7 @@ package migrations
 
 import mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 
-const migrationAddBillingAttemptPrincipalAttributionID = "202609022000000000_add_billing_attempt_principal_attribution"
+const migrationAddBillingAttemptPrincipalAttributionID = "20260905100000_add_billing_attempt_principal_attribution"
 
 const addBillingAttemptPrincipalAttributionSQL = `
 	ALTER TABLE public.billing_attempts

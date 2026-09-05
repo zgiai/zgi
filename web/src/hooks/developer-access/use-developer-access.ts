@@ -122,6 +122,13 @@ export function useDeveloperAccessActions(workspaceId?: string) {
     t('requestSubmitted'),
     t('requestFailed')
   );
+  const cancelRequest = useWorkspaceMutation(
+    workspaceId,
+    async (input: { requestId: string }) =>
+      (await developerAccessService.cancelRequest(workspaceId ?? '', input.requestId)).data,
+    t('requestCancelled'),
+    t('requestFailed')
+  );
   const reviewRequest = useWorkspaceMutation(
     workspaceId,
     async (input: {
@@ -149,5 +156,13 @@ export function useDeveloperAccessActions(workspaceId?: string) {
     t('requestFailed')
   );
 
-  return { createKey, setKeyStatus, rotateKey, createRequest, reviewRequest, updatePolicy };
+  return {
+    createKey,
+    setKeyStatus,
+    rotateKey,
+    createRequest,
+    cancelRequest,
+    reviewRequest,
+    updatePolicy,
+  };
 }

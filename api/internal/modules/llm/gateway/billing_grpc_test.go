@@ -27,6 +27,26 @@ func (failingSettleQuotaClient) CheckCreditBalance(context.Context, string, int6
 
 func (failingSettleQuotaClient) Close() error { return nil }
 
+type capturingFailingSettleQuotaClient struct {
+	settleRequest *SettleQuotaRequest
+}
+
+func (c *capturingFailingSettleQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
+	return nil, errors.New("unexpected pre-deduct")
+}
+
+func (c *capturingFailingSettleQuotaClient) SettleQuota(_ context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error) {
+	copy := *req
+	c.settleRequest = &copy
+	return nil, errors.New("quota service unavailable")
+}
+
+func (c *capturingFailingSettleQuotaClient) CheckCreditBalance(context.Context, string, int64) (bool, int64, error) {
+	return false, 0, errors.New("unexpected balance check")
+}
+
+func (c *capturingFailingSettleQuotaClient) Close() error { return nil }
+
 func openRemoteBillingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -83,6 +103,8 @@ func TestBillingAttemptRecoveryPreservesInvocationSource(t *testing.T) {
 	bc.PrincipalType = "user"
 	bc.PrincipalID = accountID.String()
 	bc.AccessGrantID = grantID.String()
+	grantVersion := int64(12)
+	bc.GrantAuthorizationVersion = &grantVersion
 	bc.AuthMethod = "personal_api_key"
 	bc.QuotaSubjectType = quotaSubjectTypeAccessGrant
 	bc.QuotaSubjectID = grantID.String()
@@ -91,6 +113,15 @@ func TestBillingAttemptRecoveryPreservesInvocationSource(t *testing.T) {
 		return service.upsertAttemptInit(context.Background(), tx, bc)
 	}); err != nil {
 		t.Fatalf("upsert billing attempt: %v", err)
+	}
+	// A retry may only carry the stable attempt identity. It must not erase the
+	// authorization version needed to protect a renewed grant during settlement.
+	retry := *bc
+	retry.GrantAuthorizationVersion = nil
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return service.upsertAttemptInit(context.Background(), tx, &retry)
+	}); err != nil {
+		t.Fatalf("retry billing attempt upsert: %v", err)
 	}
 
 	var attempt BillingAttempt
@@ -106,6 +137,9 @@ func TestBillingAttemptRecoveryPreservesInvocationSource(t *testing.T) {
 		attempt.AuthMethod != "personal_api_key" {
 		t.Fatalf("persisted principal attribution is incomplete: %#v", attempt)
 	}
+	if attempt.GrantAuthorizationVersion == nil || *attempt.GrantAuthorizationVersion != grantVersion {
+		t.Fatalf("persisted grant authorization version = %v, want %d", attempt.GrantAuthorizationVersion, grantVersion)
+	}
 
 	recovered, err := service.buildLocalRecoveryBillingContext(context.Background(), bc.AttemptID)
 	if err != nil {
@@ -117,6 +151,9 @@ func TestBillingAttemptRecoveryPreservesInvocationSource(t *testing.T) {
 	if recovered.APIKeyID != apiKeyID.String() || recovered.WorkspaceID != workspaceID.String() || recovered.AccountID == nil || *recovered.AccountID != accountID ||
 		recovered.PrincipalType != "user" || recovered.PrincipalID != accountID.String() || recovered.AccessGrantID != grantID.String() || recovered.AuthMethod != "personal_api_key" {
 		t.Fatalf("recovered principal attribution is incomplete: %#v", recovered)
+	}
+	if recovered.GrantAuthorizationVersion == nil || *recovered.GrantAuthorizationVersion != grantVersion {
+		t.Fatalf("recovered grant authorization version = %v, want %d", recovered.GrantAuthorizationVersion, grantVersion)
 	}
 }
 
@@ -190,5 +227,55 @@ func TestRemoteBillingRecoveryPreservesInvocationSourceInPartialUsageBill(t *tes
 		bill.PrincipalID == nil || *bill.PrincipalID != principalID || bill.AccessGrantID == nil || *bill.AccessGrantID != grantID ||
 		bill.AuthMethod != "personal_api_key" {
 		t.Fatalf("partial usage bill lost principal attribution: %#v", bill)
+	}
+}
+
+func TestRemoteBillingReconcileUsesFundActualInsteadOfCappedSubjectCharge(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	organizationID := uuid.New()
+	attemptID := uuid.NewString()
+	deductionID := uuid.NewString()
+	invocationResult := "success"
+	now := time.Now().UTC()
+	attempt := BillingAttempt{
+		AttemptID: attemptID, RequestID: uuid.NewString(), OrganizationID: organizationID,
+		Lane: billingAttemptLaneRemote, InvocationSource: InvocationSourceAPI,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: uuid.NewString(),
+		AuthMethod: "personal_api_key", Status: billingAttemptStatusPartial,
+		InvocationResult: &invocationResult, CreatedAt: now, UpdatedAt: now,
+	}
+	entries := []BillingAttemptEntry{
+		{
+			AttemptID: attemptID, EntryType: billingEntryTypeSubject,
+			LedgerType: billingLedgerTypeGrantQuota, LedgerRefID: attempt.QuotaSubjectID,
+			ReservedAmount: 10, ActualAmount: 3, Status: billingEntryStatusPending,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			AttemptID: attemptID, EntryType: billingEntryTypeFund,
+			LedgerType: billingLedgerTypeOrgFunds, LedgerRefID: organizationID.String(),
+			ReservedAmount: 0, ActualAmount: 7, Status: billingEntryStatusPending,
+			IdempotencyKey: &deductionID, CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := db.Create(&attempt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&entries).Error; err != nil {
+		t.Fatal(err)
+	}
+	client := &capturingFailingSettleQuotaClient{}
+	remote := &RemoteBilling{localService: &BillingService{db: db}, grpcClient: client}
+	if err := remote.reconcileAttempt(context.Background(), attemptID); err == nil {
+		t.Fatal("expected failed quota settlement")
+	}
+	if client.settleRequest == nil {
+		t.Fatal("expected remote settle request")
+	}
+	if client.settleRequest.ActualCredits != 7 {
+		t.Fatalf("remote fund actual credits = %d, want 7", client.settleRequest.ActualCredits)
+	}
+	if client.settleRequest.EstimatedCredits != 0 {
+		t.Fatalf("remote fund reservation = %d, want 0", client.settleRequest.EstimatedCredits)
 	}
 }

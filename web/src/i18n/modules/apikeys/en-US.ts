@@ -175,6 +175,8 @@ const messages = {
     policy: 'Access policy',
     policyDescription:
       'Control whether workspace members can create keys directly or must request approval.',
+    policyOpenDefaultsWarning:
+      'This policy includes unlimited quota, no expiration, or all models. Confirm that these open defaults are intentional.',
     configure: 'Configure',
     mode: 'Access mode',
     modes: {
@@ -243,6 +245,7 @@ const messages = {
       close: 'Done',
       keyActions: 'Key actions',
       cancel: 'Cancel',
+      cancelRequest: 'Cancel request',
       confirmRevoke: 'Revoke key',
       confirmRotate: 'Rotate key',
       retry: 'Retry',
@@ -265,11 +268,14 @@ const messages = {
       keyRotated: 'API key rotated',
       requestSubmitted: 'API access request submitted',
       requestUpdated: 'API access request reviewed',
+      requestCancelled: 'API access request cancelled',
       policyUpdated: 'Developer access policy updated',
       requestFailed: 'The request failed. Please try again.',
     },
     pendingTitle: 'Waiting for approval',
     pendingDescription: 'A workspace administrator will review your API access request.',
+    personalKeyScope:
+      'Personal keys are for development and experiments. Workspace administrators should manage production credentials centrally.',
     secretTitle: 'Save your secret key',
     secretDescription:
       'This is the only time the full key is shown. Store it in a secret manager, never in source code.',
@@ -294,6 +300,9 @@ const messages = {
       maxKeys: 'Workspace maximum: {max}',
       expiryHint: 'Leave empty for no expiration. The workspace maximum still applies.',
       modelsHint: 'Comma-separated model names. Empty means every model allowed by the workspace.',
+      unlimitedQuotaWarning: 'This approval grants unlimited personal quota.',
+      noExpiryWarning: 'This approval does not expire.',
+      allModelsWarning: 'This approval grants every model allowed by the workspace.',
     },
     audit: {
       empty: 'No personal-key calls yet',

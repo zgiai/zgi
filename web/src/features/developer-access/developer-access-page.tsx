@@ -375,6 +375,7 @@ export function DeveloperAccessPage() {
   const [copied, setCopied] = React.useState(false);
 
   React.useEffect(() => setAuditPage(1), [workspaceId]);
+  React.useEffect(() => setCopied(false), [createdKey?.id]);
 
   if (workspaceStatus === 'loading' || (workspaceId && me.isLoading)) {
     return (
@@ -427,6 +428,8 @@ export function DeveloperAccessPage() {
       ? () => setRequestOpen(true)
       : null;
   const primaryLabel = canCreate ? t('createKey') : t('requestAccess');
+  const quickstartModel =
+    createdKey?.model_names?.[0] ?? grant?.allowed_models?.[0] ?? 'YOUR_MODEL';
 
   const copySecret = async () => {
     if (!createdKey) return;
@@ -464,10 +467,20 @@ export function DeveloperAccessPage() {
       {access?.pending_request ? (
         <div className="flex items-start gap-3 rounded-xl border border-warning/25 bg-warning/5 p-4">
           <Clock3 className="mt-0.5 size-5 text-warning" />
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="font-medium">{t('pendingTitle')}</p>
             <p className="mt-1 text-sm text-muted-foreground">{t('pendingDescription')}</p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={actions.cancelRequest.isPending}
+            onClick={() =>
+              actions.cancelRequest.mutate({ requestId: access.pending_request?.id ?? '' })
+            }
+          >
+            {t('actions.cancelRequest')}
+          </Button>
         </div>
       ) : null}
 
@@ -526,6 +539,13 @@ export function DeveloperAccessPage() {
             </p>
             <ShieldCheck className="size-5 text-muted-foreground" />
           </CardContent>
+          {grant ? (
+            <p className="px-6 pb-5 text-xs text-muted-foreground">
+              {grant.allowed_models.length ? grant.allowed_models.join(', ') : t('allModels')}
+              {' · '}
+              {t('labels.expires')}: {formatDate(grant.expires_at)}
+            </p>
+          ) : null}
         </Card>
       </section>
 
@@ -751,7 +771,7 @@ export function DeveloperAccessPage() {
                 {t('quickstart')}
               </div>
               <pre className="overflow-x-auto rounded-lg bg-neutral-950 p-4 text-xs text-neutral-100">
-                <code>{`curl ${API_URL}/v1/chat/completions \\\n  -H "Authorization: Bearer ${createdKey?.secret ?? 'YOUR_API_KEY'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"your-model","messages":[{"role":"user","content":"Hello"}]}'`}</code>
+                <code>{`curl ${API_URL}/v1/chat/completions \\\n  -H "Authorization: Bearer ${createdKey?.secret ?? 'YOUR_API_KEY'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${quickstartModel}","messages":[{"role":"user","content":"Hello"}]}'`}</code>
               </pre>
             </div>
           </DialogBody>
@@ -844,7 +864,9 @@ function CreateKeyDialog({
 }) {
   const t = useT('apikeys.developerAccess');
   const [name, setName] = React.useState('');
-  const [environment, setEnvironment] = React.useState<'development' | 'production'>('development');
+  React.useEffect(() => {
+    if (open) setName('');
+  }, [open]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -863,18 +885,9 @@ function CreateKeyDialog({
               autoFocus
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="personal-key-env">{t('labels.environment')}</Label>
-            <select
-              id="personal-key-env"
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-              value={environment}
-              onChange={event => setEnvironment(event.target.value as 'development' | 'production')}
-            >
-              <option value="development">{t('labels.development')}</option>
-              <option value="production">{t('labels.production')}</option>
-            </select>
-          </div>
+          <p className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
+            {t('personalKeyScope')}
+          </p>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -882,7 +895,7 @@ function CreateKeyDialog({
           </Button>
           <Button
             disabled={!name.trim() || pending}
-            onClick={() => onSubmit({ name: name.trim(), environment })}
+            onClick={() => onSubmit({ name: name.trim(), environment: 'development' })}
           >
             {t('actions.create')}
           </Button>
@@ -914,7 +927,13 @@ function RequestAccessDialog({
   const [quota, setQuota] = React.useState('');
   const [models, setModels] = React.useState('');
   const [ttlHours, setTTLHours] = React.useState('');
-  const [environment, setEnvironment] = React.useState<'development' | 'production'>('development');
+  React.useEffect(() => {
+    if (!open) return;
+    setPurpose('');
+    setQuota('');
+    setModels('');
+    setTTLHours('');
+  }, [open]);
   const quotaValue = quota === '' ? undefined : Number(quota);
   const ttlHoursValue = ttlHours === '' ? undefined : Number(ttlHours);
   const requestInvalid =
@@ -959,18 +978,9 @@ function RequestAccessDialog({
               />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="access-env">{t('labels.environment')}</Label>
-            <select
-              id="access-env"
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-              value={environment}
-              onChange={event => setEnvironment(event.target.value as 'development' | 'production')}
-            >
-              <option value="development">{t('labels.development')}</option>
-              <option value="production">{t('labels.production')}</option>
-            </select>
-          </div>
+          <p className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
+            {t('personalKeyScope')}
+          </p>
           <div className="space-y-2">
             <Label htmlFor="access-quota">{t('labels.requestedQuota')}</Label>
             <Input
@@ -992,7 +1002,7 @@ function RequestAccessDialog({
             onClick={() =>
               onSubmit({
                 purpose: purpose.trim(),
-                environment,
+                environment: 'development',
                 requested_quota: quotaValue,
                 requested_models: splitModels(models),
                 requested_ttl_seconds:
@@ -1107,6 +1117,11 @@ function ReviewAccessDialog({
                   {t('review.maxQuota', { max: policy.max_quota })}
                 </p>
               ) : null}
+              {quotaValue === undefined ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  {t('review.unlimitedQuotaWarning')}
+                </p>
+              ) : null}
             </div>
           ) : null}
           {approving ? (
@@ -1134,6 +1149,11 @@ function ReviewAccessDialog({
                   onChange={event => setExpiresAt(event.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">{t('review.expiryHint')}</p>
+                {!expiryValue ? (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    {t('review.noExpiryWarning')}
+                  </p>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -1147,6 +1167,11 @@ function ReviewAccessDialog({
                 placeholder={t('placeholders.models')}
               />
               <p className="text-xs text-muted-foreground">{t('review.modelsHint')}</p>
+              {!splitModels(models).length ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  {t('review.allModelsWarning')}
+                </p>
+              ) : null}
             </div>
           ) : null}
           <div className="space-y-2">
@@ -1243,6 +1268,11 @@ function PolicyDialog({
   const maxKeysValue = Number(maxKeys);
   const defaultTTLValue = defaultTTLHours === '' ? undefined : Number(defaultTTLHours);
   const maxTTLValue = maxTTLHours === '' ? undefined : Number(maxTTLHours);
+  const hasOpenDefaults =
+    mode !== 'disabled' &&
+    (defaultQuotaValue === undefined ||
+      defaultTTLValue === undefined ||
+      splitModels(models).length === 0);
   const policyInvalid =
     !Number.isInteger(maxKeysValue) ||
     maxKeysValue < 1 ||
@@ -1278,6 +1308,11 @@ function PolicyDialog({
               <option value="disabled">{t('modes.disabled')}</option>
             </select>
           </div>
+          {hasOpenDefaults ? (
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-300">
+              {t('policyOpenDefaultsWarning')}
+            </p>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="policy-quota">{t('labels.defaultQuota')}</Label>

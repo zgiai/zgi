@@ -503,13 +503,11 @@ func (s *RemoteBilling) reconcileAttempt(ctx context.Context, attemptID string) 
 		return fmt.Errorf("%w: attempt_id=%s", errReconcileMissingDeductionID, attemptID)
 	}
 
+	// Organization funds and member quota are separate ledgers. The member
+	// charge may be capped (or zero for a stale grant period), but remote
+	// reconciliation must always use the provider cost recorded on the fund
+	// entry, including a legitimate zero-cost failed invocation.
 	actualCredits := fundEntry.ActualAmount
-	if subjectEntry != nil && subjectEntry.ActualAmount > 0 {
-		actualCredits = subjectEntry.ActualAmount
-	}
-	if actualCredits == 0 {
-		actualCredits = fundEntry.ReservedAmount
-	}
 
 	settleStatus := "success"
 	if attempt.InvocationResult != nil && strings.EqualFold(*attempt.InvocationResult, "error") {
@@ -517,12 +515,18 @@ func (s *RemoteBilling) reconcileAttempt(ctx context.Context, attemptID string) 
 	}
 
 	bc := &BillingContext{
-		OrganizationID:    attempt.OrganizationID.String(),
-		DeductionID:       strings.TrimSpace(*fundEntry.IdempotencyKey),
-		AttemptID:         attempt.AttemptID,
-		RequestID:         attempt.RequestID,
-		InvocationSource:  normalizeInvocationSource(attempt.InvocationSource),
-		EstimatedCredits:  fundEntry.ReservedAmount,
+		OrganizationID:   attempt.OrganizationID.String(),
+		DeductionID:      strings.TrimSpace(*fundEntry.IdempotencyKey),
+		AttemptID:        attempt.AttemptID,
+		RequestID:        attempt.RequestID,
+		InvocationSource: normalizeInvocationSource(attempt.InvocationSource),
+		EstimatedCredits: fundEntry.ReservedAmount,
+		SubjectReservedCredits: func() int64 {
+			if subjectEntry != nil {
+				return subjectEntry.ReservedAmount
+			}
+			return fundEntry.ReservedAmount
+		}(),
 		ActualCredits:     actualCredits,
 		QuotaSubjectType:  attempt.QuotaSubjectType,
 		QuotaSubjectID:    attempt.QuotaSubjectID,
@@ -647,6 +651,7 @@ func (s *RemoteBilling) preDeductLocalSubjectQuota(ctx context.Context, bc *Bill
 		}
 		bc.QuotaSubjectType = subjectType
 
+		var preDeductErr error
 		switch subjectType {
 		case quotaSubjectTypeAPIKey:
 			apiKeyID := strings.TrimSpace(bc.APIKeyID)
@@ -687,28 +692,32 @@ func (s *RemoteBilling) preDeductLocalSubjectQuota(ctx context.Context, bc *Bill
 			if apiKey.Status != "active" {
 				return ErrAPIKeyInactive
 			}
-			return s.localService.preDeductSubjectQuota(ctx, tx, bc, &apiKey)
+			preDeductErr = s.localService.preDeductSubjectQuota(ctx, tx, bc, &apiKey)
 
 		case quotaSubjectTypeAccessGrant:
 			if strings.TrimSpace(bc.QuotaSubjectID) == "" || strings.TrimSpace(bc.AccessGrantID) != strings.TrimSpace(bc.QuotaSubjectID) {
 				return fmt.Errorf("missing or mismatched developer grant subject")
 			}
-			return s.localService.preDeductSubjectQuota(ctx, tx, bc, nil)
+			preDeductErr = s.localService.preDeductSubjectQuota(ctx, tx, bc, nil)
 
 		case quotaSubjectTypeWorkspace:
 			if strings.TrimSpace(bc.QuotaSubjectID) == "" {
 				return fmt.Errorf("missing workspace_id for subject pre-deduct")
 			}
-			return s.localService.preDeductSubjectQuota(ctx, tx, bc, nil)
+			preDeductErr = s.localService.preDeductSubjectQuota(ctx, tx, bc, nil)
 		case quotaSubjectTypeOrganization:
 			if strings.TrimSpace(bc.QuotaSubjectID) == "" {
 				return fmt.Errorf("missing organization_id for subject pre-deduct")
 			}
-			return s.localService.preDeductSubjectQuota(ctx, tx, bc, nil)
+			preDeductErr = s.localService.preDeductSubjectQuota(ctx, tx, bc, nil)
 
 		default:
 			return fmt.Errorf("unsupported quota subject type: %s", subjectType)
 		}
+		if preDeductErr != nil {
+			return preDeductErr
+		}
+		return s.localService.upsertAttemptInit(ctx, tx, bc)
 	})
 }
 
