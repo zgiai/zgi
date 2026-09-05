@@ -192,7 +192,12 @@ func (h *Handler) ListKeys(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.ListKeys(c.Request.Context(), c.Param("workspace_id"), account)
+	var input KeyQuery
+	if err := c.ShouldBindQuery(&input); err != nil {
+		response.Fail(c, response.ErrInvalidParams)
+		return
+	}
+	result, err := h.service.ListKeys(c.Request.Context(), c.Param("workspace_id"), account, input)
 	if err != nil {
 		h.writeError(c, err)
 		return

@@ -20,7 +20,8 @@ export const DEVELOPER_ACCESS_KEYS = {
     [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'policy'] as const,
   requests: (workspaceId: string, status?: AccessRequestStatus) =>
     [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'requests', status ?? 'all'] as const,
-  keys: (workspaceId: string) => [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'keys'] as const,
+  keys: (workspaceId: string, scope: 'mine' | 'members', page: number, pageSize: number) =>
+    [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'keys', scope, page, pageSize] as const,
   audit: (workspaceId: string, page: number, pageSize: number) =>
     [...DEVELOPER_ACCESS_KEYS.workspace(workspaceId), 'audit', page, pageSize] as const,
 };
@@ -50,7 +51,14 @@ function useWorkspaceMutation<TInput, TResult>(
   });
 }
 
-export function useDeveloperAccess(workspaceId?: string, auditPage = 1, auditPageSize = 50) {
+export function useDeveloperAccess(
+  workspaceId?: string,
+  keyPage = 1,
+  memberKeyPage = 1,
+  auditPage = 1,
+  keyPageSize = 20,
+  auditPageSize = 50
+) {
   const enabled = Boolean(workspaceId);
   const me = useQuery({
     queryKey: DEVELOPER_ACCESS_KEYS.me(workspaceId ?? ''),
@@ -59,9 +67,29 @@ export function useDeveloperAccess(workspaceId?: string, auditPage = 1, auditPag
     staleTime: 30_000,
   });
   const keys = useQuery({
-    queryKey: DEVELOPER_ACCESS_KEYS.keys(workspaceId ?? ''),
-    queryFn: async () => (await developerAccessService.listKeys(workspaceId ?? '')).data,
+    queryKey: DEVELOPER_ACCESS_KEYS.keys(workspaceId ?? '', 'mine', keyPage, keyPageSize),
+    queryFn: async () =>
+      (
+        await developerAccessService.listKeys(workspaceId ?? '', {
+          scope: 'mine',
+          page: keyPage,
+          page_size: keyPageSize,
+        })
+      ).data,
     enabled,
+    staleTime: 15_000,
+  });
+  const memberKeys = useQuery({
+    queryKey: DEVELOPER_ACCESS_KEYS.keys(workspaceId ?? '', 'members', memberKeyPage, keyPageSize),
+    queryFn: async () =>
+      (
+        await developerAccessService.listKeys(workspaceId ?? '', {
+          scope: 'members',
+          page: memberKeyPage,
+          page_size: keyPageSize,
+        })
+      ).data,
+    enabled: enabled && me.data?.can_manage === true,
     staleTime: 15_000,
   });
   const requests = useQuery({
@@ -82,7 +110,7 @@ export function useDeveloperAccess(workspaceId?: string, auditPage = 1, auditPag
     enabled,
     staleTime: 15_000,
   });
-  return { me, keys, requests, audit };
+  return { me, keys, memberKeys, requests, audit };
 }
 
 export function useDeveloperAccessActions(workspaceId?: string) {

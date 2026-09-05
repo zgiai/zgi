@@ -198,6 +198,7 @@ const messages: ApikeysMessages = {
     emptyKeysDescription: '创建密钥后，可直接调用 OpenAI 兼容接口。',
     emptyMemberKeys: '暂无成员密钥',
     emptyMemberKeysDescription: '工作空间成员获批并创建密钥后，将显示在这里。',
+    keysPagination: '第 {page} / {totalPages} 页，共 {total} 个密钥',
     emptyRequests: '暂无申请记录',
     emptyApprovals: '当前没有待审批申请',
     labels: {

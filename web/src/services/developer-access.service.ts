@@ -80,6 +80,19 @@ export interface PersonalApiKey {
   can_rotate: boolean;
 }
 
+export interface PersonalApiKeyPage {
+  items: PersonalApiKey[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface PersonalApiKeyParams {
+  scope?: 'all' | 'mine' | 'members';
+  page?: number;
+  page_size?: number;
+}
+
 export interface DeveloperAccessAuditItem {
   attempt_id: string;
   request_id: string;
@@ -212,8 +225,11 @@ class DeveloperAccessService extends BaseService {
     );
   }
 
-  listKeys(workspaceId: string): Promise<ApiResponseData<PersonalApiKey[]>> {
-    return this.request('get', this.workspacePath(workspaceId, '/api-keys'));
+  listKeys(
+    workspaceId: string,
+    params?: PersonalApiKeyParams
+  ): Promise<ApiResponseData<PersonalApiKeyPage>> {
+    return this.request('get', this.workspacePath(workspaceId, '/api-keys'), undefined, { params });
   }
 
   listAudit(

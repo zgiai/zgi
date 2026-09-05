@@ -201,6 +201,7 @@ const messages = {
     emptyKeysDescription: 'Create a key and use it with the OpenAI-compatible API.',
     emptyMemberKeys: 'No member keys yet',
     emptyMemberKeysDescription: 'Keys created by approved workspace members will appear here.',
+    keysPagination: 'Page {page} of {totalPages} · {total} keys',
     emptyRequests: 'No access requests yet',
     emptyApprovals: 'No requests are waiting for approval',
     labels: {

@@ -62,6 +62,27 @@ func TestReviewerCannotApproveOwnRequest(t *testing.T) {
 	}
 }
 
+func TestDeveloperAccessTTLRejectsDurationOverflow(t *testing.T) {
+	tooLarge := maxDeveloperAccessTTLSeconds + 1
+	if err := validatePolicy(PolicyInput{
+		Mode: accessmodel.AccessModeSelfService, MaxKeys: 1, DefaultTTLSeconds: &tooLarge,
+	}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("validatePolicy error = %v, want invalid oversized TTL", err)
+	}
+	if _, err := ttlExpiry(time.Now(), &tooLarge); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("ttlExpiry error = %v, want invalid oversized TTL", err)
+	}
+
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, _, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	if _, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{
+		Purpose: "oversized access period", RequestedTTLSeconds: &tooLarge,
+	}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("CreateRequest error = %v, want invalid oversized TTL", err)
+	}
+}
+
 func TestPutPolicyRejectsStaleWorkspaceScopeAfterOrganizationChange(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
@@ -618,12 +639,67 @@ func TestManagerKeyListIncludesPrincipalIdentity(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	keys, err := service.ListKeys(context.Background(), workspaceID, ownerID)
+	page, err := service.ListKeys(context.Background(), workspaceID, ownerID, KeyQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(keys) != 1 || keys[0].PrincipalName != "Research Member" || keys[0].PrincipalEmail != "member@example.test" {
-		t.Fatalf("principal identity missing or cross-organization key leaked for organization %s: %#v", organizationID, keys)
+	if len(page.Items) != 1 || page.Total != 1 || page.Items[0].PrincipalName != "Research Member" || page.Items[0].PrincipalEmail != "member@example.test" {
+		t.Fatalf("principal identity missing or cross-organization key leaked for organization %s: %#v", organizationID, page)
+	}
+}
+
+func TestKeyListIsPaginatedAndSeparatedByOwnership(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	principalType := accessmodel.PrincipalTypeUser
+	createdAt := time.Now().Add(-time.Hour)
+	for i := 0; i < 25; i++ {
+		key := apikeymodel.TenantAPIKey{
+			OrganizationID: organizationID, WorkspaceID: &workspaceID,
+			PrincipalType: &principalType, PrincipalID: &memberID,
+			KeyHash: uuid.NewString(), Name: uuid.NewString(), Status: "revoked",
+			SecretVersion: 2, CreatedAt: createdAt.Add(time.Duration(i) * time.Second),
+		}
+		if err := db.Omit("Key").Create(&key).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		key := apikeymodel.TenantAPIKey{
+			OrganizationID: organizationID, WorkspaceID: &workspaceID,
+			PrincipalType: &principalType, PrincipalID: &ownerID,
+			KeyHash: uuid.NewString(), Name: uuid.NewString(), Status: "revoked", SecretVersion: 2,
+		}
+		if err := db.Omit("Key").Create(&key).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	membersPage, err := service.ListKeys(context.Background(), workspaceID, ownerID, KeyQuery{Scope: "members", Page: 2, PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membersPage.Total != 25 || len(membersPage.Items) != 10 || membersPage.Page != 2 || membersPage.PageSize != 10 {
+		t.Fatalf("unexpected member key page: %#v", membersPage)
+	}
+	for _, item := range membersPage.Items {
+		if item.PrincipalID != memberID {
+			t.Fatalf("member page leaked principal %s", item.PrincipalID)
+		}
+	}
+	minePage, err := service.ListKeys(context.Background(), workspaceID, ownerID, KeyQuery{Scope: "mine", PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if minePage.Total != 3 || len(minePage.Items) != 3 {
+		t.Fatalf("unexpected owner key page: %#v", minePage)
+	}
+	if _, err := service.ListKeys(context.Background(), workspaceID, memberID, KeyQuery{Scope: "members"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-manager member scope error = %v, want forbidden", err)
+	}
+	if _, err := service.ListKeys(context.Background(), workspaceID, ownerID, KeyQuery{Page: maxDeveloperAccessPage + 1}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("oversized page error = %v, want invalid", err)
 	}
 }
 
@@ -838,12 +914,12 @@ func TestOwnerCanCreateKeyUnderDefaultMemberApprovalPolicy(t *testing.T) {
 	if stored.KeyHash == "" || stored.KeyPrefix == "" || stored.KeySuffix == "" {
 		t.Fatalf("hash-only metadata missing: %#v", stored)
 	}
-	listed, err := service.ListKeys(context.Background(), workspaceID, ownerID)
+	page, err := service.ListKeys(context.Background(), workspaceID, ownerID, KeyQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || listed[0].KeyMasked == created.Secret {
-		t.Fatalf("list leaked or lost the key: %#v", listed)
+	if len(page.Items) != 1 || page.Total != 1 || page.Items[0].KeyMasked == created.Secret {
+		t.Fatalf("list leaked or lost the key: %#v", page)
 	}
 }
 
@@ -948,11 +1024,11 @@ func TestListKeysReportsAuthoritativeActivationCapability(t *testing.T) {
 	}
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
 	keyView := func(accountID, keyID string) KeyView {
-		items, err := service.ListKeys(context.Background(), workspaceID, accountID)
+		page, err := service.ListKeys(context.Background(), workspaceID, accountID, KeyQuery{PageSize: 100})
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, item := range items {
+		for _, item := range page.Items {
 			if item.ID == keyID {
 				return item
 			}

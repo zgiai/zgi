@@ -34,6 +34,13 @@ var (
 	ErrQuotaExceeded  = errors.New("developer access quota exceeded")
 )
 
+const (
+	// time.Duration stores nanoseconds in an int64. Keep TTL conversion within
+	// that representation so an oversized API value cannot wrap into the past.
+	maxDeveloperAccessTTLSeconds int64 = 9_223_372_036
+	maxDeveloperAccessPage             = 1_000_000
+)
+
 type PolicyInput struct {
 	Mode              string   `json:"mode" binding:"required"`
 	DefaultQuota      *int64   `json:"default_quota"`
@@ -96,6 +103,19 @@ type KeyView struct {
 	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
 	CanActivate    bool       `json:"can_activate"`
 	CanRotate      bool       `json:"can_rotate"`
+}
+
+type KeyQuery struct {
+	Scope    string `form:"scope"`
+	Page     int    `form:"page"`
+	PageSize int    `form:"page_size"`
+}
+
+type KeyPage struct {
+	Items    []KeyView `json:"items"`
+	Total    int64     `json:"total"`
+	Page     int       `json:"page"`
+	PageSize int       `json:"page_size"`
 }
 
 type AuditQuery struct {
@@ -339,7 +359,7 @@ func validatePolicy(input PolicyInput) error {
 		return ErrInvalid
 	}
 	for _, ttl := range []*int64{input.DefaultTTLSeconds, input.MaxTTLSeconds} {
-		if ttl != nil && *ttl <= 0 {
+		if !validTTLSeconds(ttl) {
 			return ErrInvalid
 		}
 	}
@@ -594,7 +614,7 @@ func (s *Service) createRequest(ctx context.Context, scope *workspaceScope, acco
 		if input.RequestedQuota != nil && (*input.RequestedQuota < 0 || (policy.MaxQuota != nil && *input.RequestedQuota > *policy.MaxQuota)) {
 			return ErrInvalid
 		}
-		if input.RequestedTTLSeconds != nil && (*input.RequestedTTLSeconds <= 0 || (policy.MaxTTLSeconds != nil && *input.RequestedTTLSeconds > *policy.MaxTTLSeconds)) {
+		if !validTTLSeconds(input.RequestedTTLSeconds) || (input.RequestedTTLSeconds != nil && policy.MaxTTLSeconds != nil && *input.RequestedTTLSeconds > *policy.MaxTTLSeconds) {
 			return ErrInvalid
 		}
 		if !modelsWithin(input.RequestedModels, policy.AllowedModels) {
@@ -723,18 +743,24 @@ func (s *Service) reviewRequest(ctx context.Context, scope *workspaceScope, acco
 			return ErrInvalid
 		}
 		expiresAt := input.ExpiresAt
-		if expiresAt == nil && request.RequestedTTLSeconds != nil {
-			value := now.Add(time.Duration(*request.RequestedTTLSeconds) * time.Second)
-			expiresAt = &value
-		}
 		if expiresAt == nil {
-			expiresAt = ttlExpiry(now, policy.DefaultTTLSeconds)
+			requestedTTL := request.RequestedTTLSeconds
+			if requestedTTL == nil {
+				requestedTTL = policy.DefaultTTLSeconds
+			}
+			expiresAt, err = ttlExpiry(now, requestedTTL)
+			if err != nil {
+				return err
+			}
 		}
 		if expiresAt != nil && !expiresAt.After(now) {
 			return ErrInvalid
 		}
-		if expiresAt != nil && policy.MaxTTLSeconds != nil && expiresAt.After(now.Add(time.Duration(*policy.MaxTTLSeconds)*time.Second)) {
-			return ErrInvalid
+		if expiresAt != nil && policy.MaxTTLSeconds != nil {
+			maximumExpiry, expiryErr := ttlExpiry(now, policy.MaxTTLSeconds)
+			if expiryErr != nil || expiresAt.After(*maximumExpiry) {
+				return ErrInvalid
+			}
 		}
 		if err := upsertGrant(tx, lockedScope, request.RequesterAccountID, accountID, "approved_request", quota, maxKeys, models, expiresAt, now); err != nil {
 			return err
@@ -913,7 +939,11 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 			applyGrantLimits(&locked, policy.DefaultQuota, true)
 			locked.MaxKeys = policy.MaxKeys
 			locked.AllowedModels = unique(policy.AllowedModels)
-			locked.ExpiresAt = ttlExpiry(now, policy.DefaultTTLSeconds)
+			expiresAt, err := ttlExpiry(now, policy.DefaultTTLSeconds)
+			if err != nil {
+				return err
+			}
+			locked.ExpiresAt = expiresAt
 			locked.UpdatedByAccountID = &accountID
 			locked.AuthorizationVersion++
 			if err := tx.Save(&locked).Error; err != nil {
@@ -956,7 +986,11 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 			source = "workspace_admin"
 		}
 		now := s.now()
-		return createGrantIfAbsent(tx, lockedScope, accountID, accountID, source, policy.DefaultQuota, policy.MaxKeys, policy.AllowedModels, ttlExpiry(now, policy.DefaultTTLSeconds))
+		expiresAt, err := ttlExpiry(now, policy.DefaultTTLSeconds)
+		if err != nil {
+			return err
+		}
+		return createGrantIfAbsent(tx, lockedScope, accountID, accountID, source, policy.DefaultQuota, policy.MaxKeys, policy.AllowedModels, expiresAt)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create self-service grant: %w", err)
@@ -967,12 +1001,19 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 	return &grant, nil
 }
 
-func ttlExpiry(now time.Time, seconds *int64) *time.Time {
+func validTTLSeconds(seconds *int64) bool {
+	return seconds == nil || (*seconds > 0 && *seconds <= maxDeveloperAccessTTLSeconds)
+}
+
+func ttlExpiry(now time.Time, seconds *int64) (*time.Time, error) {
 	if seconds == nil {
-		return nil
+		return nil, nil
+	}
+	if !validTTLSeconds(seconds) {
+		return nil, ErrInvalid
 	}
 	value := now.Add(time.Duration(*seconds) * time.Second)
-	return &value
+	return &value, nil
 }
 
 func generateSecret() (string, error) {
@@ -1108,10 +1149,34 @@ func keyToView(key *apikeymodel.TenantAPIKey) KeyView {
 	return KeyView{ID: key.ID, Name: key.Name, Status: key.Status, KeyMasked: masked, PrincipalID: principal, Environment: key.Environment, ModelNames: models, CreatedAt: key.CreatedAt, AccessedAt: key.AccessedAt, ExpiresAt: key.ExpiresAt, RevokedAt: key.RevokedAt}
 }
 
-func (s *Service) ListKeys(ctx context.Context, workspaceID, accountID string) ([]KeyView, error) {
+func normalizePagination(page, pageSize int) (int, int, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if page > maxDeveloperAccessPage || pageSize > 100 {
+		return 0, 0, ErrInvalid
+	}
+	return page, pageSize, nil
+}
+
+func (s *Service) ListKeys(ctx context.Context, workspaceID, accountID string, input KeyQuery) (*KeyPage, error) {
 	scope, err := s.scope(ctx, workspaceID, accountID)
 	if err != nil {
 		return nil, err
+	}
+	input.Page, input.PageSize, err = normalizePagination(input.Page, input.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	input.Scope = strings.TrimSpace(input.Scope)
+	if input.Scope != "" && input.Scope != "all" && input.Scope != "mine" && input.Scope != "members" {
+		return nil, ErrInvalid
+	}
+	if !scope.CanManage && input.Scope == "members" {
+		return nil, ErrForbidden
 	}
 	query := s.db.WithContext(ctx).Where(
 		"workspace_id = ? AND organization_id = ? AND principal_type = ?",
@@ -1119,11 +1184,22 @@ func (s *Service) ListKeys(ctx context.Context, workspaceID, accountID string) (
 		*scope.Workspace.OrganizationID,
 		accessmodel.PrincipalTypeUser,
 	)
-	if !scope.CanManage {
+	if !scope.CanManage || input.Scope == "mine" {
 		query = query.Where("principal_id = ?", accountID)
+	} else if input.Scope == "members" {
+		query = query.Where("principal_id <> ?", accountID)
+	}
+	var total int64
+	if err := query.Model(&apikeymodel.TenantAPIKey{}).Count(&total).Error; err != nil {
+		return nil, fmt.Errorf("count personal API keys: %w", err)
 	}
 	var rows []apikeymodel.TenantAPIKey
-	if err := query.Order("created_at DESC").Find(&rows).Error; err != nil {
+	if err := query.
+		Order(clause.Expr{SQL: "CASE WHEN status <> 'revoked' AND (expires_at IS NULL OR expires_at > ?) THEN 0 ELSE 1 END", Vars: []interface{}{s.now()}}).
+		Order("created_at DESC").
+		Limit(input.PageSize).
+		Offset((input.Page - 1) * input.PageSize).
+		Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list personal API keys: %w", err)
 	}
 	views := make([]KeyView, 0, len(rows))
@@ -1140,7 +1216,7 @@ func (s *Service) ListKeys(ctx context.Context, workspaceID, accountID string) (
 	if err := s.hydrateKeyCapabilities(ctx, policy, accountID, rows, views); err != nil {
 		return nil, err
 	}
-	return views, nil
+	return &KeyPage{Items: views, Total: total, Page: input.Page, PageSize: input.PageSize}, nil
 }
 
 func (s *Service) hydrateKeyCapabilities(ctx context.Context, policy *accessmodel.Policy, accountID string, keys []apikeymodel.TenantAPIKey, views []KeyView) error {
@@ -1249,13 +1325,11 @@ func (s *Service) ListAudit(ctx context.Context, workspaceID, accountID string, 
 	if err != nil {
 		return nil, err
 	}
-	if input.Page <= 0 {
-		input.Page = 1
+	input.Page, input.PageSize, err = normalizePagination(input.Page, input.PageSize)
+	if err != nil {
+		return nil, err
 	}
-	if input.PageSize <= 0 {
-		input.PageSize = 20
-	}
-	if input.PageSize > 100 || input.StartTime < 0 || input.EndTime < 0 || (input.StartTime > 0 && input.EndTime > 0 && input.EndTime < input.StartTime) {
+	if input.StartTime < 0 || input.EndTime < 0 || (input.StartTime > 0 && input.EndTime > 0 && input.EndTime < input.StartTime) {
 		return nil, ErrInvalid
 	}
 	if input.Status != "" && input.Status != "success" && input.Status != "failed" && input.Status != "partial" {

@@ -61,6 +61,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
+const MAX_DEVELOPER_ACCESS_TTL_SECONDS = 9_223_372_036;
+const MAX_DEVELOPER_ACCESS_TTL_HOURS = Math.floor(MAX_DEVELOPER_ACCESS_TTL_SECONDS / 3600);
+
 function formatDate(value?: string | null): string {
   if (!value) return '—';
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(
@@ -173,6 +176,47 @@ function KeyRow({
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
+    </div>
+  );
+}
+
+function KeyPagination({
+  total,
+  page,
+  pageSize,
+  onPageChange,
+}: {
+  total: number;
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+}) {
+  const t = useT('apikeys.developerAccess');
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (totalPages <= 1 && page <= 1) return null;
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+      <p className="text-sm text-muted-foreground">
+        {t('keysPagination', { page, totalPages, total })}
+      </p>
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          {t('audit.previous')}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          {t('audit.next')}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -360,9 +404,25 @@ export function DeveloperAccessPage() {
   const workspace = useCurrentWorkspace();
   const workspaceStatus = useWorkspaceContextStatus();
   const workspaceId = workspace?.id;
+  const [keyPage, setKeyPage] = React.useState(1);
+  const [memberKeyPage, setMemberKeyPage] = React.useState(1);
   const [auditPage, setAuditPage] = React.useState(1);
+  const keyPageSize = 20;
   const auditPageSize = 50;
-  const { me, keys, requests, audit } = useDeveloperAccess(workspaceId, auditPage, auditPageSize);
+  const {
+    me,
+    keys,
+    memberKeys: memberKeyQuery,
+    requests,
+    audit,
+  } = useDeveloperAccess(
+    workspaceId,
+    keyPage,
+    memberKeyPage,
+    auditPage,
+    keyPageSize,
+    auditPageSize
+  );
   const actions = useDeveloperAccessActions(workspaceId);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [requestOpen, setRequestOpen] = React.useState(false);
@@ -376,7 +436,11 @@ export function DeveloperAccessPage() {
   } | null>(null);
   const [copied, setCopied] = React.useState(false);
 
-  React.useEffect(() => setAuditPage(1), [workspaceId]);
+  React.useEffect(() => {
+    setKeyPage(1);
+    setMemberKeyPage(1);
+    setAuditPage(1);
+  }, [workspaceId]);
   React.useEffect(() => setCopied(false), [createdKey?.id]);
 
   if (workspaceStatus === 'loading' || (workspaceId && me.isLoading)) {
@@ -420,8 +484,8 @@ export function DeveloperAccessPage() {
   const ownRequests = (requests.data ?? []).filter(
     item => item.requester_account_id === access?.principal_id
   );
-  const personalKeys = (keys.data ?? []).filter(item => item.principal_id === access?.principal_id);
-  const memberKeys = (keys.data ?? []).filter(item => item.principal_id !== access?.principal_id);
+  const personalKeys = keys.data?.items ?? [];
+  const memberKeys = memberKeyQuery.data?.items ?? [];
   const canUseKeys = Boolean(access?.can_create_key);
   const maxKeys = grant?.max_keys ?? access?.policy.max_keys ?? 0;
   const hasAvailableKeySlot = (access?.active_key_count ?? 0) < maxKeys;
@@ -563,9 +627,9 @@ export function DeveloperAccessPage() {
                 <TabsTrigger value="memberKeys">
                   <UsersRound className="mr-2 size-4" />
                   {t('tabs.memberKeys')}
-                  {memberKeys.length ? (
+                  {(memberKeyQuery.data?.total ?? 0) > 0 ? (
                     <Badge className="ml-2" variant="subtle">
-                      {memberKeys.length}
+                      {memberKeyQuery.data?.total}
                     </Badge>
                   ) : null}
                 </TabsTrigger>
@@ -614,14 +678,20 @@ export function DeveloperAccessPage() {
                       }}
                     />
                   ))}
+                  <KeyPagination
+                    total={keys.data?.total ?? 0}
+                    page={keys.data?.page ?? keyPage}
+                    pageSize={keys.data?.page_size ?? keyPageSize}
+                    onPageChange={setKeyPage}
+                  />
                 </div>
               )}
             </TabsContent>
             {access?.can_manage ? (
               <TabsContent value="memberKeys" className="mt-5">
-                {keys.isError ? (
+                {memberKeyQuery.isError ? (
                   <EmptyState title={t('loadError')} description={t('loadErrorDescription')} />
-                ) : keys.isLoading ? (
+                ) : memberKeyQuery.isLoading ? (
                   <Skeleton className="h-48 w-full" />
                 ) : memberKeys.length === 0 ? (
                   <EmptyState
@@ -647,6 +717,12 @@ export function DeveloperAccessPage() {
                         }}
                       />
                     ))}
+                    <KeyPagination
+                      total={memberKeyQuery.data?.total ?? 0}
+                      page={memberKeyQuery.data?.page ?? memberKeyPage}
+                      pageSize={memberKeyQuery.data?.page_size ?? keyPageSize}
+                      onPageChange={setMemberKeyPage}
+                    />
                   </div>
                 )}
               </TabsContent>
@@ -949,7 +1025,8 @@ function RequestAccessDialog({
     (ttlHoursValue !== undefined &&
       (!Number.isFinite(ttlHoursValue) ||
         ttlHoursValue <= 0 ||
-        !Number.isSafeInteger(ttlHoursValue * 3600)));
+        !Number.isSafeInteger(ttlHoursValue * 3600) ||
+        ttlHoursValue * 3600 > MAX_DEVELOPER_ACCESS_TTL_SECONDS));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="lg">
@@ -983,6 +1060,8 @@ function RequestAccessDialog({
                 id="access-ttl"
                 type="number"
                 min={1}
+                max={MAX_DEVELOPER_ACCESS_TTL_HOURS}
+                step={1}
                 value={ttlHours}
                 onChange={event => setTTLHours(event.target.value)}
                 placeholder={t('placeholders.ttlHours')}
@@ -1299,11 +1378,13 @@ function PolicyDialog({
     (defaultTTLValue !== undefined &&
       (!Number.isFinite(defaultTTLValue) ||
         defaultTTLValue <= 0 ||
-        !Number.isSafeInteger(defaultTTLValue * 3600))) ||
+        !Number.isSafeInteger(defaultTTLValue * 3600) ||
+        defaultTTLValue * 3600 > MAX_DEVELOPER_ACCESS_TTL_SECONDS)) ||
     (maxTTLValue !== undefined &&
       (!Number.isFinite(maxTTLValue) ||
         maxTTLValue <= 0 ||
-        !Number.isSafeInteger(maxTTLValue * 3600))) ||
+        !Number.isSafeInteger(maxTTLValue * 3600) ||
+        maxTTLValue * 3600 > MAX_DEVELOPER_ACCESS_TTL_SECONDS)) ||
     (defaultTTLValue !== undefined && maxTTLValue !== undefined && defaultTTLValue > maxTTLValue);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1373,6 +1454,8 @@ function PolicyDialog({
                 id="policy-default-ttl"
                 type="number"
                 min={1}
+                max={MAX_DEVELOPER_ACCESS_TTL_HOURS}
+                step={1}
                 value={defaultTTLHours}
                 onChange={event => setDefaultTTLHours(event.target.value)}
                 placeholder={t('placeholders.ttlHours')}
@@ -1384,6 +1467,8 @@ function PolicyDialog({
                 id="policy-max-ttl"
                 type="number"
                 min={1}
+                max={MAX_DEVELOPER_ACCESS_TTL_HOURS}
+                step={1}
                 value={maxTTLHours}
                 onChange={event => setMaxTTLHours(event.target.value)}
                 placeholder={t('placeholders.ttlHours')}
