@@ -272,6 +272,33 @@ func defaultPolicy(scope *workspaceScope) *accessmodel.Policy {
 	}
 }
 
+// applySecurePolicyDefaults keeps finite ceilings effective even when an
+// older policy row (or a partial policy update) omitted the corresponding
+// default. A finite maximum and an unlimited default are contradictory; the
+// maximum is the least-surprising, fail-closed value for new grant periods.
+func applySecurePolicyDefaults(policy *accessmodel.Policy) {
+	if policy.DefaultQuota == nil && policy.MaxQuota != nil {
+		value := *policy.MaxQuota
+		policy.DefaultQuota = &value
+	}
+	if policy.DefaultTTLSeconds == nil && policy.MaxTTLSeconds != nil {
+		value := *policy.MaxTTLSeconds
+		policy.DefaultTTLSeconds = &value
+	}
+}
+
+func applySecurePolicyInputDefaults(input PolicyInput) PolicyInput {
+	if input.DefaultQuota == nil && input.MaxQuota != nil {
+		value := *input.MaxQuota
+		input.DefaultQuota = &value
+	}
+	if input.DefaultTTLSeconds == nil && input.MaxTTLSeconds != nil {
+		value := *input.MaxTTLSeconds
+		input.DefaultTTLSeconds = &value
+	}
+	return input
+}
+
 func (s *Service) policy(ctx context.Context, scope *workspaceScope) (*accessmodel.Policy, error) {
 	var policy accessmodel.Policy
 	err := s.db.WithContext(ctx).Where("workspace_id = ?", scope.Workspace.ID).First(&policy).Error
@@ -281,6 +308,7 @@ func (s *Service) policy(ctx context.Context, scope *workspaceScope) (*accessmod
 	if err != nil {
 		return nil, fmt.Errorf("load developer access policy: %w", err)
 	}
+	applySecurePolicyDefaults(&policy)
 	return &policy, nil
 }
 
@@ -385,6 +413,7 @@ func validatePolicy(input PolicyInput) error {
 }
 
 func (s *Service) PutPolicy(ctx context.Context, workspaceID, accountID string, input PolicyInput) (*accessmodel.Policy, error) {
+	input = applySecurePolicyInputDefaults(input)
 	if err := validatePolicy(input); err != nil {
 		return nil, err
 	}
@@ -399,6 +428,10 @@ func (s *Service) PutPolicy(ctx context.Context, workspaceID, accountID string, 
 }
 
 func (s *Service) putPolicy(ctx context.Context, scope *workspaceScope, accountID string, input PolicyInput) (*accessmodel.Policy, error) {
+	input = applySecurePolicyInputDefaults(input)
+	if err := validatePolicy(input); err != nil {
+		return nil, err
+	}
 	var result accessmodel.Policy
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		lockedScope, err := s.lockScopeForUpdate(ctx, tx, scope, accountID)
@@ -621,6 +654,7 @@ func policyForUpdate(ctx context.Context, tx *gorm.DB, scope *workspaceScope) (*
 	if scope.Workspace.OrganizationID == nil || policy.OrganizationID != *scope.Workspace.OrganizationID {
 		return nil, ErrConflict
 	}
+	applySecurePolicyDefaults(&policy)
 	return &policy, nil
 }
 

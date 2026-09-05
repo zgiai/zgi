@@ -83,6 +83,77 @@ func TestDeveloperAccessTTLRejectsDurationOverflow(t *testing.T) {
 	}
 }
 
+func TestPutPolicyUsesFiniteCeilingsAsSecureDefaults(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, _, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	now := time.Date(2026, time.September, 6, 1, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	maxQuota, maxTTL := int64(40), int64(7200)
+
+	policy, err := service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{
+		Mode: accessmodel.AccessModeSelfService, MaxQuota: &maxQuota, MaxKeys: 2, MaxTTLSeconds: &maxTTL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.DefaultQuota == nil || *policy.DefaultQuota != maxQuota || policy.DefaultTTLSeconds == nil || *policy.DefaultTTLSeconds != maxTTL {
+		t.Fatalf("finite policy ceilings were not persisted as secure defaults: %#v", policy)
+	}
+
+	scope, err := service.scope(context.Background(), workspaceID, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := service.ensureGrant(context.Background(), scope, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.QuotaLimit == nil || *grant.QuotaLimit != maxQuota || grant.RemainQuota != maxQuota {
+		t.Fatalf("self-service grant quota = %#v, want %d", grant, maxQuota)
+	}
+	wantExpiry := now.Add(time.Duration(maxTTL) * time.Second)
+	if grant.ExpiresAt == nil || !grant.ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("self-service grant expiry = %v, want %v", grant.ExpiresAt, wantExpiry)
+	}
+}
+
+func TestLegacyPolicyFiniteCeilingsBoundApprovedGrant(t *testing.T) {
+	db := openDeveloperAccessTestDB(t)
+	workspaceID, organizationID, ownerID, memberID := seedDeveloperWorkspace(t, db)
+	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
+	now := time.Date(2026, time.September, 6, 2, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	maxQuota, maxTTL := int64(75), int64(3600)
+	policy := accessmodel.Policy{
+		OrganizationID: organizationID, WorkspaceID: workspaceID,
+		Mode: accessmodel.AccessModeApprovalRequired, MaxQuota: &maxQuota, MaxKeys: 2,
+		MaxTTLSeconds: &maxTTL, AllowedModels: []string{}, Version: 1,
+	}
+	if err := db.Create(&policy).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := service.CreateRequest(context.Background(), workspaceID, memberID, CreateRequestInput{Purpose: "bounded legacy policy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReviewRequest(context.Background(), workspaceID, ownerID, request.ID, true, ReviewRequestInput{}); err != nil {
+		t.Fatal(err)
+	}
+	var grant accessmodel.Grant
+	if err := db.Where("workspace_id = ? AND principal_id = ?", workspaceID, memberID).First(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.QuotaLimit == nil || *grant.QuotaLimit != maxQuota || grant.RemainQuota != maxQuota {
+		t.Fatalf("approved grant quota = %#v, want %d", grant, maxQuota)
+	}
+	wantExpiry := now.Add(time.Duration(maxTTL) * time.Second)
+	if grant.ExpiresAt == nil || !grant.ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("approved grant expiry = %v, want %v", grant.ExpiresAt, wantExpiry)
+	}
+}
+
 func TestPutPolicyRejectsStaleWorkspaceScopeAfterOrganizationChange(t *testing.T) {
 	db := openDeveloperAccessTestDB(t)
 	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
