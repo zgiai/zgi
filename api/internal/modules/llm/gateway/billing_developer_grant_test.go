@@ -353,4 +353,45 @@ func TestDeveloperGrantSettlementDoesNotMutateNewAuthorizationPeriod(t *testing.
 	}
 }
 
+func TestDeveloperGrantPreDeductRejectsStaleKeyAuthorizationPeriod(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatal(err)
+	}
+	quota := int64(100)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1,
+		AllowedModels: []string{}, AuthorizationVersion: 2,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	staleVersion := int64(1)
+	billing := &BillingContext{
+		OrganizationID: grant.OrganizationID, AccessGrantID: grant.ID,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		GrantAuthorizationVersion: &staleVersion, AuthMethod: "personal_api_key",
+		EstimatedCredits: 10, BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+	}
+	service := &BillingService{db: db}
+	err = db.Transaction(func(tx *gorm.DB) error {
+		return service.preDeductSubjectQuota(context.Background(), tx, billing, nil)
+	})
+	if err != ErrAPIKeyInactive {
+		t.Fatalf("stale key pre-deduct error = %v, want %v", err, ErrAPIKeyInactive)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.AuthorizationVersion != 2 || grant.UsedQuota != 0 || grant.RemainQuota != quota {
+		t.Fatalf("stale key mutated current authorization period: %#v", grant)
+	}
+}
+
 func int64Ptr(value int64) *int64 { return &value }

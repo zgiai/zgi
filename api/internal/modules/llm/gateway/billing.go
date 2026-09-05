@@ -456,6 +456,13 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if !grant.IsActive(time.Now()) {
 		return ErrAPIKeyInactive
 	}
+	// Authentication validates the personal key before provider routing. Bind
+	// pre-deduction to that key's authorization period so a grant renewal in the
+	// intervening window cannot admit a now-stale key into the new budget period.
+	if bc.AuthMethod == "personal_api_key" &&
+		(bc.GrantAuthorizationVersion == nil || grant.AuthorizationVersion != *bc.GrantAuthorizationVersion) {
+		return ErrAPIKeyInactive
+	}
 	version := grant.AuthorizationVersion
 	bc.GrantAuthorizationVersion = &version
 	if grant.QuotaLimit == nil {

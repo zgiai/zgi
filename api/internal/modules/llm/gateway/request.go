@@ -208,9 +208,11 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		AttemptID:            attemptID,
 	}
 	if apiKey.AccessGrantID != nil && apiKey.PrincipalType != nil && apiKey.PrincipalID != nil && apiKey.WorkspaceID != nil {
+		keyAuthorizationVersion := apiKey.AuthorizationVersion
 		billingCtx.QuotaSubjectType = quotaSubjectTypeAccessGrant
 		billingCtx.QuotaSubjectID = *apiKey.AccessGrantID
 		billingCtx.AccessGrantID = *apiKey.AccessGrantID
+		billingCtx.GrantAuthorizationVersion = &keyAuthorizationVersion
 		billingCtx.PrincipalType = *apiKey.PrincipalType
 		billingCtx.PrincipalID = *apiKey.PrincipalID
 		billingCtx.WorkspaceID = *apiKey.WorkspaceID
