@@ -2367,6 +2367,10 @@ func (s *organizationService) RemoveMember(ctx context.Context, organizationID, 
 					return fmt.Errorf("failed to remove workspace memberships: %w", err)
 				}
 			}
+
+			if err := revokeWorkspaceDeveloperAccess(ctx, tx, allWorkspaceIDs, accountID); err != nil {
+				return err
+			}
 		}
 
 		// 3. Delete department memberships

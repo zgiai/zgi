@@ -445,6 +445,19 @@ func modelsWithin(requested, allowed []string) bool {
 	return true
 }
 
+func lockWorkspaceMembership(tx *gorm.DB, workspaceID, accountID string) error {
+	var member workspacemodel.WorkspaceMember
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("workspace_id = ? AND account_id = ?", workspaceID, accountID).
+		First(&member).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrForbidden
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *Service) CreateRequest(ctx context.Context, workspaceID, accountID string, input CreateRequestInput) (*accessmodel.AccessRequest, error) {
 	input.Purpose = strings.TrimSpace(input.Purpose)
 	if input.Purpose == "" || len(input.Purpose) > 2000 {
@@ -485,7 +498,12 @@ func (s *Service) CreateRequest(ctx context.Context, workspaceID, accountID stri
 		Purpose: input.Purpose, Environment: environment, RequestedQuota: input.RequestedQuota,
 		RequestedModels: unique(input.RequestedModels), RequestedTTLSeconds: input.RequestedTTLSeconds, Status: accessmodel.RequestStatusPending,
 	}
-	if err := s.db.WithContext(ctx).Create(request).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockWorkspaceMembership(tx, workspaceID, accountID); err != nil {
+			return err
+		}
+		return tx.Create(request).Error
+	}); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return nil, ErrConflict
 		}
@@ -716,6 +734,9 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 		// workspace-manager principal atomically, reset period usage, and bump
 		// authorization so old keys remain stale until a replacement is created.
 		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := lockWorkspaceMembership(tx, scope.Workspace.ID, accountID); err != nil {
+				return err
+			}
 			var locked accessmodel.Grant
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", grant.ID).First(&locked).Error; err != nil {
 				return err
@@ -764,6 +785,9 @@ func (s *Service) ensureGrant(ctx context.Context, scope *workspaceScope, accoun
 	}
 	now := s.now()
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockWorkspaceMembership(tx, scope.Workspace.ID, accountID); err != nil {
+			return err
+		}
 		return createGrantIfAbsent(tx, scope, accountID, accountID, source, policy.DefaultQuota, policy.MaxKeys, policy.AllowedModels, ttlExpiry(now, policy.DefaultTTLSeconds))
 	})
 	if err != nil {

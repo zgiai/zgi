@@ -147,6 +147,9 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 	if !grant.IsActive(time.Now()) || grant.AuthorizationVersion != apiKey.AuthorizationVersion {
 		return errors.New("developer access grant is inactive or stale")
 	}
+	if grant.QuotaLimit != nil && grant.RemainQuota <= 0 {
+		return errors.New("developer access grant has no remaining quota")
+	}
 	var policy accessmodel.Policy
 	policyErr := r.db.WithContext(ctx).
 		Where("workspace_id = ?", *apiKey.WorkspaceID).

@@ -206,6 +206,14 @@ func refundPrivateMusicSubject(ctx context.Context, tx *gorm.DB, attempt Billing
 			First(&grant).Error; err != nil {
 			return fmt.Errorf("load developer grant for music compensation: %w", err)
 		}
+		// The channel wallet refund belongs to the historical request and must
+		// always be processed. The member allowance, however, is scoped to one
+		// grant authorization period. A renewal resets that allowance and bumps
+		// the version, so a delayed delivery failure from the old period must not
+		// credit the newly issued grant.
+		if attempt.GrantAuthorizationVersion == nil || grant.AuthorizationVersion != *attempt.GrantAuthorizationVersion {
+			return nil
+		}
 		if grant.UsedQuota < amount {
 			return fmt.Errorf("developer grant used quota is smaller than music refund")
 		}

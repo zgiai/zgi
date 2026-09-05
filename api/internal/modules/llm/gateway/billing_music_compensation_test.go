@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/datatypes"
 	"gorm.io/driver/sqlite"
@@ -96,7 +97,49 @@ func TestBillingServiceCompensatePrivateMusicDeliveryRejectsNonMusicAttempt(t *t
 	}
 }
 
+func TestBillingServiceCompensatePrivateMusicDeliveryDoesNotRefundRenewedGrant(t *testing.T) {
+	service, db, _, organizationID, grantID, channelID, requestID := newMusicCompensationFixtureForSubject(t, true)
+
+	if err := db.Model(&accessmodel.Grant{}).Where("id = ?", grantID).Updates(map[string]any{
+		"authorization_version": 2,
+		"used_quota":            0,
+		"remain_quota":          1000,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.CompensatePrivateMusicDelivery(t.Context(), organizationID, requestID); err != nil {
+		t.Fatalf("CompensatePrivateMusicDelivery() error = %v", err)
+	}
+
+	var grant accessmodel.Grant
+	if err := db.First(&grant, "id = ?", grantID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.AuthorizationVersion != 2 || grant.UsedQuota != 0 || grant.RemainQuota != 1000 {
+		t.Fatalf("renewed grant version/used/remain = %d/%d/%d, want 2/0/1000", grant.AuthorizationVersion, grant.UsedQuota, grant.RemainQuota)
+	}
+	var wallet ChannelWallet
+	if err := db.First(&wallet, "channel_id = ?", channelID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if wallet.Balance != 100 || wallet.Status != channelWalletStatusActive {
+		t.Fatalf("wallet balance/status = %d/%s, want 100/ACTIVE", wallet.Balance, wallet.Status)
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusCompensated {
+		t.Fatalf("attempt status = %q, want %q", attempt.Status, billingAttemptStatusCompensated)
+	}
+}
+
 func newMusicCompensationFixture(t *testing.T) (*BillingService, *gorm.DB, *BillingContext, uuid.UUID, string, uuid.UUID, string) {
+	return newMusicCompensationFixtureForSubject(t, false)
+}
+
+func newMusicCompensationFixtureForSubject(t *testing.T, useGrant bool) (*BillingService, *gorm.DB, *BillingContext, uuid.UUID, string, uuid.UUID, string) {
 	t.Helper()
 	dsn := "file:" + uuid.NewString() + "?mode=memory&cache=shared"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -105,6 +148,7 @@ func newMusicCompensationFixture(t *testing.T) (*BillingService, *gorm.DB, *Bill
 	}
 	if err := db.AutoMigrate(
 		&apikeymodel.TenantAPIKey{},
+		&accessmodel.Grant{},
 		&BillingAttempt{},
 		&BillingAttemptEntry{},
 		&ChannelWallet{},
@@ -145,13 +189,15 @@ func newMusicCompensationFixture(t *testing.T) (*BillingService, *gorm.DB, *Bill
 	}
 
 	service := &BillingService{db: db}
+	quotaSubjectType := quotaSubjectTypeAPIKey
+	quotaSubjectID := apiKeyID
 	billing := &BillingContext{
 		APIKeyID:          apiKeyID,
 		OrganizationID:    organizationID.String(),
 		AttemptID:         requestID,
 		RequestID:         requestID,
-		QuotaSubjectType:  quotaSubjectTypeAPIKey,
-		QuotaSubjectID:    apiKeyID,
+		QuotaSubjectType:  quotaSubjectType,
+		QuotaSubjectID:    quotaSubjectID,
 		ModelID:           uuid.New(),
 		ModelName:         "music-3.0",
 		ProviderID:        uuid.New(),
@@ -168,11 +214,34 @@ func newMusicCompensationFixture(t *testing.T) (*BillingService, *gorm.DB, *Bill
 		Status:            billingContextStatusSuccess,
 		RequestCreatedAt:  time.Now().Add(-time.Second),
 	}
+	if useGrant {
+		workspaceID := uuid.NewString()
+		principalID := uuid.NewString()
+		grant := accessmodel.Grant{
+			OrganizationID: organizationID.String(), WorkspaceID: workspaceID,
+			PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: principalID,
+			Source: "approved_request", Status: accessmodel.GrantStatusActive,
+			QuotaLimit: &quotaLimit, RemainQuota: quotaLimit, MaxKeys: 1,
+			AllowedModels: []string{}, AuthorizationVersion: 1,
+		}
+		if err := db.Create(&grant).Error; err != nil {
+			t.Fatal(err)
+		}
+		grantVersion := grant.AuthorizationVersion
+		billing.WorkspaceID = workspaceID
+		billing.PrincipalType = accessmodel.PrincipalTypeUser
+		billing.PrincipalID = principalID
+		billing.AccessGrantID = grant.ID
+		billing.GrantAuthorizationVersion = &grantVersion
+		billing.QuotaSubjectType = quotaSubjectTypeAccessGrant
+		billing.QuotaSubjectID = grant.ID
+		quotaSubjectID = grant.ID
+	}
 	if err := service.PreDeduct(t.Context(), billing); err != nil {
 		t.Fatalf("PreDeduct() error = %v", err)
 	}
 	if err := service.Settle(t.Context(), billing); err != nil {
 		t.Fatalf("Settle() error = %v", err)
 	}
-	return service, db, billing, organizationID, apiKeyID, channelID, requestID
+	return service, db, billing, organizationID, quotaSubjectID, channelID, requestID
 }
