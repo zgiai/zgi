@@ -58,6 +58,12 @@ Personal key rows show their own expiration, separately from the grant expiratio
 
 Request history includes the reviewer's explanation so members can understand a rejection or approval conditions without access to administrator controls.
 
+### Grant allowance versus actual model cost
+
+The grant limits the amount charged to that allowance, not necessarily the full upstream cost of an admitted request. For a Cloud route without a local price estimate, the gateway reserves the entire remaining allowance and serializes such requests. Settlement caps the grant charge at its remaining limit and records any difference as `quota_overage_points`; `total_points` still records the actual model cost. Thus a final request costing 45 internal credits can charge the last one credit to its grant and record 44 as overage. The subsequent request is denied, but the first request's actual cost is not reduced to one credit.
+
+For reconciliation, sum `quota_charged_points` against the grant's usage, and sum `total_points` against model usage costs. Include `quota_overage_points` when explaining the difference. Do not present this as a strict monetary spending cap. A strict enterprise cost ceiling requires a reliable admission-time upper-bound quote or an explicit rule denying unpriced routes; it must not be inferred from the grant balance alone.
+
 Console API quota fields and audit `*_points` fields retain their existing integer internal-credit contract. For example, a 100-point request is sent as `requested_quota: 100000`; an audit value of `total_points: 1234` displays as 1.234 points. API clients must not send UI point values directly. Missing or null limits retain their default/unlimited semantics; zero remains zero. This display conversion does not rescale stored grants, change billing, or replenish any balance.
 
 ### Shared billing subject
