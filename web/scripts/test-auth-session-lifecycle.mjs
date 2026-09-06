@@ -20,6 +20,8 @@ function fixture() {
   const redirects = [];
   const requests = [];
   const effects = [];
+  const diagnostics = [];
+  let diagnosticFailure = false;
   const dependencies = [];
   let effectIndex = 0;
   let mode = 200;
@@ -136,7 +138,13 @@ function fixture() {
         exports: module.exports,
         require: resolveImport,
         window,
-        console,
+        console: {
+          ...console,
+          info: (...args) => {
+            if (diagnosticFailure) throw new Error('Synthetic reporter failure');
+            diagnostics.push(args);
+          },
+        },
         atob: globalThis.atob,
         Date,
         Error,
@@ -178,6 +186,13 @@ function fixture() {
     client,
     session,
     load,
+    diagnostics,
+    failDiagnostics: () => {
+      diagnosticFailure = true;
+    },
+    mock: (name, value) => {
+      mocks[name] = value;
+    },
     notices,
     redirects,
     requests,
@@ -200,6 +215,100 @@ function fixture() {
     },
   };
 }
+
+function logoutService(f, request) {
+  f.mock('@/lib/http/services', {
+    BaseService: class {
+      request(...args) {
+        return request(...args);
+      }
+    },
+  });
+  return f.load('services/auth.service.ts').authenticationService;
+}
+
+test('logout diagnostics expose only allowlisted fields and never interrupt cleanup', async () => {
+  const f = fixture();
+  f.seed();
+  const privateValue = 'private-test-credential';
+  const failure = {
+    message: privateValue,
+    config: { headers: { Authorization: privateValue } },
+    response: {
+      status: 503,
+      data: { code: '123456', message: privateValue },
+      headers: { 'x-request-id': '12345678-1234-1234-1234-123456789abc' },
+    },
+  };
+  await logoutService(f, async () => {
+    throw failure;
+  }).logout();
+  assert.equal(f.session.hasSession(), false);
+  const event = f.diagnostics.find(([, data]) => data.phase === 'request_failed');
+  assert.equal(event[0], 'auth.logout.phase');
+  assert.equal(event[1].status, 503);
+  assert.equal(event[1].code, '123456');
+  assert.equal(event[1].requestId, '12345678-1234-1234-1234-123456789abc');
+  assert.equal(JSON.stringify(f.diagnostics).includes(privateValue), false);
+  assert.deepEqual(Object.keys(event[1]).sort(), [
+    'code',
+    'kind',
+    'logout_in_progress',
+    'phase',
+    'requestId',
+    'session_present',
+    'status',
+  ]);
+  f.seed();
+  f.failDiagnostics();
+  await logoutService(f, async () => ({})).logout();
+  assert.equal(f.session.hasSession(), false);
+});
+
+for (const serverFailure of [false, true]) {
+  test(`explicit logout clears persisted session even when server failure=${serverFailure}`, async () => {
+    const f = fixture();
+    f.seed();
+    const service = logoutService(f, async (method, route, _body, options) => {
+      assert.equal(method, 'post');
+      assert.equal(route, '/logout');
+      assert.equal(options.skipAuth, true);
+      assert.equal(options.retryAttemptsOverride, 0);
+      if (serverFailure) throw new Error('Synthetic logout transport failure');
+      return { code: 0 };
+    });
+    await service.logout();
+    assert.equal(f.session.hasSession(), false);
+    for (const key of ['auth_session_v1', 'auth_token', 'refresh_token']) {
+      assert.equal(f.window.localStorage.getItem(key), null);
+    }
+  });
+}
+
+test('late successful refresh cannot restore a session after explicit logout', async () => {
+  const f = fixture();
+  f.seed();
+  let finishRefresh;
+  f.setMode(
+    config =>
+      new Promise(resolve => {
+        finishRefresh = () =>
+          resolve({
+            status: 200,
+            data: { access_token: jwt(3600), refresh_token: 'late-refresh' },
+            config,
+          });
+      })
+  );
+  const refresh = f.client.get('/private').catch(error => error);
+  for (let i = 0; i < 20 && !finishRefresh; i++) await Promise.resolve();
+  assert.equal(typeof finishRefresh, 'function');
+  await logoutService(f, async () => ({ code: 0 })).logout();
+  finishRefresh();
+  await refresh;
+  assert.equal(f.session.hasSession(), false);
+  assert.equal(f.requests.includes('/private'), false);
+});
 
 test('expired access token: concurrent reads share one successful refresh', async () => {
   const f = fixture();

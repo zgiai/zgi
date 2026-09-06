@@ -44,6 +44,7 @@ import {
 } from '@/utils/client-cache';
 import { ENABLE_ROOT_COOKIE_TOKEN_SYNC, ROOT_COOKIE_DOMAIN } from '@/lib/config';
 import { sessionManager } from '@/lib/auth/session-manager';
+import { reportLogoutPhase } from '@/lib/auth/logout-diagnostics';
 
 type SystemFeaturesResponse = ApiResponseData<{ features: SystemFeatures }>;
 
@@ -309,13 +310,15 @@ export class AuthenticationService extends BaseService {
         retryAttemptsOverride: 0,
         ...(accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
       });
+      reportLogoutPhase('request_completed');
     } catch (error) {
-      // Log the error but don't throw - logout should always succeed locally
-      console.warn('Server logout failed (this is usually not critical):', error);
+      // Local cleanup must still run, without logging credentials in Axios errors.
+      reportLogoutPhase('request_failed', error);
     }
 
     // Clean up local storage
     sessionManager.clearSession({ type: 'SIGNED_OUT' });
+    reportLogoutPhase('session_cleared');
     this.syncIdTokenCookie();
   }
 
