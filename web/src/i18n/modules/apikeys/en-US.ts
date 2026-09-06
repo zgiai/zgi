@@ -256,6 +256,7 @@ const messages = {
     },
     statuses: {
       active: 'Active',
+      expired: 'Expired',
       inactive: 'Disabled',
       revoked: 'Revoked',
       pending: 'Pending',
@@ -276,6 +277,7 @@ const messages = {
       policyUpdated: 'Developer access policy updated',
       requestFailed: 'The request failed. Please try again.',
     },
+    keyLimitReached: 'The limit of {max} active keys has been reached. Rotate an existing key, or disable or revoke one before creating another.',
     pendingTitle: 'Waiting for approval',
     pendingDescription: 'A workspace administrator will review your API access request.',
     personalKeyScope:

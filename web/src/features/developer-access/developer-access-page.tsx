@@ -77,9 +77,15 @@ function formatDate(value?: string | null): string {
 
 function statusVariant(status: string): 'success' | 'warning' | 'subtle' | 'destructive' {
   if (status === 'active' || status === 'approved') return 'success';
-  if (status === 'pending') return 'warning';
+  if (status === 'pending' || status === 'expired') return 'warning';
   if (status === 'revoked' || status === 'rejected' || status === 'failed') return 'destructive';
   return 'subtle';
+}
+
+function keyDisplayStatus(item: PersonalApiKey, now = Date.now()) {
+  if (item.status === 'revoked') return 'revoked';
+  if (item.expires_at && new Date(item.expires_at).getTime() <= now) return 'expired';
+  return item.status;
 }
 
 function splitModels(value: string): string[] {
@@ -126,12 +132,13 @@ function KeyRow({
   canActivate?: boolean;
 }) {
   const t = useT('apikeys.developerAccess');
+  const displayStatus = keyDisplayStatus(item);
   return (
     <div className="grid gap-4 border-b px-1 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_auto] md:items-center">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate font-medium">{item.name}</p>
-          <Badge variant={statusVariant(item.status)}>{t(`statuses.${item.status}`)}</Badge>
+          <Badge variant={statusVariant(displayStatus)}>{t(`statuses.${displayStatus}`)}</Badge>
           <Badge variant="outline">
             {item.environment === 'production' ? t('labels.production') : t('labels.development')}
           </Badge>
@@ -151,6 +158,9 @@ function KeyRow({
         <p>
           {t('labels.lastUsed')}: {formatDate(item.accessed_at)}
         </p>
+        {item.expires_at ? (
+          <p>{t('labels.expires')}: {formatDate(item.expires_at)}</p>
+        ) : null}
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -159,16 +169,16 @@ function KeyRow({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {canRotate && item.status !== 'revoked' ? (
+          {canRotate && displayStatus !== 'revoked' && displayStatus !== 'expired' ? (
             <DropdownMenuItem onClick={() => onStatus('rotate')}>
               {t('actions.rotate')}
             </DropdownMenuItem>
           ) : null}
-          {item.status === 'active' ? (
+          {displayStatus === 'active' ? (
             <DropdownMenuItem onClick={() => onStatus('disable')}>
               {t('actions.disable')}
             </DropdownMenuItem>
-          ) : item.status === 'inactive' && canActivate ? (
+          ) : displayStatus === 'inactive' && canActivate ? (
             <DropdownMenuItem onClick={() => onStatus('enable')}>
               {t('actions.enable')}
             </DropdownMenuItem>
@@ -596,6 +606,12 @@ export function DeveloperAccessPage() {
           ) : null}
         </div>
       </header>
+
+      {canUseKeys && !hasAvailableKeySlot ? (
+        <p className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
+          {t('keyLimitReached', { max: maxKeys })}
+        </p>
+      ) : null}
 
       {access?.pending_request ? (
         <div className="flex items-start gap-3 rounded-xl border border-warning/25 bg-warning/5 p-4">

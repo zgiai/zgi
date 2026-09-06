@@ -253,6 +253,7 @@ const messages: ApikeysMessages = {
     },
     statuses: {
       active: '有效',
+      expired: '已过期',
       inactive: '已停用',
       revoked: '已撤销',
       pending: '待审批',
@@ -273,6 +274,7 @@ const messages: ApikeysMessages = {
       policyUpdated: '开发者访问策略已更新',
       requestFailed: '操作失败，请稍后重试',
     },
+    keyLimitReached: '已达到 {max} 把有效密钥的上限。可轮换现有密钥，或先停用、撤销一把密钥后再创建。',
     pendingTitle: '正在等待审批',
     pendingDescription: '工作空间管理员审批后，你就可以创建个人 API 密钥。',
     personalKeyScope:

@@ -99,7 +99,7 @@ for (const manager of [false, true]) {
 const translate = key => key;
 const passthrough = ({ children }) => React.createElement('div', null, children);
 const ui = new Proxy({}, { get: () => passthrough });
-test('audit renders exact request ID and input/output tokens without exposing a secret', () => {
+function pageMocks() {
   const mocks = {
     './load-error': {},
     '@/i18n': { useT: () => (key, values) => (values ? `${key} ${JSON.stringify(values)}` : key) },
@@ -123,9 +123,12 @@ test('audit renders exact request ID and input/output tokens without exposing a 
   ]) {
     mocks[`@/components/ui/${name}`] = ui;
   }
+  return mocks;
+}
+test('audit renders exact request ID and input/output tokens without exposing a secret', () => {
   const { AuditList } = load(
     'features/developer-access/developer-access-page.tsx',
-    mocks,
+    pageMocks(),
     '\nexports.AuditList = AuditList;'
   );
   const markup = renderToStaticMarkup(
@@ -164,6 +167,32 @@ test('audit renders exact request ID and input/output tokens without exposing a 
   assert.match(markup, /audit.tokenBreakdown.*10.*2/);
   assert.match(markup, /0\.045/);
   assert.doesNotMatch(markup, /must-not-render/);
+});
+
+test('expired keys keep their deadline and cannot be presented as active or reactivated', () => {
+  const { KeyRow, keyDisplayStatus } = load(
+    'features/developer-access/developer-access-page.tsx', pageMocks(),
+    '\nexports.KeyRow = KeyRow; exports.keyDisplayStatus = keyDisplayStatus;'
+  );
+  const deadline = '2020-01-01T00:00:00Z';
+  const timestamp = Date.parse(deadline);
+  const item = {
+    name: 'Expired example', status: 'active', environment: 'development',
+    key_masked: 'zgi_abcd••••1234', created_at: '2019-12-01T00:00:00Z', expires_at: deadline,
+  };
+  assert.equal(keyDisplayStatus(item, timestamp - 1), 'active');
+  assert.equal(keyDisplayStatus(item, timestamp), 'expired');
+  assert.equal(keyDisplayStatus(item, timestamp + 1), 'expired');
+  assert.equal(keyDisplayStatus({ ...item, status: 'inactive' }, timestamp), 'expired');
+  assert.equal(keyDisplayStatus({ ...item, status: 'revoked' }, timestamp), 'revoked');
+  assert.equal(keyDisplayStatus({ ...item, expires_at: null }, timestamp), 'active');
+  const markup = renderToStaticMarkup(React.createElement(KeyRow, {
+    item, onStatus() {}, canRotate: true, canActivate: true,
+  }));
+  assert.match(markup, /statuses.expired/);
+  assert.match(markup, /labels.expires/);
+  assert.match(markup, /actions.revoke/);
+  assert.doesNotMatch(markup, /statuses.active|actions.rotate|actions.enable|actions.disable/);
 });
 
 test('desktop and mobile expose the same root links; mobile closes on navigation', () => {
