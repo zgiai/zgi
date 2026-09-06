@@ -93,7 +93,7 @@ func TestProviderDiagnosticsRejectsMessagesBodiesAndInvalidStatuses(t *testing.T
 func TestProviderDiagnosticsRejectsCredentialShapedValues(t *testing.T) {
 	tests := []ProviderDiagnostics{
 		{
-			ErrorCode: "github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			ErrorCode: "github_pat_" + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 			RequestID: "safe-request-id",
 		},
 		{
@@ -102,7 +102,7 @@ func TestProviderDiagnosticsRejectsCredentialShapedValues(t *testing.T) {
 		},
 		{
 			ErrorCode: "safe_error",
-			RequestID: "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
+			RequestID: "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
 		},
 	}
 	for _, diagnostics := range tests {

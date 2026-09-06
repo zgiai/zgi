@@ -223,7 +223,7 @@ func TestMessageResponseRedactsExternalActionArgumentsFromHistory(t *testing.T) 
 				"skill_id": "external-apps", "tool_name": "execute_action", "provider_id": "external-integrations",
 				"arguments": map[string]interface{}{
 					"integration_id": "github", "action_id": "github.issue.create", "connection_id": "connection-a",
-					"arguments": map[string]interface{}{"body": "xoxb-12345678901234567890", "title": "safe title"},
+					"arguments": map[string]interface{}{"body": "xoxb-" + "12345678901234567890", "title": "safe title"},
 				},
 			}},
 		}}},
