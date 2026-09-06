@@ -531,6 +531,120 @@ test('auth reset removes private state without losing known public login feature
   assert.equal(state.systemFeatures, features);
 });
 
+for (const entry of ['refreshProfile', 'initializeAuth']) {
+  for (const failure of ['unauthorized', 'network', 'generic']) {
+    test(`${entry}: late ${failure} from an old account cannot mutate the new login`, async () => {
+      const f = fixture();
+      let rejectProfile;
+      f.mock('@/services/auth.service', {
+        AuthenticationService: class {
+          getToken() {
+            return f.session.getAccessToken();
+          }
+          getProfile() {
+            return new Promise((_resolve, reject) => {
+              rejectProfile = reject;
+            });
+          }
+          async getSystemFeatures() {
+            return {};
+          }
+        },
+      });
+      f.mock('@/utils/client-cache', { clearAuthClientCaches() {} });
+      f.mock('@/lib/auth/context-sync', { syncAccountContextStores() {} });
+      const { useAuthStore } = f.load('store/auth-store.ts');
+      f.session.setSession({
+        accessToken: 'old-account-access',
+        refreshToken: 'old-account-refresh',
+      });
+      useAuthStore.getState().setUser({ id: 'old-account' });
+      const pending = useAuthStore
+        .getState()
+        [entry]({ force: true })
+        .catch(error => error);
+      f.session.setSession({
+        accessToken: 'new-account-access',
+        refreshToken: 'new-account-refresh',
+      });
+      useAuthStore.getState().setUser({ id: 'new-account' });
+      useAuthStore.getState().setLoading(true);
+      const error =
+        failure === 'unauthorized'
+          ? new axios.AxiosError('Unauthorized', 'ERR_BAD_RESPONSE', undefined, undefined, {
+              status: 401,
+            })
+          : failure === 'network'
+            ? new axios.AxiosError('Network Error', 'ERR_NETWORK')
+            : new Error('old profile failed');
+      rejectProfile(error);
+      await pending;
+      const state = useAuthStore.getState();
+      assert.equal(state.user?.id, 'new-account');
+      assert.equal(state.isAuthenticated, true);
+      assert.equal(state.sessionStatus, 'authenticated');
+      assert.equal(state.isLoading, true, 'old initializer cannot finish a newer bootstrap');
+      assert.equal(state.error, null);
+      assert.equal(state.networkError, false);
+      assert.equal(f.session.getAccessToken(), 'new-account-access');
+      assert.equal(f.notices.length, 0);
+    });
+  }
+}
+
+test('initialization finishes loading when its own token refresh rotates credentials', async () => {
+  const f = fixture();
+  f.mock('@/services/auth.service', {
+    AuthenticationService: class {
+      getToken() {
+        return f.session.getAccessToken();
+      }
+      async getProfile() {
+        f.session.setSession(
+          { accessToken: 'rotated-access', refreshToken: 'rotated-refresh' },
+          { type: 'TOKEN_REFRESHED' }
+        );
+        return { id: 'same-account' };
+      }
+      async getSystemFeatures() {
+        return {};
+      }
+    },
+  });
+  f.mock('@/utils/client-cache', { clearAuthClientCaches() {} });
+  f.mock('@/lib/auth/context-sync', { syncAccountContextStores() {} });
+  const { useAuthStore } = f.load('store/auth-store.ts');
+  f.session.setSession({ accessToken: 'original-access', refreshToken: 'original-refresh' });
+  await useAuthStore.getState().initializeAuth({ force: true });
+  assert.equal(useAuthStore.getState().isLoading, false);
+  assert.equal(f.session.getAccessToken(), 'rotated-access');
+  assert.equal(f.notices.length, 0);
+});
+
+test('a current-session profile 401 still invalidates that session', async () => {
+  const f = fixture();
+  f.mock('@/services/auth.service', {
+    AuthenticationService: class {
+      getToken() {
+        return f.session.getAccessToken();
+      }
+      async getProfile() {
+        throw new axios.AxiosError('Unauthorized', 'ERR_BAD_RESPONSE', undefined, undefined, {
+          status: 401,
+        });
+      }
+    },
+  });
+  f.mock('@/utils/client-cache', { clearAuthClientCaches() {} });
+  f.mock('@/lib/auth/context-sync', { syncAccountContextStores() {} });
+  const { useAuthStore } = f.load('store/auth-store.ts');
+  f.session.setSession({ accessToken: 'invalid-access', refreshToken: 'invalid-refresh' });
+  await assert.rejects(useAuthStore.getState().refreshProfile());
+  assert.equal(f.session.hasSession(), false);
+  assert.equal(useAuthStore.getState().user, null);
+  assert.equal(f.notices.length, 1);
+});
+
 test('SSE missing session uses the same redirect and localized error handling', async () => {
   const f = fixture();
   let error;
