@@ -4909,7 +4909,7 @@ assert.match(
 );
 assert.match(
   workflowBatchTestOverviewSource,
-  /canViewBatchResults \? \([\s\S]*runningBatch\.id[\s\S]*batchActions\.viewProgress/,
+  /canViewBatchResults \? \([\s\S]*batch\.id[\s\S]*batchActions\.viewProgress/,
   'workflow batch-test active progress link should require workflow.logs.view'
 );
 assert.match(
@@ -5265,7 +5265,7 @@ const appCenterListSource = fs.readFileSync(appCenterPaths[0], 'utf8');
 const appCenterDetailSource = fs.readFileSync(appCenterPaths[2], 'utf8');
 assert.match(
   appCenterListSource,
-  /const \{ items, isLoading, canUseResourceList \}\s*=\s*useRunnableWebApps\(\{\s*workspaceId:\s*null\s*\}\)/,
+  /const \{\s*items,\s*isLoading,\s*[^}]*\bcanUseResourceList\b[^}]*\}\s*=\s*useRunnableWebApps\(\{\s*workspaceId:\s*null\s*[,}]/,
   'app center list should read the app_center resource-list capability from the runnable app hook'
 );
 assert.match(
@@ -5360,9 +5360,27 @@ assert.doesNotMatch(
 
 assert.equal(
   canShowAgentApiKeys('AGENT', { canView: true, canManage: true }),
-  false,
-  'AGENT mode should not show workflow API key/docs tabs'
+  true,
+  'AGENT mode should expose its own API key/docs tabs with runtime-access management'
 );
+for (const agentType of ['AGENT', 'WORKFLOW']) {
+  for (const permissions of [
+    { canView: true },
+    { canView: true, canManage: false },
+    { canView: true, canManage: true, canManageRuntimeAccess: false },
+  ]) {
+    assert.equal(
+      canShowAgentApiKeys(agentType, permissions),
+      false,
+      `${agentType} API visibility must deny missing management and respect an explicit runtime-access denial`
+    );
+    assert.equal(
+      getAgentDetailRouteAccess('agent-1', agentType, permissions).canShowApiKeys,
+      false,
+      `${agentType} route access must preserve the same API management boundary`
+    );
+  }
+}
 assert.equal(
   canShowAgentRuntimeAccess('AGENT', { canView: true, canManage: true }),
   true,
@@ -5377,7 +5395,7 @@ const agentRouteAccess = getAgentDetailRouteAccess('agent-1', 'AGENT', {
   canView: true,
   canManage: true,
 });
-assert.equal(agentRouteAccess.canShowApiKeys, false, 'AGENT mode should not show API keys');
+assert.equal(agentRouteAccess.canShowApiKeys, true, 'AGENT mode should show its own authorized API keys');
 assert.equal(
   agentRouteAccess.canShowRuntimeAccess,
   true,
