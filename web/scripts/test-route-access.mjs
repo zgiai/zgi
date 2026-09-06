@@ -4227,7 +4227,7 @@ assert.doesNotMatch(
 );
 assert.match(
   createFromTemplateHookSource,
-  /router\.push\(getAgentDetailBaseHref\(agentId,\s*resolveTemplateRouteKind\(template\)\)\)/,
+  /router\.push\(getAgentDetailEditHref\(agentId,\s*resolveTemplateRouteKind\(template\)\)\)/,
   'template-created resources should route through their runtime-specific detail root'
 );
 assert.doesNotMatch(

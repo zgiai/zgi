@@ -9,7 +9,7 @@ import { useImportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
 import { useT } from '@/i18n';
 import { withBasePath } from '@/lib/config';
 import type { WorkflowImportResult } from '@/services/types/workflow';
-import { getAgentDetailBaseHref } from '@/utils/agent-detail-routes';
+import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
 import { uploadAppAvatarPreset } from '@/components/common/icon-input/avatar-preset-upload';
 import { getRandomAppAvatar } from '@/components/common/icon-input/avatar-presets';
 import type { AgentTemplate, AgentTemplateLocale } from './types';
@@ -104,7 +104,7 @@ export function useCreateAgentFromTemplate() {
       const file = new File([hydratedYaml], `${template.id}.yml`, { type: 'application/x-yaml' });
       const response = await importWorkflow({ file, workspaceId });
       const agentId = response.data.agent_id;
-      router.push(getAgentDetailBaseHref(agentId, resolveTemplateRouteKind(template)));
+      router.push(getAgentDetailEditHref(agentId, resolveTemplateRouteKind(template)));
       return response.data;
     },
     [importWorkflow, locale, router, t]

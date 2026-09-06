@@ -10,6 +10,25 @@ const code = ts.transpileModule(readFileSync(filename, 'utf8'), {
   fileName: filename.pathname,
 }).outputText;
 
+function loadProductionModule(path, dependencies = {}) {
+  const module = { exports: {} };
+  const output = ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+    fileName: path,
+  }).outputText;
+  vm.runInNewContext(output, {
+    module, exports: module.exports,
+    require: name => {
+      assert.ok(Object.hasOwn(dependencies, name), `Unexpected route dependency: ${name}`);
+      return dependencies[name];
+    },
+  });
+  return module.exports;
+}
+const routes = loadProductionModule('../src/utils/agent-detail-routes.ts', {
+  '@/services/types/agent': loadProductionModule('../src/services/types/agent.ts'),
+});
+
 function setup(importError) {
   const navigations = [];
   const imports = [];
@@ -29,10 +48,7 @@ function setup(importError) {
     }) },
     '@/i18n': { useT: () => key => key },
     '@/lib/config': { withBasePath: path => path },
-    '@/utils/agent-detail-routes': {
-      getAgentDetailBaseHref: (id, kind) => `/console/${kind === 'agent' ? 'agents' : 'workflows'}/${id}`,
-      getAgentDetailEditHref: (id, kind) => `/console/${kind === 'agent' ? 'agents' : 'workflows'}/${id}/editor`,
-    },
+    '@/utils/agent-detail-routes': routes,
     '@/components/common/icon-input/avatar-preset-upload': { uploadAppAvatarPreset: async () => ({ imageId: 'fixture-image' }) },
     '@/components/common/icon-input/avatar-presets': { getRandomAppAvatar: () => 'fixture-avatar' },
   };
