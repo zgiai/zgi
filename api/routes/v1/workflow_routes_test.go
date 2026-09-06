@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -34,6 +36,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/database"
 	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
 	"github.com/zgiai/zgi/api/pkg/queue"
+	redisutil "github.com/zgiai/zgi/api/pkg/redis"
 	"github.com/zgiai/zgi/api/pkg/response"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	pkguuid "github.com/zgiai/zgi/api/pkg/uuid"
@@ -691,6 +694,11 @@ func newWorkflowRoutesTestRouterWithConversation(t *testing.T) (*gin.Engine, str
 
 func newWorkflowRoutesTestRouterWithConversationAndAccountService(t *testing.T, accountService interfaces.AccountService) (*gin.Engine, string, string, string) {
 	t.Helper()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	previousClient := redisutil.GetClient()
+	redisutil.SetClient(client)
+	t.Cleanup(func() { redisutil.SetClient(previousClient); _ = client.Close() })
 	oldConfig := config.GlobalConfig
 	config.GlobalConfig = &config.Config{
 		Platform: config.PlatformConfig{Edition: "TEST"},

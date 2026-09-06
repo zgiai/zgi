@@ -342,22 +342,13 @@ func (s *AccountService) isResetPasswordEmailRateLimited(ctx context.Context, em
 }
 
 func (s *AccountService) Logout(ctx context.Context, accessToken, refreshToken string) error {
-	// Only revoke refresh token which is stored in Redis
-	err := s.tokenMgr.RevokeToken(refreshToken, TokenTypeRefresh)
-
-	// Also clean up any old format storage for backward compatibility
-	if refreshToken != "" {
-		// Try to get account ID from refresh token to clean up old format
-		if tokenData, err := s.tokenMgr.GetTokenData(refreshToken, TokenTypeRefresh); err == nil && tokenData != nil && tokenData.AccountID != nil {
-			redisUtil.RedisClient.Del(ctx, "refresh_token:"+*tokenData.AccountID)
-			redisUtil.RedisClient.Del(ctx, "refresh_token:"+refreshToken)
-		}
-	}
-
+	accountID, err := jwt.RevokeToken(ctx, accessToken)
 	if err != nil {
-		return fmt.Errorf("failed to revoke refresh token: %v", err)
+		return fmt.Errorf("logout access token: %w", err)
 	}
-	return nil
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return s.tokenMgr.RevokeAccountRefreshToken(ctx, refreshToken, accountID)
 }
 
 func (s *AccountService) RefreshToken(ctx context.Context, refreshToken string) (*dto.TokenResponse, error) {

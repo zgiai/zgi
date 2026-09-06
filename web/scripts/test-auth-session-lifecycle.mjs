@@ -278,9 +278,11 @@ for (const serverFailure of [false, true]) {
   test(`explicit logout clears persisted session even when server failure=${serverFailure}`, async () => {
     const f = fixture();
     f.seed();
-    const service = logoutService(f, async (method, route, _body, options) => {
+    const expectedRefresh = f.session.getRefreshToken();
+    const service = logoutService(f, async (method, route, body, options) => {
       assert.equal(method, 'post');
       assert.equal(route, '/logout');
+      assert.deepEqual(body, { refresh_token: expectedRefresh });
       assert.equal(options.skipAuth, true);
       assert.equal(options.retryAttemptsOverride, 0);
       if (serverFailure) throw new Error('Synthetic logout transport failure');

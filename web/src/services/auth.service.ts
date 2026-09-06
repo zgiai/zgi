@@ -302,14 +302,20 @@ export class AuthenticationService extends BaseService {
   // Logout with token cleanup
   async logout(): Promise<void> {
     const accessToken = sessionManager.getAccessToken();
+    const refreshToken = sessionManager.getRefreshToken();
 
     try {
-      await this.request<void>('post', '/logout', undefined, {
-        skipAuth: true,
-        skipErrorHandling: true,
-        retryAttemptsOverride: 0,
-        ...(accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
-      });
+      await this.request<void>(
+        'post',
+        '/logout',
+        refreshToken ? { refresh_token: refreshToken } : undefined,
+        {
+          skipAuth: true,
+          skipErrorHandling: true,
+          retryAttemptsOverride: 0,
+          ...(accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
+        }
+      );
       reportLogoutPhase('request_completed');
     } catch (error) {
       // Local cleanup must still run, without logging credentials in Axios errors.
