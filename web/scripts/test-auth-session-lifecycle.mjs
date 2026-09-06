@@ -248,6 +248,13 @@ test('logout diagnostics expose only allowlisted fields and never interrupt clea
     .map(([marker, data]) => [marker, JSON.parse(data)])
     .find(([, data]) => data.phase === 'request_failed');
   assert.equal(event[0], 'auth.logout.phase');
+  assert.equal(event[1].session_present, true);
+  assert.equal(event[1].logout_in_progress, false);
+  const clearedEvent = f.diagnostics
+    .map(([, data]) => JSON.parse(data))
+    .find(data => data.phase === 'session_cleared');
+  assert.equal(clearedEvent.session_present, false);
+  assert.equal(clearedEvent.logout_in_progress, false);
   assert.equal(event[1].status, 503);
   assert.equal(event[1].code, '123456');
   assert.equal(event[1].requestId, '12345678-1234-1234-1234-123456789abc');
