@@ -246,6 +246,13 @@ test('desktop and mobile expose the same root links; mobile closes on navigation
     '@/hooks/use-persistent-sidebar-collapse': {
       usePersistentSidebarCollapse: () => [false, () => {}],
     },
+    '@/hooks/auth/use-system-features': {
+      useSystemFeatures: () => ({
+        data: { enable_external_integrations: false },
+        isLoading: false,
+        error: null,
+      }),
+    },
     '@/routes/console-navigation': {
       getZGIConsoleNavigationAccess: () => ({ status: 'forbidden' }),
       getZGIConsoleNavigationDisplayState: () => 'error',

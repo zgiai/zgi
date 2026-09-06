@@ -291,8 +291,14 @@ func newMusicCompensationFixtureForSubjectState(t *testing.T, useGrant, settle b
 	if err := db.Exec(`CREATE TABLE llm_routes (id text PRIMARY KEY, organization_id text NOT NULL, balance numeric NOT NULL DEFAULT 0, updated_at datetime, deleted_at datetime)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec(`CREATE TABLE organizations (id text PRIMARY KEY, billing_display_currency text NOT NULL, usd_to_cny_rate text NOT NULL)`).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	organizationID := uuid.New()
+	if err := db.Exec(`INSERT INTO organizations (id, billing_display_currency, usd_to_cny_rate) VALUES (?, ?, ?)`, organizationID.String(), "CNY", "7.2").Error; err != nil {
+		t.Fatal(err)
+	}
 	apiKeyID := uuid.NewString()
 	channelID := uuid.New()
 	requestID := uuid.NewString()
@@ -366,6 +372,9 @@ func newMusicCompensationFixtureForSubjectState(t *testing.T, useGrant, settle b
 	}
 	if err := service.PreDeduct(t.Context(), billing); err != nil {
 		t.Fatalf("PreDeduct() error = %v", err)
+	}
+	if billing.DisplayCurrency != "CNY" || billing.USDToCNYRate.String() != "7.2" {
+		t.Fatalf("currency snapshot = %s/%s, want CNY/7.2", billing.DisplayCurrency, billing.USDToCNYRate)
 	}
 	if settle {
 		if err := service.Settle(t.Context(), billing); err != nil {
