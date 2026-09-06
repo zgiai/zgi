@@ -1,4 +1,4 @@
-import type { ModelUseCase } from '@/services/types/model';
+import type { ModelImagePriceRule, ModelUseCase } from '@/services/types/model';
 import Decimal from 'decimal.js-light';
 import {
   type BillingDisplaySettings,
@@ -129,6 +129,7 @@ interface GetModelPriceDisplayParams {
   cacheWrite5mPriceConfigured?: boolean | null;
   cacheWrite1hPriceConfigured?: boolean | null;
   pricing?: StructuredModelPricing | null;
+  imagePrices?: ModelImagePriceRule[] | null;
   currency: string | null | undefined;
   useCases?: ModelUseCase[] | null;
   billingDisplay?: BillingDisplaySettings;
@@ -176,6 +177,7 @@ export function getModelPriceDisplay({
   cacheWrite5mPriceConfigured,
   cacheWrite1hPriceConfigured,
   pricing,
+  imagePrices,
   currency,
   useCases,
   billingDisplay = DEFAULT_BILLING_DISPLAY,
@@ -220,14 +222,18 @@ export function getModelPriceDisplay({
   }
 
   if (isImageGenerationModel(useCases)) {
-    if (outputPriceConfigured) {
+    const configuredImagePriceItems = getImagePriceDisplayItems(imagePrices, currency, labels);
+    if (configuredImagePriceItems.length > 0) {
+      return configuredImagePriceItems;
+    }
+    if (outputPriceConfigured || isDisplayablePrice(outputPrice)) {
       return [buildModelPriceDisplayItem('image', outputPrice, true, 'perImage', billingDisplay)];
     }
     return [
       buildModelPriceDisplayItem(
         'image',
         inputPrice,
-        Boolean(inputPriceConfigured),
+        Boolean(inputPriceConfigured || isDisplayablePrice(inputPrice)),
         'perImage',
         billingDisplay
       ),
@@ -367,6 +373,51 @@ function getStructuredPriceDisplay(
       ),
     ];
   });
+}
+
+function getImagePriceDisplayItems(
+  imagePrices: ModelImagePriceRule[] | null | undefined,
+  fallbackCurrency: string | null | undefined,
+  labels?: ModelPriceDisplayLabels
+): ModelPriceDisplayItem[] {
+  if (!Array.isArray(imagePrices) || imagePrices.length === 0) return [];
+
+  const sortedRules = [...imagePrices].sort(
+    (left, right) => (right.priority ?? 0) - (left.priority ?? 0)
+  );
+  for (const rule of sortedRules) {
+    if (!isRecord(rule)) continue;
+    const price = isRecord(rule.price) ? rule.price : undefined;
+    const amount = finiteNumberOrUndefined(price?.amount);
+    if (typeof amount === 'number') {
+      return [
+        buildStructuredPriceItem(
+          'image',
+          labels?.image ?? '图像',
+          amount,
+          safeCurrency(price?.currency, fallbackCurrency, 'USD'),
+          labels?.perImage ?? '/ 张'
+        ),
+      ];
+    }
+
+    const credits = finiteNumberOrUndefined(price?.credits);
+    if (typeof credits === 'number') {
+      return [
+        {
+          label: 'image',
+          detail: labels?.image ?? '图像',
+          formattedValue: `${credits.toLocaleString()} 点`,
+          unit: 'perImage',
+          isConfigured: true,
+          isFree: credits === 0,
+          displayUnit: labels?.perImage ?? '/ 张',
+        },
+      ];
+    }
+  }
+
+  return [];
 }
 
 function buildOptionalStructuredPriceItem(
@@ -675,6 +726,11 @@ function decimalIsZero(value: number | string): boolean {
   } catch {
     return false;
   }
+}
+
+function isDisplayablePrice(value: unknown): boolean {
+  const price = finiteNumberOrUndefined(value);
+  return typeof price === 'number' && price > 0;
 }
 
 function videoRateDetail(

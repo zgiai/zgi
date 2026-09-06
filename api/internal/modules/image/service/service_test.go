@@ -53,10 +53,18 @@ func (f fakeRouteLister) GetRoutesForModel(_ context.Context, _ uuid.UUID, model
 }
 
 func TestListModelsReturnsEveryAvailableImageModel(t *testing.T) {
+	imagePrices := `[{"id":"standard","priority":100,"price":{"amount":0.14}}]`
 	svc := NewService(
 		registry.NewRegistry(),
 		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{
-			{Provider: "openai", Name: "gpt-image-2"},
+			{
+				Provider:              "openai",
+				Name:                  "gpt-image-2",
+				Currency:              "USD",
+				OutputPrice:           0.14,
+				OutputPriceConfigured: true,
+				ImagePrices:           []byte(imagePrices),
+			},
 			{Provider: "qwen", Name: "qwen-image"},
 			{Provider: "qwen", Name: "qwen-image-2.0"},
 			{Provider: "custom", Name: "future-image-model"},
@@ -82,6 +90,14 @@ func TestListModelsReturnsEveryAvailableImageModel(t *testing.T) {
 		key := model.Provider + "/" + model.Model
 		if _, ok := want[key]; ok {
 			want[key] = true
+		}
+		if key == "openai/gpt-image-2" {
+			if model.Currency != "USD" || model.OutputPrice != 0.14 || !model.OutputConfigured {
+				t.Fatalf("ListModels did not preserve scalar image pricing: %#v", model)
+			}
+			if string(model.ImagePrices) != imagePrices {
+				t.Fatalf("ListModels image_prices = %s, want %s", string(model.ImagePrices), imagePrices)
+			}
 		}
 	}
 	for key, found := range want {

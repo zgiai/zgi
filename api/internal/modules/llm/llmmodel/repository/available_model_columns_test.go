@@ -22,6 +22,7 @@ func TestAvailableModelColumnsIncludePricingFields(t *testing.T) {
 		"cache_write_5m_price_configured",
 		"cache_write_1h_price_configured",
 		"pricing",
+		"image_prices",
 	}
 
 	for _, column := range requiredColumns {

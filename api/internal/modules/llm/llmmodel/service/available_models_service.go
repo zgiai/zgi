@@ -76,6 +76,7 @@ type AvailableModel struct {
 	CacheWrite5mPriceOverride   *float64        `json:"cache_write_5m_price_override"`
 	CacheWrite1hPriceOverride   *float64        `json:"cache_write_1h_price_override"`
 	Pricing                     json.RawMessage `json:"pricing,omitempty"`
+	ImagePrices                 json.RawMessage `json:"image_prices,omitempty"`
 
 	// Context
 	ContextWindow   int `json:"context_window,omitempty"`
@@ -492,6 +493,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			SyncedCacheWrite5mPrice:     syncedCacheWrite5mPrice,
 			SyncedCacheWrite1hPrice:     syncedCacheWrite1hPrice,
 			Pricing:                     cloneRawJSON(m.Pricing),
+			ImagePrices:                 cloneRawJSON(m.ImagePrices),
 
 			// ModelHub-aligned nested structures
 			Endpoints: model.ModelEndpoints{
@@ -809,6 +811,7 @@ func cloneAvailableModels(models []*AvailableModel) []*AvailableModel {
 		modelCopy.Capabilities = cloneJSONObject(item.Capabilities)
 		modelCopy.Video = cloneJSONObject(item.Video)
 		modelCopy.Pricing = cloneRawJSON(item.Pricing)
+		modelCopy.ImagePrices = cloneRawJSON(item.ImagePrices)
 		cloned = append(cloned, &modelCopy)
 	}
 	return cloned

@@ -102,6 +102,7 @@ export const ModelPriceSummary = memo(function ModelPriceSummary({
     useCases: model.use_cases,
     currency: model.currency,
     pricing: model.pricing,
+    imagePrices: model.image_prices,
     billingDisplay,
     videoDisplayMode: 'summary',
     labels: {

@@ -182,4 +182,21 @@ assert.deepEqual(
   'structured token cache prices must use cache labels'
 );
 
+const imageRulePriceItems = getModelPriceDisplay({
+  useCases: ['image-gen'],
+  currency: 'USD',
+  imagePrices: [
+    {
+      id: 'standard',
+      priority: 100,
+      price: { amount: 0.14 },
+    },
+  ],
+});
+assert.deepEqual(
+  imageRulePriceItems.map(item => [item.label, item.unit, item.formattedValue]),
+  [['image', 'perImage', '$0.14']],
+  'image generation pricing must read configured image_prices as per-image pricing'
+);
+
 console.log('Model plaza fallback checks passed.');

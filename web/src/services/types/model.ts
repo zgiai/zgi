@@ -134,6 +134,17 @@ export interface ModelPerformance {
 
 export type ModelPricing = Record<string, unknown>;
 
+export interface ModelImagePriceRule {
+  id?: string;
+  priority?: number;
+  conditions?: Record<string, unknown>;
+  price?: {
+    amount?: number | string | null;
+    credits?: number | string | null;
+    currency?: string | null;
+  } | null;
+}
+
 export interface ModelUsageGuidelines {
   recommended_use_cases?: string[];
   limitations?: string[];
@@ -188,6 +199,7 @@ export interface ModelItem {
   cache_write_5m_price_override?: number | null;
   cache_write_1h_price_override?: number | null;
   pricing?: ModelPricing | null;
+  image_prices?: ModelImagePriceRule[] | null;
   context_window: number;
   max_output_tokens: number;
   max_input_tokens?: number;

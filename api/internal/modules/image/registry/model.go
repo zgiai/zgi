@@ -1,10 +1,19 @@
 package registry
 
+import "encoding/json"
+
 type ImageModel struct {
 	Provider          string            `json:"provider"`
 	Model             string            `json:"model"`
 	ModelLabel        string            `json:"model_label"`
 	GenerationProfile GenerationProfile `json:"generation_profile"`
+	Currency          string            `json:"currency,omitempty"`
+	InputPrice        float64           `json:"input_price,omitempty"`
+	OutputPrice       float64           `json:"output_price,omitempty"`
+	InputConfigured   bool              `json:"input_price_configured"`
+	OutputConfigured  bool              `json:"output_price_configured"`
+	Pricing           json.RawMessage   `json:"pricing,omitempty"`
+	ImagePrices       json.RawMessage   `json:"image_prices,omitempty"`
 }
 
 type GenerationProfile struct {

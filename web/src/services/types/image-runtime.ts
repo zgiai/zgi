@@ -1,10 +1,18 @@
 import type { ApiResponseData } from './common';
+import type { ModelImagePriceRule, ModelPricing } from './model';
 
 export interface ImageRuntimeModel {
   provider: string;
   model: string;
   model_label: string;
   generation_profile: ImageGenerationProfile;
+  currency?: string | null;
+  input_price?: number | null;
+  output_price?: number | null;
+  input_price_configured?: boolean | null;
+  output_price_configured?: boolean | null;
+  pricing?: ModelPricing | null;
+  image_prices?: ModelImagePriceRule[] | null;
 }
 
 export interface ImageGenerationProfile {
