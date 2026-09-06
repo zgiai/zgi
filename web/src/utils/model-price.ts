@@ -226,17 +226,21 @@ export function getModelPriceDisplay({
     if (configuredImagePriceItems.length > 0) {
       return configuredImagePriceItems;
     }
-    if (outputPriceConfigured || isDisplayablePrice(outputPrice)) {
+
+    const hasInputPrice = Boolean(inputPriceConfigured || isDisplayablePrice(inputPrice));
+    const hasOutputPrice = Boolean(outputPriceConfigured || isDisplayablePrice(outputPrice));
+    if (hasInputPrice && hasOutputPrice) {
+      return [
+        buildModelPriceDisplayItem('input', inputPrice, true, 'perMillionTokens', billingDisplay),
+        buildModelPriceDisplayItem('output', outputPrice, true, 'perMillionTokens', billingDisplay),
+      ];
+    }
+
+    if (hasOutputPrice) {
       return [buildModelPriceDisplayItem('image', outputPrice, true, 'perImage', billingDisplay)];
     }
     return [
-      buildModelPriceDisplayItem(
-        'image',
-        inputPrice,
-        Boolean(inputPriceConfigured || isDisplayablePrice(inputPrice)),
-        'perImage',
-        billingDisplay
-      ),
+      buildModelPriceDisplayItem('image', inputPrice, hasInputPrice, 'perImage', billingDisplay),
     ];
   }
 

@@ -199,4 +199,33 @@ assert.deepEqual(
   'image generation pricing must read configured image_prices as per-image pricing'
 );
 
+const imageTokenPriceItems = getModelPriceDisplay({
+  useCases: ['image-gen'],
+  currency: 'USD',
+  inputPrice: 8,
+  outputPrice: 30,
+  inputPriceConfigured: true,
+  outputPriceConfigured: true,
+});
+assert.deepEqual(
+  imageTokenPriceItems.map(item => [item.label, item.unit, item.formattedValue]),
+  [
+    ['input', 'perMillionTokens', '$8.00'],
+    ['output', 'perMillionTokens', '$30.00'],
+  ],
+  'image generation models with input and output prices must display token pricing'
+);
+
+const imageScalarPriceItems = getModelPriceDisplay({
+  useCases: ['image-gen'],
+  currency: 'USD',
+  outputPrice: 0.14,
+  outputPriceConfigured: true,
+});
+assert.deepEqual(
+  imageScalarPriceItems.map(item => [item.label, item.unit, item.formattedValue]),
+  [['image', 'perImage', '$0.14']],
+  'image generation models with only output price must keep per-image fallback pricing'
+);
+
 console.log('Model plaza fallback checks passed.');
