@@ -159,13 +159,6 @@ const promptDetailPagePath = path.join(
   '[promptId]',
   'page.tsx'
 );
-const promptUsageSummaryPath = path.join(
-  rootDir,
-  'src',
-  'components',
-  'prompts',
-  'prompt-usage-summary.tsx'
-);
 const contentParsePagePath = path.join(
   rootDir,
   'src',
@@ -1631,7 +1624,8 @@ const organizationWorkspaceDetailPageSource = fs.readFileSync(
 const workspaceManagementServiceSource = fs.readFileSync(workspaceManagementServicePath, 'utf8');
 const promptListPageSource = fs.readFileSync(promptListPagePath, 'utf8');
 const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
-const promptUsageSummarySource = fs.readFileSync(promptUsageSummaryPath, 'utf8');
+// Usage references now live in the detail page, not a separate summary component.
+const promptUsageSummarySource = promptDetailPageSource;
 const contentParsePageSource = fs.readFileSync(contentParsePagePath, 'utf8');
 const contentParsePlaygroundSource = fs.readFileSync(contentParsePlaygroundPath, 'utf8');
 const contentParseProviderSettingsHandlerSource = fs.readFileSync(
@@ -1963,8 +1957,13 @@ assert.match(
 );
 assert.match(
   organizationPermissionsPageSource,
-  /roles\.filter\(isWorkspaceGovernanceRole\)/,
-  'organization permission page should use the shared governance role helper'
+  /permissionTemplateRoles\.map\(role =>/,
+  'organization permission cards should render only selectable templates, not fixed governance roles'
+);
+assert.doesNotMatch(
+  organizationPermissionsPageSource,
+  /\broles\.map\(/,
+  'organization permission cards must not bypass the governance-role exclusion filter'
 );
 assert.match(
   organizationPermissionsPageSource,
@@ -2103,11 +2102,6 @@ assert.match(
 );
 assert.match(
   promptUsageSummarySource,
-  /const canOpenWorkflowRunLog\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.logsView\)/,
-  'prompt usage run log links should require workflow.logs.view'
-);
-assert.match(
-  promptUsageSummarySource,
   /canOpenWorkflowReference\s*\?\s*\([\s\S]*href=\{`\$\{getAgentDetailBaseHref\(reference\.agent_id,\s*'workflow'\)\}\?nodeId=\$\{reference\.node_id\}`\}/,
   'prompt usage references should gate workflow node deep links with target-page permissions'
 );
@@ -2123,8 +2117,18 @@ assert.doesNotMatch(
 );
 assert.match(
   promptUsageSummarySource,
-  /run\.workflow_run_id && canOpenWorkflowRunLog\s*\?\s*\([\s\S]*href=\{`\$\{getAgentDetailLogsHref\(run\.agent_id,\s*'workflow'\)\}\?runId=\$\{run\.workflow_run_id\}&tab=execution`\}/,
-  'prompt usage recent-run logs should be hidden unless the workflow log direct page is available'
+  /\{usage\?\.last_run_at[\s\S]*t\('detail\.lastRunAt'/,
+  'prompt usage should retain its informational last-run timestamp'
+);
+assert.doesNotMatch(
+  promptUsageSummarySource,
+  /getAgentDetailLogsHref|workflow_run_id/,
+  'the current summary has no run-log links; restoring them requires an explicit logsView permission guard'
+);
+assert.match(
+  promptUsageSummarySource,
+  /\{referenceContent\}[\s\S]*<\/Link>[\s\S]*:\s*\([\s\S]*<div[\s\S]*\{referenceContent\}/,
+  'members without workflow editor access should still see a non-interactive reference summary'
 );
 assert.match(
   contentParsePageSource,
@@ -2443,7 +2447,7 @@ assert.match(
 );
 assert.match(
   fileChunksPanelSource,
-  /disabled=\{!canUpdateFile \|\| updateChunk\.isPending \|\| batchUpdateChunks\.isPending\}/,
+  /disabled=\{\s*!canUpdateFile\s*\|\|\s*updateChunk\.isPending\s*\|\|\s*batchUpdateChunks\.isPending\s*\|\|\s*deleteChunk\.isPending\s*\}/,
   'file chunk mutation controls should be disabled when file.update is absent'
 );
 assert.match(
@@ -2478,8 +2482,8 @@ assert.match(
 );
 assert.match(
   fileManagementContentSource,
-  /onUpload=\{canUpload \? handleUpload : undefined\}/,
-  'file upload sidebar action should stay gated by upload permission'
+  /onUpload=\{selectionMode && canUpload \? handleUpload : undefined\}/,
+  'file upload sidebar action should require both selection mode and upload permission'
 );
 assert.match(
   fileManagementContentSource,
