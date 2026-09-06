@@ -36,8 +36,21 @@ jobs:
             | tar -xz -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/ripgrep-14.1.1-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache: false
+
       - name: Check repository hygiene
         run: ./scripts/check-open-source.sh --worktree
+
+      - name: Check migration source safety
+        working-directory: api
+        env:
+          CONNECTOR_CREDENTIAL_ACTIVE_KEY_ID: ci
+          CONNECTOR_CREDENTIAL_KEYS_JSON: '{"ci":"12345678901234567890123456789012"}'
+        run: go test ./internal/migrations -run '^TestCheck' -count=1
 
   web:
     name: Web type check

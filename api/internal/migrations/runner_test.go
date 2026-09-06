@@ -198,6 +198,130 @@ func TestCheckStaticRules(t *testing.T) {
 	}
 }
 
+func TestCheckMigrationSourceSafetyAllowsDestructiveRollback(t *testing.T) {
+	path := writeMigrationSourceFixture(t, `package migrations
+
+func init() {
+	registerSchemaMigration("209901010000000000_fixture", upFixture, downFixture)
+}
+
+func upFixture(schema *Builder) error {
+	return schema.Raw("CREATE TABLE public.fixture (id uuid PRIMARY KEY)")
+}
+
+func downFixture(schema *Builder) error {
+	if err := schema.Raw("DROP TABLE IF EXISTS public.fixture"); err != nil {
+		return err
+	}
+	return schema.DropIfExists("fixture")
+}
+`)
+
+	if err := checkMigrationSourceSafety([]string{path}); err != nil {
+		t.Fatalf("destructive rollback must not be inspected as an up migration: %v", err)
+	}
+}
+
+func TestCheckMigrationSourceSafetyRejectsDestructiveUpMigration(t *testing.T) {
+	tests := map[string]string{
+		"raw SQL":                   `return schema.Raw("DROP TABLE public.fixture")`,
+		"builder":                   `return schema.DropIfExists("fixture")`,
+		"explicit destructive mode": `return schema.AllowDestructive().Raw("CREATE TABLE public.fixture (id uuid PRIMARY KEY)")`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := writeMigrationSourceFixture(t, `package migrations
+
+func init() {
+	registerSchemaMigration("209901010000000000_fixture", upFixture, nil)
+}
+
+func upFixture(schema *Builder) error {
+	`+body+`
+}
+`)
+
+			err := checkMigrationSourceSafety([]string{path})
+			if err == nil {
+				t.Fatal("expected destructive up migration to be rejected")
+			}
+			if !strings.Contains(err.Error(), "up migration contains forbidden operation") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckMigrationSourceSafetyAllowsExplicitDataFix(t *testing.T) {
+	tests := map[string]string{
+		"raw SQL":                         `return db.Exec(backfillFixture).Error`,
+		"builder update equal helper":     `return schema.UpdateRowsWhereEqual("fixture", "active", true, "expired", false)`,
+		"builder update not equal helper": `return schema.UpdateRowsWhereNotEqual("fixture", "active", true, "expired", false)`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := writeMigrationSourceFixture(t, `package migrations
+
+func init() {
+	registerSchemaMigration("209901010000000000_fixture", upFixture, nil)
+}
+
+const backfillFixture = "UPDATE public.fixture SET active = true; DELETE FROM public.fixture WHERE expired = true"
+
+func upFixture(schema *Builder) error {
+	return schema.DataFix("backfill fixture", func(db *DB) error {
+		`+body+`
+	})
+}
+`)
+
+			if err := checkMigrationSourceSafety([]string{path}); err != nil {
+				t.Fatalf("explicit data fixes are valid up migrations: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckMigrationSourceSafetyRejectsDataModificationOutsideDataFix(t *testing.T) {
+	tests := map[string]string{
+		"raw update":               `return schema.Raw("UPDATE public.fixture SET active = true")`,
+		"raw delete":               `return schema.Raw("DELETE FROM public.fixture WHERE expired = true")`,
+		"builder update equal":     `return schema.UpdateRowsWhereEqual("fixture", "active", true, "expired", false)`,
+		"builder update not equal": `return schema.UpdateRowsWhereNotEqual("fixture", "active", true, "expired", false)`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := writeMigrationSourceFixture(t, `package migrations
+
+func init() {
+	registerSchemaMigration("209901010000000000_fixture", upFixture, nil)
+}
+
+func upFixture(schema *Builder) error {
+	`+body+`
+}
+`)
+
+			err := checkMigrationSourceSafety([]string{path})
+			if err == nil {
+				t.Fatal("expected data modification outside DataFix to be rejected")
+			}
+			if !strings.Contains(err.Error(), "up migration contains forbidden operation") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func writeMigrationSourceFixture(t *testing.T, source string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "209901010000000000_fixture.go")
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatalf("write migration source fixture: %v", err)
+	}
+	return path
+}
+
 func TestMigrationFilenameMatchesRegisteredID(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
