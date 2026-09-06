@@ -9,8 +9,10 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/gorm"
 )
@@ -160,9 +162,6 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 	if !grant.IsActive(time.Now()) || grant.AuthorizationVersion != apiKey.AuthorizationVersion {
 		return errors.New("developer access grant is inactive or stale")
 	}
-	if grant.QuotaLimit != nil && grant.RemainQuota <= 0 {
-		return errors.New("developer access grant has no remaining quota")
-	}
 	var policy accessmodel.Policy
 	policyErr := r.db.WithContext(ctx).
 		Where("workspace_id = ?", *apiKey.WorkspaceID).
@@ -183,6 +182,12 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 		if count == 0 {
 			return errors.New("API key principal is no longer a workspace member")
 		}
+	}
+	// Authorization failures take precedence over quota: removed members must
+	// not receive allowance information, even when their grant is exhausted.
+	if grant.QuotaLimit != nil && grant.RemainQuota <= 0 {
+		return apperror.New(llmerrors.AppCodeDeveloperQuotaExhausted,
+			apperror.WithOperation("apikey.validate_principal_access"))
 	}
 	return nil
 }

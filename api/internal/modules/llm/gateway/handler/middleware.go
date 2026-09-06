@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -17,7 +18,11 @@ type principalAccessValidator interface {
 }
 
 // LLMAPIKeyAuthMiddleware validates LLM API keys
-func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.HandlerFunc {
+func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository, projectors ...*apptransport.Projector) gin.HandlerFunc {
+	var projector *apptransport.Projector
+	if len(projectors) > 0 {
+		projector = projectors[0]
+	}
 	return func(c *gin.Context) {
 		apiKey, errCode, ok := extractGatewayAPIKey(c)
 		if !ok {
@@ -51,7 +56,7 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.Handler
 			}
 			if err := validator.ValidatePrincipalAccess(c.Request.Context(), keyInfo); err != nil {
 				logger.WarnContext(c.Request.Context(), "API key principal access validation failed", err)
-				abortWithProtocolError(c, invalidAPIKeyProtocolError("API key access has been revoked"))
+				abortWithProtocolError(c, principalAccessProtocolError(c, err, projector))
 				return
 			}
 		}

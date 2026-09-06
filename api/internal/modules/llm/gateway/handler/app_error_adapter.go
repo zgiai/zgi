@@ -15,7 +15,27 @@ import (
 var (
 	legacyOpenAIUpstreamTimeout = appcatalog.MustLegacyKey("llm.openai:upstream_timeout")
 	legacyAnthropicTimeoutError = appcatalog.MustLegacyKey("llm.anthropic:timeout_error")
+	legacyPersonalKeyQuota      = appcatalog.MustLegacyKey("llm.personal_key.quota:invalid_api_key")
 )
+
+// principalAccessProtocolError changes only the quota message. Keep HTTP 401,
+// invalid_api_key/authentication_error and the existing JSON/header contract
+// until a separately reviewed protocol migration changes these wire values.
+func principalAccessProtocolError(c *gin.Context, err error, projector *apptransport.Projector) protocolError {
+	legacy := invalidAPIKeyProtocolError("API key access has been revoked")
+	if !apperror.IsCode(err, llmerrors.AppCodeDeveloperQuotaExhausted) {
+		return legacy
+	}
+	legacy.message = "Developer API access has no available quota. Check usage or contact your workspace administrator."
+	if projector != nil {
+		message := projector.ProjectLegacyMessage(err,
+			apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")), legacyPersonalKeyQuota)
+		if message.Resolution == apptransport.ResolutionMatched {
+			legacy.message = message.Message
+		}
+	}
+	return legacy
+}
 
 // localizedProtocolError is an error-only compatibility adapter. The protocol
 // classifier continues to own status, type, code, and wire shape; the

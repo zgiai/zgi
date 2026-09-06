@@ -30,6 +30,7 @@ var (
 	AppCodeDeveloperAccessDisabled   = apperror.MustCode("llm.developer_access.disabled")
 	AppCodeDeveloperApprovalNeeded   = apperror.MustCode("llm.developer_access.approval_required")
 	AppCodeDeveloperAccessConflict   = apperror.MustCode("llm.developer_access.conflict")
+	AppCodeDeveloperQuotaExhausted   = apperror.MustCode("llm.developer_access.quota_exhausted")
 )
 
 // CatalogDefinitions returns fresh LLM-owned definitions for composition into
@@ -126,6 +127,12 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The requested operation conflicts with the current developer access state.",
 			"当前开发者访问状态不允许执行此操作。",
 			"llm.developer_access.conflict:403003"),
+		// Personal-key authentication retains its legacy HTTP 401/code shape.
+		// This domain-scoped alias must not map every invalid_api_key to quota.
+		llmDefinition(AppCodeDeveloperQuotaExhausted, appcatalog.CategoryQuota, 429, false,
+			"Your developer API allowance is exhausted or reserved by in-flight requests. Check usage or contact your workspace administrator. Creating another key does not increase the shared allowance.",
+			"你的开发者 API 额度已用完或被进行中的请求占用。请检查用量或联系工作空间管理员；创建新密钥不会增加共享额度。",
+			"llm.personal_key.quota:invalid_api_key"),
 	}
 }
 
