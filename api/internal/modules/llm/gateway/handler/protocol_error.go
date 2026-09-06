@@ -87,11 +87,45 @@ func internalProtocolError() protocolError {
 }
 
 func writeProtocolError(c *gin.Context, protocolErr protocolError) {
+	if isGeminiRequest(c) {
+		writeGeminiProtocolError(c, protocolErr)
+		return
+	}
 	if isAnthropicRequest(c) {
 		writeAnthropicProtocolError(c, protocolErr)
 		return
 	}
 	writeOpenAIProtocolError(c, protocolErr)
+}
+
+func writeGeminiProtocolError(c *gin.Context, protocolErr protocolError) {
+	c.JSON(protocolErr.openAIStatus, gin.H{"error": gin.H{
+		"code": protocolErr.openAIStatus, "message": protocolErr.message,
+		"status": geminiErrorStatus(protocolErr.openAIStatus),
+	}})
+}
+
+func geminiErrorStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "INVALID_ARGUMENT"
+	case http.StatusUnauthorized:
+		return "UNAUTHENTICATED"
+	case http.StatusForbidden:
+		return "PERMISSION_DENIED"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusTooManyRequests:
+		return "RESOURCE_EXHAUSTED"
+	case http.StatusServiceUnavailable:
+		return "UNAVAILABLE"
+	default:
+		return "INTERNAL"
+	}
+}
+
+func isGeminiRequest(c *gin.Context) bool {
+	return strings.HasPrefix(c.Request.URL.Path, "/v1beta/")
 }
 
 func writeOpenAIProtocolError(c *gin.Context, protocolErr protocolError) {

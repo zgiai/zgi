@@ -28,6 +28,21 @@ func TestPlatformProxyRoutingHeaders(t *testing.T) {
 	if got := req.Header.Get(headerZGIEstimatedOutputTokens); got != "80" {
 		t.Fatalf("estimated output header = %q, want 80", got)
 	}
+	if got := req.Header.Get(headerZGISettlementTransport); got != "" {
+		t.Fatalf("non-stream settlement transport = %q, want empty", got)
+	}
+}
+
+func TestPlatformProxyStreamingNegotiatesSettlementTrailers(t *testing.T) {
+	bc := &BillingContext{BillingLane: UsageBillingLanePlatform, IsStreaming: true}
+	req, err := http.NewRequestWithContext(withPlatformProxyMetadata(context.Background(), bc), http.MethodPost, "http://console.internal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyPlatformProxyHeaders(req)
+	if got := req.Header.Get(headerZGISettlementTransport); got != "trailers" {
+		t.Fatalf("settlement transport = %q, want trailers", got)
+	}
 }
 
 func TestPrivateChannelDoesNotReceiveRoutingHeaders(t *testing.T) {

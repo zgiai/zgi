@@ -106,6 +106,7 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository, projectors 
 func extractGatewayAPIKey(c *gin.Context) (string, string, bool) {
 	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
 	xAPIKey := strings.TrimSpace(c.GetHeader("x-api-key"))
+	xGoogAPIKey := strings.TrimSpace(c.GetHeader("x-goog-api-key"))
 
 	bearerKey := ""
 	if authHeader != "" {
@@ -118,8 +119,22 @@ func extractGatewayAPIKey(c *gin.Context) (string, string, bool) {
 		}
 	}
 
-	if xAPIKey != "" && bearerKey != "" && xAPIKey != bearerKey {
-		return "", "Conflicting API key headers", false
+	keys := make([]string, 0, 3)
+	if bearerKey != "" {
+		keys = append(keys, bearerKey)
+	}
+	if xAPIKey != "" {
+		keys = append(keys, xAPIKey)
+	}
+	if xGoogAPIKey != "" {
+		keys = append(keys, xGoogAPIKey)
+	}
+	if len(keys) > 1 {
+		for _, key := range keys[1:] {
+			if key != keys[0] {
+				return "", "Conflicting API key headers", false
+			}
+		}
 	}
 	if bearerKey != "" {
 		return bearerKey, "", true
@@ -127,5 +142,8 @@ func extractGatewayAPIKey(c *gin.Context) (string, string, bool) {
 	if xAPIKey != "" {
 		return xAPIKey, "", true
 	}
-	return "", "Authorization or x-api-key header required", false
+	if xGoogAPIKey != "" {
+		return xGoogAPIKey, "", true
+	}
+	return "", "Authorization, x-api-key, or x-goog-api-key header required", false
 }

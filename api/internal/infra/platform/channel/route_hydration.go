@@ -43,6 +43,8 @@ func HydrateOfficialRoutes(
 	providerModels := make([]channelmodel.ProviderModel, 0)
 	seenModels := make(map[string]struct{})
 	seenProviderModels := make(map[channelmodel.ProviderModel]struct{})
+	modelProtocols := make(map[string][]string)
+	modelProtocolSeen := make(map[string]map[string]struct{})
 	for _, platformChannel := range channels {
 		if platformChannel == nil {
 			continue
@@ -58,14 +60,33 @@ func HydrateOfficialRoutes(
 				models = append(models, modelName)
 			}
 			if channelProvider == "" {
-				continue
+				// Protocol capability remains model-scoped even if a legacy Console
+				// response omitted the supplier label.
+			} else {
+				pair := channelmodel.ProviderModel{Provider: channelProvider, Model: modelName}
+				if _, ok := seenProviderModels[pair]; !ok {
+					seenProviderModels[pair] = struct{}{}
+					providerModels = append(providerModels, pair)
+				}
 			}
-			pair := channelmodel.ProviderModel{Provider: channelProvider, Model: modelName}
-			if _, ok := seenProviderModels[pair]; ok {
-				continue
+			protocols := platformChannel.ModelProtocols[rawModel]
+			if len(protocols) == 0 {
+				protocols = platformChannel.SupportedProtocols
 			}
-			seenProviderModels[pair] = struct{}{}
-			providerModels = append(providerModels, pair)
+			if modelProtocolSeen[modelName] == nil {
+				modelProtocolSeen[modelName] = map[string]struct{}{}
+			}
+			for _, protocol := range protocols {
+				protocol = strings.TrimSpace(protocol)
+				if protocol == "" {
+					continue
+				}
+				if _, exists := modelProtocolSeen[modelName][protocol]; exists {
+					continue
+				}
+				modelProtocolSeen[modelName][protocol] = struct{}{}
+				modelProtocols[modelName] = append(modelProtocols[modelName], protocol)
+			}
 		}
 	}
 	sort.Strings(models)
@@ -82,6 +103,7 @@ func HydrateOfficialRoutes(
 		}
 		route.Models = append([]string(nil), models...)
 		route.OfficialProviderModels = append([]channelmodel.ProviderModel(nil), providerModels...)
+		route.OfficialModelProtocols = cloneModelProtocols(modelProtocols)
 	}
 	return routes, nil
 }

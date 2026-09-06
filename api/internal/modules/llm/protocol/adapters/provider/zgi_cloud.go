@@ -221,6 +221,11 @@ func (a *ZGICloudAdapter) ChatCompletionStream(ctx context.Context, request *ada
 			}
 
 			if !ok {
+				if parsed := settlementFromHeaders(resp.Trailer); parsed != nil {
+					settlement = parsed
+				} else if parsed := settlementFromHeaders(resp.Header); parsed != nil {
+					settlement = parsed
+				}
 				respChan <- adapter.StreamResponse{
 					Done:       true,
 					Usage:      lastUsage,
@@ -297,7 +302,7 @@ func (a *ZGICloudAdapter) CreateResponseRaw(ctx context.Context, request *adapte
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, handleOpenAICompatibleError(httpResp.StatusCode, httpResp.Body)
+		return nil, rawProtocolError(httpResp)
 	}
 
 	return &adapter.RawResponse{
@@ -316,12 +321,12 @@ func (a *ZGICloudAdapter) CreateResponseStream(ctx context.Context, request *ada
 	url := fmt.Sprintf("%s/responses", a.baseURL)
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, a.buildHeaders(), body)
 	if err != nil {
-		return nil, handleZGICloudStreamError(err)
+		return nil, handleZGICloudRawStreamError(err)
 	}
 
 	return streamRawHTTPEvents(ctx, resp.Body, func(raw json.RawMessage, _ *adapter.Usage) *adapter.Usage {
 		return openAIUsageFromRaw(raw)
-	}), nil
+	}, resp), nil
 }
 
 func (a *ZGICloudAdapter) CreateAnthropicMessage(ctx context.Context, request *adapter.AnthropicMessageRequest) (*adapter.RawResponse, error) {
@@ -336,7 +341,7 @@ func (a *ZGICloudAdapter) CreateAnthropicMessage(ctx context.Context, request *a
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, handleOpenAICompatibleError(httpResp.StatusCode, httpResp.Body)
+		return nil, rawProtocolError(httpResp)
 	}
 
 	return &adapter.RawResponse{
@@ -355,10 +360,46 @@ func (a *ZGICloudAdapter) CreateAnthropicMessageStream(ctx context.Context, requ
 	url := fmt.Sprintf("%s/anthropic/v1/messages", a.baseURL)
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, a.buildAnthropicHeaders(request.Headers), body)
 	if err != nil {
-		return nil, handleZGICloudStreamError(err)
+		return nil, handleZGICloudRawStreamError(err)
 	}
 
-	return streamRawHTTPEvents(ctx, resp.Body, anthropicUsageFromRaw), nil
+	return streamRawHTTPEvents(ctx, resp.Body, anthropicUsageFromRaw, resp), nil
+}
+
+func (a *ZGICloudAdapter) CreateGeminiContent(ctx context.Context, request *adapter.GeminiGenerateContentRequest) (*adapter.RawResponse, error) {
+	body, err := rawRequestBody(request.Body)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(a.baseURL, "/"), url.PathEscape(request.Model))
+	httpResp, err := a.httpClient.DoRequestDetailed(ctx, http.MethodPost, endpoint, a.buildHeaders(), body)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, rawProtocolError(httpResp)
+	}
+	return &adapter.RawResponse{Body: httpResp.Body, Usage: geminiUsageFromRaw(httpResp.Body, nil), Settlement: settlementFromHeaders(httpResp.Header)}, nil
+}
+
+func (a *ZGICloudAdapter) CreateGeminiContentStream(ctx context.Context, request *adapter.GeminiGenerateContentRequest) (<-chan adapter.RawStreamEvent, error) {
+	body, err := rawRequestBody(request.Body)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", strings.TrimRight(a.baseURL, "/"), url.PathEscape(request.Model))
+	resp, err := a.httpClient.DoStreamRequest(ctx, http.MethodPost, endpoint, a.buildHeaders(), body)
+	if err != nil {
+		return nil, handleZGICloudRawStreamError(err)
+	}
+	return streamRawHTTPEvents(ctx, resp.Body, geminiUsageFromRaw, resp), nil
+}
+
+func rawProtocolError(resp *adapter.HTTPResponse) error {
+	if resp == nil {
+		return &adapter.RawProtocolError{StatusCode: http.StatusBadGateway, ContentType: "application/json"}
+	}
+	return newRawProtocolError(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
 }
 
 func handleZGICloudStreamError(err error) error {
@@ -367,6 +408,28 @@ func handleZGICloudStreamError(err error) error {
 		return handleOpenAICompatibleError(statusErr.StatusCode, statusErr.Body)
 	}
 	return fmt.Errorf("stream request failed: %w", err)
+}
+
+func handleZGICloudRawStreamError(err error) error {
+	var statusErr *adapter.HTTPStatusError
+	if errors.As(err, &statusErr) {
+		return newRawProtocolError(statusErr.StatusCode, "application/json", statusErr.Body)
+	}
+	return fmt.Errorf("stream request failed: %w", err)
+}
+
+func newRawProtocolError(status int, contentType string, body []byte) error {
+	var cause error
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) == nil && (payload.Error.Code == adapter.ErrorCodePlatformChannelUnavailable || payload.Error.Type == adapter.ErrorCodePlatformChannelUnavailable) {
+		cause = adapter.ErrPlatformChannelUnavailable
+	}
+	return &adapter.RawProtocolError{StatusCode: status, ContentType: contentType, Body: append([]byte(nil), body...), Cause: cause}
 }
 
 func (a *ZGICloudAdapter) CreateEmbeddings(ctx context.Context, request *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {

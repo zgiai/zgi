@@ -10,13 +10,15 @@ import (
 
 // OfficialChannel represents a platform-provided channel for routing decisions.
 type OfficialChannel struct {
-	ID         string
-	Name       string
-	Provider   string
-	Models     []string
-	Priority   int
-	Weight     int
-	APIBaseURL string // console-api internal endpoint (e.g. "https://console.zgi.ai/v1/internal")
+	ID                 string
+	Name               string
+	Provider           string
+	Models             []string
+	Priority           int
+	Weight             int
+	SupportedProtocols []string
+	ModelProtocols     map[string][]string
+	APIBaseURL         string // console-api internal endpoint (e.g. "https://console.zgi.ai/v1/internal")
 }
 
 // ChannelProvider defines the interface for fetching official channels.
@@ -30,16 +32,28 @@ type ChannelProvider interface {
 // IsOfficial is still set for per-org priority/weight management.
 func (o *OfficialChannel) ToTenantRoute(tenantID uuid.UUID) *channelmodel.LLMRoute {
 	return &channelmodel.LLMRoute{
-		ID:              uuid.New(),
-		OrganizationID:  tenantID,
-		Type:            shared.RouteTypeZGICloud,
-		Name:            o.Name,
-		ChannelProvider: o.Provider,
-		APIBaseURL:      o.APIBaseURL,
-		Models:          o.Models,
-		Priority:        o.Priority,
-		Weight:          o.Weight,
-		IsEnabled:       true,
-		IsOfficial:      true,
+		ID:                     uuid.New(),
+		OrganizationID:         tenantID,
+		Type:                   shared.RouteTypeZGICloud,
+		Name:                   o.Name,
+		ChannelProvider:        o.Provider,
+		APIBaseURL:             o.APIBaseURL,
+		Models:                 o.Models,
+		Priority:               o.Priority,
+		Weight:                 o.Weight,
+		IsEnabled:              true,
+		IsOfficial:             true,
+		OfficialModelProtocols: cloneModelProtocols(o.ModelProtocols),
 	}
+}
+
+func cloneModelProtocols(source map[string][]string) map[string][]string {
+	if len(source) == 0 {
+		return nil
+	}
+	result := make(map[string][]string, len(source))
+	for model, protocols := range source {
+		result[model] = append([]string(nil), protocols...)
+	}
+	return result
 }

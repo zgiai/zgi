@@ -15,11 +15,14 @@ import (
 )
 
 const (
+	protocolOpenAIChatCompletions  = "openai_chat_completions"
 	protocolOpenAIResponses        = "openai_responses"
 	protocolAnthropicMessages      = "anthropic_messages"
 	modelCategoryImage             = "image"
 	modelCategoryResponses         = "responses"
 	modelCategoryAnthropicMessages = "anthropic_messages"
+	protocolGeminiGenerateContent  = "gemini_generate_content"
+	modelCategoryGemini            = "gemini_generate_content"
 )
 
 func (s *llmGatewayServiceImpl) CreateResponseRaw(
@@ -106,6 +109,42 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessageStream(
 	return s.createNativeAnthropicMessageStream(ctx, apiKey, effectiveReq)
 }
 
+func (s *llmGatewayServiceImpl) CreateGeminiContent(
+	ctx context.Context,
+	apiKey *apikeymodel.TenantAPIKey,
+	req *adapter.GeminiGenerateContentRequest,
+) (*adapter.RawResponse, error) {
+	if err := validateGeminiGenerateContentRequest(req); err != nil {
+		return nil, err
+	}
+	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryGemini)
+	return s.runNativeNonStream(ctx, apiKey, req.Model, req.Body, "llm.gemini.generate_content", nativeUsageBodyFormatGemini, func(callCtx context.Context, providerAdapter adapter.LLMProviderAdapter) (*adapter.RawResponse, error) {
+		capable, ok := providerAdapter.(adapter.GeminiGenerateContentCapable)
+		if !ok {
+			return nil, fmt.Errorf("%w: selected provider does not support Gemini generateContent", adapter.ErrCapabilityUnsupported)
+		}
+		return capable.CreateGeminiContent(callCtx, req)
+	})
+}
+
+func (s *llmGatewayServiceImpl) CreateGeminiContentStream(
+	ctx context.Context,
+	apiKey *apikeymodel.TenantAPIKey,
+	req *adapter.GeminiGenerateContentRequest,
+) (<-chan adapter.RawStreamEvent, error) {
+	if err := validateGeminiGenerateContentRequest(req); err != nil {
+		return nil, err
+	}
+	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryGemini)
+	return s.runNativeStream(ctx, apiKey, req.Model, req.Body, "llm.gemini.stream_generate_content", nativeUsageBodyFormatGemini, func(callCtx context.Context, providerAdapter adapter.LLMProviderAdapter) (<-chan adapter.RawStreamEvent, error) {
+		capable, ok := providerAdapter.(adapter.GeminiGenerateContentCapable)
+		if !ok {
+			return nil, fmt.Errorf("%w: selected provider does not support Gemini streamGenerateContent", adapter.ErrCapabilityUnsupported)
+		}
+		return capable.CreateGeminiContentStream(callCtx, req)
+	})
+}
+
 func validateRawResponseRequest(req *adapter.RawResponseRequest) error {
 	if req == nil {
 		return fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
@@ -121,6 +160,20 @@ func validateRawResponseRequest(req *adapter.RawResponseRequest) error {
 }
 
 func validateAnthropicMessageRequest(req *adapter.AnthropicMessageRequest) error {
+	if req == nil {
+		return fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
+	}
+	req.Model = normalizeRequestedModelName(req.Model)
+	if req.Model == "" {
+		return ErrMissingModel
+	}
+	if len(req.Body) == 0 || !json.Valid(req.Body) {
+		return fmt.Errorf("%w: request body must be valid JSON", adapter.ErrInvalidRequest)
+	}
+	return nil
+}
+
+func validateGeminiGenerateContentRequest(req *adapter.GeminiGenerateContentRequest) error {
 	if req == nil {
 		return fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
 	}
@@ -211,7 +264,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 		return nil, reportedNoProviderAvailableError(ctx, model, organizationID.String(), shadowOrganizationID.String())
 	}
 
-	requestID := uuid.New().String()
+	requestID := gatewayRequestIDFromContext(ctx)
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
 		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
@@ -387,7 +440,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		return nil, reportedNoProviderAvailableError(ctx, model, organizationID.String(), shadowOrganizationID.String())
 	}
 
-	requestID := uuid.New().String()
+	requestID := gatewayRequestIDFromContext(ctx)
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
 		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
@@ -633,4 +686,13 @@ func logNativeProtocolUnsupported(ctx context.Context, err error) {
 		return
 	}
 	logger.DebugContext(ctx, "native protocol capability rejected", err)
+}
+
+func gatewayRequestIDFromContext(ctx context.Context) string {
+	if ctx != nil {
+		if requestID, ok := ctx.Value(shared.ContextKeyRequestID).(string); ok && strings.TrimSpace(requestID) != "" {
+			return strings.TrimSpace(requestID)
+		}
+	}
+	return uuid.NewString()
 }

@@ -48,13 +48,26 @@ func openAIUsageFromRaw(raw json.RawMessage) *adapter.Usage {
 }
 
 type openAIUsageShape struct {
-	InputTokens      int `json:"input_tokens"`
-	OutputTokens     int `json:"output_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	VideoTokens      int `json:"video_tokens"`
-	TotalVideoTokens int `json:"total_video_tokens"`
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
+	InputTokens        int `json:"input_tokens"`
+	OutputTokens       int `json:"output_tokens"`
+	TotalTokens        int `json:"total_tokens"`
+	VideoTokens        int `json:"video_tokens"`
+	TotalVideoTokens   int `json:"total_video_tokens"`
+	PromptTokens       int `json:"prompt_tokens"`
+	CompletionTokens   int `json:"completion_tokens"`
+	InputTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
+	PromptTokensDetails struct {
+		CachedTokens        int `json:"cached_tokens"`
+		CacheCreationTokens int `json:"cache_creation_tokens"`
+	} `json:"prompt_tokens_details"`
+	OutputTokensDetails struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"output_tokens_details"`
+	CompletionTokensDetails struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
 }
 
 func (u openAIUsageShape) toAdapterUsage() *adapter.Usage {
@@ -79,11 +92,69 @@ func (u openAIUsageShape) toAdapterUsage() *adapter.Usage {
 	if promptTokens == 0 && completionTokens == 0 && totalTokens == 0 {
 		return nil
 	}
-	return &adapter.Usage{
+	usage := &adapter.Usage{
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		TotalTokens:      totalTokens,
 	}
+	usage.CacheReadTokens = maxRawUsageInt(u.InputTokensDetails.CachedTokens, u.PromptTokensDetails.CachedTokens)
+	usage.CacheWriteTokens = u.PromptTokensDetails.CacheCreationTokens
+	usage.CompletionTokensDetails.ReasoningTokens = maxRawUsageInt(u.OutputTokensDetails.ReasoningTokens, u.CompletionTokensDetails.ReasoningTokens)
+	usage.NormalizeCacheTokens()
+	return usage
+}
+
+func maxRawUsageInt(values ...int) int {
+	best := 0
+	for _, value := range values {
+		if value > best {
+			best = value
+		}
+	}
+	return best
+}
+
+func geminiUsageFromRaw(raw json.RawMessage, previous *adapter.Usage) *adapter.Usage {
+	if len(raw) == 0 {
+		return previous
+	}
+	var payload struct {
+		Usage struct {
+			PromptTokens     int `json:"promptTokenCount"`
+			CompletionTokens int `json:"candidatesTokenCount"`
+			TotalTokens      int `json:"totalTokenCount"`
+			CachedTokens     int `json:"cachedContentTokenCount"`
+			ReasoningTokens  int `json:"thoughtsTokenCount"`
+		} `json:"usageMetadata"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return previous
+	}
+	u := payload.Usage
+	if previous == nil && u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0 && u.CachedTokens == 0 && u.ReasoningTokens == 0 {
+		return nil
+	}
+	usage := &adapter.Usage{}
+	if previous != nil {
+		*usage = *previous
+	}
+	if u.PromptTokens > 0 {
+		usage.PromptTokens = u.PromptTokens
+	}
+	if u.CompletionTokens > 0 {
+		usage.CompletionTokens = u.CompletionTokens
+	}
+	if u.TotalTokens > 0 {
+		usage.TotalTokens = u.TotalTokens
+	}
+	if u.CachedTokens > 0 {
+		usage.CacheReadTokens = u.CachedTokens
+	}
+	if u.ReasoningTokens > 0 {
+		usage.CompletionTokensDetails.ReasoningTokens = u.ReasoningTokens
+	}
+	usage.NormalizeCacheTokens()
+	return usage
 }
 
 func anthropicUsageFromRaw(raw json.RawMessage, previous *adapter.Usage) *adapter.Usage {
@@ -173,6 +244,7 @@ func streamRawHTTPEvents(
 	ctx context.Context,
 	respBody io.ReadCloser,
 	usageFromRaw func(json.RawMessage, *adapter.Usage) *adapter.Usage,
+	responses ...*http.Response,
 ) <-chan adapter.RawStreamEvent {
 	out := make(chan adapter.RawStreamEvent, 10)
 	eventChan := make(chan adapter.RawStreamEvent, 10)
@@ -198,6 +270,13 @@ func streamRawHTTPEvents(
 				return
 			case event, ok := <-eventChan:
 				if !ok {
+					if len(responses) > 0 && responses[0] != nil {
+						if parsed := settlementFromHeaders(responses[0].Trailer); parsed != nil {
+							settlement = parsed
+						} else if parsed := settlementFromHeaders(responses[0].Header); parsed != nil {
+							settlement = parsed
+						}
+					}
 					out <- adapter.RawStreamEvent{Done: true, Usage: lastUsage, Settlement: settlement}
 					return
 				}

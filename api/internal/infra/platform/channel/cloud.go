@@ -126,11 +126,13 @@ func (c *Cloud) fetchFromConsole(ctx context.Context) ([]*OfficialChannel, error
 		Message string `json:"message"`
 		Data    struct {
 			Channels []struct {
-				ID       string   `json:"id"`
-				Provider string   `json:"provider"`
-				Models   []string `json:"models"`
-				Priority int      `json:"priority"`
-				Weight   int      `json:"weight"`
+				ID                 string              `json:"id"`
+				Provider           string              `json:"provider"`
+				Models             []string            `json:"models"`
+				Priority           int                 `json:"priority"`
+				Weight             int                 `json:"weight"`
+				SupportedProtocols []string            `json:"supported_protocols"`
+				ModelProtocols     map[string][]string `json:"model_protocols"`
 			} `json:"channels"`
 		} `json:"data"`
 	}
@@ -146,12 +148,14 @@ func (c *Cloud) fetchFromConsole(ctx context.Context) ([]*OfficialChannel, error
 	channels := make([]*OfficialChannel, 0, len(consoleResp.Data.Channels))
 	for _, ch := range consoleResp.Data.Channels {
 		channels = append(channels, &OfficialChannel{
-			ID:         ch.ID,
-			Provider:   ch.Provider,
-			Models:     ch.Models,
-			Priority:   ch.Priority,
-			Weight:     ch.Weight,
-			APIBaseURL: c.baseURL + "/v1/internal", // console-api internal endpoint acts as OpenAI-compatible base
+			ID:                 ch.ID,
+			Provider:           ch.Provider,
+			Models:             ch.Models,
+			Priority:           ch.Priority,
+			Weight:             ch.Weight,
+			SupportedProtocols: append([]string(nil), ch.SupportedProtocols...),
+			ModelProtocols:     cloneModelProtocols(ch.ModelProtocols),
+			APIBaseURL:         c.baseURL + "/v1/internal", // console-api internal endpoint acts as OpenAI-compatible base
 		})
 	}
 
@@ -180,6 +184,8 @@ func (c *Cloud) deepCopy() []*OfficialChannel {
 		copied := *ch
 		copied.Models = make([]string, len(ch.Models))
 		copy(copied.Models, ch.Models)
+		copied.SupportedProtocols = append([]string(nil), ch.SupportedProtocols...)
+		copied.ModelProtocols = cloneModelProtocols(ch.ModelProtocols)
 		result[i] = &copied
 	}
 	return result

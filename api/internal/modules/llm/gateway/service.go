@@ -22,6 +22,7 @@ import (
 	pconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
 	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
@@ -861,16 +862,50 @@ func (s *llmGatewayServiceImpl) ListAvailableModels(
 		}
 
 		result = append(result, adapter.Model{
-			ID:            m.Model,
-			Name:          m.ModelName,
-			Description:   "",
-			ContextLength: m.ContextWindow,
-			Created:       m.CreatedAt.Unix(),
-			OwnedBy:       m.Provider,
+			ID:                 m.Model,
+			Name:               m.ModelName,
+			Description:        "",
+			ContextLength:      m.ContextWindow,
+			Created:            m.CreatedAt.Unix(),
+			OwnedBy:            m.Provider,
+			SupportedProtocols: supportedProtocolsForRoutes(routableModels[normalizeRequestedModelName(m.Model)], &m),
 		})
 	}
 
 	return result, nil
+}
+
+func supportedProtocolsForRoutes(routes []*channelmodel.LLMRoute, model *llmmodel.LLMModel) []string {
+	modelName := ""
+	if model != nil {
+		modelName = model.Model
+	}
+	checks := []struct {
+		name string
+		ok   func(*channelmodel.LLMRoute) bool
+	}{
+		{protocolOpenAIChatCompletions, func(route *channelmodel.LLMRoute) bool {
+			if supported, declared := routeProtocolDeclaration(route, modelName, protocolOpenAIChatCompletions); declared {
+				return supported
+			}
+			return true
+		}},
+		{protocolOpenAIResponses, func(route *channelmodel.LLMRoute) bool {
+			return (isOfficialRoute(route) || model != nil && model.Responses) && routeSupportsOpenAIResponses(route, modelName)
+		}},
+		{protocolAnthropicMessages, func(route *channelmodel.LLMRoute) bool { return routeSupportsAnthropicMessages(route, modelName) }},
+		{protocolGeminiGenerateContent, func(route *channelmodel.LLMRoute) bool { return routeSupportsGeminiGenerateContent(route, modelName) }},
+	}
+	result := make([]string, 0, len(checks))
+	for _, check := range checks {
+		for _, route := range routes {
+			if route != nil && check.ok(route) {
+				result = append(result, check.name)
+				break
+			}
+		}
+	}
+	return result
 }
 
 // validateRequest validates the chat request

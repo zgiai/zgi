@@ -23,8 +23,9 @@ type Spec struct {
 
 // NativeCapabilities describes provider-native protocol support.
 type NativeCapabilities struct {
-	OpenAIResponses   NativeProtocolCapability
-	AnthropicMessages NativeProtocolCapability
+	OpenAIResponses       NativeProtocolCapability
+	AnthropicMessages     NativeProtocolCapability
+	GeminiGenerateContent NativeProtocolCapability
 }
 
 type NativeProtocolCapability struct {
@@ -33,9 +34,9 @@ type NativeProtocolCapability struct {
 }
 
 var specs = map[string]Spec{
-	"zgi-cloud":         {Name: "zgi-cloud", AdapterKey: "zgi-cloud", LookupProvider: "zgi-cloud", RequiresBaseURL: true, AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
+	"zgi-cloud":         {Name: "zgi-cloud", AdapterKey: "zgi-cloud", LookupProvider: "zgi-cloud", RequiresBaseURL: true, AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol(), GeminiGenerateContent: supportedNativeProtocol()}},
 	"openai":            {Name: "openai", AdapterKey: "openai", LookupProvider: "openai", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
-	"openai-compatible": {Name: "openai-compatible", AdapterKey: "openai-compatible", LookupProvider: "openai", RequiresBaseURL: true, AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: explicitNativeProtocol(), AnthropicMessages: explicitNativeProtocol()}},
+	"openai-compatible": {Name: "openai-compatible", AdapterKey: "openai-compatible", LookupProvider: "openai", RequiresBaseURL: true, AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: explicitNativeProtocol(), AnthropicMessages: explicitNativeProtocol(), GeminiGenerateContent: explicitNativeProtocol()}},
 	"ollama":            {Name: "ollama", AdapterKey: "ollama", LookupProvider: "ollama", RequiresBaseURL: true, AllowsEmptyKey: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
 	"agicto":            {Name: "agicto", AdapterKey: "agicto", LookupProvider: "openai", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
 	"glm":               {Name: "glm", AdapterKey: "glm", LookupProvider: "zhipu", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
@@ -56,16 +57,16 @@ var specs = map[string]Spec{
 	"alibaba":           {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
 	"dashscope":         {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
 	"aliyun":            {Name: "qwen", AdapterKey: "dashscope", LookupProvider: "qwen", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
-	"moonshot":          {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"moonshotai":        {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"moonshotai-cn":     {Name: "moonshotai-cn", AdapterKey: "moonshotai-cn", LookupProvider: "moonshot", NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
-	"kimi":              {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{AnthropicMessages: supportedNativeProtocol()}},
+	"moonshot":          {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
+	"moonshotai":        {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
+	"moonshotai-cn":     {Name: "moonshotai-cn", AdapterKey: "moonshotai-cn", LookupProvider: "moonshot", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
+	"kimi":              {Name: "moonshot", AdapterKey: "moonshotai", LookupProvider: "moonshot", AgentProtocolSupported: true, NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol(), AnthropicMessages: supportedNativeProtocol()}},
 	"volcengine":        {Name: "volcengine", AdapterKey: "volcengine", LookupProvider: "doubao", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
 	"doubao":            {Name: "doubao", AdapterKey: "doubao", LookupProvider: "doubao", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
 	"doubao-speech":     {Name: "doubao-speech", AdapterKey: "doubao-speech", LookupProvider: "doubao"},
 	"ark":               {Name: "doubao", AdapterKey: "doubao", LookupProvider: "doubao", NativeCapabilities: NativeCapabilities{OpenAIResponses: supportedNativeProtocol()}},
-	"google":            {Name: "google", AdapterKey: "gcp-imagen", LookupProvider: "google"},
-	"gemini":            {Name: "google", AdapterKey: "gcp-imagen", LookupProvider: "google"},
+	"google":            {Name: "google", AdapterKey: "gcp-imagen", LookupProvider: "google", NativeCapabilities: NativeCapabilities{GeminiGenerateContent: supportedNativeProtocol()}},
+	"gemini":            {Name: "google", AdapterKey: "gcp-imagen", LookupProvider: "google", NativeCapabilities: NativeCapabilities{GeminiGenerateContent: supportedNativeProtocol()}},
 	"gcp-imagen":        {Name: "google", AdapterKey: "gcp-imagen", LookupProvider: "google"},
 	"midjourney":        {Name: "midjourney", AdapterKey: "midjourney", LookupProvider: "openai"},
 	"mj-proxy":          {Name: "midjourney", AdapterKey: "midjourney", LookupProvider: "openai"},
@@ -244,4 +245,13 @@ func AnthropicMessagesCapability(raw string) NativeProtocolCapability {
 		return NativeProtocolCapability{}
 	}
 	return spec.NativeCapabilities.AnthropicMessages
+}
+
+// GeminiGenerateContentCapability returns native Gemini protocol support.
+func GeminiGenerateContentCapability(raw string) NativeProtocolCapability {
+	spec, err := Resolve(raw)
+	if err != nil {
+		return NativeProtocolCapability{}
+	}
+	return spec.NativeCapabilities.GeminiGenerateContent
 }

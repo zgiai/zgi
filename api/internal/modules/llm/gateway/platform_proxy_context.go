@@ -22,6 +22,7 @@ const (
 	headerZGIRoutingStrategy       = "X-ZGI-Routing-Strategy"
 	headerZGIEstimatedInputTokens  = "X-ZGI-Estimated-Input-Tokens"
 	headerZGIEstimatedOutputTokens = "X-ZGI-Estimated-Output-Tokens"
+	headerZGISettlementTransport   = "X-ZGI-Settlement-Transport"
 )
 
 type platformProxyContextKey struct{}
@@ -101,6 +102,7 @@ func applyPlatformProxyHeaders(req *http.Request) {
 	}
 	if meta.IsStreaming {
 		req.Header.Set(headerZGIIsStreaming, "true")
+		req.Header.Set(headerZGISettlementTransport, "trailers")
 	}
 }
 

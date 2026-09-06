@@ -1820,6 +1820,31 @@ func TestFilterRoutesForNativeProtocol_ResponsesSkipsChatOnlyRoutes(t *testing.T
 	}
 }
 
+func TestFilterRoutesForNativeProtocol_UsesConsoleModelCapabilityForOfficialRoute(t *testing.T) {
+	route := &channelmodel.LLMRoute{
+		ID: uuid.New(), Type: shared.RouteTypeZGICloud, ChannelProvider: "zgi-cloud", IsOfficial: true,
+		OfficialModelProtocols: map[string][]string{"console-model": {protocolOpenAIResponses, protocolGeminiGenerateContent}},
+	}
+	model := &llmmodel.LLMModel{Model: "console-model", Provider: "openai", Responses: false}
+	if got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, modelCategoryResponses); len(got) != 1 {
+		t.Fatalf("Responses routes = %d, want Console-declared official route", len(got))
+	}
+	if got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, modelCategoryGemini); len(got) != 1 {
+		t.Fatalf("Gemini routes = %d, want Console-declared official route", len(got))
+	}
+	if got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, modelCategoryAnthropicMessages); len(got) != 0 {
+		t.Fatalf("Messages routes = %d, want protocol filtered", len(got))
+	}
+}
+
+func TestFilterRoutesForNativeProtocol_DoesNotExposeOfficialGeminiBeforeConsoleCapabilitySync(t *testing.T) {
+	route := &channelmodel.LLMRoute{ID: uuid.New(), Type: shared.RouteTypeZGICloud, ChannelProvider: "zgi-cloud", IsOfficial: true}
+	model := &llmmodel.LLMModel{Model: "gemini-model", Provider: "google"}
+	if got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, modelCategoryGemini); len(got) != 0 {
+		t.Fatalf("Gemini routes = %d, want no route before Console capability sync", len(got))
+	}
+}
+
 func TestFilterRoutesForNativeProtocol_OpenAICompatibleRequiresExplicitResponsesConfig(t *testing.T) {
 	routes := []*channelmodel.LLMRoute{
 		{
@@ -1862,10 +1887,11 @@ func TestFilterRoutesForNativeProtocol_ResponsesRequiresModelCapabilityForKnownM
 			},
 		},
 		{
-			ID:              uuid.New(),
-			Type:            shared.RouteTypeZGICloud,
-			ChannelProvider: "zgi-cloud",
-			IsOfficial:      true,
+			ID:                     uuid.New(),
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			IsOfficial:             true,
+			OfficialModelProtocols: map[string][]string{"chat-only-model": {protocolOpenAIChatCompletions}},
 		},
 	}
 	model := &llmmodel.LLMModel{

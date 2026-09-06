@@ -3,11 +3,35 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/shopspring/decimal"
 )
+
+// RawProtocolError keeps a provider-native error body/status intact so the
+// public protocol handler can return it without converting error schemas.
+type RawProtocolError struct {
+	StatusCode  int
+	ContentType string
+	Body        []byte
+	Cause       error
+}
+
+func (e *RawProtocolError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func (e *RawProtocolError) Error() string {
+	if e == nil {
+		return "native protocol request failed"
+	}
+	return fmt.Sprintf("native protocol request failed with status %d", e.StatusCode)
+}
 
 // ProviderAdapter defines the provider-level contract shared by all adapters.
 type ProviderAdapter interface {
@@ -39,6 +63,13 @@ type RawResponseCapable interface {
 type AnthropicMessagesCapable interface {
 	CreateAnthropicMessage(ctx context.Context, request *AnthropicMessageRequest) (*RawResponse, error)
 	CreateAnthropicMessageStream(ctx context.Context, request *AnthropicMessageRequest) (<-chan RawStreamEvent, error)
+}
+
+// GeminiGenerateContentCapable preserves the Google Gemini generateContent
+// and streamGenerateContent wire contract.
+type GeminiGenerateContentCapable interface {
+	CreateGeminiContent(ctx context.Context, request *GeminiGenerateContentRequest) (*RawResponse, error)
+	CreateGeminiContentStream(ctx context.Context, request *GeminiGenerateContentRequest) (<-chan RawStreamEvent, error)
 }
 
 // EmbeddingCapable defines embedding generation capability.
@@ -150,6 +181,13 @@ type RawResponseRequest struct {
 type AnthropicMessageRequest struct {
 	Model   string            `json:"model"`
 	Stream  bool              `json:"stream,omitempty"`
+	Body    json.RawMessage   `json:"-"`
+	Headers map[string]string `json:"-"`
+}
+
+type GeminiGenerateContentRequest struct {
+	Model   string            `json:"-"`
+	Stream  bool              `json:"-"`
 	Body    json.RawMessage   `json:"-"`
 	Headers map[string]string `json:"-"`
 }
@@ -500,6 +538,7 @@ type Model struct {
 	IsModerated         bool                   `json:"is_moderated,omitempty"`
 	Endpoints           []string               `json:"endpoints,omitempty"`    // Supported API endpoints (e.g., ["chat", "embed", "rerank"])
 	IsFinetuned         bool                   `json:"is_finetuned,omitempty"` // Whether model is a fine-tuned version
+	SupportedProtocols  []string               `json:"supported_protocols,omitempty"`
 }
 
 // ModelArchitecture model architecture info

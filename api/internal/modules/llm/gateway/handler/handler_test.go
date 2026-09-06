@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -187,5 +188,37 @@ func TestRecordServiceErrorPreservesConcreteFailureForOuterMiddleware(t *testing
 	hint, ok := c.Errors[0].Meta.(observability.FailureReportHint)
 	if !ok || hint.EventName != "llm.request.failed" || hint.Classification.Source != observability.ErrorSourceProvider || hint.Classification.Code != "upstream_request_failed" {
 		t.Fatalf("report hint = %#v, want provider classification", c.Errors[0].Meta)
+	}
+}
+
+func TestExtractGatewayAPIKeySupportsGeminiHeaderAndRejectsConflicts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent", nil)
+	c.Request.Header.Set("x-goog-api-key", "pre-key")
+
+	key, message, ok := extractGatewayAPIKey(c)
+	if !ok || key != "pre-key" || message != "" {
+		t.Fatalf("key=%q message=%q ok=%t", key, message, ok)
+	}
+
+	c.Request.Header.Set("Authorization", "Bearer another-key")
+	if _, message, ok := extractGatewayAPIKey(c); ok || message != "Conflicting API key headers" {
+		t.Fatalf("conflicting headers: message=%q ok=%t", message, ok)
+	}
+}
+
+func TestParseGeminiGenerateContentRequestUsesNativePathAndBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-logical:streamGenerateContent?alt=sse", strings.NewReader(`{"contents":[{"parts":[{"text":"hello"}]}]}`))
+	c.Params = gin.Params{{Key: "modelAction", Value: "/gemini-logical:streamGenerateContent"}}
+
+	req, err := parseGeminiGenerateContentRequest(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Model != "gemini-logical" || !req.Stream || !strings.Contains(string(req.Body), `"contents"`) {
+		t.Fatalf("request = %#v body=%s", req, req.Body)
 	}
 }

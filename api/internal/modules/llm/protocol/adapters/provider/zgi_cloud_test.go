@@ -1292,6 +1292,89 @@ func TestZGICloudAdapterRerank_ForwardsToConsoleInternal(t *testing.T) {
 	}
 }
 
+func TestZGICloudAdapterGeminiGenerateContentPreservesProtocolAndUsage(t *testing.T) {
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/v1/internal/v1beta/models/gemini-2.5-pro:generateContent"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerSettlementID, "settlement-gemini")
+		w.Header().Set(headerOfficialPoints, "13")
+		fmt.Fprint(w, `{"candidates":[{"content":{"parts":[{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":5,"totalTokenCount":16,"cachedContentTokenCount":3,"thoughtsTokenCount":2}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{BaseURL: server.URL + "/v1/internal", AuthHook: func(*http.Request) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := a.CreateGeminiContent(t.Context(), &adapter.GeminiGenerateContentRequest{
+		Model: "gemini-2.5-pro", Body: json.RawMessage(`{"contents":[{"parts":[{"text":"hi"}]}]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(gotBody, []byte(`"contents"`)) || !bytes.Contains(resp.Body, []byte(`"candidates"`)) {
+		t.Fatalf("request=%s response=%s", gotBody, resp.Body)
+	}
+	if resp.Usage == nil || resp.Usage.PromptTokens != 11 || resp.Usage.CompletionTokens != 5 || resp.Usage.CacheReadTokens != 3 || resp.Usage.CompletionTokensDetails.ReasoningTokens != 2 {
+		t.Fatalf("usage = %#v", resp.Usage)
+	}
+	if resp.Settlement == nil || resp.Settlement.SettlementID != "settlement-gemini" || resp.Settlement.OfficialPoints != 13 {
+		t.Fatalf("settlement = %#v", resp.Settlement)
+	}
+}
+
+func TestZGICloudAdapterGeminiStreamReadsSettlementTrailersWithoutPrivateEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/v1/internal/v1beta/models/gemini-2.5-flash:streamGenerateContent"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		if got := r.URL.Query().Get("alt"); got != "sse" {
+			t.Errorf("alt = %q, want sse", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Add("Trailer", headerSettlementID)
+		w.Header().Add("Trailer", headerOfficialPoints)
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":4,\"totalTokenCount\":11}}\n\n")
+		w.Header().Set(headerSettlementID, "settlement-gemini-stream")
+		w.Header().Set(headerOfficialPoints, "17")
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{BaseURL: server.URL + "/v1/internal", AuthHook: func(*http.Request) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := a.CreateGeminiContentStream(t.Context(), &adapter.GeminiGenerateContentRequest{
+		Model: "gemini-2.5-flash", Stream: true, Body: json.RawMessage(`{"contents":[]}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dataEvents int
+	var done adapter.RawStreamEvent
+	for event := range events {
+		if event.Done {
+			done = event
+			continue
+		}
+		dataEvents++
+		if event.Usage == nil || event.Usage.TotalTokens != 11 {
+			t.Fatalf("event usage = %#v", event.Usage)
+		}
+	}
+	if dataEvents != 1 {
+		t.Fatalf("data events = %d, want 1", dataEvents)
+	}
+	if done.Settlement == nil || done.Settlement.SettlementID != "settlement-gemini-stream" || done.Settlement.OfficialPoints != 17 {
+		t.Fatalf("done settlement = %#v", done.Settlement)
+	}
+}
+
 func TestZGICloudAdapterRejectsStillUnsupportedCapabilities(t *testing.T) {
 	t.Helper()
 

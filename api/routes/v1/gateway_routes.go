@@ -98,4 +98,11 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 		anthropic.POST("/v1/messages", llmHandler.CreateAnthropicMessage)
 	}
 	logger.Info("Anthropic-compatible gateway routes registered", "path", "/anthropic/*")
+
+	gemini := router.Group("/v1beta")
+	gemini.Use(authMiddleware)
+	{
+		gemini.POST("/models/*modelAction", llmHandler.CreateGeminiContent)
+	}
+	logger.Info("Gemini-compatible gateway routes registered", "path", "/v1beta/models/*")
 }

@@ -67,13 +67,14 @@ type LLMRoute struct {
 	TenantCredential *credentialmodel.TenantCredential `gorm:"foreignKey:CredentialID;references:ID" json:"tenant_credential,omitempty"`
 
 	// Transient fields (not persisted)
-	PlatformAPIKey              string          `gorm:"-" json:"-"`
-	UpstreamGeneration          int64           `gorm:"-" json:"-"`
-	UpstreamWouldGuard          bool            `gorm:"-" json:"-"`
-	UpstreamHalfOpen            bool            `gorm:"-" json:"-"`
-	UpstreamProbe               bool            `gorm:"-" json:"-"`
-	UpstreamProbeRequiresBackup bool            `gorm:"-" json:"-"`
-	OfficialProviderModels      []ProviderModel `gorm:"-" json:"-"`
+	PlatformAPIKey              string              `gorm:"-" json:"-"`
+	UpstreamGeneration          int64               `gorm:"-" json:"-"`
+	UpstreamWouldGuard          bool                `gorm:"-" json:"-"`
+	UpstreamHalfOpen            bool                `gorm:"-" json:"-"`
+	UpstreamProbe               bool                `gorm:"-" json:"-"`
+	UpstreamProbeRequiresBackup bool                `gorm:"-" json:"-"`
+	OfficialProviderModels      []ProviderModel     `gorm:"-" json:"-"`
+	OfficialModelProtocols      map[string][]string `gorm:"-" json:"-"`
 }
 
 // ProviderModel identifies one exact provider/model pair advertised by an official channel.
@@ -87,8 +88,11 @@ func (LLMRoute) TableName() string {
 }
 
 type NativeProtocolConfig struct {
-	OpenAIResponses   NativeProtocolEndpoint `json:"openai_responses,omitempty"`
-	AnthropicMessages NativeProtocolEndpoint `json:"anthropic_messages,omitempty"`
+	OpenAIChatCompletions NativeProtocolEndpoint `json:"openai_chat_completions,omitempty"`
+	OpenAIResponses       NativeProtocolEndpoint `json:"openai_responses,omitempty"`
+	AnthropicMessages     NativeProtocolEndpoint `json:"anthropic_messages,omitempty"`
+	GeminiGenerateContent NativeProtocolEndpoint `json:"gemini_generate_content,omitempty"`
+	ModelProtocols        map[string][]string    `json:"model_protocols,omitempty"`
 }
 
 type NativeProtocolEndpoint struct {

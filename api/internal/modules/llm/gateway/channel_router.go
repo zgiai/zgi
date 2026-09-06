@@ -321,17 +321,32 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 }
 
 func filterRoutesForNativeProtocol(routes []*channelmodel.LLMRoute, llmModel *llmmodel.LLMModel, modelCategory string) []*channelmodel.LLMRoute {
+	modelName := ""
+	if llmModel != nil {
+		modelName = llmModel.Model
+	}
 	switch modelCategory {
+	case "chat":
+		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
+			if supported, declared := routeProtocolDeclaration(route, modelName, protocolOpenAIChatCompletions); declared {
+				return supported
+			}
+			return true
+		})
 	case modelCategoryResponses:
 		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
-			if llmModel != nil && !llmModel.Responses {
+			if !isOfficialRoute(route) && llmModel != nil && !llmModel.Responses {
 				return false
 			}
-			return routeSupportsOpenAIResponses(route)
+			return routeSupportsOpenAIResponses(route, modelName)
 		})
 	case modelCategoryAnthropicMessages:
 		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
-			return routeSupportsAnthropicMessages(route)
+			return routeSupportsAnthropicMessages(route, modelName)
+		})
+	case modelCategoryGemini:
+		return filterRoutesByCapability(routes, func(route *channelmodel.LLMRoute) bool {
+			return routeSupportsGeminiGenerateContent(route, modelName)
 		})
 	default:
 		return routes
@@ -360,9 +375,15 @@ func filterRoutesByCapability(routes []*channelmodel.LLMRoute, supports func(*ch
 	return filtered
 }
 
-func routeSupportsOpenAIResponses(route *channelmodel.LLMRoute) bool {
+func routeSupportsOpenAIResponses(route *channelmodel.LLMRoute, modelName ...string) bool {
 	if route == nil {
 		return false
+	}
+	if supported, declared := routeProtocolDeclaration(route, firstModelName(modelName), protocolOpenAIResponses); declared {
+		return supported
+	}
+	if route.NativeProtocols.OpenAIResponses.Enabled {
+		return true
 	}
 	capability := channelprovider.OpenAIResponsesCapability(route.ChannelProvider)
 	if !capability.Supported {
@@ -374,9 +395,15 @@ func routeSupportsOpenAIResponses(route *channelmodel.LLMRoute) bool {
 	return true
 }
 
-func routeSupportsAnthropicMessages(route *channelmodel.LLMRoute) bool {
+func routeSupportsAnthropicMessages(route *channelmodel.LLMRoute, modelName ...string) bool {
 	if route == nil {
 		return false
+	}
+	if supported, declared := routeProtocolDeclaration(route, firstModelName(modelName), protocolAnthropicMessages); declared {
+		return supported
+	}
+	if route.NativeProtocols.AnthropicMessages.Enabled {
+		return true
 	}
 	capability := channelprovider.AnthropicMessagesCapability(route.ChannelProvider)
 	if !capability.Supported {
@@ -386,6 +413,59 @@ func routeSupportsAnthropicMessages(route *channelmodel.LLMRoute) bool {
 		return route.NativeProtocols.AnthropicMessages.Enabled
 	}
 	return true
+}
+
+func routeSupportsGeminiGenerateContent(route *channelmodel.LLMRoute, modelName ...string) bool {
+	if route == nil {
+		return false
+	}
+	if supported, declared := routeProtocolDeclaration(route, firstModelName(modelName), protocolGeminiGenerateContent); declared {
+		return supported
+	}
+	// Gemini is a new public protocol for the platform lane. Do not advertise
+	// or route it until Console has supplied an explicit per-model capability;
+	// this keeps a pre-first rolling deployment safe against an older Console.
+	if isOfficialRoute(route) {
+		return false
+	}
+	if route.NativeProtocols.GeminiGenerateContent.Enabled {
+		return true
+	}
+	capability := channelprovider.GeminiGenerateContentCapability(route.ChannelProvider)
+	if !capability.Supported {
+		return false
+	}
+	if capability.RequiresExplicitConfig {
+		return route.NativeProtocols.GeminiGenerateContent.Enabled
+	}
+	return true
+}
+
+func firstModelName(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func routeProtocolDeclaration(route *channelmodel.LLMRoute, model, protocol string) (bool, bool) {
+	model = normalizeRequestedModelName(model)
+	var protocols []string
+	var ok bool
+	if isOfficialRoute(route) {
+		protocols, ok = route.OfficialModelProtocols[model]
+	} else {
+		protocols, ok = route.NativeProtocols.ModelProtocols[model]
+	}
+	if !ok {
+		return false, false
+	}
+	for _, candidate := range protocols {
+		if strings.EqualFold(strings.TrimSpace(candidate), protocol) {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 func (r *ChannelRouter) resolveSelectionModel(ctx context.Context, organizationID uuid.UUID, providerHint string, modelName string) (*llmmodel.LLMModel, *llmmodel.CustomModel, error) {
@@ -1072,6 +1152,8 @@ func applyNativeProtocolBaseURL(selection *ChannelSelection, modelCategory strin
 		endpoint = selection.NativeProtocols.OpenAIResponses
 	case modelCategoryAnthropicMessages:
 		endpoint = selection.NativeProtocols.AnthropicMessages
+	case modelCategoryGemini:
+		endpoint = selection.NativeProtocols.GeminiGenerateContent
 	default:
 		return nil
 	}

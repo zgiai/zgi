@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,13 @@ import (
 type LLMHandler struct {
 	gatewayService types.GatewayService
 	errorProjector *apptransport.Projector
+}
+
+// geminiGatewayService is deliberately additive so existing GatewayService
+// implementations and test doubles remain source-compatible.
+type geminiGatewayService interface {
+	CreateGeminiContent(context.Context, *apikeymodel.TenantAPIKey, *adapter.GeminiGenerateContentRequest) (*adapter.RawResponse, error)
+	CreateGeminiContentStream(context.Context, *apikeymodel.TenantAPIKey, *adapter.GeminiGenerateContentRequest) (<-chan adapter.RawStreamEvent, error)
 }
 
 // NewLLMHandler creates a new LLM handler
@@ -127,9 +135,12 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.gatewayService.CreateResponseRaw(c.Request.Context(), apiKey, req)
+	resp, err := h.gatewayService.CreateResponseRaw(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
+		if writeRawProtocolError(c, err) {
+			return
+		}
 		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
@@ -159,13 +170,49 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.gatewayService.CreateAnthropicMessage(c.Request.Context(), apiKey, req)
+	resp, err := h.gatewayService.CreateAnthropicMessage(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
+		if writeRawProtocolError(c, err) {
+			return
+		}
 		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
 
+	c.Data(http.StatusOK, "application/json", resp.Body)
+}
+
+// CreateGeminiContent handles both Gemini generateContent actions. The model
+// and stream mode come from the native path; the JSON body is forwarded intact.
+func (h *LLMHandler) CreateGeminiContent(c *gin.Context) {
+	apiKey, ok := apiKeyFromContext(c)
+	if !ok {
+		return
+	}
+	req, err := parseGeminiGenerateContentRequest(c)
+	if err != nil {
+		writeGeminiProtocolError(c, invalidRequestProtocolError(err.Error()))
+		return
+	}
+	if req.Stream {
+		h.handleGeminiContentStream(c, apiKey, req)
+		return
+	}
+	service, ok := h.gatewayService.(geminiGatewayService)
+	if !ok {
+		writeGeminiProtocolError(c, classifyProtocolError(adapter.ErrCapabilityUnsupported))
+		return
+	}
+	resp, err := service.CreateGeminiContent(gatewayRequestContext(c), apiKey, req)
+	if err != nil {
+		recordServiceError(c, err)
+		if writeRawProtocolError(c, err) {
+			return
+		}
+		writeGeminiProtocolError(c, h.localizedProtocolError(c, err))
+		return
+	}
 	c.Data(http.StatusOK, "application/json", resp.Body)
 }
 
@@ -208,9 +255,12 @@ func (h *LLMHandler) handleStreamingRequest(c *gin.Context, apiKey *apikeymodel.
 }
 
 func (h *LLMHandler) handleResponseStream(c *gin.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.RawResponseRequest) {
-	streamChan, err := h.gatewayService.CreateResponseStream(c.Request.Context(), apiKey, req)
+	streamChan, err := h.gatewayService.CreateResponseStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
+		if writeRawProtocolError(c, err) {
+			return
+		}
 		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
@@ -238,9 +288,12 @@ func (h *LLMHandler) handleResponseStream(c *gin.Context, apiKey *apikeymodel.Te
 }
 
 func (h *LLMHandler) handleAnthropicMessageStream(c *gin.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.AnthropicMessageRequest) {
-	streamChan, err := h.gatewayService.CreateAnthropicMessageStream(c.Request.Context(), apiKey, req)
+	streamChan, err := h.gatewayService.CreateAnthropicMessageStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
+		if writeRawProtocolError(c, err) {
+			return
+		}
 		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
 		return
 	}
@@ -256,6 +309,41 @@ func (h *LLMHandler) handleAnthropicMessageStream(c *gin.Context, apiKey *apikey
 		if event.Error != nil {
 			recordStreamServiceError(c, event.Error)
 			_ = streamWriter.WriteRawError(h.anthropicStreamError(c, event.Error))
+			return
+		}
+		if event.Done {
+			return
+		}
+		if err := streamWriter.WriteEvent(event); err != nil {
+			return
+		}
+	}
+}
+
+func (h *LLMHandler) handleGeminiContentStream(c *gin.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.GeminiGenerateContentRequest) {
+	service, ok := h.gatewayService.(geminiGatewayService)
+	if !ok {
+		writeGeminiProtocolError(c, classifyProtocolError(adapter.ErrCapabilityUnsupported))
+		return
+	}
+	streamChan, err := service.CreateGeminiContentStream(gatewayRequestContext(c), apiKey, req)
+	if err != nil {
+		recordServiceError(c, err)
+		if writeRawProtocolError(c, err) {
+			return
+		}
+		writeGeminiProtocolError(c, h.localizedProtocolError(c, err))
+		return
+	}
+	streamWriter, err := llmshared.NewRawEventStreamWriter(c)
+	if err != nil {
+		writeGeminiProtocolError(c, internalProtocolError())
+		return
+	}
+	for event := range streamChan {
+		if event.Error != nil {
+			recordStreamServiceError(c, event.Error)
+			_ = streamWriter.WriteEvent(adapter.RawStreamEvent{Data: geminiStreamErrorBody(h.localizedProtocolError(c, event.Error))})
 			return
 		}
 		if event.Done {
@@ -285,10 +373,11 @@ func (h *LLMHandler) ListModels(c *gin.Context) {
 	modelList := make([]gin.H, 0, len(models))
 	for _, m := range models {
 		modelList = append(modelList, gin.H{
-			"id":       m.ID,
-			"object":   "model",
-			"created":  m.Created,
-			"owned_by": m.OwnedBy,
+			"id":                  m.ID,
+			"object":              "model",
+			"created":             m.Created,
+			"owned_by":            m.OwnedBy,
+			"supported_protocols": m.SupportedProtocols,
 		})
 	}
 
@@ -484,6 +573,14 @@ func parseRawResponseRequest(c *gin.Context) (*adapter.RawResponseRequest, error
 	}, nil
 }
 
+func gatewayRequestContext(c *gin.Context) context.Context {
+	ctx := c.Request.Context()
+	if requestID := requestIDFromContext(c); requestID != "" {
+		ctx = context.WithValue(ctx, llmshared.ContextKeyRequestID, requestID)
+	}
+	return ctx
+}
+
 func parseAnthropicMessageRequest(c *gin.Context) (*adapter.AnthropicMessageRequest, error) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -508,6 +605,51 @@ func parseAnthropicMessageRequest(c *gin.Context) (*adapter.AnthropicMessageRequ
 		Body:    body,
 		Headers: headers,
 	}, nil
+}
+
+func parseGeminiGenerateContentRequest(c *gin.Context) (*adapter.GeminiGenerateContentRequest, error) {
+	modelAction := strings.TrimPrefix(strings.TrimSpace(c.Param("modelAction")), "/")
+	model, action, ok := strings.Cut(modelAction, ":")
+	if !ok || strings.TrimSpace(model) == "" {
+		return nil, fmt.Errorf("Gemini path must be /v1beta/models/{model}:generateContent")
+	}
+	stream := false
+	switch action {
+	case "generateContent":
+	case "streamGenerateContent":
+		stream = true
+	default:
+		return nil, fmt.Errorf("unsupported Gemini action %s", action)
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read request body: %w", err)
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		body = []byte(`{}`)
+	}
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("invalid JSON")
+	}
+	return &adapter.GeminiGenerateContentRequest{Model: strings.TrimSpace(model), Stream: stream, Body: body}, nil
+}
+
+func writeRawProtocolError(c *gin.Context, err error) bool {
+	var rawErr *adapter.RawProtocolError
+	if !errors.As(err, &rawErr) || rawErr == nil {
+		return false
+	}
+	contentType := strings.TrimSpace(rawErr.ContentType)
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	c.Data(rawErr.StatusCode, contentType, rawErr.Body)
+	return true
+}
+
+func geminiStreamErrorBody(protocolErr protocolError) json.RawMessage {
+	body, _ := json.Marshal(gin.H{"error": gin.H{"code": protocolErr.openAIStatus, "message": protocolErr.message, "status": geminiErrorStatus(protocolErr.openAIStatus)}})
+	return body
 }
 
 func (h *LLMHandler) openAIStreamError(c *gin.Context, err error) []byte {
