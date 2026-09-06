@@ -3987,8 +3987,18 @@ assert.match(
 );
 assert.match(
   agentRuntimePageModelSource,
-  /enabled:\s*knowledgeDialogOpen && canBindKnowledge/,
-  'agent runtime knowledge selector should not list candidates without knowledge binding access'
+  /knowledge:\s*\{\s*agentId,\s*open:\s*knowledgeDialogOpen && canBindKnowledge/,
+  'agent runtime knowledge selector should not open without knowledge binding access'
+);
+assert.match(
+  fs.readFileSync(path.join(rootDir, 'src/components/agents/agent-runtime/dialogs.tsx'), 'utf8'),
+  /<AgentRuntimeKnowledgeDialog \{\.\.\.model\.dialogs\.knowledge\}/,
+  'runtime dialogs must forward the permission-gated knowledge dialog state'
+);
+assert.match(
+  fs.readFileSync(path.join(rootDir, 'src/components/agents/agent-runtime/knowledge-dialog.tsx'), 'utf8'),
+  /enabled:\s*open && Boolean\(agentId\)/,
+  'knowledge candidates must only load while the permitted dialog is open'
 );
 assert.match(
   agentRuntimePageModelSource,
