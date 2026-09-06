@@ -81,6 +81,7 @@
     "test:file-context-permissions": "node scripts/test-file-context-permissions.mjs",
     "test:workspace-home-access": "node --test scripts/test-workspace-home-access.mjs",
     "test:template-entry-route": "node --test scripts/test-template-entry-route.mjs",
+    "test:agent-api-access-guard": "node --test scripts/test-agent-api-access-guard.mjs",
     "test:billing-display": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-billing-display.mjs && node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-usage-fiat-display.mjs",
     "test:model-plaza-fallbacks": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-model-plaza-fallbacks.mjs",
     "test:work-layout-request-lifecycle": "node scripts/test-work-layout-request-lifecycle.mjs",

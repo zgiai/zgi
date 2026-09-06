@@ -101,6 +101,9 @@ jobs:
       - name: Template entry route regression
         run: pnpm test:template-entry-route
 
+      - name: Agent API access guard regression
+        run: pnpm test:agent-api-access-guard
+
       - name: Clean generated web files
         if: always()
         run: |

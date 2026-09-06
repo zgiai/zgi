@@ -23,8 +23,19 @@ interface AgentApiAccessGuardProps {
 export function AgentApiAccessGuard({ agentId, children }: AgentApiAccessGuardProps) {
   const t = useT();
   const tWebapp = useT('webapp');
-  const { agent, isLoading, error } = useAgent(agentId);
-  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const {
+    hasAnyPermission,
+    isLoading: isPermissionsLoading,
+    error: permissionError,
+  } = useAccountPermissions();
+  const canQueryAgent =
+    !isPermissionsLoading &&
+    !permissionError &&
+    hasAnyPermission([
+      ...AGENT_PERMISSION_ACTIONS.runtimeAccessManage,
+      ...WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage,
+    ]);
+  const { agent, isLoading, error } = useAgent(agentId, canQueryAgent);
   const agentType = (agent?.data?.agent_type as AgentType | string | undefined) ?? undefined;
   const canManageRuntimeAccess = isAgentRuntimeType(agentType)
     ? hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage)
@@ -32,7 +43,7 @@ export function AgentApiAccessGuard({ agentId, children }: AgentApiAccessGuardPr
       ? hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage)
       : false;
 
-  if (isLoading || isPermissionsLoading) {
+  if (isPermissionsLoading || (canQueryAgent && isLoading)) {
     return (
       <div className="flex h-full w-full items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -40,7 +51,7 @@ export function AgentApiAccessGuard({ agentId, children }: AgentApiAccessGuardPr
     );
   }
 
-  if (error || !agent?.data) {
+  if (permissionError || (canQueryAgent && (error || !agent?.data))) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
@@ -49,14 +60,16 @@ export function AgentApiAccessGuard({ agentId, children }: AgentApiAccessGuardPr
           </div>
           <div className="text-lg font-semibold">{t('agents.workflow.loadFailedTitle')}</div>
           <div className="mt-2 text-sm text-muted-foreground">
-            {error ? getErrorMessage(error) : t('agents.workflow.notFoundDesc')}
+            {permissionError || error
+              ? getErrorMessage(permissionError || error)
+              : t('agents.workflow.notFoundDesc')}
           </div>
         </div>
       </div>
     );
   }
 
-  if (!supportsAgentApiKeyPages(agentType)) {
+  if (canQueryAgent && !supportsAgentApiKeyPages(agentType)) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
@@ -72,7 +85,7 @@ export function AgentApiAccessGuard({ agentId, children }: AgentApiAccessGuardPr
     );
   }
 
-  if (!canShowAgentApiKeys(agentType, { canView: true, canManageRuntimeAccess })) {
+  if (!canQueryAgent || !canShowAgentApiKeys(agentType, { canView: true, canManageRuntimeAccess })) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
