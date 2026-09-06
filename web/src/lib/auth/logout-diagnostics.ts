@@ -14,12 +14,15 @@ type LogoutPhase =
 /** Never include session values, URLs, account IDs or raw transport errors. */
 export function reportLogoutPhase(phase: LogoutPhase, error?: unknown): void {
   try {
-    console.info('auth.logout.phase', {
-      phase,
-      session_present: sessionManager.hasSession(),
-      logout_in_progress: isLogoutInProgress(),
-      ...(error === undefined ? {} : describeAccessLoadError(error)),
-    });
+    console.info(
+      'auth.logout.phase',
+      JSON.stringify({
+        phase,
+        session_present: sessionManager.hasSession(),
+        logout_in_progress: isLogoutInProgress(),
+        ...(error === undefined ? {} : describeAccessLoadError(error)),
+      })
+    );
   } catch {
     // Diagnostics must never interrupt logout or replace its original error.
   }

@@ -244,7 +244,9 @@ test('logout diagnostics expose only allowlisted fields and never interrupt clea
     throw failure;
   }).logout();
   assert.equal(f.session.hasSession(), false);
-  const event = f.diagnostics.find(([, data]) => data.phase === 'request_failed');
+  const event = f.diagnostics
+    .map(([marker, data]) => [marker, JSON.parse(data)])
+    .find(([, data]) => data.phase === 'request_failed');
   assert.equal(event[0], 'auth.logout.phase');
   assert.equal(event[1].status, 503);
   assert.equal(event[1].code, '123456');
