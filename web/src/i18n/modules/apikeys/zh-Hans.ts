@@ -306,6 +306,7 @@ const messages: ApikeysMessages = {
     requestPurpose: '申请用途',
     approvalQuota: '批准额度（点）',
     review: {
+      feedback: '审批说明',
       approveTitle: '批准 API 权限申请',
       rejectTitle: '拒绝 API 权限申请',
       reason: '审批说明（可选）',

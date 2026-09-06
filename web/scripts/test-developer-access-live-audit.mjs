@@ -195,6 +195,21 @@ test('expired keys keep their deadline and cannot be presented as active or reac
   assert.doesNotMatch(markup, /statuses.active|actions.rotate|actions.enable|actions.disable/);
 });
 
+test('members see review feedback without approval controls or executable markup', () => {
+  const { AccessRequestRow } = load(
+    'features/developer-access/developer-access-page.tsx', pageMocks(),
+    '\nexports.AccessRequestRow = AccessRequestRow;'
+  );
+  const markup = renderToStaticMarkup(React.createElement(AccessRequestRow, {
+    item: { status: 'rejected', environment: 'development', purpose: 'Example request',
+      created_at: '2020-01-01T00:00:00Z', review_reason: 'Provide purpose <script>alert(1)</script>' },
+    canReview: false, onReview() {},
+  }));
+  assert.match(markup, /review.feedback/);
+  assert.match(markup, /Provide purpose &lt;script&gt;/);
+  assert.doesNotMatch(markup, /<script>|actions.approve|actions.reject/);
+});
+
 test('desktop and mobile expose the same root links; mobile closes on navigation', () => {
   const links = [];
   const closed = [];

@@ -313,6 +313,7 @@ const messages = {
     requestPurpose: 'Purpose',
     approvalQuota: 'Grant quota (points)',
     review: {
+      feedback: 'Review notes',
       approveTitle: 'Approve API access request',
       rejectTitle: 'Reject API access request',
       reason: 'Review note (optional)',

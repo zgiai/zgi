@@ -56,6 +56,8 @@ Organization invocation details also preserve this precision: a charge of 45 int
 
 Personal key rows show their own expiration, separately from the grant expiration. On refresh, an expired key is labeled **Expired** even when its stored status is still active; activation and rotation are not offered for it. Revocation remains available for cleanup. When all active key slots are occupied, the page explains how to free a slot or rotate an existing key. Expiration and slot limits are enforced by the API independently of the UI.
 
+Request history includes the reviewer's explanation so members can understand a rejection or approval conditions without access to administrator controls.
+
 Console API quota fields and audit `*_points` fields retain their existing integer internal-credit contract. For example, a 100-point request is sent as `requested_quota: 100000`; an audit value of `total_points: 1234` displays as 1.234 points. API clients must not send UI point values directly. Missing or null limits retain their default/unlimited semantics; zero remains zero. This display conversion does not rescale stored grants, change billing, or replenish any balance.
 
 ### Shared billing subject

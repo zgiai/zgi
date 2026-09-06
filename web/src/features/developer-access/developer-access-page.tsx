@@ -412,6 +412,11 @@ function AccessRequestRow({
           </div>
         ) : null}
         <p className="mt-1 line-clamp-2 text-sm">{item.purpose}</p>
+        {item.review_reason ? (
+          <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+            {t('review.feedback')}: {item.review_reason}
+          </p>
+        ) : null}
       </div>
       {canReview && item.status === 'pending' ? (
         <div className="flex shrink-0 gap-2">
