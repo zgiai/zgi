@@ -15,6 +15,16 @@ ZGI provides workspace-scoped personal API keys for interactive development. A p
 
 Service-account identities are represented by `principal_type = service_account` in the storage model, but service-account management is intentionally deferred to the next product phase.
 
+## Deployment and rollback boundary
+
+Personal keys must not be served by API binaries that predate principal and grant validation. The keys share the legacy key table and hash lookup, while their independent `quota_limit` is null because the grant owns their allowance. An older binary can ignore the principal fields and interpret such a key as an ordinary unlimited key. An additive database migration alone does not make this downgrade safe.
+
+Before enabling personal-key creation or routing personal-key traffic, verify that every serving API replica supports principal validation and grant-aware pre-deduction and settlement. Do not run old and new authentication paths concurrently for that traffic. Hiding the console entry is not an authorization barrier. Rollback artifacts must retain these checks, including membership, policy, grant lifecycle and authorization-version validation.
+
+Once personal keys exist, prefer a forward fix or a previously verified grant-aware API artifact. Do not automatically restore a pre-feature binary against the upgraded database. If such a downgrade is unavoidable, it requires a separately approved maintenance procedure: stop admission, drain or reconcile in-flight attempts, revoke personal keys through the supported administration path, invalidate their cached authorization, and verify rejection before serving traffic. Revocation is permanent and requires replacement keys after recovery; do not silently perform it as an ordinary release step.
+
+Schema rollback is a separate operation. The developer-access down migration deliberately refuses to remove its tables while policy, request or grant records exist. Do not delete those records to force a rollback or discard billing attribution. Both code rollback and database rollback require their own evidence; source-safety checks and unit tests are not deployment or ledger reconciliation proof.
+
 ## Console API
 
 All routes require console authentication and a workspace membership or workspace-management permission.
