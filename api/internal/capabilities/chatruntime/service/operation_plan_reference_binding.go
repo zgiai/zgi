@@ -81,8 +81,12 @@ func operationPlanBindReferencedPhaseActions(plan map[string]interface{}) {
 				}
 				if targetID := stringFromAny(outcome["target_resource_id"]); targetID != "" {
 					matched := false
-					for _, value := range mapFromOperationContext(binding["target"]) {
-						matched = matched || stringFromAny(value) == targetID
+					if stringFromAny(outcome["target_resource_type"]) == "tool" {
+						matched = stringFromAny(binding["tool_name"]) == targetID
+					} else {
+						for _, value := range mapFromOperationContext(binding["target"]) {
+							matched = matched || stringFromAny(value) == targetID
+						}
 					}
 					valid = valid && matched
 				}

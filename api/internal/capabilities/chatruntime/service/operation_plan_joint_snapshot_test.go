@@ -316,3 +316,35 @@ func TestSkippedUnboundToolPhaseDoesNotEraseRequiredRuntimeFailure(t *testing.T)
 		})
 	}
 }
+
+func TestReferencedToolOutcomeMatchesExactRuntimeToolIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, targetType, targetID string
+		wantBound                  bool
+	}{
+		{"exact tool", "tool", "run", true}, {"wrong tool", "tool", "delete", false}, {"resource name is not tool identity", "file", "run", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := jointSnapshotMetadata()
+			p := mapFromOperationContext(m["operation_plan"])
+			phases := mapSliceFromAny(p["phases"])
+			delete(phases[1], "expected_action")
+			phases[1]["evidence_refs"] = []string{"tool:calculator/run"}
+			p["phases"] = mapsToInterfaceSlice(phases)
+			outcomes := mapSliceFromAny(p["outcomes"])
+			outcomes[1]["target_resource_type"] = tc.targetType
+			outcomes[1]["target_resource_id"] = tc.targetID
+			p["outcomes"] = mapsToInterfaceSlice(outcomes)
+			applyOperationPlanInvocationState(m, []map[string]interface{}{{"kind": "tool_call", "status": "success", "runtime_id": "prepare-1", "skill_id": "pipeline", "tool_name": "prepare"}, {"kind": "tool_call", "status": "success", "runtime_id": "compute-1", "skill_id": "calculator", "tool_name": "run"}})
+			finalizeOperationPlanForCompletedResult(m)
+			p = mapFromOperationContext(m["operation_plan"])
+			phase := mapSliceFromAny(p["phases"])[1]
+			if got := len(mapFromOperationContext(phase["expected_action"])) > 0; got != tc.wantBound {
+				t.Fatalf("bound=%v, want %v; phase=%#v", got, tc.wantBound, phase)
+			}
+			if tc.wantBound && p["status"] != "completed" {
+				t.Fatalf("verified tool work remained incomplete: %#v", p)
+			}
+		})
+	}
+}
