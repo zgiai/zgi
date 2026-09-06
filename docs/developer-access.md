@@ -42,6 +42,8 @@ POST  /console/api/llm/workspaces/:workspace_id/api-keys/:key_id/rotate
 
 The console UI is available at `/console/api-keys`. Members see their own keys, requests, and call audit. Workspace managers additionally see member keys, the full approval history, and workspace-scoped personal-key audit records. Query caches include the workspace ID so switching workspaces cannot display data from the previous workspace.
 
+Both desktop and mobile navigation include **Model Plaza** and **API Keys**. On the API Keys page, **Refresh** and switching tabs reload active queries for the current workspace, including the shared quota balance. Disabled administrator queries are not fetched for ordinary members. Call audit rows display the request ID, input/output token counts, and points so a caller can correlate a response with its usage record.
+
 If workspace navigation reports that permissions cannot be confirmed, inspect the browser warning `workspace.permissions.load_failed` and correlate its request ID, when available, with API access logs. The diagnostic includes allowlisted error/status codes and session/workspace lifecycle states, but excludes raw errors, request headers, response bodies, credentials, and account IDs. It is also sent to configured observability adapters. An HTTP 200 in server logs alone does not prove that the browser received or processed the permission response. Failed reads continue to deny unconfirmed access; diagnostics do not grant permissions or retry requests automatically.
 
 ## Runtime attribution

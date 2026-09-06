@@ -80,6 +80,11 @@ interface RootRouteItem {
   activeMatchPaths?: string[];
 }
 
+const ROOT_ROUTES = [
+  { key: 'model-plaza', titleKey: 'modelPlaza', href: '/console/model', icon: LayoutGrid },
+  { key: 'api-keys', titleKey: 'apiKeys', href: '/console/api-keys', icon: KeyRound },
+] as const;
+
 const STORAGE_KEY = 'zgi:console:sidebar:groups';
 
 function CollapsedNavTooltip({ label, children }: { label: string; children: React.ReactElement }) {
@@ -348,20 +353,7 @@ export function ConsoleSidebar({
   }, [allNavGroups, navigationAccessContext, permissionsError]);
 
   const rootRouteItems = React.useMemo(
-    (): RootRouteItem[] => [
-      {
-        key: 'model-plaza',
-        title: t('modelPlaza'),
-        href: '/console/model',
-        icon: LayoutGrid,
-      },
-      {
-        key: 'api-keys',
-        title: t('apiKeys'),
-        href: '/console/api-keys',
-        icon: KeyRound,
-      },
-    ],
+    (): RootRouteItem[] => ROOT_ROUTES.map(item => ({ ...item, title: t(item.titleKey) })),
     [t]
   );
 
@@ -606,6 +598,7 @@ export function ConsoleSidebar({
                 <Link
                   href={item.href}
                   target={item.target}
+                  aria-current={isActive ? 'page' : undefined}
                   rel={item.target === '_blank' ? 'noreferrer' : undefined}
                   className={cn(
                     'flex items-center rounded-md py-1.5 text-[13px] transition-colors shrink-0 w-full',
@@ -1008,6 +1001,30 @@ export function ConsoleMobileSidebar({
                 </div>
               );
             })}
+            <div className="space-y-0.5 border-t border-border pt-2">
+              {ROOT_ROUTES.map(item => {
+                const Icon = item.icon;
+                const title = t(item.titleKey);
+                const isActive = isRootRouteItemActive(activePathname, { ...item, title });
+                return (
+                  <Link
+                    key={item.key}
+                    href={item.href}
+                    onClick={closeSidebar}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={cn(
+                      'flex w-full items-center gap-2 rounded-md px-2 py-2 text-[13px] transition-colors',
+                      isActive
+                        ? 'bg-muted/80 text-foreground'
+                        : 'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
+                    )}
+                  >
+                    <Icon size={16} className="shrink-0" />
+                    <span className="truncate font-medium">{title}</span>
+                  </Link>
+                );
+              })}
+            </div>
           </nav>
         </div>
       </SheetContent>

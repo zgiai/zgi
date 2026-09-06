@@ -249,6 +249,7 @@ const messages: ApikeysMessages = {
       confirmRevoke: '确认撤销',
       confirmRotate: '确认轮换',
       retry: '重试',
+      refresh: '刷新',
     },
     statuses: {
       active: '有效',
@@ -323,6 +324,8 @@ const messages: ApikeysMessages = {
       model: '模型 / 供应商',
       status: '状态',
       tokens: 'Token',
+      requestId: '请求 ID',
+      tokenBreakdown: '输入 {input} · 输出 {output}',
       points: '点数',
       quotaBreakdown: '额度扣除 {charged} · 超额 {overage}',
       pagination: '第 {page} / {totalPages} 页，共 {total} 条',

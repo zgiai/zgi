@@ -79,6 +79,9 @@ jobs:
       - name: Check developer access quota units
         run: pnpm test:developer-access-credits
 
+      - name: Check developer access refresh, audit and mobile navigation
+        run: pnpm test:developer-access-live-audit
+
       - name: Clean generated web files
         if: always()
         run: |

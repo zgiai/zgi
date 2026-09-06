@@ -85,6 +85,7 @@ export function useDeveloperAccess(
   requestPageSize = 20,
   auditPageSize = 50
 ) {
+  const queryClient = useQueryClient();
   const enabled = Boolean(workspaceId);
   const me = useQuery({
     queryKey: DEVELOPER_ACCESS_KEYS.me(workspaceId ?? ''),
@@ -170,7 +171,19 @@ export function useDeveloperAccess(
     enabled,
     staleTime: 15_000,
   });
-  return { me, keys, memberKeys, requests, memberRequests, audit };
+  // Only mounted, enabled queries are refreshed. Disabled administrator queries
+  // must not be triggered when an ordinary member refreshes this page.
+  const refresh = async () => {
+    if (!workspaceId) return;
+    await queryClient.refetchQueries({
+      queryKey: DEVELOPER_ACCESS_KEYS.workspace(workspaceId),
+      type: 'active',
+    });
+  };
+  const isRefreshing = [me, keys, memberKeys, requests, memberRequests, audit].some(
+    query => query.isFetching
+  );
+  return { me, keys, memberKeys, requests, memberRequests, audit, refresh, isRefreshing };
 }
 
 export function useDeveloperAccessActions(workspaceId?: string) {

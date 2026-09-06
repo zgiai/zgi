@@ -252,6 +252,7 @@ const messages = {
       confirmRevoke: 'Revoke key',
       confirmRotate: 'Rotate key',
       retry: 'Retry',
+      refresh: 'Refresh',
     },
     statuses: {
       active: 'Active',
@@ -330,6 +331,8 @@ const messages = {
       model: 'Model / provider',
       status: 'Status',
       tokens: 'Tokens',
+      requestId: 'Request ID',
+      tokenBreakdown: 'Input {input} · output {output}',
       points: 'Points',
       quotaBreakdown: 'Quota charged {charged} · overage {overage}',
       pagination: 'Page {page} of {totalPages} · {total} calls',

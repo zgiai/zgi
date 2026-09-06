@@ -11,6 +11,7 @@ import {
   KeyRound,
   MoreHorizontal,
   Plus,
+  RefreshCw,
   Settings2,
   ShieldCheck,
   UsersRound,
@@ -292,6 +293,12 @@ function AuditList({
                     <code className="text-[11px] text-muted-foreground">
                       {item.api_key_masked || '—'}
                     </code>
+                    {item.request_id ? (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {t('audit.requestId')}
+                        <code className="block select-all break-all">{item.request_id}</code>
+                      </p>
+                    ) : null}
                   </div>
                 </TableCell>
                 <TableCell>
@@ -306,7 +313,15 @@ function AuditList({
                     <p className="mt-1 max-w-32 truncate text-destructive">{item.error_code}</p>
                   ) : null}
                 </TableCell>
-                <TableCell>{item.total_tokens.toLocaleString()}</TableCell>
+                <TableCell>
+                  <p>{item.total_tokens.toLocaleString()}</p>
+                  <p className="whitespace-nowrap text-[11px] text-muted-foreground">
+                    {t('audit.tokenBreakdown', {
+                      input: item.prompt_tokens.toLocaleString(),
+                      output: item.completion_tokens.toLocaleString(),
+                    })}
+                  </p>
+                </TableCell>
                 <TableCell>
                   <p>{item.total_points.toLocaleString()}</p>
                   {item.quota_overage_points > 0 ? (
@@ -422,6 +437,8 @@ export function DeveloperAccessPage() {
     requests,
     memberRequests: memberRequestQuery,
     audit,
+    refresh,
+    isRefreshing,
   } = useDeveloperAccess(
     workspaceId,
     keyPage,
@@ -560,7 +577,11 @@ export function DeveloperAccessPage() {
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">{t('title')}</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{t('description')}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" disabled={isRefreshing} onClick={() => void refresh()}>
+            <RefreshCw className={`mr-2 size-4${isRefreshing ? ' animate-spin' : ''}`} />
+            {t('actions.refresh')}
+          </Button>
           {access?.can_manage ? (
             <Button variant="outline" onClick={() => setPolicyOpen(true)}>
               <Settings2 className="mr-2 size-4" />
@@ -667,7 +688,7 @@ export function DeveloperAccessPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <Tabs defaultValue="keys">
+          <Tabs key={workspaceId} defaultValue="keys" onValueChange={() => void refresh()}>
             <TabsList className="h-auto flex-wrap justify-start">
               <TabsTrigger value="keys">{t('tabs.keys')}</TabsTrigger>
               {access?.can_manage ? (
