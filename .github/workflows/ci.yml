@@ -95,6 +95,9 @@ jobs:
         working-directory: web
         run: pnpm test:file-context-permissions
 
+      - name: Workspace home access regression
+        run: pnpm test:workspace-home-access
+
       - name: Clean generated web files
         if: always()
         run: |
