@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -280,7 +281,7 @@ func (s *AccountService) SendResetPasswordEmail(ctx context.Context, account *au
 	return token, nil
 }
 
-func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
+func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, workspaceID, groupName, departmentName, language string) error {
 	if account == nil {
 		return errors.New("account must be provided")
 	}
@@ -296,7 +297,7 @@ func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *
 	if s.tokenMgr != nil {
 		if err := s.tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
 			AccountID: account.ID, Email: account.Email, OrganizationID: groupID, InviterID: inviterID,
-			Role: string(workspace_model.OrganizationRoleNormal),
+			WorkspaceID: workspaceID, Role: string(workspace_model.OrganizationRoleNormal),
 		}, token, expiryHours); err != nil {
 			return fmt.Errorf("store direct member invitation: %w", err)
 		}
@@ -309,7 +310,7 @@ func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *
 		targetURL = targetURL + "/"
 	}
 
-	activationURL := fmt.Sprintf("%sactivate?email=%s&token=%s", targetURL, account.Email, token)
+	activationURL := fmt.Sprintf("%sactivate?%s", targetURL, url.Values{"email": {account.Email}, "token": {token}}.Encode())
 
 	return email.SendDirectAddMemberMail(language, account.Email, groupName, departmentName, activationURL)
 }
