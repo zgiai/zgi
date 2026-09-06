@@ -1138,7 +1138,6 @@ const appCenterPaths = [
 const organizationProductPagePaths = [
   path.join(rootDir, 'src', 'app', 'console', 'work', 'chat', 'page.tsx'),
   path.join(rootDir, 'src', 'app', 'console', 'work', 'image', 'page.tsx'),
-  path.join(rootDir, 'src', 'app', 'console', 'settings', 'page.tsx'),
   ...appCenterPaths,
 ];
 
@@ -4342,7 +4341,7 @@ assert.match(
 );
 assert.match(
   datasetFileRefPanelSource,
-  /canOpenSourceFile \? \([\s\S]*href=\{`\/console\/files\/\$\{ref\.file_id\}\?returnTo=/,
+  /canOpenSourceFile && ref\.source_file_available \? \([\s\S]*href=\{`\/console\/files\/\$\{ref\.file_id\}\?returnTo=/,
   'dataset file-ref panel should hide source-file links when file detail cannot be opened'
 );
 assert.match(
@@ -4397,7 +4396,7 @@ assert.match(
 );
 assert.match(
   datasetDetailLayoutSource,
-  /const canOpenSettings\s*=\s*hasAnyPermission\(\[\s*\.\.\.KNOWLEDGE_BASE_PERMISSION_ACTIONS\.update,\s*\]\)/,
+  /const canOpenSettings\s*=\s*hasAnyPermission\(\[\s*\.\.\.KNOWLEDGE_BASE_PERMISSION_ACTIONS\.update,?\s*\]\)/,
   'dataset detail layout should show the settings navigation only with knowledge_base.update'
 );
 assert.match(
@@ -5208,6 +5207,8 @@ for (const appCenterPath of appCenterPaths) {
   );
 }
 
+// The former console/settings theme page was moved into the shared user menu.
+assert.match(userMenuSource, /<ThemeSwitcherSubmenu\s*\/>/, 'theme selection must remain reachable from the user menu');
 for (const productPagePath of organizationProductPagePaths) {
   const productPageSource = fs.readFileSync(productPagePath, 'utf8');
   assert.doesNotMatch(
