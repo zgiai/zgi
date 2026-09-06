@@ -4072,7 +4072,7 @@ assert.match(
 );
 assert.match(
   agentRuntimeDatabaseSectionSource,
-  /useDbsBasic\([\s\S]*enabled:\s*open && canBindReadableDatabase/,
+  /agentService\.getAgentDatabaseBindingCandidates\(agentId,[\s\S]*?enabled:\s*open && canBindReadableDatabase && Boolean\(agentId\)/,
   'agent runtime database selector should not load database candidates without binding read permissions'
 );
 assert.match(
@@ -4082,7 +4082,7 @@ assert.match(
 );
 assert.match(
   agentRuntimeDatabaseSectionSource,
-  /useDbTables\(dataSourceID,[\s\S]*enabled:\s*canReadBinding && tableIDs\.length > 0/,
+  /useDbTables\(dataSourceID,[\s\S]*?enabled:\s*canReadBinding &&\s*\(isScopedDatabase \|\| databaseHealthItem\?\.status === 'active'\) &&\s*tableIDs\.length > 0/,
   'agent runtime selected database cards should not load table metadata without binding read permissions'
 );
 assert.match(
@@ -4227,8 +4227,8 @@ assert.doesNotMatch(
 );
 assert.match(
   createFromTemplateHookSource,
-  /router\.push\(getAgentDetailBaseHref\(agentId,\s*'workflow'\)\)/,
-  'template-created workflows should route through the workflow detail root'
+  /router\.push\(getAgentDetailBaseHref\(agentId,\s*resolveTemplateRouteKind\(template\)\)\)/,
+  'template-created resources should route through their runtime-specific detail root'
 );
 assert.doesNotMatch(
   createFromTemplateHookSource,
