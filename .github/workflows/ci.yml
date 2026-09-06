@@ -91,6 +91,10 @@ jobs:
       - name: Check exact Agent context action permissions
         run: pnpm test:agent-context-permissions
 
+      - name: File context permissions
+        working-directory: web
+        run: pnpm test:file-context-permissions
+
       - name: Clean generated web files
         if: always()
         run: |

@@ -25,7 +25,7 @@ const fileReadCapability: AIChatCapabilityDescriptor = {
   description: 'Read file metadata and contents for files visible on the current files page.',
   risk: 'low',
   status: 'available',
-  permissions: ['file.view'],
+  permissions: ['file.preview'],
 };
 
 const fileListVisibleCapability: AIChatCapabilityDescriptor = {
@@ -34,7 +34,7 @@ const fileListVisibleCapability: AIChatCapabilityDescriptor = {
   description: 'List files visible on the current files page.',
   risk: 'low',
   status: 'available',
-  permissions: ['file.view'],
+  permissions: [],
 };
 
 const fileDeleteCapability: AIChatCapabilityDescriptor = {
@@ -44,7 +44,7 @@ const fileDeleteCapability: AIChatCapabilityDescriptor = {
   risk: 'high',
   requiresConfirmation: true,
   status: 'available',
-  permissions: ['file.manage'],
+  permissions: ['file.delete'],
 };
 
 const fileCreateCapability: AIChatCapabilityDescriptor = {
@@ -55,7 +55,7 @@ const fileCreateCapability: AIChatCapabilityDescriptor = {
   risk: 'medium',
   requiresConfirmation: true,
   status: 'available',
-  permissions: ['file.upload_create'],
+  permissions: ['file.upload'],
   metadata: {
     target: 'file_management',
     default_without_explicit_target: 'temporary_artifact',
@@ -76,9 +76,13 @@ interface VisibleFileContext {
 
 function filesAIChatCapabilities(
   canManage: boolean,
-  canUpload: boolean
+  canUpload: boolean,
+  canPreview: boolean
 ): AIChatCapabilityDescriptor[] {
-  const capabilities = [fileListVisibleCapability, fileReadCapability];
+  const capabilities = [fileListVisibleCapability];
+  if (canPreview) {
+    capabilities.push(fileReadCapability);
+  }
   if (canUpload) {
     capabilities.push(fileCreateCapability);
   }
@@ -329,9 +333,10 @@ export function buildFilesAIChatContextItems(
     queryStatus,
     canManage,
     canUpload,
+    canPreview,
     presentation,
   } = snapshot;
-  const capabilities = filesAIChatCapabilities(canManage, canUpload);
+  const capabilities = filesAIChatCapabilities(canManage, canUpload, canPreview);
   const visibleFileContexts = buildVisibleFileContexts(files, selectedFileIds);
   const selectedVisibleCount = visibleFileContexts.filter(({ selected }) => selected).length;
   const orderedVisibleFileIds = buildAIChatListMetadata(
@@ -438,7 +443,7 @@ export function buildFilesAIChatContextItems(
       type: 'file' as const,
       title: context.file.name,
       subtitle: `${context.fileTypeNormalized} - ${context.extensionNormalized}`,
-      description: `Visible file ${context.visibleIndex} on console.files page. Use read_file to inspect content.`,
+      description: `Visible file ${context.visibleIndex} on console.files page.${canPreview ? ' Use read_file to inspect content.' : ' Content preview is not permitted.'}`,
       href: '/console/files',
       source: 'Files page',
       status: 'available' as const,
