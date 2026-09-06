@@ -733,6 +733,24 @@ func newWorkflowRoutesTestRouterWithConversationAndAccountService(t *testing.T, 
 
 	webAppID, userID, conversationID := seedWorkflowRoutesTestData()
 	expectWorkflowRoutesSQL(t, mock, webAppID, userID, conversationID)
+	if strings.HasPrefix(t.Name(), "TestWorkflowRoutes_BuiltIn") &&
+		t.Name() != "TestWorkflowRoutes_BuiltInWorkflowsRequireOrganizationAuth" {
+		// Console authentication verifies the persisted account status before
+		// applying the organization/runtime permissions exercised by these tests.
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id","status" FROM "accounts"`)).
+			WithArgs(userID, 1).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).
+				AddRow(userID, string(auth_model.AccountStatusActive)))
+		mock.ExpectExec(`UPDATE "accounts" SET "last_active_at"=`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		// Last-active persistence is asynchronous. Drain it before restoring the
+		// package-global database so it cannot leak into the next route fixture.
+		t.Cleanup(func() {
+			require.Eventually(t, func() bool {
+				return mock.ExpectationsWereMet() == nil
+			}, time.Second, time.Millisecond)
+		})
+	}
 
 	taskManager, err := queue.NewTaskManager(config.GlobalConfig)
 	require.NoError(t, err)
@@ -984,6 +1002,11 @@ func expectAgentByWebAppWithRuntimeSurface(mock sqlmock.Sqlmock, webAppID, webAp
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agents"`)).
 		WithArgs(webAppID, 1).
 		WillReturnRows(rows)
+	if webAppStatus != "active" {
+		// An offline app is rejected before looking up runtime surfaces. Keeping
+		// the response assertions and no surface expectation guards that order.
+		return agentID
+	}
 	if surfaceEnabled == (webAppStatus == "active") {
 		expectAgentWebAppRuntimeFallback(mock, agentID)
 	} else {
