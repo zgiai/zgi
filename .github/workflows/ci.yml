@@ -85,6 +85,9 @@ jobs:
       - name: Test billing display reconciliation
         run: pnpm test:billing-display
 
+      - name: Check permission-gated file creation entry
+        run: pnpm test:file-sidebar-actions
+
       - name: Clean generated web files
         if: always()
         run: |

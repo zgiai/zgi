@@ -2501,6 +2501,11 @@ assert.match(
   'file sidebar should render the text creation label separately from upload'
 );
 assert.match(
+  fileSidebarSource,
+  /\{onCreateTextFile && \([\s\S]*onClick=\{onCreateTextFile\}[\s\S]*t\('files\.sidebar\.newTextFile'\)/,
+  'file sidebar should render a working text action only when its permission-gated callback is supplied'
+);
+assert.match(
   fileHandlerSource,
   /func \(h \*FileHandler\) authorizeWorkspaceTextCreate[\s\S]*WorkspacePermissionFileTextCreate/,
   'file text creation backend helper should require file.text.create'
@@ -2671,7 +2676,7 @@ assert.match(
 );
 assert.match(
   dbLayoutSource,
-  /\{canViewTableMetadata && \([\s\S]*<button[\s\S]*\{t\('dbs\.tables'\)\}/,
+  /\{canViewTableMetadata && \([\s\S]*<Link\s+href=\{`\/console\/db\/\$\{dbId\}`\}[\s\S]*\{t\('dbs\.tables'\)\}/,
   'database detail layout should hide the table navigation group without table metadata permissions'
 );
 assert.match(
@@ -2866,7 +2871,7 @@ assert.match(
 );
 assert.match(
   dashboardTypesSource,
-  /DashboardRecentWorkType = 'conversation' \| 'agent' \| 'workflow' \| 'dataset' \| 'database'/,
+  /DashboardRecentWorkType\s*=\s*\|?\s*'conversation'\s*\|\s*'agent'\s*\|\s*'workflow'\s*\|\s*'dataset'\s*\|\s*'database'/,
   'recent work response type should include workflow so workflow assets do not fall through to database links'
 );
 assert.match(
@@ -3176,13 +3181,13 @@ const legacyAggregatePermissionCodes = [
 ];
 assert.match(
   consoleSidebarSource,
-  /getConsoleRouteAccess/,
+  /getZGIConsoleNavigationAccess\(item\.href, context\)/,
   'console sidebar should use shared route access metadata for nav visibility'
 );
 assert.match(
   consoleSidebarSource,
-  /routeAccess\.scope === 'organization'/,
-  'console sidebar should keep only organization-scoped nav items in organization mode'
+  /getZGIConsoleNavigationDisplayState\(access, permissionsFailed\)/,
+  'console sidebar should project missing workspace and denied permissions through shared navigation display states'
 );
 assert.doesNotMatch(
   consoleSidebarSource,
