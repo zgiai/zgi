@@ -3464,6 +3464,7 @@ const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, '
 const createFromTemplateHookSource = fs.readFileSync(createFromTemplateHookPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
+const agentApiGuardSource = fs.readFileSync(path.join(rootDir, 'src/components/agents/api/agent-api-access-guard.tsx'), 'utf8');
 const workflowEditorPageSource = fs.readFileSync(workflowEditorPagePath, 'utf8');
 const agentBatchTestPageSource = fs.readFileSync(agentBatchTestPagePath, 'utf8');
 const workflowBatchTestOverviewSource = fs.readFileSync(workflowBatchTestOverviewPath, 'utf8');
@@ -4804,13 +4805,13 @@ assert.doesNotMatch(
 );
 assert.match(
   agentApiPageSource,
-  /defaultValue="api-keys"/,
-  'agent API page should default to workflow API keys after publication access moved to the publish dialog'
+  /router\.replace\(`\$\{basePath\}\/api\/keys`\)/,
+  'agent API index should redirect to the guarded API keys child'
 );
 assert.match(
-  agentApiPageSource,
+  agentApiGuardSource,
   /hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage\)/,
-  'agent API page should require workflow runtime-access management for workflow API key/docs tabs'
+  'workflow API children should require workflow runtime-access management'
 );
 assert.doesNotMatch(
   agentApiPageSource,
@@ -4818,14 +4819,28 @@ assert.doesNotMatch(
   'agent API page should not mix AGENT runtime-access permissions into the workflow-only API key/docs route'
 );
 assert.match(
-  agentApiPageSource,
+  agentApiGuardSource,
   /canShowAgentApiKeys\(agentType,[\s\S]*canManageRuntimeAccess/,
   'agent API page should delegate workflow API-key visibility through the shared route helper'
 );
 assert.match(
-  agentApiPageSource,
-  /useAgent\(agentId,\s*canManageRuntimeAccess\)/,
-  'agent API direct page should not fetch agent metadata before workflow runtime-access permission is present'
+  agentApiGuardSource,
+  /useAgent\(agentId,\s*canQueryAgent\)/,
+  'agent API children should not fetch metadata before runtime-access permissions are resolved'
+);
+assert.match(
+  agentApiGuardSource,
+  /isAgentRuntimeType\(agentType\)[\s\S]*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.runtimeAccessManage\)/,
+  'Agent API children must preserve Agent-specific authorization rather than reuse workflow permission'
+);
+for (const child of ['keys', 'docs']) {
+  const source = fs.readFileSync(path.join(path.dirname(agentApiPagePath), child, 'page.tsx'), 'utf8');
+  assert.match(source, /<AgentApiAccessGuard agentId=\{agentId\}>/, `${child} API child must use the shared guard`);
+}
+assert.match(
+  agentApiGuardSource,
+  /const canQueryAgent\s*=\s*!isPermissionsLoading &&\s*!permissionError &&\s*hasAnyPermission\(/,
+  'API metadata loading must fail closed while permissions are unavailable'
 );
 assert.match(
   agentLogsPageSource,
