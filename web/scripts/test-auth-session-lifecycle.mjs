@@ -415,6 +415,122 @@ test('same-tab session removal resets auth and clears active query state', () =>
   cleanups.forEach(cleanup => cleanup?.());
 });
 
+test('session cleanup retains only the exact public features query and its active observer', async () => {
+  const f = fixture();
+  const { QueryClient, QueryObserver } = require('@tanstack/react-query');
+  const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity } } });
+  const keys = f.load('hooks/query-keys.ts');
+  const features = { enable_email_code_login: true, is_email_setup: true, is_allow_register: true };
+  client.setQueryData(keys.SYSTEM_KEYS.features(), features);
+  const privateKeys = [
+    ['profile'],
+    ['workspace', 'A'],
+    keys.SYSTEM_KEYS.settings(),
+    ['system', 'features', 'private'],
+  ];
+  privateKeys.forEach(key => client.setQueryData(key, { secret: 'session-bound-test-data' }));
+  client.getMutationCache().build(client, { mutationKey: ['create-key'] });
+  const observer = new QueryObserver(client, {
+    queryKey: keys.SYSTEM_KEYS.features(),
+    enabled: false,
+  });
+  const unsubscribe = observer.subscribe(() => {});
+  const originalQuery = client
+    .getQueryCache()
+    .find({ queryKey: keys.SYSTEM_KEYS.features(), exact: true });
+  f.mock('@/lib/query-client', { queryClient: client });
+  f.mock('@/hooks/query-keys', keys);
+  let cachesCleared = 0;
+  let workspaces = ['A'];
+  let organizations = ['org-A'];
+  f.mock('@/utils/client-cache', { clearAuthClientCaches: () => cachesCleared++ });
+  f.mock('@/store/workspace-store', {
+    useWorkspaceStore: {
+      getState: () => ({
+        setWorkspaces: value => {
+          workspaces = value;
+        },
+        enterOrganizationMode() {},
+      }),
+    },
+  });
+  f.mock('@/store/organization-store', {
+    useOrganizationStore: {
+      getState: () => ({
+        setOrganizations: value => {
+          organizations = value;
+        },
+        setCurrentOrganization() {},
+        setSwitchingOrganization() {},
+      }),
+    },
+  });
+  try {
+    const { clearSessionBoundClientState } = f.load('lib/auth/client-state.ts');
+    await clearSessionBoundClientState();
+    await clearSessionBoundClientState(); // Duplicate sign-out notification from another tab.
+    assert.equal(
+      client.getQueryCache().find({ queryKey: keys.SYSTEM_KEYS.features(), exact: true }),
+      originalQuery
+    );
+    assert.equal(originalQuery.getObserversCount(), 1);
+    assert.deepEqual(observer.getCurrentResult().data, features);
+    privateKeys.forEach(key => assert.equal(client.getQueryData(key), undefined));
+    assert.equal(client.getMutationCache().getAll().length, 0);
+    assert.equal(workspaces.length, 0);
+    assert.equal(organizations.length, 0);
+    assert.equal(cachesCleared, 2);
+    const fresh = { ...features, is_allow_register: false };
+    await client.fetchQuery({ queryKey: keys.SYSTEM_KEYS.features(), queryFn: async () => fresh });
+    assert.deepEqual(
+      observer.getCurrentResult().data,
+      fresh,
+      'the retained query must still receive refreshed public configuration'
+    );
+    await client.resetQueries({ queryKey: keys.SYSTEM_KEYS.features(), exact: true });
+    let finishFeatures;
+    const pendingFeatures = client.fetchQuery({
+      queryKey: keys.SYSTEM_KEYS.features(),
+      queryFn: () =>
+        new Promise(resolve => {
+          finishFeatures = resolve;
+        }),
+    });
+    await clearSessionBoundClientState();
+    assert.equal(
+      client.getQueryCache().find({ queryKey: keys.SYSTEM_KEYS.features(), exact: true }),
+      originalQuery
+    );
+    finishFeatures(features);
+    await pendingFeatures;
+    assert.deepEqual(
+      observer.getCurrentResult().data,
+      features,
+      'a late sign-out must not cancel initial login configuration loading'
+    );
+  } finally {
+    unsubscribe();
+    client.clear();
+  }
+});
+
+test('auth reset removes private state without losing known public login features', () => {
+  const f = fixture();
+  f.mock('@/services/auth.service', { AuthenticationService: class {} });
+  f.mock('@/utils/client-cache', { clearAuthClientCaches() {} });
+  f.mock('@/lib/auth/context-sync', { syncAccountContextStores() {} });
+  const { useAuthStore } = f.load('store/auth-store.ts');
+  const features = { enable_email_code_login: true, is_email_setup: true, is_allow_register: true };
+  useAuthStore.getState().setSystemFeatures(features);
+  useAuthStore.getState().setUser({ id: 'private-member' });
+  useAuthStore.getState().reset({ clearSession: false });
+  const state = useAuthStore.getState();
+  assert.equal(state.user, null);
+  assert.equal(state.isAuthenticated, false);
+  assert.equal(state.sessionStatus, 'guest');
+  assert.equal(state.systemFeatures, features);
+});
+
 test('SSE missing session uses the same redirect and localized error handling', async () => {
   const f = fixture();
   let error;

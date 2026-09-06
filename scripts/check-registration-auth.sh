@@ -35,6 +35,7 @@ if [[ "${mode}" != "--backend-only" ]]; then
   echo "Running registration and invitation frontend checks"
   (
     cd "${repo_root}/web"
+    pnpm test:auth-session-lifecycle
     pnpm exec eslint --max-warnings=17 \
       'src/app/(auth)/invite/[token]/page.tsx' \
       'src/app/(auth)/layout.tsx' \

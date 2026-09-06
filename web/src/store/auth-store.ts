@@ -270,6 +270,9 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
 
     set({
       ...defaultState,
+      // Public login capabilities are not account data. Keep the last known
+      // snapshot while the login page revalidates it through useSystemFeatures.
+      systemFeatures: get().systemFeatures,
       isInitialized: true,
       isSystemReady: true,
       sessionStatus: 'guest',
