@@ -8,6 +8,7 @@ export CONNECTOR_CREDENTIAL_KEYS_JSON='{"contextual-permissions-ci":"contextual-
 cd "${repo_root}/api"
 go test ./internal/modules/tools/builtin/agentmanagement \
   ./internal/modules/tools/builtin/files -count=1
+go test ./internal/modules/app/workflowtest ./internal/modules/dataset/handler -count=1
 go test ./internal/capabilities/chatruntime/service \
   -run 'Test(TrustedContextual|ContextualAgentSkillDiscovery|ContextualFileSkillDiscovery|AddContextualAIChatSkillIDsDoesNotUseText|ContextualAIChatSkillIDsUseModelIntent)' \
   -count=1
