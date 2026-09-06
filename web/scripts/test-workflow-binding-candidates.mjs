@@ -8,4 +8,5 @@ assert.equal(indexWorkflowBindingCandidates([candidate], [{ ...custom, workflow_
 assert.equal(indexWorkflowBindingCandidates([candidate], [{ ...custom, version_uuid: 'old-version' }]).has('custom-alias'), false);
 assert.equal(indexWorkflowBindingCandidates([candidate], [{ ...custom, binding_id: 'suggested', agent_id: 'different-agent' }]).has('suggested'), false);
 assert.equal(indexWorkflowBindingCandidates([candidate], [custom]).get('custom-alias')?.workflow_id, 'published');
+assert.equal(indexWorkflowBindingCandidates([candidate], [{ ...candidate, workflow_id: 'old-workflow' }]).has('suggested'), false);
 console.log('Workflow alias and resource/version boundary checks passed');

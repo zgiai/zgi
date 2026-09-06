@@ -20,8 +20,7 @@ export function indexWorkflowBindingCandidates(
     if (candidate) {
       indexed.set(binding.binding_id, { ...candidate, ...binding });
     } else {
-      const aliasCandidate = indexed.get(binding.binding_id);
-      if (aliasCandidate?.agent_id !== binding.agent_id) indexed.delete(binding.binding_id);
+      indexed.delete(binding.binding_id);
     }
   }
   return indexed;
