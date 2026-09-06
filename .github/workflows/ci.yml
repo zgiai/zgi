@@ -82,6 +82,9 @@ jobs:
       - name: Check developer access refresh, audit and mobile navigation
         run: pnpm test:developer-access-live-audit
 
+      - name: Test billing display reconciliation
+        run: pnpm test:billing-display
+
       - name: Clean generated web files
         if: always()
         run: |

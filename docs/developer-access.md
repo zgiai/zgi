@@ -52,6 +52,8 @@ If workspace navigation reports that permissions cannot be confirmed, inspect th
 
 The console displays and accepts quota in points, consistently with workspace quotas. One displayed point equals 1,000 internal credits. The console preserves three decimal places (0.001 point is one internal credit), including in personal balances, access requests, approvals, policy limits, and call audit. Points are not tokens or a currency amount.
 
+Organization invocation details also preserve this precision: a charge of 45 internal credits is displayed as 0.045 points, not rounded to 0.04 points. The API source label covers both personal and legacy organization keys; it does not imply ownership by the organization.
+
 Console API quota fields and audit `*_points` fields retain their existing integer internal-credit contract. For example, a 100-point request is sent as `requested_quota: 100000`; an audit value of `total_points: 1234` displays as 1.234 points. API clients must not send UI point values directly. Missing or null limits retain their default/unlimited semantics; zero remains zero. This display conversion does not rescale stored grants, change billing, or replenish any balance.
 
 ### Shared billing subject
