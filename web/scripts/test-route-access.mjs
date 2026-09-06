@@ -3340,6 +3340,10 @@ for (const filePath of backendPermissionBusinessFiles) {
 }
 
 const consolePageSource = fs.readFileSync(consolePagePath, 'utf8');
+const workspaceHomeHookSource = fs.readFileSync(path.join(rootDir, 'src/hooks/console/use-workspace-home.ts'), 'utf8');
+const workspaceHomeSource = fs.readFileSync(path.join(rootDir, 'src/components/console/workspace-home/index.tsx'), 'utf8');
+const workspaceQuickActionsSource = fs.readFileSync(path.join(rootDir, 'src/components/console/workspace-home/quick-actions.tsx'), 'utf8');
+const workspaceRecentWorkSource = fs.readFileSync(path.join(rootDir, 'src/components/console/workspace-home/recent-work.tsx'), 'utf8');
 const workspaceStoreSource = fs.readFileSync(workspaceStorePath, 'utf8');
 const accountServiceSource = fs.readFileSync(accountServicePath, 'utf8');
 const runnableWebAppsHookSource = fs.readFileSync(runnableWebAppsHookPath, 'utf8');
@@ -3393,10 +3397,21 @@ assert.match(
   /useWorkspaces\('',\s*1,\s*1000,\s*\{\s*keepPreviousData:\s*true,\s*enabled:\s*open\s*\}\)/,
   'runtime audience picker should not fetch workspace scope while closed'
 );
+// Audience names are embedded in subject_detail; chip components no longer
+// perform lookups. Protect that boundary instead of requiring the removed prop.
+const runtimeAudienceChipSource = runtimeAudiencePickerSource.slice(
+  runtimeAudiencePickerSource.indexOf('export function RuntimeAudienceChipList(')
+);
+assert.match(runtimeAudienceChipSource, /function RuntimeAudienceChip\(/);
+assert.doesNotMatch(
+  runtimeAudienceChipSource,
+  /\b(?:useDepartments|useWorkspaces|useCurrentOrganizationMembers)\s*\(/,
+  'runtime audience chips must render embedded names without fetching scope catalogs'
+);
 assert.match(
   runtimeAudiencePickerSource,
-  /lookupEnabled=\{open\}/,
-  'runtime audience picker selected chips should not resolve department/workspace labels while closed'
+  /useCurrentOrganizationMembers\(\{[^}]*enabled:\s*open/,
+  'runtime audience picker should not fetch members while closed'
 );
 assert.match(
   runtimeAudiencePickerSource,
@@ -3414,12 +3429,12 @@ assert.match(
   'runtime audience picker should show the owning workspace as an implicit audience'
 );
 assert.match(
-  consolePageSource,
-  /const canOpenModelConfig\s*=\s*canAccessOrganizationDashboard && canManageModelConfig/,
+  workspaceHomeHookSource,
+  /const canOpenModelConfig\s*=\s*capabilities\.canAccessOrganizationDashboard && capabilities\.canManageModelConfig/,
   'console overview model configuration entry should require organization dashboard and model-config capabilities'
 );
 assert.doesNotMatch(
-  consolePageSource,
+  workspaceHomeHookSource,
   /has(?:Any|All)?Permission\s*\([\s\S]{0,240}['"](?:dashboard|content_parse)\./,
   'console overview should not gate model readiness or parser/dashboard entry points with retired workspace permissions'
 );
@@ -3577,53 +3592,63 @@ assert.match(
 );
 assert.match(
   consolePageSource,
+  /<WorkspaceHome\s*\/>/,
+  'console route should render the modular workspace home'
+);
+assert.match(
+  workspaceHomeSource,
+  /useWorkspaceHome\(\)/,
+  'workspace home should use its scoped data and permission hook'
+);
+assert.match(
+  workspaceHomeHookSource,
   /useAccountCapabilities/,
   'console home should consume account capabilities'
 );
 assert.match(
-  consolePageSource,
+  workspaceHomeHookSource,
   /canAccessOrganizationDashboard/,
   'console home should derive dashboard entry visibility from account capabilities'
 );
 assert.match(
-  consolePageSource,
+  workspaceHomeHookSource,
   /canManageModelConfig/,
   'console home should derive model configuration entry visibility from account capabilities'
 );
 assert.match(
-  consolePageSource,
-  /useRunnableWebApps\(\{\s*workspaceId:\s*null\s*\}\)/,
-  'console home should load runnable apps through organization scope instead of the current workspace'
+  workspaceHomeHookSource,
+  /apps:\s*toHomeAccessState\('\/console\/work\/app', navigationContext, permissionsFailed\)/,
+  'home app entry must use the shared navigation permission decision'
 );
 assert.match(
-  consolePageSource,
-  /key:\s*'app-center'[\s\S]*enabled:\s*canUseOrganizationScope\s*&&\s*productSurfaces\?\.app\s*!==\s*false\s*&&\s*canUseRunnableApps/,
-  'console home should hide the app-center product entry when the account lacks the app_center resource-list capability'
+  workspaceQuickActionsSource,
+  /href:\s*'\/console\/work\/app',[\s\S]*?accessState:\s*access\.apps/,
+  'app-center shortcut must consume its own access decision'
 );
 assert.match(
-  consolePageSource,
-  /\{canUseRunnableApps \? \([\s\S]*href="\/console\/work\/app"/,
-  'console home should hide the open-app-center CTA when the account lacks the app_center resource-list capability'
+  workspaceQuickActionsSource,
+  /return isBlocked \? \([\s\S]*?aria-disabled="true"[\s\S]*?: \([\s\S]*?<Link/,
+  'blocked home actions must remain informative but not navigable'
 );
 assert.match(
-  consolePageSource,
+  workspaceQuickActionsSource,
   /href:\s*'\/console\/work\/chat'/,
   'console home should keep chat as an organization-scoped product entry'
 );
 assert.match(
-  consolePageSource,
-  /DASHBOARD_KEYS\.recentWork\('overview'\)/,
-  'console home should query the organization overview recent-work feed'
+  workspaceHomeHookSource,
+  /useDashboardRecentWork\(/,
+  'home should use the shared recent-work query hook'
 );
 assert.match(
-  consolePageSource,
-  /dashboardService\.getRecentWork\(\{[\s\S]*scope:\s*'overview'/,
-  'console home recent-work request should use overview scope'
+  workspaceHomeHookSource,
+  /useDashboardRecentWork\(\s*\{\s*scope:\s*currentWorkspace \? 'workspace' : 'overview',\s*workspace_id:\s*currentWorkspace\?\.id/,
+  'home recent work must use the selected workspace and fall back to overview only without one'
 );
 assert.match(
-  consolePageSource,
-  /handleOpenRecentWork/,
-  'console home should open recent work through the workspace-aware handler'
+  workspaceRecentWorkSource,
+  /getRecentWorkNavigationHref\(\s*hasWorkspace,\s*item\.type,\s*item\.resource_id,\s*item\.parent_id,\s*item\.workspace_id/,
+  'home recent work must preserve workspace-aware navigation'
 );
 assert.match(
   workspaceStoreSource,
@@ -3662,12 +3687,12 @@ assert.match(
 );
 assert.match(
   userMenuSource,
-  /canAccessOrganizationDashboard/,
+  /\{canAccessOrganizationDashboard && \([\s\S]*?<Link href="\/dashboard"/,
   'user menu dashboard entry should use the dashboard access capability'
 );
 assert.doesNotMatch(
   userMenuSource,
-  /organization_role[\s\S]*href="\/dashboard"/,
+  /const\s+canAccessOrganizationDashboard\s*=[^;]*organization_role/,
   'user menu dashboard entry should not be gated directly by local organization_role'
 );
 assert.match(
