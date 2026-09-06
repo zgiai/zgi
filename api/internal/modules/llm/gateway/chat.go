@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
@@ -44,7 +45,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 ) (*adapter.ChatResponse, error) {
 	ctx = applyInvocationContentPrivacy(ctx, appCtx)
 	startTime := time.Now()
-	requestID := uuid.New().String()
+	requestID := types.NewInvocationID(ctx)
 	ctx = logger.WithFields(ctx,
 		zap.String("gateway_request_id", requestID),
 		zap.String("model", req.Model),
@@ -297,7 +298,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 ) (<-chan adapter.StreamResponse, error) {
 	ctx = applyInvocationContentPrivacy(ctx, appCtx)
 	startTime := time.Now()
-	requestID := uuid.New().String()
+	requestID := types.NewInvocationID(ctx)
 	ctx = logger.WithFields(ctx,
 		zap.String("gateway_request_id", requestID),
 		zap.String("model", req.Model),

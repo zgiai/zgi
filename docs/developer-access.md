@@ -56,4 +56,6 @@ Console API quota fields and audit `*_points` fields retain their existing integ
 
 ### Shared billing subject
 
+For `/v1/chat/completions` (streaming and non-streaming), record the response header `X-ZGI-Request-ID`. This server-generated invocation ID matches the audit `request_id` and links its provider attempts and billing records. It is exposed through CORS for browser clients. `X-Request-ID` remains the transport correlation ID and may be supplied by the caller; it is not a billing idempotency key. Reusing a client header does not reuse an invocation or skip charges. Authentication/JSON validation failures that never enter the gateway may not have an invocation ID or a provider-attempt audit record.
+
 Gateway usage records include the workspace account, principal type and ID, access grant ID, API key ID, and authentication method. Personal-key calls are charged against the shared developer grant rather than an independent per-key balance. This keeps key rotation from resetting a user's assigned quota and lets administrators audit usage across all keys owned by one user. Billing retry and reconciliation records persist the same attribution so failure recovery does not downgrade a personal-key call to legacy-key usage.

@@ -116,7 +116,7 @@ jobs:
           go-version-file: api/go.mod
           cache: false
 
-      - name: Run registration and invitation gate
+      - name: Run registration and developer access gates
         run: |
           go_root="$(go env GOROOT)"
           docker run --rm \
@@ -131,7 +131,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             node:22-bookworm \
-            ./scripts/check-registration-auth.sh --backend-only
+            bash -c './scripts/check-registration-auth.sh --backend-only && bash ./scripts/check-developer-access.sh'
 
   sandbox:
     name: Sandbox runtime tests

@@ -58,6 +58,12 @@ func (h *LLMHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// Publish the server-generated billing/audit ID without trusting or replacing
+	// the caller's transport request ID. Set it before SSE headers are committed.
+	c.Request = c.Request.WithContext(types.WithInvocationIDObserver(c.Request.Context(), func(id string) {
+		c.Header(types.InvocationIDHeader, id)
+	}))
+
 	// 4. Check if streaming is requested
 	if req.Stream {
 		h.handleStreamingRequest(c, apiKey, &req)
