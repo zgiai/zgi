@@ -3891,6 +3891,10 @@ func (s *fakeAgentManagementService) ListAgentMemoryValues(context.Context, stri
 	return nil, nil
 }
 
+func (s *fakeAgentManagementService) UpdateAgentMemoryConfig(context.Context, string, string, dto.AgentMemoryConfigRequest) (*dto.AgentMemoryConfigResponse, error) {
+	return nil, errors.New("unexpected UpdateAgentMemoryConfig call")
+}
+
 func (s *fakeAgentManagementService) UpdateAgentMemoryValue(context.Context, string, string, dto.UpdateAgentMemoryValueRequest) (*dto.AgentMemoryValueResponse, error) {
 	return nil, nil
 }
