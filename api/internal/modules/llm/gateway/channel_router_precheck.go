@@ -131,7 +131,12 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 		}
 		llmModel, privateModel, err := r.resolveCandidateModel(ctx, organizationID, "", normalizedModelName)
 		if err != nil {
-			if !errors.Is(err, llmerrors.DomainErrModelNotFound) {
+			if errors.Is(err, errAmbiguousActiveCatalogModel) {
+				llmModel, err = r.resolveCatalogModelForRoutes(ctx, routes, normalizedModelName)
+			}
+		}
+		if err != nil {
+			if !isModelUnavailableForRouteListing(err) {
 				return nil, err
 			}
 			result[normalizedModelName] = nil
@@ -139,7 +144,7 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 		}
 		candidates, err := r.candidateRoutesForResolvedModel(ctx, organizationID, normalizedModelName, "", maxSelections, routes, llmModel, privateModel)
 		if err != nil {
-			if !errors.Is(err, llmerrors.DomainErrModelNotFound) {
+			if !isModelUnavailableForRouteListing(err) {
 				return nil, err
 			}
 			result[normalizedModelName] = nil
@@ -148,6 +153,12 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 		result[normalizedModelName] = candidates
 	}
 	return result, nil
+}
+
+func isModelUnavailableForRouteListing(err error) bool {
+	return errors.Is(err, llmerrors.DomainErrModelNotFound) ||
+		errors.Is(err, llmerrors.DomainErrNoProviderAvailable) ||
+		errors.Is(err, llmerrors.DomainErrRouteNotFound)
 }
 
 func (r *ChannelRouter) candidateRoutesForResolvedModel(

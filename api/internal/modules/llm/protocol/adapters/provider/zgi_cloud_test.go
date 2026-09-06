@@ -520,6 +520,52 @@ func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementEvent(t *testing.
 	}
 }
 
+func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementTrailersAfterDone(t *testing.T) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Trailer", headerSettlementID+", "+headerOfficialPoints+", "+headerSettlementStatus)
+		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		w.Header().Set(headerSettlementID, "deduction-trailer")
+		w.Header().Set(headerOfficialPoints, "9")
+		w.Header().Set(headerSettlementStatus, "settled")
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL: server.URL,
+		AuthHook: func(req *http.Request) {
+			req.Header.Set("X-Test-Signature", "signed")
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	stream, err := a.ChatCompletionStream(context.Background(), &adapter.ChatRequest{
+		Model:    "gpt-4o-mini",
+		Messages: []adapter.Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletionStream() error = %v", err)
+	}
+
+	var done adapter.StreamResponse
+	for event := range stream {
+		if event.Done {
+			done = event
+		}
+	}
+	if done.Settlement == nil || done.Settlement.SettlementID != "deduction-trailer" || done.Settlement.OfficialPoints != 9 {
+		t.Fatalf("done settlement = %+v, want deduction-trailer/9", done.Settlement)
+	}
+	if done.Usage == nil || done.Usage.TotalTokens != 5 {
+		t.Fatalf("done usage = %+v, want total 5", done.Usage)
+	}
+}
+
 func TestZGICloudAdapterChatCompletionStream_AllowsSettlementAfterCallerCancellation(t *testing.T) {
 	t.Helper()
 

@@ -151,7 +151,7 @@ func (a *ZGICloudAdapter) ChatCompletionStream(ctx context.Context, request *ada
 	dataChan := make(chan string, 10)
 	errChan := make(chan error, 1)
 
-	go adapter.ParseSSE(resp.Body, dataChan, errChan)
+	go adapter.ParseSSEToEOF(resp.Body, dataChan, errChan)
 
 	go func() {
 		defer close(respChan)

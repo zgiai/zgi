@@ -972,6 +972,66 @@ func TestCandidateRoutesForModelsLoadsEnabledRoutesOnce(t *testing.T) {
 	}
 }
 
+func TestCandidateRoutesForModelsResolvesAmbiguousCatalogModelFromEnabledRoute(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "shared-logical-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-a", modelName)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-b", modelName)
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         organizationID,
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "supplier-b", Model: modelName}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	router := &ChannelRouter{
+		db:                      db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{route}},
+		strategyFactory:         NewStrategyFactory(),
+	}
+
+	routesByModel, err := router.CandidateRoutesForModels(t.Context(), organizationID, []string{modelName}, 1)
+	require.NoError(t, err)
+	require.Len(t, routesByModel[modelName], 1)
+	require.Equal(t, route.ID, routesByModel[modelName][0].ID)
+}
+
+func TestCandidateRoutesForModelsSkipsAmbiguousCatalogModelUnavailableOnEnabledRoute(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	availableModel := "available-model"
+	unavailableModel := "unavailable-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-c", availableModel)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-a", unavailableModel)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-b", unavailableModel)
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         organizationID,
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{availableModel},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "supplier-c", Model: availableModel}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	router := &ChannelRouter{
+		db:                      db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{route}},
+		strategyFactory:         NewStrategyFactory(),
+	}
+
+	routesByModel, err := router.CandidateRoutesForModels(t.Context(), organizationID, []string{unavailableModel, availableModel}, 1)
+	require.NoError(t, err)
+	require.Empty(t, routesByModel[unavailableModel])
+	require.Len(t, routesByModel[availableModel], 1)
+}
+
 func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *testing.T) {
 	db := openGatewayUpstreamGuardDB(t)
 	organizationID := uuid.New()

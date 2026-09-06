@@ -593,7 +593,7 @@ func (r *ChannelRouter) resolveCatalogModelForRoutes(ctx context.Context, routes
 			}
 		}
 	}
-	return nil, fmt.Errorf("logical model %q has no provider available on an enabled route", modelName)
+	return nil, fmt.Errorf("%w: logical model %q has no provider available on an enabled route", llmerrors.DomainErrNoProviderAvailable, modelName)
 }
 
 func (r *ChannelRouter) activeModelQuery(ctx context.Context, provider, modelName string) *gorm.DB {

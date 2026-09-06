@@ -494,6 +494,17 @@ func (c *HTTPClient) doSingleRequest(
 // ParseSSE parses Server-Sent Events stream
 // It also handles non-SSE JSON error responses from upstream providers
 func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
+	parseSSE(reader, dataChan, errChan, true)
+}
+
+// ParseSSEToEOF parses an SSE response through EOF so HTTP response trailers
+// are populated. This is intended for internal gateway transports that place
+// settlement metadata in trailers after the public [DONE] marker.
+func ParseSSEToEOF(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
+	parseSSE(reader, dataChan, errChan, false)
+}
+
+func parseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error, stopAtDone bool) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(nil, bufio.MaxScanTokenSize<<9)
 	var dataBuffer strings.Builder
@@ -525,8 +536,11 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 		if data, ok := parseSSEDataLine(line); ok {
 			// [DONE] indicates stream end
 			if data == "[DONE]" {
-				close(dataChan)
-				return
+				if stopAtDone {
+					close(dataChan)
+					return
+				}
+				continue
 			}
 
 			dataBuffer.WriteString(data)

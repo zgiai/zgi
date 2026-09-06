@@ -78,7 +78,7 @@ func (h *LLMHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.gatewayService.ChatCompletion(c.Request.Context(), apiKey, &req)
+	resp, err := h.gatewayService.ChatCompletion(gatewayRequestContext(c), apiKey, &req)
 	if err != nil {
 		h.handleError(c, err)
 		return
@@ -218,7 +218,7 @@ func (h *LLMHandler) CreateGeminiContent(c *gin.Context) {
 
 // handleStreamingRequest handles streaming chat completions
 func (h *LLMHandler) handleStreamingRequest(c *gin.Context, apiKey *apikeymodel.TenantAPIKey, req *adapter.ChatRequest) {
-	streamChan, err := h.gatewayService.ChatCompletionStream(c.Request.Context(), apiKey, req)
+	streamChan, err := h.gatewayService.ChatCompletionStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		h.handleError(c, err)
 		return
