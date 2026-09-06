@@ -2346,7 +2346,7 @@ func TestBatchApproveDepartmentJoinRequestsDoesNotLeakInternalErrors(t *testing.
 }
 
 func newOrganizationHandlerTestContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {
-	gin.SetMode(gin.TestMode)
+	// Parallel callers must not write Gin's process-global mode.
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(method, target, nil)
