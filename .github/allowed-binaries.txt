@@ -2,8 +2,21 @@
 # Keep this list short. Prefer source fixtures or generated artifacts over committed binaries.
 api/tests/file_process/hyperparse/fixtures/empty.pdf
 api/tests/file_process/hyperparse/fixtures/sample.pdf
+# Public product-tour screenshots referenced by the project READMEs.
+docs/assets/product-tour/zgi-agent-studio-en.webp
+docs/assets/product-tour/zgi-agent-studio-zh.webp
+docs/assets/product-tour/zgi-data-analysis-en.webp
+docs/assets/product-tour/zgi-data-analysis-zh.webp
+docs/assets/product-tour/zgi-files-knowledge-en.webp
+docs/assets/product-tour/zgi-files-knowledge-zh.webp
+docs/assets/product-tour/zgi-model-gateway-en.webp
+docs/assets/product-tour/zgi-model-gateway-zh.webp
+docs/assets/product-tour/zgi-run-results-en.webp
+docs/assets/product-tour/zgi-run-results-zh.webp
 docs/assets/zgi-agent-runtime-hero.png
 docs/assets/zgi-workflow-editor-api-enrichment.png
+# Runtime fallback artwork for the video workbench.
+web/public/assets/video/default-video-cover.webp
 web/public/logo.png
 web/public/logo1.png
 web/public/logo_dark.png
