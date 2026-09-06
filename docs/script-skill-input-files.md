@@ -155,3 +155,11 @@ confirmation. Its original hash must still have a server runtime grant. Reimport
 verifies existing content before reusing the version. Runs snapshot package files
 before hashing and upload, so concurrent imports cannot change running scripts.
 Runtime storage is excluded from Docker build contexts.
+# Diagnostic output from failed scripts
+
+A script may write diagnostic output and authorized artifacts before exiting
+with a nonzero code. These outputs remain available in the tool error response
+and as downloadable conversation artifacts. The invocation and operation plan
+still record execution failure; the presence of a diagnostic file does not
+prove that the requested work succeeded. Validation and provider errors retain
+their existing public error and redaction behavior.

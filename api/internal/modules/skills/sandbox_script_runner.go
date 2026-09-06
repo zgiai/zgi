@@ -328,6 +328,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	r.prepareArtifacts(ctx, sandboxID, artifacts, execCtx, manifest.MaxArtifactBytes)
 	messages, content, err := skillScriptMessages(command, artifacts, artifactErr)
 	trace.DurationMS = time.Since(start).Milliseconds()
+	trace.Result = summarizeSkillScriptResult(command, messages, artifacts)
 	if command.ExitCode != 0 {
 		err = fmt.Errorf("skill script exited with code %d: %s", command.ExitCode, strings.TrimSpace(command.Error))
 	}
@@ -335,7 +336,6 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 		recordSkillScriptError(&trace, start, err)
 		return &ToolInvocationResult{Trace: trace, Messages: messages, ToolMessage: skillScriptToolMessage(callID, content)}, err
 	}
-	trace.Result = summarizeSkillScriptResult(command, messages, artifacts)
 	trace.Result["package_sha256"] = packageHash
 	if grant != nil {
 		trace.Result["dependency_profile"] = grant.DependencyProfile
