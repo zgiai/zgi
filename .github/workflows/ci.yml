@@ -98,6 +98,9 @@ jobs:
       - name: Workspace home access regression
         run: pnpm test:workspace-home-access
 
+      - name: Template entry route regression
+        run: pnpm test:template-entry-route
+
       - name: Clean generated web files
         if: always()
         run: |
