@@ -77,6 +77,7 @@
     "test:invocation-log-loading-state": "node scripts/test-invocation-log-loading-state.mjs",
     "test:route-access": "node scripts/test-route-access.mjs",
     "test:file-sidebar-actions": "node scripts/test-file-sidebar-actions.mjs",
+    "test:agent-context-permissions": "node scripts/test-agent-context-permissions.mjs",
     "test:billing-display": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-billing-display.mjs && node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-usage-fiat-display.mjs",
     "test:model-plaza-fallbacks": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-model-plaza-fallbacks.mjs",
     "test:work-layout-request-lifecycle": "node scripts/test-work-layout-request-lifecycle.mjs",
