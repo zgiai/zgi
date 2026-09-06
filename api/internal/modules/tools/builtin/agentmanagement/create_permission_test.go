@@ -22,7 +22,8 @@ func TestCreateAgentUsesExactCreatePermission(t *testing.T) {
 	} {
 		t.Run(string(tc.permission), func(t *testing.T) {
 			service := &fakeAgentManagementService{}
-			perms := &fakeWorkspacePermissionService{granted: []workspacemodel.WorkspacePermissionCode{tc.permission}}
+			// Viewing is a prerequisite for Agent mutations in the permission model.
+			perms := &fakeWorkspacePermissionService{granted: []workspacemodel.WorkspacePermissionCode{workspacemodel.WorkspacePermissionAgentView, tc.permission}}
 			tool := newCreateAgentTool(service, perms).ForkToolRuntime(&tools.ToolRuntime{
 				TenantID: "org-1", InvokeFrom: tools.ToolInvokeFromAIChat,
 				RuntimeParameters: map[string]interface{}{"organization_id": "org-1", "workspace_id": "workspace-1"},
