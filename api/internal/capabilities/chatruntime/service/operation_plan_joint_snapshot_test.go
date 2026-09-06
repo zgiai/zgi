@@ -276,3 +276,43 @@ func TestUnboundToolPhaseRemainsUnverifiedWhenTerminalCallFails(t *testing.T) {
 		t.Fatal("unbound failure must not fabricate outcome evidence")
 	}
 }
+
+func TestSkippedUnboundToolPhaseDoesNotEraseRequiredRuntimeFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name                            string
+		optional, recovered, wantFailed bool
+	}{
+		{name: "required", wantFailed: true}, {name: "optional", optional: true}, {name: "recovered", recovered: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := jointSnapshotMetadata()
+			plan := mapFromOperationContext(m["operation_plan"])
+			phases := mapSliceFromAny(plan["phases"])
+			delete(phases[1], "expected_action")
+			plan["phases"] = mapsToInterfaceSlice(phases)
+			if tc.optional {
+				outcomes := mapSliceFromAny(plan["outcomes"])
+				outcomes[1]["required"] = false
+				plan["outcomes"] = mapsToInterfaceSlice(outcomes)
+			}
+			calls := []map[string]interface{}{{"kind": "tool_call", "status": "success", "runtime_id": "prepare-1", "skill_id": "pipeline", "tool_name": "prepare"}, {"kind": "tool_call", "status": "failed", "runtime_id": "compute-1", "skill_id": "calculator", "tool_name": "run"}}
+			if tc.recovered {
+				calls = append(calls, map[string]interface{}{"kind": "tool_call", "status": "success", "runtime_id": "compute-2", "skill_id": "calculator", "tool_name": "run"})
+			}
+			applyOperationPlanInvocationState(m, calls)
+			plan = mapFromOperationContext(m["operation_plan"])
+			phases = mapSliceFromAny(plan["phases"])
+			phases[1]["status"] = "skipped"
+			delete(phases[1], "expected_action")
+			plan["phases"] = mapsToInterfaceSlice(phases)
+			finalizeOperationPlanForCompletedResult(m)
+			plan = mapFromOperationContext(m["operation_plan"])
+			if got := plan["status"] == "failed"; got != tc.wantFailed {
+				t.Fatalf("failed=%v, want %v; plan=%#v", got, tc.wantFailed, plan)
+			}
+			if tc.wantFailed && mapFromOperationContext(m["completion_verification"])["status"] != "failed" {
+				t.Fatal("runtime failure became passing verification")
+			}
+		})
+	}
+}

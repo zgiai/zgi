@@ -77,7 +77,7 @@ func operationPlanFinalizeFailedBindings(plan map[string]interface{}) bool {
 		// tool work is still unverified and the latest business call failed.
 		unverifiedToolWork := false
 		for _, phase := range phases {
-			if !operationPlanPhaseOpen(phase) || stringFromAny(phase["completion_mode"]) != "tool" || len(mapFromOperationContext(phase["expected_action"])) > 0 {
+			if (!operationPlanPhaseOpen(phase) && stringFromAny(phase["status"]) != "skipped") || stringFromAny(phase["completion_mode"]) != "tool" || len(mapFromOperationContext(phase["expected_action"])) > 0 {
 				continue
 			}
 			required := true

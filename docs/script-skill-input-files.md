@@ -163,3 +163,7 @@ and as downloadable conversation artifacts. The invocation and operation plan
 still record execution failure; the presence of a diagnostic file does not
 prove that the requested work succeeded. Validation and provider errors retain
 their existing public error and redaction behavior.
+
+Failed script events retain the verified package and runtime profile identity with
+the exit code. Marking required, unverified tool work as skipped does not turn a
+failed runtime attempt into passing plan completion.

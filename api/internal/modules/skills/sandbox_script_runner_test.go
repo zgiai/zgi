@@ -522,6 +522,9 @@ func TestSandboxScriptRunnerNonzeroExitReturnsToolMessage(t *testing.T) {
 	if len(result.Messages) < 2 || result.Messages[0].Type != tools.ToolInvokeMessageTypeText || result.Messages[1].Type != tools.ToolInvokeMessageTypeLog {
 		t.Fatalf("messages = %#v, want text stdout and stderr log", result.Messages)
 	}
+	if result.Trace.Result["package_sha256"] == nil || result.Trace.Result["package_sha256"] == "" {
+		t.Fatal("failed script lost its verified package identity")
+	}
 	if result.Trace.Status != "error" || result.Trace.Result["exit_code"] != 2 {
 		t.Fatalf("trace = %#v, want failed execution with retained exit code", result.Trace)
 	}

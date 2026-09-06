@@ -511,6 +511,7 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 			"message":     payloadString(payload, "message"),
 			"error":       payloadString(payload, "message"),
 			"error_code":  payloadString(payload, "error_code"),
+			"result":      payloadMap(payload, "result"),
 		}))
 		invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
 		return invocation
