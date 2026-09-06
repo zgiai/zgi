@@ -840,6 +840,21 @@ func seedWorkflowRoutesTestData() (string, string, string) {
 
 func expectWorkflowRoutesSQL(t *testing.T, mock sqlmock.Sqlmock, webAppID, userID, conversationID string) {
 	t.Helper()
+	if strings.HasPrefix(t.Name(), "TestWorkflowRoutes_BuiltInWorkflow") &&
+		t.Name() != "TestWorkflowRoutes_BuiltInWorkflowsRequireOrganizationAuth" {
+		// JWT authentication checks persisted account status before the injected
+		// account service is used for organization and runtime-grant resolution.
+		mock.ExpectQuery(`SELECT "id","status" FROM "accounts"`).
+			WithArgs(userID, 1).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(userID, "active"))
+		mock.ExpectExec(`UPDATE "accounts" SET "last_active_at"`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		// Last-active tracking is asynchronous. Finish it while this test's DB
+		// is still installed, before cleanup restores the global connection.
+		t.Cleanup(func() {
+			require.Eventually(t, func() bool { return mock.ExpectationsWereMet() == nil }, time.Second, time.Millisecond)
+		})
+	}
 
 	switch t.Name() {
 	case "TestWorkflowRoutes_WebAppConfigIsPublic",
@@ -976,6 +991,10 @@ func expectAgentByWebAppWithRuntimeSurface(mock sqlmock.Sqlmock, webAppID, webAp
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agents"`)).
 		WithArgs(webAppID, 1).
 		WillReturnRows(rows)
+	if webAppStatus != "active" {
+		// Offline applications are rejected before runtime-surface lookup.
+		return agentID
+	}
 	if surfaceEnabled == (webAppStatus == "active") {
 		expectAgentWebAppRuntimeFallback(mock, agentID)
 	} else {

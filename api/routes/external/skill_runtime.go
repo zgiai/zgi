@@ -25,6 +25,7 @@ func newExternalSkillRuntimeWithSandbox(toolEngine *tools.ToolEngine, toolManage
 		return runtime
 	}
 	return runtime.WithScriptRunner(skills.NewSandboxScriptRunner(skills.SandboxScriptRunnerConfig{
+		RuntimeGrantsPath:     appconfig.GlobalConfig.CodeExec.SkillRuntimeGrantsPath,
 		Endpoint:              appconfig.GlobalConfig.CodeExec.Endpoint,
 		APIKey:                appconfig.GlobalConfig.CodeExec.APIKey,
 		ConnectTimeout:        externalSecondsDuration(appconfig.GlobalConfig.CodeExec.ConnectTimeoutSeconds),

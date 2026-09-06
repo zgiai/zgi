@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 )
 
 const secureProfileBasePath = "/opt/zgi/profiles"
@@ -22,6 +23,40 @@ type dependencyProfileActivation struct {
 	ProfileChecksum     string
 	ProfileSizeBytes    int64
 	ProfileEnv          map[string]string
+}
+
+type dependencyProfileActivationCache struct {
+	mu      sync.RWMutex
+	entries map[string]dependencyProfileActivation
+}
+
+func newDependencyProfileActivationCache() *dependencyProfileActivationCache {
+	return &dependencyProfileActivationCache{entries: make(map[string]dependencyProfileActivation)}
+}
+
+func (c *dependencyProfileActivationCache) resolve(defaultRootFS string, dependencyRootFSDir string, dependencyProfile string, dependencyArtifactChecksum string) (dependencyProfileActivation, error) {
+	// Profile artifacts are operator-built, fully verified on first activation,
+	// and mounted read-only by the production runtime. Cache that activation for
+	// the backend lifetime so a large scientific environment is not re-hashed
+	// for every short analysis. Direct validation APIs remain uncached for build,
+	// catalog refresh, and tamper checks.
+	checksum := strings.TrimSpace(dependencyArtifactChecksum)
+	if c == nil || strings.TrimSpace(dependencyProfile) == "" || strings.TrimSpace(dependencyRootFSDir) == "" {
+		return resolveDependencyProfileActivation(defaultRootFS, dependencyRootFSDir, dependencyProfile, checksum)
+	}
+	key := strings.Join([]string{defaultRootFS, dependencyRootFSDir, strings.TrimSpace(dependencyProfile), checksum}, "\x00")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	activation, ok := c.entries[key]
+	if ok {
+		return activation, nil
+	}
+	activation, err := resolveDependencyProfileActivation(defaultRootFS, dependencyRootFSDir, dependencyProfile, checksum)
+	if err != nil {
+		return dependencyProfileActivation{}, err
+	}
+	c.entries[key] = activation
+	return activation, nil
 }
 
 type builtProfileManifest struct {
@@ -114,17 +149,19 @@ func dependencyProfileArtifactFromManifest(manifest builtProfileManifest) Depend
 		})
 	}
 	return DependencyProfileArtifact{
-		Name:           manifest.Name,
-		Version:        manifest.Version,
-		OwnerScope:     defaultString(manifest.OwnerScope, "global"),
-		Languages:      append([]string(nil), manifest.Languages...),
-		Packages:       packages,
-		BaseRuntime:    defaultString(manifest.BaseRuntime, "linux-secure"),
-		Checksum:       manifest.Build.Checksum,
-		SizeBytes:      manifest.Build.SizeBytes,
-		Description:    strings.TrimSpace(manifest.Description),
-		PublicReusable: manifest.PublicReusable || strings.HasPrefix(manifest.Name, "auto-"),
-		Pinned:         manifest.Pinned || strings.HasPrefix(manifest.Name, "auto-"),
+		Name:        manifest.Name,
+		Version:     manifest.Version,
+		OwnerScope:  defaultString(manifest.OwnerScope, "global"),
+		Languages:   append([]string(nil), manifest.Languages...),
+		Packages:    packages,
+		BaseRuntime: defaultString(manifest.BaseRuntime, "linux-secure"),
+		Checksum:    manifest.Build.Checksum,
+		SizeBytes:   manifest.Build.SizeBytes,
+		Description: strings.TrimSpace(manifest.Description),
+		// Reuse and pinning are trust decisions recorded by the operator-managed
+		// build. A profile name prefix must never grant those permissions.
+		PublicReusable: manifest.PublicReusable,
+		Pinned:         manifest.Pinned,
 	}
 }
 

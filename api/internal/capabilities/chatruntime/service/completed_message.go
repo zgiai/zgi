@@ -260,7 +260,15 @@ func (s *service) StopRuntimeMessage(ctx context.Context, scope Scope, req StopR
 			stopped = message
 			return nil
 		}
-		if err := txRepos.Message.UpdateStoppedAnswer(ctx, req.MessageID, strings.TrimSpace(req.Answer), req.Metadata); err != nil {
+		metadata := copyStringAnyMap(message.Metadata)
+		if metadata == nil {
+			metadata = map[string]interface{}{}
+		}
+		for key, value := range req.Metadata {
+			metadata[key] = value
+		}
+		markOperationPlanStopped(metadata)
+		if err := txRepos.Message.UpdateStoppedAnswer(ctx, req.MessageID, strings.TrimSpace(req.Answer), metadata); err != nil {
 			return err
 		}
 		if err := txRepos.Conversation.FinishActiveMessage(ctx, req.ConversationID, req.MessageID); err != nil {

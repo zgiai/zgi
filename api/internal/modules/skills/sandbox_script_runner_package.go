@@ -220,12 +220,12 @@ func defaultSkillScriptManifest(fallbackTimeoutSeconds int) skillScriptManifest 
 	}
 }
 
-func prepareSkillScriptManifest(root string, fallbackTimeoutSeconds int) (preparedSkillScriptManifest, error) {
+func prepareSkillScriptManifest(root string, fallbackTimeoutSeconds int, allowManagedProfile bool) (preparedSkillScriptManifest, error) {
 	manifest, err := loadSkillScriptManifest(root)
 	if err != nil {
 		return preparedSkillScriptManifest{}, err
 	}
-	if err := normalizeSkillScriptManifest(root, fallbackTimeoutSeconds, &manifest); err != nil {
+	if err := normalizeSkillScriptManifest(root, fallbackTimeoutSeconds, allowManagedProfile, &manifest); err != nil {
 		return preparedSkillScriptManifest{}, err
 	}
 	raw, err := json.Marshal(manifest)
@@ -264,7 +264,7 @@ func loadSkillScriptManifest(root string) (skillScriptManifest, error) {
 	return manifest, nil
 }
 
-func normalizeSkillScriptManifest(root string, fallbackTimeoutSeconds int, manifest *skillScriptManifest) error {
+func normalizeSkillScriptManifest(root string, fallbackTimeoutSeconds int, allowManagedProfile bool, manifest *skillScriptManifest) error {
 	if manifest == nil {
 		return fmt.Errorf("skill manifest is empty")
 	}
@@ -291,10 +291,21 @@ func normalizeSkillScriptManifest(root string, fallbackTimeoutSeconds int, manif
 		return fmt.Errorf("skill manifest language must be python3 or nodejs for API run_script: %s", manifest.Language)
 	}
 
-	// Dependency profiles are selected by the platform from prepared dependency
-	// requests and verified artifacts. Skill packages may declare dependencies,
-	// but they must not choose the runtime profile directly.
-	manifest.DependencyProfile = defaultSkillDependencyProfile
+	// Only a server grant matched to the organization and package content may
+	// authorize a declared managed profile. Package source and name confer no
+	// execution privilege.
+	declaredProfile := strings.ToLower(strings.TrimSpace(manifest.DependencyProfile))
+	if !allowManagedProfile && declaredProfile != "" && declaredProfile != defaultSkillDependencyProfile {
+		return fmt.Errorf("skill dependency profile is not authorized for this organization and package")
+	}
+	if !allowManagedProfile || declaredProfile == "" {
+		manifest.DependencyProfile = defaultSkillDependencyProfile
+	} else {
+		if !regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`).MatchString(declaredProfile) {
+			return fmt.Errorf("skill manifest dependency_profile is invalid: %s", declaredProfile)
+		}
+		manifest.DependencyProfile = declaredProfile
+	}
 	if manifest.TimeoutMS <= 0 {
 		timeoutSeconds := fallbackTimeoutSeconds
 		if timeoutSeconds <= 0 {
@@ -318,17 +329,25 @@ func normalizeSkillScriptManifest(root string, fallbackTimeoutSeconds int, manif
 		}
 		manifest.AllowedArtifactPaths[i] = path
 	}
-	if manifest.MaxArtifactCount <= 0 {
-		manifest.MaxArtifactCount = 10
+	artifactCountLimit := maxSkillScriptArtifactCount
+	artifactBytesLimit := int64(maxSkillScriptArtifactBytes)
+	inputFileBytesLimit := int64(maxSkillScriptInputFileBytes)
+	if allowManagedProfile {
+		artifactCountLimit = maxManagedSkillScriptArtifactCount
+		artifactBytesLimit = maxManagedSkillScriptArtifactBytes
+		inputFileBytesLimit = maxManagedSkillScriptInputFileBytes
 	}
-	if manifest.MaxArtifactCount > 10 {
-		return fmt.Errorf("skill manifest max_artifact_count must be between 1 and 10")
+	if manifest.MaxArtifactCount <= 0 {
+		manifest.MaxArtifactCount = maxSkillScriptArtifactCount
+	}
+	if manifest.MaxArtifactCount > artifactCountLimit {
+		return fmt.Errorf("skill manifest max_artifact_count must be between 1 and %d", artifactCountLimit)
 	}
 	if manifest.MaxArtifactBytes <= 0 {
 		manifest.MaxArtifactBytes = maxSkillScriptArtifactBytes
 	}
-	if manifest.MaxArtifactBytes > maxSkillScriptArtifactBytes {
-		return fmt.Errorf("skill manifest max_artifact_bytes must be between 1 and %d", maxSkillScriptArtifactBytes)
+	if manifest.MaxArtifactBytes > artifactBytesLimit {
+		return fmt.Errorf("skill manifest max_artifact_bytes must be between 1 and %d", artifactBytesLimit)
 	}
 	manifest.ResultMode = strings.TrimSpace(manifest.ResultMode)
 	if manifest.ResultMode == "" {
@@ -343,14 +362,14 @@ func normalizeSkillScriptManifest(root string, fallbackTimeoutSeconds int, manif
 		return fmt.Errorf("skill manifest input_files must contain at most %d files", maxSkillScriptInputFileCount)
 	}
 	for index := range manifest.InputFiles {
-		if err := normalizeSkillScriptInputFileSpec(&manifest.InputFiles[index]); err != nil {
+		if err := normalizeSkillScriptInputFileSpec(&manifest.InputFiles[index], inputFileBytesLimit); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func normalizeSkillScriptInputFileSpec(spec *skillScriptInputFileSpec) error {
+func normalizeSkillScriptInputFileSpec(spec *skillScriptInputFileSpec, maxBytesLimit int64) error {
 	if spec == nil {
 		return fmt.Errorf("skill manifest input_files contains an empty item")
 	}
@@ -386,10 +405,10 @@ func normalizeSkillScriptInputFileSpec(spec *skillScriptInputFileSpec) error {
 		spec.MimeTypes[i] = normalized
 	}
 	if spec.MaxBytes <= 0 {
-		spec.MaxBytes = maxSkillScriptInputFileBytes
+		spec.MaxBytes = maxBytesLimit
 	}
-	if spec.MaxBytes > maxSkillScriptInputFileBytes {
-		return fmt.Errorf("skill manifest input file %s max_bytes must be between 1 and %d", spec.Name, maxSkillScriptInputFileBytes)
+	if spec.MaxBytes > maxBytesLimit {
+		return fmt.Errorf("skill manifest input file %s max_bytes must be between 1 and %d", spec.Name, maxBytesLimit)
 	}
 	if spec.Multiple {
 		if spec.MaxCount <= 0 {

@@ -226,6 +226,7 @@ type ETLConfig struct {
 }
 
 type CodeExecConfig struct {
+	SkillRuntimeGrantsPath       string `json:"skill_runtime_grants_path"`
 	Endpoint                     string `json:"endpoint"`
 	APIKey                       string `json:"-"`
 	ConnectTimeoutSeconds        int    `json:"connect_timeout_seconds"`

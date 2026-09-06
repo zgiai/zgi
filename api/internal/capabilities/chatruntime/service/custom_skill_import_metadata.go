@@ -41,6 +41,9 @@ func customSkillManifest(doc skills.SkillDocument, extracted *extractedSkillPack
 		"scripts_supported": doc.Metadata.ScriptsSupported,
 		"imported_at":       time.Now().Unix(),
 	}
+	if digest, err := skills.SkillPackageSHA256(doc.Metadata.RootPath); err == nil {
+		manifest["package_sha256"] = digest
+	}
 	if extracted != nil {
 		manifest["file_count"] = extracted.FileCount
 		manifest["total_size"] = extracted.TotalSize

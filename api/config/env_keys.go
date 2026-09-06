@@ -368,6 +368,8 @@ const (
 	envCodeExecutionEnableNetwork = "CODE_EXECUTION_ENABLE_NETWORK"
 	// envCodeExecutionSystemOfficeProfile sets the managed dependency profile used by system Office/PDF/PPTX file tools. Default: skill-office.
 	envCodeExecutionSystemOfficeProfile = "CODE_EXECUTION_SYSTEM_OFFICE_PROFILE"
+	// envSkillRuntimeGrantsPath points to administrator-owned organization/package grants.
+	envSkillRuntimeGrantsPath = "ZGI_SKILL_RUNTIME_GRANTS_PATH"
 
 	// Code execution safety limits.
 	// envCodeMaxNumber sets the largest numeric value allowed in code execution. Default: 9223372036854775807.

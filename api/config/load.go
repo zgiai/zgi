@@ -787,6 +787,7 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.CodeExec = CodeExecConfig{
+		SkillRuntimeGrantsPath:       source.string("", envSkillRuntimeGrantsPath),
 		Endpoint:                     source.string("", envCodeExecutionEndpoint),
 		APIKey:                       source.string("", envCodeExecutionAPIKey),
 		ConnectTimeoutSeconds:        connectTimeout,

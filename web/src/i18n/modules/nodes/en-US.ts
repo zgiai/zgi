@@ -1491,6 +1491,13 @@ const messages = {
     editor: 'Code Editor',
     noOutputs: 'No outputs',
     varNamePlaceholder: 'Variable name',
+    dependencyProfile: {
+      label: 'Runtime profile',
+      stdlib: 'Standard library',
+      scientificData: 'Scientific data (pandas, SciPy, statsmodels, scikit-learn, lifelines)',
+      description:
+        'Select an operator-managed, reproducible dependency environment for this code node.',
+    },
     languageChange: {
       title: 'Switch Language',
       description:

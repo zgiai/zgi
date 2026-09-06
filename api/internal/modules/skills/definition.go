@@ -275,6 +275,7 @@ type SkillToolDefinition struct {
 }
 
 type SkillFrontmatter struct {
+	ScriptInputSchema       map[string]interface{}             `yaml:"script_input_schema"`
 	Name                    string                             `yaml:"name"`
 	Description             string                             `yaml:"description"`
 	WhenToUse               string                             `yaml:"when_to_use"`

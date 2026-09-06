@@ -922,6 +922,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		}
 
 		metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
+		markOperationPlanStopped(metadata)
 		continuation := workflowApprovalContinuationFromMetadata(metadata)
 		isWorkflowContinuation := continuation.WorkflowRunID != ""
 		if isWorkflowContinuation {

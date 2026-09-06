@@ -46,6 +46,34 @@ func TestBuildNativeToolSetUsesContractAndActivatesPromptOnlySkill(t *testing.T)
 	}
 }
 
+func TestBuildNativeToolSetExposesPackageScriptContract(t *testing.T) {
+	runtime := NewRuntime(nil, nil)
+	resolved := &ResolvedSkills{Skills: []SkillDocument{{
+		Metadata:     SkillMetadata{ID: "private-example", Description: "Synthetic script contract"},
+		Instructions: "Use run_script for the supplied input.",
+		Tools:        []SkillToolDefinition{{Name: SkillScriptToolRun, InputSchema: objectSchema(map[string]interface{}{"request": map[string]interface{}{"type": "object"}, "payload": map[string]interface{}{"type": "string"}}, []string{"request"})}},
+	}}}
+
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, NativeToolSetOptions{BudgetChars: 100000})
+	if len(toolSet.SkippedSkills) != 0 || len(toolSet.ActiveSkillIDs) != 1 {
+		t.Fatalf("private skill activation = %#v, want active without skips", toolSet)
+	}
+	if len(toolSet.ProviderTools) != 1 || toolSet.ProviderTools[0].Function.Name != SkillScriptToolRun {
+		t.Fatalf("provider tools = %#v, want native run_script", toolSet.ProviderTools)
+	}
+	parameters, ok := toolSet.ProviderTools[0].Function.Parameters.(map[string]interface{})
+	if !ok {
+		t.Fatalf("run_script parameters type = %T, want object schema", toolSet.ProviderTools[0].Function.Parameters)
+	}
+	properties, _ := parameters["properties"].(map[string]interface{})
+	if _, ok := properties["request"].(map[string]interface{}); !ok {
+		t.Fatalf("request schema missing from %#v", properties)
+	}
+	if _, ok := properties["payload"].(map[string]interface{}); !ok {
+		t.Fatalf("payload schema missing from %#v", properties)
+	}
+}
+
 func TestBuildNativeToolSetActivatesStructuredFileGeneratorWithinBudget(t *testing.T) {
 	runtime := NewRuntime(nil, nil)
 	resolved := &ResolvedSkills{Skills: []SkillDocument{{

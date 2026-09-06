@@ -829,6 +829,7 @@ func (s *service) clearPreparedRuntime(ctx context.Context, prepared *PreparedCh
 func (s *service) persistStoppedAnswer(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) error {
 	metadata := preparedResultMetadataForPrepared(prepared, prepared.Message.Metadata, usage)
 	metadata["stopped"] = true
+	markOperationPlanStopped(metadata)
 	if err := s.repos.Message.UpdateStoppedAnswer(ctx, prepared.Message.ID, answer, metadata); err != nil {
 		return err
 	}

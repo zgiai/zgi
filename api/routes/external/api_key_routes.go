@@ -218,6 +218,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 			}
 			agentHandler.StreamAPIKeyAgentRuntimeEvents(c)
 		})
+		externalGroup.POST("/agents/conversations/:conversation_id/stop", withAgentAPIKeyContext(agentHandler.StopAPIKeyAgentRuntimeConversation))
 		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/workflow-continuation", func(c *gin.Context) {
 			if v, exists := c.Get("api_key_info"); exists {
 				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {

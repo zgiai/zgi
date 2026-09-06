@@ -142,6 +142,8 @@ func Build(opts Options) (Result, error) {
 	builtProfile.EstimatedSizeBytes = size
 	if builtProfile.Name == "skill-office" {
 		builtProfile.Packages = managedOfficePackages(builtProfile.Languages)
+	} else if builtProfile.Name == "scientific-data" {
+		builtProfile.Packages = managedScientificDataPackages(builtProfile.Languages)
 	}
 	manifest := builtManifest{
 		Profile: builtProfile,
@@ -193,6 +195,17 @@ func managedOfficePackages(languages []string) []profilecatalog.Package {
 		})
 	}
 	return packages
+}
+
+func managedScientificDataPackages(languages []string) []profilecatalog.Package {
+	if !slices.Contains(languages, "python3") {
+		return nil
+	}
+	return []profilecatalog.Package{{
+		Ecosystem: "python3",
+		Name:      "data-tools",
+		Version:   "managed",
+	}}
 }
 
 func findProfile(profiles []profilecatalog.Profile, name string) (profilecatalog.Profile, bool) {
@@ -470,7 +483,16 @@ func verifyPython(profileDir string) error {
 		return nil
 	}
 	python := "python3"
-	env := []string{"PYTHONNOUSERSITE=1"}
+	runtimeCache := filepath.Join(profileDir, "runtime-cache")
+	matplotlibCache := filepath.Join(runtimeCache, "matplotlib")
+	if err := os.MkdirAll(matplotlibCache, 0o755); err != nil {
+		return fmt.Errorf("prepare python runtime cache: %w", err)
+	}
+	env := []string{
+		"PYTHONNOUSERSITE=1",
+		"XDG_CACHE_HOME=" + runtimeCache,
+		"MPLCONFIGDIR=" + matplotlibCache,
+	}
 	if fileExists(filepath.Join(profileDir, "venv", "bin", "python")) {
 		python = filepath.Join(profileDir, "venv", "bin", "python")
 		env = append(env, "PATH="+filepath.Join(profileDir, "venv", "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))

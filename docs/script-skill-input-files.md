@@ -108,3 +108,50 @@ adds an array under `input_files.<name>`:
   }
 }
 ```
+
+## Package argument contracts
+
+Script packages can declare `script_input_schema` in `SKILL.md` YAML frontmatter.
+The schema must have an object root and follow JSON Schema Draft 2020-12. It is
+validated during import and attached to the package's `run_script` tool. Invalid
+arguments are rejected by the runtime before execution. This grants no additional
+tools, providers, file permissions, or execution privileges.
+
+```yaml
+script_input_schema:
+  type: object
+  required: [count]
+  additionalProperties: false
+  properties:
+    count:
+      type: integer
+      minimum: 1
+```
+
+Schemas are limited to 128 KiB and 32 nesting levels. Only local references are
+allowed; `$id` is rejected to prevent changes to reference resolution scope.
+
+## Administrator runtime grants
+
+Set `ZGI_SKILL_RUNTIME_GRANTS_PATH` to a server-controlled JSON file outside the
+package storage tree. The API loads it at startup. A configured unreadable or
+invalid file causes script executions to fail closed. Each entry binds an
+`organization_id` and `package_sha256` to a `dependency_profile`, `profile_version`,
+`artifact_checksum`, `max_artifact_count`, `max_artifact_bytes`, and
+`max_input_file_bytes`. Package names and declared source do not confer a grant.
+Without a matching grant, explicit non-stdlib environments are rejected.
+
+The package hash is SHA-256 over sorted relative file names, a NUL byte, the
+lowercase SHA-256 hex digest of each file, and a newline for each entry. Symlinks
+and nonregular files are rejected. ZIP metadata is excluded. Any content change
+requires a new grant. The created sandbox must match the granted runtime version
+and artifact checksum before package upload. Successful traces include the
+package hash and granted runtime identity.
+
+Imports retain content-addressed directories under `versions/<package_sha256>`.
+Upgrading changes the active database pointer without overwriting earlier package
+bytes. To roll back, preview and confirm the previous ZIP again with overwrite
+confirmation. Its original hash must still have a server runtime grant. Reimport
+verifies existing content before reusing the version. Runs snapshot package files
+before hashing and upload, so concurrent imports cannot change running scripts.
+Runtime storage is excluded from Docker build contexts.

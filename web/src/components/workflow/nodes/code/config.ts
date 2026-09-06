@@ -47,6 +47,7 @@ export interface CodeNodeData {
   desc: string;
   code: string;
   code_language: 'python3' | 'javascript' | 'json';
+  dependency_profile?: 'stdlib' | 'scientific-data';
   variables: Array<{
     variable: string;
     value_selector: string[];
@@ -70,6 +71,7 @@ export const DEFAULT_CODE_NODE_DATA: CodeNodeData = {
   desc: '',
   code: '',
   code_language: 'python3',
+  dependency_profile: 'stdlib',
   variables: [],
   outputs: {},
   outputKeyOrders: [],

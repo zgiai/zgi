@@ -217,6 +217,22 @@ func (h *AgentsHandler) StreamAPIKeyAgentRuntimeEvents(c *gin.Context) {
 	}
 }
 
+// StopAPIKeyAgentRuntimeConversation cancels the active model, Skill, and
+// workflow-continuation execution for an external API caller. The caller scope
+// is derived exclusively from the validated API key context so one key cannot
+// stop another Agent's conversation.
+func (h *AgentsHandler) StopAPIKeyAgentRuntimeConversation(c *gin.Context) {
+	if h.chatRuntimeService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	runtimeCtx, ok := h.apiKeyAgentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	h.stopRuntimeConversation(c, runtimeCtx)
+}
+
 // ContinueAPIKeyAgentRuntimeWorkflowContinuation resumes an Agent workflow pause for an external API caller.
 func (h *AgentsHandler) ContinueAPIKeyAgentRuntimeWorkflowContinuation(c *gin.Context) {
 	if h.chatRuntimeService == nil {

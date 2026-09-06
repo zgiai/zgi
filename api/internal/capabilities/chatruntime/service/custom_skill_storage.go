@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 const (
@@ -106,13 +107,34 @@ func (s *filesystemCustomSkillStorage) PublishPreview(ctx context.Context, previ
 	if preview == nil {
 		return nil, "", fmt.Errorf("%w: skill import preview is required", ErrInvalidInput)
 	}
-	finalRoot := filepath.Join(s.organizationRootFromPreview(preview), strings.ToLower(strings.TrimSpace(skillID)), "current")
-	_ = os.Remove(filepath.Join(preview.Root, customSkillPreviewStateFile))
-	published, err := replaceCustomSkillDirectory(preview.Root, finalRoot)
+	if err := os.Remove(filepath.Join(preview.Root, customSkillPreviewStateFile)); err != nil && !os.IsNotExist(err) {
+		return nil, "", err
+	}
+	digest, err := skills.SkillPackageSHA256(preview.Root)
 	if err != nil {
 		return nil, "", err
 	}
-	_ = os.RemoveAll(preview.Root)
+	finalRoot := filepath.Join(s.organizationRootFromPreview(preview), strings.ToLower(strings.TrimSpace(skillID)), "versions", digest)
+	if _, err := os.Stat(finalRoot); err == nil {
+		existingDigest, err := skills.SkillPackageSHA256(finalRoot)
+		if err != nil || existingDigest != digest {
+			return nil, "", fmt.Errorf("stored skill version failed integrity verification")
+		}
+		// Reimporting an old version changes only the database's active pointer.
+		return &publishedCustomSkillDirectory{rollback: func() {}, cleanup: func() { _ = os.RemoveAll(preview.Root) }}, finalRoot, nil
+	} else if !os.IsNotExist(err) {
+		return nil, "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(finalRoot), 0700); err != nil {
+		return nil, "", err
+	}
+	if err := os.Rename(preview.Root, finalRoot); err != nil {
+		return nil, "", err
+	}
+	// Preserve content-addressed versions on transaction failure: another import
+	// may already reference them. Old revisions are never overwritten in place.
+	published := &publishedCustomSkillDirectory{rollback: func() {}, cleanup: func() {}}
+
 	return published, finalRoot, nil
 }
 

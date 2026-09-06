@@ -142,6 +142,7 @@ func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, imp
 	if err != nil {
 		return nil, err
 	}
+	doc.Metadata.RootPath = finalRoot
 	extracted := extractedSkillPackageFromPreview(preview)
 	record := customSkillRecordFromDocument(scope, doc, finalRoot, extracted)
 	if err := s.repos.CustomSkill.Upsert(ctx, record); err != nil {
