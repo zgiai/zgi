@@ -104,6 +104,9 @@ jobs:
       - name: Agent API access guard regression
         run: pnpm test:agent-api-access-guard
 
+      - name: Workflow batch action permission regression
+        run: pnpm test:batch-action-permissions
+
       - name: Clean generated web files
         if: always()
         run: |
