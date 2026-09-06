@@ -764,7 +764,7 @@ func (t *saveFileTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 }
 
 func (t *deleteFileTool) ensureFileManageable(ctx context.Context, scope fileScope, file *dto.UploadFile) error {
-	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFileManage)
+	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFileDelete)
 }
 
 func (t *deleteFileTool) ensureGovernedDeleteApproved(scope fileScope, file *dto.UploadFile, conversationID *string) error {
@@ -1056,7 +1056,7 @@ func (t *saveFileTool) ensureFileCreatable(ctx context.Context, scope fileScope,
 	if t.workspacePerms == nil {
 		return fmt.Errorf("workspace permission service is not configured")
 	}
-	allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionFileUploadCreate)
+	allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionFileUpload)
 	if err != nil {
 		return fmt.Errorf("failed to check workspace file creation permission: %w", err)
 	}

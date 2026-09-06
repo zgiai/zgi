@@ -144,7 +144,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             node:22-bookworm \
-            bash -c './scripts/check-registration-auth.sh --backend-only && bash ./scripts/check-developer-access.sh'
+            bash -c './scripts/check-registration-auth.sh --backend-only && bash ./scripts/check-developer-access.sh && bash ./scripts/check-contextual-permissions.sh'
 
   sandbox:
     name: Sandbox runtime tests

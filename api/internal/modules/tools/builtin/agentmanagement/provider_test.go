@@ -155,8 +155,8 @@ func TestCreateAgentAppliesDefaultTextIconAndPayloadEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
-	if perms.workspaceID != "workspace-1" || perms.accountID != "account-1" || perms.permissionCode != workspacemodel.WorkspacePermissionAgentManage {
-		t.Fatalf("permission check = org %q workspace %q account %q permission %q, want current workspace agent manage", perms.organizationID, perms.workspaceID, perms.accountID, perms.permissionCode)
+	if perms.workspaceID != "workspace-1" || perms.accountID != "account-1" || perms.permissionCode != workspacemodel.WorkspacePermissionAgentCreate {
+		t.Fatalf("permission check = org %q workspace %q account %q permission %q, want current workspace agent create", perms.organizationID, perms.workspaceID, perms.accountID, perms.permissionCode)
 	}
 	if service.createAgentCalls != 1 || service.lastCreateAgentWorkspaceID != "workspace-1" {
 		t.Fatalf("CreateAgent calls = %d workspace=%q, want one current workspace call", service.createAgentCalls, service.lastCreateAgentWorkspaceID)
@@ -3605,6 +3605,7 @@ func (s *fakeAvailableModelsService) ListAvailable(_ context.Context, organizati
 
 type fakeWorkspacePermissionService struct {
 	allowed        bool
+	granted        []workspacemodel.WorkspacePermissionCode
 	organizationID string
 	workspaceID    string
 	accountID      string
@@ -3631,6 +3632,9 @@ func (s *fakeWorkspacePermissionService) CheckWorkspacePermission(_ context.Cont
 	s.workspaceID = workspaceID
 	s.accountID = accountID
 	s.permissionCode = permissionCode
+	if s.granted != nil {
+		return workspacemodel.WorkspacePermissionCodesAllow(s.granted, permissionCode), nil
+	}
 	return s.allowed, nil
 }
 
