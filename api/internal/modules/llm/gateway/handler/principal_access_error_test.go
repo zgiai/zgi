@@ -100,3 +100,25 @@ func TestPrincipalQuotaWithoutProjectorIsSafe(t *testing.T) {
 		t.Fatalf("unexpected fallback: %#v", got)
 	}
 }
+
+func TestPrincipalLifecycleMessagesPreserveWireContract(t *testing.T) {
+	for _, tc := range []struct {
+		code             apperror.Code
+		english, chinese string
+	}{
+		{llmerrors.AppCodeAPIKeyExpired, "expired", "已过期"},
+		{llmerrors.AppCodeAPIKeyInactive, "disabled", "已停用"},
+	} {
+		for _, locale := range []string{"en-US", "zh-Hans"} {
+			c := testProtocolContext(t, "/v1/models", locale)
+			got := principalAccessProtocolError(c, apperror.New(tc.code), testApplicationErrorProjector(t))
+			want := tc.english
+			if locale == "zh-Hans" {
+				want = tc.chinese
+			}
+			if got.openAIStatus != 401 || got.anthropicStatus != 401 || got.openAICode != "invalid_api_key" || got.openAIType != "invalid_request_error" || got.anthropicType != "authentication_error" || !strings.Contains(got.message, want) {
+				t.Fatalf("lifecycle projection: %#v", got)
+			}
+		}
+	}
+}

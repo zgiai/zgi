@@ -130,6 +130,14 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 		return fmt.Errorf("reload personal API key: %w", err)
 	}
 	if !persisted.IsActive() {
+		if persisted.Status == "active" && persisted.ExpiresAt != nil && persisted.ExpiresAt.Before(time.Now()) {
+			return apperror.New(llmerrors.AppCodeAPIKeyExpired,
+				apperror.WithOperation("apikey.validate_principal_access"))
+		}
+		if persisted.Status == "inactive" {
+			return apperror.New(llmerrors.AppCodeAPIKeyInactive,
+				apperror.WithOperation("apikey.validate_principal_access"))
+		}
 		return errors.New("personal API key is inactive or expired")
 	}
 	*apiKey = persisted

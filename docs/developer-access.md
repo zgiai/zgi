@@ -58,6 +58,8 @@ Personal key rows show their own expiration, separately from the grant expiratio
 
 Request history includes the reviewer's explanation so members can understand a rejection or approval conditions without access to administrator controls.
 
+Personal-key authentication also distinguishes expired and disabled keys in its localized public message, using the authoritative database row rather than cached lifecycle state. These message overlays preserve the existing HTTP status and protocol error codes.
+
 ### Grant allowance versus actual model cost
 
 The grant limits the amount charged to that allowance, not necessarily the full upstream cost of an admitted request. For a Cloud route without a local price estimate, the gateway reserves the entire remaining allowance and serializes such requests. Settlement caps the grant charge at its remaining limit and records any difference as `quota_overage_points`; `total_points` still records the actual model cost. Thus a final request costing 45 internal credits can charge the last one credit to its grant and record 44 as overage. The subsequent request is denied, but the first request's actual cost is not reduced to one credit.

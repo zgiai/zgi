@@ -3,6 +3,7 @@ package developeraccess
 import (
 	"context"
 	"testing"
+	"time"
 
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestPrincipalQuotaClassificationAfterAuthorization(t *testing.T) {
-	for _, scenario := range []string{"exhausted", "unlimited", "removed_member", "disabled_policy", "revoked_key", "archived_workspace"} {
+	for _, scenario := range []string{"exhausted", "unlimited", "removed_member", "disabled_policy", "revoked_key", "archived_workspace", "expired_key", "inactive_key"} {
 		t.Run(scenario, func(t *testing.T) {
 			db := openDeveloperAccessTestDB(t)
 			workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
@@ -41,6 +42,10 @@ func TestPrincipalQuotaClassificationAfterAuthorization(t *testing.T) {
 				_, err = service.PutPolicy(context.Background(), workspaceID, ownerID, PolicyInput{Mode: accessmodel.AccessModeDisabled, MaxKeys: 3})
 			case "revoked_key":
 				err = db.Model(&apikeymodel.TenantAPIKey{}).Where("id = ?", key.ID).Update("status", "revoked").Error
+			case "expired_key":
+				err = db.Model(&apikeymodel.TenantAPIKey{}).Where("id = ?", key.ID).Update("expires_at", time.Now().Add(-time.Minute)).Error
+			case "inactive_key":
+				err = db.Model(&apikeymodel.TenantAPIKey{}).Where("id = ?", key.ID).Update("status", "inactive").Error
 			case "archived_workspace":
 				err = db.Model(&workspacemodel.Workspace{}).Where("id = ?", workspaceID).Update("status", workspacemodel.WorkspaceStatusArchived).Error
 			}
@@ -59,6 +64,12 @@ func TestPrincipalQuotaClassificationAfterAuthorization(t *testing.T) {
 			}
 			if got := apperror.IsCode(err, llmerrors.AppCodeDeveloperQuotaExhausted); got != (scenario == "exhausted") {
 				t.Fatalf("quota classification=%v: %v", got, err)
+			}
+			if scenario == "expired_key" && !apperror.IsCode(err, llmerrors.AppCodeAPIKeyExpired) {
+				t.Fatalf("expired key misclassified: %v", err)
+			}
+			if scenario == "inactive_key" && !apperror.IsCode(err, llmerrors.AppCodeAPIKeyInactive) {
+				t.Fatalf("inactive key misclassified: %v", err)
 			}
 		})
 	}
