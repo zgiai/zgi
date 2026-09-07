@@ -396,22 +396,6 @@ func modelUseCaseForAppContext(appCtx *AppContext) string {
 	}
 }
 
-func (s *llmGatewayServiceImpl) withPrincipalChatOutputLimit(
-	apiKey *apikeymodel.TenantAPIKey,
-	req *adapter.ChatRequest,
-) *adapter.ChatRequest {
-	if s == nil || s.tokenEstimator == nil || !isPrincipalBoundAPIKey(apiKey) || req == nil || req.MaxTokens != nil {
-		return req
-	}
-	limit := s.tokenEstimator.EstimateCompletionTokens(nil, req.Model)
-	if limit <= 0 {
-		return req
-	}
-	cloned := *req
-	cloned.MaxTokens = &limit
-	return &cloned
-}
-
 // tryChatCompletionStream attempts a streaming chat completion with a single provider
 func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	ctx context.Context,
