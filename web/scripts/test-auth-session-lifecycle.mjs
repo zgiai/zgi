@@ -27,6 +27,7 @@ function fixture() {
   let mode = 200;
   let queryError = null;
   let sessionClears = 0;
+  let executeTimeouts = false;
   const auth = {
     isAuthenticated: true,
     isSystemReady: true,
@@ -152,7 +153,10 @@ function fixture() {
         URL: globalThis.URL,
         AbortController: globalThis.AbortController,
         TextDecoder: globalThis.TextDecoder,
-        setTimeout: () => 1,
+        setTimeout: callback => {
+          if (executeTimeouts) Promise.resolve().then(callback);
+          return 1;
+        },
         clearTimeout() {},
         BroadcastChannel: undefined,
       },
@@ -204,6 +208,9 @@ function fixture() {
     setError: value => {
       queryError = value;
     },
+    executeTimeouts: () => {
+      executeTimeouts = true;
+    },
     seed: () => session.setSession({ accessToken: jwt(-60), refreshToken: 'refresh' }),
     render: callback => {
       effectIndex = 0;
@@ -215,6 +222,62 @@ function fixture() {
     },
   };
 }
+
+test('opted-in GET retries a transient network failure without notifying before recovery', async () => {
+  const f = fixture();
+  f.session.setSession({ accessToken: jwt(3600), refreshToken: 'refresh' });
+  f.executeTimeouts();
+  let attempts = 0;
+  f.client.getInstance().defaults.adapter = async config => {
+    attempts++;
+    if (attempts < 3) {
+      throw new axios.AxiosError('Network Error', 'ERR_NETWORK', config);
+    }
+    return { status: 200, data: { code: 0 }, config };
+  };
+
+  await f.client.get('/profile', { retryAttemptsOverride: 2 });
+
+  assert.equal(attempts, 3);
+  assert.equal(f.notices.length, 0);
+});
+
+test('network retry never replays a mutation even when an override is present', async () => {
+  const f = fixture();
+  f.session.setSession({ accessToken: jwt(3600), refreshToken: 'refresh' });
+  f.executeTimeouts();
+  let attempts = 0;
+  f.client.getInstance().defaults.adapter = async config => {
+    attempts++;
+    throw new axios.AxiosError('Network Error', 'ERR_NETWORK', config);
+  };
+
+  await assert.rejects(f.client.post('/mutation', {}, { retryAttemptsOverride: 2 }));
+
+  assert.equal(attempts, 1);
+  assert.equal(f.notices.length, 1);
+});
+
+test('profile bootstrap explicitly opts into bounded read retries', async () => {
+  const f = fixture();
+  let request;
+  f.mock('@/lib/http/services', {
+    BaseService: class {
+      async request(...args) {
+        request = args;
+        return { code: '0', data: { id: 'profile-account' } };
+      }
+    },
+  });
+  const service = f.load('services/auth.service.ts').authenticationService;
+
+  const profile = await service.getProfile(false);
+
+  assert.equal(profile.id, 'profile-account');
+  assert.equal(request[0], 'get');
+  assert.equal(request[1], '/account/profile');
+  assert.equal(request[3].retryAttemptsOverride, 2);
+});
 
 function logoutService(f, request) {
   f.mock('@/lib/http/services', {

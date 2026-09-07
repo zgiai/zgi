@@ -420,7 +420,17 @@ export class AuthenticationService extends BaseService {
       // ignore client cache errors and fall back to network
     }
 
-    const response = await this.request<ApiResponseData<User>>('get', '/account/profile');
+    const response = await this.request<ApiResponseData<User>>(
+      'get',
+      '/account/profile',
+      undefined,
+      {
+        // Auth bootstrap gates the whole protected application. A short,
+        // read-only retry absorbs transient transport and 5xx failures without
+        // risking duplicate mutations or hiding an invalid session.
+        retryAttemptsOverride: 2,
+      }
+    );
 
     if (response.code !== '0') {
       throw new Error(response.message || 'Failed to get profile');

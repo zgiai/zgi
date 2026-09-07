@@ -6,16 +6,8 @@ import axios from 'axios';
 import { ErrorNotificationService } from '@/utils/error-notifications';
 import { isAuthRedirectInProgress, isLogoutInProgress } from '@/lib/auth/logout-state';
 import { captureError } from '@/lib/observability';
-import {
-  getEndpointConfig,
-  getHttpConfig,
-  type ApiEndpoint,
-} from './config';
-import {
-  isStaleTokenRefreshError,
-  StaleTokenRefreshError,
-  TokenManager,
-} from './token-manager';
+import { getEndpointConfig, getHttpConfig, type ApiEndpoint } from './config';
+import { isStaleTokenRefreshError, StaleTokenRefreshError, TokenManager } from './token-manager';
 import { SseClient } from './sse-client';
 import type { ExtendedRequestConfig, RetryableConfig, SseOptions, SsePostOptions } from './types';
 
@@ -147,6 +139,20 @@ export class HttpClient {
             errorCode === 'ERR_CANCELED';
           const isMissingAuthSession = errorCode === 'ERR_AUTH_SESSION_MISSING';
           const isReadRequest = this.isReadRequest(config);
+          const shouldRetryRead =
+            !isCanceled &&
+            !isMissingAuthSession &&
+            isReadRequest &&
+            this.hasExplicitRetryAttempt(config);
+
+          // Network failures happen before a response exists, so they bypass
+          // the server-error retry branch below. Retry only explicitly opted-in
+          // reads: replaying a mutation after an ambiguous network failure can
+          // duplicate user-visible side effects.
+          if (shouldRetryRead) {
+            return this.retryRequest(config);
+          }
+
           const shouldSilence =
             isCanceled ||
             isMissingAuthSession ||
@@ -259,10 +265,7 @@ export class HttpClient {
   }
 
   private shouldRetry(error: AxiosError, config?: ExtendedRequestConfig): boolean {
-    const retryCount = (config as RetryableConfig)?._retryCount || 0;
-    const maxRetries = config?.retryAttemptsOverride ?? this.config.retryAttempts;
-
-    if (maxRetries <= 0 || retryCount >= maxRetries) return false;
+    if (!this.hasRetryAttempt(config)) return false;
 
     const code = (error.response?.data as { code?: string })?.code;
     if (
@@ -274,6 +277,18 @@ export class HttpClient {
     }
 
     return !error.response || error.response.status >= 500 || error.response.status === 429;
+  }
+
+  private hasRetryAttempt(config?: ExtendedRequestConfig): boolean {
+    const retryCount = (config as RetryableConfig)?._retryCount || 0;
+    const maxRetries = config?.retryAttemptsOverride ?? this.config.retryAttempts;
+    return maxRetries > 0 && retryCount < maxRetries;
+  }
+
+  private hasExplicitRetryAttempt(config?: ExtendedRequestConfig): boolean {
+    const retryCount = (config as RetryableConfig)?._retryCount || 0;
+    const maxRetries = config?.retryAttemptsOverride ?? 0;
+    return maxRetries > 0 && retryCount < maxRetries;
   }
 
   private async retryRequest(config: ExtendedRequestConfig): Promise<AxiosResponse> {
@@ -296,10 +311,7 @@ export class HttpClient {
     return token && this.tokenManager.canUseToken(token) ? token : null;
   }
 
-  private retryWithAuthToken(
-    config: ExtendedRequestConfig,
-    token: string
-  ): Promise<AxiosResponse> {
+  private retryWithAuthToken(config: ExtendedRequestConfig, token: string): Promise<AxiosResponse> {
     const retryConfig = { ...config, isRetryRequest: true };
     retryConfig.headers = { ...retryConfig.headers, Authorization: `Bearer ${token}` };
     return this.instance.request(retryConfig);
@@ -320,7 +332,9 @@ export class HttpClient {
           return this.retryWithAuthToken(config, currentToken);
         }
 
-        throw new StaleTokenRefreshError('Token refresh discarded because the auth session changed');
+        throw new StaleTokenRefreshError(
+          'Token refresh discarded because the auth session changed'
+        );
       }
 
       return this.retryWithAuthToken(config, newToken);
