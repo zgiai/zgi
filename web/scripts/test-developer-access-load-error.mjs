@@ -157,6 +157,20 @@ assert.equal(
   2
 );
 assert.match(organizationsHook, /id: 'organization-load-error'/);
+const developerAccessHook = await readFile(
+  new URL('../src/hooks/developer-access/use-developer-access.ts', import.meta.url),
+  'utf8'
+);
+assert.match(
+  developerAccessHook,
+  /shouldRetryAccessLoadError\(failureCount, error\)/,
+  'developer access reads must reuse the shared transient-error classifier'
+);
+assert.equal(
+  developerAccessHook.match(/\.\.\.ACCESS_READ_RETRY_OPTIONS/g)?.length,
+  6,
+  'every developer access page query must use bounded transient retries'
+);
 const compatibilityExport = await readFile(
   new URL('../src/features/developer-access/load-error.ts', import.meta.url),
   'utf8'

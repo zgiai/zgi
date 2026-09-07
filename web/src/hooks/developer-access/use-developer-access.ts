@@ -21,6 +21,12 @@ import {
   type DeveloperAccessPolicy,
   type ReviewAccessRequestInput,
 } from '@/services/developer-access.service';
+import { shouldRetryAccessLoadError } from '@/utils/access-load-error';
+
+const ACCESS_READ_RETRY_OPTIONS = {
+  retry: (failureCount: number, error: unknown) => shouldRetryAccessLoadError(failureCount, error),
+  retryDelay: (attemptIndex: number) => Math.min(250 * 2 ** attemptIndex, 1000),
+};
 
 export const DEVELOPER_ACCESS_KEYS = {
   all: ['developer-access'] as const,
@@ -93,6 +99,7 @@ export function useDeveloperAccess(
     select: normalizeDeveloperAccessMe,
     enabled,
     staleTime: 30_000,
+    ...ACCESS_READ_RETRY_OPTIONS,
   });
   const keys = useQuery({
     queryKey: DEVELOPER_ACCESS_KEYS.keys(workspaceId ?? '', 'mine', keyPage, keyPageSize),
@@ -106,6 +113,7 @@ export function useDeveloperAccess(
       ).data,
     enabled,
     staleTime: 15_000,
+    ...ACCESS_READ_RETRY_OPTIONS,
   });
   const memberKeys = useQuery({
     queryKey: DEVELOPER_ACCESS_KEYS.keys(workspaceId ?? '', 'members', memberKeyPage, keyPageSize),
@@ -119,6 +127,7 @@ export function useDeveloperAccess(
       ).data,
     enabled: enabled && me.data?.can_manage === true,
     staleTime: 15_000,
+    ...ACCESS_READ_RETRY_OPTIONS,
   });
   const requests = useQuery({
     select: normalizeDeveloperAccessRequests,
@@ -138,6 +147,7 @@ export function useDeveloperAccess(
       ).data,
     enabled,
     staleTime: 15_000,
+    ...ACCESS_READ_RETRY_OPTIONS,
   });
   const memberRequests = useQuery({
     select: normalizeDeveloperAccessRequests,
@@ -157,6 +167,7 @@ export function useDeveloperAccess(
       ).data,
     enabled: enabled && me.data?.can_manage === true,
     staleTime: 15_000,
+    ...ACCESS_READ_RETRY_OPTIONS,
   });
   const audit = useQuery({
     select: normalizeDeveloperAccessAudit,
@@ -170,6 +181,7 @@ export function useDeveloperAccess(
       ).data,
     enabled,
     staleTime: 15_000,
+    ...ACCESS_READ_RETRY_OPTIONS,
   });
   // Only mounted, enabled queries are refreshed. Disabled administrator queries
   // must not be triggered when an ordinary member refreshes this page.
