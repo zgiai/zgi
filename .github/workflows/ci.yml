@@ -255,3 +255,9 @@ jobs:
         env:
           ZGI_SANDBOX_DATABASE_URL: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports[5432] }}/zgi_sandbox_ci?sslmode=disable
         run: make test-sandbox-kest
+
+      - name: Verify personal key legacy quota guard on PostgreSQL
+        working-directory: api
+        env:
+          ZGI_MIGRATION_TEST_DSN: postgres://zgi_sandbox:zgi_sandbox_ci@127.0.0.1:${{ job.services.postgres.ports[5432] }}/zgi_sandbox_ci?sslmode=disable
+        run: go test ./internal/migrations -run '^TestPersonalKeyLegacyQuotaMigration' -count=1 -v

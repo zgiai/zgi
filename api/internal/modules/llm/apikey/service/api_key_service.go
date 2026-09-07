@@ -464,7 +464,9 @@ func (s *apiKeyServiceImpl) ValidateAPIKey(ctx context.Context, key string) (*dt
 		}, nil
 	}
 
-	if !apiKey.HasQuota() {
+	// A principal's live grant was validated above; the independent quota is
+	// deliberately zero to deny authentication by older, grant-unaware code.
+	if apiKey.PrincipalType == nil && apiKey.PrincipalID == nil && !apiKey.HasQuota() {
 		return &dto.ValidateAPIKeyResponse{
 			Valid:   false,
 			Message: "API key has no remaining quota",

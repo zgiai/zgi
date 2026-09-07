@@ -68,8 +68,9 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository, projectors 
 			return
 		}
 
-		// 6. Check if API key has quota
-		if !keyInfo.HasQuota() {
+		// Principal quota was checked against the live grant above. Its zero
+		// independent quota is a fail-closed guard for pre-principal binaries.
+		if keyInfo.PrincipalType == nil && keyInfo.PrincipalID == nil && !keyInfo.HasQuota() {
 			abortWithProtocolError(c, quotaProtocolError())
 			return
 		}

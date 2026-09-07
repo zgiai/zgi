@@ -8,5 +8,6 @@ export CONNECTOR_CREDENTIAL_KEYS_JSON='{"developer-access-ci":"developer-access-
 cd "${repo_root}/api"
 go test ./internal/modules/llm/developeraccess \
   ./internal/modules/llm/apikey/repository \
+  ./internal/modules/llm/apikey/service \
   ./internal/modules/llm/gateway/... -count=1
 go test ./internal/bootstrap/fxapp -run '^TestProvideGinEngine_' -count=1

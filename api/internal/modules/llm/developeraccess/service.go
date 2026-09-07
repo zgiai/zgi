@@ -1165,11 +1165,14 @@ func (s *Service) CreateKey(ctx context.Context, workspaceID, accountID string, 
 	}
 	modelsString := string(modelsJSON)
 	principalType := accessmodel.PrincipalTypeUser
+	legacyQuotaLimit := int64(0)
 	key := &apikeymodel.TenantAPIKey{
 		OrganizationID: *scope.Workspace.OrganizationID, WorkspaceID: &workspaceID,
 		PrincipalType: &principalType, PrincipalID: &accountID, AccessGrantID: &grant.ID, CreatedByID: &accountID,
 		Key: "", KeyHash: util.HashAPIKey(secret), KeyPrefix: secret[:8], KeySuffix: secret[len(secret)-4:], SecretVersion: 2,
-		Name: input.Name, Status: "active", Environment: environment, ExpiresAt: expiresAt, QuotaLimit: nil,
+		// Grant-aware authentication uses the shared grant. Older binaries must
+		// see an exhausted independent quota, never an unlimited personal key.
+		Name: input.Name, Status: "active", Environment: environment, ExpiresAt: expiresAt, QuotaLimit: &legacyQuotaLimit,
 		ModelLimitsEnabled: len(models) > 0, ModelLimits: &modelsString, AllowIPs: "",
 		AuthorizationVersion: grant.AuthorizationVersion,
 	}
@@ -1836,11 +1839,12 @@ func (s *Service) RotateKey(ctx context.Context, workspaceID, accountID, keyID s
 			return err
 		}
 		principalType := accessmodel.PrincipalTypeUser
+		legacyQuotaLimit := int64(0)
 		replacement = apikeymodel.TenantAPIKey{
 			OrganizationID: current.OrganizationID, WorkspaceID: &workspaceID,
 			PrincipalType: &principalType, PrincipalID: &accountID, AccessGrantID: &grant.ID, CreatedByID: &accountID,
 			Key: "", KeyHash: util.HashAPIKey(secret), KeyPrefix: secret[:8], KeySuffix: secret[len(secret)-4:], SecretVersion: 2,
-			Name: name, Status: "active", Environment: current.Environment, ExpiresAt: expiresAt,
+			Name: name, Status: "active", Environment: current.Environment, ExpiresAt: expiresAt, QuotaLimit: &legacyQuotaLimit,
 			ModelLimitsEnabled: current.ModelLimitsEnabled, ModelLimits: current.ModelLimits, AllowIPs: current.AllowIPs,
 			AuthorizationVersion: grant.AuthorizationVersion, RotatedFromID: &current.ID,
 		}

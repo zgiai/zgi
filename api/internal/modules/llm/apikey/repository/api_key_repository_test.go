@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
@@ -60,5 +61,33 @@ func TestGetByKeyHashRestoresHashOnCacheHit(t *testing.T) {
 	}
 	if second.KeyHash != keyHash {
 		t.Fatalf("cache lookup lost key hash: got %q", second.KeyHash)
+	}
+	// An upgrade can change a previously cached unlimited personal key to
+	// zero legacy quota. Old cache entries must expire before an old binary
+	// can be admitted: changing the database alone does not purge Redis.
+	if err := db.Model(stored).Updates(map[string]any{"quota_limit": int64(0), "remain_quota": int64(0)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	cached, err := repo.GetByKeyHash(context.Background(), keyHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cached.HasQuota() {
+		t.Fatal("fixture did not retain the pre-migration cache entry")
+	}
+	miniRedis.FastForward(apiKeyCacheTTL + time.Second)
+	guarded, err := repo.GetByKeyHash(context.Background(), keyHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guarded.HasQuota() {
+		t.Fatal("expired legacy cache did not reload the zero quota guard")
+	}
+	cachedGuard, err := repo.GetByKeyHash(context.Background(), keyHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cachedGuard.HasQuota() {
+		t.Fatal("new cache entry lost the legacy quota guard")
 	}
 }
