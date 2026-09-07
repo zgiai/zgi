@@ -66,6 +66,29 @@ func TestTokenEstimator_EstimateChatPromptTokensAddsStructure(t *testing.T) {
 	}
 }
 
+func TestTokenEstimator_EstimateChatRequestTokensIncludesToolsAndOutputLimit(t *testing.T) {
+	estimator := NewTokenEstimator()
+	maxTokens := 7
+	req := &adapter.ChatRequest{
+		Model:     "gpt-4o",
+		MaxTokens: &maxTokens,
+		Messages:  []adapter.Message{{Role: "user", Content: "hello"}},
+		Tools: []adapter.Tool{{
+			Type:     "function",
+			Function: adapter.Function{Name: "lookup"},
+		}},
+	}
+
+	promptTokens, completionTokens, totalTokens := estimator.EstimateChatRequestTokens(req)
+	messageOnly := estimator.EstimatePromptTokens(req.Messages, req.Model)
+	if promptTokens <= messageOnly {
+		t.Fatalf("prompt tokens = %d, want above message-only estimate %d", promptTokens, messageOnly)
+	}
+	if completionTokens != maxTokens || totalTokens != promptTokens+maxTokens {
+		t.Fatalf("completion/total = %d/%d, want %d/%d", completionTokens, totalTokens, maxTokens, promptTokens+maxTokens)
+	}
+}
+
 func TestTokenEstimator_EmbeddingAndRerankUseModelSpecificCounter(t *testing.T) {
 	estimator := NewTokenEstimator()
 

@@ -69,6 +69,17 @@ func (te *TokenEstimator) EstimateChatPromptTokens(req *adapter.ChatRequest) int
 	return totalTokens
 }
 
+// EstimateChatRequestTokens estimates the complete billable chat request,
+// including tools and response formatting that are not present in messages.
+func (te *TokenEstimator) EstimateChatRequestTokens(req *adapter.ChatRequest) (promptTokens, completionTokens, totalTokens int) {
+	if req == nil {
+		return 0, 0, 0
+	}
+	promptTokens = te.EstimateChatPromptTokens(req)
+	completionTokens = te.EstimateCompletionTokens(req.MaxTokens, req.Model)
+	return promptTokens, completionTokens, promptTokens + completionTokens
+}
+
 // EstimateCompletionTokens estimates completion tokens based on max_tokens or default
 func (te *TokenEstimator) EstimateCompletionTokens(maxTokens *int, model string) int {
 	if maxTokens != nil && *maxTokens > 0 {
