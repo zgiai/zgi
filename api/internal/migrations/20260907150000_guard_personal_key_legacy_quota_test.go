@@ -12,11 +12,13 @@ import (
 
 func TestPersonalKeyLegacyQuotaMigrationContract(t *testing.T) {
 	for _, required := range []string{
+		"DROP CONSTRAINT IF EXISTS chk_llm_tenant_api_keys_quota_limit",
+		"quota_limit > 0",
 		"SET quota_limit = 0, remain_quota = 0",
 		"principal_type IS NOT NULL OR principal_id IS NOT NULL OR access_grant_id IS NOT NULL",
 		"quota_limit IS NOT NULL AND quota_limit = 0 AND remain_quota = 0",
 	} {
-		if !strings.Contains(backfillPersonalKeyLegacyQuotaSQL+guardPersonalKeyLegacyQuotaSQL, required) {
+		if !strings.Contains(allowZeroOnlyForPrincipalBoundKeysSQL+backfillPersonalKeyLegacyQuotaSQL+guardPersonalKeyLegacyQuotaSQL, required) {
 			t.Fatalf("missing legacy quota protection: %s", required)
 		}
 	}
@@ -48,13 +50,31 @@ func TestPersonalKeyLegacyQuotaMigrationPostgres(t *testing.T) {
 	defer tx.Rollback()
 	mustExec(t, tx, `CREATE TABLE public.llm_organization_api_keys (
 		id text PRIMARY KEY, principal_type text, principal_id text, access_grant_id text,
-		quota_limit bigint, remain_quota bigint NOT NULL DEFAULT 0, used_quota bigint NOT NULL DEFAULT 0
+		quota_limit bigint, remain_quota bigint NOT NULL DEFAULT 0, used_quota bigint NOT NULL DEFAULT 0,
+		CONSTRAINT chk_llm_tenant_api_keys_quota_limit CHECK (quota_limit IS NULL OR quota_limit > 0)
 	)`)
 	mustExec(t, tx, `INSERT INTO public.llm_organization_api_keys VALUES
 		('personal', 'user', 'user-a', 'grant-a', NULL, 9, 7),
 		('legacy-unlimited', NULL, NULL, NULL, NULL, 0, 11),
 		('legacy-bounded', NULL, NULL, NULL, 100, 75, 25),
 		('orphan-grant', NULL, NULL, 'grant-b', NULL, 0, 0)`)
+	// Force the final ADD CONSTRAINT to fail and prove the earlier constraint
+	// replacement and backfill roll back together.
+	mustExec(t, tx, `ALTER TABLE public.llm_organization_api_keys
+		ADD CONSTRAINT llm_api_keys_principal_legacy_quota_check CHECK (TRUE)`)
+	if err := upGuardPersonalKeyLegacyQuota(mschema.New(tx)); err == nil {
+		t.Fatal("migration unexpectedly succeeded with a conflicting guard constraint")
+	}
+	var unchanged int64
+	if err := tx.Raw(`SELECT COUNT(*) FROM public.llm_organization_api_keys
+		WHERE id = 'personal' AND quota_limit IS NULL AND remain_quota = 9`).Scan(&unchanged).Error; err != nil {
+		t.Fatal(err)
+	}
+	if unchanged != 1 {
+		t.Fatal("failed migration did not atomically restore the personal key row")
+	}
+	mustExec(t, tx, `ALTER TABLE public.llm_organization_api_keys
+		DROP CONSTRAINT IF EXISTS llm_api_keys_principal_legacy_quota_check`)
 	if err := upGuardPersonalKeyLegacyQuota(mschema.New(tx)); err != nil {
 		t.Fatal(err)
 	}
@@ -87,4 +107,9 @@ func TestPersonalKeyLegacyQuotaMigrationPostgres(t *testing.T) {
 	if err := downGuardPersonalKeyLegacyQuota(mschema.New(tx).AllowDestructive()); err != nil {
 		t.Fatal(err)
 	}
+	mustExec(t, tx, "SAVEPOINT denied_legacy_zero")
+	if err := tx.Exec("UPDATE public.llm_organization_api_keys SET quota_limit = 0 WHERE id = 'legacy-bounded'").Error; err == nil {
+		t.Fatal("rollback did not restore the legacy positive quota constraint")
+	}
+	mustExec(t, tx, "ROLLBACK TO SAVEPOINT denied_legacy_zero")
 }

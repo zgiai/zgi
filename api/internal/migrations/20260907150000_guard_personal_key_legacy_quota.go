@@ -7,6 +7,20 @@ import (
 
 const migrationGuardPersonalKeyLegacyQuotaID = "20260907150000_guard_personal_key_legacy_quota"
 
+const allowZeroOnlyForPrincipalBoundKeysSQL = `
+	ALTER TABLE public.llm_organization_api_keys
+		DROP CONSTRAINT IF EXISTS chk_llm_tenant_api_keys_quota_limit;
+	ALTER TABLE public.llm_organization_api_keys
+		ADD CONSTRAINT chk_llm_tenant_api_keys_quota_limit CHECK (
+			quota_limit IS NULL
+			OR quota_limit > 0
+			OR (
+				quota_limit = 0
+				AND (principal_type IS NOT NULL OR principal_id IS NOT NULL OR access_grant_id IS NOT NULL)
+			)
+		);
+`
+
 const backfillPersonalKeyLegacyQuotaSQL = `
 	UPDATE public.llm_organization_api_keys
 	SET quota_limit = 0, remain_quota = 0
@@ -34,6 +48,12 @@ const rollbackPersonalKeyLegacyQuotaSQL = `
 	$$;
 	ALTER TABLE public.llm_organization_api_keys
 		DROP CONSTRAINT IF EXISTS llm_api_keys_principal_legacy_quota_check;
+	ALTER TABLE public.llm_organization_api_keys
+		DROP CONSTRAINT IF EXISTS chk_llm_tenant_api_keys_quota_limit;
+	ALTER TABLE public.llm_organization_api_keys
+		ADD CONSTRAINT chk_llm_tenant_api_keys_quota_limit CHECK (
+			quota_limit IS NULL OR quota_limit > 0
+		);
 `
 
 func init() {
@@ -41,12 +61,19 @@ func init() {
 }
 
 func upGuardPersonalKeyLegacyQuota(schema *mschema.Builder) error {
-	if err := schema.DataFix("deny legacy quota authentication for principal-bound keys without changing grant balances or usage", func(db *gorm.DB) error {
-		return db.Exec(backfillPersonalKeyLegacyQuotaSQL).Error
-	}); err != nil {
-		return err
-	}
-	return schema.Raw(guardPersonalKeyLegacyQuotaSQL)
+	return schema.DataFix("atomically deny legacy quota authentication for principal-bound keys without changing grant balances or usage", func(db *gorm.DB) error {
+		return db.Transaction(func(tx *gorm.DB) error {
+			// The legacy table rejects zero quota limits. Replace that constraint
+			// first, while still allowing zero only for principal-bound rows.
+			if err := tx.Exec(allowZeroOnlyForPrincipalBoundKeysSQL).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(backfillPersonalKeyLegacyQuotaSQL).Error; err != nil {
+				return err
+			}
+			return tx.Exec(guardPersonalKeyLegacyQuotaSQL).Error
+		})
+	})
 }
 
 func downGuardPersonalKeyLegacyQuota(schema *mschema.Builder) error {
