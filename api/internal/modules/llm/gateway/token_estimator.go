@@ -146,7 +146,11 @@ func (te *TokenEstimator) EstimateChatRequestTokens(req *adapter.ChatRequest) (p
 	} else {
 		completionTokens *= completionCount
 	}
-	return promptTokens, completionTokens, promptTokens + completionTokens
+	totalTokens = math.MaxInt
+	if promptTokens <= math.MaxInt-completionTokens {
+		totalTokens = promptTokens + completionTokens
+	}
+	return promptTokens, completionTokens, totalTokens
 }
 
 // EstimateCompletionTokens estimates completion tokens based on max_tokens or default
