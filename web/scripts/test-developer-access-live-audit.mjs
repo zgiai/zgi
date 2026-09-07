@@ -63,6 +63,7 @@ for (const manager of [false, true]) {
       },
       '@/services/developer-access.service': { developerAccessService: service },
       '@/utils/ai-credits': new Proxy({}, { get: () => value => value }),
+      '@/utils/access-load-error': { shouldRetryAccessLoadError: () => false },
       '@/i18n': { useT: () => key => key },
       sonner: {},
     });
