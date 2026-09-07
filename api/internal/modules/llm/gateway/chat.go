@@ -59,6 +59,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 		return nil, err
 	}
 	effectiveReq := s.policyPrompt.injectChatRequest(req)
+	effectiveReq = s.withPrincipalChatOutputLimit(apiKey, effectiveReq)
 	logger.DebugContext(ctx, "llm gateway timing", "step", "validate_request", "latency_ms", time.Since(t1).Milliseconds())
 
 	// 2. Check model authorization
@@ -307,6 +308,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 		return nil, err
 	}
 	effectiveReq := s.policyPrompt.injectChatRequest(req)
+	effectiveReq = s.withPrincipalChatOutputLimit(apiKey, effectiveReq)
 
 	// 2. Check model authorization
 	if err := s.checkModelAuthorization(apiKey, appCtx, effectiveReq.Model); err != nil {
@@ -392,6 +394,22 @@ func modelUseCaseForAppContext(appCtx *AppContext) string {
 	default:
 		return ""
 	}
+}
+
+func (s *llmGatewayServiceImpl) withPrincipalChatOutputLimit(
+	apiKey *apikeymodel.TenantAPIKey,
+	req *adapter.ChatRequest,
+) *adapter.ChatRequest {
+	if s == nil || s.tokenEstimator == nil || !isPrincipalBoundAPIKey(apiKey) || req == nil || req.MaxTokens != nil {
+		return req
+	}
+	limit := s.tokenEstimator.EstimateCompletionTokens(nil, req.Model)
+	if limit <= 0 {
+		return req
+	}
+	cloned := *req
+	cloned.MaxTokens = &limit
+	return &cloned
 }
 
 // tryChatCompletionStream attempts a streaming chat completion with a single provider

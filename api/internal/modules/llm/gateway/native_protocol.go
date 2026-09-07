@@ -32,6 +32,10 @@ func (s *llmGatewayServiceImpl) CreateResponseRaw(
 	if err != nil {
 		return nil, err
 	}
+	effectiveReq, err = s.withPrincipalRawResponseOutputLimit(apiKey, effectiveReq)
+	if err != nil {
+		return nil, err
+	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryResponses)
 
 	return s.createNativeResponse(ctx, apiKey, effectiveReq)
@@ -46,6 +50,10 @@ func (s *llmGatewayServiceImpl) CreateResponseStream(
 		return nil, err
 	}
 	effectiveReq, err := s.policyPrompt.injectRawResponseRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	effectiveReq, err = s.withPrincipalRawResponseOutputLimit(apiKey, effectiveReq)
 	if err != nil {
 		return nil, err
 	}
@@ -66,6 +74,10 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessage(
 	if err != nil {
 		return nil, err
 	}
+	effectiveReq, err = s.withPrincipalAnthropicOutputLimit(apiKey, effectiveReq)
+	if err != nil {
+		return nil, err
+	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryAnthropicMessages)
 
 	return s.createNativeAnthropicMessage(ctx, apiKey, effectiveReq)
@@ -83,9 +95,107 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessageStream(
 	if err != nil {
 		return nil, err
 	}
+	effectiveReq, err = s.withPrincipalAnthropicOutputLimit(apiKey, effectiveReq)
+	if err != nil {
+		return nil, err
+	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryAnthropicMessages)
 
 	return s.createNativeAnthropicMessageStream(ctx, apiKey, effectiveReq)
+}
+
+func (s *llmGatewayServiceImpl) withPrincipalRawResponseOutputLimit(
+	apiKey *apikeymodel.TenantAPIKey,
+	req *adapter.RawResponseRequest,
+) (*adapter.RawResponseRequest, error) {
+	if req == nil {
+		return req, nil
+	}
+	body, err := s.withPrincipalNativeOutputLimit(apiKey, req.Body, req.Model, protocolOpenAIResponses)
+	if err != nil || string(body) == string(req.Body) {
+		return req, err
+	}
+	cloned := *req
+	cloned.Body = body
+	return &cloned, nil
+}
+
+func (s *llmGatewayServiceImpl) withPrincipalAnthropicOutputLimit(
+	apiKey *apikeymodel.TenantAPIKey,
+	req *adapter.AnthropicMessageRequest,
+) (*adapter.AnthropicMessageRequest, error) {
+	if req == nil {
+		return req, nil
+	}
+	body, err := s.withPrincipalNativeOutputLimit(apiKey, req.Body, req.Model, protocolAnthropicMessages)
+	if err != nil || string(body) == string(req.Body) {
+		return req, err
+	}
+	cloned := *req
+	cloned.Body = body
+	return &cloned, nil
+}
+
+func (s *llmGatewayServiceImpl) withPrincipalNativeOutputLimit(
+	apiKey *apikeymodel.TenantAPIKey,
+	body json.RawMessage,
+	model string,
+	protocol string,
+) (json.RawMessage, error) {
+	if s == nil || s.tokenEstimator == nil || !isPrincipalBoundAPIKey(apiKey) {
+		return body, nil
+	}
+	limit := s.tokenEstimator.EstimateCompletionTokens(nil, model)
+	if limit <= 0 {
+		return body, nil
+	}
+	payload := map[string]json.RawMessage{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("%w: request body must be valid JSON", adapter.ErrInvalidRequest)
+	}
+
+	switch protocol {
+	case protocolOpenAIResponses:
+		if err := ensurePositiveNativeLimit(payload, []string{"max_output_tokens", "max_tokens"}); err != nil {
+			return nil, err
+		} else if nativeLimitPresent(payload, []string{"max_output_tokens", "max_tokens"}) {
+			return body, nil
+		}
+		payload["max_output_tokens"] = mustMarshalJSON(limit)
+	case protocolAnthropicMessages:
+		if err := ensurePositiveNativeLimit(payload, []string{"max_tokens"}); err != nil {
+			return nil, err
+		} else if nativeLimitPresent(payload, []string{"max_tokens"}) {
+			return body, nil
+		}
+		payload["max_tokens"] = mustMarshalJSON(limit)
+	default:
+		return body, nil
+	}
+	return json.Marshal(payload)
+}
+
+func nativeLimitPresent(payload map[string]json.RawMessage, keys []string) bool {
+	for _, key := range keys {
+		if _, ok := payload[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func ensurePositiveNativeLimit(payload map[string]json.RawMessage, keys []string) error {
+	for _, key := range keys {
+		raw, ok := payload[key]
+		if !ok {
+			continue
+		}
+		var value int
+		if err := json.Unmarshal(raw, &value); err != nil || value <= 0 {
+			return fmt.Errorf("%w: %s must be a positive integer", adapter.ErrInvalidRequest, key)
+		}
+	}
+	return nil
 }
 
 func validateRawResponseRequest(req *adapter.RawResponseRequest) error {

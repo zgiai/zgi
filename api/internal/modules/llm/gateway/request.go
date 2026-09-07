@@ -19,6 +19,14 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
+func isPrincipalBoundAPIKey(apiKey *apikeymodel.TenantAPIKey) bool {
+	return apiKey != nil &&
+		apiKey.AccessGrantID != nil && strings.TrimSpace(*apiKey.AccessGrantID) != "" &&
+		apiKey.PrincipalType != nil && strings.TrimSpace(*apiKey.PrincipalType) != "" &&
+		apiKey.PrincipalID != nil && strings.TrimSpace(*apiKey.PrincipalID) != "" &&
+		apiKey.WorkspaceID != nil && strings.TrimSpace(*apiKey.WorkspaceID) != ""
+}
+
 type privateChannelBalanceChecker interface {
 	CheckPrivateChannelBalance(ctx context.Context, organizationID uuid.UUID, channelID uuid.UUID, estimatedCredits int64) (bool, error)
 }
