@@ -84,6 +84,8 @@ type PublishedModel struct {
 	CachedInputPrice       float64
 	CacheReadPrice         *float64
 	CacheWritePrice        *float64
+	CacheWrite5mPrice      *float64
+	CacheWrite1hPrice      *float64
 	Pricing                json.RawMessage
 	InputPriceConfigured   bool
 	OutputPriceConfigured  bool
@@ -638,7 +640,7 @@ func normalizePublishedPrice(value float64) decimal.Decimal {
 }
 
 func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]interface{} {
-	inputPrice, outputPrice, cacheReadPrice, cacheWritePrice, inputConfigured, outputConfigured := resolvePublishedTokenPrices(model)
+	tokenPrices := resolvePublishedTokenPrices(model)
 	useCases := llmmodel.EnsureUseCases(model.UseCases, model.Endpoints)
 	values := map[string]interface{}{
 		"provider":           model.Provider,
@@ -658,21 +660,33 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 		"context_window":     model.ContextWindow,
 		"max_output_tokens":  model.MaxOutputTokens,
 		"knowledge_cutoff":   model.KnowledgeCutoff,
-		"input_price":        normalizePublishedPrice(inputPrice),
-		"output_price":       normalizePublishedPrice(outputPrice),
-		"cached_input_price": nullablePublishedPrice(cacheReadPrice),
+		"input_price":        normalizePublishedPrice(tokenPrices.input),
+		"output_price":       normalizePublishedPrice(tokenPrices.output),
+		"cached_input_price": nullablePublishedPrice(tokenPrices.cacheRead),
 	}
 	if hasColumn(db, "llm_models", "cost_cache_read") {
-		values["cost_cache_read"] = nullablePublishedPrice(cacheReadPrice)
+		values["cost_cache_read"] = nullablePublishedPrice(tokenPrices.cacheRead)
 	}
 	if hasColumn(db, "llm_models", "cost_cache_write") {
-		values["cost_cache_write"] = nullablePublishedPrice(cacheWritePrice)
+		values["cost_cache_write"] = nullablePublishedPrice(tokenPrices.cacheWrite)
+	}
+	if hasColumn(db, "llm_models", "cost_cache_write_5m") {
+		values["cost_cache_write_5m"] = nullablePublishedPrice(tokenPrices.cacheWrite5m)
+	}
+	if hasColumn(db, "llm_models", "cost_cache_write_1h") {
+		values["cost_cache_write_1h"] = nullablePublishedPrice(tokenPrices.cacheWrite1h)
 	}
 	if hasColumn(db, "llm_models", "cache_read_price_configured") {
-		values["cache_read_price_configured"] = cacheReadPrice != nil
+		values["cache_read_price_configured"] = tokenPrices.cacheRead != nil
 	}
 	if hasColumn(db, "llm_models", "cache_write_price_configured") {
-		values["cache_write_price_configured"] = cacheWritePrice != nil
+		values["cache_write_price_configured"] = tokenPrices.cacheWrite != nil
+	}
+	if hasColumn(db, "llm_models", "cache_write_5m_price_configured") {
+		values["cache_write_5m_price_configured"] = tokenPrices.cacheWrite5m != nil
+	}
+	if hasColumn(db, "llm_models", "cache_write_1h_price_configured") {
+		values["cache_write_1h_price_configured"] = tokenPrices.cacheWrite1h != nil
 	}
 	if hasColumn(db, "llm_models", "is_active") {
 		values["is_active"] = model.IsActive
@@ -682,10 +696,10 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	}
 
 	if hasColumn(db, "llm_models", "input_price_configured") {
-		values["input_price_configured"] = inputConfigured
+		values["input_price_configured"] = tokenPrices.inputConfigured
 	}
 	if hasColumn(db, "llm_models", "output_price_configured") {
-		values["output_price_configured"] = outputConfigured
+		values["output_price_configured"] = tokenPrices.outputConfigured
 	}
 	if hasColumn(db, "llm_models", "pricing") {
 		values["pricing"] = serializePricing(model.Pricing)
@@ -735,44 +749,78 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 
 type publishedStructuredPricing struct {
 	TokenTiers []struct {
-		InputPricePerMillion       *float64 `json:"input_price_per_million"`
-		OutputPricePerMillion      *float64 `json:"output_price_per_million"`
-		CachedInputPricePerMillion *float64 `json:"cached_input_price_per_million"`
-		CacheReadPricePerMillion   *float64 `json:"cache_read_price_per_million"`
-		CacheWritePricePerMillion  *float64 `json:"cache_write_price_per_million"`
+		InputPricePerMillion           *float64 `json:"input_price_per_million"`
+		OutputPricePerMillion          *float64 `json:"output_price_per_million"`
+		CachedInputPricePerMillion     *float64 `json:"cached_input_price_per_million"`
+		CacheReadPricePerMillion       *float64 `json:"cache_read_price_per_million"`
+		CacheWritePricePerMillion      *float64 `json:"cache_write_price_per_million"`
+		CacheWrite5mPricePerMillion    *float64 `json:"cache_write_5m_price_per_million"`
+		CacheWrite1hPricePerMillion    *float64 `json:"cache_write_1h_price_per_million"`
+		CacheCreation5mPricePerMillion *float64 `json:"cache_creation_5m_price_per_million"`
+		CacheCreation1hPricePerMillion *float64 `json:"cache_creation_1h_price_per_million"`
 	} `json:"token_tiers"`
 }
 
-func resolvePublishedTokenPrices(model PublishedModel) (float64, float64, *float64, *float64, bool, bool) {
-	inputPrice, outputPrice := model.InputPrice, model.OutputPrice
-	inputConfigured, outputConfigured := model.InputPriceConfigured, model.OutputPriceConfigured
-	cacheReadPrice, cacheWritePrice := model.CacheReadPrice, model.CacheWritePrice
+type publishedTokenPrices struct {
+	input            float64
+	output           float64
+	cacheRead        *float64
+	cacheWrite       *float64
+	cacheWrite5m     *float64
+	cacheWrite1h     *float64
+	inputConfigured  bool
+	outputConfigured bool
+}
+
+func resolvePublishedTokenPrices(model PublishedModel) publishedTokenPrices {
+	prices := publishedTokenPrices{
+		input:            model.InputPrice,
+		output:           model.OutputPrice,
+		cacheRead:        model.CacheReadPrice,
+		cacheWrite:       model.CacheWritePrice,
+		cacheWrite5m:     model.CacheWrite5mPrice,
+		cacheWrite1h:     model.CacheWrite1hPrice,
+		inputConfigured:  model.InputPriceConfigured,
+		outputConfigured: model.OutputPriceConfigured,
+	}
 	var pricing publishedStructuredPricing
 	if len(model.Pricing) > 0 && json.Unmarshal(model.Pricing, &pricing) == nil && len(pricing.TokenTiers) > 0 {
 		tier := pricing.TokenTiers[0]
 		if !model.InputPriceConfigured && tier.InputPricePerMillion != nil {
-			inputPrice = *tier.InputPricePerMillion
-			inputConfigured = true
+			prices.input = *tier.InputPricePerMillion
+			prices.inputConfigured = true
 		}
 		if !model.OutputPriceConfigured && tier.OutputPricePerMillion != nil {
-			outputPrice = *tier.OutputPricePerMillion
-			outputConfigured = true
+			prices.output = *tier.OutputPricePerMillion
+			prices.outputConfigured = true
 		}
-		if cacheReadPrice == nil {
-			cacheReadPrice = tier.CacheReadPricePerMillion
-			if cacheReadPrice == nil {
-				cacheReadPrice = tier.CachedInputPricePerMillion
+		if prices.cacheRead == nil {
+			prices.cacheRead = tier.CacheReadPricePerMillion
+			if prices.cacheRead == nil {
+				prices.cacheRead = tier.CachedInputPricePerMillion
 			}
 		}
-		if cacheWritePrice == nil {
-			cacheWritePrice = tier.CacheWritePricePerMillion
+		if prices.cacheWrite == nil {
+			prices.cacheWrite = tier.CacheWritePricePerMillion
+		}
+		if prices.cacheWrite5m == nil {
+			prices.cacheWrite5m = tier.CacheWrite5mPricePerMillion
+			if prices.cacheWrite5m == nil {
+				prices.cacheWrite5m = tier.CacheCreation5mPricePerMillion
+			}
+		}
+		if prices.cacheWrite1h == nil {
+			prices.cacheWrite1h = tier.CacheWrite1hPricePerMillion
+			if prices.cacheWrite1h == nil {
+				prices.cacheWrite1h = tier.CacheCreation1hPricePerMillion
+			}
 		}
 	}
-	if cacheReadPrice == nil && model.CachedInputPrice != 0 {
+	if prices.cacheRead == nil && model.CachedInputPrice != 0 {
 		value := model.CachedInputPrice
-		cacheReadPrice = &value
+		prices.cacheRead = &value
 	}
-	return inputPrice, outputPrice, cacheReadPrice, cacheWritePrice, inputConfigured, outputConfigured
+	return prices
 }
 
 func nullablePublishedPrice(value *float64) interface{} {

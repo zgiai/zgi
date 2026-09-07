@@ -117,10 +117,20 @@ type anthropicUsageShape struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreation            struct {
+		Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 }
 
 func mergeAnthropicTokenUsage(previous *adapter.Usage, u anthropicUsageShape) *adapter.Usage {
-	if previous == nil && u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheCreationInputTokens == 0 && u.CacheReadInputTokens == 0 {
+	cacheWrite5mTokens := maxUsageToken(u.CacheCreation.Ephemeral5mInputTokens)
+	cacheWrite1hTokens := maxUsageToken(u.CacheCreation.Ephemeral1hInputTokens)
+	cacheWriteTokens := maxUsageToken(u.CacheCreationInputTokens)
+	if cacheWriteTokens == 0 {
+		cacheWriteTokens = cacheWrite5mTokens + cacheWrite1hTokens
+	}
+	if previous == nil && u.InputTokens == 0 && u.OutputTokens == 0 && cacheWriteTokens == 0 && u.CacheReadInputTokens == 0 {
 		return nil
 	}
 
@@ -134,8 +144,14 @@ func mergeAnthropicTokenUsage(previous *adapter.Usage, u anthropicUsageShape) *a
 	if u.CacheReadInputTokens > 0 {
 		usage.CacheReadTokens = u.CacheReadInputTokens
 	}
-	if u.CacheCreationInputTokens > 0 {
-		usage.CacheWriteTokens = u.CacheCreationInputTokens
+	if cacheWrite5mTokens > 0 {
+		usage.CacheWrite5mTokens = cacheWrite5mTokens
+	}
+	if cacheWrite1hTokens > 0 {
+		usage.CacheWrite1hTokens = cacheWrite1hTokens
+	}
+	if cacheWriteTokens > 0 {
+		usage.CacheWriteTokens = cacheWriteTokens
 	}
 	if u.OutputTokens > 0 {
 		usage.CompletionTokens = u.OutputTokens
@@ -144,6 +160,13 @@ func mergeAnthropicTokenUsage(previous *adapter.Usage, u anthropicUsageShape) *a
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	usage.NormalizeCacheTokens()
 	return usage
+}
+
+func maxUsageToken(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 func streamRawHTTPEvents(

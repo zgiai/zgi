@@ -30,6 +30,8 @@ interface ModelPriceDialogValues {
   outputPrice: string;
   cacheReadPrice: string;
   cacheWritePrice: string;
+  cacheWrite5mPrice: string;
+  cacheWrite1hPrice: string;
 }
 
 interface ModelPriceDialogProps {
@@ -79,6 +81,8 @@ export function ModelPriceDialog({
     outputPrice: '',
     cacheReadPrice: '',
     cacheWritePrice: '',
+    cacheWrite5mPrice: '',
+    cacheWrite1hPrice: '',
   });
 
   const isImage = isImageGenerationModel(model?.use_cases);
@@ -87,7 +91,14 @@ export function ModelPriceDialog({
 
   useEffect(() => {
     if (!model) {
-      setValues({ inputPrice: '', outputPrice: '', cacheReadPrice: '', cacheWritePrice: '' });
+      setValues({
+        inputPrice: '',
+        outputPrice: '',
+        cacheReadPrice: '',
+        cacheWritePrice: '',
+        cacheWrite5mPrice: '',
+        cacheWrite1hPrice: '',
+      });
       return;
     }
 
@@ -111,6 +122,8 @@ export function ModelPriceDialog({
               ),
         cacheReadPrice: '',
         cacheWritePrice: '',
+        cacheWrite5mPrice: '',
+        cacheWrite1hPrice: '',
       });
       return;
     }
@@ -154,6 +167,32 @@ export function ModelPriceDialog({
             model.cache_write_price_configured,
             billingDisplay
           ),
+      cacheWrite5mPrice: isSyncedModel
+        ? model.cache_write_5m_price_override == null
+          ? ''
+          : billingDisplayInputValueFromUSD(
+              model.cache_write_5m_price_override,
+              true,
+              billingDisplay
+            )
+        : billingDisplayInputValueFromUSD(
+            model.cache_write_5m_price,
+            model.cache_write_5m_price_configured,
+            billingDisplay
+          ),
+      cacheWrite1hPrice: isSyncedModel
+        ? model.cache_write_1h_price_override == null
+          ? ''
+          : billingDisplayInputValueFromUSD(
+              model.cache_write_1h_price_override,
+              true,
+              billingDisplay
+            )
+        : billingDisplayInputValueFromUSD(
+            model.cache_write_1h_price,
+            model.cache_write_1h_price_configured,
+            billingDisplay
+          ),
     });
   }, [billingDisplay, isImage, isInputOnly, isSyncedModel, model]);
 
@@ -162,12 +201,22 @@ export function ModelPriceDialog({
       priceValueInvalid(values.inputPrice) ||
       priceValueInvalid(values.outputPrice) ||
       priceValueInvalid(values.cacheReadPrice) ||
-      priceValueInvalid(values.cacheWritePrice)
+      priceValueInvalid(values.cacheWritePrice) ||
+      priceValueInvalid(values.cacheWrite5mPrice) ||
+      priceValueInvalid(values.cacheWrite1hPrice)
     ) {
       return t('aiProviders.models.priceDialog.invalidPrice');
     }
     return '';
-  }, [t, values.cacheReadPrice, values.cacheWritePrice, values.inputPrice, values.outputPrice]);
+  }, [
+    t,
+    values.cacheReadPrice,
+    values.cacheWrite1hPrice,
+    values.cacheWrite5mPrice,
+    values.cacheWritePrice,
+    values.inputPrice,
+    values.outputPrice,
+  ]);
 
   const handleSubmit = async () => {
     if (!model || errorText) return;
@@ -182,6 +231,12 @@ export function ModelPriceDialog({
       cacheWritePrice: isImage
         ? ''
         : billingDisplayInputToUSD(values.cacheWritePrice, billingDisplay),
+      cacheWrite5mPrice: isImage
+        ? ''
+        : billingDisplayInputToUSD(values.cacheWrite5mPrice, billingDisplay),
+      cacheWrite1hPrice: isImage
+        ? ''
+        : billingDisplayInputToUSD(values.cacheWrite1hPrice, billingDisplay),
     });
   };
 
@@ -289,6 +344,26 @@ export function ModelPriceDialog({
                     value={values.cacheWritePrice}
                     onChange={cacheWritePrice =>
                       setValues(current => ({ ...current, cacheWritePrice }))
+                    }
+                    currencySymbol={currencySymbol}
+                    unit={perMillionUnit}
+                  />
+                  <PriceInput
+                    id="model-cache-write-5m-price"
+                    label={t('aiProviders.models.fields.cacheWrite5mPrice')}
+                    value={values.cacheWrite5mPrice}
+                    onChange={cacheWrite5mPrice =>
+                      setValues(current => ({ ...current, cacheWrite5mPrice }))
+                    }
+                    currencySymbol={currencySymbol}
+                    unit={perMillionUnit}
+                  />
+                  <PriceInput
+                    id="model-cache-write-1h-price"
+                    label={t('aiProviders.models.fields.cacheWrite1hPrice')}
+                    value={values.cacheWrite1hPrice}
+                    onChange={cacheWrite1hPrice =>
+                      setValues(current => ({ ...current, cacheWrite1hPrice }))
                     }
                     currencySymbol={currencySymbol}
                     unit={perMillionUnit}

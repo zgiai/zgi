@@ -54,16 +54,20 @@ type PricingQuote struct {
 	RuleID          string
 	PricingSnapshot datatypes.JSON
 
-	InputTokenPriceUSDPer1M  decimal.Decimal
-	CacheReadPriceUSDPer1M   decimal.Decimal
-	CacheWritePriceUSDPer1M  decimal.Decimal
-	OutputTokenPriceUSDPer1M decimal.Decimal
-	InputTokenPriceResolved  bool
-	CacheReadPriceResolved   bool
-	CacheWritePriceResolved  bool
-	OutputTokenPriceResolved bool
-	InputRuleID              string
-	OutputRuleID             string
+	InputTokenPriceUSDPer1M   decimal.Decimal
+	CacheReadPriceUSDPer1M    decimal.Decimal
+	CacheWritePriceUSDPer1M   decimal.Decimal
+	CacheWrite5mPriceUSDPer1M decimal.Decimal
+	CacheWrite1hPriceUSDPer1M decimal.Decimal
+	OutputTokenPriceUSDPer1M  decimal.Decimal
+	InputTokenPriceResolved   bool
+	CacheReadPriceResolved    bool
+	CacheWritePriceResolved   bool
+	CacheWrite5mPriceResolved bool
+	CacheWrite1hPriceResolved bool
+	OutputTokenPriceResolved  bool
+	InputRuleID               string
+	OutputRuleID              string
 
 	MeteredOperation       PricingOperation
 	MeteredMeter           string
@@ -82,10 +86,12 @@ type MeteredUsage struct {
 }
 
 type TokenUsage struct {
-	InputTokens      int
-	CacheReadTokens  int
-	CacheWriteTokens int
-	OutputTokens     int
+	InputTokens        int
+	CacheReadTokens    int
+	CacheWriteTokens   int
+	CacheWrite5mTokens int
+	CacheWrite1hTokens int
+	OutputTokens       int
 }
 
 type PricingEngine interface {
@@ -100,23 +106,29 @@ type pricingEngine struct {
 }
 
 type pricingModelRecord struct {
-	ID                              uuid.UUID       `gorm:"column:id"`
-	Provider                        string          `gorm:"column:provider"`
-	Name                            string          `gorm:"column:name"`
-	InputPrice                      decimal.Decimal `gorm:"column:input_price"`
-	OutputPrice                     decimal.Decimal `gorm:"column:output_price"`
-	CacheReadPrice                  decimal.Decimal `gorm:"column:cost_cache_read"`
-	CacheWritePrice                 decimal.Decimal `gorm:"column:cost_cache_write"`
-	InputPriceConfigured            bool            `gorm:"column:input_price_configured"`
-	OutputPriceConfigured           bool            `gorm:"column:output_price_configured"`
-	CacheReadPriceConfigured        bool            `gorm:"column:cache_read_price_configured"`
-	CacheWritePriceConfigured       bool            `gorm:"column:cache_write_price_configured"`
-	ImagePrices                     datatypes.JSON  `gorm:"column:image_prices"`
-	Pricing                         datatypes.JSON  `gorm:"column:pricing"`
-	InputPriceOrganizationOverride  bool            `gorm:"-"`
-	OutputPriceOrganizationOverride bool            `gorm:"-"`
-	CacheReadOrganizationOverride   bool            `gorm:"-"`
-	CacheWriteOrganizationOverride  bool            `gorm:"-"`
+	ID                               uuid.UUID       `gorm:"column:id"`
+	Provider                         string          `gorm:"column:provider"`
+	Name                             string          `gorm:"column:name"`
+	InputPrice                       decimal.Decimal `gorm:"column:input_price"`
+	OutputPrice                      decimal.Decimal `gorm:"column:output_price"`
+	CacheReadPrice                   decimal.Decimal `gorm:"column:cost_cache_read"`
+	CacheWritePrice                  decimal.Decimal `gorm:"column:cost_cache_write"`
+	CacheWrite5mPrice                decimal.Decimal `gorm:"column:cost_cache_write_5m"`
+	CacheWrite1hPrice                decimal.Decimal `gorm:"column:cost_cache_write_1h"`
+	InputPriceConfigured             bool            `gorm:"column:input_price_configured"`
+	OutputPriceConfigured            bool            `gorm:"column:output_price_configured"`
+	CacheReadPriceConfigured         bool            `gorm:"column:cache_read_price_configured"`
+	CacheWritePriceConfigured        bool            `gorm:"column:cache_write_price_configured"`
+	CacheWrite5mPriceConfigured      bool            `gorm:"column:cache_write_5m_price_configured"`
+	CacheWrite1hPriceConfigured      bool            `gorm:"column:cache_write_1h_price_configured"`
+	ImagePrices                      datatypes.JSON  `gorm:"column:image_prices"`
+	Pricing                          datatypes.JSON  `gorm:"column:pricing"`
+	InputPriceOrganizationOverride   bool            `gorm:"-"`
+	OutputPriceOrganizationOverride  bool            `gorm:"-"`
+	CacheReadOrganizationOverride    bool            `gorm:"-"`
+	CacheWriteOrganizationOverride   bool            `gorm:"-"`
+	CacheWrite5mOrganizationOverride bool            `gorm:"-"`
+	CacheWrite1hOrganizationOverride bool            `gorm:"-"`
 }
 
 func NewPricingEngine(db *gorm.DB) PricingEngine {
@@ -171,9 +183,10 @@ func (e *pricingEngine) QuoteTokens(ctx context.Context, ref PricingModelRef, pr
 }
 
 func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef, usage TokenUsage) (PricingQuote, error) {
-	if usage.InputTokens < 0 || usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 || usage.OutputTokens < 0 {
+	if usage.InputTokens < 0 || usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 || usage.CacheWrite5mTokens < 0 || usage.CacheWrite1hTokens < 0 || usage.OutputTokens < 0 {
 		return PricingQuote{}, fmt.Errorf("token count must be greater than or equal to zero")
 	}
+	usage = normalizeGatewayTokenUsage(usage)
 	quote, err := e.QuoteTokens(ctx, ref, usage.InputTokens, usage.OutputTokens)
 	if err != nil {
 		return PricingQuote{}, err
@@ -191,12 +204,24 @@ func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef
 	if usage.CacheReadTokens > 0 && !model.CacheReadPriceConfigured {
 		return PricingQuote{}, fmt.Errorf("%w: cache read price is not configured", ErrPricingNotConfigured)
 	}
-	if usage.CacheWriteTokens > 0 && !model.CacheWritePriceConfigured {
+	cacheWriteTokens := legacyCacheWriteTokens(usage)
+	if cacheWriteTokens > 0 && !model.CacheWritePriceConfigured {
 		return PricingQuote{}, fmt.Errorf("%w: cache write price is not configured", ErrPricingNotConfigured)
 	}
+	if usage.CacheWrite5mTokens > 0 && !cacheWrite5mPriceConfigured(model) {
+		return PricingQuote{}, fmt.Errorf("%w: cache write 5m price is not configured", ErrPricingNotConfigured)
+	}
+	if usage.CacheWrite1hTokens > 0 && !cacheWrite1hPriceConfigured(model) {
+		return PricingQuote{}, fmt.Errorf("%w: cache write 1h price is not configured", ErrPricingNotConfigured)
+	}
 
+	cacheWrite5mPrice, cacheWrite5mResolved, cacheWrite5mSource := resolveCacheWrite5mPrice(model)
+	cacheWrite1hPrice, cacheWrite1hResolved, cacheWrite1hSource := resolveCacheWrite1hPrice(model)
 	cacheReadUSD := tokenUSD(model.CacheReadPrice, usage.CacheReadTokens)
-	cacheWriteUSD := tokenUSD(model.CacheWritePrice, usage.CacheWriteTokens)
+	cacheWriteLegacyUSD := tokenUSD(model.CacheWritePrice, cacheWriteTokens)
+	cacheWrite5mUSD := tokenUSD(cacheWrite5mPrice, usage.CacheWrite5mTokens)
+	cacheWrite1hUSD := tokenUSD(cacheWrite1hPrice, usage.CacheWrite1hTokens)
+	cacheWriteUSD := cacheWriteLegacyUSD.Add(cacheWrite5mUSD).Add(cacheWrite1hUSD)
 	inputUSD := quote.InputUSD.Add(cacheReadUSD).Add(cacheWriteUSD)
 	snapshotValues := map[string]interface{}{}
 	if len(quote.PricingSnapshot) > 0 {
@@ -205,14 +230,24 @@ func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef
 	snapshotValues["prompt_tokens"] = usage.InputTokens
 	snapshotValues["cache_read_tokens"] = usage.CacheReadTokens
 	snapshotValues["cache_write_tokens"] = usage.CacheWriteTokens
+	snapshotValues["cache_write_legacy_tokens"] = cacheWriteTokens
+	snapshotValues["cache_write_5m_tokens"] = usage.CacheWrite5mTokens
+	snapshotValues["cache_write_1h_tokens"] = usage.CacheWrite1hTokens
 	snapshotValues["completion_tokens"] = usage.OutputTokens
 	snapshotValues["cache_read_price_usd_per_1m_tokens"] = model.CacheReadPrice.String()
 	snapshotValues["cache_write_price_usd_per_1m_tokens"] = model.CacheWritePrice.String()
+	snapshotValues["cache_write_5m_price_usd_per_1m_tokens"] = cacheWrite5mPrice.String()
+	snapshotValues["cache_write_1h_price_usd_per_1m_tokens"] = cacheWrite1hPrice.String()
 	snapshotValues["cache_read_price_source"] = cachePriceSource(model.CacheReadOrganizationOverride)
 	snapshotValues["cache_write_price_source"] = cachePriceSource(model.CacheWriteOrganizationOverride)
+	snapshotValues["cache_write_5m_price_source"] = cacheWrite5mSource
+	snapshotValues["cache_write_1h_price_source"] = cacheWrite1hSource
 	snapshotValues["input_cost_usd"] = quote.InputUSD.String()
 	snapshotValues["cache_read_cost_usd"] = cacheReadUSD.String()
 	snapshotValues["cache_write_cost_usd"] = cacheWriteUSD.String()
+	snapshotValues["cache_write_legacy_cost_usd"] = cacheWriteLegacyUSD.String()
+	snapshotValues["cache_write_5m_cost_usd"] = cacheWrite5mUSD.String()
+	snapshotValues["cache_write_1h_cost_usd"] = cacheWrite1hUSD.String()
 	snapshotValues["output_cost_usd"] = quote.OutputUSD.String()
 
 	result := newUSDQuote(inputUSD, quote.OutputUSD, quote.PricingSource, quote.RuleID, quote.UsageSource, buildPricingSnapshot(snapshotValues))
@@ -226,9 +261,68 @@ func (e *pricingEngine) QuoteTokenUsage(ctx context.Context, ref PricingModelRef
 	result.OutputRuleID = quote.OutputRuleID
 	result.CacheReadPriceUSDPer1M = model.CacheReadPrice
 	result.CacheWritePriceUSDPer1M = model.CacheWritePrice
+	result.CacheWrite5mPriceUSDPer1M = cacheWrite5mPrice
+	result.CacheWrite1hPriceUSDPer1M = cacheWrite1hPrice
 	result.CacheReadPriceResolved = model.CacheReadPriceConfigured
 	result.CacheWritePriceResolved = model.CacheWritePriceConfigured
+	result.CacheWrite5mPriceResolved = cacheWrite5mResolved
+	result.CacheWrite1hPriceResolved = cacheWrite1hResolved
 	return result, nil
+}
+
+func normalizeGatewayTokenUsage(usage TokenUsage) TokenUsage {
+	if usage.CacheWriteTokens == 0 {
+		usage.CacheWriteTokens = usage.CacheWrite5mTokens + usage.CacheWrite1hTokens
+	}
+	return usage
+}
+
+func legacyCacheWriteTokens(usage TokenUsage) int {
+	tokens := usage.CacheWriteTokens - usage.CacheWrite5mTokens - usage.CacheWrite1hTokens
+	if tokens < 0 {
+		return 0
+	}
+	return tokens
+}
+
+func cacheWrite5mPriceConfigured(model *pricingModelRecord) bool {
+	if model == nil {
+		return false
+	}
+	return model.CacheWrite5mPriceConfigured || model.CacheWritePriceConfigured
+}
+
+func cacheWrite1hPriceConfigured(model *pricingModelRecord) bool {
+	if model == nil {
+		return false
+	}
+	return model.CacheWrite1hPriceConfigured || model.CacheWritePriceConfigured
+}
+
+func resolveCacheWrite5mPrice(model *pricingModelRecord) (decimal.Decimal, bool, string) {
+	if model == nil {
+		return decimal.Zero, false, ""
+	}
+	if model.CacheWrite5mPriceConfigured {
+		return model.CacheWrite5mPrice, true, cachePriceSource(model.CacheWrite5mOrganizationOverride)
+	}
+	if model.CacheWritePriceConfigured {
+		return model.CacheWritePrice, true, cachePriceSource(model.CacheWriteOrganizationOverride)
+	}
+	return decimal.Zero, false, ""
+}
+
+func resolveCacheWrite1hPrice(model *pricingModelRecord) (decimal.Decimal, bool, string) {
+	if model == nil {
+		return decimal.Zero, false, ""
+	}
+	if model.CacheWrite1hPriceConfigured {
+		return model.CacheWrite1hPrice, true, cachePriceSource(model.CacheWrite1hOrganizationOverride)
+	}
+	if model.CacheWritePriceConfigured {
+		return model.CacheWritePrice, true, cachePriceSource(model.CacheWriteOrganizationOverride)
+	}
+	return decimal.Zero, false, ""
 }
 
 func cachePriceSource(organizationOverride bool) string {
@@ -640,10 +734,12 @@ func (e *pricingEngine) loadModel(ctx context.Context, ref PricingModelRef) (*pr
 }
 
 type pricingModelConfigOverride struct {
-	InputPriceOverride      *decimal.Decimal `gorm:"column:input_price_override"`
-	OutputPriceOverride     *decimal.Decimal `gorm:"column:output_price_override"`
-	CacheReadPriceOverride  *decimal.Decimal `gorm:"column:cache_read_price_override"`
-	CacheWritePriceOverride *decimal.Decimal `gorm:"column:cache_write_price_override"`
+	InputPriceOverride        *decimal.Decimal `gorm:"column:input_price_override"`
+	OutputPriceOverride       *decimal.Decimal `gorm:"column:output_price_override"`
+	CacheReadPriceOverride    *decimal.Decimal `gorm:"column:cache_read_price_override"`
+	CacheWritePriceOverride   *decimal.Decimal `gorm:"column:cache_write_price_override"`
+	CacheWrite5mPriceOverride *decimal.Decimal `gorm:"column:cache_write_5m_price_override"`
+	CacheWrite1hPriceOverride *decimal.Decimal `gorm:"column:cache_write_1h_price_override"`
 }
 
 func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, record *pricingModelRecord, organizationID uuid.UUID) error {
@@ -683,12 +779,22 @@ func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, reco
 		record.CacheWritePriceConfigured = true
 		record.CacheWriteOrganizationOverride = true
 	}
+	if cfg.CacheWrite5mPriceOverride != nil {
+		record.CacheWrite5mPrice = *cfg.CacheWrite5mPriceOverride
+		record.CacheWrite5mPriceConfigured = true
+		record.CacheWrite5mOrganizationOverride = true
+	}
+	if cfg.CacheWrite1hPriceOverride != nil {
+		record.CacheWrite1hPrice = *cfg.CacheWrite1hPriceOverride
+		record.CacheWrite1hPriceConfigured = true
+		record.CacheWrite1hOrganizationOverride = true
+	}
 	return nil
 }
 
 func (e *pricingEngine) modelConfigOverrideColumns() string {
 	columns := []string{"input_price_override", "output_price_override"}
-	for _, column := range []string{"cache_read_price_override", "cache_write_price_override"} {
+	for _, column := range []string{"cache_read_price_override", "cache_write_price_override", "cache_write_5m_price_override", "cache_write_1h_price_override"} {
 		if e.hasColumn("llm_model_configs", column) {
 			columns = append(columns, column)
 		} else {
@@ -730,6 +836,8 @@ func (e *pricingEngine) loadModelFromTable(ctx context.Context, table string, mo
 	for _, pricingColumn := range []struct{ column, configuredAlias string }{
 		{"cost_cache_read", "cache_read_price_configured"},
 		{"cost_cache_write", "cache_write_price_configured"},
+		{"cost_cache_write_5m", "cache_write_5m_price_configured"},
+		{"cost_cache_write_1h", "cache_write_1h_price_configured"},
 	} {
 		if e.hasColumn(table, pricingColumn.column) {
 			configuredExpr := pricingColumn.column + " IS NOT NULL AS " + pricingColumn.configuredAlias

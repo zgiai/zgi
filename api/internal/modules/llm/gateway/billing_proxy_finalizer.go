@@ -121,14 +121,18 @@ func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter
 		changed = true
 	}
 	for key, raw := range map[string]string{
-		"input_price_usd_per_1m_tokens":       settlement.InputPriceUSDPer1MTokens,
-		"cache_read_price_usd_per_1m_tokens":  settlement.CacheReadPriceUSDPer1MTokens,
-		"cache_write_price_usd_per_1m_tokens": settlement.CacheWritePriceUSDPer1MTokens,
-		"output_price_usd_per_1m_tokens":      settlement.OutputPriceUSDPer1MTokens,
-		"input_cost_usd":                      settlement.InputCostUSD,
-		"cache_read_cost_usd":                 settlement.CacheReadCostUSD,
-		"cache_write_cost_usd":                settlement.CacheWriteCostUSD,
-		"output_cost_usd":                     settlement.OutputCostUSD,
+		"input_price_usd_per_1m_tokens":          settlement.InputPriceUSDPer1MTokens,
+		"cache_read_price_usd_per_1m_tokens":     settlement.CacheReadPriceUSDPer1MTokens,
+		"cache_write_price_usd_per_1m_tokens":    settlement.CacheWritePriceUSDPer1MTokens,
+		"cache_write_5m_price_usd_per_1m_tokens": settlement.CacheWrite5mPriceUSDPer1MTokens,
+		"cache_write_1h_price_usd_per_1m_tokens": settlement.CacheWrite1hPriceUSDPer1MTokens,
+		"output_price_usd_per_1m_tokens":         settlement.OutputPriceUSDPer1MTokens,
+		"input_cost_usd":                         settlement.InputCostUSD,
+		"cache_read_cost_usd":                    settlement.CacheReadCostUSD,
+		"cache_write_cost_usd":                   settlement.CacheWriteCostUSD,
+		"cache_write_5m_cost_usd":                settlement.CacheWrite5mCostUSD,
+		"cache_write_1h_cost_usd":                settlement.CacheWrite1hCostUSD,
+		"output_cost_usd":                        settlement.OutputCostUSD,
 	} {
 		if value, ok := parseNonNegativeBillingDecimal(raw); ok {
 			values[key] = value.String()

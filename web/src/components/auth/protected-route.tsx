@@ -7,6 +7,7 @@ import { AlertCircle } from 'lucide-react';
 import { ZgiLoadingScreen } from '@/components/brand/zgi-loading-screen';
 import { useT } from '@/i18n';
 import { consumePendingLogoutRedirect } from '@/utils/logout-redirect';
+import { isAuthRedirectInProgress, isLogoutInProgress } from '@/lib/auth/logout-state';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -48,6 +49,8 @@ export function ProtectedRoute({ children, requireAdmin = false, fallback }: Pro
 
     // Redirect to login if not authenticated
     if (!isAuthenticated) {
+      if (isAuthRedirectInProgress() || isLogoutInProgress()) return;
+
       const pendingLogoutRedirect = consumePendingLogoutRedirect();
       if (pendingLogoutRedirect) {
         window.location.replace(pendingLogoutRedirect);

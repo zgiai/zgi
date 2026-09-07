@@ -80,6 +80,8 @@ type BillingContext struct {
 	PromptTokens         int
 	CacheReadTokens      int
 	CacheWriteTokens     int
+	CacheWrite5mTokens   int
+	CacheWrite1hTokens   int
 	CompletionTokens     int
 	TotalTokens          int
 	InputCost            decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
@@ -608,7 +610,8 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 		engine := NewPricingEngine(b.db)
 		quote, quoteErr := engine.(cacheTokenPricingEngine).QuoteTokenUsage(ctx, pricingModelRefFromBillingContext(bc), TokenUsage{
 			InputTokens: bc.PromptTokens, CacheReadTokens: bc.CacheReadTokens,
-			CacheWriteTokens: bc.CacheWriteTokens, OutputTokens: bc.CompletionTokens,
+			CacheWriteTokens: bc.CacheWriteTokens, CacheWrite5mTokens: bc.CacheWrite5mTokens,
+			CacheWrite1hTokens: bc.CacheWrite1hTokens, OutputTokens: bc.CompletionTokens,
 		})
 		err = wrapPricingNotConfiguredError(quoteErr)
 		if err != nil {
@@ -634,15 +637,17 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 
 	// Create transaction detail (shared across all records in the batch)
 	transactionDetail := map[string]interface{}{
-		"model_name":         bc.ModelName,
-		"provider_name":      bc.ProviderName,
-		"prompt_tokens":      bc.PromptTokens,
-		"cache_read_tokens":  bc.CacheReadTokens,
-		"cache_write_tokens": bc.CacheWriteTokens,
-		"completion_tokens":  bc.CompletionTokens,
-		"total_tokens":       bc.TotalTokens,
-		"request_id":         bc.RequestID,
-		"api_key_id":         bc.APIKeyID,
+		"model_name":            bc.ModelName,
+		"provider_name":         bc.ProviderName,
+		"prompt_tokens":         bc.PromptTokens,
+		"cache_read_tokens":     bc.CacheReadTokens,
+		"cache_write_tokens":    bc.CacheWriteTokens,
+		"cache_write_5m_tokens": bc.CacheWrite5mTokens,
+		"cache_write_1h_tokens": bc.CacheWrite1hTokens,
+		"completion_tokens":     bc.CompletionTokens,
+		"total_tokens":          bc.TotalTokens,
+		"request_id":            bc.RequestID,
+		"api_key_id":            bc.APIKeyID,
 	}
 
 	// Generate shared batch_id for related transactions

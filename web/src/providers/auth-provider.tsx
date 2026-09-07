@@ -9,6 +9,7 @@ import { clearSessionBoundClientState } from '@/lib/auth/client-state';
 import { sessionManager, type AuthSyncEvent } from '@/lib/auth/session-manager';
 import { PROFILE_KEYS } from '@/hooks/query-keys';
 import { clearProfileClientCache } from '@/utils/client-cache';
+import { isLogoutInProgress } from '@/lib/auth/logout-state';
 
 interface AuthProviderProps {
   children: React.ReactNode;
@@ -121,9 +122,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return;
     }
 
-    return sessionManager.subscribeToCrossTabEvents(event => {
+    const unsubscribeLocal = sessionManager.subscribe(event => {
+      if (event.type !== 'SIGNED_OUT' || isLogoutInProgress()) return;
+
+      useAuthStore.getState().reset({ clearSession: false });
+      void clearSessionBoundClientState();
+    });
+    const unsubscribeCrossTab = sessionManager.subscribeToCrossTabEvents(event => {
       void handleCrossTabEvent(event);
     });
+
+    return () => {
+      unsubscribeLocal();
+      unsubscribeCrossTab();
+    };
   }, []);
 
   return <>{children}</>;

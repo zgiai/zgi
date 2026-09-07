@@ -488,6 +488,8 @@ func (s *llmGatewayServiceImpl) handleProviderError(
 	billingCtx.PromptTokens = 0
 	billingCtx.CacheReadTokens = 0
 	billingCtx.CacheWriteTokens = 0
+	billingCtx.CacheWrite5mTokens = 0
+	billingCtx.CacheWrite1hTokens = 0
 	billingCtx.CompletionTokens = 0
 	billingCtx.TotalTokens = 0
 	billingCtx.TotalCost = decimal.Zero
@@ -572,6 +574,8 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 			billingCtx.PromptTokens = usage.UncachedInputTokens
 			billingCtx.CacheReadTokens = usage.CacheReadTokens
 			billingCtx.CacheWriteTokens = usage.CacheWriteTokens
+			billingCtx.CacheWrite5mTokens = usage.CacheWrite5mTokens
+			billingCtx.CacheWrite1hTokens = usage.CacheWrite1hTokens
 			billingCtx.CompletionTokens = usage.CompletionTokens
 			billingCtx.TotalTokens = usage.UncachedInputTokens + usage.CacheReadTokens + usage.CacheWriteTokens + usage.CompletionTokens
 		} else {
@@ -606,7 +610,8 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 
 	quote, err := s.quoteTokenPricingForSettlementUsage(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), TokenUsage{
 		InputTokens: actualPromptTokens, CacheReadTokens: usage.CacheReadTokens,
-		CacheWriteTokens: usage.CacheWriteTokens, OutputTokens: actualCompletionTokens,
+		CacheWriteTokens: usage.CacheWriteTokens, CacheWrite5mTokens: usage.CacheWrite5mTokens,
+		CacheWrite1hTokens: usage.CacheWrite1hTokens, OutputTokens: actualCompletionTokens,
 	})
 	if err != nil {
 		return wrapPricingCalculationError(err)
@@ -617,6 +622,8 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	billingCtx.PromptTokens = actualPromptTokens
 	billingCtx.CacheReadTokens = usage.CacheReadTokens
 	billingCtx.CacheWriteTokens = usage.CacheWriteTokens
+	billingCtx.CacheWrite5mTokens = usage.CacheWrite5mTokens
+	billingCtx.CacheWrite1hTokens = usage.CacheWrite1hTokens
 	billingCtx.CompletionTokens = actualCompletionTokens
 	billingCtx.TotalTokens = actualPromptTokens + usage.CacheReadTokens + usage.CacheWriteTokens + actualCompletionTokens
 
@@ -667,6 +674,8 @@ func clearBillingContextTokenUsage(billingCtx *BillingContext) {
 	billingCtx.PromptTokens = 0
 	billingCtx.CacheReadTokens = 0
 	billingCtx.CacheWriteTokens = 0
+	billingCtx.CacheWrite5mTokens = 0
+	billingCtx.CacheWrite1hTokens = 0
 	billingCtx.CompletionTokens = 0
 	billingCtx.TotalTokens = 0
 }

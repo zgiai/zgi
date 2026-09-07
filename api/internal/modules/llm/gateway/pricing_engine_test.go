@@ -229,6 +229,62 @@ func TestPricingEngineQuoteTokenUsageUsesCustomModelCachePrices(t *testing.T) {
 	}
 }
 
+func TestPricingEngineQuoteTokenUsageUsesCacheWriteTTLPrices(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	for _, ddl := range []string{
+		`ALTER TABLE llm_models ADD COLUMN cost_cache_read decimal`,
+		`ALTER TABLE llm_models ADD COLUMN cost_cache_write decimal`,
+		`ALTER TABLE llm_models ADD COLUMN cost_cache_write_5m decimal`,
+		`ALTER TABLE llm_models ADD COLUMN cost_cache_write_1h decimal`,
+		`ALTER TABLE llm_models ADD COLUMN cache_read_price_configured boolean`,
+		`ALTER TABLE llm_models ADD COLUMN cache_write_price_configured boolean`,
+		`ALTER TABLE llm_models ADD COLUMN cache_write_5m_price_configured boolean`,
+		`ALTER TABLE llm_models ADD COLUMN cache_write_1h_price_configured boolean`,
+	} {
+		if err := db.Exec(ddl).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "anthropic", "5", "25", true, true, `[]`)
+	if err := db.Exec(`
+		UPDATE llm_models
+		SET cost_cache_read = ?,
+			cost_cache_write = ?,
+			cost_cache_write_5m = ?,
+			cost_cache_write_1h = ?,
+			cache_read_price_configured = true,
+			cache_write_price_configured = false,
+			cache_write_5m_price_configured = true,
+			cache_write_1h_price_configured = true
+		WHERE id = ?`,
+		"0.5", "0", "3", "6", modelID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	engine := NewPricingEngine(db).(cacheTokenPricingEngine)
+	quote, err := engine.QuoteTokenUsage(context.Background(), PricingModelRef{ModelID: modelID}, TokenUsage{
+		InputTokens: 400, CacheReadTokens: 300, CacheWriteTokens: 300,
+		CacheWrite5mTokens: 100, CacheWrite1hTokens: 200, OutputTokens: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quote.CacheWriteUSD.Equal(decimal.RequireFromString("0.0015")) {
+		t.Fatalf("cache write cost = %s, want 0.0015", quote.CacheWriteUSD)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(quote.PricingSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot["cache_write_5m_tokens"] != float64(100) || snapshot["cache_write_1h_tokens"] != float64(200) {
+		t.Fatalf("cache write ttl tokens missing from snapshot: %#v", snapshot)
+	}
+	if snapshot["cache_write_5m_price_usd_per_1m_tokens"] != "3" || snapshot["cache_write_1h_price_usd_per_1m_tokens"] != "6" {
+		t.Fatalf("cache write ttl prices missing from snapshot: %#v", snapshot)
+	}
+}
+
 func insertPricingModelNamed(t *testing.T, db *gorm.DB, modelID uuid.UUID, provider string, name string, inputPrice string, outputPrice string, inputConfigured bool, outputConfigured bool, imagePrices string) {
 	t.Helper()
 	if imagePrices == "" {

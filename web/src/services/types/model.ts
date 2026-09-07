@@ -134,6 +134,17 @@ export interface ModelPerformance {
 
 export type ModelPricing = Record<string, unknown>;
 
+export interface ModelImagePriceRule {
+  id?: string;
+  priority?: number;
+  conditions?: Record<string, unknown>;
+  price?: {
+    amount?: number | string | null;
+    credits?: number | string | null;
+    currency?: string | null;
+  } | null;
+}
+
 export interface ModelUsageGuidelines {
   recommended_use_cases?: string[];
   limitations?: string[];
@@ -169,17 +180,26 @@ export interface ModelItem {
   cached_input_price?: number;
   cache_read_price?: number;
   cache_write_price?: number;
+  cache_write_5m_price?: number;
+  cache_write_1h_price?: number;
   cache_read_price_configured?: boolean;
   cache_write_price_configured?: boolean;
+  cache_write_5m_price_configured?: boolean;
+  cache_write_1h_price_configured?: boolean;
   synced_input_price?: number | null;
   synced_output_price?: number | null;
   synced_cache_read_price?: number | null;
   synced_cache_write_price?: number | null;
+  synced_cache_write_5m_price?: number | null;
+  synced_cache_write_1h_price?: number | null;
   input_price_override?: number | null;
   output_price_override?: number | null;
   cache_read_price_override?: number | null;
   cache_write_price_override?: number | null;
+  cache_write_5m_price_override?: number | null;
+  cache_write_1h_price_override?: number | null;
   pricing?: ModelPricing | null;
+  image_prices?: ModelImagePriceRule[] | null;
   context_window: number;
   max_output_tokens: number;
   max_input_tokens?: number;
@@ -248,6 +268,8 @@ export interface ConfigureModelRequest {
   output_price_override?: string;
   cache_read_price_override?: string;
   cache_write_price_override?: string;
+  cache_write_5m_price_override?: string;
+  cache_write_1h_price_override?: string;
   access_scope?: string;
   visible_groups?: string[];
   visible_users?: string[];
@@ -284,6 +306,8 @@ export interface CreateCustomModelRequest {
   output_price?: string;
   cache_read_price?: string;
   cache_write_price?: string;
+  cache_write_5m_price?: string;
+  cache_write_1h_price?: string;
   knowledge_cutoff?: string;
   description?: string;
   endpoints?: ModelEndpoints;
