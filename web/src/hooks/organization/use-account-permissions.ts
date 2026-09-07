@@ -11,7 +11,11 @@ import type { PermissionState } from '@/store/workspace-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
 import type { PermissionCode } from '@/constants/permissions';
-import { observePermissionLoad } from '@/utils/access-load-error';
+import {
+  observePermissionLoad,
+  shouldRetryAccessLoadError,
+  shouldShowAccessLoadToast,
+} from '@/utils/access-load-error';
 import { captureEvent } from '@/lib/observability';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -93,7 +97,9 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     staleTime: 2 * 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
-    retry: false,
+    retry: (failureCount, queryError) =>
+      shouldRetryAccessLoadError(failureCount, queryError),
+    retryDelay: attemptIndex => Math.min(250 * 2 ** attemptIndex, 1000),
   });
 
   const hasUsableWorkspaceContext =
@@ -123,7 +129,10 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   useEffect(() => {
     if (!error) return;
     if (isSwitchingOrganization || !hasUsableWorkspaceContext) return;
-    toast.error(getErrorMessage(error) || t('switchWorkspace'));
+    if (!shouldShowAccessLoadToast(error)) return;
+    toast.error(getErrorMessage(error) || t('switchWorkspace'), {
+      id: 'workspace-permissions-load-error',
+    });
   }, [error, t, isSwitchingOrganization, hasUsableWorkspaceContext]);
 
   return {

@@ -49,7 +49,8 @@ export function describeAccessLoadError(error: unknown): {
   if (
     status === 401 ||
     (status === 400 && code === '212012') ||
-    source?.code === 'ERR_AUTH_SESSION_MISSING'
+    source?.code === 'ERR_AUTH_SESSION_MISSING' ||
+    source?.code === 'ERR_AUTH_REFRESH_STALE'
   ) {
     kind = 'session';
   } else if (status === 403) {
@@ -88,6 +89,38 @@ export function describePermissionLoadError(error: unknown) {
       ? source.code
       : 'unknown';
   return { ...describeAccessLoadError(error), clientCode };
+}
+
+/**
+ * Retry only transient read failures. Authentication, authorization and missing
+ * resources must stay fail-closed and must not be hidden behind retries.
+ */
+export function shouldRetryAccessLoadError(
+  failureCount: number,
+  error: unknown,
+  maxRetries = 2
+): boolean {
+  if (!Number.isInteger(failureCount) || failureCount < 0) return false;
+  if (!Number.isInteger(maxRetries) || maxRetries < 1) return false;
+  if (failureCount >= maxRetries) return false;
+
+  const { kind } = describeAccessLoadError(error);
+  return kind === 'network' || kind === 'server';
+}
+
+/**
+ * The shared HTTP client already reports network/session failures. Feature
+ * hooks should only add a domain-specific toast for actionable final errors.
+ */
+export function shouldShowAccessLoadToast(error: unknown): boolean {
+  const source = record(error);
+  const { kind } = describeAccessLoadError(error);
+  if (kind === 'network' || kind === 'session') return false;
+  return (
+    source?.code !== 'ERR_CANCELED' &&
+    source?.name !== 'CanceledError' &&
+    source?.name !== 'AbortError'
+  );
 }
 
 /** Observe the failed read without logging the Axios request, body or message. */

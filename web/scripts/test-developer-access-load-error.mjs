@@ -5,6 +5,8 @@ import {
   describeAccessLoadError,
   describePermissionLoadError,
   observePermissionLoad,
+  shouldRetryAccessLoadError,
+  shouldShowAccessLoadToast,
 } from '../src/utils/access-load-error.ts';
 
 for (const [status, kind] of [
@@ -22,6 +24,7 @@ assert.equal(
   'session'
 );
 assert.equal(describeAccessLoadError({ code: 'ERR_AUTH_SESSION_MISSING' }).kind, 'session');
+assert.equal(describeAccessLoadError({ code: 'ERR_AUTH_REFRESH_STALE' }).kind, 'session');
 assert.equal(describeAccessLoadError({ code: 'ERR_NETWORK' }).kind, 'network');
 assert.equal(describeAccessLoadError({ code: 'ECONNABORTED' }).kind, 'network');
 assert.equal(describeAccessLoadError(new Error('Query data cannot be undefined')).kind, 'unknown');
@@ -75,6 +78,24 @@ assert.deepEqual(describePermissionLoadError(unsafeError), {
 for (const code of ['ERR_NETWORK', 'ERR_AUTH_SESSION_MISSING', 'ERR_CANCELED', 'ERR_BUSINESS']) {
   assert.equal(describePermissionLoadError({ code }).clientCode, code);
 }
+assert.equal(shouldRetryAccessLoadError(0, { code: 'ERR_NETWORK' }), true);
+assert.equal(shouldRetryAccessLoadError(1, { response: { status: 503 } }), true);
+assert.equal(shouldRetryAccessLoadError(2, { code: 'ERR_NETWORK' }), false);
+for (const error of [
+  { response: { status: 401 } },
+  { response: { status: 403 } },
+  { response: { status: 404 } },
+  { response: { status: 429 } },
+  { code: 'ERR_CANCELED' },
+]) {
+  assert.equal(shouldRetryAccessLoadError(0, error), false);
+}
+assert.equal(shouldShowAccessLoadToast({ code: 'ERR_NETWORK' }), false);
+assert.equal(shouldShowAccessLoadToast({ code: 'ERR_AUTH_SESSION_MISSING' }), false);
+assert.equal(shouldShowAccessLoadToast({ code: 'ERR_CANCELED' }), false);
+assert.equal(shouldShowAccessLoadToast({ name: 'AbortError' }), false);
+assert.equal(shouldShowAccessLoadToast({ response: { status: 403 } }), true);
+assert.equal(shouldShowAccessLoadToast({ response: { status: 503 } }), true);
 
 const events = [];
 const payload = Object.freeze({ permissions: Object.freeze(['asset.read']) });
@@ -125,7 +146,17 @@ const hook = await readFile(
 assert.match(hook, /observePermissionLoad\(/);
 assert.match(hook, /console\.warn\('workspace\.permissions\.load_failed', attributes\)/);
 assert.match(hook, /captureEvent\('workspace\.permissions\.load_failed'/);
-assert.match(hook, /retry: false/);
+assert.match(hook, /shouldRetryAccessLoadError\(failureCount, queryError\)/);
+assert.match(hook, /id: 'workspace-permissions-load-error'/);
+const organizationsHook = await readFile(
+  new URL('../src/hooks/organization/use-organizations.ts', import.meta.url),
+  'utf8'
+);
+assert.equal(
+  organizationsHook.match(/shouldRetryAccessLoadError\(failureCount, queryError\)/g)?.length,
+  2
+);
+assert.match(organizationsHook, /id: 'organization-load-error'/);
 const compatibilityExport = await readFile(
   new URL('../src/features/developer-access/load-error.ts', import.meta.url),
   'utf8'
