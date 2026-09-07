@@ -72,9 +72,10 @@ func TestQuoteImagePricingWrapsMissingPricingAsBillingUserError(t *testing.T) {
 func TestQuoteTokenPricingForSelectionUsesRemoteAuthorityForOfficialRoute(t *testing.T) {
 	engine := &fakePricingEngine{tokenErr: ErrPricingNotConfigured}
 	want := PricingQuote{InputCredits: 10, OutputCredits: 20, TotalCredits: 30}
+	billing := &fakeBillingProvider{platformQuote: want}
 	svc := &llmGatewayServiceImpl{
 		pricingEngine: engine,
-		billing:       &fakeBillingProvider{platformQuote: want},
+		billing:       billing,
 	}
 	selection := &ProviderSelection{
 		UseSystemProvider: true,
@@ -97,6 +98,28 @@ func TestQuoteTokenPricingForSelectionUsesRemoteAuthorityForOfficialRoute(t *tes
 	}
 	if engine.tokenCalls != 0 {
 		t.Fatalf("local pricing calls = %d, want 0", engine.tokenCalls)
+	}
+	if billing.platformPrompt != 17 || billing.platformCompletion != 1 {
+		t.Fatalf("authoritative quote tokens = (%d, %d), want (17, 1)", billing.platformPrompt, billing.platformCompletion)
+	}
+}
+
+func TestQuoteTokenPricingForSelectionUsesReasoningFloorAndPlatformSlack(t *testing.T) {
+	billing := &fakeBillingProvider{platformQuote: PricingQuote{TotalCredits: 1}}
+	svc := &llmGatewayServiceImpl{billing: billing}
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		BillingLane:       UsageBillingLanePlatform,
+		Model:             llmmodel.LLMModel{ID: uuid.New(), SupportsReasoning: true},
+	}
+
+	if _, err := svc.quoteTokenPricingForSelection(
+		context.Background(), selection, PricingModelRef{ModelID: selection.Model.ID}, 12, 8,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if billing.platformPrompt != 80 || billing.platformCompletion != reasoningCompletionReservationFloor {
+		t.Fatalf("authoritative reasoning quote tokens = (%d, %d), want (80, %d)", billing.platformPrompt, billing.platformCompletion, reasoningCompletionReservationFloor)
 	}
 }
 

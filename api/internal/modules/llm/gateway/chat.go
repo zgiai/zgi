@@ -70,11 +70,8 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 
 	// 3. Estimate tokens
 	t3 := time.Now()
-	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateTotalTokens(
-		effectiveReq.Messages,
-		effectiveReq.MaxTokens,
-		effectiveReq.Model,
-	)
+	promptTokens := s.tokenEstimator.EstimateChatPromptTokens(effectiveReq)
+	completionTokens := s.tokenEstimator.EstimateCompletionTokens(effectiveReq.MaxTokens, effectiveReq.Model)
 	logger.DebugContext(ctx, "llm gateway timing", "step", "estimate_tokens", "latency_ms", time.Since(t3).Milliseconds())
 
 	// 4. Select providers
@@ -318,11 +315,8 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 	}
 
 	// 3. Estimate tokens
-	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateTotalTokens(
-		effectiveReq.Messages,
-		effectiveReq.MaxTokens,
-		effectiveReq.Model,
-	)
+	promptTokens := s.tokenEstimator.EstimateChatPromptTokens(effectiveReq)
+	completionTokens := s.tokenEstimator.EstimateCompletionTokens(effectiveReq.MaxTokens, effectiveReq.Model)
 
 	// 4. Select providers
 	organizationID, err := uuid.Parse(apiKey.OrganizationID)
