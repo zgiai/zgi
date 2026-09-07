@@ -69,9 +69,11 @@ func TestTokenEstimator_EstimateChatPromptTokensAddsStructure(t *testing.T) {
 func TestTokenEstimator_EstimateChatRequestTokensIncludesToolsAndOutputLimit(t *testing.T) {
 	estimator := NewTokenEstimator()
 	maxTokens := 7
+	completionCount := 3
 	req := &adapter.ChatRequest{
 		Model:     "gpt-4o",
 		MaxTokens: &maxTokens,
+		N:         &completionCount,
 		Messages:  []adapter.Message{{Role: "user", Content: "hello"}},
 		Tools: []adapter.Tool{{
 			Type:     "function",
@@ -84,8 +86,9 @@ func TestTokenEstimator_EstimateChatRequestTokensIncludesToolsAndOutputLimit(t *
 	if promptTokens <= messageOnly {
 		t.Fatalf("prompt tokens = %d, want above message-only estimate %d", promptTokens, messageOnly)
 	}
-	if completionTokens != maxTokens || totalTokens != promptTokens+maxTokens {
-		t.Fatalf("completion/total = %d/%d, want %d/%d", completionTokens, totalTokens, maxTokens, promptTokens+maxTokens)
+	wantCompletion := maxTokens * completionCount
+	if completionTokens != wantCompletion || totalTokens != promptTokens+wantCompletion {
+		t.Fatalf("completion/total = %d/%d, want %d/%d", completionTokens, totalTokens, wantCompletion, promptTokens+wantCompletion)
 	}
 }
 
@@ -128,6 +131,14 @@ func TestTokenEstimator_EstimateChatRequestTokensIncludesMessageToolPayloadsAndI
 	}
 	if completion != maxTokens || total != prompt+maxTokens {
 		t.Fatalf("completion/total = %d/%d, want %d/%d", completion, total, maxTokens, prompt+maxTokens)
+	}
+
+	rawJSONShape := []interface{}{
+		map[string]interface{}{"type": "text", "text": "hello"},
+		map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": "https://example.invalid/image.png"}},
+	}
+	if rawTokens := estimator.estimateMessageContentTokens("gpt-4o", rawJSONShape); rawTokens < multimodalImageReservationTokens {
+		t.Fatalf("raw JSON content tokens = %d, want image reservation at least %d", rawTokens, multimodalImageReservationTokens)
 	}
 }
 

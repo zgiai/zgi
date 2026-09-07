@@ -137,6 +137,15 @@ func (te *TokenEstimator) EstimateChatRequestTokens(req *adapter.ChatRequest) (p
 	}
 	promptTokens = te.EstimateChatPromptTokens(req)
 	completionTokens = te.EstimateCompletionTokens(req.MaxTokens, req.Model)
+	completionCount := 1
+	if req.N != nil && *req.N > completionCount {
+		completionCount = *req.N
+	}
+	if completionTokens > 0 && completionCount > math.MaxInt/completionTokens {
+		completionTokens = math.MaxInt
+	} else {
+		completionTokens *= completionCount
+	}
 	return promptTokens, completionTokens, promptTokens + completionTokens
 }
 
