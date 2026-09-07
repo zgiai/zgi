@@ -304,6 +304,9 @@ func (a *ZGICloudAdapter) CreateResponseRaw(ctx context.Context, request *adapte
 	if httpResp.StatusCode != http.StatusOK {
 		return nil, rawProtocolError(httpResp)
 	}
+	if err := embeddedRawProtocolError(httpResp.Body, httpResp.Header.Get("Content-Type")); err != nil {
+		return nil, err
+	}
 
 	return &adapter.RawResponse{
 		Body:       httpResp.Body,
@@ -343,6 +346,9 @@ func (a *ZGICloudAdapter) CreateAnthropicMessage(ctx context.Context, request *a
 	if httpResp.StatusCode != http.StatusOK {
 		return nil, rawProtocolError(httpResp)
 	}
+	if err := embeddedRawProtocolError(httpResp.Body, httpResp.Header.Get("Content-Type")); err != nil {
+		return nil, err
+	}
 
 	return &adapter.RawResponse{
 		Body:       httpResp.Body,
@@ -379,6 +385,9 @@ func (a *ZGICloudAdapter) CreateGeminiContent(ctx context.Context, request *adap
 	if httpResp.StatusCode != http.StatusOK {
 		return nil, rawProtocolError(httpResp)
 	}
+	if err := embeddedRawProtocolError(httpResp.Body, httpResp.Header.Get("Content-Type")); err != nil {
+		return nil, err
+	}
 	return &adapter.RawResponse{Body: httpResp.Body, Usage: geminiUsageFromRaw(httpResp.Body, nil), Settlement: settlementFromHeaders(httpResp.Header)}, nil
 }
 
@@ -402,6 +411,54 @@ func rawProtocolError(resp *adapter.HTTPResponse) error {
 	return newRawProtocolError(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
 }
 
+// embeddedRawProtocolError protects rolling deployments from an older Console
+// (or another upstream) that returns a JSON error envelope with HTTP 200. Such
+// a body must never be settled as a successful model response.
+func embeddedRawProtocolError(body []byte, contentType string) error {
+	if len(body) == 0 || !json.Valid(body) {
+		return nil
+	}
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Error) == 0 || string(envelope.Error) == "null" {
+		return nil
+	}
+
+	var detail struct {
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(envelope.Error, &detail); err != nil {
+		var message string
+		if json.Unmarshal(envelope.Error, &message) == nil {
+			detail.Message = message
+		}
+	}
+	classification := strings.ToLower(strings.Join([]string{detail.Type, detail.Code, detail.Message}, " "))
+	status := http.StatusBadGateway
+	switch {
+	case strings.Contains(classification, "not implemented"),
+		strings.Contains(classification, "unsupported"),
+		strings.Contains(classification, "not supported"):
+		status = http.StatusNotImplemented
+	case strings.Contains(classification, "rate_limit"), strings.Contains(classification, "rate limit"):
+		status = http.StatusTooManyRequests
+	case strings.Contains(classification, "overload"):
+		status = http.StatusServiceUnavailable
+	case strings.Contains(classification, "unauthorized"), strings.Contains(classification, "authentication"):
+		status = http.StatusUnauthorized
+	case strings.Contains(classification, "permission"), strings.Contains(classification, "forbidden"):
+		status = http.StatusForbidden
+	case strings.Contains(classification, "not_found"), strings.Contains(classification, "not found"):
+		status = http.StatusNotFound
+	case strings.Contains(classification, "invalid_request"), strings.Contains(classification, "bad_request"):
+		status = http.StatusBadRequest
+	}
+	return newRawProtocolError(status, contentType, body)
+}
+
 func handleZGICloudStreamError(err error) error {
 	var statusErr *adapter.HTTPStatusError
 	if errors.As(err, &statusErr) {
@@ -422,12 +479,19 @@ func newRawProtocolError(status int, contentType string, body []byte) error {
 	var cause error
 	var payload struct {
 		Error struct {
-			Code string `json:"code"`
-			Type string `json:"type"`
+			Code    string `json:"code"`
+			Type    string `json:"type"`
+			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(body, &payload) == nil && (payload.Error.Code == adapter.ErrorCodePlatformChannelUnavailable || payload.Error.Type == adapter.ErrorCodePlatformChannelUnavailable) {
-		cause = adapter.ErrPlatformChannelUnavailable
+	if json.Unmarshal(body, &payload) == nil {
+		classification := strings.ToLower(strings.Join([]string{payload.Error.Code, payload.Error.Type, payload.Error.Message}, " "))
+		switch {
+		case payload.Error.Code == adapter.ErrorCodePlatformChannelUnavailable || payload.Error.Type == adapter.ErrorCodePlatformChannelUnavailable:
+			cause = adapter.ErrPlatformChannelUnavailable
+		case strings.Contains(classification, "not implemented"), strings.Contains(classification, "unsupported"), strings.Contains(classification, "not supported"):
+			cause = adapter.ErrCapabilityUnsupported
+		}
 	}
 	return &adapter.RawProtocolError{StatusCode: status, ContentType: contentType, Body: append([]byte(nil), body...), Cause: cause}
 }

@@ -1688,7 +1688,7 @@ func TestBillingRouting_HandleNativeStreamBilling_PreservesAttemptIndex(t *testi
 	in <- adapter.RawStreamEvent{Error: fmt.Errorf("terminal native frame: %w", adapter.ErrAuthFailed)}
 	close(in)
 
-	s.handleNativeStreamBilling(context.Background(), in, out, billingCtx, selection, &channelID, 2, time.Now(), "gpt-5", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
+	s.handleNativeStreamBilling(context.Background(), nil, in, out, billingCtx, selection, &channelID, 2, time.Now(), "gpt-5", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
 	for range out {
 	}
 
@@ -1844,6 +1844,59 @@ func TestBillingRouting_HandleStreamBilling_MissingUsageMarksPartialAndEmitsErro
 	}
 }
 
+// outputChan is unbuffered in production and the billing goroutine runs on a
+// detached context, so a client that disconnects mid-stream must not be able to
+// wedge the goroutine forever on a send nobody will ever read.
+func TestBillingRouting_HandleNativeStreamBilling_ClientDisconnectDoesNotDeadlock(t *testing.T) {
+	remote := &fakeBillingProvider{checkBalanceResult: true}
+	local := &fakeBillingProvider{checkBalanceResult: true}
+	s := &llmGatewayServiceImpl{
+		billing:        remote,
+		localBilling:   local,
+		pricingEngine:  &fakePricingEngine{tokenQuote: PricingQuote{InputCredits: 10, OutputCredits: 20, TotalCredits: 30}},
+		healthTracker:  NewChannelHealthTracker(nil),
+		tokenEstimator: NewTokenEstimator(),
+	}
+
+	in := make(chan adapter.RawStreamEvent, 4)
+	in <- adapter.RawStreamEvent{Event: "response.created", Data: json.RawMessage(`{"type":"response.created","response":{"id":"resp_1"}}`)}
+	in <- adapter.RawStreamEvent{Event: "response.output_text.delta", Data: json.RawMessage(`{"type":"response.output_text.delta","delta":"hi"}`)}
+	in <- adapter.RawStreamEvent{Event: "response.completed", Data: json.RawMessage(`{"type":"response.completed","response":{"id":"resp_1"}}`)}
+	in <- adapter.RawStreamEvent{Done: true}
+	close(in)
+
+	// Unbuffered, and deliberately never read: this is a client that hung up
+	// before the first event was delivered.
+	out := make(chan adapter.RawStreamEvent)
+	clientGone := make(chan struct{})
+	close(clientGone)
+
+	bc := &BillingContext{UseSystemProvider: false, PromptTokens: 10, CompletionTokens: 20, RequestID: "req-client-disconnect"}
+	ps := &ProviderSelection{
+		UseSystemProvider: false,
+		Model:             llmmodel.LLMModel{ID: uuid.New(), Model: "gpt-5"},
+		Provider:          providermodel.LLMProvider{Provider: "openai"},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleNativeStreamBilling(context.Background(), clientGone, in, out, bc, ps, nil, 0, time.Now(), "gpt-5", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("billing goroutine deadlocked after client disconnect")
+	}
+
+	// Settlement must still have run: the customer's pre-deduction cannot be
+	// left dangling just because the client hung up.
+	if local.lastSettle == nil {
+		t.Fatal("settlement must still run after a client disconnect")
+	}
+}
+
 func TestBillingRouting_HandleNativeStreamBilling_InjectsResponsesUsageIntoTerminalEvent(t *testing.T) {
 	remote := &fakeBillingProvider{checkBalanceResult: true}
 	local := &fakeBillingProvider{checkBalanceResult: true}
@@ -1893,7 +1946,7 @@ func TestBillingRouting_HandleNativeStreamBilling_InjectsResponsesUsageIntoTermi
 		Provider:          providermodel.LLMProvider{Provider: "openai"},
 	}
 
-	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, 0, time.Now(), "gpt-5", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
+	s.handleNativeStreamBilling(context.Background(), nil, in, out, bc, ps, nil, 0, time.Now(), "gpt-5", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
 
 	var got []adapter.RawStreamEvent
 	for event := range out {
@@ -1926,6 +1979,70 @@ func TestBillingRouting_HandleNativeStreamBilling_InjectsResponsesUsageIntoTermi
 	}
 	if local.lastSettle.CompletionTokens != int(expectedCompletion) {
 		t.Fatalf("settle completion tokens = %d, want %d without double-counting terminal output", local.lastSettle.CompletionTokens, int(expectedCompletion))
+	}
+}
+
+func TestBillingRouting_HandleNativeStreamBilling_PreservesResponsesFailureAndDoesNotSettleSuccess(t *testing.T) {
+	local := &fakeBillingProvider{checkBalanceResult: true}
+	s := &llmGatewayServiceImpl{
+		billing:       &fakeBillingProvider{checkBalanceResult: true},
+		localBilling:  local,
+		healthTracker: NewChannelHealthTracker(nil),
+	}
+	in := make(chan adapter.RawStreamEvent, 2)
+	out := make(chan adapter.RawStreamEvent, 3)
+	in <- adapter.RawStreamEvent{
+		Event: "response.failed",
+		Data:  json.RawMessage(`{"type":"response.failed","response":{"id":"resp_1","model":"upstream-model","status":"failed","error":{"code":"billing_settlement_failed","message":"Response could not be finalized"}}}`),
+	}
+	in <- adapter.RawStreamEvent{Done: true}
+	close(in)
+	bc := &BillingContext{
+		UseSystemProvider: false,
+		OrganizationID:    "org-1",
+		RequestID:         "req-native-response-failed",
+		ModelName:         "logical-model",
+		ProviderName:      "openai",
+	}
+	ps := &ProviderSelection{
+		UseSystemProvider: false,
+		Model:             llmmodel.LLMModel{ID: uuid.New(), Model: "logical-model"},
+		Provider:          providermodel.LLMProvider{Provider: "openai"},
+	}
+
+	s.handleNativeStreamBilling(context.Background(), nil, in, out, bc, ps, nil, 0, time.Now(), "logical-model", nil, "llm.responses.stream", nativeUsageBodyFormatResponses)
+
+	var got []adapter.RawStreamEvent
+	for event := range out {
+		got = append(got, event)
+	}
+	if len(got) != 2 || got[0].Event != "response.failed" || !got[1].Done {
+		t.Fatalf("events = %+v, want native response.failed followed by done", got)
+	}
+	if got[0].Error != nil || !strings.Contains(string(got[0].Data), `"model":"logical-model"`) || strings.Contains(string(got[0].Data), "upstream-model") {
+		t.Fatalf("failure event was not safely preserved: %+v", got[0])
+	}
+	if local.lastSettle == nil || local.lastSettle.Status == "success" {
+		t.Fatalf("local settlement = %+v, must follow failure path", local.lastSettle)
+	}
+}
+
+func TestIsNativeFailureStreamEventCoversNativeProtocols(t *testing.T) {
+	tests := []struct {
+		name   string
+		format nativeUsageBodyFormat
+		event  adapter.RawStreamEvent
+	}{
+		{name: "responses", format: nativeUsageBodyFormatResponses, event: adapter.RawStreamEvent{Event: "response.failed", Data: json.RawMessage(`{"type":"response.failed"}`)}},
+		{name: "anthropic", format: nativeUsageBodyFormatAnthropic, event: adapter.RawStreamEvent{Event: "error", Data: json.RawMessage(`{"type":"error"}`)}},
+		{name: "gemini", format: nativeUsageBodyFormatGemini, event: adapter.RawStreamEvent{Data: json.RawMessage(`{"error":{"code":500,"status":"INTERNAL"}}`)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !isNativeFailureStreamEvent(tt.format, tt.event) {
+				t.Fatalf("event was not recognized as terminal failure: %+v", tt.event)
+			}
+		})
 	}
 }
 
@@ -1970,7 +2087,7 @@ func TestBillingRouting_HandleNativeStreamBilling_EmitsAnthropicUsageBeforeStop(
 		Provider:          providermodel.LLMProvider{Provider: "anthropic"},
 	}
 
-	s.handleNativeStreamBilling(context.Background(), in, out, bc, ps, nil, 0, time.Now(), "claude-sonnet-4-5", nil, "llm.anthropic.messages.stream", nativeUsageBodyFormatAnthropic)
+	s.handleNativeStreamBilling(context.Background(), nil, in, out, bc, ps, nil, 0, time.Now(), "claude-sonnet-4-5", nil, "llm.anthropic.messages.stream", nativeUsageBodyFormatAnthropic)
 
 	var got []adapter.RawStreamEvent
 	for event := range out {

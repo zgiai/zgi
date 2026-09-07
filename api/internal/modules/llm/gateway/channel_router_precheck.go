@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -118,6 +119,10 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 	routes, err := r.organizationIDRouteRepo.GetEnabledRoutes(ctx, organizationID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get enabled routes: %w", err)
+	}
+	routes, err = platformchannel.HydrateOfficialRoutes(ctx, r.channelProvider, organizationID, routes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hydrate official routes: %w", err)
 	}
 	if len(routes) == 0 && len(modelNames) > 0 {
 		return nil, fmt.Errorf("%w: no enabled routes found for organizationID %s", llmerrors.DomainErrRouteNotFound, organizationID)

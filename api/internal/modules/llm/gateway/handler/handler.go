@@ -138,7 +138,7 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 	resp, err := h.gatewayService.CreateResponseRaw(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err) {
+		if writeRawProtocolError(c, err, req.Model, "openai") {
 			return
 		}
 		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
@@ -173,7 +173,7 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 	resp, err := h.gatewayService.CreateAnthropicMessage(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err) {
+		if writeRawProtocolError(c, err, req.Model, "anthropic") {
 			return
 		}
 		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
@@ -207,7 +207,7 @@ func (h *LLMHandler) CreateGeminiContent(c *gin.Context) {
 	resp, err := service.CreateGeminiContent(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err) {
+		if writeRawProtocolError(c, err, req.Model, "gemini") {
 			return
 		}
 		writeGeminiProtocolError(c, h.localizedProtocolError(c, err))
@@ -258,7 +258,7 @@ func (h *LLMHandler) handleResponseStream(c *gin.Context, apiKey *apikeymodel.Te
 	streamChan, err := h.gatewayService.CreateResponseStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err) {
+		if writeRawProtocolError(c, err, req.Model, "openai") {
 			return
 		}
 		writeOpenAIProtocolError(c, h.localizedProtocolError(c, err))
@@ -291,7 +291,7 @@ func (h *LLMHandler) handleAnthropicMessageStream(c *gin.Context, apiKey *apikey
 	streamChan, err := h.gatewayService.CreateAnthropicMessageStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err) {
+		if writeRawProtocolError(c, err, req.Model, "anthropic") {
 			return
 		}
 		writeAnthropicProtocolError(c, h.localizedProtocolError(c, err))
@@ -329,7 +329,7 @@ func (h *LLMHandler) handleGeminiContentStream(c *gin.Context, apiKey *apikeymod
 	streamChan, err := service.CreateGeminiContentStream(gatewayRequestContext(c), apiKey, req)
 	if err != nil {
 		recordServiceError(c, err)
-		if writeRawProtocolError(c, err) {
+		if writeRawProtocolError(c, err, req.Model, "gemini") {
 			return
 		}
 		writeGeminiProtocolError(c, h.localizedProtocolError(c, err))
@@ -369,22 +369,21 @@ func (h *LLMHandler) ListModels(c *gin.Context) {
 		return
 	}
 
-	// 3. Return OpenAI-compatible response
-	modelList := make([]gin.H, 0, len(models))
-	for _, m := range models {
-		modelList = append(modelList, gin.H{
-			"id":                  m.ID,
-			"object":              "model",
-			"created":             m.Created,
-			"owned_by":            m.OwnedBy,
-			"supported_protocols": m.SupportedProtocols,
-		})
-	}
+	writeModelsCatalog(c, models)
+}
 
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   modelList,
-	})
+// GetModel handles GET /v1/models/{model_id} for Anthropic and OpenAI clients.
+func (h *LLMHandler) GetModel(c *gin.Context) {
+	apiKey, ok := apiKeyFromContext(c)
+	if !ok {
+		return
+	}
+	models, err := h.gatewayService.ListAvailableModels(c.Request.Context(), apiKey)
+	if err != nil {
+		h.handleError(c, err)
+		return
+	}
+	writeModelsDetail(c, models)
 }
 
 // handleError converts service errors to the public OpenAI-compatible contract.
@@ -634,17 +633,42 @@ func parseGeminiGenerateContentRequest(c *gin.Context) (*adapter.GeminiGenerateC
 	return &adapter.GeminiGenerateContentRequest{Model: strings.TrimSpace(model), Stream: stream, Body: body}, nil
 }
 
-func writeRawProtocolError(c *gin.Context, err error) bool {
+func writeRawProtocolError(c *gin.Context, err error, logicalModel, protocol string) bool {
 	var rawErr *adapter.RawProtocolError
 	if !errors.As(err, &rawErr) || rawErr == nil {
 		return false
 	}
+	status := publicRawProtocolStatus(rawErr.StatusCode)
+	body := gateway.SanitizePublicNativeErrorBody(rawErr.Body, logicalModel)
+	if len(body) == 0 {
+		writeRawProtocolFallback(c, status, protocol)
+		return true
+	}
 	contentType := strings.TrimSpace(rawErr.ContentType)
-	if contentType == "" {
+	if !strings.Contains(strings.ToLower(contentType), "json") {
 		contentType = "application/json"
 	}
-	c.Data(rawErr.StatusCode, contentType, rawErr.Body)
+	c.Data(status, contentType, body)
 	return true
+}
+
+func publicRawProtocolStatus(status int) int {
+	if status >= 400 && status <= 599 {
+		return status
+	}
+	return http.StatusBadGateway
+}
+
+func writeRawProtocolFallback(c *gin.Context, status int, protocol string) {
+	const message = "Upstream request failed"
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "anthropic":
+		c.JSON(status, gin.H{"type": "error", "error": gin.H{"type": "api_error", "message": message}})
+	case "gemini":
+		c.JSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": geminiErrorStatus(status)}})
+	default:
+		c.JSON(status, gin.H{"error": gin.H{"message": message, "type": "api_error", "code": "upstream_error", "param": nil}})
+	}
 }
 
 func geminiStreamErrorBody(protocolErr protocolError) json.RawMessage {

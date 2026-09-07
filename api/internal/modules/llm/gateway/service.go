@@ -864,8 +864,13 @@ func (s *llmGatewayServiceImpl) ListAvailableModels(
 		result = append(result, adapter.Model{
 			ID:                 m.Model,
 			Name:               m.ModelName,
-			Description:        "",
+			Description:        m.Description,
 			ContextLength:      m.ContextWindow,
+			MaxInputTokens:     m.MaxInputTokens,
+			MaxOutputTokens:    m.MaxOutputTokens,
+			InputModalities:    append([]string(nil), m.InputModalities...),
+			ParallelToolCalls:  m.ParallelToolCalls,
+			Capabilities:       publicModelCapabilities(&m),
 			Created:            m.CreatedAt.Unix(),
 			OwnedBy:            m.Provider,
 			SupportedProtocols: supportedProtocolsForRoutes(routableModels[normalizeRequestedModelName(m.Model)], &m),
@@ -873,6 +878,32 @@ func (s *llmGatewayServiceImpl) ListAvailableModels(
 	}
 
 	return result, nil
+}
+
+func publicModelCapabilities(model *llmmodel.LLMModel) []string {
+	if model == nil {
+		return nil
+	}
+	result := make([]string, 0, 6)
+	if model.SupportsStreaming {
+		result = append(result, "streaming")
+	}
+	if model.SupportsToolCall {
+		result = append(result, "tool_use")
+	}
+	if model.ParallelToolCalls {
+		result = append(result, "parallel_tool_use")
+	}
+	if model.SupportsReasoning {
+		result = append(result, "thinking")
+	}
+	if model.SupportsVision {
+		result = append(result, "vision")
+	}
+	if model.SystemPrompt {
+		result = append(result, "system")
+	}
+	return result
 }
 
 func supportedProtocolsForRoutes(routes []*channelmodel.LLMRoute, model *llmmodel.LLMModel) []string {

@@ -2,6 +2,8 @@ package model
 
 import (
 	"testing"
+
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 )
 
 func TestLLMRouteGetEffectiveModels_NormalizesLegacyProviderWildcard(t *testing.T) {
@@ -73,6 +75,54 @@ func TestLLMRouteSupportsModelForProvider_OfficialLegacySnapshotFallsBackToModel
 	}
 	if route.SupportsModelForProvider("", "legacy-model") {
 		t.Fatal("legacy fallback must still reject a missing provider")
+	}
+}
+
+// Discovery must not depend on the flat Models list alone: a snapshot whose
+// list has gone stale would otherwise hide a model the route still advertises
+// through its provider/model pairs.
+func TestLLMRouteSupportsModelForProvider_UsesProviderPairsWhenFlatListIsStale(t *testing.T) {
+	route := &LLMRoute{
+		IsOfficial:             true,
+		Models:                 []string{"stale-flat-name"},
+		OfficialProviderModels: []ProviderModel{{Provider: "openai", Model: "same-name"}},
+	}
+
+	if !route.SupportsModelForProvider("openai", "same-name") {
+		t.Fatal("a stale flat model list must not hide an advertised provider/model pair")
+	}
+	if route.SupportsModelForProvider("openai", "never-advertised") {
+		t.Fatal("a model in neither the flat list nor the pairs must stay unsupported")
+	}
+}
+
+// SupportsPlatformModel is the boundary invocation enforces, so it must accept
+// exactly what the router accepts: the exact pair, or a sibling supplier that
+// maps to the same logical vendor.
+func TestLLMRouteSupportsPlatformModel_MatchesRouterBoundary(t *testing.T) {
+	catalogvendor.Replace([]catalogvendor.Entry{
+		{Provider: "agicto", Model: "deepseek-v4-pro", Vendor: "deepseek"},
+		{Provider: "siliconflow", Model: "deepseek-v4-pro", Vendor: "deepseek"},
+	})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	route := &LLMRoute{
+		IsOfficial: true,
+		Models:     []string{"deepseek-v4-pro", "same-name"},
+		OfficialProviderModels: []ProviderModel{
+			{Provider: "siliconflow", Model: "deepseek-v4-pro"},
+			{Provider: "openai", Model: "same-name"},
+		},
+	}
+
+	if !route.SupportsPlatformModel("siliconflow", "deepseek-v4-pro") {
+		t.Fatal("the exact advertised pair must be supported")
+	}
+	if !route.SupportsPlatformModel("agicto", "deepseek-v4-pro") {
+		t.Fatal("a sibling supplier of the same vendor must be supported, as the router resolves to it")
+	}
+	if route.SupportsPlatformModel("anthropic", "same-name") {
+		t.Fatal("a different-vendor supplier must be rejected, as the router rejects it")
 	}
 }
 

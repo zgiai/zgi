@@ -19,6 +19,24 @@ import (
 	"github.com/zgiai/zgi/api/internal/observability"
 )
 
+// MaxSSEFrameBytes bounds a single SSE frame for every stream parser in the
+// gateway. The Responses response.completed frame embeds the entire response
+// object (all output items plus reasoning), so it is the largest frame on the
+// wire and sets the floor for this value. It is deliberately not raised
+// further: the buffer is per in-flight stream, so the ceiling multiplies by
+// concurrency. Console applies the same limit, so keep the two in step.
+const MaxSSEFrameBytes = 8 << 20
+
+// annotateSSEFrameLimit makes the frame cap visible. Left as a bare
+// bufio.ErrTooLong it is indistinguishable from an ordinary network error, and
+// the limit shows up in production only as "occasional stream interruptions".
+func annotateSSEFrameLimit(err error) error {
+	if !errors.Is(err, bufio.ErrTooLong) {
+		return err
+	}
+	return fmt.Errorf("upstream SSE frame exceeds %d bytes: %w", MaxSSEFrameBytes, err)
+}
+
 // HTTPClient wrapped HTTP client
 type HTTPClient struct {
 	client       *http.Client
@@ -506,7 +524,7 @@ func ParseSSEToEOF(reader io.Reader, dataChan chan<- string, errChan chan<- erro
 
 func parseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error, stopAtDone bool) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(nil, bufio.MaxScanTokenSize<<9)
+	scanner.Buffer(nil, MaxSSEFrameBytes)
 	var dataBuffer strings.Builder
 
 	lineCount := 0
@@ -549,7 +567,7 @@ func parseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error, st
 
 	// Check for scanner errors
 	if err := scanner.Err(); err != nil {
-		errChan <- err
+		errChan <- annotateSSEFrameLimit(err)
 		close(dataChan)
 		return
 	}
@@ -579,7 +597,7 @@ func parseSSEDataLine(line string) (string, bool) {
 // ParseSSEEvents parses Server-Sent Events while preserving event names and raw data.
 func ParseSSEEvents(reader io.Reader, eventChan chan<- RawStreamEvent, errChan chan<- error) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(nil, bufio.MaxScanTokenSize<<9)
+	scanner.Buffer(nil, MaxSSEFrameBytes)
 
 	var dataBuffer strings.Builder
 	eventName := ""
@@ -627,7 +645,7 @@ func ParseSSEEvents(reader io.Reader, eventChan chan<- RawStreamEvent, errChan c
 	}
 
 	if err := scanner.Err(); err != nil {
-		errChan <- err
+		errChan <- annotateSSEFrameLimit(err)
 		close(eventChan)
 		return
 	}

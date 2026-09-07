@@ -86,6 +86,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 		v1.POST("/audio/transcriptions", transcriptionHandler.Transcribe)
 		v1.POST("/audio/speech", speechHandler.Generate)
 		v1.GET("/models", llmHandler.ListModels)
+		v1.GET("/models/:model_id", llmHandler.GetModel)
 		// Anthropic-compatible endpoint, matching New API and Anthropic Messages format.
 		v1.POST("/messages", llmHandler.CreateAnthropicMessage)
 	}

@@ -1344,20 +1344,62 @@ func TestModelAvailabilitySingleAndBatchUseLogicalOfficialModel(t *testing.T) {
 	}}}
 	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
 
+	// The route advertises openai/same-name only. At invocation the router
+	// tries resolveSameVendorModelForOfficialRoute, finds no openai pair that
+	// maps to the anthropic vendor, and rejects the call. Availability must
+	// report the same answer rather than promising a route that cannot serve
+	// this platform model.
 	single, err := svc.CheckModelAvailable(context.Background(), organizationID, modelID)
 	if err != nil {
 		t.Fatalf("CheckModelAvailable returned error: %v", err)
 	}
-	if !single.Available || single.ChannelCount != 1 {
-		t.Fatalf("single availability = %#v, want available independent of supplier provider", single)
+	if single.Available || single.ChannelCount != 0 {
+		t.Fatalf("single availability = %#v, want unavailable for a different-vendor supplier", single)
 	}
 
 	batch, err := svc.BatchCheckAvailability(context.Background(), organizationID, []string{modelName})
 	if err != nil {
 		t.Fatalf("BatchCheckAvailability returned error: %v", err)
 	}
-	if got := batch.Items[modelName]; got == nil || !got.Available || got.ChannelCount != 1 {
-		t.Fatalf("batch availability = %#v, want available independent of supplier provider", got)
+	if got := batch.Items[modelName]; got == nil || got.Available || got.ChannelCount != 0 {
+		t.Fatalf("batch availability = %#v, want unavailable for a different-vendor supplier", got)
+	}
+}
+
+// The counterpart to the test above: when the route's supplier differs but maps
+// to the same logical vendor, the router resolves to that sibling supplier and
+// the call succeeds, so availability must report the model as available.
+func TestModelAvailabilityAllowsSameVendorSupplier(t *testing.T) {
+	catalogvendor.Replace([]catalogvendor.Entry{
+		{Provider: "agicto", Model: "deepseek-v4-pro", Vendor: "deepseek"},
+		{Provider: "siliconflow", Model: "deepseek-v4-pro", Vendor: "deepseek"},
+	})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	modelName := "deepseek-v4-pro"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:       modelID,
+		Provider: "agicto",
+		Model:    modelName,
+		IsActive: true,
+		Status:   llmmodel.ModelStatusActive,
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:                   shared.RouteTypeZGICloud,
+		IsOfficial:             true,
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "siliconflow", Model: modelName}},
+	}}}
+	svc := NewModelAvailabilityService(modelRepo, &availableConfigRepoFake{}, routeRepo)
+
+	single, err := svc.CheckModelAvailable(context.Background(), organizationID, modelID)
+	if err != nil {
+		t.Fatalf("CheckModelAvailable returned error: %v", err)
+	}
+	if !single.Available || single.ChannelCount != 1 {
+		t.Fatalf("single availability = %#v, want available through the same-vendor supplier", single)
 	}
 }
 

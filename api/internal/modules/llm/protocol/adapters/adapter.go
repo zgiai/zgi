@@ -526,6 +526,10 @@ type Model struct {
 	Type                string                 `json:"type,omitempty"`
 	Description         string                 `json:"description,omitempty"`
 	ContextLength       int                    `json:"context_length"`
+	MaxInputTokens      int                    `json:"max_input_tokens,omitempty"`
+	MaxOutputTokens     int                    `json:"max_output_tokens,omitempty"`
+	InputModalities     []string               `json:"input_modalities,omitempty"`
+	ParallelToolCalls   bool                   `json:"parallel_tool_calls,omitempty"`
 	Capabilities        []string               `json:"capabilities,omitempty"`
 	Pricing             *Pricing               `json:"pricing,omitempty"`
 	Created             int64                  `json:"created,omitempty"`

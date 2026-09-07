@@ -300,6 +300,11 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 
 	for _, model := range resp.GetModels() {
 		configParameters, defaultParameters := decodeCatalogModelConfigPayload(model.GetConfigParametersJson())
+		contextWindow, maxOutputTokens := normalizePublishedModelLimits(
+			model.GetModel(),
+			int(model.GetContextWindow()),
+			int(model.GetMaxOutputTokens()),
+		)
 		catalog.Models = append(catalog.Models, modelmeta.PublishedModel{
 			Provider:               model.GetProvider(),
 			Vendor:                 model.GetVendor(),
@@ -316,8 +321,8 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 			IsNew:                  model.GetIsNew(),
 			AccessType:             model.GetAccessType(),
 			Currency:               model.GetCurrency(),
-			ContextWindow:          int(model.GetContextWindow()),
-			MaxOutputTokens:        int(model.GetMaxOutputTokens()),
+			ContextWindow:          contextWindow,
+			MaxOutputTokens:        maxOutputTokens,
 			InputPrice:             model.GetInputPrice(),
 			OutputPrice:            model.GetOutputPrice(),
 			CachedInputPrice:       model.GetCachedInputPrice(),
@@ -346,6 +351,22 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 	}
 
 	return catalog
+}
+
+// normalizePublishedModelLimits protects pre from reapplying a known stale
+// Console catalog snapshot after the model limit correction migration. Keep the
+// override deliberately narrow: smaller limits for other models may be valid.
+func normalizePublishedModelLimits(model string, contextWindow, maxOutputTokens int) (int, int) {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "qwen3.5-plus", "qwen3.5-plus-2026-02-15":
+		if contextWindow == 0 || contextWindow == 100000 {
+			contextWindow = 1000000
+		}
+		if maxOutputTokens == 0 || maxOutputTokens <= 4096 {
+			maxOutputTokens = 65536
+		}
+	}
+	return contextWindow, maxOutputTokens
 }
 
 func publishedModelEndpoints(source *pb.CatalogModelEndpoints) *llmmodel.ModelEndpoints {

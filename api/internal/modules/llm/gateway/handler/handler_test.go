@@ -28,6 +28,58 @@ func TestClassifyProtocolErrorPreservesUpstreamGuardCode(t *testing.T) {
 	}
 }
 
+func TestWriteRawProtocolErrorSanitizesProviderDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	err := &adapter.RawProtocolError{
+		StatusCode:  http.StatusTooManyRequests,
+		ContentType: "application/json",
+		Body:        []byte(`{"error":{"message":"provider dashscope rejected model qwen-upstream-2026","model":"qwen-upstream-2026","provider":"dashscope"}}`),
+	}
+
+	if !writeRawProtocolError(c, err, "qwen-logical", "openai") {
+		t.Fatal("raw protocol error was not handled")
+	}
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusTooManyRequests)
+	}
+	if got := recorder.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
+		t.Fatalf("content type = %q, want application/json", got)
+	}
+	body := recorder.Body.String()
+	for _, forbidden := range []string{"dashscope", "qwen-upstream-2026", `"provider"`} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("public error leaked %q: %s", forbidden, body)
+		}
+	}
+	if !strings.Contains(body, "qwen-logical") {
+		t.Fatalf("public error missing logical model: %s", body)
+	}
+}
+
+func TestWriteRawProtocolErrorReplacesNonJSONWithProtocolError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	err := &adapter.RawProtocolError{
+		StatusCode:  http.StatusBadGateway,
+		ContentType: "text/plain",
+		Body:        []byte("private provider host failed"),
+	}
+
+	if !writeRawProtocolError(c, err, "claude-logical", "anthropic") {
+		t.Fatal("raw protocol error was not handled")
+	}
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(body, `"type":"error"`) || !strings.Contains(body, "Upstream request failed") {
+		t.Fatalf("fallback response = status %d body %s", recorder.Code, body)
+	}
+	if strings.Contains(body, "private provider host") {
+		t.Fatalf("fallback response leaked raw body: %s", body)
+	}
+}
+
 func TestClassifyProtocolErrorTreatsPricingFailureAsInternal(t *testing.T) {
 	got := classifyProtocolError(fmt.Errorf("quote failed: %w", gateway.ErrPricingCalculationFailed))
 	if got.openAIStatus != http.StatusInternalServerError || got.openAICode != "internal_error" {

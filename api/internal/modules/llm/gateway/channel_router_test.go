@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"github.com/zgiai/zgi/api/config"
+	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
@@ -94,6 +95,14 @@ func (f *fakeCandidateRouteRepo) GetPlatformChannels(context.Context) ([]*channe
 
 type fakePrivateModelLookup struct {
 	model *llmmodel.CustomModel
+}
+
+type fakeOfficialChannelProvider struct {
+	channels []*platformchannel.OfficialChannel
+}
+
+func (f *fakeOfficialChannelProvider) ListChannels(context.Context, string) ([]*platformchannel.OfficialChannel, error) {
+	return f.channels, nil
 }
 
 type sqliteCatalogProvider struct {
@@ -970,6 +979,33 @@ func TestCandidateRoutesForModelsLoadsEnabledRoutesOnce(t *testing.T) {
 	if len(routesByModel["model-b"]) != 1 {
 		t.Fatalf("model-b routes = %d, want 1", len(routesByModel["model-b"]))
 	}
+}
+
+func TestCandidateRoutesForModelsHydratesOfficialModelProtocols(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "claude-sonnet-4-6"
+	insertGatewayCatalogModel(t, db, uuid.New(), "agicto", modelName)
+	route := &channelmodel.LLMRoute{
+		ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypeZGICloud,
+		ChannelProvider: "zgi-cloud", IsEnabled: true, IsOfficial: true,
+	}
+	router := &ChannelRouter{
+		db:                      db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{route}},
+		strategyFactory:         NewStrategyFactory(),
+		channelProvider: &fakeOfficialChannelProvider{channels: []*platformchannel.OfficialChannel{{
+			Provider: "agicto", Models: []string{modelName}, ModelProtocols: map[string][]string{
+				modelName: {protocolOpenAIChatCompletions, protocolAnthropicMessages},
+			},
+		}}},
+	}
+
+	routesByModel, err := router.CandidateRoutesForModels(t.Context(), organizationID, []string{modelName}, 1)
+	require.NoError(t, err)
+	require.Len(t, routesByModel[modelName], 1)
+	require.Equal(t, []string{protocolOpenAIChatCompletions, protocolAnthropicMessages}, routesByModel[modelName][0].OfficialModelProtocols[modelName])
 }
 
 func TestCandidateRoutesForModelsResolvesAmbiguousCatalogModelFromEnabledRoute(t *testing.T) {

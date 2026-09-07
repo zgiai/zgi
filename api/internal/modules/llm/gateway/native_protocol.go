@@ -347,6 +347,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			}
 			return nil, fmt.Errorf("all providers failed: %w", lastErr)
 		}
+		response.Body = sanitizePublicNativeBody(response.Body, model)
 		if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, response.Usage, response.Settlement, responseTime); err != nil {
 			return nil, err
 		}
@@ -509,7 +510,12 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		}
 
 		outputChan := make(chan adapter.RawStreamEvent)
-		go s.handleNativeStreamBilling(context.WithoutCancel(ctx), streamChan, outputChan, billingCtx, providerSelection, channelID, attemptIdx, startTime, model, body, traceName, usageFormat)
+		// Billing runs on a detached context so a client disconnect cannot abort
+		// settlement, but the goroutine still needs the request context's Done
+		// channel: without it every send on the unbuffered outputChan blocks
+		// forever once the handler stops reading, leaking the goroutine and the
+		// upstream connection behind it.
+		go s.handleNativeStreamBilling(context.WithoutCancel(ctx), ctx.Done(), streamChan, outputChan, billingCtx, providerSelection, channelID, attemptIdx, startTime, model, body, traceName, usageFormat)
 		traceHandedOff = true
 		return outputChan, nil
 	}
@@ -537,6 +543,7 @@ func (s *llmGatewayServiceImpl) settleNativeUsageFallbackError(
 
 func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	ctx context.Context,
+	clientGone <-chan struct{},
 	inputChan <-chan adapter.RawStreamEvent,
 	outputChan chan<- adapter.RawStreamEvent,
 	billingCtx *BillingContext,
@@ -551,14 +558,31 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 ) {
 	defer close(outputChan)
 
+	// emit never blocks indefinitely. Once the client is gone the remaining
+	// events are dropped, but the loop below keeps draining inputChan so the
+	// upstream reader can finish and settlement still sees the real usage.
+	clientConnected := true
+	emit := func(event adapter.RawStreamEvent) {
+		if !clientConnected {
+			return
+		}
+		select {
+		case outputChan <- event:
+		case <-clientGone:
+			clientConnected = false
+		}
+	}
+
 	var lastUsage *adapter.Usage
 	var lastSettlement *adapter.SettlementResult
 	var lastError error
 	var pendingTerminal *adapter.RawStreamEvent
+	var pendingFailure *adapter.RawStreamEvent
 	var sawUsage bool
 	var collectedText strings.Builder
 	for event := range inputChan {
 		terminal := isNativeTerminalStreamEvent(usageFormat, event)
+		failed := isNativeFailureStreamEvent(usageFormat, event)
 		if event.Usage != nil && (hasBillableTokenUsage(event.Usage) || event.Usage.TotalTokens > 0) {
 			lastUsage = event.Usage
 			sawUsage = true
@@ -582,12 +606,19 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 		if event.Done {
 			break
 		}
+		event.Data = sanitizePublicNativeBody(event.Data, model)
+		if failed {
+			pending := event
+			pendingFailure = &pending
+			lastError = fmt.Errorf("%w: provider returned terminal %s event", adapter.ErrUpstreamError, strings.TrimSpace(event.Event))
+			break
+		}
 		if terminal {
 			pending := event
 			pendingTerminal = &pending
 			continue
 		}
-		outputChan <- event
+		emit(event)
 	}
 
 	responseTime := time.Since(startTime).Milliseconds()
@@ -596,11 +627,21 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 		reportLLMProviderFailureForSelection(ctx, lastError, "llm.provider.stream_failed", providerSelection, billingCtx, attemptIdx, true)
 		if err := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, lastError); err != nil {
 			s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)
-			outputChan <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
+			if pendingFailure != nil {
+				emit(*pendingFailure)
+				emit(adapter.RawStreamEvent{Done: true, Usage: lastUsage})
+				return
+			}
+			emit(adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage})
 			return
 		}
 		s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, lastError)
-		outputChan <- adapter.RawStreamEvent{Error: lastError, Done: true, Usage: lastUsage}
+		if pendingFailure != nil {
+			emit(*pendingFailure)
+			emit(adapter.RawStreamEvent{Done: true, Usage: lastUsage})
+			return
+		}
+		emit(adapter.RawStreamEvent{Error: lastError, Done: true, Usage: lastUsage})
 		return
 	}
 
@@ -617,25 +658,25 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 
 	if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, lastUsage, lastSettlement, responseTime); err != nil {
 		s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)
-		outputChan <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
+		emit(adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage})
 		return
 	}
 	s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, nil)
 	if pendingTerminal != nil {
 		if estimatedUsage {
 			if updated, ok := injectUsageIntoNativeTerminalEvent(*pendingTerminal, model, lastUsage, usageFormat); ok {
-				outputChan <- updated
+				emit(updated)
 			} else {
-				outputChan <- nativeUsageStreamEvent(model, lastUsage, usageFormat)
-				outputChan <- *pendingTerminal
+				emit(nativeUsageStreamEvent(model, lastUsage, usageFormat))
+				emit(*pendingTerminal)
 			}
 		} else {
-			outputChan <- *pendingTerminal
+			emit(*pendingTerminal)
 		}
 	} else if estimatedUsage {
-		outputChan <- nativeUsageStreamEvent(model, lastUsage, usageFormat)
+		emit(nativeUsageStreamEvent(model, lastUsage, usageFormat))
 	}
-	outputChan <- adapter.RawStreamEvent{Done: true, Usage: lastUsage}
+	emit(adapter.RawStreamEvent{Done: true, Usage: lastUsage})
 }
 
 func (s *llmGatewayServiceImpl) estimateNativeProtocolTokens(body json.RawMessage, model string) (int, int) {

@@ -278,6 +278,32 @@ func isNativeTerminalStreamEvent(format nativeUsageBodyFormat, event adapter.Raw
 	}
 }
 
+func isNativeFailureStreamEvent(format nativeUsageBodyFormat, event adapter.RawStreamEvent) bool {
+	eventName := strings.TrimSpace(event.Event)
+	switch format {
+	case nativeUsageBodyFormatAnthropic:
+		if eventName == "error" {
+			return true
+		}
+	case nativeUsageBodyFormatResponses:
+		if eventName == "response.failed" {
+			return true
+		}
+	}
+	if len(event.Data) == 0 {
+		return false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		return false
+	}
+	if eventType, _ := payload["type"].(string); eventType == "response.failed" || eventType == "error" {
+		return true
+	}
+	_, hasError := payload["error"]
+	return format == nativeUsageBodyFormatGemini && hasError
+}
+
 func injectUsageIntoNativeTerminalEvent(event adapter.RawStreamEvent, model string, usage *adapter.Usage, format nativeUsageBodyFormat) (adapter.RawStreamEvent, bool) {
 	if !hasBillableTokenUsage(usage) || len(event.Data) == 0 {
 		return event, false

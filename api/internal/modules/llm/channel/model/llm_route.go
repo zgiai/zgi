@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
@@ -139,6 +140,10 @@ func (r *LLMRoute) SupportsModel(modelName string) bool {
 
 // SupportsModelForProvider keeps model discovery scoped to the logical model.
 // Supplier identity must not make the same platform model appear or disappear.
+//
+// This answers "does this route serve this logical model at all". To ask
+// whether a route can serve one exact platform model, use SupportsPlatformModel
+// instead: that is the boundary invocation enforces.
 func (r *LLMRoute) SupportsModelForProvider(provider, modelName string) bool {
 	if !r.IsOfficial && r.Type != shared.RouteTypeZGICloud {
 		return r.SupportsModel(modelName)
@@ -146,7 +151,81 @@ func (r *LLMRoute) SupportsModelForProvider(provider, modelName string) bool {
 	if strings.TrimSpace(provider) == "" {
 		return false
 	}
-	return r.SupportsModel(modelName)
+	return r.supportsOfficialLogicalModel(modelName)
+}
+
+// supportsOfficialLogicalModel reports whether an official route serves the
+// logical model under any supplier. The flat Models list can lag behind a
+// catalog sync, so the advertised provider/model pairs are consulted as well;
+// consulting only the flat list lets a stale snapshot hide a model the route
+// demonstrably serves.
+func (r *LLMRoute) supportsOfficialLogicalModel(modelName string) bool {
+	if r.SupportsModel(modelName) {
+		return true
+	}
+	target := canonicalRouteModel(modelName)
+	if target == "" {
+		return false
+	}
+	for _, pair := range r.OfficialProviderModels {
+		switch canonicalRouteModel(pair.Model) {
+		case target, "*":
+			return true
+		}
+	}
+	return false
+}
+
+// SupportsPlatformModel reports whether the route can serve the exact platform
+// model identified by provider and name. Official routes are validated against
+// the supplier/model pairs Console advertises; private routes keep their
+// model-list behavior.
+//
+// This is the boundary the router enforces at invocation time, so catalog and
+// availability layers must use it too. Using the looser
+// SupportsModelForProvider there makes them advertise routes the router will
+// then reject, which surfaces as "the catalog says supported but the call has
+// no candidate".
+func (r *LLMRoute) SupportsPlatformModel(provider, modelName string) bool {
+	if !r.IsOfficial && r.Type != shared.RouteTypeZGICloud {
+		return r.SupportsModel(modelName)
+	}
+	if r.SupportsOfficialProviderModel(provider, modelName) {
+		return true
+	}
+	// Before giving up, the router re-resolves the model to another supplier of
+	// the same logical vendor that this route does advertise. Availability has
+	// to grant the same tolerance, otherwise it hides a model that is in fact
+	// callable through a sibling supplier.
+	return r.servesModelUnderSameVendor(provider, modelName)
+}
+
+// servesModelUnderSameVendor mirrors the router's same-vendor fallback: the
+// route serves this model name through a different supplier that maps to the
+// same logical vendor as the requested one.
+func (r *LLMRoute) servesModelUnderSameVendor(provider, modelName string) bool {
+	target := canonicalRouteModel(modelName)
+	requestedVendor := logicalModelVendor(provider, modelName)
+	if target == "" || requestedVendor == "" {
+		return false
+	}
+	for _, pair := range r.OfficialProviderModels {
+		pairProvider := strings.TrimSpace(pair.Provider)
+		if pairProvider == "" || canonicalRouteModel(pair.Model) != target {
+			continue
+		}
+		if logicalModelVendor(pairProvider, pair.Model) == requestedVendor {
+			return true
+		}
+	}
+	return false
+}
+
+func logicalModelVendor(provider, modelName string) string {
+	if vendor := strings.TrimSpace(catalogvendor.Lookup(provider, modelName)); vendor != "" {
+		return strings.ToLower(vendor)
+	}
+	return strings.ToLower(strings.TrimSpace(provider))
 }
 
 // SupportsOfficialProviderModel validates the exact supplier/model capability

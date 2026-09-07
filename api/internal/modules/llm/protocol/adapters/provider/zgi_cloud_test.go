@@ -750,6 +750,38 @@ func TestZGICloudAdapterCreateResponseRaw_ForwardsToConsoleInternalResponses(t *
 	}
 }
 
+func TestZGICloudAdapterCreateResponseRawRejectsEmbeddedHTTP200Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"not implemented"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:  server.URL + "/v1/internal",
+		AuthHook: func(*http.Request) {},
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+	_, err = a.CreateResponseRaw(context.Background(), &adapter.RawResponseRequest{
+		Model: "logical-model", Body: json.RawMessage(`{"model":"logical-model","input":"hello"}`),
+	})
+	if err == nil {
+		t.Fatal("CreateResponseRaw() error = nil, want embedded protocol error")
+	}
+	var rawErr *adapter.RawProtocolError
+	if !errors.As(err, &rawErr) {
+		t.Fatalf("error = %T %v, want RawProtocolError", err, err)
+	}
+	if rawErr.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rawErr.StatusCode, http.StatusNotImplemented)
+	}
+	if !errors.Is(err, adapter.ErrCapabilityUnsupported) {
+		t.Fatalf("error = %v, want ErrCapabilityUnsupported", err)
+	}
+}
+
 func TestZGICloudAdapterCreateResponseStream_ConsumesSettlementEvent(t *testing.T) {
 	t.Helper()
 
