@@ -14,10 +14,25 @@ import (
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	gatewayhandler "github.com/zgiai/zgi/api/internal/modules/llm/gateway/handler"
 	"github.com/zgiai/zgi/api/internal/util"
+	"gorm.io/gorm"
 )
 
-func TestPersonalKeyCreationAndRotationDenyLegacyQuotaAuthentication(t *testing.T) {
+func openQuotaAuthenticationTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
 	db := openDeveloperAccessTestDB(t)
+	pool, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// These tests call both auth entry points in sequence. Serialize SQLite
+	// connections so their asynchronous accessed_at writes cannot race the
+	// next authoritative read with SQLITE_LOCKED. Keep the real repository.
+	pool.SetMaxOpenConns(1)
+	return db
+}
+
+func TestPersonalKeyCreationAndRotationDenyLegacyQuotaAuthentication(t *testing.T) {
+	db := openQuotaAuthenticationTestDB(t)
 	workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
 	service := NewService(db, apikeyrepo.NewAPIKeyRepository(db), nil)
 	created, err := service.CreateKey(context.Background(), workspaceID, ownerID, CreateKeyInput{Name: "legacy guard"})
@@ -55,7 +70,7 @@ func TestLegacyKeyQuotaAuthenticationIsUnchanged(t *testing.T) {
 		{"exhausted", &limit, 0, false},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			db := openDeveloperAccessTestDB(t)
+			db := openQuotaAuthenticationTestDB(t)
 			_, organizationID, _, _ := seedDeveloperWorkspace(t, db)
 			secret := "legacy-fixture-" + uuid.NewString()
 			key := apikeymodel.TenantAPIKey{OrganizationID: organizationID, Name: "legacy quota",
@@ -88,11 +103,21 @@ func TestLegacyKeyQuotaAuthenticationIsUnchanged(t *testing.T) {
 	}
 }
 
-func TestZeroLegacyQuotaUsesLiveGrantAtBothAuthenticationEntrypoints(t *testing.T) {
+func TestPersonalQuotaUsesLiveGrantAtBothAuthenticationEntrypoints(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, exhausted := range []bool{false, true} {
-		t.Run(map[bool]string{false: "available", true: "exhausted"}[exhausted], func(t *testing.T) {
-			db := openDeveloperAccessTestDB(t)
+	for _, scenario := range []struct {
+		name        string
+		legacyQuota any
+		exhausted   bool
+	}{
+		{"guarded/available", int64(0), false},
+		{"guarded/exhausted", int64(0), true},
+		{"pre-guard/available", nil, false},
+		{"pre-guard/exhausted", nil, true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			exhausted := scenario.exhausted
+			db := openQuotaAuthenticationTestDB(t)
 			workspaceID, _, ownerID, _ := seedDeveloperWorkspace(t, db)
 			repo := apikeyrepo.NewAPIKeyRepository(db)
 			service := NewService(db, repo, nil)
@@ -101,7 +126,7 @@ func TestZeroLegacyQuotaUsesLiveGrantAtBothAuthenticationEntrypoints(t *testing.
 				t.Fatal(err)
 			}
 			if err := db.Model(&apikeymodel.TenantAPIKey{}).Where("id = ?", created.ID).
-				Updates(map[string]any{"quota_limit": int64(0), "remain_quota": int64(0)}).Error; err != nil {
+				Updates(map[string]any{"quota_limit": scenario.legacyQuota, "remain_quota": int64(0)}).Error; err != nil {
 				t.Fatal(err)
 			}
 			remaining := int64(100)
