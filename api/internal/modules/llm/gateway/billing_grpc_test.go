@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -100,6 +101,20 @@ func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testi
 	}
 	if quote.PricingSource != PricingSourceUpstreamModelPrice || quote.UsageSource != UsageSourceEstimatedUsage {
 		t.Fatalf("quote sources = %q/%q", quote.PricingSource, quote.UsageSource)
+	}
+	if !quote.InputTokenPriceResolved || !quote.OutputTokenPriceResolved ||
+		!quote.InputTokenPriceUSDPer1M.Equal(decimal.RequireFromString("2.5")) ||
+		!quote.OutputTokenPriceUSDPer1M.Equal(decimal.RequireFromString("10")) {
+		t.Fatalf("locked token prices = %s/%s resolved=%v/%v, want 2.5/10 true/true",
+			quote.InputTokenPriceUSDPer1M, quote.OutputTokenPriceUSDPer1M,
+			quote.InputTokenPriceResolved, quote.OutputTokenPriceResolved)
+	}
+	repriced, err := repriceLockedTokenQuote(quote, 8, 1)
+	if err != nil {
+		t.Fatalf("repriceLockedTokenQuote() error = %v", err)
+	}
+	if repriced.TotalCredits != 30 {
+		t.Fatalf("repriced credits = %d, want 30", repriced.TotalCredits)
 	}
 }
 

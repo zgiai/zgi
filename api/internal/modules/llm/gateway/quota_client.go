@@ -134,6 +134,10 @@ func (c *QuotaClient) CheckCreditBalance(ctx context.Context, organizationID str
 }
 
 func (c *QuotaClient) CalculateDualCost(ctx context.Context, modelID string, promptTokens, completionTokens int) (*DualCostQuotaResponse, error) {
+	const maxGRPCTokenCount = int64(1<<31 - 1)
+	if promptTokens < 0 || completionTokens < 0 || int64(promptTokens) > maxGRPCTokenCount || int64(completionTokens) > maxGRPCTokenCount {
+		return nil, fmt.Errorf("token count is outside the billing RPC range")
+	}
 	resp, err := c.client.CalculateDualCost(ctx, &pb.CalculateDualCostRequest{
 		ModelId:          modelID,
 		PromptTokens:     int32(promptTokens),

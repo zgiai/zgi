@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -114,6 +115,14 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 	if resp.TotalCredits <= 0 && (promptTokens > 0 || completionTokens > 0) {
 		return PricingQuote{}, fmt.Errorf("authoritative token pricing returned no credits")
 	}
+	inputPrice, inputResolved, err := deriveAuthoritativeTokenPrice(resp.InputUSD, promptTokens)
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("derive authoritative input token price: %w", err)
+	}
+	outputPrice, outputResolved, err := deriveAuthoritativeTokenPrice(resp.OutputUSD, completionTokens)
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("derive authoritative output token price: %w", err)
+	}
 	return PricingQuote{
 		InputCredits:  resp.InputCredits,
 		OutputCredits: resp.OutputCredits,
@@ -123,7 +132,28 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 		TotalUSD:      decimal.NewFromFloat(resp.TotalUSD),
 		PricingSource: PricingSourceUpstreamModelPrice,
 		UsageSource:   UsageSourceEstimatedUsage,
+
+		InputTokenPriceUSDPer1M:  inputPrice,
+		OutputTokenPriceUSDPer1M: outputPrice,
+		InputTokenPriceResolved:  inputResolved,
+		OutputTokenPriceResolved: outputResolved,
 	}, nil
+}
+
+func deriveAuthoritativeTokenPrice(costUSD float64, tokenCount int) (decimal.Decimal, bool, error) {
+	if tokenCount < 0 || costUSD < 0 || math.IsNaN(costUSD) || math.IsInf(costUSD, 0) {
+		return decimal.Zero, false, fmt.Errorf("invalid authoritative token cost")
+	}
+	if tokenCount == 0 {
+		if costUSD != 0 {
+			return decimal.Zero, false, fmt.Errorf("non-zero cost without tokens")
+		}
+		return decimal.Zero, false, nil
+	}
+	price := decimal.NewFromFloat(costUSD).
+		Mul(decimal.NewFromInt(1_000_000)).
+		Div(decimal.NewFromInt(int64(tokenCount)))
+	return price, true, nil
 }
 
 // CalculateImageCredits uses local DB (model pricing is in zgi-api DB)
