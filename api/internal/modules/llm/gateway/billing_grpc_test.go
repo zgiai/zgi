@@ -62,6 +62,47 @@ func (successfulSettleQuotaClient) CheckCreditBalance(context.Context, string, i
 
 func (successfulSettleQuotaClient) Close() error { return nil }
 
+type authoritativeQuoteQuotaClient struct {
+	response *DualCostQuotaResponse
+	err      error
+}
+
+func (c authoritativeQuoteQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
+	return nil, errors.New("unexpected pre-deduct")
+}
+
+func (c authoritativeQuoteQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
+	return nil, errors.New("unexpected settle")
+}
+
+func (c authoritativeQuoteQuotaClient) CheckCreditBalance(context.Context, string, int64) (bool, int64, error) {
+	return false, 0, errors.New("unexpected balance check")
+}
+
+func (c authoritativeQuoteQuotaClient) CalculateDualCost(context.Context, string, int, int) (*DualCostQuotaResponse, error) {
+	return c.response, c.err
+}
+
+func (authoritativeQuoteQuotaClient) Close() error { return nil }
+
+func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testing.T) {
+	rb := &RemoteBilling{grpcClient: authoritativeQuoteQuotaClient{response: &DualCostQuotaResponse{
+		Success: true, InputCredits: 25, OutputCredits: 20, TotalCredits: 45,
+		InputUSD: 0.000025, OutputUSD: 0.00002, TotalUSD: 0.000045,
+	}}}
+
+	quote, err := rb.QuotePlatformTokenPricing(context.Background(), uuid.New(), 10, 2)
+	if err != nil {
+		t.Fatalf("QuotePlatformTokenPricing() error = %v", err)
+	}
+	if quote.TotalCredits != 45 || quote.InputCredits != 25 || quote.OutputCredits != 20 {
+		t.Fatalf("quote credits = %d/%d/%d, want 25/20/45", quote.InputCredits, quote.OutputCredits, quote.TotalCredits)
+	}
+	if quote.PricingSource != PricingSourceUpstreamModelPrice || quote.UsageSource != UsageSourceEstimatedUsage {
+		t.Fatalf("quote sources = %q/%q", quote.PricingSource, quote.UsageSource)
+	}
+}
+
 type capturingFailingSettleQuotaClient struct {
 	settleRequest *SettleQuotaRequest
 }

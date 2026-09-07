@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -30,6 +31,10 @@ type quotaClient interface {
 	SettleQuota(ctx context.Context, req *SettleQuotaRequest) (*SettleQuotaResponse, error)
 	CheckCreditBalance(ctx context.Context, organizationID string, estimatedCredits int64) (bool, int64, error)
 	Close() error
+}
+
+type authoritativeTokenCostClient interface {
+	CalculateDualCost(ctx context.Context, modelID string, promptTokens, completionTokens int) (*DualCostQuotaResponse, error)
 }
 
 const (
@@ -83,6 +88,42 @@ func (s *RemoteBilling) CalculateCreditsFromTokens(
 	// via grpc console
 
 	return s.localService.CalculateCreditsFromTokens(promptTokens, completionTokens, modelID)
+}
+
+func (s *RemoteBilling) QuotePlatformTokenPricing(
+	ctx context.Context,
+	modelID uuid.UUID,
+	promptTokens int,
+	completionTokens int,
+) (PricingQuote, error) {
+	client, ok := s.grpcClient.(authoritativeTokenCostClient)
+	if !ok {
+		return PricingQuote{}, fmt.Errorf("remote billing does not support authoritative token pricing")
+	}
+	resp, err := client.CalculateDualCost(ctx, modelID.String(), promptTokens, completionTokens)
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("calculate authoritative token cost: %w", err)
+	}
+	if resp == nil || !resp.Success {
+		message := "authoritative token pricing failed"
+		if resp != nil && strings.TrimSpace(resp.ErrorMessage) != "" {
+			message = resp.ErrorMessage
+		}
+		return PricingQuote{}, fmt.Errorf("%s", message)
+	}
+	if resp.TotalCredits <= 0 && (promptTokens > 0 || completionTokens > 0) {
+		return PricingQuote{}, fmt.Errorf("authoritative token pricing returned no credits")
+	}
+	return PricingQuote{
+		InputCredits:  resp.InputCredits,
+		OutputCredits: resp.OutputCredits,
+		TotalCredits:  resp.TotalCredits,
+		InputUSD:      decimal.NewFromFloat(resp.InputUSD),
+		OutputUSD:     decimal.NewFromFloat(resp.OutputUSD),
+		TotalUSD:      decimal.NewFromFloat(resp.TotalUSD),
+		PricingSource: PricingSourceUpstreamModelPrice,
+		UsageSource:   UsageSourceEstimatedUsage,
+	}, nil
 }
 
 // CalculateImageCredits uses local DB (model pricing is in zgi-api DB)

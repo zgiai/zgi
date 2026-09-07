@@ -33,6 +33,12 @@ type fakeBillingProvider struct {
 	settleErr          error
 	checkBalanceResult bool
 	checkBalanceErr    error
+	platformQuote      PricingQuote
+	platformQuoteErr   error
+}
+
+func (f *fakeBillingProvider) QuotePlatformTokenPricing(context.Context, uuid.UUID, int, int) (PricingQuote, error) {
+	return f.platformQuote, f.platformQuoteErr
 }
 
 func TestApplyPlatformSettlementCostSnapshotRecordsCallTimeCurrencyFacts(t *testing.T) {

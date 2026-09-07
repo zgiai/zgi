@@ -133,6 +133,27 @@ func (c *QuotaClient) CheckCreditBalance(ctx context.Context, organizationID str
 	return resp.Sufficient, resp.Balance, nil
 }
 
+func (c *QuotaClient) CalculateDualCost(ctx context.Context, modelID string, promptTokens, completionTokens int) (*DualCostQuotaResponse, error) {
+	resp, err := c.client.CalculateDualCost(ctx, &pb.CalculateDualCostRequest{
+		ModelId:          modelID,
+		PromptTokens:     int32(promptTokens),
+		CompletionTokens: int32(completionTokens),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("grpc call failed: %w", err)
+	}
+	return &DualCostQuotaResponse{
+		Success:       resp.Success,
+		ErrorMessage:  resp.ErrorMessage,
+		InputCredits:  resp.InputCredits,
+		OutputCredits: resp.OutputCredits,
+		TotalCredits:  resp.TotalCredits,
+		InputUSD:      resp.InputUsd,
+		OutputUSD:     resp.OutputUsd,
+		TotalUSD:      resp.TotalUsd,
+	}, nil
+}
+
 type PreDeductQuotaRequest struct {
 	OrganizationID   string
 	EstimatedCredits int64
@@ -189,4 +210,15 @@ type SettleQuotaResponse struct {
 	UsedQuota       int64
 	RefundedCredits int64
 	SettledCredits  int64
+}
+
+type DualCostQuotaResponse struct {
+	Success       bool
+	ErrorMessage  string
+	InputCredits  int64
+	OutputCredits int64
+	TotalCredits  int64
+	InputUSD      float64
+	OutputUSD     float64
+	TotalUSD      float64
 }
