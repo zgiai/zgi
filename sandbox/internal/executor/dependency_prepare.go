@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-const dependencyPrepareSchemaVersion = 1
+const dependencyPrepareSchemaVersion = 2
 
 type DependencyPrepareRequest struct {
 	OrganizationID string `json:"organization_id,omitempty"`
@@ -171,11 +171,12 @@ func scanDependencyRequest(entries []archiveEntry, requestedLanguage string, bas
 		addPackageSpecs(packages, sourceSet, "nodejs", specs, "package.json")
 	}
 
+	localPythonModules := pythonArchiveLocalModules(files)
 	for path, file := range files {
 		switch filepath.Ext(path) {
 		case ".py":
 			if strings.HasPrefix(path, "scripts/") {
-				specs, err := scanPythonImports(file)
+				specs, err := scanPythonImports(file, localPythonModules)
 				if err != nil {
 					return DependencyPrepareResult{}, err
 				}
@@ -397,7 +398,7 @@ func isUnsupportedNodeDependencyVersion(version string) bool {
 var pythonImportRE = regexp.MustCompile(`(?m)^\s*(?:from\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+import|import\s+([A-Za-z_][A-Za-z0-9_\.]*))`)
 var nodeImportRE = regexp.MustCompile(`(?m)(?:import\s+(?:[^'"]+\s+from\s+)?|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]`)
 
-func scanPythonImports(file *zip.File) ([]string, error) {
+func scanPythonImports(file *zip.File, localModules map[string]bool) ([]string, error) {
 	content, err := readZipFile(file, 256*1024)
 	if err != nil {
 		return nil, err
@@ -410,12 +411,29 @@ func scanPythonImports(file *zip.File) ([]string, error) {
 			module = match[2]
 		}
 		module = strings.Split(module, ".")[0]
-		if module == "" || pythonStdlibModules[module] {
+		if module == "" || pythonStdlibModules[module] || localModules[module] {
 			continue
 		}
 		specSet[normalizePackageName("python3", module)] = struct{}{}
 	}
 	return sortedSourceSet(specSet), nil
+}
+
+func pythonArchiveLocalModules(files map[string]*zip.File) map[string]bool {
+	modules := map[string]bool{}
+	for path := range files {
+		path = filepath.ToSlash(strings.TrimSpace(path))
+		if !strings.HasPrefix(path, "scripts/") || filepath.Ext(path) != ".py" {
+			continue
+		}
+		relative := strings.TrimPrefix(path, "scripts/")
+		root, _, _ := strings.Cut(relative, "/")
+		root = strings.TrimSuffix(root, ".py")
+		if root != "" && root != "__init__" {
+			modules[root] = true
+		}
+	}
+	return modules
 }
 
 func scanNodeImports(file *zip.File) ([]string, error) {
@@ -542,8 +560,8 @@ var pythonImportPackageMap = map[string]string{
 
 var pythonStdlibModules = map[string]bool{
 	"argparse": true, "base64": true, "collections": true, "contextlib": true,
-	"csv": true, "datetime": true, "decimal": true, "functools": true,
-	"hashlib": true, "io": true, "itertools": true, "json": true,
+	"csv": true, "dataclasses": true, "datetime": true, "decimal": true, "functools": true,
+	"hashlib": true, "importlib": true, "io": true, "itertools": true, "json": true,
 	"logging": true, "math": true, "os": true, "pathlib": true, "random": true,
 	"re": true, "shutil": true, "statistics": true, "string": true,
 	"subprocess": true, "sys": true, "tempfile": true, "time": true,

@@ -1938,6 +1938,36 @@ func TestPrepareDependenciesReturnsReadyForStdlibArchive(t *testing.T) {
 	}
 }
 
+func TestPrepareDependenciesIgnoresPythonStdlibAndLocalModules(t *testing.T) {
+	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
+
+	result, err := service.PrepareDependencies(DependencyPrepareRequest{
+		ArchiveBase64: zipBase64(t, map[string]string{
+			"SKILL.md":                   "Skill package\n",
+			"requirements.txt":           "pandas==2.2.3\n",
+			"scripts/run.py":             "import importlib.metadata\nfrom eda import SKILL_VERSION\nimport pandas as pd\n",
+			"scripts/eda/__init__.py":    "SKILL_VERSION = '1.0.0'\n",
+			"scripts/eda/lineage.py":     "from dataclasses import dataclass, field\n",
+			"scripts/eda/descriptive.py": "import pandas as pd\n",
+		}),
+		Format:      "zip",
+		BaseRuntime: "linux-secure",
+	})
+	if err != nil {
+		t.Fatalf("prepare dependencies: %v", err)
+	}
+	if result.Status != "build_required" {
+		t.Fatalf("expected build_required, got %q", result.Status)
+	}
+	if result.PackageCount != 1 {
+		t.Fatalf("expected only the declared third-party package, got %#v", result.Packages)
+	}
+	assertDetectedDependency(t, result.Packages, "python3", "pandas", "==2.2.3")
+	assertMissingDependency(t, result.Packages, "python3", "dataclasses")
+	assertMissingDependency(t, result.Packages, "python3", "importlib")
+	assertMissingDependency(t, result.Packages, "python3", "eda")
+}
+
 func TestPrepareDependenciesRejectsSymlinkArchive(t *testing.T) {
 	service := NewService(nil, nil, nil, policy.NewService(config.FromEnv()))
 
