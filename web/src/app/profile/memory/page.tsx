@@ -37,6 +37,7 @@ import type {
   UserMemoryRelationship,
   UserMemoryRelationshipStatus,
 } from '@/services/types/relationship-memory';
+import { useAuthStore } from '@/store/auth-store';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 const memoryKeys = ['user-relationship-memories'] as const;
@@ -60,6 +61,8 @@ export default function ProfileMemoryPage() {
   const t = useT('profile');
   const router = useRouter();
   const queryClient = useQueryClient();
+  const sessionStatus = useAuthStore.use.sessionStatus();
+  const memoryQueriesEnabled = sessionStatus === 'authenticated';
   const [consumerType, setConsumerType] = useState<UserMemoryConsumerType | ''>('');
   const [status, setStatus] = useState<UserMemoryRelationshipStatus | ''>('');
   const [page, setPage] = useState(1);
@@ -94,11 +97,12 @@ export default function ProfileMemoryPage() {
         page,
         page_size: 20,
       }),
+    enabled: memoryQueriesEnabled,
   });
   const detailQuery = useQuery({
     queryKey: [...memoryKeys, 'detail', selectedId],
     queryFn: () => relationshipMemoryService.get(selectedId),
-    enabled: Boolean(selectedId),
+    enabled: memoryQueriesEnabled && Boolean(selectedId),
   });
   const relationships = useMemo(() => listQuery.data?.data.items ?? [], [listQuery.data]);
   const detail = detailQuery.data?.data;
