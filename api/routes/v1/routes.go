@@ -130,6 +130,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		MemoryService:  serviceContainer.GetMemoryService(),
 		AccountService: accountService,
 	})
+	RegisterRelationshipMemoryRoutes(v1, db, accountService)
 
 	// ---------- Dataset ----------
 	RegisterDatasetRoutes(v1, DatasetRouteDeps{
