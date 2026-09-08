@@ -3,6 +3,8 @@
 使用该接口从外部系统调用当前 Agent 的最新发布版本。
 接口只支持流式响应，并使用绑定到该 Agent 的 Agent API Key 鉴权。
 
+## 接入概览
+
 <div>
   ### Base URL
 
@@ -29,7 +31,164 @@ X-API-Key: {API_KEY}
 
 请只在服务端保存和使用 API Key，不要暴露在浏览器代码或公开客户端中。
 
+所有有状态 Agent 操作还必须由可信服务端发送 `X-External-User-ID`。请从业务侧已认证用户生成稳定、不透明的 id（1–128 个 Unicode 字符、区分大小写），不要直接使用邮箱、手机号或其他个人信息。ZGI 只持久化按 workspace 和 Agent 派生的 UUID，并用它统一隔离会话、流恢复、各类继续请求、文件和 Agent Memory。
+
+### 复刻落地页的最小调用顺序
+
+1. 服务端调用 `GET /agents/config`，取得标题、开场白、主题色、建议问题、文件和记忆能力开关。
+2. 如果用户选择文件，服务端调用 `POST /files/upload`，再把返回的文件 id 放进聊天请求的 `file_ids`。
+3. 调用 `POST /agents/chat`，浏览器通过你自己的服务端代理消费 SSE；保存 `conversation_id`、`message_id` 和最新 SSE `id`。
+4. 用会话和消息查询接口恢复历史；用 events 接口断线重连，用 stop 接口终止生成。
+5. 分流两类公开暂停：工作流审批/问答和 Skill 用户输入；分别通过对应的继续接口恢复同一条消息。
+
+Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success", "data": ... }`；错误响应统一为 `{ "code": "...", "message": "..." }` 并使用对应的 HTTP `4xx/5xx` 状态。文件上传及旧版兼容的 `/info`、`/parameters` 成功响应是对象本身，SSE 接口成功时直接返回 `text/event-stream`。
+
 </div>
+
+---
+
+## 核心执行与继续
+
+<Heading
+  url="/api/v1/agents/config"
+  method="GET"
+  title="获取已发布落地页配置"
+  name="#Get-Agent-Config"
+/>
+
+<Row>
+  <Col>
+    只返回搭建公开落地页需要的最新发布字段，不包含模型密钥、草稿或内部配置。
+
+    ### 请求头
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填。使用 `Bearer {'{api_key}'}`；也可改用 `X-API-Key`。</Property>
+    </Properties>
+
+    ### 响应 `data`
+
+    <Properties>
+      <Property name='agent_id / web_app_id' type='uuid' propKey='agent_id'>已发布 Agent 和落地页标识。</Property>
+      <Property name='agent_type' type='string' propKey='agent_type'>已发布 Agent 类型。</Property>
+      <Property name='name / description' type='string' propKey='name'>公开名称与描述。</Property>
+      <Property name='icon / icon_type / icon_url' type='string' propKey='icon_url'>图标原始字段与解析后的 URL。</Property>
+      <Property name='home_title / opening_statement / input_placeholder' type='string' propKey='home_title'>落地页标题、开场白和输入框提示。</Property>
+      <Property name='theme_color' type='string' propKey='theme_color'>已发布主题色。</Property>
+      <Property name='suggested_questions' type='array[string]' propKey='suggested_questions'>按展示顺序返回的建议问题。</Property>
+      <Property name='file_upload_enabled / supports_vision' type='boolean' propKey='file_upload_enabled'>文件上传与视觉能力开关。</Property>
+      <Property name='agent_memory_enabled / memory_requires_user' type='boolean' propKey='agent_memory_enabled'>Agent Memory 开关及用户身份要求。</Property>
+      <Property name='external_user_required' type='boolean' propKey='external_user_required'>有状态外部 Agent 操作始终为 `true`。</Property>
+      <Property name='version / version_uuid' type='string' propKey='version'>最新发布版本标识。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/config' \
+      --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {
+      "code": "0",
+      "message": "success",
+      "data": {
+        "agent_id": "4c2cb782-748e-4ff4-a34d-796b40f98f16",
+        "web_app_id": "f8d1dddb-21f1-48c2-bb27-7602a72c4eca",
+        "agent_type": "AGENT",
+        "name": "研究助手",
+        "description": "提供有依据的回答",
+        "icon_url": "https://example.com/icon.png",
+        "home_title": "开始研究",
+        "opening_statement": "需要我调查什么？",
+        "input_placeholder": "请输入问题",
+        "theme_color": "#4F46E5",
+        "suggested_questions": ["比较这些证据"],
+        "file_upload_enabled": true,
+        "supports_vision": true,
+        "agent_memory_enabled": true,
+        "memory_requires_user": true,
+        "external_user_required": true,
+        "version": "v12",
+        "version_uuid": "7b0df140-fbc1-41ef-9234-611172283b23"
+      }
+    }
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+`external_user_required` 对所有有状态外部 Agent 操作始终为 `true`；`memory_requires_user` 只描述已发布 Memory 配置本身是否需要用户身份。聊天 JSON、查询参数和 multipart 中的旧 `user` 暂时兼容；使用它会返回弃用响应头，同时传入且与 `X-External-User-ID` 不一致时返回 `400`。
+
+---
+
+<Heading url="/api/v1/files/upload" method="POST" title="上传聊天文件" name="#Upload-Agent-File" />
+
+<Row>
+  <Col>
+    上传临时文件，再把返回的 `id` 放入聊天请求的 `file_ids`。允许类型和限制由 `/parameters` 返回。
+
+    ### 请求头与表单
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填稳定外部用户 id；上传文件归该用户所有。</Property>
+      <Property name='file' type='binary' propKey='file'>必填 `multipart/form-data` 文件字段。</Property>
+      <Property name='user' type='string' propKey='user'>已弃用的 multipart 兼容字段；与请求头同时传入时必须一致。</Property>
+    </Properties>
+
+    ### 直接返回的 `201` 响应
+
+    <Properties>
+      <Property name='id' type='uuid' propKey='id'>在后续 `file_ids` 中使用的文件 id。</Property>
+      <Property name='name / extension / mime_type' type='string' propKey='name'>规范化文件元数据。</Property>
+      <Property name='size' type='integer' propKey='size'>文件字节数。</Property>
+      <Property name='created_by' type='string' propKey='created_by'>本次请求提供的外部用户 id。</Property>
+      <Property name='created_at' type='integer' propKey='created_at'>Unix 秒时间戳。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/files/upload' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --form 'file=@./report.pdf'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="201 JSON">
+
+    ```json
+    {
+      "id": "be2467cc-cab5-4a24-bc41-51cbf83788b4",
+      "name": "report.pdf",
+      "size": 204800,
+      "extension": "pdf",
+      "mime_type": "application/pdf",
+      "created_by": "external-user-1",
+      "created_at": 1788854400
+    }
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
 
 ---
 
@@ -43,6 +202,14 @@ X-API-Key: {API_KEY}
 <Row>
   <Col>
     在已发布 Agent runtime 中创建一条用户消息。
+
+    ### 请求头
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。使用 `Bearer {'{api_key}'}` 或替代请求头 `X-API-Key`。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填稳定、不透明的会话所有者 id；后续所有会话操作必须复用。</Property>
+      <Property name='Content-Type' type='string' propKey='Content-Type'>必填，固定为 `application/json`。</Property>
+    </Properties>
 
     ### 请求体
 
@@ -63,11 +230,23 @@ X-API-Key: {API_KEY}
         可选。默认值为 `streaming`。传入其他值会返回 `400`。
       </Property>
       <Property name='user' type='string' propKey='user'>
-        当 Agent Memory 已启用且至少存在一个启用的记忆槽时必填，用于隔离外部终端用户的长期记忆。其他情况下可选，也可用于追踪。
+        已弃用的兼容字段。请通过 `X-External-User-ID` 发送同一个值；两者同时存在时必须完全一致。
       </Property>
     </Properties>
 
     `model`、`provider`、`parameters`、`use_memory` 不作为该接口的公开控制项。Agent 始终使用最新发布版本的配置。`parameters` 和 `use_memory` 只作为兼容字段被解析，不会作为外部覆盖项传入 runtime。
+
+    ### `200` 响应
+
+    <Properties>
+      <Property name='Content-Type' type='text/event-stream' propKey='Content-Type'>原生 SSE 流；应增量消费，不要等待整个响应体结束。</Property>
+      <Property name='X-ZGI-Conversation-ID' type='uuid' propKey='X-ZGI-Conversation-ID'>首个 SSE frame 前即可取得的会话 id；即使 `message_start` 前断线也应保存。</Property>
+      <Property name='X-ZGI-Message-ID' type='uuid' propKey='X-ZGI-Message-ID'>本次新建助手消息 id。</Property>
+      <Property name='event' type='string' propKey='event'>原生 SSE 事件名，完整事件清单见下文。</Property>
+      <Property name='data.event' type='string' propKey='data.event'>JSON envelope 中的事件名，与原生 `event:` 一致。</Property>
+      <Property name='data.data' type='object' propKey='data.data'>事件特定载荷，公共字段和各事件字段见下文。</Property>
+      <Property name='id' type='string' propKey='id'>可选的可恢复 SSE 事件 id；请保存最新值用于断线恢复。</Property>
+    </Properties>
 
     ### 流式格式
 
@@ -83,35 +262,15 @@ X-API-Key: {API_KEY}
 
     客户端可以按原生 `event:` 分发，也可以解析 JSON 里的 `event` 字段。展示最终回答时，按 `message_id` 拼接 `message.data.answer`。可恢复的 `message` 和进度事件会带 SSE `id`，请保存最新 id 用于重连。
 
-    ### 核心事件
+    ### 事件处理
 
-    - `message_start`：助手消息已创建。请保存 `conversation_id` 和 `message_id`，用于断线恢复和后续继续。
-    - `message`：回答片段。将 `data.answer` 追加到当前回答。
-    - `message_end`：当前助手消息的终态。`data.status` 可能为 `completed`、`stopped`、`error`、`waiting_approval`、`waiting_question`。
-    - `error`：流式或运行时错误。除非随后收到 `message_end`，否则按终态处理。
+    聊天、断线恢复和两个继续接口使用同一套 Agent SSE 事件契约。最小实现必须处理 `message_start`、`message`、`message_retract`、`message_end` 和 `error`，并保存最新非空 SSE `id`。涉及 Skill 用户输入或工作流暂停时，再处理对应的请求事件。
 
-    ### Agent 运行事件
-
-    Agent 在最终回答之前，可能额外输出运行进度事件：
-
-    - 文件解析事件：`file_parse_start`、`file_parse_end`、`file_parse_error`。
-    - Skill 和工具事件：`skill_reference_read`、`skill_call_start`、`skill_call_end`、`skill_call_error`、`skill_artifact_created`。旧执行模式仍可能发送 `skill_load_start` 和 `skill_load_end`；原生工具循环的常规 Skill 发现与激活只保留在服务端诊断中。
-    - Agent 进度事件：`agent_progress`、`agent_intermediate_answer`、`message_retract`，以及 `memory_create`、`memory_update` 等记忆变更事件。原生工具循环可能先用 `message` 流式发送候选文本，再用 `message_retract.presentation_disposition` 将其归类：`process` 表示从最终答案撤回并保留为处理过程，`discard` 表示撤回且不保留。单次模型调用耗时较长时，`agent_progress` 可能使用 `phase=model_processing` 发送分阶段的临时等待状态。其 `activity` 会根据运行时上下文和 Provider 流信号标记等待响应、推理、准备操作或分析工具结果，`source` 用于区分运行时判断与 Provider 信号；事件不包含模型推理正文、工具参数或本地化文案，也不写入最终答案或聊天历史。
-    - Agent 绑定工作流产生的事件：`workflow_started`、`node_started`、`node_finished`、`iteration_started`、`iteration_next`、`iteration_completed`、`loop_started`、`loop_next`、`loop_completed`、`workflow_paused`、`approval_requested`、`question_answer_requested`、`question_answer_submitted`、`workflow_finished`、`workflow_failed`。
-
-    Agent 流里的工作流事件属于进度事件，可用于展示执行轨迹或等待状态；可见的助手回答仍以 `message` / `message_end` 为准。工作流节点、循环和迭代字段的详细含义，请参考 Workflow API 文档。
-
-    ### 等待用户输入
-
-    如果 Agent 调用的工作流发生暂停，流中可能出现 `approval_requested`、`question_answer_requested` 或 `user_input_requested`，并且 `message_end.status` 可能是 `waiting_approval` 或 `waiting_question`。
-
-    - 问答暂停：优先渲染 `user_input_requested.data.questions`。用户回答后，通过下方 workflow continuation 接口提交。
-    - 审批暂停：使用 `approval_requested` 里的审批信息。通过下方 workflow continuation 接口提交 `approval_token`、`action` 和表单 `inputs`。
-    - 不要通过新的 `/agents/chat` 请求回答一个正在等待的 workflow pause。应继续同一个 `conversation_id` 和 `message_id`。
+    每个事件的作用、触发时机、客户端动作、字段结构和接入代码见下方“Agent 事件接入手册”。未知事件和未知字段必须忽略，以保持向前兼容。
 
     ### 错误
 
-    - `400`：请求体错误、id 非法、`response_mode` 不是 `streaming`，或启用 Agent Memory 时缺少 `user`
+    - `400`：请求体错误、id 非法、`response_mode` 不是 `streaming`、缺少/非法的 `X-External-User-ID`，或与旧 `user` 不一致
     - `401`：API Key 缺失、错误、已停用、已过期或已撤销
     - `404`：Agent 不存在，或没有发布版本
     - `500`：服务内部错误
@@ -119,15 +278,15 @@ X-API-Key: {API_KEY}
   </Col>
 
   <Col sticky>
-    <CodeGroup title="请求" tag="POST" label="/api/v1/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "你好，请用一句话回答。",\n  "user": "external-user-1"\n}'`}>
+    <CodeGroup title="请求" tag="POST" label="/api/v1/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'X-External-User-ID: external-user-1' \\\n--data '{\n  "query": "你好，请用一句话回答。"\n}'`}>
 
     ```bash {{ title: 'cURL' }}
     curl --location --no-buffer '{apibase}/agents/chat' \
     --header 'Content-Type: application/json' \
     --header 'Authorization: Bearer {api_key}' \
+    --header 'X-External-User-ID: external-user-1' \
     --data '{
-      "query": "你好，请用一句话回答。",
-      "user": "external-user-1"
+      "query": "你好，请用一句话回答。"
     }'
     ```
 
@@ -165,6 +324,14 @@ X-API-Key: {API_KEY}
   <Col>
     当客户端在 Agent 消息仍在运行时断开连接，可以使用该接口恢复流。
 
+    ### 路径参数与请求头
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，聊天接口返回的会话 id。</Property>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填，必须是原会话所有者；其他用户不能回放该流。</Property>
+    </Properties>
+
     ### Query 参数
 
     <Properties>
@@ -178,10 +345,14 @@ X-API-Key: {API_KEY}
 
     事件存储是短期的。当前 Agent stream events 保存 24 小时。如果消息仍在运行，但事件存储不可用或已过期，服务端会发送 `error`，其中 `message` 为 `stream events expired`。
 
+    ### `200` 响应
+
+    返回 `text/event-stream`，按顺序发送 `after_id` 之后持久化的事件。事件名、JSON envelope 和字段定义与聊天接口完全一致。消息仍在执行时连接会继续等待，并在终态事件后结束；该接口不会创建新消息。
+
     ### 恢复流程
 
     - 保存 `conversation_id`、`message_id`，以及每个带有 `id:` 的 Agent 事件的最新 SSE `id`。
-    - 断线后使用同一个 API Key 调用该接口。
+    - 断线后使用同一个 API Key 和 `X-External-User-ID` 调用该接口。
     - 使用 `after_id` 续拉；如果客户端可能重试，请按 SSE `id` 去重。
     - 如果某个事件没有 SSE `id`，请把它视为不可恢复的降级事件，不要用作 `after_id`。
     - 收到 `message_end` 且状态为 `completed`、`stopped`、`error`、`failed`，或收到 `error` 后结束监听。
@@ -189,11 +360,26 @@ X-API-Key: {API_KEY}
   </Col>
 
   <Col sticky>
-    <CodeGroup title="恢复" tag="GET" label="/api/v1/agents/conversations/{conversation_id}/events" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \\\n--header 'Authorization: Bearer {api_key}'`}>
+    <CodeGroup title="恢复" tag="GET" label="/api/v1/agents/conversations/{conversation_id}/events" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'X-External-User-ID: external-user-1'`}>
 
     ```bash {{ title: 'cURL' }}
     curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \
-    --header 'Authorization: Bearer {api_key}'
+    --header 'Authorization: Bearer {api_key}' \
+    --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 SSE">
+
+    ```text
+    id: 1788854400123-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","answer":"重放片段","event_id":"1788854400123-0","sequence":0,"created_at":1788854400,"created_at_ms":1788854400123}}
+
+    id: 1788854400456-0
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"completed","event_id":"1788854400456-0","sequence":0,"created_at":1788854400,"created_at_ms":1788854400456}}
     ```
 
     </CodeGroup>
@@ -214,6 +400,16 @@ X-API-Key: {API_KEY}
   <Col>
     当 Agent 消息等待工作流审批或问答节点时，使用该接口继续同一条消息。
 
+    ### 路径参数与请求头
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，处于等待状态的会话 id。</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>必填，处于等待状态的消息 id；继续操作不会新建一轮消息。</Property>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填，必须是原会话所有者。</Property>
+      <Property name='Content-Type' type='string' propKey='Content-Type'>必填，固定为 `application/json`。</Property>
+    </Properties>
+
     ### 问答请求体
 
     <Properties>
@@ -221,7 +417,7 @@ X-API-Key: {API_KEY}
         必填。固定为 `question_answer`。
       </Property>
       <Property name='inputs' type='object' propKey='inputs'>
-        必填。包含 `query`；如果用户从 `user_input_requested` 的选项中选择了答案，同时传入 `question_answer_option_id`。
+        必填且不能为空。提交 `question_answer_requested` 所要求的回答值；常用字段为 `query`，选择选项时同时传 `question_answer_option_id`。
       </Property>
     </Properties>
 
@@ -232,7 +428,7 @@ X-API-Key: {API_KEY}
         必填。固定为 `approval`。
       </Property>
       <Property name='approval_token' type='string' propKey='approval_token'>
-        必填。来自 `approval_requested`。
+        必填。复制 `approval_requested` 的 `token` 字段。
       </Property>
       <Property name='action' type='string' propKey='action'>
         必填。审批动作 id。
@@ -244,15 +440,20 @@ X-API-Key: {API_KEY}
 
     响应仍然是同一个 `message_id` 的 Agent SSE 流。它可能继续输出工作流事件、再次进入等待状态，也可能输出最终回答并以 `message_end.status: "completed"` 结束。
 
+    ### `200` 响应
+
+    返回 `text/event-stream`，沿用聊天接口的 SSE envelope 和事件字段。通常先收到带 `continuation: true` 的 `message_start`，再收到 `workflow_resumed`、执行进度/文本，以及下一次等待或最终 `message_end`。
+
   </Col>
 
   <Col sticky>
-    <CodeGroup title="提交问答" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "type": "question_answer",\n  "inputs": {\n    "query": "继续",\n    "question_answer_option_id": "continue"\n  }\n}'`}>
+    <CodeGroup title="提交问答" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'X-External-User-ID: external-user-1' \\\n--data '{\n  "type": "question_answer",\n  "inputs": {\n    "query": "继续",\n    "question_answer_option_id": "continue"\n  }\n}'`}>
 
     ```bash {{ title: 'cURL - 提交问答' }}
     curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
     --header 'Content-Type: application/json' \
     --header 'Authorization: Bearer {api_key}' \
+    --header 'X-External-User-ID: external-user-1' \
     --data '{
       "type": "question_answer",
       "inputs": {
@@ -264,12 +465,13 @@ X-API-Key: {API_KEY}
 
     </CodeGroup>
 
-    <CodeGroup title="提交审批" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "type": "approval",\n  "approval_token": "{approval_token}",\n  "action": "approve",\n  "inputs": {}\n}'`}>
+    <CodeGroup title="提交审批" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'X-External-User-ID: external-user-1' \\\n--data '{\n  "type": "approval",\n  "approval_token": "{approval_token}",\n  "action": "approve",\n  "inputs": {}\n}'`}>
 
     ```bash {{ title: 'cURL - 提交审批' }}
     curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
     --header 'Content-Type: application/json' \
     --header 'Authorization: Bearer {api_key}' \
+    --header 'X-External-User-ID: external-user-1' \
     --data '{
       "type": "approval",
       "approval_token": "{approval_token}",
@@ -280,11 +482,1547 @@ X-API-Key: {API_KEY}
 
     </CodeGroup>
 
+    <CodeGroup title="响应" label="200 SSE">
+
+    ```text
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","workflow_run_id":"run-01","continuation":true,"created_at":1788854400}}
+
+    id: 1788854400123-0
+    event: workflow_resumed
+    data: {"event":"workflow_resumed","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","workflow_run_id":"run-01","status":"running"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"completed","metadata":{}}}
+    ```
+
+    </CodeGroup>
+
   </Col>
 </Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"
+  method="POST"
+  title="回答 Skill 用户输入请求"
+  name="#Continue-Agent-User-Input"
+/>
+
+<Row>
+  <Col>
+    只用于 `user_input_requested`，不要用于工作流的审批或问答事件。
+
+    ### 路径参数与请求头
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，处于等待状态的会话 id。</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>必填，处于等待状态的消息 id。</Property>
+      <Property name='request_id' type='string' propKey='request_id'>必填，复制当前 `user_input_requested.request_id`。</Property>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填，必须是原会话所有者。</Property>
+      <Property name='Content-Type' type='string' propKey='Content-Type'>必填，固定为 `application/json`。</Property>
+    </Properties>
+
+    ### 请求体
+
+    <Properties>
+      <Property name='answers' type='object&lt;string,string&gt;' propKey='answers'>必填且不能为空。键为事件中每个 `questions[].id`，值为用户回答或所选选项值。</Property>
+    </Properties>
+
+    ### `200` 响应
+
+    返回同一条消息的 `text/event-stream`。恢复后的模型可能完成，也可能再次询问或进入另一种等待状态；状态机应持续到 `message_end.status` 进入终态。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --data '{"answers":{"target":"生产环境"}}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 SSE">
+
+    ```text
+    id: 1788854400123-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","answer":"我会部署到生产环境。"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"completed","metadata":{}}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+## Agent 事件接入手册
+
+本节是聊天、断线恢复和继续接口共用的 SSE 契约。先根据原生 `event:` 分发，再读取 JSON envelope 的 `data.data`。不要把整个响应当成一个 JSON，也不要等连接关闭后再渲染。
+
+### 通用 envelope 与恢复字段
+
+<Properties>
+  <Property name="id" type="string?" propKey="SSE id">
+    位于 JSON 之外的 SSE 传输字段。非空时保存为 `lastEventID`；断线后把它作为 events 接口的
+    `after_id`。初始或降级事件可能没有 id。
+  </Property>
+  <Property name="event" type="AgentEventName" propKey="SSE event">
+    原生 SSE 事件名，也是客户端 `switch` 的判别字段。
+  </Property>
+  <Property name="data.event" type="AgentEventName" propKey="event">
+    JSON envelope 中的事件名，应与原生 `event:` 一致。
+  </Property>
+  <Property name="data.data" type="object" propKey="data">
+    事件载荷。下面每张表中的“关键字段”都位于这里。
+  </Property>
+  <Property name="conversation_id" type="uuid" propKey="conversation_id">
+    事件所属会话。用它更新当前会话并调用恢复、停止或继续接口。
+  </Property>
+  <Property name="message_id" type="uuid" propKey="message_id">
+    本次助手执行对应的消息。文本拼接、去重和等待状态都应按它隔离。
+  </Property>
+  <Property name="event_id / sequence" type="string? / integer?" propKey="event_id">
+    持久化事件的恢复标识与顺序号；`event_id` 与 SSE `id` 一致。不要自行计算或比较时间戳来代替它。
+  </Property>
+  <Property name="created_at / created_at_ms" type="integer?" propKey="created_at">
+    Unix 秒与可选 Unix 毫秒时间戳，用于展示和诊断，不作为去重键。
+  </Property>
+</Properties>
+
+### 推荐客户端状态机
+
+1. 收到 `message_start` 就保存响应头或事件里的 `conversation_id`、`message_id`。
+2. 收到带 `id` 的事件就立即持久化最新 id，并按 id 去重。
+3. 可见答案只由 `message`、`message_retract`、`message_end.answer` 驱动；进度事件不要拼入最终答案。
+4. `message_end.status` 为 `completed`、`stopped`、`error`、`failed` 时结束；为 `waiting_approval` 或 `waiting_question` 时保留同一消息并走匹配的继续接口。
+5. 断线后调用 events 接口恢复，不要重复提交原聊天请求。
+
+<CodeGroup title="TypeScript 事件分发骨架">
+
+```ts
+type AgentEvent = { event: string; data: Record<string, unknown> };
+
+function applyAgentEvent(frame: AgentEvent) {
+  const data = frame.data;
+  switch (frame.event) {
+    case 'message_start':
+      saveMessageIdentity(String(data.conversation_id), String(data.message_id));
+      break;
+    case 'message':
+      appendAnswer(String(data.message_id), String(data.answer ?? ''));
+      break;
+    case 'message_retract':
+      retractCandidate(String(data.message_id), String(data.presentation_disposition));
+      break;
+    case 'user_input_requested':
+    case 'approval_requested':
+    case 'question_answer_requested':
+      renderPendingInteraction(frame);
+      break;
+    case 'message_end':
+      transitionMessage(String(data.message_id), String(data.status));
+      break;
+    case 'error':
+      showSafeError(String(data.message ?? 'Agent 执行失败'));
+      break;
+    default:
+      updateOptionalProgress(frame); // 未识别事件必须安全忽略
+  }
+}
+```
+
+</CodeGroup>
+
+### 核心消息事件
+
+| 事件              | 什么时候出现                          | 客户端应该做什么                                                   | 关键字段                                               |
+| ----------------- | ------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------ |
+| `message_start`   | 助手消息记录创建后、回答文本之前      | 立即保存会话和消息 id；初始化空回答                                | `parent_id`, `title`, `model`, `replace`, `created_at` |
+| `message`         | 模型产生新的可见回答片段              | 按 `message_id` 将 `answer` 追加到当前回答                         | `answer`                                               |
+| `message_retract` | 已发送的候选文本不再属于最终回答      | `process` 时移出最终回答并可放入过程区；`discard` 时直接删除       | `presentation_disposition`, `answer?`                  |
+| `message_end`     | 当前 SSE 阶段结束                     | 根据 `status` 进入终态或等待态；若有 `answer` 可用它校准完整文本   | `status`, `metadata`, `answer?`                        |
+| `error`           | 流式传输或 runtime 产生客户端安全错误 | 展示 `message`；记录 `code`；若后续没有 `message_end` 则按失败终止 | `message`, `code?`, `params?`                          |
+
+`message_start.parent_id` 为空表示根消息；`replace=true` 表示重新生成正在替换原分支结果。`message_end.status` 的终态为 `completed`、`stopped`、`error`、`failed`，等待态为 `waiting_approval`、`waiting_question`。`metadata` 是公开扩展对象，客户端只读取已知字段并保留未知字段兼容性。
+
+<Properties>
+  <Property name="parent_id" type="uuid | empty string" propKey="parent_id">
+    必填。用户问题或上一条消息 id；根消息使用空字符串。
+  </Property>
+  <Property name="title / model" type="string" propKey="title">
+    必填。消息创建时的会话标题和本次执行使用的已发布模型。
+  </Property>
+  <Property name="replace" type="boolean" propKey="replace">
+    必填。`true` 表示本次是重新生成，客户端应替换原分支结果而不是新增并列答案。
+  </Property>
+  <Property name="answer" type="string" propKey="answer">
+    在 `message` 中是要追加的文本片段；在 `message_retract` 中是受影响的候选文本；在 `message_end`
+    中是可选的完整已保存答案。
+  </Property>
+  <Property
+    name="presentation_disposition"
+    type="process | discard"
+    propKey="presentation_disposition"
+  >
+    必填于 `message_retract`。`process` 表示可移入过程展示，`discard` 表示完全删除。
+  </Property>
+  <Property
+    name="status"
+    type="completed | stopped | error | failed | waiting_approval | waiting_question"
+    propKey="status"
+  >
+    必填于 `message_end`。前四项终止本次消息，后两项要求继续处理同一消息。
+  </Property>
+  <Property name="metadata" type="object" propKey="metadata">
+    必填于 `message_end`。公开运行元数据，可包含 usage 和等待上下文；允许增加未知键。
+  </Property>
+  <Property name="message / code / params" type="string / string? / object?" propKey="message">
+    `error` 的安全错误文本、可选稳定错误码和可选结构化上下文。
+  </Property>
+</Properties>
+
+<CodeGroup title="正常回答 SSE 示例">
+
+```text
+event: message_start
+data: {"event":"message_start","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","parent_id":"","title":"季度分析","model":"published-model","replace":false,"created_at":1788854400}}
+
+id: 1788854400123-0
+event: message
+data: {"event":"message","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","answer":"第一条结论。","event_id":"1788854400123-0","sequence":0,"created_at":1788854400,"created_at_ms":1788854400123}}
+
+event: message_end
+data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"completed","metadata":{"usage":{"total_tokens":128}}}}
+```
+
+</CodeGroup>
+
+### 模型进度与文件解析事件
+
+| 事件                        | 作用与触发时机                       | 客户端应该做什么                                                     | 关键字段                                                                                            |
+| --------------------------- | ------------------------------------ | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `agent_progress`            | 模型仍在处理、复核工具结果或准备动作 | 显示非敏感的加载状态；不能当作模型推理正文                           | `phase`, `progress_id`, `activity`, `stage`, `source`, `status`, `round`, `elapsed_ms`              |
+| `agent_intermediate_answer` | Agent 输出可单独展示的阶段性答案     | 按 `answer_id` 分组；`delta=true` 追加，否则替换；`done=true` 时封口 | `answer_id`, `title?`, `content`, `delta`, `index`, `done`, `status`                                |
+| `file_parse_start`          | 开始解析一个已上传文件               | 展示第 `index` / `total` 个文件的解析状态                            | 公共文件解析字段，`status=parsing`                                                                  |
+| `file_parse_end`            | 文件解析完成或内容被策略过滤         | 结束该文件进度，并根据 `content_status` 判断内容是否可用             | 公共字段及 `content_status?`, `content_chars?`, `from_cache?`, `vision_detail?`, `filtered_reason?` |
+| `file_parse_error`          | 文件解析失败                         | 标记单个文件失败并展示安全的 `message`，不要默认终止其他文件         | 公共字段及 `message`, `status=error`                                                                |
+
+<Properties>
+  <Property name="agent_progress.phase" type="model_processing" propKey="phase">
+    固定的进度事件族。
+  </Property>
+  <Property name="agent_progress.progress_id" type="string" propKey="progress_id">
+    同一消息和模型轮次的稳定标识，用于更新而不是重复创建进度项。
+  </Property>
+  <Property
+    name="agent_progress.activity"
+    type="awaiting_response | reviewing_tool_result | reasoning | preparing_action"
+    propKey="activity"
+  >
+    安全的高层活动标签。`reasoning` 只表示阶段，不包含也不代表可展示的推理内容。
+  </Property>
+  <Property name="agent_progress.stage" type="initial | extended | long_running" propKey="stage">
+    按耗时递进的展示阶段，可用于切换“正在处理”文案。
+  </Property>
+  <Property name="agent_progress.source" type="runtime | provider_signal" propKey="source">
+    进度来自 runtime 推断或 Provider 信号。
+  </Property>
+  <Property
+    name="agent_progress.status / round / elapsed_ms"
+    type="running / integer / integer"
+    propKey="round"
+  >
+    固定运行状态、从 1 开始的模型轮次和当前轮已耗费毫秒数。
+  </Property>
+  <Property name="answer_id / title" type="string / string?" propKey="answer_id">
+    阶段性答案分组 id 和可选展示标题。
+  </Property>
+  <Property name="content / delta" type="string / boolean" propKey="content">
+    阶段性内容，以及该内容应追加还是替换当前分组内容。
+  </Property>
+  <Property name="index / done / status" type="integer / boolean / string" propKey="done">
+    从 0 开始的片段序号、是否完成和阶段性答案生命周期状态。
+  </Property>
+  <Property name="file_id / name / kind" type="uuid / string / string" propKey="file_id">
+    正在解析的文件、原始文件名和解析类别。
+  </Property>
+  <Property name="index / total" type="integer" propKey="index">
+    从 1 开始的文件序号和本轮文件总数。
+  </Property>
+  <Property name="status" type="parsing | completed | error" propKey="status">
+    当前文件解析结果；分别对应开始、成功结束和失败事件。
+  </Property>
+  <Property
+    name="content_status / content_chars"
+    type="string? / integer?"
+    propKey="content_status"
+  >
+    抽取内容的可用状态和字符数。
+  </Property>
+  <Property name="from_cache / vision_detail" type="boolean? / string?" propKey="from_cache">
+    是否复用缓存，以及图像类文件采用的视觉解析精度。
+  </Property>
+  <Property name="filtered_reason / message" type="string?" propKey="filtered_reason">
+    内容不可用或被过滤的原因，以及 `file_parse_error` 的安全错误文本。
+  </Property>
+</Properties>
+
+### Skill 与工具事件
+
+| 事件                       | 作用与触发时机                              | 客户端应该做什么                                           | 关键字段                                                                                                    |
+| -------------------------- | ------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `skill_load_start`         | 兼容执行模式开始加载 Skill 指令             | 可显示加载进度；原生工具循环通常不会发送                   | `skill_id`, `status?`, `effective_version?`                                                                 |
+| `skill_load_end`           | 兼容执行模式完成 Skill 加载                 | 结束加载进度；不要据此判断工具已执行                       | `skill_id`, `status?`, `instruction_digest?`, `instruction_chars?`                                          |
+| `skill_reference_read`     | Skill 读取其公开参考资料                    | 可作为执行轨迹展示                                         | `skill_id`, `path`, `status?`, `access_status?`                                                             |
+| `skill_call_start`         | 开始一次 Skill 工具调用                     | 用 `invocation_id` 创建运行步骤，展示摘要化 `arguments`    | `skill_id`, `tool_name`, `invocation_id`, `arguments?`, `arguments_summary?`, `status?`                     |
+| `skill_call_end`           | 工具调用成功结束                            | 用相同 `invocation_id` 完成步骤，读取公开 `result`         | `skill_id`, `tool_name`, `invocation_id`, `result?`, `duration_ms?`, `status`                               |
+| `skill_call_error`         | 工具调用失败                                | 标记该调用失败并展示安全 `message`；模型仍可能继续回答     | `skill_id`, `tool_name`, `invocation_id`, `message?`, `error_code?`, `duration_ms?`, `status`               |
+| `skill_artifact_created`   | Skill 生成了可下载文件产物                  | 展示文件卡片；优先使用 `download_url`，并遵守 `expires_at` | 调用标识及 `artifact_id?`, `file_id?`, `filename?`, `mime_type?`, `size?`, `url?`, `download_url?`          |
+| `tool_governance_decision` | 已发布 Agent 根据绑定对工具执行做非交互授权 | 可展示允许/拒绝原因或只写入日志；绝不能弹出人工审批        | `correlation_id`, `decision`, `requires_approval=false`, `reason?`, `risk_level?`, `effect?`, `asset_type?` |
+
+所有 `arguments`、`arguments_summary`、`result` 和 `governance` 都是公开摘要，不是稳定的 Provider 原始对象。客户端可以展示或记录，但不应依赖未在文档中声明的嵌套字段完成业务逻辑。
+
+<Properties>
+  <Property name="skill_id" type="string" propKey="skill_id">
+    产生事件的 Skill。
+  </Property>
+  <Property name="tool_name / invocation_id" type="string?" propKey="invocation_id">
+    工具名称和单次调用标识；start、end、error、artifact 使用同一个 `invocation_id` 关联。
+  </Property>
+  <Property name="kind / path" type="string?" propKey="kind">
+    事件子类型和参考资料路径。
+  </Property>
+  <Property name="arguments / arguments_summary" type="object?" propKey="arguments">
+    公开工具参数和经过脱敏、压缩的展示摘要；优先展示摘要。
+  </Property>
+  <Property name="status / duration_ms" type="string? / integer?" propKey="status">
+    调用状态与毫秒耗时。
+  </Property>
+  <Property name="result / governance" type="object?" propKey="result">
+    公开工具结果与治理元数据；两者都允许增加未知键。
+  </Property>
+  <Property name="message / error_code" type="string?" propKey="error_code">
+    客户端安全错误说明和稳定错误码。
+  </Property>
+  <Property
+    name="instruction_digest / instruction_chars / effective_version"
+    type="string? / integer? / string?"
+    propKey="instruction_digest"
+  >
+    兼容模式中有效 Skill 指令的摘要、字符数和版本，用于诊断而不是显示原始指令。
+  </Property>
+  <Property name="policy_state / access_status" type="string?" propKey="access_status">
+    Skill 策略判断状态和参考资料或工具访问结果。
+  </Property>
+  <Property name="artifact_id / artifact_type" type="string? / file?" propKey="artifact_id">
+    runtime 产物标识和固定文件类别。
+  </Property>
+  <Property name="file_id / tool_file_id / upload_file_id" type="string?" propKey="file_id">
+    持久化文件、工具 runtime 文件和关联上传记录的标识。
+  </Property>
+  <Property
+    name="file_type / filename / extension / mime_type / size"
+    type="string? / string? / string? / string? / integer?"
+    propKey="filename"
+  >
+    应用文件类别、建议下载名、无点扩展名、媒体类型和字节大小。
+  </Property>
+  <Property name="url / download_url / transfer_method" type="string?" propKey="download_url">
+    展示或下载地址及获取方式；有 `download_url` 时优先使用。
+  </Property>
+  <Property name="lifecycle / expires_at" type="string? / unknown?" propKey="expires_at">
+    产物保留状态和 runtime 提供的过期时间表示。
+  </Property>
+  <Property name="target / workspace_id / folder_id" type="string?" propKey="target">
+    产物目标类型、工作空间和文件夹。
+  </Property>
+  <Property
+    name="operation_id / asset_operation_audit"
+    type="string? / object?"
+    propKey="operation_id"
+  >
+    资产操作标识和公开公开审计摘要。
+  </Property>
+  <Property name="correlation_id" type="string" propKey="correlation_id">
+    关联治理决定、工具调用和资产审计的标识；不是继续接口参数。
+  </Property>
+  <Property name="decision" type="string" propKey="decision">
+    通常为允许或拒绝结果。拒绝表示工具没有执行，最终回答仍可能正常完成。
+  </Property>
+  <Property name="requires_approval" type="false" propKey="requires_approval">
+    在已发布 Agent API 中固定为 `false`。
+  </Property>
+  <Property name="approval_every_invocation" type="boolean?" propKey="approval_every_invocation">
+    策略是否禁止把一次授权复用于后续调用；这是审计字段，不会让外部用户进入审批流。
+  </Property>
+  <Property name="reason / risk_level / effect / asset_type" type="string?" propKey="reason">
+    可展示的治理原因、风险级别、预期外部副作用和受影响资产类别。
+  </Property>
+  <Property name="tool_id / governed_tool_id" type="string?" propKey="governed_tool_id">
+    runtime 工具标识与稳定的受治理工具定义标识。
+  </Property>
+  <Property
+    name="provider_type / provider_id / integration_id / action_id"
+    type="string?"
+    propKey="provider_id"
+  >
+    集成提供方、配置和动作标识。
+  </Property>
+  <Property
+    name="external_destination / connection_name / connection_display_name"
+    type="string?"
+    propKey="external_destination"
+  >
+    外部目标、内部连接名和用户可见连接名。
+  </Property>
+  <Property name="approval_event / asset_operation_audit" type="object?" propKey="approval_event">
+    可选的公开授权元数据和资产操作审计摘要；允许增加未知键。
+  </Property>
+</Properties>
+
+### Skill 用户输入事件
+
+| 事件                   | 作用与触发时机                             | 客户端应该做什么                                                                           | 关键字段                                                                                                   |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `user_input_requested` | Skill 缺少继续执行所需的信息并暂停当前消息 | 渲染问题，保存 `request_id`；通过 user-input continue 接口提交 `answers`，不要新建聊天消息 | `request_id`, `message?`, `questions[]`, `created_at`, `source?`, `workflow_run_id?`, `node_id?`, `round?` |
+
+<Properties>
+  <Property name="request_id" type="string" propKey="request_id">
+    当前暂停请求的唯一标识，原样放入继续接口路径。
+  </Property>
+  <Property name="message" type="string?" propKey="message">
+    显示在问题列表前的可选提示。
+  </Property>
+  <Property name="questions" type="array&lt;UserInputQuestion&gt;" propKey="questions">
+    至少包含一项；按顺序渲染。
+  </Property>
+  <SubProperty name="questions[].id" type="string">
+    问题标识，也是继续请求 `answers` 对象的键。
+  </SubProperty>
+  <SubProperty name="questions[].question" type="string">
+    展示给最终用户的问题文本。
+  </SubProperty>
+  <SubProperty name="questions[].options" type="array&lt;string | { label, description? }&gt;?">
+    存在时渲染选择项；省略时渲染自由输入。
+  </SubProperty>
+  <Property
+    name="source / workflow_run_id / node_id / round"
+    type="string? / integer?"
+    propKey="source"
+  >
+    仅在问题由工作流上下文生成时出现，用于展示来源和重复轮次。
+  </Property>
+</Properties>
+
+<CodeGroup title="用户输入等待示例">
+
+```text
+event: user_input_requested
+data: {"event":"user_input_requested","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","request_id":"ask-target","message":"请选择目标环境","questions":[{"id":"target","question":"部署到哪个环境？","options":[{"label":"测试环境","description":"仅供验证"},{"label":"生产环境"}]}],"created_at":1788854400}}
+
+event: message_end
+data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","status":"waiting_question","metadata":{}}}
+```
+
+</CodeGroup>
+
+### Agent Memory 事件
+
+| 事件            | 作用与触发时机                   | 客户端应该做什么                 | 事件特定值      |
+| --------------- | -------------------------------- | -------------------------------- | --------------- |
+| `memory_create` | 首次写入某个 Agent Memory 槽位   | 刷新对应槽位；可提供撤销入口     | `action=create` |
+| `memory_update` | 已有槽位被替换或自动更新         | 用新 `revision` 标记本地缓存过期 | `action=update` |
+| `memory_delete` | 单个槽位值被删除                 | 清空该槽位展示                   | `action=delete` |
+| `memory_clear`  | 当前外部用户的可写槽位被批量清空 | 刷新整份 Agent Memory            | `action=clear`  |
+
+<Properties>
+  <Property name="memory_scope" type="agent" propKey="memory_scope">
+    在 Agent API 中固定为 `agent`；账户级记忆不属于此契约。
+  </Property>
+  <Property
+    name="action / status"
+    type="create | update | delete | clear / string"
+    propKey="action"
+  >
+    变更动作和总体执行状态。
+  </Property>
+  <Property name="key / display_name" type="string?" propKey="key">
+    已发布槽位键和展示名称；批量 clear 时可能没有单个 key。
+  </Property>
+  <Property name="mutation_status / source_kind" type="string?" propKey="mutation_status">
+    具体变更结果及来源，例如显式管理或自动提取。
+  </Property>
+  <Property name="operation_id" type="uuid?" propKey="operation_id">
+    存在时可传给 Memory undo 接口。
+  </Property>
+  <Property name="revision" type="integer?" propKey="revision">
+    变更后的槽位修订号，用于并发控制和缓存失效。
+  </Property>
+  <Property name="undoable_until" type="date-time?" propKey="undoable_until">
+    可撤销截止时间；超过后不要再显示撤销操作。
+  </Property>
+</Properties>
+
+### Agent 绑定工作流事件
+
+工作流事件用于执行轨迹和等待交互；最终助手文本仍只由核心消息事件维护。下面每个事件都使用通用 envelope，并按“关键字段”增加工作流字段。
+
+| 事件                        | 含义与客户端动作                         | 关键字段                                                                                                                                |
+| --------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflow_started`          | 工作流开始；创建顶层运行步骤             | `workflow_run_id` 或 `id`, `workflow_id`, `status`                                                                                      |
+| `workflow_resumed`          | 暂停的工作流已恢复；把顶层状态改回运行中 | `workflow_run_id`, `status`                                                                                                             |
+| `workflow_paused`           | 工作流暂停；等待紧邻的审批或问答请求事件 | `workflow_run_id`, `status`, `reasons?`, `paused_at?`                                                                                   |
+| `workflow_finished`         | 工作流成功结束；完成顶层步骤             | `workflow_run_id`, `status`, `outputs?`, `elapsed_time?`, `total_tokens?`, `total_steps?`, `finished_at?`                               |
+| `workflow_failed`           | 工作流失败；展示安全错误摘要             | 上述终态字段及 `error?`                                                                                                                 |
+| `workflow_stopped`          | 工作流被用户或系统停止                   | 上述终态字段及 `reasons?`                                                                                                               |
+| `node_started`              | 工作流节点开始；创建子步骤               | `id`, `node_id`, `node_type`, `title?`, `index?`, `inputs?`, `created_at?`                                                              |
+| `node_finished`             | 工作流节点结束；完成或标记失败           | start 字段及 `status?`, `process_data?`, `outputs?`, `output_handle?`, `error?`, `elapsed_time?`, `execution_metadata?`, `finished_at?` |
+| `approval_requested`        | 工作流等待人工审批；渲染内容、字段和动作 | `form_id`, `node_id`, `node_title?`, `content?`, `fields?`, `actions?`, `submit_methods?`, `expires_at?`, `token?`                      |
+| `approval_result_filled`    | 审批结果已提交；把表单改为只读结果       | `form_id`, `action_id`, `action_label?`, `inputs?`, `rendered_content?`                                                                 |
+| `approval_expired`          | 审批已过期；禁用提交按钮                 | `form_id`, `expires_at?`, `status?`                                                                                                     |
+| `question_answer_requested` | 工作流等待回答；渲染问题和选项           | `workflow_run_id`, `node_id`, `node_title?`, `question`, `choices?`, `round?`                                                           |
+| `question_answer_submitted` | 问题答案已提交；显示所选答案             | `workflow_run_id`, `node_id`, `answer`, `trigger_id?`, `round?`                                                                         |
+| `iteration_started`         | 迭代容器开始                             | `id`, `node_id`, `node_type`, `title?`, `inputs?`, `status?`                                                                            |
+| `iteration_next`            | 开始下一项迭代；更新当前序号             | 容器字段及 `index` 或 `iteration_index`                                                                                                 |
+| `iteration_completed`       | 所有迭代项已跑完，容器准备汇总           | 容器字段及 `steps?`, `outputs?`                                                                                                         |
+| `iteration_succeeded`       | 迭代容器成功终止                         | completed 字段及 `elapsed_time?`, `finished_at?`                                                                                        |
+| `iteration_failed`          | 迭代容器失败终止                         | completed 字段及 `error?`, `elapsed_time?`, `finished_at?`                                                                              |
+| `loop_started`              | 循环容器开始                             | `id`, `node_id`, `node_type`, `title?`, `inputs?`, `status?`                                                                            |
+| `loop_next`                 | 开始下一轮循环；更新当前序号             | 容器字段及 `index` 或 `loop_index`                                                                                                      |
+| `loop_completed`            | 循环条件结束，容器准备汇总               | 容器字段及 `steps?`, `outputs?`                                                                                                         |
+| `loop_succeeded`            | 循环容器成功终止                         | completed 字段及 `elapsed_time?`, `finished_at?`                                                                                        |
+| `loop_failed`               | 循环容器失败终止                         | completed 字段及 `error?`, `elapsed_time?`, `finished_at?`                                                                              |
+| `text_chunk`                | 会话型工作流追加可见文本                 | `workflow_run_id?`, `text?`, `answer?`, `data?`                                                                                         |
+| `text_replace`              | 会话型工作流替换此前文本                 | `workflow_run_id?`, `text?`, `answer?`, `data?`                                                                                         |
+
+<Properties>
+  <Property
+    name="id / workflow_run_id / workflow_id / task_id"
+    type="string?"
+    propKey="workflow_run_id"
+  >
+    工作流运行、定义和任务标识；优先用 `workflow_run_id` 关联同一次运行。
+  </Property>
+  <Property name="node_id / node_type / title / node_title" type="string?" propKey="node_id">
+    节点标识、类型和展示标题。
+  </Property>
+  <Property
+    name="status / round / index / iteration_index / loop_index"
+    type="string? / integer?"
+    propKey="status"
+  >
+    生命周期状态、从 1 开始的交互轮次，以及从 0 开始的容器索引。
+  </Property>
+  <Property name="iteration / pre_loop_output" type="integer? / unknown?" propKey="iteration">
+    runtime 迭代计数和进入循环前保存的值。
+  </Property>
+  <Property name="token" type="string?" propKey="token">
+    审批等待时原样传入 workflow continuation 的 `approval_token`；只适用于该审批事件。
+  </Property>
+  <Property name="form_id / content" type="string? / unknown?" propKey="form_id">
+    审批表单关联 id 和 runtime 提供的文本或结构化内容。
+  </Property>
+  <Property
+    name="fields / actions / submit_methods"
+    type="array? / array? / object?"
+    propKey="actions"
+  >
+    审批字段定义、可选动作和 runtime 声明的提交方式。
+  </Property>
+  <Property name="expires_at" type="unknown?" propKey="expires_at">
+    runtime 提供的审批过期时间；到期后禁止继续提交。
+  </Property>
+  <Property name="action_id / action_label / rendered_content" type="string?" propKey="action_id">
+    已提交审批动作的 id、展示名称和渲染结果。
+  </Property>
+  <Property
+    name="question / choices / answer"
+    type="string? / array? / unknown?"
+    propKey="question"
+  >
+    用户可见问题、可选选择项和 runtime 定义的标量或结构化答案。
+  </Property>
+  <Property name="trigger_id" type="string?" propKey="trigger_id">
+    runtime 为已提交答案提供的触发标识。
+  </Property>
+  <Property name="inputs / outputs / process_data" type="object?" propKey="outputs">
+    公开的节点或工作流输入、输出和过程摘要；大对象可能被截断。
+  </Property>
+  <Property
+    name="inputs_truncated / outputs_truncated / output_handle"
+    type="boolean? / string?"
+    propKey="outputs_truncated"
+  >
+    说明载荷是否被截断以及较大输出的关联句柄。
+  </Property>
+  <Property name="error / reasons" type="unknown? / array?" propKey="error">
+    失败或暂停原因；只用于展示和诊断，不据此猜测继续接口。
+  </Property>
+  <Property
+    name="elapsed_time / total_tokens / total_steps / steps"
+    type="number?"
+    propKey="elapsed_time"
+  >
+    执行统计。
+  </Property>
+  <Property name="paused_at / finished_at / finished_at_ms" type="integer?" propKey="finished_at">
+    runtime 提供的暂停或结束时间戳。
+  </Property>
+  <Property name="extras / metadata / execution_metadata" type="object?" propKey="metadata">
+    向前兼容扩展字段；客户端必须允许新增键。
+  </Property>
+  <Property name="text / answer / data" type="string? / string? / object?" propKey="text">
+    `text_chunk` 和 `text_replace` 的文本主字段、兼容答案字段与附加文本元数据。优先读取
+    `text`，没有时再读取 `answer`。
+  </Property>
+</Properties>
+
+### 两类公开等待如何继续
+
+| 请求事件                    | `message_end.status` | 保存什么                                                                  | 调用什么                                      |
+| --------------------------- | -------------------- | ------------------------------------------------------------------------- | --------------------------------------------- |
+| `approval_requested`        | `waiting_approval`   | `conversation_id`, `message_id`, `token`, 可选表单字段与所选 `action`     | workflow continuation，`type=approval`        |
+| `question_answer_requested` | `waiting_question`   | `conversation_id`, `message_id`, 用户答案及可选 choice id                 | workflow continuation，`type=question_answer` |
+| `user_input_requested`      | `waiting_question`   | `conversation_id`, `message_id`, `request_id`, 以问题 id 为键的 `answers` | user-input continue                           |
+
+继续请求返回的仍是同一条消息的 SSE 流，可能再次等待。不要新建消息；持续处理到真正终态。工具治理对已发布 Agent 是非交互的，`tool_governance_decision.requires_approval` 固定为 `false`，不对应人工继续接口。
+
+---
+
+## 会话、停止和重新生成
+
+本节每个接口都要求使用创建会话时的同一把 API Key 和同一个 `X-External-User-ID`。其他用户的资源按不存在处理。身份隔离上线前创建、没有用户归属的会话不会出现在这些按用户隔离的操作中。
+
+<Heading
+  url="/api/v1/agents/conversations"
+  method="GET"
+  title="列出会话"
+  name="#List-Agent-Conversations"
+/>
+
+<Row>
+  <Col>
+    按最近更新时间倒序返回当前外部用户的会话。
+
+    ### Query 与请求头
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填，会话所有者。</Property>
+      <Property name='page' type='integer' propKey='page'>可选，最小 `1`，默认 `1`。</Property>
+      <Property name='limit' type='integer' propKey='limit'>可选，最小 `1`，默认 `20`，最大 `100`。</Property>
+    </Properties>
+
+    ### 响应 `data`
+
+    `data.data[]` 是会话数组；`page`、`limit`、`total`、`has_more` 描述分页。
+
+    <Properties>
+      <Property name='id' type='uuid' propKey='id'>会话 id，用于详情、消息、恢复、停止和继续接口。</Property>
+      <Property name='organization_id / workspace_id / account_id' type='uuid | null' propKey='organization_id'>资源作用域标识；`workspace_id` 可能为空。</Property>
+      <Property name='title' type='string' propKey='title'>会话展示标题。</Property>
+      <Property name='status / runtime_status' type='string' propKey='status'>会话生命周期状态与当前执行状态。</Property>
+      <Property name='conversation_type / source' type='string' propKey='conversation_type'>会话类型与创建来源；外部 Agent 来源为 `external-api`。</Property>
+      <Property name='current_leaf_message_id / active_message_id' type='uuid | null' propKey='current_leaf_message_id'>当前分支叶子消息与正在执行的消息。</Property>
+      <Property name='dialogue_count' type='integer' propKey='dialogue_count'>对话轮数。</Property>
+      <Property name='source_conversation_id / source_web_app_id' type='string | null' propKey='source_conversation_id'>可选来源会话或落地页标识。</Property>
+      <Property name='metadata' type='object' propKey='metadata'>公开运行与展示元数据；应忽略未知键。</Property>
+      <Property name='created_at / updated_at' type='integer' propKey='created_at'>Unix 秒时间戳。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/conversations?page=1&limit=20' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {
+      "code": "0",
+      "message": "success",
+      "data": {
+        "data": [{
+          "id": "f1f7503a-9e28-4af5-9d6d-9e23fb5a8994",
+          "organization_id": "42ce02c9-0805-48fb-b663-fecb314ce48d",
+          "workspace_id": "711e2b14-0fbc-42ec-839a-9df0536ea2da",
+          "account_id": "5c501f2f-d22c-4c44-8890-bc6d98bf84fd",
+          "title": "季度报告",
+          "status": "normal",
+          "runtime_status": "idle",
+          "conversation_type": "chat",
+          "current_leaf_message_id": "d57058bd-50f1-4bc2-931d-e22a739190e6",
+          "active_message_id": null,
+          "dialogue_count": 3,
+          "source": "external-api",
+          "metadata": {"surface":"external_page_chat"},
+          "created_at": 1788854400,
+          "updated_at": 1788854460
+        }],
+        "page": 1,
+        "limit": 20,
+        "total": 1,
+        "has_more": false
+      }
+    }
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/search"
+  method="GET"
+  title="搜索会话与消息"
+  name="#Search-Agent-Conversations"
+/>
+
+<Row>
+  <Col>
+    在当前外部用户范围内搜索会话标题、用户问题和助手回答。
+
+    ### Query 与请求头
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填，会话所有者。</Property>
+      <Property name='query' type='string' propKey='query'>搜索文本；空白值返回空数组。</Property>
+      <Property name='limit' type='integer' propKey='limit'>可选，默认 `20`，最大 `50`。</Property>
+    </Properties>
+
+    ### 响应 `data[]`
+
+    <Properties>
+      <Property name='type' type='conversation | message' propKey='type'>命中会话标题还是消息。</Property>
+      <Property name='conversation_id / conversation_title' type='string' propKey='conversation_id'>所属会话 id 与标题。</Property>
+      <Property name='message_id' type='uuid | null' propKey='message_id'>消息命中时存在。</Property>
+      <Property name='snippet' type='string' propKey='snippet'>包含命中内容的摘要。</Property>
+      <Property name='updated_at' type='integer' propKey='updated_at'>Unix 秒时间戳。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --get '{apibase}/agents/conversations/search' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --data-urlencode 'query=季度收入' \
+      --data-urlencode 'limit=20'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":[{"type":"message","conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","conversation_title":"季度报告","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","snippet":"季度收入同比增长……","updated_at":1788854460}]}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}"
+  method="GET"
+  title="读取会话"
+  name="#Get-Agent-Conversation"
+/>
+
+<Row>
+  <Col>
+    ### 路径参数与请求头
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，会话 id。</Property>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填，会话所有者；访问其他用户的会话返回 `404`。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data` 是一个完整会话对象，字段与“列出会话”中的 `data.data[]` 完全相同，包括分支 id、执行状态、来源、元数据和时间戳。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/conversations/{conversation_id}' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","title":"季度报告","status":"normal","runtime_status":"idle","conversation_type":"chat","current_leaf_message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","active_message_id":null,"dialogue_count":3,"source":"external-api","created_at":1788854400,"updated_at":1788854460}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}"
+  method="PATCH"
+  title="更新会话"
+  name="#Update-Agent-Conversation"
+/>
+
+<Row>
+  <Col>
+    只更新请求体中出现的字段，未传字段保持不变。
+
+    ### 路径、请求头与请求体
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，会话 id。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与会话所有者。</Property>
+      <Property name='Content-Type' type='string' propKey='Content-Type'>必填，固定为 `application/json`。</Property>
+      <Property name='title' type='string' propKey='title'>可选，新展示标题；空白值会恢复默认标题。</Property>
+      <Property name='status' type='string' propKey='status'>可选，会话生命周期状态，例如 `normal` 或 `archived`。</Property>
+      <Property name='current_leaf_message_id' type='uuid' propKey='current_leaf_message_id'>可选，选择本会话中的某条消息作为当前分支叶子。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data` 是更新后的完整会话对象，字段与“列出会话”中的 `data.data[]` 相同。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request PATCH '{apibase}/agents/conversations/{conversation_id}' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --header 'Content-Type: application/json' \
+      --data '{"title":"2026 财年分析","status":"archived"}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","title":"2026 财年分析","status":"archived","runtime_status":"idle","conversation_type":"chat","dialogue_count":3,"source":"external-api","created_at":1788854400,"updated_at":1788854520}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}"
+  method="DELETE"
+  title="删除会话"
+  name="#Delete-Agent-Conversation"
+/>
+
+<Row>
+  <Col>
+    软删除当前外部用户拥有的会话。
+
+    ### 路径参数与请求头
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，会话 id。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与会话所有者。</Property>
+    </Properties>
+
+    ### 响应
+
+    成功时 `data.result` 固定为 `success`。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request DELETE '{apibase}/agents/conversations/{conversation_id}' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"result":"success"}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages"
+  method="GET"
+  title="列出会话消息"
+  name="#List-Agent-Messages"
+/>
+
+<Row>
+  <Col>
+    用于恢复会话中已持久化的消息历史。
+
+    ### 路径、Query 与请求头
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，会话 id。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与会话所有者。</Property>
+      <Property name='page' type='integer' propKey='page'>可选，默认 `1`。</Property>
+      <Property name='limit' type='integer' propKey='limit'>可选，默认 `100`，最大 `200`。</Property>
+    </Properties>
+
+    ### 响应 `data.data[]`
+
+    <Properties>
+      <Property name='id / conversation_id / parent_id' type='uuid | null' propKey='id'>消息、所属会话和可选父消息标识。</Property>
+      <Property name='query / answer' type='string' propKey='query'>用户问题与持久化助手回答。</Property>
+      <Property name='status / error' type='string | null' propKey='status'>消息生命周期状态与可选公开错误。</Property>
+      <Property name='model_provider / model_name' type='string | null' propKey='model_name'>已发布模型信息。</Property>
+      <Property name='billing_reason_source' type='string | null' propKey='billing_reason_source'>可选计费原因来源。</Property>
+      <Property name='model_parameters / metadata' type='object' propKey='metadata'>记录的公开运行值；应忽略未知键。</Property>
+      <Property name='source_message_id' type='string | null' propKey='source_message_id'>可选来源消息标识。</Property>
+      <Property name='created_at / updated_at' type='integer' propKey='created_at'>Unix 秒时间戳。</Property>
+    </Properties>
+
+    分页字段 `page`、`limit`、`total`、`has_more` 与 `data.data[]` 同级。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/conversations/{conversation_id}/messages?page=1&limit=100' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"data":[{"id":"d57058bd-50f1-4bc2-931d-e22a739190e6","conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","parent_id":null,"query":"总结报告","answer":"收入增长 18%。","status":"completed","model_provider":"openai","model_name":"gpt-5","metadata":{"usage":{"total_tokens":321}},"created_at":1788854400,"updated_at":1788854460}],"page":1,"limit":100,"total":1,"has_more":false}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/stop"
+  method="POST"
+  title="停止会话执行"
+  name="#Stop-Agent-Conversation"
+/>
+
+<Row>
+  <Col>
+    停止当前模型生成、Skill 执行或工作流继续执行。
+
+    ### 路径参数与请求头
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，会话 id。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与会话所有者。</Property>
+    </Properties>
+
+    ### 响应 `data`
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>被停止的会话。</Property>
+      <Property name='message_id' type='uuid | null' propKey='message_id'>存在正在执行的消息时返回。</Property>
+      <Property name='runtime_status' type='string' propKey='runtime_status'>操作后的会话执行状态。</Property>
+      <Property name='status' type='string' propKey='status'>消息停止状态；没有活动消息时返回会话执行状态。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request POST '{apibase}/agents/conversations/{conversation_id}/stop' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","runtime_status":"idle","status":"stopped"}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/messages/{message_id}/regenerate"
+  method="POST"
+  title="重新生成根消息"
+  name="#Regenerate-Agent-Message"
+/>
+
+<Row>
+  <Col>
+    使用最新发布的 Agent 模型和参数重新生成根消息。
+
+    ### 路径、请求头与可选请求体
+
+    <Properties>
+      <Property name='message_id' type='uuid' propKey='message_id'>必填，原根消息 id。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与会话所有者。</Property>
+      <Property name='query' type='string' propKey='query'>可选，替换原用户问题；不传请求体或不传该字段会复用原问题。</Property>
+    </Properties>
+
+    ### `200` 响应
+
+    返回 `text/event-stream`，创建新的助手消息并沿用聊天接口的 SSE envelope 与全部事件字段。请保存 `message_start` 中的新 `message_id`；响应头也会提供 `X-ZGI-Conversation-ID` 和 `X-ZGI-Message-ID`。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --no-buffer --request POST '{apibase}/agents/messages/{message_id}/regenerate' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --header 'Content-Type: application/json' \
+      --data '{"query":"请给出更短的答案"}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 SSE">
+
+    ```text
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"4f13fbde-9538-48b9-ad41-8d768e87af03","parent_id":null,"replace":true}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"4f13fbde-9538-48b9-ad41-8d768e87af03","status":"completed","metadata":{"usage":{"total_tokens":128}}}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## Agent Memory
+
+所有 Memory 接口都要求 `X-External-User-ID`，且只能访问最新发布配置声明的槽位。请与聊天使用同一个 id，使会话和长期 Memory 的归属保持一致。
+
+<Heading
+  url="/api/v1/agents/memory"
+  method="GET"
+  title="读取 Agent Memory"
+  name="#Read-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    ### 请求头
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填，Memory 所有者。</Property>
+    </Properties>
+
+    ### 响应 `data`
+
+    <Properties>
+      <Property name='agent_id' type='uuid' propKey='agent_id'>已发布 Agent id。</Property>
+      <Property name='user_scope / user_id' type='string' propKey='user_scope'>分别为 `end_user` 和 ZGI 派生的内部用户 UUID；`user_id` 不是原始外部 id。</Property>
+      <Property name='exported_at' type='integer' propKey='exported_at'>导出时刻的 Unix 秒。</Property>
+      <Property name='values[]' type='array' propKey='values'>当前可见的已发布 Memory 槽位。</Property>
+      <Property name='values[].id / key / name / description' type='string' propKey='key'>槽位标识与展示信息。</Property>
+      <Property name='values[].max_chars / enabled / sort_order' type='integer / boolean' propKey='max_chars'>内容上限、启用状态与排序。</Property>
+      <Property name='values[].content / revision' type='string / integer' propKey='content'>保存的内容与乐观锁版本。</Property>
+      <Property name='values[].source_kind' type='string' propKey='source_kind'>变更来源类型。</Property>
+      <Property name='values[].source_conversation_id / source_message_id / source_completed_at' type='string / integer' propKey='source_conversation_id'>自动提取来源，可能省略。</Property>
+      <Property name='values[].extractor_version / last_operation_id / undoable_until' type='string / integer' propKey='last_operation_id'>提取器、最后操作和可撤销截止时间，可能省略。</Property>
+      <Property name='values[].created_at / updated_at' type='integer' propKey='created_at'>Unix 秒；同时可能返回 `_unix`、`_iso`、`_display` 时间变体。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/memory' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"agent_id":"4c2cb782-748e-4ff4-a34d-796b40f98f16","user_scope":"end_user","user_id":"ef423f22-abfe-57fa-8320-cfca8d0fdf35","exported_at":1788854400,"values":[{"id":"0a154cc6-b5f0-4875-b2ba-642e0e8f37dd","key":"profile","name":"用户画像","description":"稳定偏好","max_chars":2000,"enabled":true,"sort_order":1,"content":"偏好简洁回答","revision":3,"source_kind":"manager","last_operation_id":"72111957-9a76-49ec-b55a-c11b18b21ac4","created_at":1788850000,"updated_at":1788854400}]}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/export"
+  method="GET"
+  title="导出 Agent Memory"
+  name="#Export-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    ### 请求头
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填，Memory 所有者。</Property>
+    </Properties>
+
+    ### 响应
+
+    JSON body 与“读取 Agent Memory”完全相同；额外返回 `Content-Disposition: attachment; filename="agent-memory.json"`，便于 BFF 转发为下载文件。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/memory/export' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --output agent-memory.json
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应体" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"agent_id":"4c2cb782-748e-4ff4-a34d-796b40f98f16","user_scope":"end_user","user_id":"ef423f22-abfe-57fa-8320-cfca8d0fdf35","exported_at":1788854400,"values":[]}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/{key}"
+  method="PUT"
+  title="写入 Memory 槽位"
+  name="#Set-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    只可写入最新发布配置中已启用的槽位，并且 Agent Memory 必须开启。
+
+    ### 路径、请求头与请求体
+
+    <Properties>
+      <Property name='key' type='string' propKey='key'>必填，已发布槽位 key。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+      <Property name='Content-Type' type='string' propKey='Content-Type'>必填，固定为 `application/json`。</Property>
+      <Property name='content' type='string' propKey='content'>必填，不得超过该槽位的 `max_chars`。</Property>
+      <Property name='expected_revision' type='integer' propKey='expected_revision'>可选，乐观并发校验；版本已经变化时拒绝写入。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data` 是更新后的完整槽位值，包含新 `revision`、`source_kind`、`last_operation_id` 和可选 `undoable_until`，其他字段与读取接口的 `values[]` 相同。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request PUT '{apibase}/agents/memory/profile' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --header 'Content-Type: application/json' \
+      --data '{"content":"偏好简洁回答","expected_revision":2}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"id":"0a154cc6-b5f0-4875-b2ba-642e0e8f37dd","key":"profile","name":"用户画像","description":"稳定偏好","max_chars":2000,"enabled":true,"sort_order":1,"content":"偏好简洁回答","revision":3,"source_kind":"manager","last_operation_id":"72111957-9a76-49ec-b55a-c11b18b21ac4","created_at":1788850000,"updated_at":1788854400}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/{key}"
+  method="DELETE"
+  title="清空单个 Memory 槽位"
+  name="#Clear-Agent-Memory-Slot"
+/>
+
+<Row>
+  <Col>
+    ### 路径、Query 与请求头
+
+    <Properties>
+      <Property name='key' type='string' propKey='key'>必填，最新发布配置中的槽位 key。</Property>
+      <Property name='expected_revision' type='integer' propKey='expected_revision'>可选，乐观并发检查；版本过期会拒绝操作。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data` 是清空后的完整槽位对象；`content` 为空，`revision` 是清空操作后的新版本。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request DELETE '{apibase}/agents/memory/profile?expected_revision=3' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"id":"0a154cc6-b5f0-4875-b2ba-642e0e8f37dd","key":"profile","name":"用户画像","content":"","revision":4,"source_kind":"manager","last_operation_id":"72111957-9a76-49ec-b55a-c11b18b21ac4","updated_at":1788854460}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory"
+  method="DELETE"
+  title="清空全部 Agent Memory"
+  name="#Clear-All-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    清空当前外部用户的所有可写 Memory 值，不会修改 Agent 的槽位定义。
+
+    ### 请求头
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。</Property>
+      <Property name='X-External-User-ID' type='string' propKey='X-External-User-ID'>必填，Memory 所有者。</Property>
+    </Properties>
+
+    ### 响应
+
+    成功时 `data.deleted` 为 `true`。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request DELETE '{apibase}/agents/memory' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"deleted":true}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/operations/{operation_id}/undo"
+  method="POST"
+  title="撤销 Memory 操作"
+  name="#Undo-Agent-Memory"
+/>
+
+<Row>
+  <Col>
+    仅当操作尚未过期、仍是当前版本且允许撤销时，恢复该操作保存的上一份值快照。
+
+    ### 路径参数与请求头
+
+    <Properties>
+      <Property name='operation_id' type='uuid' propKey='operation_id'>必填，来自槽位 `last_operation_id` 或 `memory_*` 事件的 `operation_id`。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+    </Properties>
+
+    ### 响应 `data`
+
+    <Properties>
+      <Property name='operation_id' type='uuid' propKey='operation_id'>被撤销的操作 id。</Property>
+      <Property name='value' type='object' propKey='value'>恢复后的完整槽位对象；恢复状态没有值时可省略。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request POST '{apibase}/agents/memory/operations/{operation_id}/undo' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"operation_id":"72111957-9a76-49ec-b55a-c11b18b21ac4","value":{"key":"profile","content":"上一版本内容","revision":4,"source_kind":"manager","updated_at":1788854520}}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## 兼容元数据接口
+
+这两个只读接口用于兼容同时接入发布工作流的客户端。新 Agent 落地页优先使用 `/agents/config`；需要读取当前文件限制与类型时可使用 `/parameters`。
+
+<Heading url="/api/v1/info" method="GET" title="读取已发布应用信息" name="#Get-Agent-App-Info" />
+
+<Row>
+  <Col>
+    ### 请求头
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。该接口不访问用户状态，不需要外部用户 id。</Property>
+    </Properties>
+
+    ### 直接 `200` 响应
+
+    <Properties>
+      <Property name='name / description' type='string' propKey='name'>已发布应用名称与描述。</Property>
+      <Property name='tags' type='array[string]' propKey='tags'>包含解析后的应用模式。</Property>
+      <Property name='mode' type='agent | workflow | chat-workflow' propKey='mode'>API Key 所绑定应用的 runtime 模式。</Property>
+      <Property name='author_name' type='string' propKey='author_name'>当前固定为 `ZGI`。</Property>
+      <Property name='agent_id' type='uuid' propKey='agent_id'>绑定的应用 id；字段名为兼容旧客户端而保留。</Property>
+      <Property name='icon / icon_type / icon_url' type='string' propKey='icon_url'>图标原始值、类型和解析 URL。</Property>
+      <Property name='version / version_uuid' type='string' propKey='version'>最新发布版本标签与 UUID。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/info' \
+      --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"name":"研究助手","description":"提供有依据的回答","tags":["agent"],"mode":"agent","author_name":"ZGI","agent_id":"4c2cb782-748e-4ff4-a34d-796b40f98f16","icon":"bot","icon_type":"emoji","icon_url":"","version":"v12","version_uuid":"7b0df140-fbc1-41ef-9234-611172283b23"}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/parameters"
+  method="GET"
+  title="读取已发布输入与上传限制"
+  name="#Get-Agent-App-Parameters"
+/>
+
+<Row>
+  <Col>
+    ### 请求头
+
+    <Properties>
+      <Property name='Authorization' type='string' propKey='Authorization'>必填 Agent API Key。该接口不访问用户状态，不需要外部用户 id。</Property>
+    </Properties>
+
+    ### 直接 `200` 响应
+
+    <Properties>
+      <Property name='user_input_form' type='array[object]' propKey='user_input_form'>已发布工作流 start 变量；Agent 模式为空数组。工作流变量保留 graph 中的标识、标签、类型、必填/默认值、选项等字段。</Property>
+      <Property name='features' type='object' propKey='features'>已发布展示能力。Agent 模式包含 `home_title`、`opening_statement`、`input_placeholder`、`theme_color`、`suggested_questions`、`supports_vision`。</Property>
+      <Property name='file_upload.enabled' type='boolean' propKey='file_upload.enabled'>是否允许公开文件上传。</Property>
+      <Property name='file_upload.number_limits' type='integer' propKey='file_upload.number_limits'>单次调用最大文件数。</Property>
+      <Property name='file_upload.allowed_file_types' type='array[string]' propKey='file_upload.allowed_file_types'>当前服务端支持的扩展名/类型。</Property>
+      <Property name='file_upload.transfer_methods' type='array[string]' propKey='file_upload.transfer_methods'>当前为 `local_file`。</Property>
+      <Property name='file_upload.image' type='object' propKey='file_upload.image'>图片专用 `enabled`、`number_limits`、`transfer_methods`。</Property>
+      <Property name='agent_memory.enabled / requires_user' type='boolean' propKey='agent_memory.enabled'>已发布 Agent Memory 开关。</Property>
+      <Property name='system_parameters.*_file_size_limit' type='integer' propKey='system_parameters.file_size_limit'>普通文件、图片、音频和视频大小上限，单位 MB。</Property>
+      <Property name='system_parameters.file_upload_count_limit' type='integer' propKey='system_parameters.file_upload_count_limit'>服务端文件数量上限。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/parameters' \
+      --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {
+      "user_input_form": [],
+      "features": {"home_title":"开始研究","opening_statement":"需要我调查什么？","input_placeholder":"请输入问题","theme_color":"#4F46E5","suggested_questions":["比较这些证据"],"supports_vision":true},
+      "file_upload": {"enabled":true,"number_limits":10,"allowed_file_types":["pdf","png","jpg"],"transfer_methods":["local_file"],"image":{"enabled":true,"number_limits":10,"transfer_methods":["local_file"]}},
+      "agent_memory": {"enabled":true,"requires_user":true},
+      "system_parameters": {"file_size_limit":50,"image_file_size_limit":20,"audio_file_size_limit":100,"video_file_size_limit":500,"file_upload_count_limit":10}
+    }
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## JSON 错误响应
+
+SSE 建立之前，所有接口都以匹配的 HTTP 状态返回 JSON 错误。`code` 是稳定的 ZGI 错误码，`message` 是面向客户端的安全描述；校验错误可能使用更具体的文字，客户端应容忍新增字段。
+
+<Properties>
+  <Property name="code" type="string" propKey="code">
+    机器可读错误码；成功为 `0`，错误为非零值。
+  </Property>
+  <Property name="message" type="string" propKey="message">
+    可展示或记录的安全错误描述。
+  </Property>
+</Properties>
+
+<CodeGroup title="错误响应" label="400 JSON">
+
+```json
+{ "code": "199001", "message": "Invalid parameter" }
+```
+
+</CodeGroup>
+
+- `400`：JSON/参数/id/枚举非法，缺少外部用户，Memory revision 过期，或旧 `user` 与请求头不一致。
+- `401`：API Key 缺失、错误、已停用、已过期或已撤销。
+- `403`：已认证调用者没有该操作权限。
+- `404`：没有发布版本、资源不属于当前用户、Memory 槽位不存在，或继续请求已过期/已处理。
+- `409`：runtime 状态或乐观并发冲突（后端单独映射时）。
+- `500`：服务内部错误；不要向最终用户暴露上游或内部细节。
+
+## 重试、安全与跨域
+
+- 推荐架构是“浏览器 → 你的 BFF/服务端 → ZGI”，由服务端注入 API Key。即使部署允许你的 Origin 跨域，也不要把 Key 下发给浏览器。
+- 建立 SSE 前若返回 `4xx/5xx`，按普通 JSON 错误处理；已建立流后按 `error` / `message_end` 处理。只对网络错误、`429` 和可恢复的 `5xx` 使用指数退避，不要自动重试 `400/401/403/404`。
+- 对聊天 POST 的不确定重试可能创建重复消息。收到 `message_start` 后优先通过 events 接口恢复；客户端按 SSE `id` 去重。
+- 机器可读契约位于 `/api/openapi.yaml`，交互式页面位于 `/swagger/index.html`。
 
 ## 注意事项
 
 - 该接口始终运行 Agent 的最新发布版本，不能调用草稿配置。
 - API Key 只能访问它绑定的 Agent。
-- 多轮上下文使用 `conversation_id`，流恢复和 workflow continuation 使用 `message_id`，排查工作流节点事件使用 `workflow_run_id`。
+- 多轮上下文使用 `conversation_id`，流恢复、两类 continuation 和重新生成使用 `message_id`，排查工作流节点事件使用 `workflow_run_id`。
+- 完整的 Next.js 服务端代理、SSE 状态机和页面接线示例见仓库 `docs/agent-api-quickstart.md`。
