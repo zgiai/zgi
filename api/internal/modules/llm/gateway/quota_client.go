@@ -45,14 +45,15 @@ func (c *QuotaClient) Close() error {
 
 func (c *QuotaClient) PreDeductQuota(ctx context.Context, req *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	grpcReq := &pb.PreDeductQuotaRequest{
-		OrganizationId:   req.OrganizationID,
-		EstimatedCredits: req.EstimatedCredits,
-		ModelId:          req.ModelID,
-		ModelName:        req.ModelName,
-		ProviderId:       req.ProviderID,
-		ProviderName:     req.ProviderName,
-		RequestId:        req.RequestID,
-		AttemptId:        req.AttemptID,
+		OrganizationId:    req.OrganizationID,
+		EstimatedCredits:  req.EstimatedCredits,
+		ModelId:           req.ModelID,
+		ModelName:         req.ModelName,
+		ProviderId:        req.ProviderID,
+		ProviderName:      req.ProviderName,
+		RequestId:         req.RequestID,
+		AttemptId:         req.AttemptID,
+		ReservationPolicy: req.ReservationPolicy,
 	}
 
 	resp, err := c.client.PreDeductQuota(ctx, grpcReq)
@@ -159,14 +160,15 @@ func (c *QuotaClient) CalculateDualCost(ctx context.Context, modelID string, pro
 }
 
 type PreDeductQuotaRequest struct {
-	OrganizationID   string
-	EstimatedCredits int64
-	ModelID          string
-	ModelName        string
-	ProviderID       string
-	ProviderName     string
-	RequestID        string
-	AttemptID        string
+	OrganizationID    string
+	EstimatedCredits  int64
+	ModelID           string
+	ModelName         string
+	ProviderID        string
+	ProviderName      string
+	RequestID         string
+	AttemptID         string
+	ReservationPolicy string
 }
 
 type PreDeductQuotaResponse struct {

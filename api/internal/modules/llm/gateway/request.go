@@ -263,6 +263,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 	requestCreatedAt time.Time,
 	requestID string,
 	attemptID string,
+	reservationPolicy string,
 ) (*BillingContext, error) {
 	channelID := getChannelID(providerSelection)
 
@@ -279,6 +280,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 		attemptID,
 	)
 	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
+	billingCtx.ReservationPolicy = strings.TrimSpace(reservationPolicy)
 	switch useCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string); llmmodel.UseCase(useCase) {
 	case llmmodel.UseCaseTextToSpeech:
 		billingCtx.PricingOperation = PricingOperationSpeech

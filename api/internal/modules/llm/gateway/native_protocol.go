@@ -230,6 +230,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			startTime,
 			requestID,
 			buildAttemptID(requestID, attemptIdx),
+			quote.ReservationPolicy,
 		)
 		if err != nil {
 			lastErr = err
@@ -402,6 +403,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 			startTime,
 			requestID,
 			buildAttemptID(requestID, attemptIdx),
+			quote.ReservationPolicy,
 		)
 		if err != nil {
 			lastErr = err

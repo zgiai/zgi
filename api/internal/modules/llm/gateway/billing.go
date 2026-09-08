@@ -115,6 +115,7 @@ type BillingContext struct {
 	UsageSource         UsageSource
 	PricingSnapshot     datatypes.JSON
 	LockedTokenQuote    *PricingQuote
+	ReservationPolicy   string
 	BillingLane         UsageBillingLane
 	UseSystemProvider   bool
 	IsStreaming         bool

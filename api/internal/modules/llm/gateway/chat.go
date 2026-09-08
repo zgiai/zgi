@@ -192,6 +192,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		startTime,
 		requestID,
 		attemptID,
+		quote.ReservationPolicy,
 	)
 	if err != nil {
 		return nil, err
@@ -437,6 +438,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		startTime,
 		requestID,
 		attemptID,
+		quote.ReservationPolicy,
 	)
 	if err != nil {
 		return nil, err

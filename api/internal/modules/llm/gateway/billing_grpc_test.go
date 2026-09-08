@@ -102,6 +102,9 @@ func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testi
 	if quote.PricingSource != PricingSourceUpstreamModelPrice || quote.UsageSource != UsageSourceEstimatedUsage {
 		t.Fatalf("quote sources = %q/%q", quote.PricingSource, quote.UsageSource)
 	}
+	if quote.ReservationPolicy != reservationPolicyAuthoritativeQuoteV1 {
+		t.Fatalf("reservation policy = %q, want %q", quote.ReservationPolicy, reservationPolicyAuthoritativeQuoteV1)
+	}
 	if !quote.InputTokenPriceResolved || !quote.OutputTokenPriceResolved ||
 		!quote.InputTokenPriceUSDPer1M.Equal(decimal.RequireFromString("2.5")) ||
 		!quote.OutputTokenPriceUSDPer1M.Equal(decimal.RequireFromString("10")) {

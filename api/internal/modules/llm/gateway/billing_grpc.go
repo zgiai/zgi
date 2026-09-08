@@ -39,14 +39,15 @@ type authoritativeTokenCostClient interface {
 }
 
 const (
-	defaultReconcileSweepEvery  = 30 * time.Second
-	defaultReconcileBatchSize   = 50
-	defaultReconcileMaxRetries  = 8
-	defaultReconcileBaseBackoff = 30 * time.Second
-	defaultReconcileMaxBackoff  = 10 * time.Minute
-	defaultSettlePendingTimeout = 2 * time.Minute
-	defaultRemoteInitTimeout    = 10 * time.Minute
-	defaultRemoteCleanupTimeout = 10 * time.Second
+	defaultReconcileSweepEvery            = 30 * time.Second
+	defaultReconcileBatchSize             = 50
+	defaultReconcileMaxRetries            = 8
+	defaultReconcileBaseBackoff           = 30 * time.Second
+	defaultReconcileMaxBackoff            = 10 * time.Minute
+	defaultSettlePendingTimeout           = 2 * time.Minute
+	defaultRemoteInitTimeout              = 10 * time.Minute
+	defaultRemoteCleanupTimeout           = 10 * time.Second
+	reservationPolicyAuthoritativeQuoteV1 = "authoritative_quote_v1"
 )
 
 var (
@@ -124,14 +125,15 @@ func (s *RemoteBilling) QuotePlatformTokenPricing(
 		return PricingQuote{}, fmt.Errorf("derive authoritative output token price: %w", err)
 	}
 	return PricingQuote{
-		InputCredits:  resp.InputCredits,
-		OutputCredits: resp.OutputCredits,
-		TotalCredits:  resp.TotalCredits,
-		InputUSD:      decimal.NewFromFloat(resp.InputUSD),
-		OutputUSD:     decimal.NewFromFloat(resp.OutputUSD),
-		TotalUSD:      decimal.NewFromFloat(resp.TotalUSD),
-		PricingSource: PricingSourceUpstreamModelPrice,
-		UsageSource:   UsageSourceEstimatedUsage,
+		InputCredits:      resp.InputCredits,
+		OutputCredits:     resp.OutputCredits,
+		TotalCredits:      resp.TotalCredits,
+		InputUSD:          decimal.NewFromFloat(resp.InputUSD),
+		OutputUSD:         decimal.NewFromFloat(resp.OutputUSD),
+		TotalUSD:          decimal.NewFromFloat(resp.TotalUSD),
+		PricingSource:     PricingSourceUpstreamModelPrice,
+		UsageSource:       UsageSourceEstimatedUsage,
+		ReservationPolicy: reservationPolicyAuthoritativeQuoteV1,
 
 		InputTokenPriceUSDPer1M:  inputPrice,
 		OutputTokenPriceUSDPer1M: outputPrice,
@@ -189,14 +191,15 @@ func (s *RemoteBilling) preDeductViaGRPC(ctx context.Context, bc *BillingContext
 	}
 
 	req := &PreDeductQuotaRequest{
-		OrganizationID:   bc.OrganizationID,
-		EstimatedCredits: bc.EstimatedCredits,
-		ModelID:          bc.ModelID.String(),
-		ModelName:        bc.ModelName,
-		ProviderID:       bc.ProviderID.String(),
-		ProviderName:     bc.ProviderName,
-		RequestID:        bc.RequestID,
-		AttemptID:        bc.AttemptID,
+		OrganizationID:    bc.OrganizationID,
+		EstimatedCredits:  bc.EstimatedCredits,
+		ModelID:           bc.ModelID.String(),
+		ModelName:         bc.ModelName,
+		ProviderID:        bc.ProviderID.String(),
+		ProviderName:      bc.ProviderName,
+		RequestID:         bc.RequestID,
+		AttemptID:         bc.AttemptID,
+		ReservationPolicy: bc.ReservationPolicy,
 	}
 
 	resp, err := s.grpcClient.PreDeductQuota(ctx, req)

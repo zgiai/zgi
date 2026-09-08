@@ -41,18 +41,19 @@ type PricingModelRef struct {
 }
 
 type PricingQuote struct {
-	InputUSD        decimal.Decimal
-	CacheReadUSD    decimal.Decimal
-	CacheWriteUSD   decimal.Decimal
-	OutputUSD       decimal.Decimal
-	TotalUSD        decimal.Decimal
-	InputCredits    int64
-	OutputCredits   int64
-	TotalCredits    int64
-	PricingSource   PricingSource
-	UsageSource     UsageSource
-	RuleID          string
-	PricingSnapshot datatypes.JSON
+	InputUSD          decimal.Decimal
+	CacheReadUSD      decimal.Decimal
+	CacheWriteUSD     decimal.Decimal
+	OutputUSD         decimal.Decimal
+	TotalUSD          decimal.Decimal
+	InputCredits      int64
+	OutputCredits     int64
+	TotalCredits      int64
+	PricingSource     PricingSource
+	UsageSource       UsageSource
+	RuleID            string
+	PricingSnapshot   datatypes.JSON
+	ReservationPolicy string
 
 	InputTokenPriceUSDPer1M   decimal.Decimal
 	CacheReadPriceUSDPer1M    decimal.Decimal
