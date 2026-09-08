@@ -13,7 +13,7 @@ import {
   Trash2,
   UserRound,
 } from 'lucide-react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { Badge } from '@/components/ui/badge';
@@ -58,6 +58,7 @@ function downloadJSON(filename: string, value: unknown) {
 
 export default function ProfileMemoryPage() {
   const t = useT('profile');
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [consumerType, setConsumerType] = useState<UserMemoryConsumerType | ''>('');
   const [status, setStatus] = useState<UserMemoryRelationshipStatus | ''>('');
@@ -163,11 +164,14 @@ export default function ProfileMemoryPage() {
         <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
           <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
             <div>
-              <Button variant="ghost" size="sm" asChild className="mb-3 -ml-2">
-                <Link href="/profile">
-                  <ArrowLeft className="mr-1 size-4" />
-                  {t('backButton')}
-                </Link>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mb-3 -ml-2"
+                onClick={() => router.back()}
+              >
+                <ArrowLeft className="mr-1 size-4" />
+                {t('backButton')}
               </Button>
               <div className="flex items-center gap-3">
                 <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -188,9 +192,7 @@ export default function ProfileMemoryPage() {
             <Select
               value={consumerType || allFilterValue}
               onValueChange={value => {
-                setConsumerType(
-                  value === allFilterValue ? '' : (value as UserMemoryConsumerType)
-                );
+                setConsumerType(value === allFilterValue ? '' : (value as UserMemoryConsumerType));
                 setPage(1);
               }}
             >
@@ -209,16 +211,11 @@ export default function ProfileMemoryPage() {
             <Select
               value={status || allFilterValue}
               onValueChange={value => {
-                setStatus(
-                  value === allFilterValue ? '' : (value as UserMemoryRelationshipStatus)
-                );
+                setStatus(value === allFilterValue ? '' : (value as UserMemoryRelationshipStatus));
                 setPage(1);
               }}
             >
-              <SelectTrigger
-                className="w-full sm:w-[200px]"
-                aria-label={t('memory.statusFilter')}
-              >
+              <SelectTrigger className="w-full sm:w-[200px]" aria-label={t('memory.statusFilter')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
