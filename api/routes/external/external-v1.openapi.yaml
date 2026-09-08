@@ -1,0 +1,1571 @@
+openapi: 3.0.3
+info:
+  title: ZGI External Agent API
+  version: 1.0.0
+  description: |-
+    Server-side API for building a frontend on a published ZGI Agent.
+    Streaming operations use native Server-Sent Events. Each `data:` line is an
+    `SSEEnvelope`; dispatch on the native `event:` value and read its matching
+    payload schema from `x-zgi-sse-event-data-schemas` below.
+x-zgi-sse-event-data-schemas:
+  message_start: '#/components/schemas/MessageStartEventData'
+  message: '#/components/schemas/MessageEventData'
+  message_retract: '#/components/schemas/MessageRetractEventData'
+  message_end: '#/components/schemas/MessageEndEventData'
+  error: '#/components/schemas/ErrorEventData'
+  agent_progress: '#/components/schemas/AgentProgressEventData'
+  agent_intermediate_answer: '#/components/schemas/IntermediateAnswerEventData'
+  user_input_requested: '#/components/schemas/UserInputRequestedEventData'
+  file_parse_start: '#/components/schemas/FileParseEventData'
+  file_parse_end: '#/components/schemas/FileParseEventData'
+  file_parse_error: '#/components/schemas/FileParseEventData'
+  skill_load_start: '#/components/schemas/SkillEventData'
+  skill_load_end: '#/components/schemas/SkillEventData'
+  skill_reference_read: '#/components/schemas/SkillEventData'
+  skill_call_start: '#/components/schemas/SkillEventData'
+  skill_call_end: '#/components/schemas/SkillEventData'
+  skill_call_error: '#/components/schemas/SkillEventData'
+  skill_artifact_created: '#/components/schemas/SkillArtifactEventData'
+  tool_governance_decision: '#/components/schemas/ToolGovernanceDecisionEventData'
+  memory_create: '#/components/schemas/MemoryMutationEventData'
+  memory_update: '#/components/schemas/MemoryMutationEventData'
+  memory_delete: '#/components/schemas/MemoryMutationEventData'
+  memory_clear: '#/components/schemas/MemoryMutationEventData'
+  workflow_started: '#/components/schemas/WorkflowEventData'
+  node_started: '#/components/schemas/WorkflowEventData'
+  node_finished: '#/components/schemas/WorkflowEventData'
+  workflow_paused: '#/components/schemas/WorkflowEventData'
+  workflow_resumed: '#/components/schemas/WorkflowEventData'
+  approval_requested: '#/components/schemas/WorkflowEventData'
+  approval_result_filled: '#/components/schemas/WorkflowEventData'
+  approval_expired: '#/components/schemas/WorkflowEventData'
+  question_answer_requested: '#/components/schemas/WorkflowEventData'
+  question_answer_submitted: '#/components/schemas/WorkflowEventData'
+  iteration_started: '#/components/schemas/WorkflowEventData'
+  iteration_next: '#/components/schemas/WorkflowEventData'
+  iteration_completed: '#/components/schemas/WorkflowEventData'
+  iteration_succeeded: '#/components/schemas/WorkflowEventData'
+  iteration_failed: '#/components/schemas/WorkflowEventData'
+  loop_started: '#/components/schemas/WorkflowEventData'
+  loop_next: '#/components/schemas/WorkflowEventData'
+  loop_completed: '#/components/schemas/WorkflowEventData'
+  loop_succeeded: '#/components/schemas/WorkflowEventData'
+  loop_failed: '#/components/schemas/WorkflowEventData'
+  workflow_finished: '#/components/schemas/WorkflowEventData'
+  workflow_failed: '#/components/schemas/WorkflowEventData'
+  workflow_stopped: '#/components/schemas/WorkflowEventData'
+  text_chunk: '#/components/schemas/WorkflowTextEventData'
+  text_replace: '#/components/schemas/WorkflowTextEventData'
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
+tags:
+  - name: Agent
+  - name: Conversations
+  - name: Continuations
+  - name: Memory
+paths:
+  /info:
+    get:
+      tags: [Agent]
+      summary: Get legacy-compatible published application metadata
+      operationId: getPublishedApplicationInfo
+      description: Returns direct JSON metadata for the latest published application bound to this API key. This read-only endpoint does not require an external-user id.
+      responses:
+        '200':
+          description: Published application metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishedApplicationInfo'
+        default:
+          $ref: '#/components/responses/Error'
+  /parameters:
+    get:
+      tags: [Agent]
+      summary: Get legacy-compatible inputs, features, and file limits
+      operationId: getPublishedApplicationParameters
+      description: Returns direct JSON containing published presentation features, workflow start variables, upload capabilities, Agent Memory flags, and current server limits.
+      responses:
+        '200':
+          description: Published runtime parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishedApplicationParameters'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/config:
+    get:
+      tags: [Agent]
+      summary: Get published landing-page configuration
+      operationId: getPublishedAgentConfig
+      description: Returns the latest published public fields needed to render an Agent landing page. Draft settings, model credentials, and internal runtime configuration are never returned.
+      responses:
+        '200':
+          description: Published Agent presentation and capability flags
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConfigEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /files/upload:
+    post:
+      tags: [Agent]
+      summary: Upload a file for a subsequent Agent message
+      operationId: uploadAgentFile
+      description: Uploads a temporary file owned by the external user. Put the returned `id` in a later chat request's `file_ids`.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                user:
+                  type: string
+                  deprecated: true
+                  description: Deprecated compatibility field. Use `X-External-User-ID`.
+                file:
+                  type: string
+                  format: binary
+                  description: Required file body. Check `/parameters` for the server's current types and limits.
+      responses:
+        '201':
+          description: Uploaded file metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadedFile'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/chat:
+    post:
+      tags: [Agent]
+      summary: Stream a published Agent response
+      operationId: streamPublishedAgentResponse
+      description: Creates or continues an external-user-scoped conversation using the latest published Agent configuration and streams native SSE events. External model/provider/parameter overrides are not applied.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/conversations:
+    get:
+      tags: [Conversations]
+      summary: List conversations owned by this API key
+      operationId: listAgentConversations
+      description: Lists only conversations created by this API key's bound Agent for the supplied external user, ordered by latest update.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          $ref: '#/components/responses/ConversationListEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/conversations/search:
+    get:
+      tags: [Conversations]
+      summary: Search conversations and messages
+      operationId: searchAgentConversations
+      description: Searches conversation titles, user queries, and assistant answers in the supplied external user's scope. Blank query text returns an empty array.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+        - name: query
+          in: query
+          description: Text to find in conversation titles or message content.
+          schema: {type: string}
+        - $ref: '#/components/parameters/SearchLimit'
+      responses:
+        '200':
+          $ref: '#/components/responses/SearchResultsEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/ExternalUserID'
+      - $ref: '#/components/parameters/LegacyUser'
+    get:
+      tags: [Conversations]
+      summary: Get a conversation
+      operationId: getAgentConversation
+      description: Returns one conversation only when it belongs to the API key's bound Agent and supplied external user.
+      responses:
+        '200':
+          $ref: '#/components/responses/ConversationEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      tags: [Conversations]
+      summary: Rename or update a conversation
+      operationId: updateAgentConversation
+      description: Updates only supplied fields and returns the complete conversation object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateConversationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/ConversationEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [Conversations]
+      summary: Delete a conversation
+      operationId: deleteAgentConversation
+      description: Soft-deletes a conversation owned by the supplied external user.
+      responses:
+        '200':
+          $ref: '#/components/responses/DeleteConversationEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}/messages:
+    get:
+      tags: [Conversations]
+      summary: List messages in a conversation
+      operationId: listAgentConversationMessages
+      description: Returns persisted message history for an external-user-owned conversation.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/MessageLimit'
+      responses:
+        '200':
+          $ref: '#/components/responses/MessageListEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}/events:
+    get:
+      tags: [Conversations]
+      summary: Recover a running Agent SSE stream
+      operationId: recoverAgentEventStream
+      description: Replays recoverable events after `after_id` and remains connected while the message is active. Events are retained for a limited period and this endpoint never creates a new message.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+        - name: message_id
+          in: query
+          required: true
+          description: Assistant message id returned by `message_start` or `X-ZGI-Message-ID`.
+          schema: {type: string, format: uuid}
+        - name: after_id
+          in: query
+          description: Last SSE `id` received by the client. Omit to replay from the beginning of the recoverable stream.
+          schema: {type: string}
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}/stop:
+    post:
+      tags: [Conversations]
+      summary: Stop the active Agent response
+      operationId: stopAgentConversation
+      description: Cancels the current model generation, Skill execution, or workflow continuation for the conversation.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/StopConversationEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/messages/{message_id}/regenerate:
+    post:
+      tags: [Conversations]
+      summary: Regenerate a root message using published Agent settings
+      operationId: regenerateAgentMessage
+      description: Creates a replacement assistant message using the latest published model and parameters. An empty body reuses the original query.
+      parameters:
+        - $ref: '#/components/parameters/MessageID'
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegenerateMessageRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation:
+    post:
+      tags: [Continuations]
+      summary: Continue a paused workflow question or approval
+      operationId: continueAgentWorkflow
+      description: Continues the same message after `question_answer_requested` or `approval_requested`. A continuation can enter another waiting state.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/MessageID'
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowContinuationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:
+    post:
+      tags: [Continuations]
+      summary: Answer a Skill user-input request
+      operationId: continueAgentUserInput
+      description: Continues the same message after `user_input_requested`. Use each event `questions[].id` as an `answers` key.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/MessageID'
+        - name: request_id
+          in: path
+          required: true
+          description: Request id copied from the active `user_input_requested` event.
+          schema: {type: string}
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInputContinuationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/memory:
+    get:
+      tags: [Memory]
+      summary: Read the external user's Agent Memory
+      operationId: getAgentMemory
+      description: Returns visible slots from the latest published Agent configuration and values owned by the supplied external user.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryExportEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [Memory]
+      summary: Clear the external user's writable Agent Memory
+      operationId: clearAgentMemory
+      description: Clears all writable values for the external user without changing published slot definitions.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryClearEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/memory/export:
+    get:
+      tags: [Memory]
+      summary: Export the external user's Agent Memory
+      operationId: exportAgentMemory
+      description: Returns the same JSON envelope as `GET /agents/memory` and marks it as an `agent-memory.json` attachment.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryExportDownload'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/memory/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema: {type: string}
+      - $ref: '#/components/parameters/ExternalUserID'
+      - $ref: '#/components/parameters/LegacyUser'
+    put:
+      tags: [Memory]
+      summary: Set one writable memory slot
+      operationId: setAgentMemorySlot
+      description: Writes an enabled slot declared by the latest published Agent configuration. Use `expected_revision` to prevent lost updates.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemorySlotUpdateRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemorySlotEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [Memory]
+      summary: Delete one writable memory slot
+      operationId: clearAgentMemorySlot
+      description: Clears one enabled slot. Use the optional revision check to reject stale writes.
+      parameters:
+        - name: expected_revision
+          in: query
+          description: Current slot revision expected by the caller.
+          schema: {type: integer, format: int64, minimum: 0}
+      responses:
+        '200':
+          $ref: '#/components/responses/MemorySlotEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/memory/operations/{operation_id}/undo:
+    post:
+      tags: [Memory]
+      summary: Undo a direct memory operation
+      operationId: undoAgentMemoryOperation
+      description: Restores the operation's previous value while the operation is unexpired and still matches the current revision.
+      parameters:
+        - name: operation_id
+          in: path
+          required: true
+          description: Last operation id returned by a slot value or a `memory_*` event.
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryUndoEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  parameters:
+    ConversationID:
+      name: conversation_id
+      in: path
+      required: true
+      description: Conversation UUID returned by chat or the conversation list.
+      schema: {type: string, format: uuid}
+    MessageID:
+      name: message_id
+      in: path
+      required: true
+      description: Assistant message UUID returned by `message_start` or message history.
+      schema: {type: string, format: uuid}
+    ExternalUserID:
+      name: X-External-User-ID
+      in: header
+      required: true
+      description: |-
+        Stable, opaque end-user identifier supplied by the integration's trusted
+        backend. It is case-sensitive, limited to 128 Unicode characters, and
+        scopes conversations, stream recovery, continuations, files, and Memory.
+        Do not send email addresses, phone numbers, or other direct personal data.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    LegacyUser:
+      name: user
+      in: query
+      deprecated: true
+      description: Deprecated compatibility parameter. Use `X-External-User-ID`; if both are sent they must match exactly.
+      schema:
+        type: string
+        maxLength: 128
+    Page:
+      name: page
+      in: query
+      description: One-based page number.
+      schema: {type: integer, minimum: 1, default: 1}
+    Limit:
+      name: limit
+      in: query
+      description: Maximum conversations to return. Runtime caps this value at 100.
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    SearchLimit:
+      name: limit
+      in: query
+      description: Maximum search results to return.
+      schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+    MessageLimit:
+      name: limit
+      in: query
+      description: Maximum messages to return. Runtime caps this value at 200.
+      schema: {type: integer, minimum: 1, maximum: 200, default: 100}
+  responses:
+    AgentEventStream:
+      description: |-
+        Native Server-Sent Events stream. The native `event:` value selects the
+        payload schema in `x-zgi-sse-event-data-schemas`. The JSON `data:` line
+        has shape `{ "event": eventName, "data": eventPayload }`. Persist each
+        SSE `id:` for reconnect; an event without `id:` is not recoverable.
+      content:
+        text/event-stream:
+          schema:
+            type: string
+            example: |-
+              id: 1715750400000-0
+              event: message
+              data: {"event":"message","data":{"conversation_id":"…","message_id":"…","answer":"Hello"}}
+      headers:
+        X-ZGI-Conversation-ID:
+          description: Present for newly prepared chat and regeneration streams so the conversation can be recovered before the first SSE frame is read.
+          schema: {type: string, format: uuid}
+        X-ZGI-Message-ID:
+          description: Present for newly prepared chat and regeneration streams so the message can be recovered before the first SSE frame is read.
+          schema: {type: string, format: uuid}
+    SuccessEnvelope:
+      description: Successful response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SuccessEnvelope'
+    ConversationEnvelope:
+      description: Conversation response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ConversationEnvelope'
+    ConversationListEnvelope:
+      description: Paginated conversation response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ConversationListEnvelope'
+    MessageListEnvelope:
+      description: Paginated message response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MessageListEnvelope'
+    SearchResultsEnvelope:
+      description: Conversation and message search results
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SearchResultsEnvelope'
+    StopConversationEnvelope:
+      description: Stop result
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StopConversationEnvelope'
+    DeleteConversationEnvelope:
+      description: Conversation deletion result
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DeleteConversationEnvelope'
+    MemoryExportEnvelope:
+      description: Agent Memory slots and values for the supplied external user
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryExportEnvelope'
+    MemoryExportDownload:
+      description: Downloadable Agent Memory export
+      headers:
+        Content-Disposition:
+          description: Attachment filename; currently `attachment; filename="agent-memory.json"`.
+          schema: {type: string}
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryExportEnvelope'
+    MemorySlotEnvelope:
+      description: Updated or cleared Agent Memory slot
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemorySlotEnvelope'
+    MemoryClearEnvelope:
+      description: Clear-all result
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryClearEnvelope'
+    MemoryUndoEnvelope:
+      description: Undo result
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryUndoEnvelope'
+    Error:
+      description: Error response. The HTTP status reflects the error class.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    SSEEnvelope:
+      type: object
+      required: [event, data]
+      description: JSON encoded on an SSE `data:` line. The native SSE `id:` and `event:` lines are outside this object.
+      properties:
+        event:
+          $ref: '#/components/schemas/AgentEventName'
+        data:
+          type: object
+          description: Event-specific payload described by the matching event data schema.
+          additionalProperties: true
+    AgentEventName:
+      type: string
+      enum:
+        - message_start
+        - message
+        - message_retract
+        - message_end
+        - error
+        - agent_progress
+        - agent_intermediate_answer
+        - user_input_requested
+        - file_parse_start
+        - file_parse_end
+        - file_parse_error
+        - skill_load_start
+        - skill_load_end
+        - skill_reference_read
+        - skill_call_start
+        - skill_call_end
+        - skill_call_error
+        - skill_artifact_created
+        - tool_governance_decision
+        - memory_create
+        - memory_update
+        - memory_delete
+        - memory_clear
+        - workflow_started
+        - node_started
+        - node_finished
+        - workflow_paused
+        - workflow_resumed
+        - approval_requested
+        - approval_result_filled
+        - approval_expired
+        - question_answer_requested
+        - question_answer_submitted
+        - iteration_started
+        - iteration_next
+        - iteration_completed
+        - iteration_succeeded
+        - iteration_failed
+        - loop_started
+        - loop_next
+        - loop_completed
+        - loop_succeeded
+        - loop_failed
+        - workflow_finished
+        - workflow_failed
+        - workflow_stopped
+        - text_chunk
+        - text_replace
+    EventIdentity:
+      type: object
+      description: Identity and replay metadata shared by Agent SSE event payloads.
+      required: [conversation_id, message_id]
+      properties:
+        conversation_id: {type: string, format: uuid, description: Conversation that owns the stream.}
+        message_id: {type: string, format: uuid, description: Assistant message whose execution emitted the event.}
+        event_id: {type: string, description: Recoverable SSE id copied into persisted event payloads.}
+        sequence: {type: integer, format: int64, description: Sequence component of a recoverable SSE id.}
+        created_at: {type: integer, format: int64, description: Unix seconds.}
+        created_at_ms: {type: integer, format: int64, description: Unix milliseconds when available.}
+    MessageStartEventData:
+      description: Emitted after the assistant message record is created and before answer deltas.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [parent_id, title, model, replace, created_at]
+          properties:
+            parent_id: {type: string, nullable: true, description: Parent message UUID, or an empty string for a root message.}
+            title: {type: string, description: Conversation title at message creation time.}
+            model: {type: string, description: Published model selected for execution.}
+            replace: {type: boolean, description: True when regeneration replaces a prior branch result.}
+    MessageEventData:
+      description: Incremental visible assistant-answer chunk.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [answer]
+          properties:
+            answer: {type: string, description: Text delta to append to the visible assistant answer.}
+    MessageRetractEventData:
+      description: Removes previously streamed candidate text from the final answer and optionally preserves it as process output.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [presentation_disposition]
+          properties:
+            presentation_disposition:
+              type: string
+              enum: [process, discard]
+              description: Move previously streamed candidate text to process UI, or remove it entirely.
+            answer: {type: string, description: Candidate text affected by the retraction when supplied.}
+    MessageEndEventData:
+      description: Ends the current streaming phase; waiting statuses require a matching continuation endpoint.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [status, metadata]
+          properties:
+            status:
+              type: string
+              enum: [completed, stopped, error, failed, waiting_approval, waiting_question]
+              description: Final status, or a resumable waiting state for this streaming phase.
+            answer: {type: string, description: Complete stored answer when supplied.}
+            metadata: {type: object, additionalProperties: true, description: Public runtime metadata, including usage and continuation state.}
+    ErrorEventData:
+      description: Client-safe streaming or runtime failure.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [message]
+          properties:
+            message: {type: string, description: Client-safe error message.}
+            code: {type: string, description: Stable structured code when available.}
+            params: {type: object, additionalProperties: true, description: Optional structured context safe to expose to clients.}
+    AgentProgressEventData:
+      description: Coarse model-processing progress without private reasoning text.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [phase, progress_id, activity, stage, source, status, round, elapsed_ms, created_at]
+          properties:
+            phase: {type: string, enum: [model_processing], description: Stable progress event family.}
+            progress_id: {type: string, description: Stable message-and-model-round identifier.}
+            activity: {type: string, enum: [awaiting_response, reviewing_tool_result, reasoning, preparing_action], description: Current high-level activity safe to present to the user.}
+            stage: {type: string, enum: [initial, extended, long_running], description: Elapsed-time stage for progressive UI messaging.}
+            source: {type: string, enum: [runtime, provider_signal], description: Whether progress was inferred by the runtime or emitted by the provider.}
+            status: {type: string, enum: [running], description: Execution remains in progress.}
+            round: {type: integer, minimum: 1, description: One-based model round within the message.}
+            elapsed_ms: {type: integer, format: int64, minimum: 0, description: Milliseconds elapsed in the current model round.}
+    IntermediateAnswerEventData:
+      description: Structured interim answer that can be rendered separately from the final answer.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [answer_id, content, delta, index, done, status]
+          properties:
+            answer_id: {type: string, description: Stable id used to group chunks for one intermediate answer.}
+            title: {type: string, description: Optional user-facing intermediate-answer title.}
+            content: {type: string, description: Full content or delta according to delta.}
+            delta: {type: boolean, description: Append content when true; replace the grouped content when false.}
+            index: {type: integer, minimum: 0, description: Zero-based chunk or item index.}
+            done: {type: boolean, description: Whether this intermediate answer is complete.}
+            status: {type: string, description: Intermediate-answer lifecycle status.}
+    UserInputOption:
+      type: object
+      description: Selectable answer displayed for a user-input question.
+      required: [label]
+      properties:
+        label: {type: string, description: Value and label presented to the user.}
+        description: {type: string, description: Optional explanatory text for the option.}
+    UserInputQuestion:
+      type: object
+      description: One question the host page must present before resuming the Agent.
+      required: [id, question]
+      properties:
+        id: {type: string, description: Key to use in the continuation `answers` object.}
+        question: {type: string, description: User-facing question text.}
+        options:
+          type: array
+          description: Optional choices; omitted for free-form answers.
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/UserInputOption'
+              - type: string
+    UserInputRequestedEventData:
+      description: Pauses the Agent until answers are submitted to the user-input continuation endpoint.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [request_id, questions, created_at]
+          properties:
+            source: {type: string, description: Present for workflow-generated question prompts.}
+            request_id: {type: string, description: Path id for the user-input continuation endpoint.}
+            workflow_run_id: {type: string, description: Originating workflow run for workflow-generated prompts.}
+            node_id: {type: string, description: Originating workflow node for workflow-generated prompts.}
+            round: {type: integer, minimum: 1, description: Prompt round when repeated input is requested.}
+            message: {type: string, description: Optional introductory instruction for the questions.}
+            questions:
+              type: array
+              description: Questions whose ids become keys in the continuation answers object.
+              items: {$ref: '#/components/schemas/UserInputQuestion'}
+    FileParseEventData:
+      description: Start, completion, or failure state for one uploaded file being prepared for the Agent.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [file_id, name, kind, index, total, status]
+          properties:
+            file_id: {type: string, format: uuid, description: Uploaded file being parsed.}
+            name: {type: string, description: Original filename for progress display.}
+            kind: {type: string, description: File or content category selected by the parser.}
+            index: {type: integer, minimum: 1, description: One-based file position in this request.}
+            total: {type: integer, minimum: 1, description: Total files being prepared.}
+            status: {type: string, enum: [parsing, completed, error], description: Current parse result.}
+            content_status: {type: string, description: Extracted-content availability or filtering status.}
+            content_chars: {type: integer, minimum: 0, description: Number of extracted text characters.}
+            from_cache: {type: boolean, description: Whether parsed content was reused from cache.}
+            vision_detail: {type: string, description: Vision-processing detail level when applicable.}
+            filtered_reason: {type: string, description: Why extracted content was filtered or unavailable.}
+            message: {type: string, description: Parse error message for `file_parse_error`.}
+    SkillEventData:
+      description: Common public payload for Skill reference reads and tool invocation lifecycle events.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [skill_id]
+          properties:
+            skill_id: {type: string, description: Skill that owns the reference or tool.}
+            tool_name: {type: string, description: Invoked tool name when applicable.}
+            invocation_id: {type: string, description: Stable id correlating start, end, error, and artifact events.}
+            kind: {type: string, description: Reference or invocation kind.}
+            path: {type: string, description: Reference path for `skill_reference_read`.}
+            arguments: {type: object, additionalProperties: true, description: Public/summarized tool arguments.}
+            arguments_summary: {type: object, additionalProperties: true, description: Redacted compact argument summary for presentation.}
+            status: {type: string, description: Skill or tool lifecycle status.}
+            duration_ms: {type: integer, format: int64, minimum: 0, description: Invocation duration in milliseconds.}
+            result: {type: object, additionalProperties: true, description: Public/summarized result.}
+            message: {type: string, description: Client-safe status or failure message.}
+            error_code: {type: string, description: Stable invocation error code when supplied.}
+            governance: {type: object, additionalProperties: true, description: Public governance decision metadata.}
+            instruction_digest: {type: string, description: Digest identifying the effective Skill instructions.}
+            instruction_chars: {type: integer, minimum: 0, description: Character count of the effective Skill instructions.}
+            effective_version: {type: string, description: Effective Skill version.}
+            policy_state: {type: string, description: Skill policy evaluation state.}
+            access_status: {type: string, description: Skill reference or tool access result.}
+    SkillArtifactEventData:
+      description: Public metadata for a file artifact created by a Skill invocation.
+      allOf:
+        - $ref: '#/components/schemas/SkillEventData'
+        - type: object
+          properties:
+            artifact_id: {type: string, description: Runtime artifact identifier.}
+            artifact_type: {type: string, enum: [file], description: Artifact category.}
+            file_id: {type: string, description: Public file identifier when persisted.}
+            tool_file_id: {type: string, description: Tool-runtime file identifier when different from file_id.}
+            file_type: {type: string, description: Application-specific file category.}
+            filename: {type: string, description: Suggested download filename.}
+            extension: {type: string, description: Filename extension without a leading dot.}
+            mime_type: {type: string, description: Artifact media type.}
+            size: {type: integer, format: int64, minimum: 0, description: Artifact size in bytes.}
+            url: {type: string, description: Public or signed artifact URL when available.}
+            download_url: {type: string, description: Download-specific URL when available.}
+            transfer_method: {type: string, description: How the artifact can be retrieved.}
+            lifecycle: {type: string, description: Retention or persistence state.}
+            expires_at: {description: Expiration time in the runtime-provided representation.}
+            target: {type: string, description: Requested asset destination when applicable.}
+            workspace_id: {type: string, format: uuid, description: Destination workspace when applicable.}
+            folder_id: {type: string, description: Destination folder when applicable.}
+            upload_file_id: {type: string, description: Uploaded-file record associated with the artifact.}
+            correlation_id: {type: string, description: Correlates the artifact with a governed operation.}
+            operation_id: {type: string, description: Asset operation identifier.}
+            asset_operation_audit: {type: object, additionalProperties: true, description: Public asset-operation audit summary.}
+    ToolGovernanceDecisionEventData:
+      description: Non-interactive authorization decision for a published Agent tool invocation. It may allow or deny execution, but never asks the external user to approve it.
+      allOf:
+        - $ref: '#/components/schemas/SkillEventData'
+        - type: object
+          required: [correlation_id, decision, requires_approval]
+          properties:
+            correlation_id: {type: string, description: Stable id for correlating the authorization decision with tool lifecycle and audit records.}
+            decision: {type: string, description: Non-interactive authorization result, such as allowed or denied.}
+            requires_approval: {type: boolean, enum: [false], description: Always false for the published Agent API; Agent bindings are evaluated non-interactively.}
+            reason: {type: string, description: User-facing rationale for the decision.}
+            risk_level: {type: string, description: Public risk classification.}
+            effect: {type: string, description: Expected external side effect.}
+            asset_type: {type: string, description: Asset category affected by the tool.}
+            approval_every_invocation: {type: boolean, description: Whether policy forbids reusing an approval for later invocations.}
+            tool_id: {type: string, description: Runtime tool identifier.}
+            governed_tool_id: {type: string, description: Stable governed-tool definition id.}
+            provider_type: {type: string, description: Integration provider category.}
+            provider_id: {type: string, description: Integration provider identifier.}
+            external_destination: {type: string, description: External system or destination affected by the tool.}
+            integration_id: {type: string, description: Integration configuration identifier.}
+            action_id: {type: string, description: Provider action identifier.}
+            connection_name: {type: string, description: Internal connection name safe to expose.}
+            connection_display_name: {type: string, description: User-facing connection label.}
+            asset_operation_audit: {type: object, additionalProperties: true, description: Public asset-operation audit summary.}
+            approval_event: {type: object, additionalProperties: true, description: Public authorization metadata for auditing when available.}
+    MemoryMutationEventData:
+      description: Published Agent Memory mutation notification for the current external user.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [memory_scope, action, status]
+          properties:
+            memory_scope: {type: string, enum: [agent], description: Always agent for the published Agent API.}
+            action: {type: string, enum: [create, update, delete, clear], description: Mutation performed.}
+            key: {type: string, description: Published Agent Memory slot key.}
+            display_name: {type: string, description: User-facing slot name.}
+            status: {type: string, description: Overall mutation event status.}
+            mutation_status: {type: string, description: Published Agent Memory mutation result.}
+            source_kind: {type: string, description: Mutation source such as manager or automatic extraction.}
+            operation_id: {type: string, format: uuid, description: Operation id accepted by the memory undo endpoint.}
+            revision: {type: integer, format: int64, minimum: 0, description: Slot revision after the mutation.}
+            undoable_until: {type: string, format: date-time, description: RFC 3339 deadline for undo when available.}
+    WorkflowEventData:
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          description: Workflow progress payload. Node-type-specific fields are additive; preserve unknown fields.
+          properties:
+            id: {type: string, description: Workflow run, node execution, or container id depending on the event family.}
+            workflow_run_id: {type: string, description: Stable workflow execution id shared by events from one run.}
+            workflow_id: {type: string, description: Published workflow definition id.}
+            task_id: {type: string, description: Runtime task id when the workflow engine supplies one.}
+            node_id: {type: string, description: Workflow graph node id.}
+            node_type: {type: string, description: Workflow node kind.}
+            node_title: {type: string, description: User-facing node title used by approval and question events.}
+            title: {type: string, description: User-facing node or container title.}
+            index: {type: integer, minimum: 0, description: Zero-based iteration or loop item index.}
+            iteration_index: {type: integer, minimum: 0, description: Explicit zero-based iteration index when supplied.}
+            loop_index: {type: integer, minimum: 0, description: Explicit zero-based loop index when supplied.}
+            status: {type: string, description: Workflow, node, or container lifecycle status.}
+            round: {type: integer, minimum: 1, description: One-based repeated question or approval round.}
+            iteration: {type: integer, minimum: 0, description: Runtime iteration counter when supplied.}
+            token: {type: string, description: Copy to the workflow continuation request's `approval_token` for API/debug approval flows.}
+            form_id: {type: string, description: Approval form id used to correlate request, result, and expiration events.}
+            content: {description: Approval content in the workflow-provided structured or textual form.}
+            fields: {type: array, description: Approval form field definitions., items: {type: object, additionalProperties: true}}
+            actions: {type: array, description: Approval actions available to the user., items: {type: object, additionalProperties: true}}
+            submit_methods: {type: object, additionalProperties: true, description: Submission methods advertised by the workflow runtime.}
+            expires_at: {description: Approval expiration time in the workflow-provided representation.}
+            action_id: {type: string, description: Approval action selected by the user.}
+            action_label: {type: string, description: User-facing label of the selected approval action.}
+            rendered_content: {type: string, description: Rendered approval summary after submission.}
+            question: {type: string, description: User-facing workflow question text.}
+            choices: {type: array, description: Optional workflow question choices; items are runtime-defined., items: {}}
+            answer: {description: Submitted workflow answer in the runtime-defined scalar or structured form.}
+            trigger_id: {type: string, description: Runtime trigger id for the submitted answer.}
+            reasons: {type: array, description: Reasons the workflow entered a paused or terminal state., items: {}}
+            inputs: {type: object, additionalProperties: true, description: Public workflow, node, or container inputs.}
+            inputs_truncated: {type: boolean, description: Whether inputs were shortened for the public stream.}
+            process_data: {description: Runtime-provided intermediate node processing data.}
+            outputs: {type: object, additionalProperties: true, description: Public workflow, node, or container outputs.}
+            outputs_truncated: {type: boolean, description: Whether outputs were shortened for the public stream.}
+            output_handle: {type: string, description: Handle for retrieving or correlating larger node output.}
+            steps: {type: integer, minimum: 0, description: Completed steps in an iteration or loop container.}
+            total_steps: {type: integer, minimum: 0, description: Total workflow or container steps when known.}
+            total_tokens: {type: integer, minimum: 0, description: Aggregated token usage when exposed by the runtime.}
+            elapsed_time: {type: number, minimum: 0, description: Elapsed execution time in seconds.}
+            pre_loop_output: {description: Runtime-defined value captured before a loop executes.}
+            metadata: {type: object, additionalProperties: true, description: Public workflow metadata.}
+            execution_metadata: {type: object, additionalProperties: true, description: Public node execution metadata.}
+            extras: {type: object, additionalProperties: true, description: Additional forward-compatible runtime fields.}
+            error: {description: Workflow, node, iteration, or loop error in runtime-provided form.}
+            finished_at: {type: integer, format: int64, description: Completion time in Unix seconds.}
+            finished_at_ms: {type: integer, format: int64, description: Completion time in Unix milliseconds.}
+            paused_at: {type: integer, format: int64, description: Pause time in Unix seconds.}
+          additionalProperties: true
+    WorkflowTextEventData:
+      description: Text emitted by a delegated chat workflow; text_chunk appends and text_replace replaces visible content.
+      allOf:
+        - $ref: '#/components/schemas/WorkflowEventData'
+        - type: object
+          properties:
+            text: {type: string, description: Workflow-provided text payload.}
+            answer: {type: string, description: Alternate answer field supplied by some workflow runtimes.}
+            data: {type: object, additionalProperties: true, description: Additional workflow text metadata.}
+    PublishedApplicationInfo:
+      type: object
+      required: [name, description, tags, mode, author_name, agent_id, icon, icon_type, icon_url, version, version_uuid]
+      description: Direct success object returned by `/info`; it is not wrapped in the standard success envelope.
+      properties:
+        name: {type: string, description: Published application name.}
+        description: {type: string, description: Published application description.}
+        tags:
+          type: array
+          description: Contains the resolved application mode.
+          items: {type: string}
+        mode: {type: string, enum: [agent, workflow, chat-workflow], description: Runtime mode inferred from the API key's bound application.}
+        author_name: {type: string, description: Application author label., example: ZGI}
+        agent_id: {type: string, format: uuid, description: Bound application id; the legacy field name is retained for compatibility.}
+        icon: {type: string, description: Stored icon value.}
+        icon_type: {type: string, description: Stored icon type, such as emoji or image.}
+        icon_url: {type: string, description: Resolved image URL when the icon type is image.}
+        version: {type: string, description: Latest published version label.}
+        version_uuid: {type: string, format: uuid, description: Latest published version UUID.}
+      example:
+        name: Research Assistant
+        description: Evidence-backed answers
+        tags: [agent]
+        mode: agent
+        author_name: ZGI
+        agent_id: 4c2cb782-748e-4ff4-a34d-796b40f98f16
+        icon: bot
+        icon_type: emoji
+        icon_url: ''
+        version: v12
+        version_uuid: 7b0df140-fbc1-41ef-9234-611172283b23
+    PublishedApplicationParameters:
+      type: object
+      required: [user_input_form, features, file_upload, agent_memory, system_parameters]
+      description: Direct success object returned by `/parameters`; it is not wrapped in the standard success envelope.
+      properties:
+        user_input_form:
+          type: array
+          description: Published workflow start variables; empty for Agent mode. Unknown published graph fields are preserved.
+          items:
+            $ref: '#/components/schemas/WorkflowInputVariable'
+        features:
+          $ref: '#/components/schemas/PublishedFeatures'
+        file_upload:
+          $ref: '#/components/schemas/PublishedFileUploadParameters'
+        agent_memory:
+          $ref: '#/components/schemas/PublishedAgentMemoryParameters'
+        system_parameters:
+          $ref: '#/components/schemas/PublishedSystemParameters'
+      example:
+        user_input_form: []
+        features:
+          home_title: Start your research
+          opening_statement: What should I investigate?
+          input_placeholder: Ask a question
+          theme_color: '#4F46E5'
+          suggested_questions: [Compare the evidence]
+          supports_vision: true
+        file_upload:
+          enabled: true
+          number_limits: 10
+          allowed_file_types: [pdf, png, jpg]
+          transfer_methods: [local_file]
+          image: {enabled: true, number_limits: 10, transfer_methods: [local_file]}
+        agent_memory: {enabled: true, requires_user: true}
+        system_parameters:
+          file_size_limit: 50
+          image_file_size_limit: 20
+          audio_file_size_limit: 100
+          video_file_size_limit: 500
+          file_upload_count_limit: 10
+    WorkflowInputVariable:
+      type: object
+      additionalProperties: true
+      description: One start-node variable copied from a published workflow graph.
+      properties:
+        variable: {type: string, description: Variable identifier when supplied by the workflow.}
+        label: {type: string, description: User-facing field label when supplied.}
+        type: {type: string, description: Published input type.}
+        required: {type: boolean, description: Whether the input is required.}
+        default: {description: Published default value.}
+        options:
+          type: array
+          description: Published selection options when applicable.
+          items: {}
+    PublishedFeatures:
+      type: object
+      additionalProperties: true
+      description: Published presentation features. Workflow modes can add feature-specific keys.
+      properties:
+        home_title: {type: string, description: Main landing-page heading.}
+        opening_statement: {type: string, description: Introductory text shown before the first user message.}
+        input_placeholder: {type: string, description: Suggested placeholder for the chat composer.}
+        theme_color: {type: string, description: Published theme color, usually a CSS hex color.}
+        suggested_questions:
+          type: array
+          description: Starter prompts displayed on the landing page.
+          items: {type: string}
+        supports_vision: {type: boolean, description: Whether the published model can consume image inputs.}
+    PublishedFileUploadParameters:
+      type: object
+      description: Published file-attachment capabilities used to configure the client picker and validation.
+      required: [enabled, number_limits, allowed_file_types, transfer_methods, image]
+      properties:
+        enabled: {type: boolean, description: Whether public file upload is enabled.}
+        number_limits: {type: integer, minimum: 0, description: Maximum files accepted by one invocation.}
+        allowed_file_types:
+          type: array
+          description: File extensions/types supported by the current server.
+          items: {type: string}
+        transfer_methods:
+          type: array
+          description: Supported transfer methods; currently local_file.
+          items: {type: string, enum: [local_file]}
+        image:
+          type: object
+          description: Image-specific picker and validation capabilities.
+          required: [enabled, number_limits, transfer_methods]
+          properties:
+            enabled: {type: boolean, description: Whether image attachments are enabled.}
+            number_limits: {type: integer, minimum: 0, description: Maximum images accepted by one invocation.}
+            transfer_methods:
+              type: array
+              description: Supported image transfer methods; currently local_file.
+              items: {type: string, enum: [local_file]}
+    PublishedAgentMemoryParameters:
+      type: object
+      description: Published Agent Memory capability flags used to enable memory-management UI.
+      required: [enabled, requires_user]
+      properties:
+        enabled: {type: boolean, description: Whether published Agent Memory is enabled.}
+        requires_user: {type: boolean, description: Whether the published Memory configuration has enabled user-scoped slots.}
+    PublishedSystemParameters:
+      type: object
+      description: Current upload limits. Size values are in MB. The object can be empty when the file service is unavailable.
+      properties:
+        file_size_limit: {type: integer, format: int64, minimum: 0, description: General file size limit in MB.}
+        image_file_size_limit: {type: integer, format: int64, minimum: 0, description: Image file size limit in MB.}
+        audio_file_size_limit: {type: integer, format: int64, minimum: 0, description: Audio file size limit in MB.}
+        video_file_size_limit: {type: integer, format: int64, minimum: 0, description: Video file size limit in MB.}
+        file_upload_count_limit: {type: integer, minimum: 0, description: Server-side maximum upload count per invocation.}
+    ChatRequest:
+      type: object
+      required: [query]
+      description: Chat request for the latest published Agent configuration.
+      properties:
+        query: {type: string, minLength: 1, description: User input for this turn.}
+        conversation_id: {type: string, format: uuid, description: Existing conversation to continue; omit to create one.}
+        parent_id: {type: string, format: uuid, description: Parent message when branching from a specific point.}
+        file_ids:
+          type: array
+          description: Temporary uploaded file ids to attach to this message.
+          items: {type: string, format: uuid}
+        response_mode:
+          type: string
+          enum: [streaming]
+          default: streaming
+          description: Response transport. External Agent chat currently supports streaming only.
+        user:
+          type: string
+          deprecated: true
+          description: Deprecated compatibility field. Use `X-External-User-ID`; if both are sent they must match exactly.
+      example:
+        query: Summarize the attached report in three bullets.
+        conversation_id: f1f7503a-9e28-4af5-9d6d-9e23fb5a8994
+        file_ids: [be2453d1-ec7e-42d5-920b-024cc6d477e9]
+        response_mode: streaming
+    UpdateConversationRequest:
+      type: object
+      description: Only supplied fields are changed.
+      minProperties: 1
+      properties:
+        title: {type: string, description: New display title. Blank input is normalized to the default title.}
+        status: {type: string, description: Conversation lifecycle status, such as normal or archived.}
+        current_leaf_message_id: {type: string, format: uuid, description: Message in this conversation to select as the current branch leaf.}
+      example: {title: FY 2026 analysis, status: archived}
+    RegenerateMessageRequest:
+      type: object
+      description: Optional replacement input. Omit the body or `query` to reuse the original query.
+      properties:
+        query: {type: string, description: Replacement user query.}
+      example: {query: Give me a shorter answer.}
+    UserInputContinuationRequest:
+      type: object
+      description: Answers a Skill-originated user_input_requested event without creating a new message.
+      required: [answers]
+      properties:
+        answers:
+          type: object
+          minProperties: 1
+          description: Map each `user_input_requested.questions[].id` to the user's answer or selected option value.
+          additionalProperties: {type: string}
+      example:
+        answers: {target: production}
+    WorkflowContinuationRequest:
+      description: Resumes a paused workflow question or approval within the existing Agent message.
+      oneOf:
+        - type: object
+          required: [type, inputs]
+          properties:
+            type: {type: string, enum: [question_answer], description: Selects workflow question-answer continuation.}
+            inputs:
+              type: object
+              minProperties: 1
+              description: Answer values expected by the paused question; commonly `query` and, for a selected choice, `question_answer_option_id`.
+              additionalProperties: true
+        - type: object
+          required: [type, approval_token, action]
+          properties:
+            type: {type: string, enum: [approval], description: Selects workflow approval continuation.}
+            approval_token: {type: string, description: Copy from the `approval_requested` event's `token` field.}
+            action: {type: string, description: Selected approval action id advertised by the event.}
+            inputs:
+              type: object
+              description: Optional approval form values.
+              additionalProperties: true
+      example:
+        type: question_answer
+        inputs: {query: Continue, question_answer_option_id: continue}
+    MemorySlotUpdateRequest:
+      type: object
+      description: Replaces one published Agent Memory slot value for the current external user.
+      required: [content]
+      properties:
+        content: {type: string, description: New slot content within the published slot's max_chars limit.}
+        expected_revision: {type: integer, format: int64, minimum: 0, description: Optional optimistic-concurrency revision.}
+      example: {content: Prefers concise answers, expected_revision: 2}
+    AgentConfigEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/AgentConfig'
+    AgentConfig:
+      type: object
+      description: Published Agent identity, landing-page presentation, capability flags, and immutable version metadata.
+      required: [agent_id, web_app_id, agent_type, name, description, icon, icon_type, icon_url, home_title, opening_statement, input_placeholder, theme_color, suggested_questions, file_upload_enabled, supports_vision, agent_memory_enabled, memory_requires_user, external_user_required, version, version_uuid]
+      properties:
+        agent_id: {type: string, format: uuid, description: Published Agent id used by this API Key.}
+        web_app_id: {type: string, format: uuid, description: Published web application id bound to the API Key.}
+        agent_type: {type: string, description: Published application type, normally AGENT.}
+        name: {type: string, description: Agent display name.}
+        description: {type: string, description: Agent description shown by the client.}
+        icon: {type: string, description: Icon value, interpreted according to icon_type.}
+        icon_type: {type: string, description: Icon representation such as emoji or image.}
+        icon_url: {type: string, description: Resolved icon URL when an image icon is configured; otherwise empty.}
+        home_title: {type: string, description: Main landing-page heading.}
+        opening_statement: {type: string, description: Introductory assistant text shown before the first message.}
+        input_placeholder: {type: string, description: Suggested placeholder for the chat composer.}
+        theme_color: {type: string, description: Published theme color, usually a CSS hex color.}
+        suggested_questions:
+          type: array
+          description: Starter prompts displayed on the landing page.
+          items: {type: string}
+        file_upload_enabled: {type: boolean, description: Whether the published Agent accepts file attachments.}
+        supports_vision: {type: boolean, description: Whether the published model can consume image inputs.}
+        agent_memory_enabled: {type: boolean, description: Whether Agent Memory is enabled in the published configuration.}
+        memory_requires_user: {type: boolean, description: Whether memory operations require an external-user identity.}
+        external_user_required: {type: boolean, description: Always true for stateful external Agent operations.}
+        version: {type: string, description: Human-readable published version label.}
+        version_uuid: {type: string, format: uuid, description: Immutable published version id.}
+      example:
+        agent_id: 4c2cb782-748e-4ff4-a34d-796b40f98f16
+        web_app_id: f8d1dddb-21f1-48c2-bb27-7602a72c4eca
+        agent_type: AGENT
+        name: Research Assistant
+        description: Evidence-backed answers
+        icon: bot
+        icon_type: emoji
+        icon_url: ''
+        home_title: Start your research
+        opening_statement: What should I investigate?
+        input_placeholder: Ask a question
+        theme_color: '#4F46E5'
+        suggested_questions: [Compare the evidence]
+        file_upload_enabled: true
+        supports_vision: true
+        agent_memory_enabled: true
+        memory_requires_user: true
+        external_user_required: true
+        version: v12
+        version_uuid: 7b0df140-fbc1-41ef-9234-611172283b23
+    UploadedFile:
+      type: object
+      description: Metadata returned after a file is stored for later use in a chat request.
+      required: [id, name, size, extension, mime_type, created_by, created_at]
+      properties:
+        id: {type: string, format: uuid, description: 'Upload id passed as files[].upload_file_id in chat.'}
+        name: {type: string, description: Original client-provided filename.}
+        size: {type: integer, format: int64, description: Stored file size in bytes.}
+        extension: {type: string, description: Normalized extension without a leading dot.}
+        mime_type: {type: string, description: Detected or supplied media type.}
+        created_by: {type: string, description: External user id that uploaded the file.}
+        created_at: {type: integer, format: int64, description: Upload creation time in Unix seconds.}
+      example:
+        id: be2453d1-ec7e-42d5-920b-024cc6d477e9
+        name: report.pdf
+        size: 204800
+        extension: pdf
+        mime_type: application/pdf
+        created_by: external-user-1
+        created_at: 1788854400
+    MemorySlotValue:
+      type: object
+      required: [id, key, name, description, max_chars, enabled, sort_order, content, revision, source_kind, created_at, updated_at, created_at_unix, updated_at_unix, created_at_iso, updated_at_iso, created_at_display, updated_at_display]
+      properties:
+        id: {type: string, format: uuid, description: Published slot definition id.}
+        key: {type: string, description: Stable published slot key.}
+        name: {type: string, description: User-facing slot name.}
+        description: {type: string, description: Published slot description.}
+        max_chars: {type: integer, minimum: 1, description: Maximum content length in Unicode characters.}
+        enabled: {type: boolean, description: Whether the slot is enabled in the latest published configuration.}
+        sort_order: {type: integer, description: Published display order.}
+        content: {type: string, description: Current stored value; empty after a clear.}
+        revision: {type: integer, format: int64, minimum: 0, description: Optimistic-concurrency revision.}
+        source_kind: {type: string, description: Mutation source, such as manager or automatic extraction.}
+        source_conversation_id: {type: string, format: uuid, description: Source conversation for automatically extracted values.}
+        source_message_id: {type: string, format: uuid, description: Source message for automatically extracted values.}
+        source_completed_at: {type: integer, format: int64, description: Source completion time in Unix seconds.}
+        extractor_version: {type: string, description: Extractor version for automatically generated values.}
+        last_operation_id: {type: string, format: uuid, description: Most recent mutation operation id.}
+        undoable_until: {type: integer, format: int64, description: Unix-second deadline for undo when available.}
+        created_at: {type: integer, format: int64, description: Unix seconds.}
+        updated_at: {type: integer, format: int64, description: Unix seconds.}
+        created_at_unix: {type: integer, format: int64, description: Alias of created_at.}
+        updated_at_unix: {type: integer, format: int64, description: Alias of updated_at.}
+        created_at_iso: {type: string, format: date-time, description: ISO-8601 creation time.}
+        updated_at_iso: {type: string, format: date-time, description: ISO-8601 update time.}
+        created_at_display: {type: string, description: Display-formatted creation time.}
+        updated_at_display: {type: string, description: Display-formatted update time.}
+      example:
+        id: 0a154cc6-b5f0-4875-b2ba-642e0e8f37dd
+        key: profile
+        name: User profile
+        description: Stable preferences
+        max_chars: 2000
+        enabled: true
+        sort_order: 1
+        content: Prefers concise answers
+        revision: 3
+        source_kind: manager
+        last_operation_id: 72111957-9a76-49ec-b55a-c11b18b21ac4
+        created_at: 1788850000
+        updated_at: 1788854400
+        created_at_unix: 1788850000
+        updated_at_unix: 1788854400
+        created_at_iso: '2026-09-08T06:46:40Z'
+        updated_at_iso: '2026-09-08T08:00:00Z'
+        created_at_display: '2026-09-08 06:46:40'
+        updated_at_display: '2026-09-08 08:00:00'
+    MemoryExport:
+      type: object
+      required: [agent_id, user_scope, user_id, exported_at, values]
+      properties:
+        agent_id: {type: string, format: uuid, description: Published Agent id.}
+        user_scope: {type: string, enum: [end_user], description: External Agent Memory user scope.}
+        user_id: {type: string, format: uuid, description: Workspace-and-Agent-scoped derived UUID, not the raw external id.}
+        exported_at: {type: integer, format: int64, description: Export time in Unix seconds.}
+        values:
+          type: array
+          description: Visible slots from the latest published Agent configuration.
+          items: {$ref: '#/components/schemas/MemorySlotValue'}
+      example:
+        agent_id: 4c2cb782-748e-4ff4-a34d-796b40f98f16
+        user_scope: end_user
+        user_id: ef423f22-abfe-57fa-8320-cfca8d0fdf35
+        exported_at: 1788854400
+        values: []
+    MemoryUndoResult:
+      type: object
+      required: [operation_id]
+      properties:
+        operation_id: {type: string, format: uuid, description: Operation that was undone.}
+        value:
+          allOf:
+            - $ref: '#/components/schemas/MemorySlotValue'
+          description: Restored slot value; omitted when the restored state has no value.
+    Conversation:
+      type: object
+      description: Persisted conversation owned by the current external user.
+      required: [id, organization_id, account_id, title, status, runtime_status, conversation_type, dialogue_count, source, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid, description: Conversation id used by detail, message, event, stop, and continuation endpoints.}
+        organization_id: {type: string, format: uuid, description: Organization ownership scope.}
+        workspace_id: {type: string, format: uuid, nullable: true, description: Workspace ownership scope when applicable.}
+        account_id: {type: string, format: uuid, description: Server-side account scope associated with the conversation.}
+        title: {type: string, description: User-facing conversation title.}
+        status: {type: string, description: Lifecycle status such as normal or archived.}
+        runtime_status: {type: string, description: Current execution state such as idle or running.}
+        conversation_type: {type: string, description: Conversation mode, such as chat.}
+        current_leaf_message_id: {type: string, format: uuid, nullable: true, description: Selected leaf message of the active branch.}
+        active_message_id: {type: string, format: uuid, nullable: true, description: Message currently executing, or null when idle.}
+        dialogue_count: {type: integer, minimum: 0, description: Persisted dialogue-turn count.}
+        source: {type: string, example: external-api, description: Surface that created the conversation.}
+        source_conversation_id: {type: string, nullable: true, description: Optional upstream conversation identifier supplied by the source surface.}
+        source_web_app_id: {type: string, format: uuid, nullable: true, description: Published web application that originated the conversation.}
+        metadata: {type: object, additionalProperties: true, description: Extensible runtime and presentation metadata; clients must ignore unknown keys.}
+        created_at: {type: integer, format: int64, description: Unix timestamp in seconds.}
+        updated_at: {type: integer, format: int64, description: Unix timestamp in seconds.}
+    Message:
+      type: object
+      description: Persisted user-and-assistant dialogue message in a conversation branch.
+      required: [id, conversation_id, query, answer, status, model_name, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid, description: Message id used for regeneration and event correlation.}
+        conversation_id: {type: string, format: uuid, description: Owning conversation id.}
+        parent_id: {type: string, format: uuid, nullable: true, description: Parent message id in the conversation branch.}
+        query: {type: string, description: Persisted user input for this dialogue turn.}
+        answer: {type: string, description: Persisted assistant answer accumulated from the stream.}
+        status: {type: string, description: Message lifecycle status such as running, completed, stopped, or failed.}
+        error: {type: string, nullable: true, description: Persisted failure detail when the message did not complete normally.}
+        model_provider: {type: string, nullable: true, description: Provider recorded for the published model.}
+        model_name: {type: string, description: Model name recorded for the message.}
+        billing_reason_source: {type: string, nullable: true, description: Optional billing-attribution source.}
+        model_parameters: {type: object, additionalProperties: true, description: Model parameters recorded at execution time.}
+        metadata: {type: object, additionalProperties: true, description: Extensible message metadata; clients must ignore unknown keys.}
+        source_message_id: {type: string, nullable: true, description: Optional upstream message identifier supplied by the source surface.}
+        created_at: {type: integer, format: int64, description: Unix timestamp in seconds.}
+        updated_at: {type: integer, format: int64, description: Unix timestamp in seconds.}
+    SearchResult:
+      type: object
+      description: Conversation-title or message-content match returned by conversation search.
+      required: [type, conversation_id, conversation_title, snippet, updated_at]
+      properties:
+        type: {type: string, enum: [conversation, message], description: Entity that matched the query.}
+        conversation_id: {type: string, format: uuid, description: Conversation containing the match.}
+        conversation_title: {type: string, description: Current conversation title.}
+        message_id: {type: string, format: uuid, nullable: true, description: Matching message id; null for a conversation-title match.}
+        snippet: {type: string, description: Short matched-text preview for display.}
+        updated_at: {type: integer, format: int64, description: Unix timestamp in seconds.}
+    ConversationList:
+      type: object
+      description: Paginated conversation collection.
+      required: [data, page, limit, total, has_more]
+      properties:
+        data:
+          type: array
+          description: Conversations in descending update-time order.
+          items: {$ref: '#/components/schemas/Conversation'}
+        page: {type: integer, minimum: 1, description: One-based page number.}
+        limit: {type: integer, minimum: 1, maximum: 100, description: Requested page size.}
+        total: {type: integer, format: int64, minimum: 0, description: Total matching conversations.}
+        has_more: {type: boolean, description: Whether another page is available.}
+    MessageList:
+      type: object
+      description: Paginated persisted-message collection.
+      required: [data, page, limit, total, has_more]
+      properties:
+        data:
+          type: array
+          description: Messages in persisted conversation order.
+          items: {$ref: '#/components/schemas/Message'}
+        page: {type: integer, minimum: 1, description: One-based page number.}
+        limit: {type: integer, minimum: 1, maximum: 200, description: Requested page size.}
+        total: {type: integer, format: int64, minimum: 0, description: Total persisted messages in the conversation.}
+        has_more: {type: boolean, description: Whether another page is available.}
+    ConversationEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data: {$ref: '#/components/schemas/Conversation'}
+    ConversationListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data: {$ref: '#/components/schemas/ConversationList'}
+    MessageListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data: {$ref: '#/components/schemas/MessageList'}
+    SearchResultsEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              description: Ordered conversation-title and message-content matches.
+              items: {$ref: '#/components/schemas/SearchResult'}
+    StopConversationEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              description: Conversation execution state after the stop request.
+              required: [conversation_id, runtime_status, status]
+              properties:
+                conversation_id: {type: string, format: uuid, description: Conversation that received the stop request.}
+                message_id: {type: string, format: uuid, nullable: true, description: Active message targeted by the stop request, if one existed.}
+                runtime_status: {type: string, description: Conversation runtime state after the request.}
+                status: {type: string, description: Stop operation result.}
+    DeleteConversationEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              description: Deletion confirmation payload.
+              required: [result]
+              properties:
+                result: {type: string, enum: [success], description: Fixed success marker.}
+              example: {result: success}
+    MemoryExportEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data: {$ref: '#/components/schemas/MemoryExport'}
+    MemorySlotEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data: {$ref: '#/components/schemas/MemorySlotValue'}
+    MemoryClearEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              description: Clear-all confirmation payload.
+              required: [deleted]
+              properties:
+                deleted: {type: boolean, enum: [true], description: True after all writable values are cleared.}
+              example: {deleted: true}
+    MemoryUndoEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data: {$ref: '#/components/schemas/MemoryUndoResult'}
+    SuccessEnvelope:
+      type: object
+      description: Standard JSON success envelope. Compatibility discovery and upload endpoints return direct objects instead.
+      required: [code, message]
+      properties:
+        code: {type: string, example: '0', description: String success code; zero means success.}
+        message: {type: string, example: success, description: Human-readable result message.}
+        data: {description: Endpoint-specific success payload.}
+    ErrorEnvelope:
+      type: object
+      description: Standard JSON error envelope returned for validation, authorization, ownership, conflict, and server errors.
+      required: [code, message]
+      properties:
+        code: {type: string, example: '199001', description: Stable application error code represented as a string.}
+        message: {type: string, example: Invalid parameter, description: Human-readable failure reason.}

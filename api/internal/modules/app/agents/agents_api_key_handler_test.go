@@ -1,7 +1,10 @@
 package agents
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +16,209 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/pkg/response"
 )
+
+func TestGetAPIKeyAgentRuntimeConfigReturnsPublishedLandingPageFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+		webAppID:       uuid.New(),
+	}
+	appService := newAgentRuntimePermissionAppService(ids)
+	appService.published = &dto.AgentWebAppRuntimeConfigResponse{
+		AgentID:     ids.agentID.String(),
+		WebAppID:    ids.webAppID.String(),
+		AgentType:   "AGENT",
+		Name:        "Research Agent",
+		Description: "Finds evidence",
+		Version:     "v7",
+		VersionUUID: uuid.NewString(),
+		Config: dto.AgentConfigResponse{
+			HomeTitle:          "Ask the research agent",
+			OpeningStatement:   "What should we investigate?",
+			InputPlaceholder:   "Enter a research question",
+			ThemeColor:         "#155EEF",
+			SuggestedQuestions: []string{"Summarize the evidence"},
+			FileUpload:         true,
+			AgentMemoryEnabled: true,
+			AgentMemorySlots:   []dto.AgentMemorySlotConfig{{Key: "profile", Enabled: true}},
+		},
+	}
+	handler := NewAgentsHandler(appService, nil, nil, nil, nil)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/agents/config", nil)
+	setAPIKeyAgentTestContext(c, ids)
+	handler.GetAPIKeyAgentRuntimeConfig(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var body struct {
+		Data apiKeyAgentRuntimeConfigResponse `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode config response: %v", err)
+	}
+	if body.Data.Name != "Research Agent" || body.Data.HomeTitle != "Ask the research agent" || !body.Data.FileUploadEnabled || !body.Data.MemoryRequiresUser {
+		t.Fatalf("published config response = %#v", body.Data)
+	}
+}
+
+func TestContinueAPIKeyAgentRuntimeUserInputUsesPublishedExternalScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+		conversationID: uuid.New(),
+		messageID:      uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/conversations/"+ids.conversationID.String()+"/messages/"+ids.messageID.String()+"/user-input/ask-1/continue?user=end-user-1", bytes.NewBufferString(`{"answers":{"target":"Published Agent"}}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{
+		{Key: "conversation_id", Value: ids.conversationID.String()},
+		{Key: "message_id", Value: ids.messageID.String()},
+		{Key: "request_id", Value: "ask-1"},
+	}
+	setAPIKeyAgentTestContext(c, ids)
+	handler.ContinueAPIKeyAgentRuntimeUserInput(c)
+
+	if !runtimeSvc.userInputContinuationCalled {
+		t.Fatal("RunConfiguredUserInputContinuationStream was not called")
+	}
+	assertExternalAgentRuntimeCallerScope(t, runtimeSvc.lastScope, runtimeSvc.lastCaller, ids)
+	if runtimeSvc.lastRunConfig.SystemPromptVersion != "agent.published.v1" {
+		t.Fatalf("SystemPromptVersion = %q, want agent.published.v1", runtimeSvc.lastRunConfig.SystemPromptVersion)
+	}
+	if runtimeSvc.lastUserInputRequest.Answers["target"] != "Published Agent" {
+		t.Fatalf("answers = %#v", runtimeSvc.lastUserInputRequest.Answers)
+	}
+	if w.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", w.Header().Get("Content-Type"))
+	}
+}
+
+func TestStreamAPIKeyAgentRuntimeEventsUsesCallerScopeAndSanitizesErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(), workspaceID: uuid.New(), accountID: uuid.New(), agentID: uuid.New(),
+		conversationID: uuid.New(), messageID: uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{streamForCallerErr: errors.New("redis password leaked by internal error")}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/agents/conversations/"+ids.conversationID.String()+"/events?message_id="+ids.messageID.String(), nil)
+	c.Params = gin.Params{{Key: "conversation_id", Value: ids.conversationID.String()}}
+	setAPIKeyAgentTestContext(c, ids)
+	handler.StreamAPIKeyAgentRuntimeEvents(c)
+
+	if !runtimeSvc.streamForCallerCalled || runtimeSvc.streamCalled {
+		t.Fatalf("caller-scoped/legacy stream calls = %v/%v", runtimeSvc.streamForCallerCalled, runtimeSvc.streamCalled)
+	}
+	assertExternalAgentRuntimeCallerScope(t, runtimeSvc.lastScope, runtimeSvc.lastCaller, ids)
+	if strings.Contains(w.Body.String(), "redis password") || !strings.Contains(w.Body.String(), response.ErrSystemError.Message) {
+		t.Fatalf("event stream error was not sanitized: %s", w.Body.String())
+	}
+}
+
+func TestExternalAgentSSEOmitsSidebarOnlyClientCollaborationEvents(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set(externalAgentAPIContextKey, true)
+
+	for _, event := range []string{"client_action_required", "client_action_result"} {
+		if err := writeAgentSSEEvent(c, "", event, gin.H{"action_id": "sidebar-action"}); err != nil {
+			t.Fatalf("write %s: %v", event, err)
+		}
+	}
+	if err := writeAgentSSEEvent(c, "", "tool_governance_decision", gin.H{"requires_approval": false}); err != nil {
+		t.Fatalf("write public governance event: %v", err)
+	}
+
+	if strings.Contains(w.Body.String(), "client_action") {
+		t.Fatalf("external Agent stream exposed sidebar-only event: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "event: tool_governance_decision") {
+		t.Fatalf("external Agent stream omitted public governance event: %s", w.Body.String())
+	}
+}
+
+func TestChatAPIKeyAgentSanitizesUnexpectedPublishedConfigError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+	}
+	appService := newAgentRuntimePermissionAppService(ids)
+	appService.publishedErr = errors.New("database password leaked by internal error")
+	handler := NewAgentsHandler(appService, nil, nil, nil, nil, &apiKeyChatRuntimeService{ids: ids})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/chat", strings.NewReader(`{"query":"hello"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	setAPIKeyAgentTestContext(c, ids)
+	handler.ChatAPIKeyAgent(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "database password") {
+		t.Fatalf("response leaked internal error: %s", w.Body.String())
+	}
+}
+
+func TestRegenerateAPIKeyAgentRuntimeMessageAllowsEmptyBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+		messageID:      uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{prepareRegenerationErr: runtimeservice.ErrNotFound}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/messages/"+ids.messageID.String()+"/regenerate", nil)
+	c.Params = gin.Params{{Key: "message_id", Value: ids.messageID.String()}}
+	setAPIKeyAgentTestContext(c, ids)
+	handler.RegenerateAPIKeyAgentRuntimeMessage(c)
+
+	if !runtimeSvc.prepareRegenerationCalled {
+		t.Fatal("PrepareConfiguredRootRegeneration was not called for an empty request body")
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+}
+
+func setAPIKeyAgentTestContext(c *gin.Context, ids webAppRuntimePermissionIDs) {
+	c.Set("organization_id", ids.organizationID.String())
+	c.Set("workspace_id", ids.workspaceID.String())
+	c.Set("account_id", ids.accountID.String())
+	c.Set("agent_id", ids.agentID.String())
+	c.Request.Header.Set(ExternalUserIDHeader, "end-user-1")
+}
 
 func TestExternalAgentInvocationContextPreservesAPISource(t *testing.T) {
 	ctx := externalAgentInvocationContext(context.Background())
@@ -67,24 +272,24 @@ func TestPublishedAgentConfigRequiresExternalUserOnlyWhenMemoryEnabledWithSlots(
 	}
 }
 
-func TestExternalAgentMemoryUserIDStableAcrossAPIKeys(t *testing.T) {
+func TestDeriveExternalUserIDStableAcrossAPIKeys(t *testing.T) {
 	workspaceID := uuid.New()
 	agentID := uuid.New()
 
-	first := externalAgentMemoryUserID(workspaceID, agentID, " external-user-1 ")
-	second := externalAgentMemoryUserID(workspaceID, agentID, "external-user-1")
+	first := DeriveExternalUserID(workspaceID, agentID, " external-user-1 ")
+	second := DeriveExternalUserID(workspaceID, agentID, "external-user-1")
 	if first != second {
-		t.Fatalf("externalAgentMemoryUserID() changed for same workspace/agent/user: %s != %s", first, second)
+		t.Fatalf("DeriveExternalUserID() changed for same workspace/agent/user: %s != %s", first, second)
 	}
 
-	otherUser := externalAgentMemoryUserID(workspaceID, agentID, "External-User-1")
+	otherUser := DeriveExternalUserID(workspaceID, agentID, "External-User-1")
 	if otherUser == first {
-		t.Fatalf("externalAgentMemoryUserID() ignored user case, got same id %s", first)
+		t.Fatalf("DeriveExternalUserID() ignored user case, got same id %s", first)
 	}
 
-	otherAgent := externalAgentMemoryUserID(workspaceID, uuid.New(), "external-user-1")
+	otherAgent := DeriveExternalUserID(workspaceID, uuid.New(), "external-user-1")
 	if otherAgent == first {
-		t.Fatalf("externalAgentMemoryUserID() ignored agent scope, got same id %s", first)
+		t.Fatalf("DeriveExternalUserID() ignored agent scope, got same id %s", first)
 	}
 }
 
@@ -110,6 +315,7 @@ func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	c.Set("workspace_id", ids.workspaceID.String())
 	c.Set("account_id", ids.accountID.String())
 	c.Set("agent_id", ids.agentID.String())
+	c.Request.Header.Set(ExternalUserIDHeader, "end-user-1")
 
 	handler.ChatAPIKeyAgent(c)
 
@@ -157,6 +363,7 @@ func TestStopAPIKeyAgentRuntimeConversationUsesExternalCallerScope(t *testing.T)
 	c.Set("workspace_id", ids.workspaceID.String())
 	c.Set("account_id", ids.accountID.String())
 	c.Set("agent_id", ids.agentID.String())
+	c.Request.Header.Set(ExternalUserIDHeader, "end-user-1")
 
 	handler.StopAPIKeyAgentRuntimeConversation(c)
 
@@ -190,6 +397,7 @@ func TestStopAPIKeyAgentRuntimeConversationRejectsForeignConversation(t *testing
 	c.Set("workspace_id", ids.workspaceID.String())
 	c.Set("account_id", ids.accountID.String())
 	c.Set("agent_id", ids.agentID.String())
+	c.Request.Header.Set(ExternalUserIDHeader, "end-user-1")
 
 	handler.StopAPIKeyAgentRuntimeConversation(c)
 
@@ -209,6 +417,13 @@ func assertExternalAgentRuntimeCallerScope(t *testing.T, scope runtimeservice.Sc
 	}
 	if scope.WorkspaceID == nil || *scope.WorkspaceID != ids.workspaceID || !scope.SkipAccessCheck {
 		t.Fatalf("scope workspace/skip = %v/%v, want %s/true", scope.WorkspaceID, scope.SkipAccessCheck, ids.workspaceID)
+	}
+	externalUserID := DeriveExternalUserID(ids.workspaceID, ids.agentID, "end-user-1")
+	if scope.ExternalUserID == nil || *scope.ExternalUserID != externalUserID {
+		t.Fatalf("scope external user = %v, want %s", scope.ExternalUserID, externalUserID)
+	}
+	if scope.AgentMemoryUserID == nil || *scope.AgentMemoryUserID != externalUserID {
+		t.Fatalf("scope memory user = %v, want %s", scope.AgentMemoryUserID, externalUserID)
 	}
 	if caller.Type != runtimemodel.ConversationCallerAgent || caller.Source != runtimemodel.ConversationSourceExternalAPI {
 		t.Fatalf("caller type/source = %q/%q, want %q/%q", caller.Type, caller.Source, runtimemodel.ConversationCallerAgent, runtimemodel.ConversationSourceExternalAPI)

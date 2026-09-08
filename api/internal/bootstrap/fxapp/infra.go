@@ -36,6 +36,8 @@ var corsAllowHeaders = []string{
 	"Content-Type",
 	"Accept",
 	"Authorization",
+	"X-API-Key",
+	"X-External-User-ID",
 	"X-Requested-With",
 	"X-Request-ID",
 	"X-User-Account-Id",

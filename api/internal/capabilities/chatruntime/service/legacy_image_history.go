@@ -25,7 +25,7 @@ func (s *service) listImageConversationsWithLegacy(ctx context.Context, scope Sc
 		fetchLimit = limit
 	}
 
-	current, currentTotal, err := s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), runtimemodel.ConversationTypeImage, fetchLimit, 0)
+	current, currentTotal, err := s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), normalizeCallerID(scope.ExternalUserID), runtimemodel.ConversationTypeImage, fetchLimit, 0)
 	if err != nil {
 		return nil, 0, err
 	}

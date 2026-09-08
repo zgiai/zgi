@@ -93,6 +93,140 @@ func TestBeginWorkflowApprovalContinuationRejectsOtherCallerBeforeMessageLookup(
 	}
 }
 
+func TestInteractiveContinuationsRejectOtherAgentBeforeMessageLookup(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	allowedAgentID := uuid.New()
+	otherAgentID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	scope := Scope{OrganizationID: organizationID, AccountID: accountID}
+	caller := Caller{Type: runtimemodel.ConversationCallerAgent, ID: &otherAgentID, Source: runtimemodel.ConversationSourceExternalAPI}
+
+	tests := []struct {
+		name string
+		call func(*service) error
+	}{
+		{
+			name: "tool governance claim",
+			call: func(svc *service) error {
+				_, err := svc.beginToolGovernanceContinuationForCaller(context.Background(), scope, caller, conversationID, messageID, "governance-1")
+				return err
+			},
+		},
+		{
+			name: "client action claim",
+			call: func(svc *service) error {
+				_, err := svc.beginClientActionContinuationForCaller(context.Background(), scope, caller, conversationID, messageID, "action-1")
+				return err
+			},
+		},
+		{
+			name: "tool governance decision",
+			call: func(svc *service) error {
+				_, err := svc.submitToolGovernanceDecisionForCaller(context.Background(), scope, caller, conversationID, messageID, "governance-1", runtimedto.ToolGovernanceDecisionRequest{Action: "approve"})
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			messageRepo := &callerScopedStreamMessageRepo{}
+			conversationRepo := &callerScopedStreamConversationRepo{
+				allowedCallerType: runtimemodel.ConversationCallerAgent,
+				allowedCallerID:   allowedAgentID,
+			}
+			svc := &service{repos: &repository.Repositories{
+				Access: callerScopedStreamAccessRepo{}, Conversation: conversationRepo, Message: messageRepo,
+			}}
+
+			err := test.call(svc)
+
+			if !errors.Is(err, ErrNotFound) {
+				t.Fatalf("interactive continuation error = %v, want ErrNotFound", err)
+			}
+			if !conversationRepo.getByCallerScopedCalled {
+				t.Fatal("conversation caller-scoped lookup was not called")
+			}
+			if messageRepo.getScopedCalled {
+				t.Fatal("message lookup should not run after caller-scoped conversation denial")
+			}
+		})
+	}
+}
+
+func TestInteractiveContinuationsRejectOtherExternalUserBeforeMessageLookup(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	agentID := uuid.New()
+	allowedExternalUserID := uuid.New()
+	otherExternalUserID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	scope := Scope{OrganizationID: organizationID, AccountID: accountID, ExternalUserID: &otherExternalUserID}
+	caller := Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, Source: runtimemodel.ConversationSourceExternalAPI}
+
+	tests := []struct {
+		name string
+		call func(*service) error
+	}{
+		{
+			name: "event recovery",
+			call: func(svc *service) error {
+				return svc.StreamConversationEventsForCaller(context.Background(), scope, caller, conversationID, messageID, "", func(StreamEvent) error { return nil })
+			},
+		},
+		{
+			name: "tool governance claim",
+			call: func(svc *service) error {
+				_, err := svc.beginToolGovernanceContinuationForCaller(context.Background(), scope, caller, conversationID, messageID, "governance-1")
+				return err
+			},
+		},
+		{
+			name: "client action claim",
+			call: func(svc *service) error {
+				_, err := svc.beginClientActionContinuationForCaller(context.Background(), scope, caller, conversationID, messageID, "action-1")
+				return err
+			},
+		},
+		{
+			name: "tool governance decision",
+			call: func(svc *service) error {
+				_, err := svc.submitToolGovernanceDecisionForCaller(context.Background(), scope, caller, conversationID, messageID, "governance-1", runtimedto.ToolGovernanceDecisionRequest{Action: "approve"})
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			messageRepo := &callerScopedStreamMessageRepo{}
+			conversationRepo := &callerScopedStreamConversationRepo{
+				allowedCallerType:     runtimemodel.ConversationCallerAgent,
+				allowedCallerID:       agentID,
+				allowedExternalUserID: &allowedExternalUserID,
+			}
+			svc := &service{repos: &repository.Repositories{
+				Access: callerScopedStreamAccessRepo{}, Conversation: conversationRepo, Message: messageRepo,
+			}}
+
+			err := test.call(svc)
+
+			if !errors.Is(err, ErrNotFound) {
+				t.Fatalf("interactive continuation error = %v, want ErrNotFound", err)
+			}
+			if !conversationRepo.getByCallerScopedCalled {
+				t.Fatal("conversation caller-scoped lookup was not called")
+			}
+			if messageRepo.getScopedCalled {
+				t.Fatal("message lookup should not run after external-user denial")
+			}
+		})
+	}
+}
+
 func TestBeginWorkflowApprovalContinuationRejectsUnavailableBindingBeforeStreaming(t *testing.T) {
 	for _, status := range []string{
 		runtimemodel.MessageStatusWaitingApproval,
@@ -400,15 +534,19 @@ type callerScopedStreamConversationRepo struct {
 
 	allowedCallerType       string
 	allowedCallerID         uuid.UUID
+	allowedExternalUserID   *uuid.UUID
 	getByCallerScopedCalled bool
 	getScopedCalled         bool
 	updateScopedCalled      bool
 	deleteScopedCalled      bool
 }
 
-func (r *callerScopedStreamConversationRepo) GetByCallerScoped(_ context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
+func (r *callerScopedStreamConversationRepo) GetByCallerScoped(_ context.Context, id, organizationID, accountID uuid.UUID, callerType string, callerID, externalUserID *uuid.UUID, _ string) (*runtimemodel.Conversation, error) {
 	r.getByCallerScopedCalled = true
 	if callerType != r.allowedCallerType || callerID == nil || *callerID != r.allowedCallerID {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if r.allowedExternalUserID != nil && (externalUserID == nil || *externalUserID != *r.allowedExternalUserID) {
 		return nil, gorm.ErrRecordNotFound
 	}
 	return &runtimemodel.Conversation{
@@ -417,6 +555,7 @@ func (r *callerScopedStreamConversationRepo) GetByCallerScoped(_ context.Context
 		AccountID:      accountID,
 		CallerType:     callerType,
 		CallerID:       callerID,
+		ExternalUserID: externalUserID,
 	}, nil
 }
 
