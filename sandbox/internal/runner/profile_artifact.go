@@ -139,6 +139,42 @@ func ListDependencyProfileArtifacts(dependencyRootFSDir string) ([]DependencyPro
 	return artifacts, nil
 }
 
+// DependencyProfileArtifactPresent checks whether a previously built artifact is
+// still installed. It deliberately does not re-hash every installed environment:
+// activation validates the selected artifact before execution. This lightweight
+// check is used when reusing a ready build, not to grant trust to an artifact.
+func DependencyProfileArtifactPresent(root string, checksum string) (bool, error) {
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read dependency profile rootfs directory: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !safeDependencyProfileName(entry.Name()) {
+			continue
+		}
+		profileDir := filepath.Join(root, entry.Name(), strings.TrimPrefix(secureProfileBasePath, "/"), entry.Name())
+		if err := validateProfileDir(profileDir); err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(profileDir, "manifest.json"))
+		if err != nil {
+			continue
+		}
+		var manifest builtProfileManifest
+		if json.Unmarshal(raw, &manifest) != nil {
+			continue
+		}
+		if manifest.Name == entry.Name() && manifest.Build.Checksum == checksum && checksum != "" &&
+			manifest.Build.VerificationPassed && manifest.Build.SizeBytes > 0 && strings.TrimSpace(manifest.Version) != "" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func dependencyProfileArtifactFromManifest(manifest builtProfileManifest) DependencyProfileArtifact {
 	packages := make([]DependencyProfileArtifactPackage, 0, len(manifest.Packages))
 	for _, item := range manifest.Packages {

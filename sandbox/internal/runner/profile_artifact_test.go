@@ -320,6 +320,37 @@ func TestDependencyProfileArtifactDoesNotInferTrustFromAutoPrefix(t *testing.T) 
 	}
 }
 
+func TestDependencyProfileArtifactPresenceDoesNotReplaceActivationValidation(t *testing.T) {
+	root := t.TempDir()
+	profileDir := filepath.Join(root, "skill-office", "opt", "zgi", "profiles", "skill-office")
+	writeBuiltProfileArtifact(t, profileDir, "skill-office", map[string]string{"data.txt": "verified"})
+	manifest, err := validateBuiltProfileArtifact(profileDir, "skill-office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A broken unrelated environment must not block reuse of this build.
+	if err := os.MkdirAll(filepath.Join(root, "other-profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	present, err := DependencyProfileArtifactPresent(root, manifest.Build.Checksum)
+	if err != nil || !present {
+		t.Fatalf("expected installed artifact: present=%v err=%v", present, err)
+	}
+	if err := os.WriteFile(filepath.Join(profileDir, "data.txt"), []byte("tampered"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateBuiltProfileArtifact(profileDir, "skill-office"); err == nil {
+		t.Fatal("activation must still reject a tampered artifact")
+	}
+	if err := os.Remove(filepath.Join(profileDir, "manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	present, err = DependencyProfileArtifactPresent(root, manifest.Build.Checksum)
+	if err != nil || present {
+		t.Fatalf("missing artifact must be rebuilt: present=%v err=%v", present, err)
+	}
+}
+
 func writeBuiltProfileArtifact(t *testing.T, profileDir string, profile string, files map[string]string) {
 	t.Helper()
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
