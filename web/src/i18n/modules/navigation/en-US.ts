@@ -13,6 +13,7 @@ const messages = {
   settings: 'Settings',
   systemSettings: 'Personal Settings',
   profile: 'Profile',
+  memory: 'My AI memories',
   models: 'Models',
   modelPlaza: 'Model Plaza',
   orders: 'Orders',

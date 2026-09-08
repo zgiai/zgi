@@ -11,6 +11,7 @@ import {
 import {
   AlertTriangle,
   ArrowLeft,
+  Brain,
   CheckCircle2,
   ChevronRight,
   CircleDashed,
@@ -61,7 +62,7 @@ import type {
   UpdateDigitalHumanDraftRequest,
 } from '@/services/types/digital-human';
 
-export type DigitalHumanConfigurationPanel = 'response';
+export type DigitalHumanConfigurationPanel = 'response' | 'memory';
 
 export function DigitalHumanConfigurationEditor({
   id,
@@ -137,6 +138,13 @@ function ConfigurationEditor({
   const [acknowledgementEnabled, setAcknowledgementEnabled] = useState(
     detail?.draft.trigger_policy?.channel_response?.acknowledgement_enabled ?? true
   );
+  const initialUserRelationshipPolicy = relationshipMemoryPolicy(detail?.draft.memory_policy);
+  const [userRelationshipMemoryEnabled, setUserRelationshipMemoryEnabled] = useState(
+    initialUserRelationshipPolicy.enabled
+  );
+  const [userRelationshipAutoCaptureAllowed, setUserRelationshipAutoCaptureAllowed] = useState(
+    initialUserRelationshipPolicy.autoCaptureAllowed
+  );
   const [activePanel, setActivePanel] = useState<DigitalHumanConfigurationPanel | null>(
     initialPanel ?? null
   );
@@ -152,10 +160,11 @@ function ConfigurationEditor({
       goals: detail?.draft.goals ?? [],
       rules: detail?.draft.rules ?? [],
       default_model: detail?.draft.default_model ?? '',
-      memory_policy: detail?.draft.memory_policy ?? {
-        enabled: false,
-        ownership: 'digital_human',
-      },
+      memory_policy: withRelationshipMemoryPolicy(
+        detail?.draft.memory_policy,
+        initialUserRelationshipPolicy.enabled,
+        initialUserRelationshipPolicy.autoCaptureAllowed
+      ),
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
@@ -181,10 +190,11 @@ function ConfigurationEditor({
       goals: normalizedGoals,
       rules: normalizedRules,
       default_model: model,
-      memory_policy: detail?.draft.memory_policy ?? {
-        enabled: false,
-        ownership: 'digital_human',
-      },
+      memory_policy: withRelationshipMemoryPolicy(
+        detail?.draft.memory_policy,
+        userRelationshipMemoryEnabled,
+        userRelationshipAutoCaptureAllowed
+      ),
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
@@ -437,6 +447,18 @@ function ConfigurationEditor({
                       count: Number(intermediateMessagesEnabled) + Number(acknowledgementEnabled),
                     })}
                     onClick={() => setActivePanel('response')}
+                  />
+                  <ConfigurationMenuItem
+                    id="configuration-memory"
+                    icon={<Brain className="size-4" />}
+                    title={t('preferences.relationshipMemoryTitle')}
+                    description={t('preferences.relationshipMemoryDescription')}
+                    summary={
+                      userRelationshipMemoryEnabled
+                        ? t('preferences.relationshipMemoryEnabled')
+                        : t('preferences.relationshipMemoryDisabled')
+                    }
+                    onClick={() => setActivePanel('memory')}
                     last
                   />
                 </div>
@@ -468,6 +490,32 @@ function ConfigurationEditor({
                       checked={acknowledgementEnabled}
                       onCheckedChange={setAcknowledgementEnabled}
                       disabled={!canUpdate}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              {activePanel === 'memory' ? (
+                <div className="p-4 md:p-5">
+                  <p className="mb-4 text-xs leading-5 text-muted-foreground">
+                    {t('preferences.relationshipMemoryDescription')}
+                  </p>
+                  <div className="min-w-0 divide-y rounded-lg border px-4">
+                    <PreferenceSwitch
+                      title={t('preferences.relationshipMemory')}
+                      description={t('preferences.relationshipMemoryHint')}
+                      checked={userRelationshipMemoryEnabled}
+                      onCheckedChange={enabled => {
+                        setUserRelationshipMemoryEnabled(enabled);
+                        if (!enabled) setUserRelationshipAutoCaptureAllowed(false);
+                      }}
+                      disabled={!canUpdate}
+                    />
+                    <PreferenceSwitch
+                      title={t('preferences.relationshipAutoCapture')}
+                      description={t('preferences.relationshipAutoCaptureHint')}
+                      checked={userRelationshipAutoCaptureAllowed}
+                      onCheckedChange={setUserRelationshipAutoCaptureAllowed}
+                      disabled={!canUpdate || !userRelationshipMemoryEnabled}
                     />
                   </div>
                 </div>
@@ -1150,4 +1198,39 @@ function Field({
       {children}
     </div>
   );
+}
+
+function relationshipMemoryPolicy(policy?: Record<string, unknown>) {
+  const value = policy?.user_relationship;
+  const relationship =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    enabled: relationship.enabled === true,
+    autoCaptureAllowed: relationship.auto_capture_allowed === true,
+  };
+}
+
+function withRelationshipMemoryPolicy(
+  policy: Record<string, unknown> | undefined,
+  enabled: boolean,
+  autoCaptureAllowed: boolean
+): Record<string, unknown> {
+  const existing =
+    policy?.user_relationship &&
+    typeof policy.user_relationship === 'object' &&
+    !Array.isArray(policy.user_relationship)
+      ? (policy.user_relationship as Record<string, unknown>)
+      : {};
+  return {
+    ...(policy ?? {}),
+    enabled: policy?.enabled === true,
+    ownership: 'digital_human',
+    user_relationship: {
+      ...existing,
+      enabled,
+      auto_capture_allowed: enabled && autoCaptureAllowed,
+    },
+  };
 }

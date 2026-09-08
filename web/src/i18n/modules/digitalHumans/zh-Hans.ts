@@ -263,6 +263,17 @@ const messages: DigitalHumansMessages = {
     acknowledgement: '发送“已收到”提示',
     acknowledgementDescription:
       '渠道请求被接受后发送“已收到，正在处理…”，可以与中间文本开关独立启用。',
+    relationshipMemoryTitle: '用户关系记忆',
+    relationshipMemoryDescription:
+      '让数字人为每个已登录的 ZGI 用户维护相互隔离的个人记忆；外接渠道仍然不使用用户记忆。',
+    relationshipMemoryEnabled: '已对控制台登录会话启用',
+    relationshipMemoryDisabled: '默认关闭',
+    relationshipMemory: '启用用户关系记忆',
+    relationshipMemoryHint:
+      '允许根据当前用户明确表达的证据修改记忆，并在之后的控制台会话中注入个人上下文。',
+    relationshipAutoCapture: '允许自动提取',
+    relationshipAutoCaptureHint:
+      '允许符合条件的用户关系自行开启保守的后台提取；每个新关系的自动提取仍默认关闭。',
     unsaved: '有尚未保存的修改',
     saved: '所有设置均已保存',
     pendingPublish: '草稿已保存，等待发布后生效',

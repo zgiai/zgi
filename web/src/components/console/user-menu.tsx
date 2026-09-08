@@ -227,6 +227,12 @@ export function UserMenu() {
             <span>{tNav('profile')}</span>
           </Link>
         </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/profile/memory" className="!cursor-pointer">
+            <Icons.Brain className="h-4 w-4" />
+            <span>{tNav('memory')}</span>
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         {/* Logout */}
         <DropdownMenuItem

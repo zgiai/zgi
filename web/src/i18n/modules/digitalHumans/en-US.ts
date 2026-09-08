@@ -280,6 +280,17 @@ const messages = {
     acknowledgement: 'Send processing acknowledgement',
     acknowledgementDescription:
       'Send “Received, processing…” when a channel request is accepted. This can be enabled independently of intermediate messages.',
+    relationshipMemoryTitle: 'User relationship memory',
+    relationshipMemoryDescription:
+      'Let this digital human maintain isolated personal memory for each signed-in ZGI user. External channels remain excluded.',
+    relationshipMemoryEnabled: 'Enabled for signed-in console conversations',
+    relationshipMemoryDisabled: 'Disabled by default',
+    relationshipMemory: 'Enable user relationship memory',
+    relationshipMemoryHint:
+      'Allow explicit, evidence-backed memory changes and inject saved personal context in later console conversations.',
+    relationshipAutoCapture: 'Allow automatic capture',
+    relationshipAutoCaptureHint:
+      'Permit eligible user relationships to opt in to conservative background extraction. Each relationship starts with this option off.',
     unsaved: 'You have unsaved changes',
     saved: 'All settings are saved',
     pendingPublish: 'Draft saved and waiting to be published',

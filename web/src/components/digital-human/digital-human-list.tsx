@@ -248,7 +248,11 @@ function CreateDigitalHumanDialog({
       default_model: defaultModel,
       autonomy_level: 'supervised',
       visibility: 'workspace',
-      memory_policy: { enabled: false },
+      memory_policy: {
+        enabled: false,
+        ownership: 'digital_human',
+        user_relationship: { enabled: false, auto_capture_allowed: false },
+      },
       trigger_policy: { manual: true },
     });
     const id = response.data?.definition.id;

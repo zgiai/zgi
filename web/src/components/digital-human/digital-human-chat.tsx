@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Bot, Settings2 } from 'lucide-react';
+import { Bot, Brain, Settings2 } from 'lucide-react';
 import { useStore } from 'zustand';
 import { toast } from 'sonner';
 import {
@@ -32,6 +32,7 @@ interface DigitalHumanChatProps {
 
 export function DigitalHumanChat({ id, controlsPortalId }: DigitalHumanChatProps) {
   const t = useT('digitalHumans');
+  const tProfile = useT('profile');
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -213,6 +214,16 @@ export function DigitalHumanChat({ id, controlsPortalId }: DigitalHumanChatProps
         inputPlaceholder={t('chat.placeholder')}
         onSelectConversation={selectConversation}
         onStartNewConversation={handleStartNewConversation}
+        headerRightAction={
+          <Button variant="ghost" size="sm" asChild>
+            <Link
+              href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
+            >
+              <Brain className="mr-2 size-4" />
+              {tProfile('memory.title')}
+            </Link>
+          </Button>
+        }
       />
     </div>
   );
