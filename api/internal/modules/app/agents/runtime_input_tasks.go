@@ -155,7 +155,9 @@ func (h *AgentsHandler) runtimeInputFollowUpRunConfig(ctx context.Context, info 
 		if loadErr != nil {
 			return runtimeservice.RunConfig{}, loadErr
 		}
-		runConfig, err = h.agentRunConfig(requestCtx, scope, info.CallerID.String(), "agent.published."+published.Version, published.Config, agentmemory.UserScopeEndUser)
+		// Memory-enabled WebApps require authentication, so follow-up runs use
+		// the same account subject as the original WebApp conversation.
+		runConfig, err = h.agentRunConfig(requestCtx, scope, info.CallerID.String(), "agent.published."+published.Version, published.Config, agentmemory.UserScopeAccount)
 	default:
 		return runtimeservice.RunConfig{}, runtimeservice.ErrRuntimeInputDisabled
 	}

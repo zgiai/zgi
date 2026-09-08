@@ -43,10 +43,12 @@ var sensitiveRequestQueryKeys = map[string]struct{}{
 	"refresh_token":      {},
 	"state":              {},
 	"token":              {},
+	"user":               {},
 }
 
 // safeRequestLogPath keeps useful query structure without persisting OAuth
-// authorization codes, CSRF state, tokens, or client secrets. Provider
+// authorization codes, CSRF state, tokens, client secrets, or opaque external
+// user identifiers. Provider
 // callbacks necessarily transport those values in the URL, so logging the raw
 // query would turn an otherwise short-lived credential into durable log data.
 func safeRequestLogPath(requestURL *url.URL) string {

@@ -22,6 +22,7 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -60,6 +61,11 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	)
 
 	agentMemoryService := agentmemory.NewService(db)
+	userRelationshipMemory := relationshipmemory.NewAgentAdapter(db)
+	var runtimeAgentMemory any = agentMemoryService
+	if relationshipmemory.RuntimeEnabled() {
+		runtimeAgentMemory = userRelationshipMemory
+	}
 	var defaultModelResolver llmdefaultservice.DefaultModelResolver
 	var titleGenerator titlegen.Service
 	if graphFlowService != nil {
@@ -83,7 +89,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		enterpriseService,
 		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolvers...),
 		memoryService,
-		agentMemoryService,
+		runtimeAgentMemory,
 		runtimeInputDispatcher,
 		externalActionProjections,
 	)
@@ -102,9 +108,16 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 			logger.Error("Failed to register chat runtime lease cleanup task", err)
 		}
 		extractionTask := agentmemoryworker.NewExtractionSweepTask()
-		extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, agentMemoryService, llmClient))
-		if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
-			logger.Error("Failed to register Agent memory extraction sweep", err)
+		if relationshipmemory.RuntimeEnabled() {
+			extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, userRelationshipMemory, llmClient))
+			if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
+				logger.Error("Failed to register Agent memory extraction sweep", err)
+			}
+		} else {
+			extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, agentMemoryService, llmClient))
+			if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
+				logger.Error("Failed to register Agent memory extraction sweep", err)
+			}
 		}
 		if runtimeInputDispatcher != nil {
 			recoveryTask := &app.RuntimeInputRecoveryTask{}
@@ -261,6 +274,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.DELETE("/:web_app_id/memory", appHandler.DeleteAllWebAppMemory)
 	protectedWebApps.GET("/:web_app_id/memory/export", appHandler.ExportWebAppMemory)
 	protectedWebApps.POST("/:web_app_id/memory/operations/:operation_id/undo", appHandler.UndoWebAppMemoryOperation)
+	protectedWebApps.GET("/:web_app_id/memory/settings", appHandler.GetWebAppMemorySettings)
+	protectedWebApps.PATCH("/:web_app_id/memory/settings", appHandler.PatchWebAppMemorySettings)
 
 	workflowTests := appsGroup.Group("/:agent_id/workflow-tests")
 	workflowTests.GET("/settings", workflowTestHandler.GetSettings)

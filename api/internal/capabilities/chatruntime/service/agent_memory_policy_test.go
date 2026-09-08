@@ -14,7 +14,34 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 )
+
+func TestAgentRelationshipMemoryIdentityRequiresExplicitAPIEndUser(t *testing.T) {
+	parts := &chatRequestParts{AgentMemoryUserScope: agentmemory.UserScopeEndUser, AgentMemoryConfigScope: agentmemory.ConfigScopePublished}
+	identity := agentRelationshipMemoryIdentity(Scope{AccountID: uuid.New()}, parts)
+	decision := relationshipmemory.DecideAccess(identity)
+	if decision.Read || decision.Reason != "user_subject_missing" {
+		t.Fatalf("decision = %#v, want fail-closed missing subject", decision)
+	}
+
+	subjectID := uuid.New()
+	identity = agentRelationshipMemoryIdentity(Scope{AccountID: uuid.New(), AgentMemoryUserID: &subjectID}, parts)
+	decision = relationshipmemory.DecideAccess(identity)
+	if !decision.Read || identity.Surface != relationshipmemory.SurfaceAgentAPI || identity.UserSubject == nil || identity.UserSubject.Kind != relationshipmemory.UserSubjectAPIEndUser || identity.UserSubject.ID != subjectID {
+		t.Fatalf("identity/decision = %#v/%#v, want allowed Agent API subject", identity, decision)
+	}
+}
+
+func TestAgentRelationshipMemoryIdentityUsesAccountForWebApp(t *testing.T) {
+	accountID := uuid.New()
+	parts := &chatRequestParts{AgentMemoryUserScope: agentmemory.UserScopeAccount, AgentMemoryConfigScope: agentmemory.ConfigScopePublished}
+	identity := agentRelationshipMemoryIdentity(Scope{AccountID: accountID}, parts)
+	decision := relationshipmemory.DecideAccess(identity)
+	if !decision.Read || identity.Surface != relationshipmemory.SurfaceAgentWebApp || identity.UserSubject == nil || identity.UserSubject.Kind != relationshipmemory.UserSubjectAccount || identity.UserSubject.ID != accountID {
+		t.Fatalf("identity/decision = %#v/%#v, want allowed WebApp account subject", identity, decision)
+	}
+}
 
 func TestAgentMemoryToolsPolicyRequiresVerifiedFunctionCalling(t *testing.T) {
 	parts := &chatRequestParts{

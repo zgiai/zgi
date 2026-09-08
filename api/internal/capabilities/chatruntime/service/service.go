@@ -529,27 +529,23 @@ func NewServiceWithSkillRuntime(
 	var runtimeInputDispatcher RuntimeInputFollowUpDispatcher
 	var externalActionProjections integrationmetatools.ActionProjectionResolver
 	for _, item := range optionalServices {
-		switch typed := item.(type) {
-		case AgentMemoryContextService:
-			if agentMemoryService == nil {
-				agentMemoryService = typed
-			}
-		case AgentMemoryExtractionScheduler:
-			if agentMemoryExtractionScheduler == nil {
-				agentMemoryExtractionScheduler = typed
-			}
-		case AIChatIntegrationPreferenceResolver:
-			if integrationPrefs == nil {
-				integrationPrefs = typed
-			}
-		case RuntimeInputFollowUpDispatcher:
-			if runtimeInputDispatcher == nil {
-				runtimeInputDispatcher = typed
-			}
-		case integrationmetatools.ActionProjectionResolver:
-			if externalActionProjections == nil {
-				externalActionProjections = typed
-			}
+		// Optional services may intentionally implement more than one contract
+		// (the memory backend provides both context and extraction scheduling),
+		// so these assertions must not be mutually exclusive.
+		if typed, ok := item.(AgentMemoryContextService); ok && agentMemoryService == nil {
+			agentMemoryService = typed
+		}
+		if typed, ok := item.(AgentMemoryExtractionScheduler); ok && agentMemoryExtractionScheduler == nil {
+			agentMemoryExtractionScheduler = typed
+		}
+		if typed, ok := item.(AIChatIntegrationPreferenceResolver); ok && integrationPrefs == nil {
+			integrationPrefs = typed
+		}
+		if typed, ok := item.(RuntimeInputFollowUpDispatcher); ok && runtimeInputDispatcher == nil {
+			runtimeInputDispatcher = typed
+		}
+		if typed, ok := item.(integrationmetatools.ActionProjectionResolver); ok && externalActionProjections == nil {
+			externalActionProjections = typed
 		}
 	}
 	return &service{

@@ -16,6 +16,7 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/gorm"
 )
@@ -41,6 +42,7 @@ type agentsService struct {
 	workflowService           interfaces.WorkflowService
 	chatRuntimeService        runtimeservice.Service
 	agentMemoryService        *agentmemory.Service
+	relationshipMemory        *relationshipmemory.AgentAdapter
 	dataSourceService         datasourceservice.DataSourceService
 	knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService
 	resourcePermissionService interfaces.ResourcePermissionService
@@ -92,10 +94,12 @@ func NewAgentsService(
 	var integrationConnections integrations.ConnectionRepository
 	var integrationAccess *integrations.DefaultConnectionAccessService
 	var integrationActionPolicies integrations.ActionPolicyResolver
+	var relationshipMemory *relationshipmemory.AgentAdapter
 	if db != nil {
 		integrationConnections = integrations.NewGormConnectionRepository(db)
 		integrationAccess = integrations.NewConnectionAccessService(integrationConnections, integrations.NewGormConnectionGrantRepository(db))
 		integrationActionPolicies = integrations.NewActionPolicyService(integrations.NewGormActionPolicyRepository(db), nil)
+		relationshipMemory = relationshipmemory.NewAgentAdapter(db)
 	}
 	return &agentsService{
 		agentsRepo:                agentsRepo,
@@ -104,6 +108,7 @@ func NewAgentsService(
 		workflowService:           workflowService,
 		chatRuntimeService:        chatRuntimeService,
 		agentMemoryService:        agentMemoryService,
+		relationshipMemory:        relationshipMemory,
 		dataSourceService:         dataSourceService,
 		knowledgeRetrievalService: knowledgeRetrievalService,
 		resourcePermissionService: resourcePermissionService,

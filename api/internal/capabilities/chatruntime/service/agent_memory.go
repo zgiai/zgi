@@ -11,15 +11,35 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const agentMemoryToolMutate = agentmemoryruntime.ToolMutate
+const maxUserRelationshipMemoryContextChars = 4000
 
 func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string, modelInputLimit int) (string, map[string]interface{}, error) {
 	if parts == nil || !parts.AgentMemoryEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 {
 		return systemPrompt, nil, nil
+	}
+	if relationshipmemory.RuntimeEnabled() {
+		identity := agentRelationshipMemoryIdentity(scope, parts)
+		decision := relationshipmemory.DecideAccess(identity)
+		relationshipmemory.RecordAccessDecision(ctx, relationshipmemory.ConsumerAgent, identity, decision)
+		if !decision.Read {
+			// Fail closed for every downstream memory path. The inline tools and
+			// extraction scheduler both use these resolved per-invocation flags.
+			parts.AgentMemoryEnabled = false
+			parts.AgentMemoryToolsEnabled = false
+			parts.AgentMemoryAutoExtractionEnabled = false
+			return systemPrompt, map[string]interface{}{
+				"agent_memory": map[string]interface{}{
+					"enabled": false, "available": false, "injected": false,
+					"context_status": "policy_denied", "reason": decision.Reason,
+				},
+			}, nil
+		}
 	}
 	agentID, _ := uuid.Parse(strings.TrimSpace(parts.AgentMemoryAgentID))
 	workspaceID := uuid.Nil
@@ -34,6 +54,9 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 		return systemPrompt, nil, nil
 	}
 	budgetChars := budgetTokens * 4
+	if budgetChars > maxUserRelationshipMemoryContextChars {
+		budgetChars = maxUserRelationshipMemoryContextChars
+	}
 	result, err := agentmemoryruntime.BuildContext(ctx, agentmemoryruntime.ContextRequest{
 		SystemPrompt: systemPrompt, Enabled: parts.AgentMemoryEnabled,
 		Slots: enabledAgentMemorySlots(parts.AgentMemorySlots), MemoryService: s.agentMemoryService,
@@ -69,7 +92,48 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 		parts.AgentMemoryRuntimeState = result.State
 	}
 	parts.AgentMemoryContext = strings.TrimSpace(result.Context)
+	if relationshipmemory.RuntimeEnabled() {
+		injectedCount := 0
+		if memoryMetadata, ok := result.Metadata["agent_memory"].(map[string]interface{}); ok {
+			if value, ok := memoryMetadata["value_count"].(int); ok {
+				injectedCount = value
+			}
+		}
+		relationshipmemory.RecordContextInjection(ctx, relationshipmemory.ConsumerAgent, parts.AgentMemoryContext, injectedCount)
+	}
 	return result.SystemPrompt, result.Metadata, err
+}
+
+func agentRelationshipMemoryIdentity(scope Scope, parts *chatRequestParts) relationshipmemory.InvocationIdentity {
+	identity := relationshipmemory.InvocationIdentity{
+		Principal:        relationshipmemory.PrincipalRef{ID: scope.AccountID},
+		ConversationType: relationshipmemory.ConversationPrivate,
+	}
+	if parts == nil {
+		return identity
+	}
+	switch strings.TrimSpace(parts.AgentMemoryUserScope) {
+	case agentmemory.UserScopeAccount:
+		identity.Principal.Type = "account"
+		identity.Surface = relationshipmemory.SurfaceAgentConsole
+		if strings.TrimSpace(parts.AgentMemoryConfigScope) == agentmemory.ConfigScopePublished {
+			identity.Surface = relationshipmemory.SurfaceAgentWebApp
+		}
+		if scope.AccountID != uuid.Nil {
+			subject := relationshipmemory.AccountSubject(scope.AccountID)
+			identity.UserSubject = &subject
+		}
+	case agentmemory.UserScopeEndUser:
+		identity.Principal.Type = "agent_api_key"
+		identity.Surface = relationshipmemory.SurfaceAgentAPI
+		// An API end-user is valid only when the API edge explicitly resolved
+		// `user`; falling back to the API key owner's account ID is forbidden.
+		if scope.AgentMemoryUserID != nil && *scope.AgentMemoryUserID != uuid.Nil {
+			subject := relationshipmemory.UserSubjectRef{Kind: relationshipmemory.UserSubjectAPIEndUser, ID: *scope.AgentMemoryUserID}
+			identity.UserSubject = &subject
+		}
+	}
+	return identity
 }
 
 func renderAgentMemoryContext(values []agentmemory.SlotValueResponse, budget int) (string, int) {
@@ -91,6 +155,9 @@ func (s *service) scheduleAgentMemoryExtractionBestEffort(ctx context.Context, p
 	if !prepared.parts.AgentMemoryEnabled || !prepared.parts.AgentMemoryAutoExtractionEnabled || !globalAgentMemoryAutoExtractionEnabled() {
 		return
 	}
+	if state := prepared.parts.AgentMemoryRuntimeState; state != nil && state.RelationshipSettingsResolved && (!state.Enabled || !state.AutoCaptureEnabled) {
+		return
+	}
 	if prepared.Scope.WorkspaceID == nil || *prepared.Scope.WorkspaceID == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
 		return
 	}
@@ -108,8 +175,7 @@ func (s *service) scheduleAgentMemoryExtractionBestEffort(ctx context.Context, p
 }
 
 func globalAgentMemoryAutoExtractionEnabled() bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv("ZGI_AGENT_MEMORY_AUTO_EXTRACTION_ENABLED")))
-	return value == "1" || value == "true" || value == "yes" || value == "on"
+	return relationshipmemory.AutomaticExtractionEnabled()
 }
 
 func globalAgentMemoryInlineToolsEnabled() bool {
@@ -186,11 +252,14 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 	state := parts.AgentMemoryRuntimeState
 	if state == nil {
 		state = &AgentMemoryRuntimeState{
-			Enabled: true, UserScope: parts.AgentMemoryUserScope,
+			Enabled: true, AutoCaptureEnabled: true, UserScope: parts.AgentMemoryUserScope,
 			ConfigScope: parts.AgentMemoryConfigScope, ConfigRevision: parts.AgentMemoryConfigRevision,
 			EnabledSlots: enabledAgentMemorySlots(parts.AgentMemorySlots),
 		}
 		parts.AgentMemoryRuntimeState = state
+	}
+	if state.RelationshipSettingsResolved && !state.Enabled {
+		return nil
 	}
 	if state.ConfigScope == "" {
 		state.ConfigScope = parts.AgentMemoryConfigScope
@@ -203,7 +272,11 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 	}
 	agentID, _ := uuid.Parse(strings.TrimSpace(parts.AgentMemoryAgentID))
 	state.AgentID = agentID
-	proactiveAllowed := parts.AgentMemoryAutoExtractionEnabled && globalAgentMemoryAutoExtractionEnabled()
+	relationshipAutoCaptureAllowed := true
+	if state.RelationshipSettingsResolved {
+		relationshipAutoCaptureAllowed = state.AutoCaptureEnabled
+	}
+	proactiveAllowed := parts.AgentMemoryAutoExtractionEnabled && relationshipAutoCaptureAllowed && globalAgentMemoryAutoExtractionEnabled()
 	definitions := agentmemoryruntime.Tools(state.EnabledSlots, proactiveAllowed)
 	if len(definitions) == 0 {
 		return nil

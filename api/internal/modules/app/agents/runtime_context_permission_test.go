@@ -956,7 +956,8 @@ func (s *webAppRuntimePermissionAppService) GetWebAppRuntimeCapability(_ context
 
 type agentRuntimePermissionAppService struct {
 	AgentsService
-	ids webAppRuntimePermissionIDs
+	ids                webAppRuntimePermissionIDs
+	agentMemoryEnabled bool
 }
 
 func (s *agentRuntimePermissionAppService) GetPublishedAgentRuntimeConfig(_ context.Context, agentID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
@@ -971,8 +972,9 @@ func (s *agentRuntimePermissionAppService) GetPublishedAgentRuntimeConfig(_ cont
 		Version:        "v1",
 		VersionUUID:    uuid.NewString(),
 		Config: dto.AgentConfigResponse{
-			AgentID:         s.ids.agentID.String(),
-			ModelParameters: map[string]interface{}{},
+			AgentID:            s.ids.agentID.String(),
+			ModelParameters:    map[string]interface{}{},
+			AgentMemoryEnabled: s.agentMemoryEnabled,
 		},
 	}, nil
 }

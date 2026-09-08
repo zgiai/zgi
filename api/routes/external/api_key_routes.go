@@ -21,6 +21,7 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -69,6 +70,11 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	externalWorkflowHandler := NewExternalWorkflowHandler(workflowService, fileService, contentExtractor, enterpriseService, quotaService, db)
 
 	agentMemoryService := agentmemory.NewService(db)
+	userRelationshipMemory := relationshipmemory.NewAgentAdapter(db)
+	var runtimeAgentMemory any = agentMemoryService
+	if relationshipmemory.RuntimeEnabled() {
+		runtimeAgentMemory = userRelationshipMemory
+	}
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(db),
 		llmClient,
@@ -79,7 +85,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		enterpriseService,
 		newExternalSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolver),
 		memoryService,
-		agentMemoryService,
+		runtimeAgentMemory,
 		actionProjections,
 	)
 	var defaultModelResolver llmdefaultservice.DefaultModelResolver
@@ -199,6 +205,8 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		externalGroup.DELETE("/agents/memory/:key", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentMemoryValue))
 		externalGroup.DELETE("/agents/memory", withAgentAPIKeyContext(agentHandler.DeleteAllAPIKeyAgentMemory))
 		externalGroup.POST("/agents/memory/operations/:operation_id/undo", withAgentAPIKeyContext(agentHandler.UndoAPIKeyAgentMemoryOperation))
+		externalGroup.GET("/agents/memory/settings", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemorySettings))
+		externalGroup.PATCH("/agents/memory/settings", withAgentAPIKeyContext(agentHandler.PatchAPIKeyAgentMemorySettings))
 		externalGroup.GET("/agents/conversations/:conversation_id/events", func(c *gin.Context) {
 			if v, exists := c.Get("api_key_info"); exists {
 				if keyInfo, ok := v.(*middleware.APIKeyInfo); ok {

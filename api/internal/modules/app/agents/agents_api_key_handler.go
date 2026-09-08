@@ -11,6 +11,7 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -73,6 +74,10 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 	ctx := externalAgentInvocationContext(c.Request.Context())
 	c.Request = c.Request.WithContext(ctx)
 	externalUser := strings.TrimSpace(req.User)
+	if len([]rune(externalUser)) > 128 {
+		response.FailWithMessage(c, response.ErrInvalidParam, "user must not exceed 128 characters")
+		return
+	}
 
 	published, err := h.appService.GetPublishedAgentRuntimeConfig(ctx, agentID.String())
 	if err != nil {
@@ -83,11 +88,6 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrInvalidParam, externalAgentMemoryUserRequiredMessage)
 		return
 	}
-	if externalUser != "" {
-		ctx = context.WithValue(ctx, "external_user", externalUser)
-		c.Request = c.Request.WithContext(ctx)
-	}
-
 	scope := runtimeservice.Scope{
 		OrganizationID:  organizationID,
 		AccountID:       accountID,
@@ -281,6 +281,23 @@ func (h *AgentsHandler) apiKeyAgentContinuationRuntimeContext(c *gin.Context) (a
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	externalUser := strings.TrimSpace(c.Query("user"))
+	if publishedAgentConfigRequiresExternalUser(published.Config) && externalUser == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, externalAgentMemoryUserRequiredMessage)
+		return agentRuntimeContext{}, false
+	}
+	if len([]rune(externalUser)) > 128 {
+		response.FailWithMessage(c, response.ErrInvalidParam, "user must not exceed 128 characters")
+		return agentRuntimeContext{}, false
+	}
+	if externalUser != "" && runtimeCtx.Scope.WorkspaceID != nil {
+		subjectID := externalAgentMemoryUserID(*runtimeCtx.Scope.WorkspaceID, *runtimeCtx.Caller.ID, externalUser)
+		if subjectID == uuid.Nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return agentRuntimeContext{}, false
+		}
+		runtimeCtx.Scope.AgentMemoryUserID = &subjectID
+	}
 	runConfig, err := h.agentRunConfig(
 		c.Request.Context(),
 		runtimeCtx.Scope,
@@ -298,24 +315,13 @@ func (h *AgentsHandler) apiKeyAgentContinuationRuntimeContext(c *gin.Context) (a
 }
 
 func publishedAgentConfigRequiresExternalUser(cfg dto.AgentConfigResponse) bool {
-	if !cfg.AgentMemoryEnabled {
-		return false
-	}
-	for _, slot := range cfg.AgentMemorySlots {
-		if slot.Enabled && strings.TrimSpace(slot.Key) != "" {
-			return true
-		}
-	}
-	return false
+	return cfg.AgentMemoryEnabled
 }
 
 func externalAgentMemoryUserID(workspaceID, agentID uuid.UUID, externalUser string) uuid.UUID {
-	seed := strings.Join([]string{
-		"zgi",
-		"external-agent-memory",
-		workspaceID.String(),
-		agentID.String(),
-		strings.TrimSpace(externalUser),
-	}, "\x00")
-	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed))
+	subject, err := relationshipmemory.APIEndUserSubject(workspaceID, agentID, externalUser)
+	if err != nil {
+		return uuid.Nil
+	}
+	return subject.ID
 }
