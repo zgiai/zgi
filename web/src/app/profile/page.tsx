@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useT } from '@/i18n';
 import { ProtectedRoute } from '@/components/auth/protected-route';
@@ -123,12 +122,6 @@ export default function ProfilePage() {
             </Button>
             <h1 className="text-3xl font-semibold tracking-tight text-foreground">{t('title')}</h1>
             <p className="text-sm text-muted-foreground mt-1">{t('personalInfoDesc')}</p>
-            <Button variant="outline" size="sm" asChild className="mt-4">
-              <Link href="/profile/memory">
-                <Icons.Brain className="mr-2 h-4 w-4" />
-                {t('memory.title')}
-              </Link>
-            </Button>
           </div>
 
           {/* Main Content Card */}
