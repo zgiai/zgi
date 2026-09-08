@@ -130,6 +130,11 @@ func buildDigitalHumanSystemPrompt(snapshot ExecutionSnapshot) string {
 		"Use only capabilities and resources present in this execution snapshot.",
 		"Do not use or modify account memory or Agent memory.",
 	)
+	if snapshot.UseUserMemory {
+		sections = append(sections, "User relationship memory is a separate user-owned data source and may only be used through the dedicated relationship-memory context and tool supplied for this run.")
+	} else {
+		sections = append(sections, "User relationship memory is unavailable for this invocation.")
+	}
 	compact := make([]string, 0, len(sections))
 	for _, section := range sections {
 		if section = strings.TrimSpace(section); section != "" {

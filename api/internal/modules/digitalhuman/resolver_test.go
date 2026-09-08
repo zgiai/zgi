@@ -140,3 +140,42 @@ func TestResolverAllowsIdentityWithoutRoleAssignment(t *testing.T) {
 		t.Fatalf("resolved roles = %#v", resolved.Spec.Roles)
 	}
 }
+
+func TestResolverAllowsRelationshipMemoryOnlyForManualAccountInvocation(t *testing.T) {
+	subject := runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New()}
+	store := &resolverStoreStub{
+		definition: &Definition{ID: subject.ID, Name: "Atlas", Status: StatusActive},
+		version: &Version{
+			ID: uuid.New(), DigitalHumanID: subject.ID, State: VersionStatePublished, VersionNumber: 1,
+			Persona: "Be direct", Rules: datatypes.JSON(`[]`), DefaultModel: "gpt-5",
+			IdentitySnapshot: datatypes.JSON(`{"name":"Atlas"}`), Revision: "sha256:version",
+			MemoryPolicy: datatypes.JSON(`{"enabled":true,"ownership":"digital_human","user_relationship":{"enabled":true,"auto_capture_allowed":true}}`),
+		},
+	}
+	resolver := NewResolver(store)
+	accountID := uuid.New()
+	manual := invocation.Event{
+		ID: "manual-memory", Type: invocation.EventTypeManual, Origin: invocation.Origin{Kind: invocation.OriginManual},
+		Target: subject, Sender: invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: accountID.String()}, OccurredAt: time.Now().UTC(),
+	}
+	resolved, err := resolver.Resolve(t.Context(), manual, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.Snapshot.UseUserMemory || !resolved.Snapshot.UserMemoryAutoCaptureAllowed {
+		t.Fatalf("manual account snapshot = %#v", resolved.Snapshot)
+	}
+
+	channel := manual
+	channel.ID = "channel-memory"
+	channel.Type = invocation.EventTypeChannelMessage
+	channel.Origin = invocation.Origin{Kind: invocation.OriginChannel, Provider: "feishu", InstallationID: "installation-1"}
+	channel.Sender = invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: "external-user"}
+	resolved, err = resolver.Resolve(t.Context(), channel, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Snapshot.UseUserMemory || resolved.Snapshot.UserMemoryAutoCaptureAllowed {
+		t.Fatalf("channel snapshot unexpectedly enabled memory = %#v", resolved.Snapshot)
+	}
+}

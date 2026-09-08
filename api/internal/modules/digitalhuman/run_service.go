@@ -728,7 +728,7 @@ func decodeAndVerifyRun(run *Run) (*ResolvedExecution, invocation.Event, error) 
 	if event.Target.ID != run.DigitalHumanID || event.Target.OrganizationID != run.OrganizationID || event.Target.WorkspaceID != run.WorkspaceID ||
 		event.IdempotencyKey != run.IdempotencyKey || spec.InvocationID != event.ID || spec.Subject != event.Target ||
 		spec.Revision != run.RunSpecRevision || snapshotRevision != snapshot.Revision || snapshot.Revision != run.ExecutionSnapshotRevision ||
-		snapshot.Subject != event.Target || snapshot.DigitalHumanVersion != run.DigitalHumanVersionID || snapshot.UseUserMemory || snapshot.UseAgentMemory {
+		snapshot.Subject != event.Target || snapshot.DigitalHumanVersion != run.DigitalHumanVersionID || snapshot.UseAgentMemory {
 		return nil, invocation.Event{}, ErrRunConflict
 	}
 	return &ResolvedExecution{Spec: spec, Snapshot: snapshot}, event, nil

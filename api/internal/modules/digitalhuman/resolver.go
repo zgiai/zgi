@@ -27,20 +27,21 @@ type ResolverStore interface {
 // ExecutionSnapshot contains all model-facing configuration required by a worker.
 // It deliberately contains credential references only, never secret material.
 type ExecutionSnapshot struct {
-	SchemaVersion         string                     `json:"schema_version"`
-	Revision              string                     `json:"revision"`
-	Subject               runtimeidentity.SubjectRef `json:"subject"`
-	DigitalHumanVersion   uuid.UUID                  `json:"digital_human_version_id"`
-	IdentityName          string                     `json:"identity_name"`
-	Persona               string                     `json:"persona"`
-	Goals                 []string                   `json:"goals"`
-	Rules                 []string                   `json:"rules"`
-	Model                 string                     `json:"model"`
-	Bindings              []resourcebindings.Binding `json:"bindings,omitempty"`
-	UseUserMemory         bool                       `json:"use_user_memory"`
-	UseAgentMemory        bool                       `json:"use_agent_memory"`
-	ChannelResponsePolicy *ChannelResponsePolicy     `json:"channel_response_policy,omitempty"`
-	ResolvedAt            time.Time                  `json:"resolved_at"`
+	SchemaVersion                string                     `json:"schema_version"`
+	Revision                     string                     `json:"revision"`
+	Subject                      runtimeidentity.SubjectRef `json:"subject"`
+	DigitalHumanVersion          uuid.UUID                  `json:"digital_human_version_id"`
+	IdentityName                 string                     `json:"identity_name"`
+	Persona                      string                     `json:"persona"`
+	Goals                        []string                   `json:"goals"`
+	Rules                        []string                   `json:"rules"`
+	Model                        string                     `json:"model"`
+	Bindings                     []resourcebindings.Binding `json:"bindings,omitempty"`
+	UseUserMemory                bool                       `json:"use_user_memory"`
+	UseAgentMemory               bool                       `json:"use_agent_memory"`
+	UserMemoryAutoCaptureAllowed bool                       `json:"user_memory_auto_capture_allowed"`
+	ChannelResponsePolicy        *ChannelResponsePolicy     `json:"channel_response_policy,omitempty"`
+	ResolvedAt                   time.Time                  `json:"resolved_at"`
 }
 
 type ResolvedExecution struct {
@@ -99,12 +100,16 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 		identityName = definition.Name
 	}
 	now := r.now()
+	userMemoryEnabled, userMemoryAutoCaptureAllowed := digitalHumanUserRelationshipMemoryPolicy(version.MemoryPolicy)
+	userMemoryEnabled = userMemoryEnabled && event.Origin.Kind == invocation.OriginManual && event.Sender.Type == invocation.PrincipalAccount
+	userMemoryAutoCaptureAllowed = userMemoryEnabled && userMemoryAutoCaptureAllowed
 	snapshot := ExecutionSnapshot{
 		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: version.ID,
 		IdentityName: identityName, Persona: version.Persona, Goals: goals, Rules: rules, Model: version.DefaultModel, Bindings: bindings,
-		UseUserMemory: false, UseAgentMemory: false,
-		ChannelResponsePolicy: channelResponsePolicyPointer(channelResponsePolicyFromTriggerPolicy(version.TriggerPolicy)),
-		ResolvedAt:            now,
+		UseUserMemory: userMemoryEnabled, UseAgentMemory: false,
+		UserMemoryAutoCaptureAllowed: userMemoryAutoCaptureAllowed,
+		ChannelResponsePolicy:        channelResponsePolicyPointer(channelResponsePolicyFromTriggerPolicy(version.TriggerPolicy)),
+		ResolvedAt:                   now,
 	}
 	snapshot.Revision, err = executionSnapshotRevision(snapshot)
 	if err != nil {
@@ -130,6 +135,19 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 		return nil, err
 	}
 	return &ResolvedExecution{Spec: spec, Snapshot: snapshot}, nil
+}
+
+func digitalHumanUserRelationshipMemoryPolicy(raw []byte) (bool, bool) {
+	var policy struct {
+		UserRelationship struct {
+			Enabled            bool `json:"enabled"`
+			AutoCaptureAllowed bool `json:"auto_capture_allowed"`
+		} `json:"user_relationship"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &policy) != nil {
+		return false, false
+	}
+	return policy.UserRelationship.Enabled, policy.UserRelationship.AutoCaptureAllowed
 }
 
 func executionSnapshotRevision(snapshot ExecutionSnapshot) (string, error) {

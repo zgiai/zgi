@@ -264,7 +264,10 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		digitalhuman.NewBrainAdapter(repository),
 		chatRuntime,
 		dispatcher,
-		digitalhuman.WithMemoryRuntime(memoryProvider),
+		digitalhuman.WithMemoryRuntime(digitalhuman.NewCompositeMemoryRuntimeProvider(
+			memoryProvider,
+			digitalhuman.NewRelationshipMemoryRuntimeProvider(deps.DB),
+		)),
 		digitalhuman.WithTaskRuntime(digitalhuman.NewTaskRuntimeProvider(deps.Tasks)),
 		digitalhuman.WithChannelTransientDispatcher(transientDispatcher),
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
