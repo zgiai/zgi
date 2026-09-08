@@ -15,6 +15,8 @@ import (
 )
 
 const (
+	protocolOpenAIResponses        = "openai_responses"
+	protocolAnthropicMessages      = "anthropic_messages"
 	modelCategoryImage             = "image"
 	modelCategoryResponses         = "responses"
 	modelCategoryAnthropicMessages = "anthropic_messages"
