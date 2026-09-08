@@ -35,11 +35,13 @@ type fakeBillingProvider struct {
 	checkBalanceErr    error
 	platformQuote      PricingQuote
 	platformQuoteErr   error
+	platformModel      PricingModelRef
 	platformPrompt     int
 	platformCompletion int
 }
 
-func (f *fakeBillingProvider) QuotePlatformTokenPricing(_ context.Context, _ uuid.UUID, promptTokens, completionTokens int) (PricingQuote, error) {
+func (f *fakeBillingProvider) QuotePlatformTokenPricing(_ context.Context, model PricingModelRef, promptTokens, completionTokens int) (PricingQuote, error) {
+	f.platformModel = model
 	f.platformPrompt = promptTokens
 	f.platformCompletion = completionTokens
 	return f.platformQuote, f.platformQuoteErr

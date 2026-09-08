@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -66,33 +69,43 @@ func (successfulSettleQuotaClient) Close() error { return nil }
 type authoritativeQuoteQuotaClient struct {
 	response *DualCostQuotaResponse
 	err      error
+	modelID  string
+	provider string
+	model    string
 }
 
-func (c authoritativeQuoteQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
+func (c *authoritativeQuoteQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	return nil, errors.New("unexpected pre-deduct")
 }
 
-func (c authoritativeQuoteQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
+func (c *authoritativeQuoteQuotaClient) SettleQuota(context.Context, *SettleQuotaRequest) (*SettleQuotaResponse, error) {
 	return nil, errors.New("unexpected settle")
 }
 
-func (c authoritativeQuoteQuotaClient) CheckCreditBalance(context.Context, string, int64) (bool, int64, error) {
+func (c *authoritativeQuoteQuotaClient) CheckCreditBalance(context.Context, string, int64) (bool, int64, error) {
 	return false, 0, errors.New("unexpected balance check")
 }
 
-func (c authoritativeQuoteQuotaClient) CalculateDualCost(context.Context, string, int, int) (*DualCostQuotaResponse, error) {
+func (c *authoritativeQuoteQuotaClient) CalculateDualCost(_ context.Context, modelID, provider, model string, _, _ int) (*DualCostQuotaResponse, error) {
+	c.modelID = modelID
+	c.provider = provider
+	c.model = model
 	return c.response, c.err
 }
 
-func (authoritativeQuoteQuotaClient) Close() error { return nil }
+func (*authoritativeQuoteQuotaClient) Close() error { return nil }
 
 func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testing.T) {
-	rb := &RemoteBilling{grpcClient: authoritativeQuoteQuotaClient{response: &DualCostQuotaResponse{
+	client := &authoritativeQuoteQuotaClient{response: &DualCostQuotaResponse{
 		Success: true, InputCredits: 25, OutputCredits: 20, TotalCredits: 45,
 		InputUSD: 0.000025, OutputUSD: 0.00002, TotalUSD: 0.000045,
-	}}}
+	}}
+	rb := &RemoteBilling{grpcClient: client}
+	localModelID := uuid.New()
 
-	quote, err := rb.QuotePlatformTokenPricing(context.Background(), uuid.New(), 10, 2)
+	quote, err := rb.QuotePlatformTokenPricing(context.Background(), PricingModelRef{
+		ModelID: localModelID, Provider: "openai", Model: "gpt-4o",
+	}, 10, 2)
 	if err != nil {
 		t.Fatalf("QuotePlatformTokenPricing() error = %v", err)
 	}
@@ -104,6 +117,9 @@ func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testi
 	}
 	if quote.ReservationPolicy != reservationPolicyAuthoritativeQuoteV1 {
 		t.Fatalf("reservation policy = %q, want %q", quote.ReservationPolicy, reservationPolicyAuthoritativeQuoteV1)
+	}
+	if client.modelID != localModelID.String() || client.provider != "openai" || client.model != "gpt-4o" {
+		t.Fatalf("quoted model identity = %q/%q/%q, want local ID plus openai/gpt-4o", client.modelID, client.provider, client.model)
 	}
 	if !quote.InputTokenPriceResolved || !quote.OutputTokenPriceResolved ||
 		!quote.InputTokenPriceUSDPer1M.Equal(decimal.RequireFromString("2.5")) ||
@@ -118,6 +134,19 @@ func TestRemoteBillingQuotePlatformTokenPricingUsesAuthoritativeCredits(t *testi
 	}
 	if repriced.TotalCredits != 30 {
 		t.Fatalf("repriced credits = %d, want 30", repriced.TotalCredits)
+	}
+}
+
+func TestRemoteBillingQuotePlatformTokenPricingRequiresCanonicalIdentity(t *testing.T) {
+	client := &authoritativeQuoteQuotaClient{}
+	rb := &RemoteBilling{grpcClient: client}
+
+	_, err := rb.QuotePlatformTokenPricing(context.Background(), PricingModelRef{ModelID: uuid.New()}, 10, 2)
+	if err == nil || !strings.Contains(err.Error(), "canonical provider and model") {
+		t.Fatalf("QuotePlatformTokenPricing() error = %v, want canonical identity failure", err)
+	}
+	if client.modelID != "" || client.provider != "" || client.model != "" {
+		t.Fatalf("RPC should not be called without canonical identity: %#v", client)
 	}
 }
 
@@ -381,6 +410,98 @@ func TestRemoteBillingEmptyDeductionIDRollsBackLocalGrantReservation(t *testing.
 	}
 	if attempt.Status != billingAttemptStatusPredeductFailed || attempt.ErrorCode == nil || *attempt.ErrorCode != "PREDEDUCT_INVALID_RESPONSE" {
 		t.Fatalf("invalid response attempt state = %#v", attempt)
+	}
+}
+
+func TestRemoteBillingInsufficientGrantQuotaPreservesSentinelAndFailureLedger(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	testRemoteBillingInsufficientGrantQuotaPreservesSentinelAndFailureLedger(t, db)
+}
+
+func TestRemoteBillingInsufficientGrantQuotaPostgres(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("ZGI_MIGRATION_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("set ZGI_MIGRATION_TEST_DSN to a disposable PostgreSQL database")
+	}
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open PostgreSQL: %v", err)
+	}
+	if err := db.AutoMigrate(
+		&BillingAttempt{},
+		&BillingAttemptEntry{},
+		&UsageBill{},
+		&accessmodel.Policy{},
+		&workspacemodel.Organization{},
+		&workspacemodel.Workspace{},
+	); err != nil {
+		t.Fatalf("migrate PostgreSQL billing fixtures: %v", err)
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_billing_attempt_entry ON billing_attempt_entries (attempt_id, entry_type, ledger_type)`).Error; err != nil {
+		t.Fatalf("create PostgreSQL billing entry index: %v", err)
+	}
+	testRemoteBillingInsufficientGrantQuotaPreservesSentinelAndFailureLedger(t, db)
+}
+
+func testRemoteBillingInsufficientGrantQuotaPreservesSentinelAndFailureLedger(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.AutoMigrate(&accessmodel.Grant{}); err != nil {
+		t.Fatalf("migrate developer grant: %v", err)
+	}
+	quota := int64(1)
+	grant := accessmodel.Grant{
+		OrganizationID: uuid.NewString(), WorkspaceID: uuid.NewString(),
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: uuid.NewString(),
+		Source: "approved_request", Status: accessmodel.GrantStatusActive,
+		QuotaLimit: &quota, RemainQuota: quota, MaxKeys: 1,
+		AllowedModels: []string{"gpt-4o"}, AuthorizationVersion: 1,
+	}
+	if err := db.Create(&grant).Error; err != nil {
+		t.Fatal(err)
+	}
+	version := grant.AuthorizationVersion
+	bc := &BillingContext{
+		OrganizationID: grant.OrganizationID, WorkspaceID: grant.WorkspaceID,
+		AttemptID: uuid.NewString(), RequestID: uuid.NewString(),
+		BillingLane: UsageBillingLanePlatform, UseSystemProvider: true,
+		InvocationSource: InvocationSourceAPI, AuthMethod: "personal_api_key",
+		PrincipalType: accessmodel.PrincipalTypeUser, PrincipalID: grant.PrincipalID,
+		AccessGrantID: grant.ID, GrantAuthorizationVersion: &version,
+		QuotaSubjectType: quotaSubjectTypeAccessGrant, QuotaSubjectID: grant.ID,
+		ModelID: uuid.New(), ModelName: "gpt-4o", ProviderID: uuid.New(), ProviderName: "openai",
+		EstimatedCredits: 45,
+	}
+	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
+	remote := &RemoteBilling{localService: &BillingService{db: db}, grpcClient: failingSettleQuotaClient{}}
+
+	err := remote.PreDeduct(context.Background(), bc)
+	if !errors.Is(err, ErrInsufficientQuota) {
+		t.Fatalf("PreDeduct() error = %v, want errors.Is(_, %v)", err, ErrInsufficientQuota)
+	}
+	if err := db.First(&grant, "id = ?", grant.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if grant.UsedQuota != 0 || grant.RemainQuota != quota {
+		t.Fatalf("rejected reservation mutated grant: used/remain=%d/%d, want 0/%d", grant.UsedQuota, grant.RemainQuota, quota)
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatalf("load failed attempt: %v", err)
+	}
+	if attempt.Status != billingAttemptStatusPredeductFailed || attempt.InvocationResult == nil || *attempt.InvocationResult != "error" {
+		t.Fatalf("failed attempt state = %#v", attempt)
+	}
+	var entries []BillingAttemptEntry
+	if err := db.Where("attempt_id = ?", bc.AttemptID).Find(&entries).Error; err != nil {
+		t.Fatalf("load failed entries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("failed attempt entries = %d, want 2", len(entries))
+	}
+	for _, entry := range entries {
+		if entry.Status != billingEntryStatusFailed {
+			t.Fatalf("entry %s status = %q, want %q", entry.EntryType, entry.Status, billingEntryStatusFailed)
+		}
 	}
 }
 

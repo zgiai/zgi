@@ -35,7 +35,7 @@ type quotaClient interface {
 }
 
 type authoritativeTokenCostClient interface {
-	CalculateDualCost(ctx context.Context, modelID string, promptTokens, completionTokens int) (*DualCostQuotaResponse, error)
+	CalculateDualCost(ctx context.Context, modelID, provider, model string, promptTokens, completionTokens int) (*DualCostQuotaResponse, error)
 }
 
 const (
@@ -94,15 +94,23 @@ func (s *RemoteBilling) CalculateCreditsFromTokens(
 
 func (s *RemoteBilling) QuotePlatformTokenPricing(
 	ctx context.Context,
-	modelID uuid.UUID,
+	model PricingModelRef,
 	promptTokens int,
 	completionTokens int,
 ) (PricingQuote, error) {
+	model = normalizePricingModelRef(model)
+	if model.Provider == "" || model.Model == "" {
+		return PricingQuote{}, fmt.Errorf("canonical provider and model are required for authoritative token pricing")
+	}
 	client, ok := s.grpcClient.(authoritativeTokenCostClient)
 	if !ok {
 		return PricingQuote{}, fmt.Errorf("remote billing does not support authoritative token pricing")
 	}
-	resp, err := client.CalculateDualCost(ctx, modelID.String(), promptTokens, completionTokens)
+	modelID := ""
+	if model.ModelID != uuid.Nil {
+		modelID = model.ModelID.String()
+	}
+	resp, err := client.CalculateDualCost(ctx, modelID, model.Provider, model.Model, promptTokens, completionTokens)
 	if err != nil {
 		return PricingQuote{}, fmt.Errorf("calculate authoritative token cost: %w", err)
 	}

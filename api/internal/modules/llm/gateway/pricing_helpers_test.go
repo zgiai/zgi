@@ -102,6 +102,9 @@ func TestQuoteTokenPricingForSelectionUsesRemoteAuthorityForOfficialRoute(t *tes
 	if billing.platformPrompt != 17 || billing.platformCompletion != 1 {
 		t.Fatalf("authoritative quote tokens = (%d, %d), want (17, 1)", billing.platformPrompt, billing.platformCompletion)
 	}
+	if billing.platformModel.ModelID != selection.Model.ID || billing.platformModel.Provider != "openai" || billing.platformModel.Model != "gpt-5.4" {
+		t.Fatalf("authoritative model identity = %#v, want local ID plus openai/gpt-5.4", billing.platformModel)
+	}
 }
 
 func TestQuoteTokenPricingForSelectionUsesReasoningFloorAndPlatformSlack(t *testing.T) {
@@ -114,7 +117,7 @@ func TestQuoteTokenPricingForSelectionUsesReasoningFloorAndPlatformSlack(t *test
 	}
 
 	if _, err := svc.quoteTokenPricingForSelection(
-		context.Background(), selection, PricingModelRef{ModelID: selection.Model.ID}, 12, 8,
+		context.Background(), selection, PricingModelRef{ModelID: selection.Model.ID, Provider: "qwen", Model: "qwen-reasoning"}, 12, 8,
 	); err != nil {
 		t.Fatal(err)
 	}

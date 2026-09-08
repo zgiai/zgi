@@ -595,6 +595,8 @@ type CalculateDualCostRequest struct {
 	CompletionTokens int32                  `protobuf:"varint,2,opt,name=completion_tokens,json=completionTokens,proto3" json:"completion_tokens,omitempty"`
 	ModelId          string                 `protobuf:"bytes,3,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
 	OrganizationId   string                 `protobuf:"bytes,4,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	Provider         string                 `protobuf:"bytes,5,opt,name=provider,proto3" json:"provider,omitempty"`
+	Model            string                 `protobuf:"bytes,6,opt,name=model,proto3" json:"model,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -653,6 +655,20 @@ func (x *CalculateDualCostRequest) GetModelId() string {
 func (x *CalculateDualCostRequest) GetOrganizationId() string {
 	if x != nil {
 		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *CalculateDualCostRequest) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *CalculateDualCostRequest) GetModel() string {
+	if x != nil {
+		return x.Model
 	}
 	return ""
 }
@@ -1360,12 +1376,14 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\n" +
 	"used_quota\x18\x04 \x01(\x03R\tusedQuota\x12)\n" +
 	"\x10refunded_credits\x18\x05 \x01(\x03R\x0frefundedCredits\x12'\n" +
-	"\x0fsettled_credits\x18\x06 \x01(\x03R\x0esettledCredits\"\xb0\x01\n" +
+	"\x0fsettled_credits\x18\x06 \x01(\x03R\x0esettledCredits\"\xe2\x01\n" +
 	"\x18CalculateDualCostRequest\x12#\n" +
 	"\rprompt_tokens\x18\x01 \x01(\x05R\fpromptTokens\x12+\n" +
 	"\x11completion_tokens\x18\x02 \x01(\x05R\x10completionTokens\x12\x19\n" +
 	"\bmodel_id\x18\x03 \x01(\tR\amodelId\x12'\n" +
-	"\x0forganization_id\x18\x04 \x01(\tR\x0eorganizationId\"\xbe\x02\n" +
+	"\x0forganization_id\x18\x04 \x01(\tR\x0eorganizationId\x12\x1a\n" +
+	"\bprovider\x18\x05 \x01(\tR\bprovider\x12\x14\n" +
+	"\x05model\x18\x06 \x01(\tR\x05model\"\xbe\x02\n" +
 	"\x10DualCostResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12#\n" +

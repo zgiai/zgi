@@ -64,13 +64,13 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSelection(
 	}
 	if lane == UsageBillingLanePlatform {
 		authority, ok := s.billing.(interface {
-			QuotePlatformTokenPricing(context.Context, uuid.UUID, int, int) (PricingQuote, error)
+			QuotePlatformTokenPricing(context.Context, PricingModelRef, int, int) (PricingQuote, error)
 		})
 		if !ok {
 			return PricingQuote{}, fmt.Errorf("platform token pricing authority is not configured")
 		}
 		promptTokens, completionTokens = conservativePlatformReservationTokens(selection, promptTokens, completionTokens)
-		return authority.QuotePlatformTokenPricing(ctx, model.ModelID, promptTokens, completionTokens)
+		return authority.QuotePlatformTokenPricing(ctx, model, promptTokens, completionTokens)
 	}
 	promptTokens, completionTokens = conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
 	return s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
