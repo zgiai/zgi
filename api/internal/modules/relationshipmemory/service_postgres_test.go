@@ -40,6 +40,17 @@ func TestRelationshipMemoryPostgresIsolationCASAndEpochFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	relationshipAAgain, err := service.EnsureRelationship(t.Context(), EnsureRelationshipRequest{
+		OrganizationID: organizationID, WorkspaceID: workspaceID, Subject: userA,
+		ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: "Support",
+		AutoCaptureEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("ensure existing relationship: %v", err)
+	}
+	if relationshipAAgain.ID != relationshipA.ID {
+		t.Fatalf("idempotent relationship ID = %s, want %s", relationshipAAgain.ID, relationshipA.ID)
+	}
 	relationshipB, err := service.EnsureRelationship(t.Context(), EnsureRelationshipRequest{
 		OrganizationID: organizationID, WorkspaceID: workspaceID, Subject: userB,
 		ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: "Support",

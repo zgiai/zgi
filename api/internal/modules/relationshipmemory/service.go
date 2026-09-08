@@ -113,7 +113,17 @@ func (s *Service) EnsureRelationship(ctx context.Context, req EnsureRelationship
 		if err := tx.Clauses(conflict).Create(&relationship).Error; err != nil {
 			return fmt.Errorf("ensure user memory relationship: %w", err)
 		}
-		return tx.Where("workspace_id = ? AND subject_id = ? AND consumer_type = ? AND consumer_id = ?", req.WorkspaceID, req.Subject.ID, req.ConsumerType, req.ConsumerID).First(&relationship).Error
+		// Always load the canonical row into a fresh value. When the insert loses
+		// the unique-key race (including the ordinary idempotent second call),
+		// relationship still contains the newly generated primary key. Passing it
+		// to First makes GORM append that stale ID to the scope query and hides the
+		// existing relationship.
+		var storedRelationship UserMemoryRelationship
+		if err := tx.Where("workspace_id = ? AND subject_id = ? AND consumer_type = ? AND consumer_id = ?", req.WorkspaceID, req.Subject.ID, req.ConsumerType, req.ConsumerID).First(&storedRelationship).Error; err != nil {
+			return err
+		}
+		relationship = storedRelationship
+		return nil
 	})
 	return &relationship, err
 }
