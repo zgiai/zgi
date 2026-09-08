@@ -9,6 +9,7 @@ const root = process.cwd();
 const read = relativePath => readFileSync(path.join(root, relativePath), 'utf8');
 
 const spec = YAML.parse(read('../api/routes/external/external-v1.openapi.yaml'));
+const quickstart = read('../docs/agent-api-quickstart.md');
 const documents = [
   ['en-US', read('src/components/agents/api/md/agent-api.en-US.mdx')],
   ['zh-Hans', read('src/components/agents/api/md/agent-api.zh-Hans.mdx')],
@@ -127,6 +128,11 @@ for (const [name, schema] of Object.entries(spec.components?.schemas ?? {})) {
 
 const publicEventNames = Object.keys(spec['x-zgi-sse-event-data-schemas'] ?? {}).sort();
 assert.ok(publicEventNames.length > 0, 'Agent OpenAPI is missing its public SSE event map');
+assert.equal(
+  spec['x-zgi-sse-event-data-schemas']?.approval_requested,
+  '#/components/schemas/ApprovalRequestedEventData',
+  'approval_requested must use its nested public event contract'
+);
 
 const collectEventPropertyNames = (schema, names = new Set(), visitedRefs = new Set()) => {
   if (!schema || typeof schema !== 'object') return names;
@@ -152,6 +158,30 @@ const collectEventPropertyNames = (schema, names = new Set(), visitedRefs = new 
 const publicEventPropertyNames = new Set();
 for (const schemaRef of Object.values(spec['x-zgi-sse-event-data-schemas'])) {
   collectEventPropertyNames({ $ref: schemaRef }, publicEventPropertyNames);
+}
+
+const approvalEventProperties = collectEventPropertyNames({
+  $ref: spec['x-zgi-sse-event-data-schemas'].approval_requested,
+});
+for (const propertyName of [
+  'approval_form_id',
+  'approval_token',
+  'ui_approval_allowed',
+  'approval_form',
+  'actions',
+  'fields',
+  'expiration_at',
+]) {
+  assert.ok(
+    approvalEventProperties.has(propertyName),
+    `approval_requested schema is missing ${propertyName}`
+  );
+}
+
+for (const [name, source] of [...documents, ['quickstart', quickstart]]) {
+  assert.match(source, /approval_form/, `${name} approval docs must describe the nested form`);
+  assert.match(source, /approval_token/, `${name} approval docs must describe the canonical token`);
+  assert.match(source, /ui_approval_allowed/, `${name} approval docs must describe API approval access`);
 }
 
 for (const [locale, source] of documents) {
