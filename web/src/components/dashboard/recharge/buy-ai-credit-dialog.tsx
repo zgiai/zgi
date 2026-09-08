@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 import { usePaymentStatusPolling } from '@/hooks/pay/use-payment-status-polling';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { payService } from '@/services/pay.service';
 import type { AiCreditProduct, Wallet, OrderStatus, PaymentMethod } from '@/services/types/pay';
 import { formatRecordedCurrencyAmount } from '@/utils/billing-display';
 
@@ -75,8 +76,21 @@ export function BuyAiCreditDialog({
   const locale = useLocale();
   const [useBalance, setUseBalance] = useState(false);
   const [balanceAmount, setBalanceAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('alipay');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wechat');
   const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && orderNo && orderStatus === 'pending') {
+      void payService
+        .cancelOrder(orderNo)
+        .then(() => onOpenChange(false))
+        .catch(() => {
+          // Keep the dialog open until the provider order is safely closed.
+        });
+      return;
+    }
+    onOpenChange(nextOpen);
+  };
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   // Determine if we should show QR code
@@ -140,11 +154,17 @@ export function BuyAiCreditDialog({
         description: t('costCenter.rechargeDialog.payment.failedDesc'),
       });
     },
-    onExpired: () => {
-      setOrderStatus('expired');
-      toast.error(t('costCenter.rechargeDialog.payment.expired'), {
-        description: t('costCenter.rechargeDialog.payment.expiredDesc'),
-      });
+    onExpired: async () => {
+      if (!orderNo) return;
+      try {
+        await payService.cancelOrder(orderNo);
+        setOrderStatus('expired');
+        toast.error(t('costCenter.rechargeDialog.payment.expired'), {
+          description: t('costCenter.rechargeDialog.payment.expiredDesc'),
+        });
+      } catch {
+        // Keep the order pending if payment won the race; polling remains authoritative.
+      }
     },
   });
 
@@ -187,7 +207,7 @@ export function BuyAiCreditDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>
@@ -398,7 +418,7 @@ export function BuyAiCreditDialog({
 
           {!showQrcode && (
             <DialogFooter>
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
+              <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isLoading}>
                 {t('costCenter.packages.cancel')}
               </Button>
               <Button onClick={handleConfirm} disabled={isLoading || finalPaymentAmount < 0}>

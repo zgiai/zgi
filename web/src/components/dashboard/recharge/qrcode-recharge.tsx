@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import { useRechargePayment } from '@/hooks/pay/use-recharge-payment';
 import { usePaymentStatusPolling } from '@/hooks/pay/use-payment-status-polling';
 import { toast } from 'sonner';
+import { payService } from '@/services/pay.service';
 import type { OrderStatus } from '@/services/types/pay';
 
 type PaymentMethod = 'wechat' | 'alipay';
@@ -80,6 +81,7 @@ function AlipayIcon({ className }: { className?: string }) {
 
 interface QrCodeRechargeProps {
   onClose?: () => void;
+  onPendingOrderChange?: (orderId: string | null) => void;
 }
 
 interface OrderState {
@@ -88,14 +90,14 @@ interface OrderState {
   status: OrderStatus | null;
 }
 
-export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
+export function QrCodeRecharge({ onClose, onPendingOrderChange }: QrCodeRechargeProps) {
   const t = useT();
   const [step, setStep] = useState<'selection' | 'payment'>('selection');
 
   // Selection state
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
   const [customAmount, setCustomAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('alipay');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wechat');
 
   // Payment state
   const [order, setOrder] = useState<OrderState>({ orderNo: null, qrcodeUrl: null, status: null });
@@ -128,21 +130,31 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
     maxAttempts: 200,
     onSuccess: (status: OrderStatus) => {
       setOrder(prev => ({ ...prev, status }));
+      onPendingOrderChange?.(null);
       toast.success(t('dashboard.costCenter.rechargeDialog.payment.success'), {
         description: t('dashboard.costCenter.rechargeDialog.payment.successDesc'),
       });
     },
     onFailure: (status: OrderStatus) => {
       setOrder(prev => ({ ...prev, status }));
+      onPendingOrderChange?.(null);
       toast.error(t('dashboard.costCenter.rechargeDialog.payment.failed'), {
         description: t('dashboard.costCenter.rechargeDialog.payment.failedDesc'),
       });
     },
-    onExpired: () => {
-      setOrder(prev => ({ ...prev, status: 'expired' }));
-      toast.error(t('dashboard.costCenter.rechargeDialog.payment.expired'), {
-        description: t('dashboard.costCenter.rechargeDialog.payment.expiredDesc'),
-      });
+    onExpired: async () => {
+      if (!order.orderNo) return;
+      try {
+        await payService.cancelOrder(order.orderNo);
+        setOrder(prev => ({ ...prev, status: 'expired' }));
+        onPendingOrderChange?.(null);
+        toast.error(t('dashboard.costCenter.rechargeDialog.payment.expired'), {
+          description: t('dashboard.costCenter.rechargeDialog.payment.expiredDesc'),
+        });
+      } catch {
+        // Keep polling state intact when cancellation loses a race with payment.
+        // The next status query will reconcile the provider result.
+      }
     },
   });
 
@@ -153,7 +165,6 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
         setTimeLeft(prev => {
           if (prev <= 1) {
             clearInterval(timer);
-            setOrder(o => ({ ...o, status: 'expired' }));
             return 0;
           }
           return prev - 1;
@@ -162,6 +173,21 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
       return () => clearInterval(timer);
     }
   }, [step, order.status, timeLeft]);
+
+  useEffect(() => {
+    if (step !== 'payment' || timeLeft !== 0 || order.status !== 'pending' || !order.orderNo) {
+      return;
+    }
+    void payService
+      .cancelOrder(order.orderNo)
+      .then(() => {
+        setOrder(prev => ({ ...prev, status: 'expired' }));
+        onPendingOrderChange?.(null);
+      })
+      .catch(() => {
+        // A payment may have completed concurrently; polling remains authoritative.
+      });
+  }, [onPendingOrderChange, order.orderNo, order.status, step, timeLeft]);
 
   const handleAmountSelect = useCallback((amount: number) => {
     setSelectedAmount(amount);
@@ -201,6 +227,7 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
             qrcodeUrl: data.payment.qr_code_content,
             status: 'pending',
           });
+          onPendingOrderChange?.(data.order.id);
           setTimeLeft(ORDER_TIMEOUT_SECONDS);
         },
         onError: () => {
@@ -208,16 +235,30 @@ export function QrCodeRecharge({ onClose }: QrCodeRechargeProps) {
         },
       }
     );
-  }, [finalAmount, paymentMethod, createPayment, t]);
+  }, [finalAmount, paymentMethod, createPayment, onPendingOrderChange, t]);
 
   const handleRefresh = useCallback(() => {
     initiatePayment();
   }, [initiatePayment]);
 
   const handleBack = useCallback(() => {
+    if (order.orderNo && order.status === 'pending') {
+      void payService
+        .cancelOrder(order.orderNo)
+        .then(() => {
+          onPendingOrderChange?.(null);
+          setStep('selection');
+          setOrder({ orderNo: null, qrcodeUrl: null, status: null });
+        })
+        .catch(() => {
+          // Keep the QR code visible until the provider order is safely closed.
+        });
+      return;
+    }
+    onPendingOrderChange?.(null);
     setStep('selection');
     setOrder({ orderNo: null, qrcodeUrl: null, status: null });
-  }, []);
+  }, [onPendingOrderChange, order.orderNo, order.status]);
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
