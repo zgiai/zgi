@@ -2,8 +2,6 @@ package agents
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -447,18 +445,9 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 }
 
 func agentMemoryConfigRevision(enabled, automatic bool, slots []dto.AgentMemorySlotConfig) string {
-	type revisionSlot struct {
-		Key         string `json:"key"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		MaxChars    int    `json:"max_chars"`
-		Enabled     bool   `json:"enabled"`
-		SortOrder   int    `json:"sort_order"`
-	}
-	normalizedSlots := normalizeAgentMemorySlotConfigs(slots)
-	revisionSlots := make([]revisionSlot, 0, len(normalizedSlots))
-	for _, slot := range normalizedSlots {
-		revisionSlots = append(revisionSlots, revisionSlot{
+	runtimeSlots := make([]agentmemory.RuntimeSlot, 0, len(slots))
+	for _, slot := range slots {
+		runtimeSlots = append(runtimeSlots, agentmemory.RuntimeSlot{
 			Key:         slot.Key,
 			Name:        slot.Name,
 			Description: slot.Description,
@@ -467,14 +456,7 @@ func agentMemoryConfigRevision(enabled, automatic bool, slots []dto.AgentMemoryS
 			SortOrder:   slot.SortOrder,
 		})
 	}
-	payload := struct {
-		Enabled   bool           `json:"enabled"`
-		Automatic bool           `json:"automatic"`
-		Slots     []revisionSlot `json:"slots"`
-	}{enabled, automatic, revisionSlots}
-	raw, _ := json.Marshal(payload)
-	digest := sha256.Sum256(raw)
-	return hex.EncodeToString(digest[:])
+	return agentmemory.ConfigRevision(enabled, automatic, runtimeSlots)
 }
 
 func agentMemorySlotConfigsFromSnapshot(raw interface{}) []dto.AgentMemorySlotConfig {

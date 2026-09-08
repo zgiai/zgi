@@ -668,7 +668,15 @@ func (a *AgentAdapter) loadPublishedAgentMemoryContract(ctx context.Context, db 
 	if err := json.Unmarshal(row.ConfigSnapshot, &contract); err != nil {
 		return nil, fmt.Errorf("%w: invalid published Agent memory contract", ErrPolicyRejected)
 	}
+	normalizePublishedAgentMemoryContract(&contract)
+	return &contract, nil
+}
+
+func normalizePublishedAgentMemoryContract(contract *publishedAgentMemoryContract) {
 	contract.ConfigRevision = strings.TrimSpace(contract.ConfigRevision)
+	if contract.ConfigRevision == "" {
+		contract.ConfigRevision = agentmemory.ConfigRevision(contract.Enabled, contract.AutoCaptureEnabled, contract.Slots)
+	}
 	enabledSlots := make([]agentmemory.RuntimeSlot, 0, len(contract.Slots))
 	for _, slot := range contract.Slots {
 		if slot.Enabled {
@@ -676,7 +684,6 @@ func (a *AgentAdapter) loadPublishedAgentMemoryContract(ctx context.Context, db 
 		}
 	}
 	contract.Slots = enabledSlots
-	return &contract, nil
 }
 
 func (a *AgentAdapter) FinishExtractionJob(ctx context.Context, id uuid.UUID, status, errorCode string) error {
