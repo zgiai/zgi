@@ -85,6 +85,21 @@ func (b *BillingService) upsertUsageBill(
 		Create(usageBill).Error
 }
 
+func hasUsageBillProjectionIdentity(bc *BillingContext) bool {
+	if bc == nil {
+		return false
+	}
+	if strings.TrimSpace(bc.AttemptID) == "" ||
+		strings.TrimSpace(bc.RequestID) == "" ||
+		strings.TrimSpace(bc.OrganizationID) == "" {
+		return false
+	}
+	if bc.ModelID == uuid.Nil || bc.ProviderID == uuid.Nil {
+		return false
+	}
+	return strings.TrimSpace(bc.ModelName) != "" && strings.TrimSpace(bc.ProviderName) != ""
+}
+
 func (b *BillingService) buildUsageBill(
 	bc *BillingContext,
 	status string,

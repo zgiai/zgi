@@ -132,7 +132,7 @@ func CatalogDefinitions() []appcatalog.Definition {
 		llmDefinition(AppCodeDeveloperQuotaExhausted, appcatalog.CategoryQuota, 429, false,
 			"Your developer API allowance is exhausted or reserved by in-flight requests. Check usage or contact your workspace administrator. Creating another key does not increase the shared allowance.",
 			"你的开发者 API 额度已用完或被进行中的请求占用。请检查用量或联系工作空间管理员；创建新密钥不会增加共享额度。",
-			"llm.personal_key.quota:invalid_api_key"),
+			"llm.personal_key.quota:invalid_api_key", "llm.developer_access.quota_exhausted:501002"),
 	}
 }
 

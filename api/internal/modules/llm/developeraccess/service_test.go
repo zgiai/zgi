@@ -937,11 +937,24 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 		VALUES (?, ?, ?, ?, ?)`, "attempt-compensated", "subject", 20, 15, 20).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec(`INSERT INTO llm_usage_bills
+		(attempt_id, request_id, organization_id, workspace_id, principal_type, principal_id, auth_method,
+		 api_key_id, model_name, provider_name, status, prompt_tokens, completion_tokens, total_tokens,
+		 total_points, response_time_ms, error_code, request_created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"attempt-rejected", "request-rejected", organizationID, workspaceID, accessmodel.PrincipalTypeUser, memberID,
+		"personal_api_key", key.ID, "qwen-test", "qwen", "failed", 0, 0, 0, 0, 0, "PREDEDUCT_FAILED", time.Now().Add(3*time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO billing_attempt_entries (attempt_id, entry_type, reserved_amount, actual_amount, refunded_amount)
+		VALUES (?, ?, ?, ?, ?)`, "attempt-rejected", "subject", 0, 0, 0).Error; err != nil {
+		t.Fatal(err)
+	}
 	adminPage, err := service.ListAudit(context.Background(), workspaceID, ownerID, AuditQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adminPage.Total != 2 || len(adminPage.Items) != 2 {
+	if adminPage.Total != 3 || len(adminPage.Items) != 3 {
 		t.Fatalf("unexpected admin audit page: %#v", adminPage)
 	}
 	itemsByAttempt := make(map[string]AuditItem, len(adminPage.Items))
@@ -956,12 +969,22 @@ func TestDeveloperAuditIsScopedAndHydrated(t *testing.T) {
 	if compensated.QuotaChargedPoints != 0 || compensated.QuotaOveragePoints != 0 || compensated.TotalPoints != 0 {
 		t.Fatalf("compensated audit item still reports a charge: %#v", compensated)
 	}
+	rejected := itemsByAttempt["attempt-rejected"]
+	if rejected.Status != "failed" || rejected.ErrorCode == nil || *rejected.ErrorCode != "PREDEDUCT_FAILED" || rejected.TotalTokens != 0 ||
+		rejected.TotalPoints != 0 || rejected.QuotaChargedPoints != 0 || rejected.QuotaOveragePoints != 0 {
+		t.Fatalf("pre-deduct rejection is not a zero-charge audit item: %#v", rejected)
+	}
 	memberPage, err := service.ListAudit(context.Background(), workspaceID, memberID, AuditQuery{PrincipalID: ownerID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if memberPage.Total != 2 || len(memberPage.Items) != 2 || memberPage.Items[0].PrincipalID != memberID || memberPage.Items[1].PrincipalID != memberID {
-		t.Fatalf("member escaped own audit scope: %#v", memberPage)
+	if memberPage.Total != 3 || len(memberPage.Items) != 3 {
+		t.Fatalf("unexpected member audit page: %#v", memberPage)
+	}
+	for _, item := range memberPage.Items {
+		if item.PrincipalID != memberID {
+			t.Fatalf("member escaped own audit scope: %#v", memberPage)
+		}
 	}
 }
 

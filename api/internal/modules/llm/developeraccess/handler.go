@@ -17,6 +17,7 @@ var (
 	legacyAccessDisabled = appcatalog.MustLegacyKey("llm.developer_access.disabled:403003")
 	legacyApprovalNeeded = appcatalog.MustLegacyKey("llm.developer_access.approval_required:403003")
 	legacyAccessConflict = appcatalog.MustLegacyKey("llm.developer_access.conflict:403003")
+	legacyQuotaExhausted = appcatalog.MustLegacyKey("llm.developer_access.quota_exhausted:501002")
 )
 
 type Handler struct {
@@ -37,7 +38,7 @@ func accountID(c *gin.Context) (string, bool) {
 	return id, true
 }
 
-func (h *Handler) writeCatalogedLegacyError(c *gin.Context, err error, legacy appcatalog.LegacyKey) bool {
+func (h *Handler) writeCatalogedLegacyError(c *gin.Context, err error, legacy appcatalog.LegacyKey, responseCode response.ErrorCode) bool {
 	if h.projector == nil {
 		return false
 	}
@@ -46,7 +47,7 @@ func (h *Handler) writeCatalogedLegacyError(c *gin.Context, err error, legacy ap
 		return false
 	}
 	c.Header(apptransport.HeaderApplicationErrorCode, message.AppCode.String())
-	response.FailWithMessage(c, response.ErrActionNotAllowed, message.Message)
+	response.FailWithMessage(c, responseCode, message.Message)
 	return true
 }
 
@@ -59,19 +60,23 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 	case errors.Is(err, ErrInvalid):
 		response.Fail(c, response.ErrInvalidParams)
 	case apperror.IsCode(err, llmerrors.AppCodeDeveloperAccessDisabled):
-		if !h.writeCatalogedLegacyError(c, err, legacyAccessDisabled) {
+		if !h.writeCatalogedLegacyError(c, err, legacyAccessDisabled, response.ErrActionNotAllowed) {
 			response.Fail(c, response.ErrActionNotAllowed)
 		}
 	case apperror.IsCode(err, llmerrors.AppCodeDeveloperApprovalNeeded):
-		if !h.writeCatalogedLegacyError(c, err, legacyApprovalNeeded) {
+		if !h.writeCatalogedLegacyError(c, err, legacyApprovalNeeded, response.ErrActionNotAllowed) {
 			response.Fail(c, response.ErrActionNotAllowed)
 		}
 	case apperror.IsCode(err, llmerrors.AppCodeDeveloperAccessConflict):
-		if !h.writeCatalogedLegacyError(c, err, legacyAccessConflict) {
+		if !h.writeCatalogedLegacyError(c, err, legacyAccessConflict, response.ErrActionNotAllowed) {
 			response.Fail(c, response.ErrActionNotAllowed)
 		}
 	case errors.Is(err, ErrQuotaExceeded):
-		response.Fail(c, response.ErrOpenAIQuota)
+		cataloged := apperror.Wrap(err, llmerrors.AppCodeDeveloperQuotaExhausted,
+			apperror.WithOperation("developer_access.write_error"))
+		if !h.writeCatalogedLegacyError(c, cataloged, legacyQuotaExhausted, response.ErrOpenAIQuota) {
+			response.Fail(c, response.ErrOpenAIQuota)
+		}
 	default:
 		logger.ErrorContext(c.Request.Context(), "developer access request failed", "error", err)
 		response.Fail(c, response.ErrSystemError)

@@ -503,6 +503,24 @@ func testRemoteBillingInsufficientGrantQuotaPreservesSentinelAndFailureLedger(t 
 			t.Fatalf("entry %s status = %q, want %q", entry.EntryType, entry.Status, billingEntryStatusFailed)
 		}
 	}
+	var bill UsageBill
+	if err := db.First(&bill, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatalf("load failed usage bill projection: %v", err)
+	}
+	if bill.RequestID != bc.RequestID || bill.OrganizationID != grant.OrganizationID ||
+		bill.WorkspaceID == nil || *bill.WorkspaceID != grant.WorkspaceID ||
+		bill.PrincipalType == nil || *bill.PrincipalType != accessmodel.PrincipalTypeUser ||
+		bill.PrincipalID == nil || *bill.PrincipalID != grant.PrincipalID ||
+		bill.APIKeyID != bc.APIKeyID || bill.AccessGrantID == nil || bill.AccessGrantID.String() != grant.ID {
+		t.Fatalf("failed usage bill lost personal-key attribution: %#v", bill)
+	}
+	if bill.Status != usageBillStatusFailed || bill.ModelName != bc.ModelName || bill.ProviderName != bc.ProviderName ||
+		bill.TotalTokens != 0 || bill.TotalPoints != 0 || bill.OfficialPoints != 0 || bill.PrivatePoints != 0 {
+		t.Fatalf("failed usage bill must be a zero-charge audit row: %#v", bill)
+	}
+	if bill.ErrorCode == nil || *bill.ErrorCode != "PREDEDUCT_FAILED" || bill.ErrorMessage != nil {
+		t.Fatalf("failed usage bill must expose only the safe failure code: %#v", bill)
+	}
 }
 
 func TestRemoteBillingRejectsInactivePersonalKeyAndRollsBackGrantReservation(t *testing.T) {

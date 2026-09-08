@@ -321,6 +321,17 @@ func (b *BillingService) updateAttemptStatus(
 		if entryRes.Error != nil {
 			return fmt.Errorf("close failed pre-deduct entries: %w", entryRes.Error)
 		}
+		// Usage bills are the durable, queryable invocation projection used by
+		// developer-access audit. Record complete pre-deduct rejections in the
+		// same transaction as the terminal attempt state so a rejected request
+		// cannot disappear from the administrator's audit trail. Recovery paths
+		// with incomplete request/model attribution remain attempt-only until
+		// their context can be restored safely.
+		if hasUsageBillProjectionIdentity(bc) {
+			if err := b.upsertUsageBill(ctx, tx, bc, usageBillStatusFailed, errCode, nil); err != nil {
+				return fmt.Errorf("project failed pre-deduct usage bill: %w", err)
+			}
+		}
 	}
 	return nil
 }
