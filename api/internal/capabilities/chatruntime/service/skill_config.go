@@ -542,12 +542,15 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 	if isAgentsContext {
 		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
 			modelTurnIntentRequestsAgentRead(parts.ModelTurnIntent) {
-			capabilities.AgentRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentView) ||
-				s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentManage)
+			capabilities.AgentRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentView)
 		}
 		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
 			modelTurnIntentRequestsAgentMutation(parts.ModelTurnIntent) {
-			capabilities.AgentManage = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentManage)
+			// This only makes the skill discoverable; it does not grant authorization
+			// to execute any tool or mutate its target.
+			capabilities.AgentManage = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentCreate) ||
+				s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentUpdate) ||
+				s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentDelete)
 		}
 	}
 	if !isFilesContext {
@@ -557,10 +560,10 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 		capabilities.FileRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFilePreview)
 	}
 	if hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext) {
-		capabilities.FileDelete = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileManage)
+		capabilities.FileDelete = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileDelete)
 	}
 	if hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		capabilities.FileCreate = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileUploadCreate)
+		capabilities.FileCreate = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileUpload)
 	}
 	return capabilities
 }

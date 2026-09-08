@@ -736,6 +736,7 @@ const FileManagementContent = ({
   const canCreateFolder = canManageFolder;
   const canManage = hasAnyPermission(FILE_PERMISSION_ACTIONS.delete);
   const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
+  const canPreview = hasAnyPermission(FILE_PERMISSION_ACTIONS.preview);
   const canCreateTextFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.textCreate);
   const canAddFile = canUpload || canCreateTextFile;
   const canCreateInActiveFolder =
@@ -912,6 +913,7 @@ const FileManagementContent = ({
             queryStatus: filesQueryStatus,
             canManage,
             canUpload,
+            canPreview,
             presentation: filesAIChatPresentation,
           })
         : [],
@@ -931,6 +933,7 @@ const FileManagementContent = ({
       isOrganizationMode,
       canManage,
       canUpload,
+      canPreview,
       selectedFiles,
       total,
       totalPages,

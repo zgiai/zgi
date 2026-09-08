@@ -159,13 +159,6 @@ const promptDetailPagePath = path.join(
   '[promptId]',
   'page.tsx'
 );
-const promptUsageSummaryPath = path.join(
-  rootDir,
-  'src',
-  'components',
-  'prompts',
-  'prompt-usage-summary.tsx'
-);
 const contentParsePagePath = path.join(
   rootDir,
   'src',
@@ -1145,7 +1138,6 @@ const appCenterPaths = [
 const organizationProductPagePaths = [
   path.join(rootDir, 'src', 'app', 'console', 'work', 'chat', 'page.tsx'),
   path.join(rootDir, 'src', 'app', 'console', 'work', 'image', 'page.tsx'),
-  path.join(rootDir, 'src', 'app', 'console', 'settings', 'page.tsx'),
   ...appCenterPaths,
 ];
 
@@ -1394,6 +1386,7 @@ const expectedWorkspaceConsolePageRoutes = [
   '/console/agents/:agentId/batch-test/batches/new',
   '/console/agents/:agentId/logs',
   '/console/agents/:agentId/workflow',
+  '/console/api-keys',
   '/console/dataset',
   '/console/dataset/:datasetId',
   '/console/dataset/:datasetId/batch-testing',
@@ -1630,7 +1623,8 @@ const organizationWorkspaceDetailPageSource = fs.readFileSync(
 const workspaceManagementServiceSource = fs.readFileSync(workspaceManagementServicePath, 'utf8');
 const promptListPageSource = fs.readFileSync(promptListPagePath, 'utf8');
 const promptDetailPageSource = fs.readFileSync(promptDetailPagePath, 'utf8');
-const promptUsageSummarySource = fs.readFileSync(promptUsageSummaryPath, 'utf8');
+// Usage references now live in the detail page, not a separate summary component.
+const promptUsageSummarySource = promptDetailPageSource;
 const contentParsePageSource = fs.readFileSync(contentParsePagePath, 'utf8');
 const contentParsePlaygroundSource = fs.readFileSync(contentParsePlaygroundPath, 'utf8');
 const contentParseProviderSettingsHandlerSource = fs.readFileSync(
@@ -1962,8 +1956,13 @@ assert.match(
 );
 assert.match(
   organizationPermissionsPageSource,
-  /roles\.filter\(isWorkspaceGovernanceRole\)/,
-  'organization permission page should use the shared governance role helper'
+  /permissionTemplateRoles\.map\(role =>/,
+  'organization permission cards should render only selectable templates, not fixed governance roles'
+);
+assert.doesNotMatch(
+  organizationPermissionsPageSource,
+  /\broles\.map\(/,
+  'organization permission cards must not bypass the governance-role exclusion filter'
 );
 assert.match(
   organizationPermissionsPageSource,
@@ -2102,11 +2101,6 @@ assert.match(
 );
 assert.match(
   promptUsageSummarySource,
-  /const canOpenWorkflowRunLog\s*=\s*hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.logsView\)/,
-  'prompt usage run log links should require workflow.logs.view'
-);
-assert.match(
-  promptUsageSummarySource,
   /canOpenWorkflowReference\s*\?\s*\([\s\S]*href=\{`\$\{getAgentDetailBaseHref\(reference\.agent_id,\s*'workflow'\)\}\?nodeId=\$\{reference\.node_id\}`\}/,
   'prompt usage references should gate workflow node deep links with target-page permissions'
 );
@@ -2122,8 +2116,18 @@ assert.doesNotMatch(
 );
 assert.match(
   promptUsageSummarySource,
-  /run\.workflow_run_id && canOpenWorkflowRunLog\s*\?\s*\([\s\S]*href=\{`\$\{getAgentDetailLogsHref\(run\.agent_id,\s*'workflow'\)\}\?runId=\$\{run\.workflow_run_id\}&tab=execution`\}/,
-  'prompt usage recent-run logs should be hidden unless the workflow log direct page is available'
+  /\{usage\?\.last_run_at[\s\S]*t\('detail\.lastRunAt'/,
+  'prompt usage should retain its informational last-run timestamp'
+);
+assert.doesNotMatch(
+  promptUsageSummarySource,
+  /getAgentDetailLogsHref|workflow_run_id/,
+  'the current summary has no run-log links; restoring them requires an explicit logsView permission guard'
+);
+assert.match(
+  promptUsageSummarySource,
+  /\{referenceContent\}[\s\S]*<\/Link>[\s\S]*:\s*\([\s\S]*<div[\s\S]*\{referenceContent\}/,
+  'members without workflow editor access should still see a non-interactive reference summary'
 );
 assert.match(
   contentParsePageSource,
@@ -2442,7 +2446,7 @@ assert.match(
 );
 assert.match(
   fileChunksPanelSource,
-  /disabled=\{!canUpdateFile \|\| updateChunk\.isPending \|\| batchUpdateChunks\.isPending\}/,
+  /disabled=\{\s*!canUpdateFile\s*\|\|\s*updateChunk\.isPending\s*\|\|\s*batchUpdateChunks\.isPending\s*\|\|\s*deleteChunk\.isPending\s*\}/,
   'file chunk mutation controls should be disabled when file.update is absent'
 );
 assert.match(
@@ -2477,8 +2481,8 @@ assert.match(
 );
 assert.match(
   fileManagementContentSource,
-  /onUpload=\{canUpload \? handleUpload : undefined\}/,
-  'file upload sidebar action should stay gated by upload permission'
+  /onUpload=\{selectionMode && canUpload \? handleUpload : undefined\}/,
+  'file upload sidebar action should require both selection mode and upload permission'
 );
 assert.match(
   fileManagementContentSource,
@@ -2494,6 +2498,11 @@ assert.match(
   fileSidebarSource,
   /t\('files\.sidebar\.newTextFile'\)/,
   'file sidebar should render the text creation label separately from upload'
+);
+assert.match(
+  fileSidebarSource,
+  /\{onCreateTextFile && \([\s\S]*onClick=\{onCreateTextFile\}[\s\S]*t\('files\.sidebar\.newTextFile'\)/,
+  'file sidebar should render a working text action only when its permission-gated callback is supplied'
 );
 assert.match(
   fileHandlerSource,
@@ -2666,7 +2675,7 @@ assert.match(
 );
 assert.match(
   dbLayoutSource,
-  /\{canViewTableMetadata && \([\s\S]*<button[\s\S]*\{t\('dbs\.tables'\)\}/,
+  /\{canViewTableMetadata && \([\s\S]*<Link\s+href=\{`\/console\/db\/\$\{dbId\}`\}[\s\S]*\{t\('dbs\.tables'\)\}/,
   'database detail layout should hide the table navigation group without table metadata permissions'
 );
 assert.match(
@@ -2861,7 +2870,7 @@ assert.match(
 );
 assert.match(
   dashboardTypesSource,
-  /DashboardRecentWorkType = 'conversation' \| 'agent' \| 'workflow' \| 'dataset' \| 'database'/,
+  /DashboardRecentWorkType\s*=\s*\|?\s*'conversation'\s*\|\s*'agent'\s*\|\s*'workflow'\s*\|\s*'dataset'\s*\|\s*'database'/,
   'recent work response type should include workflow so workflow assets do not fall through to database links'
 );
 assert.match(
@@ -3171,13 +3180,13 @@ const legacyAggregatePermissionCodes = [
 ];
 assert.match(
   consoleSidebarSource,
-  /getConsoleRouteAccess/,
+  /getZGIConsoleNavigationAccess\(item\.href, context\)/,
   'console sidebar should use shared route access metadata for nav visibility'
 );
 assert.match(
   consoleSidebarSource,
-  /routeAccess\.scope === 'organization'/,
-  'console sidebar should keep only organization-scoped nav items in organization mode'
+  /getZGIConsoleNavigationDisplayState\(access, permissionsFailed\)/,
+  'console sidebar should project missing workspace and denied permissions through shared navigation display states'
 );
 assert.doesNotMatch(
   consoleSidebarSource,
@@ -3330,6 +3339,10 @@ for (const filePath of backendPermissionBusinessFiles) {
 }
 
 const consolePageSource = fs.readFileSync(consolePagePath, 'utf8');
+const workspaceHomeHookSource = fs.readFileSync(path.join(rootDir, 'src/hooks/console/use-workspace-home.ts'), 'utf8');
+const workspaceHomeSource = fs.readFileSync(path.join(rootDir, 'src/components/console/workspace-home/index.tsx'), 'utf8');
+const workspaceQuickActionsSource = fs.readFileSync(path.join(rootDir, 'src/components/console/workspace-home/quick-actions.tsx'), 'utf8');
+const workspaceRecentWorkSource = fs.readFileSync(path.join(rootDir, 'src/components/console/workspace-home/recent-work.tsx'), 'utf8');
 const workspaceStoreSource = fs.readFileSync(workspaceStorePath, 'utf8');
 const accountServiceSource = fs.readFileSync(accountServicePath, 'utf8');
 const runnableWebAppsHookSource = fs.readFileSync(runnableWebAppsHookPath, 'utf8');
@@ -3383,10 +3396,21 @@ assert.match(
   /useWorkspaces\('',\s*1,\s*1000,\s*\{\s*keepPreviousData:\s*true,\s*enabled:\s*open\s*\}\)/,
   'runtime audience picker should not fetch workspace scope while closed'
 );
+// Audience names are embedded in subject_detail; chip components no longer
+// perform lookups. Protect that boundary instead of requiring the removed prop.
+const runtimeAudienceChipSource = runtimeAudiencePickerSource.slice(
+  runtimeAudiencePickerSource.indexOf('export function RuntimeAudienceChipList(')
+);
+assert.match(runtimeAudienceChipSource, /function RuntimeAudienceChip\(/);
+assert.doesNotMatch(
+  runtimeAudienceChipSource,
+  /\b(?:useDepartments|useWorkspaces|useCurrentOrganizationMembers)\s*\(/,
+  'runtime audience chips must render embedded names without fetching scope catalogs'
+);
 assert.match(
   runtimeAudiencePickerSource,
-  /lookupEnabled=\{open\}/,
-  'runtime audience picker selected chips should not resolve department/workspace labels while closed'
+  /useCurrentOrganizationMembers\(\{[^}]*enabled:\s*open/,
+  'runtime audience picker should not fetch members while closed'
 );
 assert.match(
   runtimeAudiencePickerSource,
@@ -3404,12 +3428,12 @@ assert.match(
   'runtime audience picker should show the owning workspace as an implicit audience'
 );
 assert.match(
-  consolePageSource,
-  /const canOpenModelConfig\s*=\s*canAccessOrganizationDashboard && canManageModelConfig/,
+  workspaceHomeHookSource,
+  /const canOpenModelConfig\s*=\s*capabilities\.canAccessOrganizationDashboard && capabilities\.canManageModelConfig/,
   'console overview model configuration entry should require organization dashboard and model-config capabilities'
 );
 assert.doesNotMatch(
-  consolePageSource,
+  workspaceHomeHookSource,
   /has(?:Any|All)?Permission\s*\([\s\S]{0,240}['"](?:dashboard|content_parse)\./,
   'console overview should not gate model readiness or parser/dashboard entry points with retired workspace permissions'
 );
@@ -3440,6 +3464,7 @@ const templateGalleryDialogSource = fs.readFileSync(templateGalleryDialogPath, '
 const createFromTemplateHookSource = fs.readFileSync(createFromTemplateHookPath, 'utf8');
 const agentSidebarSource = fs.readFileSync(agentSidebarPath, 'utf8');
 const agentApiPageSource = fs.readFileSync(agentApiPagePath, 'utf8');
+const agentApiGuardSource = fs.readFileSync(path.join(rootDir, 'src/components/agents/api/agent-api-access-guard.tsx'), 'utf8');
 const workflowEditorPageSource = fs.readFileSync(workflowEditorPagePath, 'utf8');
 const agentBatchTestPageSource = fs.readFileSync(agentBatchTestPagePath, 'utf8');
 const workflowBatchTestOverviewSource = fs.readFileSync(workflowBatchTestOverviewPath, 'utf8');
@@ -3567,53 +3592,63 @@ assert.match(
 );
 assert.match(
   consolePageSource,
+  /<WorkspaceHome\s*\/>/,
+  'console route should render the modular workspace home'
+);
+assert.match(
+  workspaceHomeSource,
+  /useWorkspaceHome\(\)/,
+  'workspace home should use its scoped data and permission hook'
+);
+assert.match(
+  workspaceHomeHookSource,
   /useAccountCapabilities/,
   'console home should consume account capabilities'
 );
 assert.match(
-  consolePageSource,
+  workspaceHomeHookSource,
   /canAccessOrganizationDashboard/,
   'console home should derive dashboard entry visibility from account capabilities'
 );
 assert.match(
-  consolePageSource,
+  workspaceHomeHookSource,
   /canManageModelConfig/,
   'console home should derive model configuration entry visibility from account capabilities'
 );
 assert.match(
-  consolePageSource,
-  /useRunnableWebApps\(\{\s*workspaceId:\s*null\s*\}\)/,
-  'console home should load runnable apps through organization scope instead of the current workspace'
+  workspaceHomeHookSource,
+  /apps:\s*toHomeAccessState\('\/console\/work\/app', navigationContext, permissionsFailed\)/,
+  'home app entry must use the shared navigation permission decision'
 );
 assert.match(
-  consolePageSource,
-  /key:\s*'app-center'[\s\S]*enabled:\s*canUseOrganizationScope\s*&&\s*productSurfaces\?\.app\s*!==\s*false\s*&&\s*canUseRunnableApps/,
-  'console home should hide the app-center product entry when the account lacks the app_center resource-list capability'
+  workspaceQuickActionsSource,
+  /href:\s*'\/console\/work\/app',[\s\S]*?accessState:\s*access\.apps/,
+  'app-center shortcut must consume its own access decision'
 );
 assert.match(
-  consolePageSource,
-  /\{canUseRunnableApps \? \([\s\S]*href="\/console\/work\/app"/,
-  'console home should hide the open-app-center CTA when the account lacks the app_center resource-list capability'
+  workspaceQuickActionsSource,
+  /return isBlocked \? \([\s\S]*?aria-disabled="true"[\s\S]*?: \([\s\S]*?<Link/,
+  'blocked home actions must remain informative but not navigable'
 );
 assert.match(
-  consolePageSource,
+  workspaceQuickActionsSource,
   /href:\s*'\/console\/work\/chat'/,
   'console home should keep chat as an organization-scoped product entry'
 );
 assert.match(
-  consolePageSource,
-  /DASHBOARD_KEYS\.recentWork\('overview'\)/,
-  'console home should query the organization overview recent-work feed'
+  workspaceHomeHookSource,
+  /useDashboardRecentWork\(/,
+  'home should use the shared recent-work query hook'
 );
 assert.match(
-  consolePageSource,
-  /dashboardService\.getRecentWork\(\{[\s\S]*scope:\s*'overview'/,
-  'console home recent-work request should use overview scope'
+  workspaceHomeHookSource,
+  /useDashboardRecentWork\(\s*\{\s*scope:\s*currentWorkspace \? 'workspace' : 'overview',\s*workspace_id:\s*currentWorkspace\?\.id/,
+  'home recent work must use the selected workspace and fall back to overview only without one'
 );
 assert.match(
-  consolePageSource,
-  /handleOpenRecentWork/,
-  'console home should open recent work through the workspace-aware handler'
+  workspaceRecentWorkSource,
+  /getRecentWorkNavigationHref\(\s*hasWorkspace,\s*item\.type,\s*item\.resource_id,\s*item\.parent_id,\s*item\.workspace_id/,
+  'home recent work must preserve workspace-aware navigation'
 );
 assert.match(
   workspaceStoreSource,
@@ -3652,12 +3687,12 @@ assert.match(
 );
 assert.match(
   userMenuSource,
-  /canAccessOrganizationDashboard/,
+  /\{canAccessOrganizationDashboard && \([\s\S]*?<Link href="\/dashboard"/,
   'user menu dashboard entry should use the dashboard access capability'
 );
 assert.doesNotMatch(
   userMenuSource,
-  /organization_role[\s\S]*href="\/dashboard"/,
+  /const\s+canAccessOrganizationDashboard\s*=[^;]*organization_role/,
   'user menu dashboard entry should not be gated directly by local organization_role'
 );
 assert.match(
@@ -3952,8 +3987,18 @@ assert.match(
 );
 assert.match(
   agentRuntimePageModelSource,
-  /enabled:\s*knowledgeDialogOpen && canBindKnowledge/,
-  'agent runtime knowledge selector should not list candidates without knowledge binding access'
+  /knowledge:\s*\{\s*agentId,\s*open:\s*knowledgeDialogOpen && canBindKnowledge/,
+  'agent runtime knowledge selector should not open without knowledge binding access'
+);
+assert.match(
+  fs.readFileSync(path.join(rootDir, 'src/components/agents/agent-runtime/dialogs.tsx'), 'utf8'),
+  /<AgentRuntimeKnowledgeDialog \{\.\.\.model\.dialogs\.knowledge\}/,
+  'runtime dialogs must forward the permission-gated knowledge dialog state'
+);
+assert.match(
+  fs.readFileSync(path.join(rootDir, 'src/components/agents/agent-runtime/knowledge-dialog.tsx'), 'utf8'),
+  /enabled:\s*open && Boolean\(agentId\)/,
+  'knowledge candidates must only load while the permitted dialog is open'
 );
 assert.match(
   agentRuntimePageModelSource,
@@ -4027,7 +4072,7 @@ assert.match(
 );
 assert.match(
   agentRuntimeDatabaseSectionSource,
-  /useDbsBasic\([\s\S]*enabled:\s*open && canBindReadableDatabase/,
+  /agentService\.getAgentDatabaseBindingCandidates\(agentId,[\s\S]*?enabled:\s*open && canBindReadableDatabase && Boolean\(agentId\)/,
   'agent runtime database selector should not load database candidates without binding read permissions'
 );
 assert.match(
@@ -4037,7 +4082,7 @@ assert.match(
 );
 assert.match(
   agentRuntimeDatabaseSectionSource,
-  /useDbTables\(dataSourceID,[\s\S]*enabled:\s*canReadBinding && tableIDs\.length > 0/,
+  /useDbTables\(dataSourceID,[\s\S]*?enabled:\s*canReadBinding &&\s*\(isScopedDatabase \|\| databaseHealthItem\?\.status === 'active'\) &&\s*tableIDs\.length > 0/,
   'agent runtime selected database cards should not load table metadata without binding read permissions'
 );
 assert.match(
@@ -4182,8 +4227,8 @@ assert.doesNotMatch(
 );
 assert.match(
   createFromTemplateHookSource,
-  /router\.push\(getAgentDetailBaseHref\(agentId,\s*'workflow'\)\)/,
-  'template-created workflows should route through the workflow detail root'
+  /router\.push\(getAgentDetailEditHref\(agentId,\s*resolveTemplateRouteKind\(template\)\)\)/,
+  'template-created resources should route through their runtime-specific detail root'
 );
 assert.doesNotMatch(
   createFromTemplateHookSource,
@@ -4297,7 +4342,7 @@ assert.match(
 );
 assert.match(
   datasetFileRefPanelSource,
-  /canOpenSourceFile \? \([\s\S]*href=\{`\/console\/files\/\$\{ref\.file_id\}\?returnTo=/,
+  /canOpenSourceFile && ref\.source_file_available \? \([\s\S]*href=\{`\/console\/files\/\$\{ref\.file_id\}\?returnTo=/,
   'dataset file-ref panel should hide source-file links when file detail cannot be opened'
 );
 assert.match(
@@ -4352,7 +4397,7 @@ assert.match(
 );
 assert.match(
   datasetDetailLayoutSource,
-  /const canOpenSettings\s*=\s*hasAnyPermission\(\[\s*\.\.\.KNOWLEDGE_BASE_PERMISSION_ACTIONS\.update,\s*\]\)/,
+  /const canOpenSettings\s*=\s*hasAnyPermission\(\[\s*\.\.\.KNOWLEDGE_BASE_PERMISSION_ACTIONS\.update,?\s*\]\)/,
   'dataset detail layout should show the settings navigation only with knowledge_base.update'
 );
 assert.match(
@@ -4760,13 +4805,13 @@ assert.doesNotMatch(
 );
 assert.match(
   agentApiPageSource,
-  /defaultValue="api-keys"/,
-  'agent API page should default to workflow API keys after publication access moved to the publish dialog'
+  /router\.replace\(`\$\{basePath\}\/api\/keys`\)/,
+  'agent API index should redirect to the guarded API keys child'
 );
 assert.match(
-  agentApiPageSource,
+  agentApiGuardSource,
   /hasAnyPermission\(WORKFLOW_PERMISSION_ACTIONS\.runtimeAccessManage\)/,
-  'agent API page should require workflow runtime-access management for workflow API key/docs tabs'
+  'workflow API children should require workflow runtime-access management'
 );
 assert.doesNotMatch(
   agentApiPageSource,
@@ -4774,14 +4819,28 @@ assert.doesNotMatch(
   'agent API page should not mix AGENT runtime-access permissions into the workflow-only API key/docs route'
 );
 assert.match(
-  agentApiPageSource,
+  agentApiGuardSource,
   /canShowAgentApiKeys\(agentType,[\s\S]*canManageRuntimeAccess/,
   'agent API page should delegate workflow API-key visibility through the shared route helper'
 );
 assert.match(
-  agentApiPageSource,
-  /useAgent\(agentId,\s*canManageRuntimeAccess\)/,
-  'agent API direct page should not fetch agent metadata before workflow runtime-access permission is present'
+  agentApiGuardSource,
+  /useAgent\(agentId,\s*canQueryAgent\)/,
+  'agent API children should not fetch metadata before runtime-access permissions are resolved'
+);
+assert.match(
+  agentApiGuardSource,
+  /isAgentRuntimeType\(agentType\)[\s\S]*hasAnyPermission\(AGENT_PERMISSION_ACTIONS\.runtimeAccessManage\)/,
+  'Agent API children must preserve Agent-specific authorization rather than reuse workflow permission'
+);
+for (const child of ['keys', 'docs']) {
+  const source = fs.readFileSync(path.join(path.dirname(agentApiPagePath), child, 'page.tsx'), 'utf8');
+  assert.match(source, /<AgentApiAccessGuard agentId=\{agentId\}>/, `${child} API child must use the shared guard`);
+}
+assert.match(
+  agentApiGuardSource,
+  /const canQueryAgent\s*=\s*!isPermissionsLoading &&\s*!permissionError &&\s*hasAnyPermission\(/,
+  'API metadata loading must fail closed while permissions are unavailable'
 );
 assert.match(
   agentLogsPageSource,
@@ -4850,7 +4909,7 @@ assert.match(
 );
 assert.match(
   workflowBatchTestOverviewSource,
-  /canViewBatchResults \? \([\s\S]*runningBatch\.id[\s\S]*batchActions\.viewProgress/,
+  /canViewBatchResults \? \([\s\S]*batch\.id[\s\S]*batchActions\.viewProgress/,
   'workflow batch-test active progress link should require workflow.logs.view'
 );
 assert.match(
@@ -5163,6 +5222,8 @@ for (const appCenterPath of appCenterPaths) {
   );
 }
 
+// The former console/settings theme page was moved into the shared user menu.
+assert.match(userMenuSource, /<ThemeSwitcherSubmenu\s*\/>/, 'theme selection must remain reachable from the user menu');
 for (const productPagePath of organizationProductPagePaths) {
   const productPageSource = fs.readFileSync(productPagePath, 'utf8');
   assert.doesNotMatch(
@@ -5204,7 +5265,7 @@ const appCenterListSource = fs.readFileSync(appCenterPaths[0], 'utf8');
 const appCenterDetailSource = fs.readFileSync(appCenterPaths[2], 'utf8');
 assert.match(
   appCenterListSource,
-  /const \{ items, isLoading, canUseResourceList \}\s*=\s*useRunnableWebApps\(\{\s*workspaceId:\s*null\s*\}\)/,
+  /const \{\s*items,\s*isLoading,\s*[^}]*\bcanUseResourceList\b[^}]*\}\s*=\s*useRunnableWebApps\(\{\s*workspaceId:\s*null\s*[,}]/,
   'app center list should read the app_center resource-list capability from the runnable app hook'
 );
 assert.match(
@@ -5299,9 +5360,27 @@ assert.doesNotMatch(
 
 assert.equal(
   canShowAgentApiKeys('AGENT', { canView: true, canManage: true }),
-  false,
-  'AGENT mode should not show workflow API key/docs tabs'
+  true,
+  'AGENT mode should expose its own API key/docs tabs with runtime-access management'
 );
+for (const agentType of ['AGENT', 'WORKFLOW']) {
+  for (const permissions of [
+    { canView: true },
+    { canView: true, canManage: false },
+    { canView: true, canManage: true, canManageRuntimeAccess: false },
+  ]) {
+    assert.equal(
+      canShowAgentApiKeys(agentType, permissions),
+      false,
+      `${agentType} API visibility must deny missing management and respect an explicit runtime-access denial`
+    );
+    assert.equal(
+      getAgentDetailRouteAccess('agent-1', agentType, permissions).canShowApiKeys,
+      false,
+      `${agentType} route access must preserve the same API management boundary`
+    );
+  }
+}
 assert.equal(
   canShowAgentRuntimeAccess('AGENT', { canView: true, canManage: true }),
   true,
@@ -5316,7 +5395,7 @@ const agentRouteAccess = getAgentDetailRouteAccess('agent-1', 'AGENT', {
   canView: true,
   canManage: true,
 });
-assert.equal(agentRouteAccess.canShowApiKeys, false, 'AGENT mode should not show API keys');
+assert.equal(agentRouteAccess.canShowApiKeys, true, 'AGENT mode should show its own authorized API keys');
 assert.equal(
   agentRouteAccess.canShowRuntimeAccess,
   true,

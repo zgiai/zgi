@@ -357,7 +357,7 @@ const messages: DashboardMessages = {
         description: '查看调用来源、用量、错误和可用的输入输出快照。',
         overview: '调用概览',
         source: '调用来源',
-        sourceApi: '通过组织 API Key 调用 Gateway',
+        sourceApi: '通过 API 密钥调用 Gateway',
         sourceProduct: '由 ZGI 产品内的智能体、工作流、对话或知识库调用 Gateway',
         sourceUnknown: '当前调用缺少可靠的 API／产品内来源归属',
         business: '业务归属',

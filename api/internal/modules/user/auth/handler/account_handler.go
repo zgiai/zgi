@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
@@ -1497,14 +1498,19 @@ func (h *AuthHandler) CheckEmailRegistered(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
-	// Assume accessToken is obtained from header
-	accessToken := c.GetHeader("Authorization")
-	if accessToken == "" {
+	parts := strings.Fields(c.GetHeader("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-
-	err := h.tokenManager.RevokeToken(accessToken, "access")
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	err := h.accountService.Logout(c.Request.Context(), parts[1], req.RefreshToken)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return

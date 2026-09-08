@@ -207,6 +207,22 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		RequestCreatedAt:     requestCreatedAt,
 		AttemptID:            attemptID,
 	}
+	if apiKey.AccessGrantID != nil && apiKey.PrincipalType != nil && apiKey.PrincipalID != nil && apiKey.WorkspaceID != nil {
+		keyAuthorizationVersion := apiKey.AuthorizationVersion
+		billingCtx.QuotaSubjectType = quotaSubjectTypeAccessGrant
+		billingCtx.QuotaSubjectID = *apiKey.AccessGrantID
+		billingCtx.AccessGrantID = *apiKey.AccessGrantID
+		billingCtx.GrantAuthorizationVersion = &keyAuthorizationVersion
+		billingCtx.PrincipalType = *apiKey.PrincipalType
+		billingCtx.PrincipalID = *apiKey.PrincipalID
+		billingCtx.WorkspaceID = *apiKey.WorkspaceID
+		billingCtx.AuthMethod = "personal_api_key"
+		if accountID, parseErr := uuid.Parse(*apiKey.PrincipalID); parseErr == nil {
+			billingCtx.AccountID = &accountID
+		}
+	} else {
+		billingCtx.AuthMethod = "legacy_api_key"
+	}
 	if appCtx != nil {
 		billingCtx.AppID = appCtx.AppID
 		billingCtx.AppType = appCtx.AppType
@@ -247,6 +263,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 	requestCreatedAt time.Time,
 	requestID string,
 	attemptID string,
+	reservationPolicy string,
 ) (*BillingContext, error) {
 	channelID := getChannelID(providerSelection)
 
@@ -263,6 +280,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 		attemptID,
 	)
 	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
+	billingCtx.ReservationPolicy = strings.TrimSpace(reservationPolicy)
 	switch useCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string); llmmodel.UseCase(useCase) {
 	case llmmodel.UseCaseTextToSpeech:
 		billingCtx.PricingOperation = PricingOperationSpeech

@@ -27,6 +27,30 @@ func (b *BillingService) ensureAttemptID(bc *BillingContext) (string, error) {
 	return attemptID, nil
 }
 
+// lockAttemptForFinalization serializes every local finalizer for one remote
+// billing attempt. Callers must check the returned terminal flag before
+// changing quota, ledger entries, or attempt state in the same transaction.
+func (b *BillingService) lockAttemptForFinalization(
+	ctx context.Context,
+	tx *gorm.DB,
+	attemptID string,
+) (bool, error) {
+	attemptID = strings.TrimSpace(attemptID)
+	if attemptID == "" {
+		return false, fmt.Errorf("missing attempt_id for billing finalization")
+	}
+
+	var attempt BillingAttempt
+	if err := tx.WithContext(ctx).
+		Select("attempt_id", "status").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("attempt_id = ?", attemptID).
+		First(&attempt).Error; err != nil {
+		return false, fmt.Errorf("lock billing attempt for finalization: %w", err)
+	}
+	return billingAttemptStatusIsFinalized(attempt.Status), nil
+}
+
 func (b *BillingService) upsertAttemptInit(ctx context.Context, tx *gorm.DB, bc *BillingContext) error {
 	orgID, err := uuid.Parse(bc.OrganizationID)
 	if err != nil {
@@ -52,7 +76,7 @@ func (b *BillingService) upsertAttemptInit(ctx context.Context, tx *gorm.DB, bc 
 	if subjectType == "" {
 		return fmt.Errorf("missing quota_subject_type for billing ledger (attempt_id=%s request_id=%s)", attemptID, strings.TrimSpace(bc.RequestID))
 	}
-	if subjectType != quotaSubjectTypeAPIKey && subjectType != quotaSubjectTypeWorkspace && subjectType != quotaSubjectTypeOrganization {
+	if subjectType != quotaSubjectTypeAPIKey && subjectType != quotaSubjectTypeAccessGrant && subjectType != quotaSubjectTypeWorkspace && subjectType != quotaSubjectTypeOrganization {
 		return fmt.Errorf("unsupported quota_subject_type for billing ledger: %s (attempt_id=%s request_id=%s)", subjectType, attemptID, strings.TrimSpace(bc.RequestID))
 	}
 	subjectID := strings.TrimSpace(bc.QuotaSubjectID)
@@ -71,9 +95,36 @@ func (b *BillingService) upsertAttemptInit(ctx context.Context, tx *gorm.DB, bc 
 		InvocationSource: normalizeInvocationSource(bc.InvocationSource),
 		QuotaSubjectType: subjectType,
 		QuotaSubjectID:   subjectID,
+		AuthMethod:       strings.TrimSpace(bc.AuthMethod),
 		Status:           billingAttemptStatusInit,
 		CreatedAt:        now,
 		UpdatedAt:        now,
+	}
+	if attempt.AuthMethod == "" {
+		attempt.AuthMethod = "legacy_api_key"
+	}
+	if value, parseErr := uuid.Parse(strings.TrimSpace(bc.APIKeyID)); parseErr == nil {
+		attempt.APIKeyID = &value
+	}
+	if value, parseErr := uuid.Parse(strings.TrimSpace(bc.WorkspaceID)); parseErr == nil {
+		attempt.WorkspaceID = &value
+	}
+	if bc.AccountID != nil {
+		value := *bc.AccountID
+		attempt.AccountID = &value
+	}
+	if value := strings.TrimSpace(bc.PrincipalType); value != "" {
+		attempt.PrincipalType = &value
+	}
+	if value := strings.TrimSpace(bc.PrincipalID); value != "" {
+		attempt.PrincipalID = &value
+	}
+	if value, parseErr := uuid.Parse(strings.TrimSpace(bc.AccessGrantID)); parseErr == nil {
+		attempt.AccessGrantID = &value
+	}
+	if bc.GrantAuthorizationVersion != nil {
+		version := *bc.GrantAuthorizationVersion
+		attempt.GrantAuthorizationVersion = &version
 	}
 	if bc.ChannelID != nil {
 		attempt.RouteID = bc.ChannelID
@@ -100,7 +151,17 @@ func (b *BillingService) upsertAttemptInit(ctx context.Context, tx *gorm.DB, bc 
 				"invocation_source":  attempt.InvocationSource,
 				"quota_subject_type": attempt.QuotaSubjectType,
 				"quota_subject_id":   attempt.QuotaSubjectID,
-				"updated_at":         now,
+				"api_key_id":         attempt.APIKeyID,
+				"workspace_id":       attempt.WorkspaceID,
+				"account_id":         attempt.AccountID,
+				"principal_type":     attempt.PrincipalType,
+				"principal_id":       attempt.PrincipalID,
+				"access_grant_id":    attempt.AccessGrantID,
+				// Retry/finalizer paths can rebuild a partial billing context. Never
+				// erase the authorization-period snapshot captured at pre-deduct.
+				"grant_authorization_version": gorm.Expr("COALESCE(?, billing_attempts.grant_authorization_version)", attempt.GrantAuthorizationVersion),
+				"auth_method":                 attempt.AuthMethod,
+				"updated_at":                  now,
 			}),
 		}).
 		Create(attempt).Error; err != nil {
@@ -124,9 +185,12 @@ func (b *BillingService) upsertAttemptBaseEntries(
 		return err
 	}
 	estimated := bc.EstimatedCredits
+	subjectReserved := subjectReservedCredits(bc)
 
 	subjectLedgerType := billingLedgerTypeAPIKeyQuota
-	if subjectType != quotaSubjectTypeAPIKey {
+	if subjectType == quotaSubjectTypeAccessGrant {
+		subjectLedgerType = billingLedgerTypeGrantQuota
+	} else if subjectType != quotaSubjectTypeAPIKey {
 		subjectLedgerType = subjectType + "_quota"
 	}
 	subjectEntry := &BillingAttemptEntry{
@@ -134,7 +198,7 @@ func (b *BillingService) upsertAttemptBaseEntries(
 		EntryType:      billingEntryTypeSubject,
 		LedgerType:     subjectLedgerType,
 		LedgerRefID:    subjectID,
-		ReservedAmount: estimated,
+		ReservedAmount: subjectReserved,
 		Status:         billingEntryStatusPending,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -201,12 +265,10 @@ func (b *BillingService) upsertAttemptEntry(
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"ledger_ref_id":   entry.LedgerRefID,
 				"reserved_amount": entry.ReservedAmount,
-				"actual_amount":   entry.ActualAmount,
-				"refunded_amount": entry.RefundedAmount,
-				"status":          entry.Status,
-				"error_code":      entry.ErrorCode,
-				"error_message":   entry.ErrorMessage,
-				"idempotency_key": entry.IdempotencyKey,
+				// A later settle/failure path also calls upsertAttemptInit to
+				// tolerate interrupted initialization. Preserve the recorded
+				// settlement state and remote deduction binding in that case.
+				"idempotency_key": gorm.Expr("COALESCE(?, billing_attempt_entries.idempotency_key)", entry.IdempotencyKey),
 				"updated_at":      now,
 			}),
 		}).
@@ -246,6 +308,31 @@ func (b *BillingService) updateAttemptStatus(
 	if res.RowsAffected != 1 {
 		return fmt.Errorf("update billing attempt status affected %d rows (attempt_id=%s)", res.RowsAffected, attemptID)
 	}
+	if status == billingAttemptStatusPredeductFailed {
+		entryRes := tx.WithContext(ctx).
+			Model(&BillingAttemptEntry{}).
+			Where("attempt_id = ? AND status = ?", attemptID, billingEntryStatusPending).
+			Updates(map[string]interface{}{
+				"status":        billingEntryStatusFailed,
+				"error_code":    errCode,
+				"error_message": errMsg,
+				"updated_at":    time.Now(),
+			})
+		if entryRes.Error != nil {
+			return fmt.Errorf("close failed pre-deduct entries: %w", entryRes.Error)
+		}
+		// Usage bills are the durable, queryable invocation projection used by
+		// developer-access audit. Record complete pre-deduct rejections in the
+		// same transaction as the terminal attempt state so a rejected request
+		// cannot disappear from the administrator's audit trail. Recovery paths
+		// with incomplete request/model attribution remain attempt-only until
+		// their context can be restored safely.
+		if hasUsageBillProjectionIdentity(bc) {
+			if err := b.upsertUsageBill(ctx, tx, bc, usageBillStatusFailed, errCode, nil); err != nil {
+				return fmt.Errorf("project failed pre-deduct usage bill: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -268,9 +355,17 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 		)
 	}
 
-	refunded := bc.EstimatedCredits - bc.ActualCredits
-	if refunded < 0 {
-		refunded = 0
+	subjectActual := bc.ActualCredits
+	if bc.QuotaChargedCredits != nil {
+		subjectActual = *bc.QuotaChargedCredits
+	}
+	subjectRefunded := subjectReservedCredits(bc) - subjectActual
+	if subjectRefunded < 0 {
+		subjectRefunded = 0
+	}
+	fundRefunded := bc.EstimatedCredits - bc.ActualCredits
+	if fundRefunded < 0 {
+		fundRefunded = 0
 	}
 	entryStatus := billingEntryStatusSettled
 	if !billingContextStatusIsSuccess(bc.Status) {
@@ -281,8 +376,8 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 		Model(&BillingAttemptEntry{}).
 		Where("attempt_id = ? AND entry_type = ?", attemptID, billingEntryTypeSubject).
 		Updates(map[string]interface{}{
-			"actual_amount":   bc.ActualCredits,
-			"refunded_amount": refunded,
+			"actual_amount":   subjectActual,
+			"refunded_amount": subjectRefunded,
 			"status":          entryStatus,
 			"updated_at":      time.Now(),
 		})
@@ -298,7 +393,7 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 		Where("attempt_id = ? AND entry_type = ? AND ledger_type = ? AND ledger_ref_id = ?", attemptID, billingEntryTypeFund, fundLedgerType, fundLedgerRefID).
 		Updates(map[string]interface{}{
 			"actual_amount":   bc.ActualCredits,
-			"refunded_amount": refunded,
+			"refunded_amount": fundRefunded,
 			"status":          entryStatus,
 			"updated_at":      time.Now(),
 		})
@@ -321,21 +416,25 @@ func (b *BillingService) recordAttemptSettleInput(
 		return err
 	}
 
-	refunded := bc.EstimatedCredits - bc.ActualCredits
-	if refunded < 0 {
-		refunded = 0
+	subjectRefunded := subjectReservedCredits(bc) - bc.ActualCredits
+	if subjectRefunded < 0 {
+		subjectRefunded = 0
+	}
+	fundRefunded := bc.EstimatedCredits - bc.ActualCredits
+	if fundRefunded < 0 {
+		fundRefunded = 0
 	}
 
-	updates := map[string]interface{}{
+	subjectUpdates := map[string]interface{}{
 		"actual_amount":   bc.ActualCredits,
-		"refunded_amount": refunded,
+		"refunded_amount": subjectRefunded,
 		"updated_at":      time.Now(),
 	}
 
 	subjectRes := tx.WithContext(ctx).
 		Model(&BillingAttemptEntry{}).
 		Where("attempt_id = ? AND entry_type = ?", attemptID, billingEntryTypeSubject).
-		Updates(updates)
+		Updates(subjectUpdates)
 	if subjectRes.Error != nil {
 		return fmt.Errorf("record subject settle input: %w", subjectRes.Error)
 	}
@@ -343,10 +442,15 @@ func (b *BillingService) recordAttemptSettleInput(
 		return fmt.Errorf("record subject settle input affected %d rows (attempt_id=%s)", subjectRes.RowsAffected, attemptID)
 	}
 
+	fundUpdates := map[string]interface{}{
+		"actual_amount":   bc.ActualCredits,
+		"refunded_amount": fundRefunded,
+		"updated_at":      time.Now(),
+	}
 	fundRes := tx.WithContext(ctx).
 		Model(&BillingAttemptEntry{}).
 		Where("attempt_id = ? AND entry_type = ?", attemptID, billingEntryTypeFund).
-		Updates(updates)
+		Updates(fundUpdates)
 	if fundRes.Error != nil {
 		return fmt.Errorf("record fund settle input: %w", fundRes.Error)
 	}

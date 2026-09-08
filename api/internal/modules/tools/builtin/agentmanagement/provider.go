@@ -692,7 +692,7 @@ func (t *createAgentTool) Invoke(ctx context.Context, userID string, params map[
 	if workspaceID == "" {
 		return nil, fmt.Errorf("workspace_id is required to create an Agent")
 	}
-	if err := t.ensureWorkspaceAgentManage(ctx, scope, workspaceID); err != nil {
+	if err := t.ensureWorkspaceAgentCreate(ctx, scope, workspaceID); err != nil {
 		return nil, err
 	}
 	name := strings.TrimSpace(stringValue(params, "name"))
@@ -2399,16 +2399,16 @@ func missingDisplayNameKeys(keys []string, displayNames map[string]string) []str
 	return out
 }
 
-func (t agentToolBase) ensureWorkspaceAgentManage(ctx context.Context, scope agentScope, workspaceID string) error {
+func (t agentToolBase) ensureWorkspaceAgentCreate(ctx context.Context, scope agentScope, workspaceID string) error {
 	if t.workspacePerms == nil {
 		return fmt.Errorf("workspace permission service is not configured")
 	}
-	allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionAgentManage)
+	allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionAgentCreate)
 	if err != nil {
 		return fmt.Errorf("failed to check workspace agent permission: %w", err)
 	}
 	if !allowed {
-		return fmt.Errorf("user does not have permission to manage Agents in this workspace")
+		return fmt.Errorf("user does not have permission to create Agents in this workspace")
 	}
 	return nil
 }

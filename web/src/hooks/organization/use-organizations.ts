@@ -13,6 +13,10 @@ import { useT } from '@/i18n';
 import { ORGANIZATION_KEYS, PROFILE_KEYS, WORKSPACE_KEYS } from '../query-keys';
 import { sessionManager } from '@/lib/auth/session-manager';
 import { clearProfileClientCache } from '@/utils/client-cache';
+import {
+  shouldRetryAccessLoadError,
+  shouldShowAccessLoadToast,
+} from '@/utils/access-load-error';
 
 interface UseOrganizationsResult {
   organizations: Organization[];
@@ -63,6 +67,9 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
       const list = await organizationService.getOrganizationList({ page: 1, limit: 100 });
       return list.data;
     },
+    retry: (failureCount, queryError) =>
+      shouldRetryAccessLoadError(failureCount, queryError),
+    retryDelay: attemptIndex => Math.min(250 * 2 ** attemptIndex, 1000),
   });
 
   useEffect(() => {
@@ -80,6 +87,9 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
     queryFn: async () => {
       return await organizationService.getCurrentOrganization();
     },
+    retry: (failureCount, queryError) =>
+      shouldRetryAccessLoadError(failureCount, queryError),
+    retryDelay: attemptIndex => Math.min(250 * 2 ** attemptIndex, 1000),
   });
 
   useEffect(() => {
@@ -90,13 +100,22 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
 
   // Error handling
   useEffect(() => {
+    if (!listError && !currentOrganizationError) {
+      hasErrorProcessed.current = false;
+      return;
+    }
     if (
       (listError || currentOrganizationError) &&
       !hasErrorProcessed.current &&
       shouldAutoLoad
     ) {
-      hasErrorProcessed.current = true;
-      toast.error(t('common.organization.fetchOrgFailed'));
+      const error = listError || currentOrganizationError;
+      if (shouldShowAccessLoadToast(error)) {
+        hasErrorProcessed.current = true;
+        toast.error(t('common.organization.fetchOrgFailed'), {
+          id: 'organization-load-error',
+        });
+      }
     }
   }, [listError, currentOrganizationError, t, shouldAutoLoad]);
 

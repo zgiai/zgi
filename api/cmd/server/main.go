@@ -15,6 +15,7 @@ import (
 	videoservice "github.com/zgiai/zgi/api/internal/modules/video/service"
 	"github.com/zgiai/zgi/api/internal/seeders"
 	"github.com/zgiai/zgi/api/pkg/database"
+	applogger "github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
@@ -49,6 +50,7 @@ func main() {
 		Use:   "migrate",
 		Short: "Run database migrations",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			applogger.InitConsole()
 			if migrateOpts.DryRun {
 				return migrations.PrintStatus()
 			}
@@ -74,6 +76,7 @@ func main() {
 		Use:   "migrate:status",
 		Short: "Show database migration status",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			applogger.InitConsole()
 			return migrations.PrintStatus()
 		},
 	})
@@ -82,6 +85,7 @@ func main() {
 		Use:   "migrate:rollback",
 		Short: "Rollback the last database migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			applogger.InitConsole()
 			cfg, err := config.Load()
 			if err != nil {
 				return err

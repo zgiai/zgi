@@ -12,10 +12,12 @@ import (
 	"github.com/shopspring/decimal"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	paymentModel "github.com/zgiai/zgi/api/internal/modules/payment/model"
 	paymentRepo "github.com/zgiai/zgi/api/internal/modules/payment/repository"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -50,6 +52,10 @@ type BillingContext struct {
 	QuotaSubjectType     string
 	QuotaSubjectID       string
 	AccountID            *uuid.UUID // Internal user ID when using models
+	PrincipalType        string
+	PrincipalID          string
+	AccessGrantID        string
+	AuthMethod           string
 	GroupID              *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
 	WorkspaceID          string
 	AppID                *uuid.UUID // App ID (agent or dataset)
@@ -76,38 +82,62 @@ type BillingContext struct {
 	UpstreamHalfOpen     bool
 	AccountProviderID    *uint // Deprecated, kept for compatibility
 	EstimatedCredits     int64 // Estimated credits to deduct
-	ActualCredits        int64 // Actual credits used
-	PromptTokens         int
-	CacheReadTokens      int
-	CacheWriteTokens     int
-	CacheWrite5mTokens   int
-	CacheWrite1hTokens   int
-	CompletionTokens     int
-	TotalTokens          int
-	InputCost            decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
-	OutputCost           decimal.Decimal // Legacy: output credits consumed for logging/RPC compatibility
-	TotalCost            decimal.Decimal // Legacy: total credits consumed for logging/RPC compatibility
-	InputUSD             decimal.Decimal
-	OutputUSD            decimal.Decimal
-	TotalUSD             decimal.Decimal
-	DisplayCurrency      string
-	USDToCNYRate         decimal.Decimal
-	PricingSource        PricingSource
-	UsageSource          UsageSource
-	PricingSnapshot      datatypes.JSON
-	LockedTokenQuote     *PricingQuote
-	BillingLane          UsageBillingLane
-	UseSystemProvider    bool
-	IsStreaming          bool
-	RequestID            string
-	RequestCreatedAt     time.Time
-	SettledAt            time.Time
-	ResponseTime         int64 // milliseconds
-	Status               string
-	ErrorCode            string
-	ErrorMessage         string
-	IPAddress            string
-	UserAgent            string
+	// SubjectReservedCredits is the amount reserved from the quota subject.
+	// It can differ from EstimatedCredits when a platform-priced request has no
+	// local quote: a bounded developer grant reserves its remaining allowance to
+	// serialize unknown-cost requests without over-reserving organization funds.
+	// It is runtime-only; the subject ledger entry persists the reservation.
+	SubjectReservedCredits int64
+	// GrantAuthorizationVersion snapshots the developer grant period used for
+	// pre-deduction. Settlement must not mutate a renewed or re-authorized grant.
+	GrantAuthorizationVersion *int64
+	ActualCredits             int64 // Actual credits used
+	// QuotaChargedCredits is the amount charged to the quota subject after
+	// applying its hard limit. Nil means the subject charge equals ActualCredits.
+	// It is runtime-only; the subject ledger entry persists the final value.
+	QuotaChargedCredits *int64
+	PromptTokens        int
+	CacheReadTokens     int
+	CacheWriteTokens    int
+	CacheWrite5mTokens  int
+	CacheWrite1hTokens  int
+	CompletionTokens    int
+	TotalTokens         int
+	InputCost           decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
+	OutputCost          decimal.Decimal // Legacy: output credits consumed for logging/RPC compatibility
+	TotalCost           decimal.Decimal // Legacy: total credits consumed for logging/RPC compatibility
+	InputUSD            decimal.Decimal
+	OutputUSD           decimal.Decimal
+	TotalUSD            decimal.Decimal
+	DisplayCurrency     string
+	USDToCNYRate        decimal.Decimal
+	PricingSource       PricingSource
+	UsageSource         UsageSource
+	PricingSnapshot     datatypes.JSON
+	LockedTokenQuote    *PricingQuote
+	ReservationPolicy   string
+	BillingLane         UsageBillingLane
+	UseSystemProvider   bool
+	IsStreaming         bool
+	RequestID           string
+	RequestCreatedAt    time.Time
+	SettledAt           time.Time
+	ResponseTime        int64 // milliseconds
+	Status              string
+	ErrorCode           string
+	ErrorMessage        string
+	IPAddress           string
+	UserAgent           string
+}
+
+func subjectReservedCredits(bc *BillingContext) int64 {
+	if bc == nil {
+		return 0
+	}
+	if bc.SubjectReservedCredits > 0 {
+		return bc.SubjectReservedCredits
+	}
+	return bc.EstimatedCredits
 }
 
 // NewBillingService creates a new billing service
@@ -142,8 +172,18 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 		if err := b.upsertAttemptInit(ctx, tx, bc); err != nil {
 			return fmt.Errorf("failed to init billing attempt: %w", err)
 		}
+		grantSubject := strings.TrimSpace(bc.QuotaSubjectType) == quotaSubjectTypeAccessGrant
+		if grantSubject {
+			// Developer-access mutations lock Grant before Key. Match that order
+			// here so pre-deduction cannot deadlock with approval or renewal. Any
+			// later key-validation failure rolls this reservation back atomically.
+			if err := b.preDeductAccessGrantQuota(ctx, tx, bc); err != nil {
+				return fmt.Errorf("failed to pre-deduct subject quota: %w", err)
+			}
+		}
 
-		// 1. Lock and get API key
+		// 1. Lock and get API key. Grant-backed subjects have already acquired
+		// their Grant lock above, preserving the global Grant -> Key order.
 		var apiKey apikeymodel.TenantAPIKey
 		if err := tx.WithContext(ctx).
 			Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -152,14 +192,24 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 			return err
 		}
 
-		// 2. Check API key status - SECURITY: reject inactive keys
-		if apiKey.Status != "active" {
+		// 2. Check the complete API key lifecycle - SECURITY: reject disabled,
+		// revoked, and expired keys that changed after gateway authentication.
+		if !apiKey.IsActive() {
 			return ErrAPIKeyInactive
 		}
 
-		// 3. Pre-deduct subject quota (key/workspace)
-		if err := b.preDeductSubjectQuota(ctx, tx, bc, &apiKey); err != nil {
-			return fmt.Errorf("failed to pre-deduct subject quota: %w", err)
+		// 3. Pre-deduct non-grant subject quota (key/workspace). Grant quota was
+		// reserved before the API key lock to preserve the lock hierarchy.
+		if !grantSubject {
+			if err := b.preDeductSubjectQuota(ctx, tx, bc, &apiKey); err != nil {
+				return fmt.Errorf("failed to pre-deduct subject quota: %w", err)
+			}
+		}
+		// Grant pre-deduction may establish a subject reservation and grant
+		// authorization snapshot that differ from the initial estimate. Persist
+		// both before any external settlement can observe this attempt.
+		if err := b.upsertAttemptInit(ctx, tx, bc); err != nil {
+			return fmt.Errorf("failed to persist subject reservation: %w", err)
 		}
 
 		if !useSystemProvider {
@@ -397,6 +447,9 @@ func (b *BillingService) preDeductSubjectQuota(
 		}
 		return b.preDeductAPIKeyQuota(ctx, tx, bc, apiKey)
 	}
+	if subjectType == quotaSubjectTypeAccessGrant {
+		return b.preDeductAccessGrantQuota(ctx, tx, bc)
+	}
 	if subjectType == quotaSubjectTypeWorkspace {
 		return b.preDeductWorkspaceQuota(ctx, tx, bc)
 	}
@@ -404,6 +457,95 @@ func (b *BillingService) preDeductSubjectQuota(
 		return nil
 	}
 	return fmt.Errorf("unsupported quota subject type: %s", subjectType)
+}
+
+func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm.DB, bc *BillingContext) error {
+	grantID := strings.TrimSpace(bc.QuotaSubjectID)
+	if grantID == "" || strings.TrimSpace(bc.AccessGrantID) != grantID {
+		return ErrInvalidRequest
+	}
+	if bc.AuthMethod == "personal_api_key" {
+		workspaceID := strings.TrimSpace(bc.WorkspaceID)
+		organizationID := strings.TrimSpace(bc.OrganizationID)
+		if workspaceID == "" || organizationID == "" {
+			return ErrInvalidRequest
+		}
+		// Developer-access administration locks Workspace -> Policy -> Grant ->
+		// Key. Match that order here so a committed kill-switch change is
+		// authoritative at the final pre-provider boundary, including when the
+		// workspace previously relied on its implicit default policy.
+		var workspace workspacemodel.Workspace
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND organization_id = ?", workspaceID, organizationID).
+			First(&workspace).Error; err != nil {
+			return ErrAPIKeyInactive
+		}
+		if !workspace.IsNormal() || workspace.OrganizationID == nil || *workspace.OrganizationID != organizationID {
+			return ErrAPIKeyInactive
+		}
+		var organization workspacemodel.Organization
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", organizationID).
+			First(&organization).Error; err != nil || !organization.IsActive() {
+			return ErrAPIKeyInactive
+		}
+		var policy accessmodel.Policy
+		err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("workspace_id = ? AND organization_id = ?", workspaceID, organizationID).
+			First(&policy).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err == nil && policy.Mode == accessmodel.AccessModeDisabled {
+			return ErrAPIKeyInactive
+		}
+	}
+	var grant accessmodel.Grant
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND organization_id = ?", grantID, bc.OrganizationID).First(&grant).Error; err != nil {
+		return err
+	}
+	if !grant.IsActive(time.Now()) {
+		return ErrAPIKeyInactive
+	}
+	// Authentication validates the personal key before provider routing. Bind
+	// pre-deduction to that key's authorization period so a grant renewal in the
+	// intervening window cannot admit a now-stale key into the new budget period.
+	if bc.AuthMethod == "personal_api_key" &&
+		(bc.GrantAuthorizationVersion == nil || grant.AuthorizationVersion != *bc.GrantAuthorizationVersion) {
+		return ErrAPIKeyInactive
+	}
+	version := grant.AuthorizationVersion
+	bc.GrantAuthorizationVersion = &version
+	if grant.QuotaLimit == nil {
+		return nil
+	}
+	availableQuota := grant.RemainQuota
+	remainingByLimit := *grant.QuotaLimit - grant.UsedQuota
+	if remainingByLimit < 0 {
+		remainingByLimit = 0
+	}
+	if availableQuota > remainingByLimit {
+		availableQuota = remainingByLimit
+	}
+	reservation := bc.EstimatedCredits
+	usageLane, err := normalizeBillingContextUsageLane(bc)
+	if err != nil {
+		return err
+	}
+	// Platform-priced routes may not have a local token quote and therefore
+	// estimate zero credits. Reserve the bounded grant's remaining allowance so
+	// only one unknown-cost request can be in flight, while the organization fund
+	// reservation remains based on the original estimate.
+	if usageBillingLaneUsesSystemProvider(usageLane) && reservation <= 0 {
+		reservation = availableQuota
+	}
+	if availableQuota <= 0 || availableQuota < reservation {
+		return ErrInsufficientQuota
+	}
+	bc.SubjectReservedCredits = reservation
+	grant.RemainQuota = availableQuota - reservation
+	return tx.WithContext(ctx).Save(&grant).Error
 }
 
 func (b *BillingService) preDeductAPIKeyQuota(
@@ -485,6 +627,9 @@ func (b *BillingService) settleSubjectQuota(
 		}
 		return b.settleAPIKeyQuota(ctx, tx, bc)
 	}
+	if subjectType == quotaSubjectTypeAccessGrant {
+		return b.settleAccessGrantQuota(ctx, tx, bc)
+	}
 	if subjectType == quotaSubjectTypeWorkspace {
 		return b.settleWorkspaceQuota(ctx, tx, bc)
 	}
@@ -492,6 +637,63 @@ func (b *BillingService) settleSubjectQuota(
 		return nil
 	}
 	return fmt.Errorf("unsupported quota subject type: %s", subjectType)
+}
+
+func (b *BillingService) settleAccessGrantQuota(ctx context.Context, tx *gorm.DB, bc *BillingContext) error {
+	grantID := strings.TrimSpace(bc.QuotaSubjectID)
+	if grantID == "" || strings.TrimSpace(bc.AccessGrantID) != grantID {
+		return ErrInvalidRequest
+	}
+	var grant accessmodel.Grant
+	if err := tx.WithContext(ctx).Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND organization_id = ?", grantID, bc.OrganizationID).First(&grant).Error; err != nil {
+		return err
+	}
+	// A grant update or renewal revokes old keys and starts a new authorization
+	// period. A delayed response from the old period is still an organization
+	// cost, but must never consume or refund the new period's member allowance.
+	if bc.GrantAuthorizationVersion == nil || grant.AuthorizationVersion != *bc.GrantAuthorizationVersion {
+		charged := int64(0)
+		bc.QuotaChargedCredits = &charged
+		return nil
+	}
+	if grant.QuotaLimit == nil {
+		grant.UsedQuota += bc.ActualCredits
+		charged := bc.ActualCredits
+		bc.QuotaChargedCredits = &charged
+		return tx.WithContext(ctx).Save(&grant).Error
+	}
+	// The reservation has already been removed from RemainQuota. The largest
+	// amount this attempt may charge is therefore the post-reservation balance
+	// plus its own reservation. Provider usage can exceed an estimate (notably
+	// hidden reasoning tokens), but a member grant must remain a hard boundary.
+	reservedCredits := subjectReservedCredits(bc)
+	availableForAttempt := grant.RemainQuota + reservedCredits
+	if availableForAttempt < 0 {
+		availableForAttempt = 0
+	}
+	remainingByLimit := *grant.QuotaLimit - grant.UsedQuota
+	if remainingByLimit < 0 {
+		remainingByLimit = 0
+	}
+	if availableForAttempt > remainingByLimit {
+		availableForAttempt = remainingByLimit
+	}
+	charged := bc.ActualCredits
+	if charged > availableForAttempt {
+		charged = availableForAttempt
+	}
+	if charged < 0 {
+		charged = 0
+	}
+	bc.QuotaChargedCredits = &charged
+	diff := reservedCredits - charged
+	grant.RemainQuota = clampQuotaRemainAtZero(grant.RemainQuota + diff)
+	grant.UsedQuota += charged
+	if grant.QuotaLimit != nil && grant.UsedQuota > *grant.QuotaLimit {
+		grant.UsedQuota = *grant.QuotaLimit
+	}
+	return tx.WithContext(ctx).Save(&grant).Error
 }
 
 func (b *BillingService) settleWorkspaceQuota(

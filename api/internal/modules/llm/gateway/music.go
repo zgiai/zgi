@@ -141,6 +141,7 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 			startedAt,
 			request.RequestID,
 			request.RequestID+":lyrics",
+			"",
 		)
 		if err != nil {
 			return nil, err
@@ -293,6 +294,7 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 			startedAt,
 			request.RequestID,
 			request.RequestID,
+			"",
 		)
 		if err != nil {
 			return err

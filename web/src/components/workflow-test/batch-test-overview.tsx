@@ -586,10 +586,10 @@ export function BatchTestOverview({
   const selectedEnabledCases = selectedCases.filter(item => item.status === 'enabled');
   const allCasesSelected =
     filteredCases.length > 0 && filteredCases.every(item => selectedCaseIds.includes(item.id));
-  const canUpdateTestAssets = permissions?.canUpdate ?? true;
-  const canDebugTest = permissions?.canDebug ?? true;
-  const canStopTestRun = permissions?.canStop ?? true;
-  const canViewBatchResults = permissions?.canViewLogs ?? true;
+  const canUpdateTestAssets = Boolean(permissions?.canUpdate);
+  const canDebugTest = Boolean(permissions?.canDebug);
+  const canStopTestRun = Boolean(permissions?.canStop);
+  const canViewBatchResults = Boolean(permissions?.canViewLogs);
   const canCreateAndRunBatch = canUpdateTestAssets && canDebugTest && canViewBatchResults;
   const canRetestBatch = canDebugTest && canViewBatchResults;
   React.useEffect(() => {
@@ -765,6 +765,7 @@ export function BatchTestOverview({
   );
 
   const confirmRetestBatch = () => {
+    if (!canRetestBatch) return;
     if (!retestingBatch) return;
     retestBatch.mutate(
       {

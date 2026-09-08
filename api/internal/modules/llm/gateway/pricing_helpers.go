@@ -10,6 +10,19 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
+const (
+	// Platform reservations include a bounded prompt margin because provider
+	// tokenizers can count protocol framing differently from the local encoder.
+	platformPromptReservationMinimumSlack = 16
+	platformPromptReservationPercent      = 10
+
+	// Reasoning providers may report hidden reasoning tokens beyond a small
+	// requested max_tokens value. These floors keep pre-deduction conservative
+	// without reserving a model's entire output window.
+	reasoningPromptReservationFloor     = 64
+	reasoningCompletionReservationFloor = 32
+)
+
 func (s *llmGatewayServiceImpl) pricing() PricingEngine {
 	if s.pricingEngine != nil {
 		return s.pricingEngine
@@ -50,9 +63,40 @@ func (s *llmGatewayServiceImpl) quoteTokenPricingForSelection(
 		return PricingQuote{}, fmt.Errorf("failed to resolve billing lane for token pricing: %w", err)
 	}
 	if lane == UsageBillingLanePlatform {
-		return PricingQuote{}, nil
+		authority, ok := s.billing.(interface {
+			QuotePlatformTokenPricing(context.Context, PricingModelRef, int, int) (PricingQuote, error)
+		})
+		if !ok {
+			return PricingQuote{}, fmt.Errorf("platform token pricing authority is not configured")
+		}
+		promptTokens, completionTokens = conservativePlatformReservationTokens(selection, promptTokens, completionTokens)
+		return authority.QuotePlatformTokenPricing(ctx, model, promptTokens, completionTokens)
 	}
+	promptTokens, completionTokens = conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
 	return s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
+}
+
+func conservativePlatformReservationTokens(selection *ProviderSelection, promptTokens, completionTokens int) (int, int) {
+	promptTokens, completionTokens = conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
+	if promptTokens <= 0 {
+		return promptTokens, completionTokens
+	}
+	percentageSlack := (promptTokens*platformPromptReservationPercent + 99) / 100
+	slack := max(platformPromptReservationMinimumSlack, percentageSlack)
+	return promptTokens + slack, completionTokens
+}
+
+func conservativeReasoningReservationTokens(selection *ProviderSelection, promptTokens, completionTokens int) (int, int) {
+	if selection == nil || !selection.Model.SupportsReasoning {
+		return promptTokens, completionTokens
+	}
+	if promptTokens > 0 && promptTokens < reasoningPromptReservationFloor {
+		promptTokens = reasoningPromptReservationFloor
+	}
+	if completionTokens > 0 && completionTokens < reasoningCompletionReservationFloor {
+		completionTokens = reasoningCompletionReservationFloor
+	}
+	return promptTokens, completionTokens
 }
 
 func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlement(

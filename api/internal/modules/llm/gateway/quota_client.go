@@ -45,14 +45,15 @@ func (c *QuotaClient) Close() error {
 
 func (c *QuotaClient) PreDeductQuota(ctx context.Context, req *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	grpcReq := &pb.PreDeductQuotaRequest{
-		OrganizationId:   req.OrganizationID,
-		EstimatedCredits: req.EstimatedCredits,
-		ModelId:          req.ModelID,
-		ModelName:        req.ModelName,
-		ProviderId:       req.ProviderID,
-		ProviderName:     req.ProviderName,
-		RequestId:        req.RequestID,
-		AttemptId:        req.AttemptID,
+		OrganizationId:    req.OrganizationID,
+		EstimatedCredits:  req.EstimatedCredits,
+		ModelId:           req.ModelID,
+		ModelName:         req.ModelName,
+		ProviderId:        req.ProviderID,
+		ProviderName:      req.ProviderName,
+		RequestId:         req.RequestID,
+		AttemptId:         req.AttemptID,
+		ReservationPolicy: req.ReservationPolicy,
 	}
 
 	resp, err := c.client.PreDeductQuota(ctx, grpcReq)
@@ -133,15 +134,43 @@ func (c *QuotaClient) CheckCreditBalance(ctx context.Context, organizationID str
 	return resp.Sufficient, resp.Balance, nil
 }
 
+func (c *QuotaClient) CalculateDualCost(ctx context.Context, modelID, provider, model string, promptTokens, completionTokens int) (*DualCostQuotaResponse, error) {
+	const maxGRPCTokenCount = int64(1<<31 - 1)
+	if promptTokens < 0 || completionTokens < 0 || int64(promptTokens) > maxGRPCTokenCount || int64(completionTokens) > maxGRPCTokenCount {
+		return nil, fmt.Errorf("token count is outside the billing RPC range")
+	}
+	resp, err := c.client.CalculateDualCost(ctx, &pb.CalculateDualCostRequest{
+		ModelId:          modelID,
+		Provider:         provider,
+		Model:            model,
+		PromptTokens:     int32(promptTokens),
+		CompletionTokens: int32(completionTokens),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("grpc call failed: %w", err)
+	}
+	return &DualCostQuotaResponse{
+		Success:       resp.Success,
+		ErrorMessage:  resp.ErrorMessage,
+		InputCredits:  resp.InputCredits,
+		OutputCredits: resp.OutputCredits,
+		TotalCredits:  resp.TotalCredits,
+		InputUSD:      resp.InputUsd,
+		OutputUSD:     resp.OutputUsd,
+		TotalUSD:      resp.TotalUsd,
+	}, nil
+}
+
 type PreDeductQuotaRequest struct {
-	OrganizationID   string
-	EstimatedCredits int64
-	ModelID          string
-	ModelName        string
-	ProviderID       string
-	ProviderName     string
-	RequestID        string
-	AttemptID        string
+	OrganizationID    string
+	EstimatedCredits  int64
+	ModelID           string
+	ModelName         string
+	ProviderID        string
+	ProviderName      string
+	RequestID         string
+	AttemptID         string
+	ReservationPolicy string
 }
 
 type PreDeductQuotaResponse struct {
@@ -189,4 +218,15 @@ type SettleQuotaResponse struct {
 	UsedQuota       int64
 	RefundedCredits int64
 	SettledCredits  int64
+}
+
+type DualCostQuotaResponse struct {
+	Success       bool
+	ErrorMessage  string
+	InputCredits  int64
+	OutputCredits int64
+	TotalCredits  int64
+	InputUSD      float64
+	OutputUSD     float64
+	TotalUSD      float64
 }

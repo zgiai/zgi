@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useQueries } from '@tanstack/react-query';
-import { Activity, Brain, Copy, Loader2, Search, Sparkles } from 'lucide-react';
+import { Activity, Brain, Copy, KeyRound, Loader2, Search, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAllModelsInfinite, useProviderModelsInfinite } from '@/hooks/model/use-model';
 import { useCustomProviders, useProviders } from '@/hooks/provider/use-provider';
@@ -200,6 +200,7 @@ function isModelRecord(value: unknown): value is ModelItem {
 
 export function ModelPlazaPage() {
   const t = useT('models');
+  const tAccess = useT('apikeys.developerAccess');
   const { locale } = useLocale();
   const [search, setSearch] = React.useState('');
   const debouncedSearch = useDebouncedValue(search, 500);
@@ -476,6 +477,12 @@ export function ModelPlazaPage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button asChild>
+                <Link href="/console/api-keys">
+                  <KeyRound className="size-4" />
+                  {tAccess('createKey')}
+                </Link>
+              </Button>
               <Button variant="outline" onClick={() => void handleRefresh()} disabled={isFetching}>
                 {isFetching ? (
                   <Loader2 className="size-4 animate-spin" />

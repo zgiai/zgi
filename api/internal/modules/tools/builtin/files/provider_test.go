@@ -505,7 +505,7 @@ func TestDeleteFileToolDeletesManageableWorkspaceFile(t *testing.T) {
 	if len(fileService.deleted) != 1 || fileService.deleted[0] != "file-1" {
 		t.Fatalf("deleted = %#v, want file-1", fileService.deleted)
 	}
-	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileManage {
+	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileDelete {
 		t.Fatalf("permission codes = %#v, want file.manage", perms.codes)
 	}
 	payload := singleJSONPayload(t, messages)
@@ -660,8 +660,8 @@ func TestSaveFileToolSavesGeneratedToolFileWithAdvancedPermission(t *testing.T) 
 	if upload.filename != "saved-draft.md" || string(upload.content) != "# Draft\nHello" || upload.workspaceID != workspaceID {
 		t.Fatalf("upload = %#v, want saved markdown into workspace", upload)
 	}
-	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileUploadCreate {
-		t.Fatalf("permission codes = %#v, want file upload create", perms.codes)
+	if len(perms.codes) != 1 || perms.codes[0] != workspacemodel.WorkspacePermissionFileUpload {
+		t.Fatalf("permission codes = %#v, want file upload", perms.codes)
 	}
 	if len(messages) != 1 || messages[0].Type != tools.ToolInvokeMessageTypeJSON {
 		t.Fatalf("messages = %#v, want json message only", messages)
@@ -1134,10 +1134,14 @@ func (e *fakeContentExtractor) ExtractMultipleFiles(_ context.Context, fileIDs [
 
 type fakeWorkspacePermissionService struct {
 	allowed bool
+	granted []workspacemodel.WorkspacePermissionCode
 	codes   []workspacemodel.WorkspacePermissionCode
 }
 
 func (s *fakeWorkspacePermissionService) CheckWorkspacePermission(_ context.Context, _, _, _ string, code workspacemodel.WorkspacePermissionCode) (bool, error) {
 	s.codes = append(s.codes, code)
+	if s.granted != nil {
+		return workspacemodel.WorkspacePermissionCodesAllow(s.granted, code), nil
+	}
 	return s.allowed, nil
 }

@@ -5,7 +5,7 @@ import { queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/store/auth-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { useWorkspaceStore } from '@/store/workspace-store';
-import { clearSessionBoundClientState } from '@/lib/auth/client-state';
+import { clearSessionBoundClientState, clearSessionBoundQueryState } from '@/lib/auth/client-state';
 import { sessionManager, type AuthSyncEvent } from '@/lib/auth/session-manager';
 import { PROFILE_KEYS } from '@/hooks/query-keys';
 import { clearProfileClientCache } from '@/utils/client-cache';
@@ -98,7 +98,7 @@ async function handleCrossTabEvent(event: AuthSyncEvent): Promise<void> {
       } else {
         await useAuthStore.getState().initializeAuth({ force: true });
       }
-      queryClient.clear();
+      clearSessionBoundQueryState();
       return;
     }
     default:

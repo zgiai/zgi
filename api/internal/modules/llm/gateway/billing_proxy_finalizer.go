@@ -8,7 +8,6 @@ import (
 	"time"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"gorm.io/gorm"
 )
 
 // FinalizePlatformProxySettlement mirrors a console-api proxy settlement locally.
@@ -42,52 +41,15 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 		bc.RequestCreatedAt = bc.RequestCreatedAt.UTC()
 	}
 
-	if err := s.localService.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.localService.upsertAttemptInit(ctx, tx, bc); err != nil {
-			return err
-		}
-		if err := s.localService.recordAttemptSettleInput(ctx, tx, bc); err != nil {
-			return err
-		}
-		invocation := invocationResultFromBillingStatus(bc.Status)
-		return s.localService.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusSettlePending, &invocation, nil, nil)
-	}); err != nil {
+	alreadyFinalized, err := s.prepareRemoteSettlement(ctx, bc)
+	if err != nil {
 		return fmt.Errorf("prepare proxy settle pending state failed: %w", err)
 	}
-
-	if err := s.localService.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.localService.settleSubjectQuota(ctx, tx, bc); err != nil {
-			return fmt.Errorf("settle subject quota: %w", err)
-		}
-		invocation := "success"
-		status := billingAttemptStatusSettled
-		if !billingContextStatusIsSuccess(bc.Status) {
-			invocation = "error"
-			status = billingAttemptStatusRolledBack
-		}
-		if err := s.localService.updateAttemptEntriesAfterSettle(ctx, tx, bc, billingLedgerTypeOrgFunds, bc.OrganizationID); err != nil {
-			return err
-		}
-		if err := tx.WithContext(ctx).
-			Model(&BillingAttempt{}).
-			Where("attempt_id = ?", bc.AttemptID).
-			Updates(map[string]interface{}{
-				"reconcile_attempts": 0,
-				"next_reconcile_at":  nil,
-				"last_reconcile_at":  time.Now(),
-			}).Error; err != nil {
-			return err
-		}
-		if err := s.localService.updateAttemptStatus(ctx, tx, bc, status, &invocation, nil, nil); err != nil {
-			return err
-		}
-		if shouldMirrorRemoteUsageBill(bc) {
-			if err := s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusFromBillingContext(bc.Status), nil, nil); err != nil {
-				return fmt.Errorf("upsert proxy usage bill: %w", err)
-			}
-		}
+	if alreadyFinalized {
 		return nil
-	}); err != nil {
+	}
+
+	if err := s.finalizeRemoteSettlement(ctx, bc); err != nil {
 		if markErr := s.markAttemptSettleFailed(ctx, bc, "PROXY_SETTLE_FINALIZE_FAILED", err.Error()); markErr != nil {
 			return fmt.Errorf("finalize proxy settle failed: %v (additionally failed to mark partial: %w)", err, markErr)
 		}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -312,7 +313,7 @@ type fakeAccountService struct {
 	ensureAccountContextForWorkspaceFn func(ctx context.Context, accountID, organizationID, workspaceID string) (*auth_model.AccountContext, bool, error)
 	isOrganizationAdminOrOwnerFn       func(ctx context.Context, organizationID, accountID string) (bool, error)
 	isEmailSendIPLimitFn               func(ctx context.Context, ipAddress string) (bool, error)
-	sendDirectAddMemberEmailFn         func(ctx context.Context, account *auth_model.Account, groupID, groupName, departmentName, language string) error
+	sendDirectAddMemberEmailFn         func(ctx context.Context, account *auth_model.Account, inviterID, groupID, workspaceID, groupName, departmentName, language string) error
 }
 
 func (f fakeAccountService) GetUserThroughEmail(ctx context.Context, email string) (*auth_model.Account, error) {
@@ -364,9 +365,9 @@ func (f fakeAccountService) IsEmailSendIPLimit(ctx context.Context, ipAddress st
 	return false, nil
 }
 
-func (f fakeAccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
+func (f fakeAccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, workspaceID, groupName, departmentName, language string) error {
 	if f.sendDirectAddMemberEmailFn != nil {
-		return f.sendDirectAddMemberEmailFn(ctx, account, groupID, groupName, departmentName, language)
+		return f.sendDirectAddMemberEmailFn(ctx, account, inviterID, groupID, workspaceID, groupName, departmentName, language)
 	}
 	return nil
 }
@@ -1705,6 +1706,49 @@ func TestDirectAddMemberAllowsMissingWorkspace(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), `"workspace"`)
 }
 
+func TestDirectAddMemberEmailUsesCommittedWorkspace(t *testing.T) {
+	for _, workspaceID := range []string{"committed-workspace", ""} {
+		t.Run("workspace="+workspaceID, func(t *testing.T) {
+			emailSent := false
+			handler := &OrganizationHandler{
+				organizationService: fakeOrganizationService{
+					isOrganizationAdminOrOwnerFn: func(context.Context, string, string) (bool, error) { return true, nil },
+					directAddMemberFn: func(context.Context, *shared_dto.DirectAddOrganizationMemberRequest) (*shared_dto.DirectAddOrganizationMemberResponse, error) {
+						result := &shared_dto.DirectAddOrganizationMemberResponse{AccountID: "member-1", Email: "alice@example.com", Name: "Alice"}
+						if workspaceID != "" {
+							result.Workspace = &shared_dto.MemberWorkspaceInfo{ID: workspaceID}
+						}
+						return result, nil
+					},
+				},
+				accountService: fakeAccountService{
+					getAccountByIDFn: func(context.Context, string) (*auth_model.Account, error) {
+						return &auth_model.Account{ID: "member-1", Email: "alice@example.com"}, nil
+					},
+					sendDirectAddMemberEmailFn: func(_ context.Context, account *auth_model.Account, inviterID, organizationID, invitedWorkspaceID, _, _, _ string) error {
+						emailSent = true
+						require.Equal(t, "member-1", account.ID)
+						require.Equal(t, "owner-1", inviterID)
+						require.Equal(t, "org-1", organizationID)
+						require.Equal(t, workspaceID, invitedWorkspaceID, "use committed membership, never an unchecked request hint")
+						return nil
+					},
+				},
+			}
+			c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/members/direct-add")
+			c.Set("account_id", "owner-1")
+			c.Set("organization_id", "org-1")
+			c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+			c.Request.Body = io.NopCloser(strings.NewReader(`{"name":"Alice","email":"alice@example.com","workspace_id":"request-hint","send_email":true}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			handler.DirectAddMember(c)
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.True(t, emailSent)
+			require.Contains(t, recorder.Body.String(), `"email_delivery_status":"sent"`)
+		})
+	}
+}
+
 func TestDirectAddMemberReportsEmailFailureAfterMemberWasCreated(t *testing.T) {
 	handler := &OrganizationHandler{
 		organizationService: fakeOrganizationService{
@@ -1723,7 +1767,7 @@ func TestDirectAddMemberReportsEmailFailureAfterMemberWasCreated(t *testing.T) {
 			getAccountByIDFn: func(context.Context, string) (*auth_model.Account, error) {
 				return &auth_model.Account{ID: "member-1", Email: "alice@example.com"}, nil
 			},
-			sendDirectAddMemberEmailFn: func(context.Context, *auth_model.Account, string, string, string, string) error {
+			sendDirectAddMemberEmailFn: func(context.Context, *auth_model.Account, string, string, string, string, string, string) error {
 				return errors.New("provider unavailable")
 			},
 		},
@@ -2302,7 +2346,7 @@ func TestBatchApproveDepartmentJoinRequestsDoesNotLeakInternalErrors(t *testing.
 }
 
 func newOrganizationHandlerTestContext(method, target string) (*gin.Context, *httptest.ResponseRecorder) {
-	gin.SetMode(gin.TestMode)
+	// Parallel callers must not write Gin's process-global mode.
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(method, target, nil)
