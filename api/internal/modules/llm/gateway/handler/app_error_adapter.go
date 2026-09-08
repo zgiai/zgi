@@ -15,7 +15,39 @@ import (
 var (
 	legacyOpenAIUpstreamTimeout = appcatalog.MustLegacyKey("llm.openai:upstream_timeout")
 	legacyAnthropicTimeoutError = appcatalog.MustLegacyKey("llm.anthropic:timeout_error")
+	legacyPersonalKeyQuota      = appcatalog.MustLegacyKey("llm.personal_key.quota:invalid_api_key")
+	legacyPersonalKeyExpired    = appcatalog.MustLegacyKey("llm.personal_key.expired:invalid_api_key")
+	legacyPersonalKeyInactive   = appcatalog.MustLegacyKey("llm.personal_key.inactive:invalid_api_key")
 )
+
+// principalAccessProtocolError changes only the public message. Keep HTTP 401,
+// invalid_api_key/authentication_error and the existing JSON/header contract
+// until a separately reviewed protocol migration changes these wire values.
+func principalAccessProtocolError(c *gin.Context, err error, projector *apptransport.Projector) protocolError {
+	legacy := invalidAPIKeyProtocolError("API key access has been revoked")
+	var legacyKey appcatalog.LegacyKey
+	switch {
+	case apperror.IsCode(err, llmerrors.AppCodeDeveloperQuotaExhausted):
+		legacyKey = legacyPersonalKeyQuota
+		legacy.message = "Developer API access has no available quota. Check usage or contact your workspace administrator."
+	case apperror.IsCode(err, llmerrors.AppCodeAPIKeyExpired):
+		legacyKey = legacyPersonalKeyExpired
+		legacy.message = "The API key has expired. Create or select an active key."
+	case apperror.IsCode(err, llmerrors.AppCodeAPIKeyInactive):
+		legacyKey = legacyPersonalKeyInactive
+		legacy.message = "The API key is disabled. Enable it or use another key."
+	default:
+		return legacy
+	}
+	if projector != nil {
+		message := projector.ProjectLegacyMessage(err,
+			apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")), legacyKey)
+		if message.Resolution == apptransport.ResolutionMatched {
+			legacy.message = message.Message
+		}
+	}
+	return legacy
+}
 
 // localizedProtocolError is an error-only compatibility adapter. The protocol
 // classifier continues to own status, type, code, and wire shape; the

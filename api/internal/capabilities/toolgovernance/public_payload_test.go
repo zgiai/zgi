@@ -20,9 +20,9 @@ func TestSanitizeExternalActionPublicValueRedactsSecretsAndKeepsServerValueDetac
 			"arguments": map[string]interface{}{
 				"title":       "Safe issue title",
 				"url":         "https://example.com/callback?access_token=secret-value-123456",
-				"body":        "notify xoxb-12345678901234567890",
-				"aws":         "AKIA1234567890123456",
-				"google":      "AIza12345678901234567890123456789012345",
+				"body":        "notify xoxb-" + "12345678901234567890",
+				"aws":         "AKIA" + "1234567890123456",
+				"google":      "AIza" + "12345678901234567890123456789012345",
 				"credentials": map[string]interface{}{"password": "database-password"},
 			},
 		},

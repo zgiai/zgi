@@ -7,12 +7,22 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
+type principalAccessValidator interface {
+	ValidatePrincipalAccess(ctx context.Context, apiKey *apikeymodel.TenantAPIKey) error
+}
+
 // LLMAPIKeyAuthMiddleware validates LLM API keys
-func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.HandlerFunc {
+func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository, projectors ...*apptransport.Projector) gin.HandlerFunc {
+	var projector *apptransport.Projector
+	if len(projectors) > 0 {
+		projector = projectors[0]
+	}
 	return func(c *gin.Context) {
 		apiKey, errCode, ok := extractGatewayAPIKey(c)
 		if !ok {
@@ -34,14 +44,33 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.Handler
 			return
 		}
 
-		// 5. Check if API key is active
+		// Personal keys must be reloaded before trusting cached lifecycle state.
+		// This handles both revocation and re-enabling when Redis invalidation is
+		// delayed or unavailable.
+		if keyInfo.PrincipalType != nil || keyInfo.PrincipalID != nil {
+			validator, supported := apiKeyRepo.(principalAccessValidator)
+			if !supported {
+				logger.WarnContext(c.Request.Context(), "API key principal access validator is unavailable")
+				abortWithProtocolError(c, invalidAPIKeyProtocolError("API key access has been revoked"))
+				return
+			}
+			if err := validator.ValidatePrincipalAccess(c.Request.Context(), keyInfo); err != nil {
+				logger.WarnContext(c.Request.Context(), "API key principal access validation failed", err)
+				abortWithProtocolError(c, principalAccessProtocolError(c, err, projector))
+				return
+			}
+		}
+
+		// 5. Check if API key is active. Personal keys now contain the
+		// authoritative row returned by ValidatePrincipalAccess.
 		if !keyInfo.IsActive() {
 			abortWithProtocolError(c, invalidAPIKeyProtocolError("API key is inactive or expired"))
 			return
 		}
 
-		// 6. Check if API key has quota
-		if !keyInfo.HasQuota() {
+		// Principal quota was checked against the live grant above. Its zero
+		// independent quota is a fail-closed guard for pre-principal binaries.
+		if keyInfo.PrincipalType == nil && keyInfo.PrincipalID == nil && !keyInfo.HasQuota() {
 			abortWithProtocolError(c, quotaProtocolError())
 			return
 		}
@@ -50,6 +79,18 @@ func LLMAPIKeyAuthMiddleware(apiKeyRepo apikeyrepo.APIKeyRepository) gin.Handler
 		c.Set("llm_api_key", keyInfo)
 		c.Set("organization_id", keyInfo.OrganizationID)
 		c.Set("api_key_id", keyInfo.ID)
+		if keyInfo.WorkspaceID != nil {
+			c.Set("workspace_id", *keyInfo.WorkspaceID)
+		}
+		if keyInfo.PrincipalType != nil {
+			c.Set("principal_type", *keyInfo.PrincipalType)
+		}
+		if keyInfo.PrincipalID != nil {
+			c.Set("principal_id", *keyInfo.PrincipalID)
+		}
+		if keyInfo.AccessGrantID != nil {
+			c.Set("access_grant_id", *keyInfo.AccessGrantID)
+		}
 
 		// 8. Update last accessed time asynchronously
 		go func(apiKeyID string) {

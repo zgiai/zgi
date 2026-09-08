@@ -657,6 +657,9 @@ func (s *WorkspaceManagementServiceImpl) LeaveWorkspace(ctx context.Context, wor
 		if err := s.workspaceMemberRepo.WithTx(tx).Delete(ctx, join.ID); err != nil {
 			return fmt.Errorf("failed to remove member from workspace: %w", err)
 		}
+		if err := revokeWorkspaceDeveloperAccess(ctx, tx, []string{workspaceID}, accountID); err != nil {
+			return err
+		}
 
 		organizationUUID := s.getWorkspaceOrganizationUUID(ctx, workspaceID)
 
@@ -749,6 +752,9 @@ func (s *WorkspaceManagementServiceImpl) removeMemberInternal(ctx context.Contex
 		// Delete workspace member
 		if err := s.workspaceMemberRepo.WithTx(tx).Delete(ctx, join.ID); err != nil {
 			return fmt.Errorf("failed to delete workspace member: %w", err)
+		}
+		if err := revokeWorkspaceDeveloperAccess(ctx, tx, []string{workspaceID}, accountID); err != nil {
+			return err
 		}
 
 		// Record quota usage decrease if the organization UUID exists.
@@ -1610,6 +1616,9 @@ func (s *WorkspaceManagementServiceImpl) RemoveMemberFromWorkspace(ctx context.C
 		// Delete workspace member association record
 		if err := s.workspaceMemberRepo.WithTx(tx).Delete(ctx, memberJoin.ID); err != nil {
 			return fmt.Errorf("failed to remove member from workspace: %w", err)
+		}
+		if err := revokeWorkspaceDeveloperAccess(ctx, tx, []string{workspace.ID}, member.ID); err != nil {
+			return err
 		}
 
 		// Record quota usage decrease if the organization UUID exists.

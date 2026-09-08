@@ -117,14 +117,20 @@ export function LoginForm({ className }: LoginFormProps) {
   const emailCodeLoginMutation = useEmailCodeLogin();
   const { data: systemFeatures } = useSystemFeatures();
 
-  const canRegister = Boolean(systemFeatures?.is_allow_register);
-  const hasSocialLogin = Boolean(systemFeatures?.enable_social_oauth_login);
-  const systemFeaturesLoaded = systemFeatures !== undefined;
-  const phoneAuthEnabled = isPhoneAuthEnabled(systemFeatures);
+  // The query may hydrate immediately from the client-side auth store while
+  // the server render has no cached feature snapshot. Gate feature-dependent
+  // markup until mount so the login form has an identical hydration tree.
+  const hydratedSystemFeatures = mounted ? systemFeatures : undefined;
+  const canRegister = Boolean(hydratedSystemFeatures?.is_allow_register);
+  const hasSocialLogin = Boolean(hydratedSystemFeatures?.enable_social_oauth_login);
+  const systemFeaturesLoaded = hydratedSystemFeatures !== undefined;
+  const phoneAuthEnabled = isPhoneAuthEnabled(hydratedSystemFeatures);
   const phoneAuthKnownDisabled = systemFeaturesLoaded && !phoneAuthEnabled;
-  const phoneResetEnabled = isPhonePasswordResetEnabled(systemFeatures);
+  const phoneResetEnabled = isPhonePasswordResetEnabled(hydratedSystemFeatures);
   const emailCodeLoginEnabled = Boolean(
-    systemFeatures?.enable_email_code_login && systemFeatures?.is_email_setup && !inviteToken
+    hydratedSystemFeatures?.enable_email_code_login &&
+      hydratedSystemFeatures?.is_email_setup &&
+      !inviteToken
   );
 
   const loginSchema = z

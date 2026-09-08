@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -34,6 +36,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/database"
 	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
 	"github.com/zgiai/zgi/api/pkg/queue"
+	redisutil "github.com/zgiai/zgi/api/pkg/redis"
 	"github.com/zgiai/zgi/api/pkg/response"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	pkguuid "github.com/zgiai/zgi/api/pkg/uuid"
@@ -691,6 +694,11 @@ func newWorkflowRoutesTestRouterWithConversation(t *testing.T) (*gin.Engine, str
 
 func newWorkflowRoutesTestRouterWithConversationAndAccountService(t *testing.T, accountService interfaces.AccountService) (*gin.Engine, string, string, string) {
 	t.Helper()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	previousClient := redisutil.GetClient()
+	redisutil.SetClient(client)
+	t.Cleanup(func() { redisutil.SetClient(previousClient); _ = client.Close() })
 	oldConfig := config.GlobalConfig
 	config.GlobalConfig = &config.Config{
 		Platform: config.PlatformConfig{Edition: "TEST"},
@@ -725,6 +733,24 @@ func newWorkflowRoutesTestRouterWithConversationAndAccountService(t *testing.T, 
 
 	webAppID, userID, conversationID := seedWorkflowRoutesTestData()
 	expectWorkflowRoutesSQL(t, mock, webAppID, userID, conversationID)
+	if strings.HasPrefix(t.Name(), "TestWorkflowRoutes_BuiltIn") &&
+		t.Name() != "TestWorkflowRoutes_BuiltInWorkflowsRequireOrganizationAuth" {
+		// Console authentication verifies the persisted account status before
+		// applying the organization/runtime permissions exercised by these tests.
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id","status" FROM "accounts"`)).
+			WithArgs(userID, 1).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).
+				AddRow(userID, string(auth_model.AccountStatusActive)))
+		mock.ExpectExec(`UPDATE "accounts" SET "last_active_at"=`).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		// Last-active persistence is asynchronous. Drain it before restoring the
+		// package-global database so it cannot leak into the next route fixture.
+		t.Cleanup(func() {
+			require.Eventually(t, func() bool {
+				return mock.ExpectationsWereMet() == nil
+			}, time.Second, time.Millisecond)
+		})
+	}
 
 	taskManager, err := queue.NewTaskManager(config.GlobalConfig)
 	require.NoError(t, err)
@@ -976,6 +1002,11 @@ func expectAgentByWebAppWithRuntimeSurface(mock sqlmock.Sqlmock, webAppID, webAp
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "agents"`)).
 		WithArgs(webAppID, 1).
 		WillReturnRows(rows)
+	if webAppStatus != "active" {
+		// An offline app is rejected before looking up runtime surfaces. Keeping
+		// the response assertions and no surface expectation guards that order.
+		return agentID
+	}
 	if surfaceEnabled == (webAppStatus == "active") {
 		expectAgentWebAppRuntimeFallback(mock, agentID)
 	} else {

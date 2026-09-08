@@ -1,12 +1,14 @@
 package jwt
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/zgiai/zgi/api/config"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 var (
@@ -28,6 +30,7 @@ func GenerateTokenFixed(userID string, username string) (string, error) {
 	expTime := now.Add(cfg.JWT.JWTExpire)
 
 	claims := jwt.MapClaims{
+		"jti":     uuid.NewString(),
 		"user_id": userID,
 		"exp":     expTime.Unix(),
 		"iss":     cfg.JWT.Issuer,
@@ -40,6 +43,23 @@ func GenerateTokenFixed(userID string, username string) (string, error) {
 }
 
 func ParseTokenFixed(tokenString string) (map[string]interface{}, error) {
+	claims, err := parseSignedToken(tokenString)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), revocationTimeout)
+	defer cancel()
+	if err := checkRevocation(ctx, tokenString); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+func parseSignedToken(tokenString string) (map[string]interface{}, error) {
+	return parseSignedTokenWithOptions(tokenString)
+}
+
+func parseSignedTokenWithOptions(tokenString string, options ...jwt.ParserOption) (map[string]interface{}, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("jwt service not initialized")
 	}
@@ -50,7 +70,7 @@ func ParseTokenFixed(tokenString string) (map[string]interface{}, error) {
 		}
 
 		return []byte(cfg.JWT.Secret), nil
-	})
+	}, options...)
 
 	if err != nil {
 		return nil, err

@@ -195,6 +195,13 @@ export const ZGI_CONSOLE_SITE_MAP = [
     permissions: NO_PERMISSIONS,
   },
   {
+    href: '/console/api-keys',
+    label: 'API Keys',
+    purpose: 'request developer access and manage personal workspace API keys',
+    scope: 'workspace',
+    permissions: NO_PERMISSIONS,
+  },
+  {
     href: '/console/agents',
     label: 'Agents',
     purpose: 'create, configure, debug, and publish agents',

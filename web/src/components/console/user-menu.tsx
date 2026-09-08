@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { Icons } from '@/components/ui/icons';
 import { useAuthStore } from '@/store/auth-store';
 import { useLogout } from '@/hooks';
+import { reportLogoutPhase } from '@/lib/auth/logout-diagnostics';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -109,6 +110,7 @@ export function UserMenu() {
 
     if (typeof window !== 'undefined') {
       markAuthRedirectInProgress();
+      reportLogoutPhase('redirecting');
       window.location.replace(logoutRedirectUrl);
       return;
     }

@@ -169,22 +169,27 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 	}
 	channelIDCopy := channelID
 	bc := &BillingContext{
-		OrganizationID:    attempt.OrganizationID.String(),
-		AttemptID:         attempt.AttemptID,
-		RequestID:         attempt.RequestID,
-		InvocationSource:  normalizeInvocationSource(attempt.InvocationSource),
-		QuotaSubjectType:  attempt.QuotaSubjectType,
-		QuotaSubjectID:    attempt.QuotaSubjectID,
-		EstimatedCredits:  subjectEntry.ReservedAmount,
-		ActualCredits:     0,
-		ChannelID:         &channelIDCopy,
-		BillingLane:       UsageBillingLanePrivate,
-		UseSystemProvider: false,
-		Status:            "error",
-		ErrorMessage:      "stale local pre-deduct auto rollback",
+		OrganizationID:         attempt.OrganizationID.String(),
+		AttemptID:              attempt.AttemptID,
+		RequestID:              attempt.RequestID,
+		InvocationSource:       normalizeInvocationSource(attempt.InvocationSource),
+		QuotaSubjectType:       attempt.QuotaSubjectType,
+		QuotaSubjectID:         attempt.QuotaSubjectID,
+		EstimatedCredits:       subjectEntry.ReservedAmount,
+		SubjectReservedCredits: subjectEntry.ReservedAmount,
+		ActualCredits:          0,
+		ChannelID:              &channelIDCopy,
+		BillingLane:            UsageBillingLanePrivate,
+		UseSystemProvider:      false,
+		Status:                 "error",
+		ErrorMessage:           "stale local pre-deduct auto rollback",
 	}
+	restoreBillingContextAttribution(bc, &attempt)
 	if attempt.QuotaSubjectType == quotaSubjectTypeAPIKey {
 		bc.APIKeyID = attempt.QuotaSubjectID
+	}
+	if attempt.QuotaSubjectType == quotaSubjectTypeAccessGrant {
+		bc.AccessGrantID = attempt.QuotaSubjectID
 	}
 	if attempt.QuotaSubjectType == quotaSubjectTypeWorkspace {
 		bc.WorkspaceID = attempt.QuotaSubjectID

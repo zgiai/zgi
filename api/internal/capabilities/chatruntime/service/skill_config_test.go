@@ -623,9 +623,9 @@ func TestTrustedContextualAIChatSkillCapabilitiesUseWorkspacePermissions(t *test
 	workspaceID := uuid.New()
 	permissionService := &skillConfigWorkspacePermissionService{
 		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
-			workspacemodel.WorkspacePermissionFilePreview:      true,
-			workspacemodel.WorkspacePermissionFileManage:       false,
-			workspacemodel.WorkspacePermissionFileUploadCreate: true,
+			workspacemodel.WorkspacePermissionFilePreview: true,
+			workspacemodel.WorkspacePermissionFileDelete:  false,
+			workspacemodel.WorkspacePermissionFileUpload:  true,
 		},
 	}
 	got := (&service{workspacePerms: permissionService}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
@@ -640,15 +640,15 @@ func TestTrustedContextualAIChatSkillCapabilitiesUseWorkspacePermissions(t *test
 
 	wantCodes := []workspacemodel.WorkspacePermissionCode{
 		workspacemodel.WorkspacePermissionFilePreview,
-		workspacemodel.WorkspacePermissionFileManage,
-		workspacemodel.WorkspacePermissionFileUploadCreate,
+		workspacemodel.WorkspacePermissionFileDelete,
+		workspacemodel.WorkspacePermissionFileUpload,
 	}
 	if !reflect.DeepEqual(permissionService.codes, wantCodes) {
 		t.Fatalf("workspace permission checks = %#v, want %#v", permissionService.codes, wantCodes)
 	}
 }
 
-func TestTrustedContextualAIChatSkillCapabilitiesUseAgentManagePermission(t *testing.T) {
+func TestTrustedContextualAIChatSkillCapabilitiesUseAgentCreatePermission(t *testing.T) {
 	workspaceID := uuid.New()
 	parts := contextualConsoleAgentsManageCapabilityPartsForTest()
 	resources := parts.RawOperationContext["resources"].([]interface{})
@@ -659,7 +659,7 @@ func TestTrustedContextualAIChatSkillCapabilitiesUseAgentManagePermission(t *tes
 	permissionService := &skillConfigWorkspacePermissionService{
 		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
 			workspacemodel.WorkspacePermissionAgentView:   true,
-			workspacemodel.WorkspacePermissionAgentManage: true,
+			workspacemodel.WorkspacePermissionAgentCreate: true,
 		},
 	}
 	got := (&service{workspacePerms: permissionService}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
@@ -687,7 +687,7 @@ func TestAddContextualAIChatSkillIDsDoesNotUseTextToInjectCrossPageAgentManageme
 	readOnlyPerms := &skillConfigWorkspacePermissionService{
 		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
 			workspacemodel.WorkspacePermissionAgentView:   true,
-			workspacemodel.WorkspacePermissionAgentManage: false,
+			workspacemodel.WorkspacePermissionAgentCreate: false,
 		},
 	}
 	readOnlyCapabilities := (&service{workspacePerms: readOnlyPerms}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
@@ -708,7 +708,7 @@ func TestAddContextualAIChatSkillIDsDoesNotUseTextToInjectCrossPageAgentManageme
 
 	managePerms := &skillConfigWorkspacePermissionService{
 		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
-			workspacemodel.WorkspacePermissionAgentManage: true,
+			workspacemodel.WorkspacePermissionAgentCreate: true,
 		},
 	}
 	manageCapabilities := (&service{workspacePerms: managePerms}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
@@ -748,7 +748,7 @@ func TestContextualAIChatSkillIDsUseModelIntentForCrossPageAgentManagement(t *te
 	permissionService := &skillConfigWorkspacePermissionService{
 		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
 			workspacemodel.WorkspacePermissionAgentView:   true,
-			workspacemodel.WorkspacePermissionAgentManage: true,
+			workspacemodel.WorkspacePermissionAgentCreate: true,
 		},
 	}
 	capabilities := (&service{workspacePerms: permissionService}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
@@ -783,9 +783,9 @@ func TestTrustedContextualAIChatSkillCapabilitiesUsesOperationContextWorkspace(t
 
 	permissionService := &skillConfigWorkspacePermissionService{
 		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
-			workspacemodel.WorkspacePermissionFilePreview:      true,
-			workspacemodel.WorkspacePermissionFileManage:       true,
-			workspacemodel.WorkspacePermissionFileUploadCreate: true,
+			workspacemodel.WorkspacePermissionFilePreview: true,
+			workspacemodel.WorkspacePermissionFileDelete:  true,
+			workspacemodel.WorkspacePermissionFileUpload:  true,
 		},
 	}
 	got := (&service{workspacePerms: permissionService}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{

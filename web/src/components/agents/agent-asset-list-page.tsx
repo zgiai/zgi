@@ -47,7 +47,6 @@ import {
   type AgentListWorkflowTypeFilter,
 } from '@/utils/agent-list-state';
 import {
-  AGENT_MANAGE_PERMISSION_CODES,
   AGENT_PERMISSION_ACTIONS,
   WORKFLOW_PERMISSION_ACTIONS,
 } from '@/constants/permissions';
@@ -72,7 +71,8 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
   );
   const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
   const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
-  const canManageAgent = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
+  const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
+  const canDeleteAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.delete);
   const canCreateBlank = isWorkflowList ? canCreateWorkflow : canCreateAgent;
   const canImportWorkflow = isWorkflowList && hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
   const canCreate = isWorkflowList ? canCreateBlank || canImportWorkflow : canCreateBlank;
@@ -464,7 +464,9 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
         workspaceId={currentWorkspace?.id}
         workspaceName={currentWorkspace?.name}
         canView={canView}
-        canManage={isWorkflowList ? false : canManageAgent}
+        canCreate={isWorkflowList ? false : canCreateAgent}
+        canUpdate={isWorkflowList ? false : canUpdateAgent}
+        canDelete={isWorkflowList ? false : canDeleteAgent}
         isLoading={isLoading}
         isFetching={isFetching}
         permissionsSettled={!isPermissionsLoading}

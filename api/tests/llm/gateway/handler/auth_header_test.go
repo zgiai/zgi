@@ -150,6 +150,10 @@ func (r fakeAPIKeyRepo) GetByKeyHash(context.Context, string) (*apikeymodel.Tena
 	return nil, fmt.Errorf("not found")
 }
 
+func (r fakeAPIKeyRepo) ValidatePrincipalAccess(context.Context, *apikeymodel.TenantAPIKey) error {
+	return nil
+}
+
 func (r fakeAPIKeyRepo) List(context.Context, string, map[string]interface{}, int, int) ([]*apikeymodel.TenantAPIKey, int64, error) {
 	return nil, 0, nil
 }

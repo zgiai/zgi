@@ -207,7 +207,7 @@ const messages = {
         description: 'Review source, usage, errors, and available input/output snapshots.',
         overview: 'Overview',
         source: 'Call source',
-        sourceApi: 'Gateway call authenticated with an organization API key',
+        sourceApi: 'Gateway call authenticated with an API key',
         sourceProduct:
           'Gateway call made by an in-product agent, workflow, chat, or knowledge base',
         sourceUnknown: 'This call has no reliable API or in-product source attribution',

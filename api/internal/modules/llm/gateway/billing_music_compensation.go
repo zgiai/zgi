@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -72,17 +73,21 @@ func (b *BillingService) CompensatePrivateMusicDelivery(ctx context.Context, org
 		if err != nil {
 			return err
 		}
-		refundCredits := subjectEntry.ActualAmount
-		if fundEntry.ActualAmount != refundCredits || bill.PrivatePoints != refundCredits || bill.TotalPoints != refundCredits || bill.OfficialPoints != 0 {
+		subjectRefundCredits := subjectEntry.ActualAmount
+		fundRefundCredits := fundEntry.ActualAmount
+		// The member allowance and channel wallet are independent ledgers. A
+		// stale grant period intentionally settles the subject entry at zero
+		// while the organization still pays the full provider cost.
+		if subjectRefundCredits > fundRefundCredits || bill.PrivatePoints != fundRefundCredits || bill.TotalPoints != fundRefundCredits || bill.OfficialPoints != 0 {
 			return fmt.Errorf("private music compensation amount mismatch for attempt %s", attempt.AttemptID)
 		}
-		if err := refundPrivateMusicSubject(ctx, tx, attempt, refundCredits); err != nil {
+		if err := refundPrivateMusicSubject(ctx, tx, attempt, subjectRefundCredits); err != nil {
 			return err
 		}
-		if err := b.refundPrivateMusicWallet(ctx, tx, attempt, fundEntry, refundCredits); err != nil {
+		if err := b.refundPrivateMusicWallet(ctx, tx, attempt, fundEntry, fundRefundCredits); err != nil {
 			return err
 		}
-		if err := markPrivateMusicEntriesRefunded(ctx, tx, subjectEntry, fundEntry, refundCredits); err != nil {
+		if err := markPrivateMusicEntriesRefunded(ctx, tx, subjectEntry, fundEntry, subjectRefundCredits, fundRefundCredits); err != nil {
 			return err
 		}
 		if err := markPrivateMusicUsageBillCompensated(ctx, tx, bill); err != nil {
@@ -198,6 +203,29 @@ func refundPrivateMusicSubject(ctx context.Context, tx *gorm.DB, attempt Billing
 		}
 		quota.UpdatedAt = time.Now()
 		return tx.WithContext(ctx).Save(&quota).Error
+	case quotaSubjectTypeAccessGrant:
+		var grant accessmodel.Grant
+		if err := tx.WithContext(ctx).Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND organization_id = ?", attempt.QuotaSubjectID, attempt.OrganizationID).
+			First(&grant).Error; err != nil {
+			return fmt.Errorf("load developer grant for music compensation: %w", err)
+		}
+		// The channel wallet refund belongs to the historical request and must
+		// always be processed. The member allowance, however, is scoped to one
+		// grant authorization period. A renewal resets that allowance and bumps
+		// the version, so a delayed delivery failure from the old period must not
+		// credit the newly issued grant.
+		if attempt.GrantAuthorizationVersion == nil || grant.AuthorizationVersion != *attempt.GrantAuthorizationVersion {
+			return nil
+		}
+		if grant.UsedQuota < amount {
+			return fmt.Errorf("developer grant used quota is smaller than music refund")
+		}
+		grant.UsedQuota -= amount
+		if grant.QuotaLimit != nil {
+			grant.RemainQuota += amount
+		}
+		return tx.WithContext(ctx).Unscoped().Save(&grant).Error
 	case quotaSubjectTypeOrganization:
 		return nil
 	default:
@@ -268,13 +296,22 @@ func markPrivateMusicEntriesRefunded(
 	tx *gorm.DB,
 	subjectEntry *BillingAttemptEntry,
 	fundEntry *BillingAttemptEntry,
-	amount int64,
+	subjectAmount int64,
+	fundAmount int64,
 ) error {
-	for _, entry := range []*BillingAttemptEntry{subjectEntry, fundEntry} {
+	entries := []struct {
+		entry  *BillingAttemptEntry
+		amount int64
+	}{
+		{entry: subjectEntry, amount: subjectAmount},
+		{entry: fundEntry, amount: fundAmount},
+	}
+	for _, item := range entries {
+		entry := item.entry
 		result := tx.WithContext(ctx).Model(&BillingAttemptEntry{}).
 			Where("id = ? AND attempt_id = ?", entry.ID, entry.AttemptID).
 			Updates(map[string]any{
-				"refunded_amount": entry.RefundedAmount + amount,
+				"refunded_amount": entry.RefundedAmount + item.amount,
 				"status":          billingEntryStatusRefunded,
 				"updated_at":      time.Now(),
 			})

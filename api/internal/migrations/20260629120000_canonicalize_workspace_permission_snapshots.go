@@ -93,6 +93,11 @@ func canonicalWorkspaceAssignablePermissionJSON(raw string) (string, error) {
 		return "", err
 	}
 
+	// Canonicalize compatibility permissions first so legacy expansions such as
+	// database.ai_query expose their database.view dependency in this pass.
+	// The view expansion below can then add the complete fine-grained snapshot
+	// without requiring the migration to run a second time.
+	permissions = workspace_model.CanonicalAssignableWorkspacePermissionSnapshotStrings(permissions)
 	permissions = expandLegacyAgentViewPermissionSnapshot(permissions)
 	permissions = expandLegacyAssetViewPermissionSnapshot(permissions)
 	sanitized := workspace_model.CanonicalAssignableWorkspacePermissionSnapshotStrings(permissions)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
@@ -44,7 +45,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 ) (*adapter.ChatResponse, error) {
 	ctx = applyInvocationContentPrivacy(ctx, appCtx)
 	startTime := time.Now()
-	requestID := uuid.New().String()
+	requestID := types.NewInvocationID(ctx)
 	ctx = logger.WithFields(ctx,
 		zap.String("gateway_request_id", requestID),
 		zap.String("model", req.Model),
@@ -58,6 +59,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 		return nil, err
 	}
 	effectiveReq := s.policyPrompt.injectChatRequest(req)
+	effectiveReq = s.withPrincipalChatOutputLimit(apiKey, effectiveReq)
 	logger.DebugContext(ctx, "llm gateway timing", "step", "validate_request", "latency_ms", time.Since(t1).Milliseconds())
 
 	// 2. Check model authorization
@@ -69,11 +71,7 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 
 	// 3. Estimate tokens
 	t3 := time.Now()
-	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateTotalTokens(
-		effectiveReq.Messages,
-		effectiveReq.MaxTokens,
-		effectiveReq.Model,
-	)
+	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateChatRequestTokens(effectiveReq)
 	logger.DebugContext(ctx, "llm gateway timing", "step", "estimate_tokens", "latency_ms", time.Since(t3).Milliseconds())
 
 	// 4. Select providers
@@ -194,6 +192,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		startTime,
 		requestID,
 		attemptID,
+		quote.ReservationPolicy,
 	)
 	if err != nil {
 		return nil, err
@@ -297,7 +296,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 ) (<-chan adapter.StreamResponse, error) {
 	ctx = applyInvocationContentPrivacy(ctx, appCtx)
 	startTime := time.Now()
-	requestID := uuid.New().String()
+	requestID := types.NewInvocationID(ctx)
 	ctx = logger.WithFields(ctx,
 		zap.String("gateway_request_id", requestID),
 		zap.String("model", req.Model),
@@ -310,6 +309,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 		return nil, err
 	}
 	effectiveReq := s.policyPrompt.injectChatRequest(req)
+	effectiveReq = s.withPrincipalChatOutputLimit(apiKey, effectiveReq)
 
 	// 2. Check model authorization
 	if err := s.checkModelAuthorization(apiKey, appCtx, effectiveReq.Model); err != nil {
@@ -317,11 +317,7 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 	}
 
 	// 3. Estimate tokens
-	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateTotalTokens(
-		effectiveReq.Messages,
-		effectiveReq.MaxTokens,
-		effectiveReq.Model,
-	)
+	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateChatRequestTokens(effectiveReq)
 
 	// 4. Select providers
 	organizationID, err := uuid.Parse(apiKey.OrganizationID)
@@ -442,6 +438,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		startTime,
 		requestID,
 		attemptID,
+		quote.ReservationPolicy,
 	)
 	if err != nil {
 		return nil, err

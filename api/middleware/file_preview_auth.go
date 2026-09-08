@@ -75,7 +75,7 @@ func FilePreviewAuthMiddleware(accountService interfaces.AccountService) gin.Han
 		userID, err := jwtpkg.GetUserIDFromToken(parts[1])
 		if err != nil {
 			logger.Error("FilePreviewAuth: JWT token parsing failed", err)
-			response.Fail(c, response.ErrTokenInvalid)
+			failJWTValidation(c, err)
 			c.Abort()
 			return
 		}

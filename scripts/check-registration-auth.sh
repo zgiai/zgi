@@ -18,12 +18,12 @@ if [[ "${mode}" != "--frontend-only" ]]; then
   echo "Running registration and invitation backend tests"
   (
     cd "${repo_root}/api"
-    go test ./internal/modules/user/auth/... ./internal/util ./pkg/email -count=1
+    go test ./internal/modules/user/auth/... ./internal/util ./pkg/email ./pkg/jwt -count=1
     go test ./middleware \
-      -run 'Test(CurrentWorkspaceRequired|ShouldSkipTenantResolutionForOnboardingRoutes)' \
+      -run 'Test(CurrentWorkspaceRequired|ShouldSkipTenantResolutionForOnboardingRoutes|JWTRevocationFailureContracts)' \
       -count=1
     go test ./internal/modules/workspace/handler \
-      -run 'Test(GetInvitationInfo|AcceptInvitation|OrganizationInvite|MemberActivationURL|MembersHandlerInvite|WorkspaceStatistics|UpdateWorkspace)' \
+      -run 'Test(GetInvitationInfo|AcceptInvitation|OrganizationInvite|DirectAddMember|MemberActivationURL|MembersHandlerInvite|WorkspaceStatistics|UpdateWorkspace)' \
       -count=1
     go test ./internal/modules/workspace/service \
       -run 'Test(InviteMemberDefaultsCreateUsableWorkspaceContext|WorkspaceMemberDefaultsNormalizeRoleID|DirectAddOrganizationMember|InviteCurrentOrganizationMember)' \
@@ -35,6 +35,7 @@ if [[ "${mode}" != "--backend-only" ]]; then
   echo "Running registration and invitation frontend checks"
   (
     cd "${repo_root}/web"
+    pnpm test:auth-session-lifecycle
     pnpm exec eslint --max-warnings=17 \
       'src/app/(auth)/invite/[token]/page.tsx' \
       'src/app/(auth)/layout.tsx' \

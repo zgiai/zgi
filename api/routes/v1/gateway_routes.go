@@ -69,7 +69,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	speechHandler := gatewayhandler.NewSpeechHandler(gatewayService)
 
 	// Create middleware
-	authMiddleware := gatewayhandler.LLMAPIKeyAuthMiddleware(deps.APIKeyRepo)
+	authMiddleware := gatewayhandler.LLMAPIKeyAuthMiddleware(deps.APIKeyRepo, errorProjector)
 
 	// Register routes with authentication middleware
 	// OpenAI-compatible endpoints

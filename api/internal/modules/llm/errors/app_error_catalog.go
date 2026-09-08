@@ -27,6 +27,10 @@ var (
 	AppCodeNoProviderAvailable       = apperror.MustCode("llm.provider.none_available")
 	AppCodePrivateChannelUnavailable = apperror.MustCode("llm.channel.private_unavailable")
 	AppCodeInvocationFailed          = apperror.MustCode("llm.invocation.failed")
+	AppCodeDeveloperAccessDisabled   = apperror.MustCode("llm.developer_access.disabled")
+	AppCodeDeveloperApprovalNeeded   = apperror.MustCode("llm.developer_access.approval_required")
+	AppCodeDeveloperAccessConflict   = apperror.MustCode("llm.developer_access.conflict")
+	AppCodeDeveloperQuotaExhausted   = apperror.MustCode("llm.developer_access.quota_exhausted")
 )
 
 // CatalogDefinitions returns fresh LLM-owned definitions for composition into
@@ -44,11 +48,11 @@ func CatalogDefinitions() []appcatalog.Definition {
 		llmDefinition(AppCodeAPIKeyExpired, appcatalog.CategoryAuthentication, 401, false,
 			"The API key has expired. Create or select an active key.",
 			"API 密钥已过期，请创建或选择有效密钥。",
-			"llm.gateway:40102", "llm.domain:40103"),
+			"llm.gateway:40102", "llm.domain:40103", "llm.personal_key.expired:invalid_api_key"),
 		llmDefinition(AppCodeAPIKeyInactive, appcatalog.CategoryAuthentication, 401, false,
 			"The API key is disabled. Enable it or use another key.",
 			"API 密钥已停用，请启用后重试或更换密钥。",
-			"llm.gateway:40103", "llm.domain:40102"),
+			"llm.gateway:40103", "llm.domain:40102", "llm.personal_key.inactive:invalid_api_key"),
 		llmDefinition(AppCodeQuotaExceeded, appcatalog.CategoryQuota, 429, false,
 			"The API key quota has been reached. Review the quota or use another key.",
 			"API 密钥额度已用完，请检查额度或更换密钥。"),
@@ -111,6 +115,24 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The model request could not be completed. Try again or choose another model.",
 			"大模型调用未完成，请重试或选择其他模型。",
 			"llm.domain:40505"),
+		llmDefinition(AppCodeDeveloperAccessDisabled, appcatalog.CategoryAuthorization, 403, false,
+			"Developer API access is disabled for this workspace.",
+			"此工作空间已停用开发者 API 访问。",
+			"llm.developer_access.disabled:403003"),
+		llmDefinition(AppCodeDeveloperApprovalNeeded, appcatalog.CategoryAuthorization, 403, false,
+			"Developer API access approval is required.",
+			"需要管理员批准开发者 API 访问。",
+			"llm.developer_access.approval_required:403003"),
+		llmDefinition(AppCodeDeveloperAccessConflict, appcatalog.CategoryConflict, 409, false,
+			"The requested operation conflicts with the current developer access state.",
+			"当前开发者访问状态不允许执行此操作。",
+			"llm.developer_access.conflict:403003"),
+		// Personal-key authentication retains its legacy HTTP 401/code shape.
+		// This domain-scoped alias must not map every invalid_api_key to quota.
+		llmDefinition(AppCodeDeveloperQuotaExhausted, appcatalog.CategoryQuota, 429, false,
+			"Your developer API allowance is exhausted or reserved by in-flight requests. Check usage or contact your workspace administrator. Creating another key does not increase the shared allowance.",
+			"你的开发者 API 额度已用完或被进行中的请求占用。请检查用量或联系工作空间管理员；创建新密钥不会增加共享额度。",
+			"llm.personal_key.quota:invalid_api_key", "llm.developer_access.quota_exhausted:501002"),
 	}
 }
 

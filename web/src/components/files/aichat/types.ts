@@ -30,6 +30,7 @@ export interface FilesAIChatContextSnapshot {
   queryStatus: FilesAIChatQueryStatus;
   canManage: boolean;
   canUpload: boolean;
+  canPreview: boolean;
   presentation?: FilesAIChatPresentation;
 }
 

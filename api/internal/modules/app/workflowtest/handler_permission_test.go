@@ -124,7 +124,7 @@ func TestHandlerTaskReadRoutesRequireWorkflowLogsViewBeforeTaskLookup(t *testing
 	}
 }
 
-func TestHandlerTaskCancelRoutesRequireWorkflowRunDraftBeforeTaskLookup(t *testing.T) {
+func TestHandlerTaskLifecycleRoutesRequireWorkflowRunDraftBeforeTaskLookup(t *testing.T) {
 	agentID := "11111111-1111-1111-1111-111111111111"
 	taskID := "44444444-4444-4444-4444-444444444444"
 	tests := []struct {
@@ -153,6 +153,18 @@ func TestHandlerTaskCancelRoutesRequireWorkflowRunDraftBeforeTaskLookup(t *testi
 				{Key: "task_id", Value: taskID},
 			},
 			call: (*Handler).CancelGenerationTask,
+		},
+		{
+			name: "generation task resume", method: http.MethodPost,
+			target: "/agents/" + agentID + "/workflow-tests/cases/generation-tasks/" + taskID + "/resume",
+			params: gin.Params{{Key: "agent_id", Value: agentID}, {Key: "task_id", Value: taskID}},
+			call:   (*Handler).ResumeGenerationTask,
+		},
+		{
+			name: "generation task delete", method: http.MethodDelete,
+			target: "/agents/" + agentID + "/workflow-tests/cases/generation-tasks/" + taskID,
+			params: gin.Params{{Key: "agent_id", Value: agentID}, {Key: "task_id", Value: taskID}},
+			call:   (*Handler).DeleteGenerationTask,
 		},
 	}
 

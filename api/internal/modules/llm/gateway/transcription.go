@@ -150,6 +150,7 @@ func (s *llmGatewayServiceImpl) Transcribe(
 			startedAt,
 			requestID,
 			buildAttemptID(requestID, attemptIndex),
+			"",
 		)
 		if err != nil {
 			return nil, err

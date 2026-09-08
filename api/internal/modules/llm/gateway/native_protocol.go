@@ -15,6 +15,8 @@ import (
 )
 
 const (
+	protocolOpenAIResponses        = "openai_responses"
+	protocolAnthropicMessages      = "anthropic_messages"
 	modelCategoryImage             = "image"
 	modelCategoryResponses         = "responses"
 	modelCategoryAnthropicMessages = "anthropic_messages"
@@ -29,6 +31,10 @@ func (s *llmGatewayServiceImpl) CreateResponseRaw(
 		return nil, err
 	}
 	effectiveReq, err := s.policyPrompt.injectRawResponseRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	effectiveReq, err = s.withPrincipalRawResponseOutputLimit(apiKey, effectiveReq)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +55,10 @@ func (s *llmGatewayServiceImpl) CreateResponseStream(
 	if err != nil {
 		return nil, err
 	}
+	effectiveReq, err = s.withPrincipalRawResponseOutputLimit(apiKey, effectiveReq)
+	if err != nil {
+		return nil, err
+	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryResponses)
 
 	return s.createNativeResponseStream(ctx, apiKey, effectiveReq)
@@ -66,6 +76,10 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessage(
 	if err != nil {
 		return nil, err
 	}
+	effectiveReq, err = s.withPrincipalAnthropicOutputLimit(apiKey, effectiveReq)
+	if err != nil {
+		return nil, err
+	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryAnthropicMessages)
 
 	return s.createNativeAnthropicMessage(ctx, apiKey, effectiveReq)
@@ -80,6 +94,10 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessageStream(
 		return nil, err
 	}
 	effectiveReq, err := s.policyPrompt.injectAnthropicMessageRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	effectiveReq, err = s.withPrincipalAnthropicOutputLimit(apiKey, effectiveReq)
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +232,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			startTime,
 			requestID,
 			buildAttemptID(requestID, attemptIdx),
+			quote.ReservationPolicy,
 		)
 		if err != nil {
 			lastErr = err
@@ -386,6 +405,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 			startTime,
 			requestID,
 			buildAttemptID(requestID, attemptIdx),
+			quote.ReservationPolicy,
 		)
 		if err != nil {
 			lastErr = err

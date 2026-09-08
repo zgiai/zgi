@@ -3,11 +3,16 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/gorm"
 )
@@ -51,7 +56,7 @@ func (r *apiKeyRepositoryImpl) GetByIDInOrganizations(ctx context.Context, id st
 
 	var apiKey model.TenantAPIKey
 	err := r.db.WithContext(ctx).
-		Where("id = ? AND organization_id IN ? AND is_internal = ?", id, organizationIDs, false).
+		Where("id = ? AND organization_id IN ? AND is_internal = ? AND principal_type IS NULL", id, organizationIDs, false).
 		First(&apiKey).Error
 	if err != nil {
 		return nil, err
@@ -74,6 +79,10 @@ func (r *apiKeyRepositoryImpl) GetByKeyHash(ctx context.Context, keyHash string)
 		if cached, err := redis.GetString(ctx, cacheKey); err == nil && cached != "" {
 			var apiKey model.TenantAPIKey
 			if err := json.Unmarshal([]byte(cached), &apiKey); err == nil {
+				// KeyHash is intentionally excluded from JSON so it never appears in
+				// cached values or API responses. Restore it from the trusted cache
+				// lookup key for the authoritative principal-access recheck.
+				apiKey.KeyHash = keyHash
 				return &apiKey, nil
 			}
 		}
@@ -96,6 +105,99 @@ func (r *apiKeyRepositoryImpl) GetByKeyHash(ctx context.Context, keyHash string)
 	}
 
 	return &apiKey, nil
+}
+
+// ValidatePrincipalAccess performs the dynamic checks that must not be trusted
+// from the API-key cache. Legacy organization keys have no principal and keep
+// their existing behavior.
+func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiKey *model.TenantAPIKey) error {
+	if apiKey == nil {
+		return gorm.ErrRecordNotFound
+	}
+	if apiKey.PrincipalType == nil && apiKey.PrincipalID == nil {
+		return nil
+	}
+	if apiKey.PrincipalType == nil || apiKey.PrincipalID == nil || apiKey.WorkspaceID == nil || apiKey.AccessGrantID == nil {
+		return fmt.Errorf("personal API key has incomplete principal scope")
+	}
+	// A personal key may have been served from Redis before a lifecycle update.
+	// Re-read it here so disable, revoke, expiry, or deletion is authoritative
+	// even when best-effort cache invalidation failed.
+	var persisted model.TenantAPIKey
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND key_hash = ?", apiKey.ID, apiKey.KeyHash).
+		First(&persisted).Error; err != nil {
+		return fmt.Errorf("reload personal API key: %w", err)
+	}
+	if !persisted.IsActive() {
+		if persisted.Status == "active" && persisted.ExpiresAt != nil && persisted.ExpiresAt.Before(time.Now()) {
+			return apperror.New(llmerrors.AppCodeAPIKeyExpired,
+				apperror.WithOperation("apikey.validate_principal_access"))
+		}
+		if persisted.Status == "inactive" {
+			return apperror.New(llmerrors.AppCodeAPIKeyInactive,
+				apperror.WithOperation("apikey.validate_principal_access"))
+		}
+		return errors.New("personal API key is inactive or expired")
+	}
+	*apiKey = persisted
+
+	var workspace workspacemodel.Workspace
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ?", *apiKey.WorkspaceID, apiKey.OrganizationID).
+		First(&workspace).Error; err != nil {
+		return fmt.Errorf("load personal API key workspace: %w", err)
+	}
+	if !workspace.IsNormal() {
+		return errors.New("API key workspace is archived")
+	}
+	var organization workspacemodel.Organization
+	if err := r.db.WithContext(ctx).
+		Where("id = ?", apiKey.OrganizationID).
+		First(&organization).Error; err != nil {
+		return fmt.Errorf("load personal API key organization: %w", err)
+	}
+	if !organization.IsActive() {
+		return errors.New("API key organization is inactive or archived")
+	}
+	var grant accessmodel.Grant
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ? AND workspace_id = ? AND principal_type = ? AND principal_id = ?", *apiKey.AccessGrantID, apiKey.OrganizationID, *apiKey.WorkspaceID, *apiKey.PrincipalType, *apiKey.PrincipalID).
+		First(&grant).Error
+	if err != nil {
+		return fmt.Errorf("load personal API key grant: %w", err)
+	}
+	if !grant.IsActive(time.Now()) || grant.AuthorizationVersion != apiKey.AuthorizationVersion {
+		return errors.New("developer access grant is inactive or stale")
+	}
+	var policy accessmodel.Policy
+	policyErr := r.db.WithContext(ctx).
+		Where("workspace_id = ?", *apiKey.WorkspaceID).
+		First(&policy).Error
+	if policyErr != nil && !errors.Is(policyErr, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("load personal API key policy: %w", policyErr)
+	}
+	if policyErr == nil && policy.Mode == accessmodel.AccessModeDisabled {
+		return errors.New("developer access is disabled for the workspace")
+	}
+	if *apiKey.PrincipalType == accessmodel.PrincipalTypeUser {
+		var count int64
+		if err := r.db.WithContext(ctx).Table("workspace_members").
+			Where("workspace_id = ? AND account_id = ?", *apiKey.WorkspaceID, *apiKey.PrincipalID).
+			Count(&count).Error; err != nil {
+			return fmt.Errorf("count personal API key workspace membership: %w", err)
+		}
+		if count == 0 {
+			return errors.New("API key principal is no longer a workspace member")
+		}
+	}
+	// Authorization failures take precedence over quota: removed members must
+	// not receive allowance information, even when their grant is exhausted.
+	if grant.QuotaLimit != nil && grant.RemainQuota <= 0 {
+		return apperror.New(llmerrors.AppCodeDeveloperQuotaExhausted,
+			apperror.WithOperation("apikey.validate_principal_access"))
+	}
+	return nil
 }
 
 // List lists API keys with filters and pagination
@@ -150,13 +252,13 @@ func (r *apiKeyRepositoryImpl) Delete(ctx context.Context, id, organizationID st
 	var apiKey model.TenantAPIKey
 	if err := r.db.WithContext(ctx).
 		Select("id", "key_hash").
-		Where("id = ? AND organization_id = ? AND is_internal = ?", id, organizationID, false).
+		Where("id = ? AND organization_id = ? AND is_internal = ? AND principal_type IS NULL", id, organizationID, false).
 		First(&apiKey).Error; err != nil {
 		return err
 	}
 
 	if err := r.db.WithContext(ctx).
-		Where("id = ? AND organization_id = ? AND is_internal = ?", id, organizationID, false).
+		Where("id = ? AND organization_id = ? AND is_internal = ? AND principal_type IS NULL", id, organizationID, false).
 		Delete(&model.TenantAPIKey{}).Error; err != nil {
 		return err
 	}
@@ -230,4 +332,10 @@ func (r *apiKeyRepositoryImpl) invalidateAPIKeyCache(ctx context.Context, keyHas
 	}
 
 	_ = client.Del(ctx, apiKeyCacheKey(keyHash)).Err()
+}
+
+// InvalidateKeyCache allows transactional domain services to invalidate a key
+// only after their transaction commits.
+func (r *apiKeyRepositoryImpl) InvalidateKeyCache(ctx context.Context, keyHash string) {
+	r.invalidateAPIKeyCache(ctx, keyHash)
 }

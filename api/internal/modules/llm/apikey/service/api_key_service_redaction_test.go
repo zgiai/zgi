@@ -159,6 +159,42 @@ func TestCreateAPIKeyRollsBackBatchWhenAnInsertFails(t *testing.T) {
 	require.Zero(t, count)
 }
 
+func TestLegacyAPIKeyCRUDExcludesPersonalKeys(t *testing.T) {
+	svc, db := newAPIKeyRedactionTestService(t)
+	organizationID := "11111111-1111-1111-1111-111111111111"
+	workspaceID := "22222222-2222-2222-2222-222222222222"
+	principalID := "33333333-3333-3333-3333-333333333333"
+	principalType := "user"
+	personal := &model.TenantAPIKey{
+		OrganizationID: organizationID,
+		WorkspaceID:    &workspaceID,
+		PrincipalType:  &principalType,
+		PrincipalID:    &principalID,
+		KeyHash:        "personal-hash",
+		Name:           "personal",
+		Status:         "revoked",
+	}
+	require.NoError(t, db.Omit("Key").Create(personal).Error)
+
+	list, err := svc.ListAPIKeys(context.Background(), &dto.ListAPIKeyRequest{
+		OrganizationIDs: []string{organizationID}, Page: 1, Limit: 20,
+	})
+	require.NoError(t, err)
+	require.Empty(t, list.Items)
+
+	_, err = svc.GetAPIKey(context.Background(), personal.ID, []string{organizationID})
+	require.Error(t, err)
+	status := "active"
+	_, err = svc.UpdateAPIKey(context.Background(), personal.ID, []string{organizationID}, &dto.UpdateAPIKeyRequest{Status: &status})
+	require.Error(t, err)
+	_, err = svc.DeleteAPIKey(context.Background(), personal.ID, []string{organizationID})
+	require.Error(t, err)
+
+	var stored model.TenantAPIKey
+	require.NoError(t, db.First(&stored, "id = ?", personal.ID).Error)
+	require.Equal(t, "revoked", stored.Status)
+}
+
 func requireRedactedAPIKeyResponse(t *testing.T, response *dto.APIKeyResponse, fullKey string) {
 	t.Helper()
 

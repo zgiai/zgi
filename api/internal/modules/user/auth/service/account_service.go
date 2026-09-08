@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -280,7 +281,7 @@ func (s *AccountService) SendResetPasswordEmail(ctx context.Context, account *au
 	return token, nil
 }
 
-func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, groupName, departmentName, language string) error {
+func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *auth_model.Account, inviterID, groupID, workspaceID, groupName, departmentName, language string) error {
 	if account == nil {
 		return errors.New("account must be provided")
 	}
@@ -296,7 +297,7 @@ func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *
 	if s.tokenMgr != nil {
 		if err := s.tokenMgr.StoreInvitationTokenWithDetails(helper.InvitationData{
 			AccountID: account.ID, Email: account.Email, OrganizationID: groupID, InviterID: inviterID,
-			Role: string(workspace_model.OrganizationRoleNormal),
+			WorkspaceID: workspaceID, Role: string(workspace_model.OrganizationRoleNormal),
 		}, token, expiryHours); err != nil {
 			return fmt.Errorf("store direct member invitation: %w", err)
 		}
@@ -309,7 +310,7 @@ func (s *AccountService) SendDirectAddMemberEmail(ctx context.Context, account *
 		targetURL = targetURL + "/"
 	}
 
-	activationURL := fmt.Sprintf("%sactivate?email=%s&token=%s", targetURL, account.Email, token)
+	activationURL := fmt.Sprintf("%sactivate?%s", targetURL, url.Values{"email": {account.Email}, "token": {token}}.Encode())
 
 	return email.SendDirectAddMemberMail(language, account.Email, groupName, departmentName, activationURL)
 }
@@ -342,22 +343,13 @@ func (s *AccountService) isResetPasswordEmailRateLimited(ctx context.Context, em
 }
 
 func (s *AccountService) Logout(ctx context.Context, accessToken, refreshToken string) error {
-	// Only revoke refresh token which is stored in Redis
-	err := s.tokenMgr.RevokeToken(refreshToken, TokenTypeRefresh)
-
-	// Also clean up any old format storage for backward compatibility
-	if refreshToken != "" {
-		// Try to get account ID from refresh token to clean up old format
-		if tokenData, err := s.tokenMgr.GetTokenData(refreshToken, TokenTypeRefresh); err == nil && tokenData != nil && tokenData.AccountID != nil {
-			redisUtil.RedisClient.Del(ctx, "refresh_token:"+*tokenData.AccountID)
-			redisUtil.RedisClient.Del(ctx, "refresh_token:"+refreshToken)
-		}
-	}
-
+	accountID, err := jwt.RevokeToken(ctx, accessToken)
 	if err != nil {
-		return fmt.Errorf("failed to revoke refresh token: %v", err)
+		return fmt.Errorf("logout access token: %w", err)
 	}
-	return nil
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return s.tokenMgr.RevokeAccountRefreshToken(ctx, refreshToken, accountID)
 }
 
 func (s *AccountService) RefreshToken(ctx context.Context, refreshToken string) (*dto.TokenResponse, error) {
