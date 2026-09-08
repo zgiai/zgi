@@ -364,6 +364,60 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
     - If an event has no SSE `id`, treat it as a non-recoverable fallback event and do not use it as `after_id`.
     - Stop listening after `message_end` with `completed`, `stopped`, `error`, or `failed`, or after an `error` event.
 
+    ### Page reload and in-page reconnect are different
+
+    During an in-page network interruption, the client still owns the rendered text. Resume incrementally with the latest `after_id` and deduplicate by SSE `id`. After a page or application restart, do not trust a local cursor by itself: load message history first, then replay the newest running or waiting message from the event-stream beginning without `after_id`.
+
+| Current state | Detection | Recovery action |
+| --- | --- | --- |
+| Running | `runtime_status=running` with `active_message_id` | Replay from the beginning and keep the connection open; use the newest `after_id` for later in-page reconnects |
+| Waiting for approval | Latest message has `status=waiting_approval` | Replay that message to rebuild `approval_requested`; message metadata may provide an immediate form fallback |
+| Waiting for workflow answer | `question_answer_requested`, or `user_input_requested.source=agent_workflow_question_answer` | Render the question/choices and call workflow continuation |
+| Waiting for Skill input | Any other `user_input_requested` | Key answers by question id and call user-input continuation |
+| Completed or failed | `completed`, `stopped`, `error`, or `failed` | Render history only; do not open a recovery stream |
+
+    Waiting conversations are normally no longer `running`, so checking only `active_message_id` is insufficient. Inspect the newest message status and recover that same `message_id`. If retained events and message metadata cannot reconstruct the form, actions, or request id, show an unrecoverable-state UI instead of inventing approval actions.
+
+    ### Automatic reconnect rules
+
+    Keep the last completely processed SSE id, de-duplicate every replayed id, and retry network failures, `429`, and retryable `5xx` responses with bounded exponential backoff. Do not retry `400/401/403/404`. Abort both the reader and pending delay when the user navigates away. Never repeat an uncertain chat POST; once conversation/message ids exist, switch to the events endpoint.
+
+    ```ts
+    async function reconnectStream({ conversationId, messageId, lastEventId, signal }) {
+      const seen = new Set<string>();
+      let cursor = lastEventId;
+
+      for (let attempt = 0; attempt <= 5; attempt += 1) {
+        const query = new URLSearchParams({ message_id: messageId });
+        if (cursor) query.set('after_id', cursor);
+        const response = await fetch(
+          `/api/v1/agents/conversations/${conversationId}/events?${query}`,
+          { headers: agentHeaders, signal },
+        );
+        if ([400, 401, 403, 404].includes(response.status)) throw new Error('not retryable');
+        if (!response.ok && response.status !== 429 && response.status < 500) throw new Error('not retryable');
+
+        let terminal = false;
+        try {
+          await consumeSSE(response, (event) => {
+            if (event.id && seen.has(event.id)) return;
+            if (event.id) {
+              seen.add(event.id);
+              cursor = event.id;
+            }
+            renderAgentEvent(event);
+            terminal = event.event === 'message_end' || event.event === 'error';
+          });
+          if (terminal) return;
+        } catch (error) {
+          if (signal.aborted) throw error;
+        }
+        if (attempt === 5) throw new Error('automatic recovery exhausted');
+        await delay(Math.min(800 * 2 ** attempt, 8000), signal);
+      }
+    }
+    ```
+
   </Col>
 
   <Col sticky>
@@ -405,7 +459,7 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 
 <Row>
   <Col>
-    Continue an Agent message that is waiting on a workflow approval or question-answer node.
+    Continue an Agent message that is waiting on a workflow approval or question-answer node. This also handles `user_input_requested` when `source=agent_workflow_question_answer`.
 
     ### Path and Headers
 
@@ -435,7 +489,7 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
         Required. Use `approval`.
       </Property>
       <Property name='approval_token' type='string' propKey='approval_token'>
-        Required. Copy the `token` field from `approval_requested`.
+        Required. Copy the top-level `approval_token` from the `approval_requested` payload. Use `approval_form.token` only as a compatibility fallback.
       </Property>
       <Property name='action' type='string' propKey='action'>
         Required. Approval action id.
@@ -446,6 +500,73 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
     </Properties>
 
     The response is another Agent SSE stream for the same `message_id`. It may emit more workflow events, another waiting `message_end`, or the final answer and completed `message_end`.
+
+    ### Rendering approval UI
+
+    Treat `approval_requested` as the live source of truth. Its credential is the top-level `approval_token`; display content, fields, actions, and expiration are nested under `approval_form`. Do not mistakenly read them from `data.actions`, `data.fields`, or `data.expires_at`.
+
+    ```text
+    event: approval_requested
+    data: {"event":"approval_requested","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","workflow_run_id":"run-01","approval_form_id":"form-01","approval_token":"{approval_token}","ui_approval_allowed":true,"approval_form":{"id":"form-01","node_id":"approval-node","node_title":"Human review","content":"Review the information and submit a decision.","fields":[],"actions":[{"id":"approve","label":"Approve"},{"id":"reject","label":"Reject","style":"danger"}],"submit_methods":{"webapp":{"enabled":true}},"expiration_at":1789002351,"token":"{approval_token}"}}}
+    ```
+
+    Normalize the live event into one approval UI model. On page reload, pass `metadata.agent_workflow_continuation` as the envelope and `metadata.workflow_runs[].approval.approval_form` as the form to the same normalizer, so live handling and durable recovery cannot drift to different field paths.
+
+    ```tsx
+    function approvalFromEvent(event) {
+      const data = event.data;
+      const form = data.approval_form ?? {};
+      return {
+        ...form,
+        form_id: data.approval_form_id ?? form.id,
+        token: data.approval_token ?? form.token,
+        ui_allowed: data.ui_approval_allowed !== false,
+      };
+    }
+
+    function ApprovalCard({ approval, submit }) {
+      const [inputs, setInputs] = useState({});
+      const expired = toTime(approval.expiration_at) <= Date.now();
+      if (!approval.ui_allowed) return <OutOfBandApprovalNotice />;
+      return <section>
+        <h3>{approval.node_title || 'Approval required'}</h3>
+        <p>{renderSafeContent(approval.content)}</p>
+        {approval.fields?.map(field => (
+          <Field key={field.id || field.key || field.name}
+            definition={field}
+            onChange={value => setInputs(current => ({
+              ...current,
+              [field.id || field.key || field.name]: value,
+            }))} />
+        ))}
+        {approval.actions?.map(action => (
+          <button key={action.id} disabled={expired}
+            onClick={() => submit({
+              type: 'approval',
+              approval_token: approval.token,
+              action: action.id,
+              inputs,
+            })}>
+            {action.label || action.id}
+          </button>
+        ))}
+      </section>;
+    }
+    ```
+
+    Render `content` only as safe text or structured data, and render only the actions returned in `approval_form.actions`. Enable the controls as soon as the matching `message_end.status=waiting_approval` arrives; do not wait for the HTTP response body to close. Disable all actions after `approval_form.expiration_at`, after `approval_expired`, or while the continuation request is in flight.
+
+    When `ui_approval_allowed=false`, the API redacts both the top-level `approval_token` and the form `token`. Direct the user to the workflow's configured approval channel instead of constructing an API request. On page reload, the latest message metadata can provide `workflow_runs[].approval.approval_form` as a temporary snapshot while the event stream is replayed. If neither the retained events nor metadata contain a token and advertised actions, show an unrecoverable-state prompt rather than constructing a request.
+
+    ### Distinguishing workflow questions from Skill input
+
+    A workflow question can emit `question_answer_requested` and then a projected `user_input_requested`. When the projected event has `source=agent_workflow_question_answer`, it still uses this workflow continuation endpoint. Only other `user_input_requested` events use the Skill user-input continuation endpoint.
+
+    ```ts
+    const workflowQuestion = event.event === 'question_answer_requested'
+      || (event.event === 'user_input_requested'
+        && event.data.source === 'agent_workflow_question_answer');
+    ```
 
     ### `200` Response
 
@@ -519,7 +640,7 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 
 <Row>
   <Col>
-    Use this only for `user_input_requested`, not for workflow approvals or questions.
+    Use this only for a Skill `user_input_requested` whose `source` is absent or is not `agent_workflow_question_answer`. That projected workflow source must use workflow continuation, as do `question_answer_requested` and approval events.
 
     ### Path and Headers
 
@@ -920,15 +1041,16 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
   </Property>
 </Properties>
 
-### Skill User-Input Event
+### User-Input Event and Routing
 
 | Event                  | Purpose and trigger                                                           | Client action                                                                                                                                     | Key fields                                                                                                 |
 | ---------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `user_input_requested` | A Skill lacks information required to continue and pauses the current message | Render the questions, save `request_id`, and submit `answers` through the user-input continuation endpoint instead of creating a new chat message | `request_id`, `message?`, `questions[]`, `created_at`, `source?`, `workflow_run_id?`, `node_id?`, `round?` |
+| `user_input_requested` | A Skill needs input, or a workflow question is projected into the common input shape | Render the questions and route by `source`; use workflow continuation for `agent_workflow_question_answer`, otherwise submit `answers` through user-input continuation | `request_id`, `message?`, `questions[]`, `created_at`, `source?`, `workflow_run_id?`, `node_id?`, `round?` |
 
 <Properties>
   <Property name="request_id" type="string" propKey="request_id">
-    The unique id of this pending request. Copy it unchanged into the continuation endpoint path.
+    The unique id of this pending request. Copy it into the Skill continuation path only when
+    `source` is not `agent_workflow_question_answer`.
   </Property>
   <Property name="message" type="string?" propKey="message">
     Optional context shown before the questions.
@@ -950,8 +1072,9 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
     type="string? / integer?"
     propKey="source"
   >
-    Present only when workflow context produced the question; useful for source display and repeated
-    rounds.
+    `source=agent_workflow_question_answer` is a routing discriminator: submit through workflow
+    continuation with `type=question_answer`. Other or absent values use Skill user-input
+    continuation. The remaining fields correlate workflow context and repeated rounds.
   </Property>
 </Properties>
 
@@ -1018,7 +1141,7 @@ Workflow events describe execution traces and pending interactions. Maintain the
 | `workflow_stopped`          | A user or the system stops the workflow                                 | Terminal fields above plus `reasons?`                                                                                                        |
 | `node_started`              | A workflow node starts; create a child step                             | `id`, `node_id`, `node_type`, `title?`, `index?`, `inputs?`, `created_at?`                                                                   |
 | `node_finished`             | A workflow node ends; complete it or mark it failed                     | Start fields plus `status?`, `process_data?`, `outputs?`, `output_handle?`, `error?`, `elapsed_time?`, `execution_metadata?`, `finished_at?` |
-| `approval_requested`        | The workflow needs human approval; render content, fields, and actions  | `form_id`, `node_id`, `node_title?`, `content?`, `fields?`, `actions?`, `submit_methods?`, `expires_at?`, `token?`                           |
+| `approval_requested`        | The workflow needs human approval; render the nested form              | `approval_form_id`, `approval_token?`, `approval_url?`, `ui_approval_allowed`, `approval_form.{id,node_id,node_title,content,fields,actions,submit_methods,expiration_at,token?}` |
 | `approval_result_filled`    | An approval result was submitted; render the form as a read-only result | `form_id`, `action_id`, `action_label?`, `inputs?`, `rendered_content?`                                                                      |
 | `approval_expired`          | An approval expired; disable submission                                 | `form_id`, `expires_at?`, `status?`                                                                                                          |
 | `question_answer_requested` | The workflow needs an answer; render the question and choices           | `workflow_run_id`, `node_id`, `node_title?`, `question`, `choices?`, `round?`                                                                |
@@ -1058,22 +1181,38 @@ Workflow events describe execution traces and pending interactions. Maintain the
   <Property name="iteration / pre_loop_output" type="integer? / unknown?" propKey="iteration">
     A runtime iteration counter and the value captured before a loop begins.
   </Property>
-  <Property name="token" type="string?" propKey="token">
-    For an approval wait, copy this unchanged into workflow continuation `approval_token`. It
-    applies only to that approval event.
+  <Property name="approval_form_id / approval_token / approval_url / ui_approval_allowed" type="string? / boolean" propKey="approval_token">
+    Top-level approval identity, credential, optional out-of-band URL, and inline API permission.
+    Copy `approval_token` unchanged into continuation. When `ui_approval_allowed=false`, the
+    credential is redacted and `approval_url` or another configured approval channel must be used.
   </Property>
-  <Property name="form_id / content" type="string? / unknown?" propKey="form_id">
-    The approval form correlation id and runtime-provided textual or structured content.
+  <Property name="approval_form" type="object" propKey="approval_form">
+    Nested display model for `approval_requested`, containing `id`, `node_id`, `node_title`,
+    `content`, `fields`, `actions`, `submit_methods`, `expiration_at`, and compatibility `token`.
   </Property>
   <Property
-    name="fields / actions / submit_methods"
+    name="approval_form.fields / approval_form.actions / approval_form.submit_methods"
     type="array? / array? / object?"
     propKey="actions"
   >
-    Approval field definitions, available actions, and runtime-advertised submission methods.
+    Approval field definitions, server-advertised actions, and runtime submission methods. Render
+    only the actions returned here.
   </Property>
-  <Property name="expires_at" type="unknown?" propKey="expires_at">
-    The runtime-provided approval expiration. Disable submission after it expires.
+  <Property name="approval_form.fields[]" type="object" propKey="required">
+    A field can provide stable `id`, `key`, or `name`, plus `label`, control `type`, `required`,
+    `default` / `default_value`, and `options`. Preserve unknown fields for future control types.
+  </Property>
+  <Property name="approval_form.actions[]" type="object" propKey="style">
+    Each action has the submitted `id`, display `label`, and optional `style`. Submit only ids
+    advertised by the server.
+  </Property>
+  <Property name="approval_form.submit_methods.webapp.enabled / resolved_default_values" type="boolean? / object?" propKey="enabled">
+    `webapp.enabled` controls inline approval for published WebApp and Agent API clients;
+    `resolved_default_values` can initialize form controls.
+  </Property>
+  <Property name="approval_form.expiration_at / approval_form.token" type="unknown? / string?" propKey="expiration_at">
+    Form expiration and compatibility credential. Prefer the top-level `approval_token`, and
+    disable continuation after expiration.
   </Property>
   <Property name="action_id / action_label / rendered_content" type="string?" propKey="action_id">
     The submitted approval action id, display label, and rendered result.
@@ -1121,13 +1260,14 @@ Workflow events describe execution traces and pending interactions. Maintain the
   </Property>
 </Properties>
 
-### Continuing the Two Public Wait Types
+### Continuing Public Wait States
 
-| Request event               | `message_end.status` | Persist                                                                              | Call                                              |
-| --------------------------- | -------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| `approval_requested`        | `waiting_approval`   | `conversation_id`, `message_id`, `token`, optional form values and selected `action` | Workflow continuation with `type=approval`        |
-| `question_answer_requested` | `waiting_question`   | `conversation_id`, `message_id`, the answer, and optional choice id                  | Workflow continuation with `type=question_answer` |
-| `user_input_requested`      | `waiting_question`   | `conversation_id`, `message_id`, `request_id`, and `answers` keyed by question id    | User-input continuation                           |
+| Request event / source | `message_end.status` | Persist | Call |
+| --- | --- | --- | --- |
+| `approval_requested` | `waiting_approval` | `conversation_id`, `message_id`, top-level `approval_token`, `ui_approval_allowed`, nested `approval_form`, and selected `action` | Workflow continuation with `type=approval` |
+| `question_answer_requested` | `waiting_question` | `conversation_id`, `message_id`, the answer, and optional choice id | Workflow continuation with `type=question_answer` |
+| `user_input_requested` with `source=agent_workflow_question_answer` | `waiting_question` | Conversation/message ids, answer, and optional choice id | Workflow continuation with `type=question_answer` |
+| Other `user_input_requested` | `waiting_question` | Conversation/message/request ids and `answers` keyed by question id | Skill user-input continuation |
 
 The continuation response is another SSE stream for the same message and may pause again. Do not create a new message; keep processing until a terminal status. Tool governance is non-interactive for a published Agent: `tool_governance_decision.requires_approval` is always `false` and has no human continuation endpoint.
 

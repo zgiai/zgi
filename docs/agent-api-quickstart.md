@@ -309,7 +309,7 @@ Implement these routes in the same server-side proxy style:
 | Regenerate | `POST /agents/messages/{message_id}/regenerate` |
 | Recover stream | `GET /agents/conversations/{conversation_id}/events?message_id=...&after_id=...` |
 | Continue workflow question | `POST .../{message_id}/workflow-continuation` with `{ "type": "question_answer", "inputs": { ... } }` |
-| Continue workflow approval | The same workflow endpoint with `type`, `approval_token` (copied from event `token`), `action`, and `inputs` |
+| Continue workflow approval | The same workflow endpoint with `type`, top-level event `approval_token`, an `action` advertised by `approval_form.actions`, and `inputs` |
 | Answer a Skill prompt | `POST .../{message_id}/user-input/{request_id}/continue` with `{ "answers": { ... } }` |
 | Manage Agent Memory | `GET/PUT/DELETE /agents/memory...` |
 
@@ -321,12 +321,39 @@ There are two public continuation paths. Select one from the trigger event and f
 
 | Trigger event | Matching wait | Continue with |
 | --- | --- | --- |
-| `approval_requested` / `question_answer_requested` | `waiting_approval` / `waiting_question` | workflow continuation; copy approval event `token` to request `approval_token`, or submit question inputs |
-| `user_input_requested` | `waiting_question` | Skill user-input continuation; key `answers` by each question `id` |
+| `approval_requested` / `question_answer_requested` | `waiting_approval` / `waiting_question` | workflow continuation; copy approval payload `approval_token` and render its nested `approval_form`, or submit question inputs |
+| `user_input_requested` with `source=agent_workflow_question_answer` | `waiting_question` | workflow continuation with `type=question_answer`; this is a projection of a workflow question, not a Skill prompt |
+| Any other `user_input_requested` | `waiting_question` | Skill user-input continuation; key `answers` by each question `id` |
 
 Published Agent tool governance is non-interactive: `tool_governance_decision.requires_approval` is always `false` and only reports whether Agent bindings allowed or denied the invocation. Host-page coordination events belong to contextual sidebar experiences and are outside this API.
 
-If the connection drops after `message_start`, do not immediately repeat the chat POST. Call the events endpoint with the saved `message_id` and `after_id`, deduplicate by SSE id, and append recovered `message` chunks. Recoverable events are retained for 24 hours.
+### Recovery state matrix
+
+| State after loading conversation detail and messages | Recovery behavior |
+| --- | --- |
+| `runtime_status=running` with `active_message_id` | Replay that message from the event-stream beginning, then keep listening; use `after_id` only for later interruptions in the same page |
+| Latest message is `waiting_approval` | Replay that message to rebuild `approval_requested`; use `metadata.workflow_runs[].approval.approval_form` only as an immediate fallback snapshot |
+| Latest message is `waiting_question` | Replay that message and route the recovered question by event `source` as described above |
+| Latest message is terminal | Render history only; do not open a recovery stream |
+
+If the connection drops after `message_start`, do not immediately repeat the chat POST. Call the events endpoint with the saved `message_id` and `after_id`, deduplicate by SSE id, and append recovered `message` chunks. Retry network failures, `429`, and retryable `5xx` responses with bounded exponential backoff; do not retry `400/401/403/404`. Recoverable events are retained for 24 hours.
+
+After a page reload, load message history before recovering. Do not apply a stored `after_id` to a freshly rendered page: the cursor does not prove which chunks are present in the DOM. Replay the newest running or waiting message without `after_id`; replace its historical answer with the first replayed text chunk and append subsequent chunks. Message history is newest-first, so sort it by `created_at` before rendering.
+
+For approval UI, read the credential from `event.data.approval_token` and the display model from `event.data.approval_form`. Render `approval_form.content` safely, build inputs from `approval_form.fields`, and render only `approval_form.actions`. `approval_form.token` is a compatibility fallback, not the canonical event path. If `event.data.ui_approval_allowed` is false, credentials are redacted and the approval must be completed through its configured channel.
+
+```ts
+const data = event.data;
+const form = data.approval_form ?? {};
+const approval = {
+  ...form,
+  formId: data.approval_form_id ?? form.id,
+  token: data.approval_token ?? form.token,
+  uiAllowed: data.ui_approval_allowed !== false,
+};
+```
+
+Submit the selected action id, exact `approval.token`, and collected `inputs` to workflow continuation. Render the card when `approval_requested` arrives, and enable it as soon as the matching `message_end.status` becomes `waiting_approval`; do not wait for the HTTP response body to close. Disable submission while the continuation request is in flight and after `approval_form.expiration_at` or `approval_expired`. If retained events and message metadata cannot reconstruct a token, request id, fields, or actions, show an unrecoverable-state prompt; never invent approval actions or continuation identifiers.
 
 ## 6. Error handling and API reference
 

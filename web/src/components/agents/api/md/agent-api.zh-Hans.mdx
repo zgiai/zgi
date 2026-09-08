@@ -357,6 +357,60 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
     - 如果某个事件没有 SSE `id`，请把它视为不可恢复的降级事件，不要用作 `after_id`。
     - 收到 `message_end` 且状态为 `completed`、`stopped`、`error`、`failed`，或收到 `error` 后结束监听。
 
+    ### 刷新页面与断线重连不是同一种恢复
+
+    同一页面内网络中断时，客户端仍保有已经渲染的文本，可以携带最后一个 `after_id` 增量续拉，并按 SSE `id` 去重。页面刷新或应用重启后，不要只依赖本地游标：先加载消息历史，再对运行中或等待中的最新消息不传 `after_id` 从事件起点回放，用第一段 `message` 替换历史中的临时答案，后续分段再追加。
+
+| 当前状态 | 判断依据 | 恢复动作 |
+| --- | --- | --- |
+| 运行中 | `runtime_status=running` 且有 `active_message_id` | 从事件起点回放并保持连接；同一页面再次断线后改用最新 `after_id` |
+| 等待审批 | 最新消息 `status=waiting_approval` | 回放该消息以重建 `approval_requested`；也可先用消息 metadata 恢复表单作为即时 UI |
+| 等待工作流回答 | `question_answer_requested`，或 `user_input_requested.source=agent_workflow_question_answer` | 渲染问题/选项并调用 workflow continuation |
+| 等待 Skill 输入 | 其他 `user_input_requested` | 按问题 id 收集答案并调用 user-input continuation |
+| 已完成或失败 | `completed`、`stopped`、`error`、`failed` | 只显示消息历史，不建立恢复流 |
+
+    等待状态下会话通常已经不再是 `running`，因此不能只检查 `active_message_id`。还要检查最新消息的 `status`，并恢复同一个 `message_id`。事件过期后，非运行消息可能返回空 SSE；此时回退到消息 metadata。若 metadata 也缺少表单、动作或 request id，应显示“状态不可恢复”，不要猜测审批动作。
+
+    ### 自动重连范例
+
+    ```ts
+    async function reconnectStream({ conversationId, messageId, lastEventId, signal }) {
+      const seen = new Set<string>();
+      let cursor = lastEventId;
+
+      for (let attempt = 0; attempt <= 5; attempt += 1) {
+        const query = new URLSearchParams({ message_id: messageId });
+        if (cursor) query.set('after_id', cursor);
+        const response = await fetch(
+          `/api/v1/agents/conversations/${conversationId}/events?${query}`,
+          { headers: agentHeaders, signal },
+        );
+        if ([400, 401, 403, 404].includes(response.status)) throw new Error('不可重试');
+        if (!response.ok && response.status !== 429 && response.status < 500) throw new Error('不可重试');
+
+        let terminal = false;
+        try {
+          await consumeSSE(response, (event) => {
+            if (event.id && seen.has(event.id)) return;
+            if (event.id) {
+              seen.add(event.id);
+              cursor = event.id;
+            }
+            renderAgentEvent(event);
+            terminal = event.event === 'message_end' || event.event === 'error';
+          });
+          if (terminal) return;
+        } catch (error) {
+          if (signal.aborted) throw error;
+        }
+        if (attempt === 5) throw new Error('自动恢复次数已用尽');
+        await delay(Math.min(800 * 2 ** attempt, 8000), signal);
+      }
+    }
+    ```
+
+    只有网络错误、`429` 和可恢复 `5xx` 应使用指数退避。聊天 POST 的结果不确定时不要重新 POST；取得 conversation/message id 后始终改用 events 接口。
+
   </Col>
 
   <Col sticky>
@@ -398,7 +452,7 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
 
 <Row>
   <Col>
-    当 Agent 消息等待工作流审批或问答节点时，使用该接口继续同一条消息。
+    当 Agent 消息等待工作流审批或问答节点时，使用该接口继续同一条消息；`source=agent_workflow_question_answer` 的 `user_input_requested` 也使用此接口。
 
     ### 路径参数与请求头
 
@@ -428,7 +482,7 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
         必填。固定为 `approval`。
       </Property>
       <Property name='approval_token' type='string' propKey='approval_token'>
-        必填。复制 `approval_requested` 的 `token` 字段。
+        必填。复制 `approval_requested` 事件 payload 顶层的 `approval_token`。`approval_form.token` 仅作为兼容回退。
       </Property>
       <Property name='action' type='string' propKey='action'>
         必填。审批动作 id。
@@ -443,6 +497,73 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
     ### `200` 响应
 
     返回 `text/event-stream`，沿用聊天接口的 SSE envelope 和事件字段。通常先收到带 `continuation: true` 的 `message_start`，再收到 `workflow_resumed`、执行进度/文本，以及下一次等待或最终 `message_end`。
+
+    ### 如何渲染审批 UI
+
+    `approval_requested` 是在线状态下的实时权威来源。审批凭证位于事件 payload 顶层的 `approval_token`，展示内容、字段、动作和过期时间位于嵌套的 `approval_form`。不要把它们误读成 `data.actions`、`data.fields` 或 `data.expires_at`。
+
+    ```text
+    event: approval_requested
+    data: {"event":"approval_requested","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-9e23fb5a8994","message_id":"d57058bd-50f1-4bc2-931d-e22a739190e6","workflow_run_id":"run-01","approval_form_id":"form-01","approval_token":"{approval_token}","ui_approval_allowed":true,"approval_form":{"id":"form-01","node_id":"approval-node","node_title":"人工审查","content":"请审查以下信息，并提交处理决定。","fields":[],"actions":[{"id":"approve","label":"通过"},{"id":"reject","label":"驳回","style":"danger"}],"submit_methods":{"webapp":{"enabled":true}},"expiration_at":1789002351,"token":"{approval_token}"}}}
+    ```
+
+    先把实时事件规范化为审批 UI 模型。页面刷新时，则把 `metadata.agent_workflow_continuation` 作为顶层状态、`metadata.workflow_runs[].approval.approval_form` 作为表单传入同一个规范化函数，避免实时与历史恢复使用两套字段路径。
+
+    ```tsx
+    function approvalFromEvent(event) {
+      const data = event.data;
+      const form = data.approval_form ?? {};
+      return {
+        ...form,
+        form_id: data.approval_form_id ?? form.id,
+        token: data.approval_token ?? form.token,
+        ui_allowed: data.ui_approval_allowed !== false,
+      };
+    }
+
+    function ApprovalCard({ approval, submit }) {
+      const [inputs, setInputs] = useState({});
+      const expired = toTime(approval.expiration_at) <= Date.now();
+      if (!approval.ui_allowed) return <OutOfBandApprovalNotice />;
+      return <section>
+        <h3>{approval.node_title || '需要审批'}</h3>
+        <p>{renderSafeContent(approval.content)}</p>
+        {approval.fields?.map(field => (
+          <Field key={field.id || field.key || field.name}
+            definition={field}
+            onChange={value => setInputs(current => ({
+              ...current,
+              [field.id || field.key || field.name]: value,
+            }))} />
+        ))}
+        {approval.actions?.map(action => (
+          <button key={action.id} disabled={expired}
+            onClick={() => submit({
+              type: 'approval',
+              approval_token: approval.token,
+              action: action.id,
+              inputs,
+            })}>
+            {action.label || action.id}
+          </button>
+        ))}
+      </section>;
+    }
+    ```
+
+    `content` 可能是字符串或结构化对象，只做安全文本/结构化渲染，不执行其中的 HTML。只渲染 `approval_form.actions` 中实际返回的操作，不要自行补出“同意/拒绝”。收到匹配的 `message_end.status=waiting_approval` 后即可启用操作，不要等待 HTTP 响应体完全关闭。到达 `approval_form.expiration_at`、收到 `approval_expired` 或 continuation 正在提交时禁用所有动作。
+
+    当 `ui_approval_allowed=false` 时，API 会隐藏顶层 `approval_token` 和表单内的 `token`，客户端应提示用户前往工作流配置的审批渠道，不能构造 API 审批请求。continuation SSE 仍属于原消息，应交给与聊天和恢复流相同的事件处理器。
+
+    ### 正确区分工作流问题与 Skill 输入
+
+    工作流问题可能先发送 `question_answer_requested`，随后再发送一个 `user_input_requested` 投影事件。当后者的 `source` 为 `agent_workflow_question_answer` 时仍然调用本接口；只有其他来源的 `user_input_requested` 才调用 Skill user-input continuation。
+
+    ```ts
+    const workflowQuestion = event.event === 'question_answer_requested'
+      || (event.event === 'user_input_requested'
+        && event.data.source === 'agent_workflow_question_answer');
+    ```
 
   </Col>
 
@@ -512,7 +633,7 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
 
 <Row>
   <Col>
-    只用于 `user_input_requested`，不要用于工作流的审批或问答事件。
+    只用于 `source` 缺失或不等于 `agent_workflow_question_answer` 的 Skill `user_input_requested`。该特殊 source 是工作流问题的投影，必须和 `question_answer_requested`、审批事件一样调用 workflow continuation。
 
     ### 路径参数与请求头
 
@@ -893,15 +1014,15 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
   </Property>
 </Properties>
 
-### Skill 用户输入事件
+### 用户输入事件与接口分流
 
 | 事件                   | 作用与触发时机                             | 客户端应该做什么                                                                           | 关键字段                                                                                                   |
 | ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `user_input_requested` | Skill 缺少继续执行所需的信息并暂停当前消息 | 渲染问题，保存 `request_id`；通过 user-input continue 接口提交 `answers`，不要新建聊天消息 | `request_id`, `message?`, `questions[]`, `created_at`, `source?`, `workflow_run_id?`, `node_id?`, `round?` |
+| `user_input_requested` | Skill 需要补充输入，或工作流问题被投影为通用输入结构 | 渲染问题并按 `source` 分流；`agent_workflow_question_answer` 走 workflow continuation，其他情况通过 user-input continue 提交 `answers` | `request_id`, `message?`, `questions[]`, `created_at`, `source?`, `workflow_run_id?`, `node_id?`, `round?` |
 
 <Properties>
   <Property name="request_id" type="string" propKey="request_id">
-    当前暂停请求的唯一标识，原样放入继续接口路径。
+    当前暂停请求的唯一标识。仅当 `source` 不是 `agent_workflow_question_answer` 时，才原样放入 Skill 继续接口路径。
   </Property>
   <Property name="message" type="string?" propKey="message">
     显示在问题列表前的可选提示。
@@ -923,7 +1044,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
     type="string? / integer?"
     propKey="source"
   >
-    仅在问题由工作流上下文生成时出现，用于展示来源和重复轮次。
+    `source=agent_workflow_question_answer` 是接口分流标记：使用 `type=question_answer` 调用 workflow continuation。source 缺失或为其他值时调用 Skill user-input continue；其余字段用于关联工作流上下文和重复轮次。
   </Property>
 </Properties>
 
@@ -990,7 +1111,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 | `workflow_stopped`          | 工作流被用户或系统停止                   | 上述终态字段及 `reasons?`                                                                                                               |
 | `node_started`              | 工作流节点开始；创建子步骤               | `id`, `node_id`, `node_type`, `title?`, `index?`, `inputs?`, `created_at?`                                                              |
 | `node_finished`             | 工作流节点结束；完成或标记失败           | start 字段及 `status?`, `process_data?`, `outputs?`, `output_handle?`, `error?`, `elapsed_time?`, `execution_metadata?`, `finished_at?` |
-| `approval_requested`        | 工作流等待人工审批；渲染内容、字段和动作 | `form_id`, `node_id`, `node_title?`, `content?`, `fields?`, `actions?`, `submit_methods?`, `expires_at?`, `token?`                      |
+| `approval_requested`        | 工作流等待人工审批；从嵌套表单渲染内容、字段和动作 | `approval_form_id`, `approval_token?`, `approval_url?`, `ui_approval_allowed`, `approval_form.{id,node_id,node_title,content,fields,actions,submit_methods,expiration_at,token?}` |
 | `approval_result_filled`    | 审批结果已提交；把表单改为只读结果       | `form_id`, `action_id`, `action_label?`, `inputs?`, `rendered_content?`                                                                 |
 | `approval_expired`          | 审批已过期；禁用提交按钮                 | `form_id`, `expires_at?`, `status?`                                                                                                     |
 | `question_answer_requested` | 工作流等待回答；渲染问题和选项           | `workflow_run_id`, `node_id`, `node_title?`, `question`, `choices?`, `round?`                                                           |
@@ -1029,21 +1150,35 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
   <Property name="iteration / pre_loop_output" type="integer? / unknown?" propKey="iteration">
     runtime 迭代计数和进入循环前保存的值。
   </Property>
-  <Property name="token" type="string?" propKey="token">
-    审批等待时原样传入 workflow continuation 的 `approval_token`；只适用于该审批事件。
+  <Property name="approval_form_id / approval_token / approval_url / ui_approval_allowed" type="string? / boolean" propKey="approval_token">
+    `approval_requested` 的顶层审批标识、凭证、可选站外地址和 API 内联审批许可。请求 continuation
+    时原样传入 `approval_token`；当 `ui_approval_allowed=false` 时凭证会被隐藏，应使用配置的
+    `approval_url` 或其他审批渠道。
   </Property>
-  <Property name="form_id / content" type="string? / unknown?" propKey="form_id">
-    审批表单关联 id 和 runtime 提供的文本或结构化内容。
+  <Property name="approval_form" type="object" propKey="approval_form">
+    `approval_requested` 的嵌套展示模型。包含表单 `id`、`node_id`、`node_title`、`content`、
+    `fields`、`actions`、`submit_methods`、`expiration_at`，以及兼容字段 `token`。
   </Property>
   <Property
-    name="fields / actions / submit_methods"
+    name="approval_form.fields / approval_form.actions / approval_form.submit_methods"
     type="array? / array? / object?"
     propKey="actions"
   >
-    审批字段定义、可选动作和 runtime 声明的提交方式。
+    审批字段定义、服务端允许的动作和 runtime 声明的提交方式。只渲染这里实际返回的动作。
   </Property>
-  <Property name="expires_at" type="unknown?" propKey="expires_at">
-    runtime 提供的审批过期时间；到期后禁止继续提交。
+  <Property name="approval_form.fields[]" type="object" propKey="required">
+    字段可包含稳定标识 `id`、`key` 或 `name`，以及 `label`、控件 `type`、`required`、
+    `default` / `default_value` 和选择项 `options`。保留未知字段以兼容后续控件类型。
+  </Property>
+  <Property name="approval_form.actions[]" type="object" propKey="style">
+    每个动作包含提交用 `id`、展示 `label` 和可选 `style`；提交值必须来自返回的动作。
+  </Property>
+  <Property name="approval_form.submit_methods.webapp.enabled / resolved_default_values" type="boolean? / object?" propKey="enabled">
+    `webapp.enabled` 表示发布 WebApp 和 Agent API 是否可内联审批；`resolved_default_values`
+    可用于初始化表单控件。
+  </Property>
+  <Property name="approval_form.expiration_at / approval_form.token" type="unknown? / string?" propKey="expiration_at">
+    表单过期时间与兼容凭证。优先使用顶层 `approval_token`，到期后禁止继续提交。
   </Property>
   <Property name="action_id / action_label / rendered_content" type="string?" propKey="action_id">
     已提交审批动作的 id、展示名称和渲染结果。
@@ -1090,13 +1225,14 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
   </Property>
 </Properties>
 
-### 两类公开等待如何继续
+### 公开等待状态如何继续
 
-| 请求事件                    | `message_end.status` | 保存什么                                                                  | 调用什么                                      |
-| --------------------------- | -------------------- | ------------------------------------------------------------------------- | --------------------------------------------- |
-| `approval_requested`        | `waiting_approval`   | `conversation_id`, `message_id`, `token`, 可选表单字段与所选 `action`     | workflow continuation，`type=approval`        |
-| `question_answer_requested` | `waiting_question`   | `conversation_id`, `message_id`, 用户答案及可选 choice id                 | workflow continuation，`type=question_answer` |
-| `user_input_requested`      | `waiting_question`   | `conversation_id`, `message_id`, `request_id`, 以问题 id 为键的 `answers` | user-input continue                           |
+| 请求事件 / source | `message_end.status` | 保存什么 | 调用什么 |
+| --- | --- | --- | --- |
+| `approval_requested` | `waiting_approval` | `conversation_id`, `message_id`、顶层 `approval_token`、`ui_approval_allowed`、嵌套 `approval_form` 与所选 `action` | workflow continuation，`type=approval` |
+| `question_answer_requested` | `waiting_question` | 会话/消息 id、用户答案及可选 choice id | workflow continuation，`type=question_answer` |
+| `user_input_requested` 且 `source=agent_workflow_question_answer` | `waiting_question` | 会话/消息 id、用户答案及可选 choice id | workflow continuation，`type=question_answer` |
+| 其他 `user_input_requested` | `waiting_question` | 会话/消息/request id、以问题 id 为键的 `answers` | Skill user-input continue |
 
 继续请求返回的仍是同一条消息的 SSE 流，可能再次等待。不要新建消息；持续处理到真正终态。工具治理对已发布 Agent 是非交互的，`tool_governance_decision.requires_approval` 固定为 `false`，不对应人工继续接口。
 

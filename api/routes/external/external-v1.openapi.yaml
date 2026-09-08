@@ -36,7 +36,7 @@ x-zgi-sse-event-data-schemas:
   node_finished: '#/components/schemas/WorkflowEventData'
   workflow_paused: '#/components/schemas/WorkflowEventData'
   workflow_resumed: '#/components/schemas/WorkflowEventData'
-  approval_requested: '#/components/schemas/WorkflowEventData'
+  approval_requested: '#/components/schemas/ApprovalRequestedEventData'
   approval_result_filled: '#/components/schemas/WorkflowEventData'
   approval_expired: '#/components/schemas/WorkflowEventData'
   question_answer_requested: '#/components/schemas/WorkflowEventData'
@@ -322,7 +322,7 @@ paths:
       tags: [Continuations]
       summary: Continue a paused workflow question or approval
       operationId: continueAgentWorkflow
-      description: Continues the same message after `question_answer_requested` or `approval_requested`. A continuation can enter another waiting state.
+      description: Continues the same message after `question_answer_requested`, its `user_input_requested` projection with `source=agent_workflow_question_answer`, or `approval_requested`. A continuation can enter another waiting state.
       parameters:
         - $ref: '#/components/parameters/ConversationID'
         - $ref: '#/components/parameters/MessageID'
@@ -344,14 +344,14 @@ paths:
       tags: [Continuations]
       summary: Answer a Skill user-input request
       operationId: continueAgentUserInput
-      description: Continues the same message after `user_input_requested`. Use each event `questions[].id` as an `answers` key.
+      description: Continues the same message after a Skill `user_input_requested`. Do not use this endpoint when `source=agent_workflow_question_answer`; that projected workflow event uses workflow continuation. Use each question id as an `answers` key.
       parameters:
         - $ref: '#/components/parameters/ConversationID'
         - $ref: '#/components/parameters/MessageID'
         - name: request_id
           in: path
           required: true
-          description: Request id copied from the active `user_input_requested` event.
+          description: Request id copied from the active Skill `user_input_requested` event whose source is not `agent_workflow_question_answer`.
           schema: {type: string}
         - $ref: '#/components/parameters/ExternalUserID'
         - $ref: '#/components/parameters/LegacyUser'
@@ -811,14 +811,14 @@ components:
               - $ref: '#/components/schemas/UserInputOption'
               - type: string
     UserInputRequestedEventData:
-      description: Pauses the Agent until answers are submitted to the user-input continuation endpoint.
+      description: Pauses the Agent until answers are submitted. Route `source=agent_workflow_question_answer` to workflow continuation; route all other values to the Skill user-input continuation endpoint.
       allOf:
         - $ref: '#/components/schemas/EventIdentity'
         - type: object
           required: [request_id, questions, created_at]
           properties:
-            source: {type: string, description: Present for workflow-generated question prompts.}
-            request_id: {type: string, description: Path id for the user-input continuation endpoint.}
+            source: {type: string, description: Routing discriminator. `agent_workflow_question_answer` means this projected event must use workflow continuation; absent or other values use the Skill user-input continuation endpoint.}
+            request_id: {type: string, description: Prompt correlation id; use it as the Skill continuation path id only when source is not `agent_workflow_question_answer`.}
             workflow_run_id: {type: string, description: Originating workflow run for workflow-generated prompts.}
             node_id: {type: string, description: Originating workflow node for workflow-generated prompts.}
             round: {type: integer, minimum: 1, description: Prompt round when repeated input is requested.}
@@ -995,6 +995,91 @@ components:
             finished_at_ms: {type: integer, format: int64, description: Completion time in Unix milliseconds.}
             paused_at: {type: integer, format: int64, description: Pause time in Unix seconds.}
           additionalProperties: true
+    ApprovalRequestedEventData:
+      description: A workflow approval wait. Render the nested approval_form and continue the same message with the top-level approval_token when inline approval is allowed.
+      allOf:
+        - $ref: '#/components/schemas/EventIdentity'
+        - type: object
+          required: [workflow_run_id, node_id, approval_form_id, ui_approval_allowed, approval_form]
+          properties:
+            workflow_run_id: {type: string, description: Stable workflow execution id for the paused run.}
+            workflow_id: {type: string, description: Published workflow definition id.}
+            node_id: {type: string, description: Approval node id in the workflow graph.}
+            node_type: {type: string, description: Workflow node kind; normally approval.}
+            title: {type: string, description: Optional event-level display title; prefer approval_form.node_title.}
+            status: {type: string, description: Approval or workflow pause status supplied by the runtime.}
+            approval_form_id: {type: string, description: Stable approval form id; normally matches approval_form.id.}
+            approval_token: {type: string, description: Credential to copy unchanged into WorkflowContinuationRequest.approval_token. Omitted when inline API approval is not allowed.}
+            approval_url: {type: string, description: Optional out-of-band approval URL supplied by the workflow.}
+            ui_approval_allowed: {type: boolean, description: Whether this API client may render and submit the approval. When false, approval credentials are redacted and the configured approval channel must be used.}
+            approval_form:
+              $ref: '#/components/schemas/ApprovalForm'
+          additionalProperties: true
+    ApprovalForm:
+      type: object
+      description: Nested form rendered for approval_requested. Use only the fields and actions advertised here.
+      properties:
+        id: {type: string, description: Approval form id.}
+        node_id: {type: string, description: Workflow approval node id.}
+        node_title: {type: string, description: User-facing approval title.}
+        content: {description: Textual or structured approval summary; render it as safe data and never execute embedded HTML.}
+        fields:
+          type: array
+          description: Input definitions to render before submission.
+          items: {$ref: '#/components/schemas/ApprovalFormField'}
+        actions:
+          type: array
+          description: The complete set of actions the client may submit; never invent actions when this list is empty.
+          items: {$ref: '#/components/schemas/ApprovalAction'}
+        submit_methods:
+          $ref: '#/components/schemas/ApprovalSubmitMethods'
+        expiration_at:
+          description: Approval deadline, normally Unix seconds; disable submission after this time.
+          oneOf:
+            - {type: integer, format: int64}
+            - {type: string}
+        token: {type: string, description: Compatibility copy of the approval credential. Prefer the event-level approval_token. Omitted when inline API approval is not allowed.}
+        resolved_default_values: {type: object, additionalProperties: true, description: Runtime-resolved defaults that may be used to initialize form controls.}
+      additionalProperties: true
+    ApprovalFormField:
+      type: object
+      description: Runtime-defined approval input. Unknown properties must be preserved for forward compatibility.
+      properties:
+        id: {type: string, description: Stable field identifier when supplied.}
+        key: {type: string, description: Stable input key when id is absent.}
+        name: {type: string, description: Stable input name when id and key are absent.}
+        label: {type: string, description: User-facing field label.}
+        type: {type: string, description: Control type such as text, textarea, select, number, or checkbox.}
+        required: {type: boolean, description: Whether a value is required before submission.}
+        default: {description: Runtime-provided default value.}
+        default_value: {description: Compatibility form of the runtime-provided default value.}
+        options:
+          type: array
+          description: Runtime-defined choices for select-like controls.
+          items: {}
+      additionalProperties: true
+    ApprovalAction:
+      type: object
+      description: One server-advertised approval operation.
+      required: [id]
+      properties:
+        id: {type: string, description: Action id to send as WorkflowContinuationRequest.action.}
+        label: {type: string, description: User-facing action label.}
+        style: {type: string, description: Optional presentation hint such as primary or danger.}
+      additionalProperties: true
+    ApprovalSubmitMethods:
+      type: object
+      description: Channels configured for this approval form.
+      properties:
+        webapp:
+          $ref: '#/components/schemas/ApprovalWebAppSubmitMethod'
+      additionalProperties: true
+    ApprovalWebAppSubmitMethod:
+      type: object
+      description: Inline WebApp and Agent API approval-channel configuration.
+      properties:
+        enabled: {type: boolean, description: Whether published WebApp and Agent API clients may submit this approval.}
+      additionalProperties: true
     WorkflowTextEventData:
       description: Text emitted by a delegated chat workflow; text_chunk appends and text_replace replaces visible content.
       allOf:
@@ -1214,7 +1299,7 @@ components:
           required: [type, approval_token, action]
           properties:
             type: {type: string, enum: [approval], description: Selects workflow approval continuation.}
-            approval_token: {type: string, description: Copy from the `approval_requested` event's `token` field.}
+            approval_token: {type: string, description: Copy from the `approval_requested` payload's top-level `approval_token`; use `approval_form.token` only as a compatibility fallback.}
             action: {type: string, description: Selected approval action id advertised by the event.}
             inputs:
               type: object
