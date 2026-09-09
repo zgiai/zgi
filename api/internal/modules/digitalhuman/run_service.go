@@ -872,6 +872,8 @@ func runtimeScope(run *Run) chatruntime.Scope {
 	}
 	if run.UserSubjectID != nil && *run.UserSubjectID != uuid.Nil {
 		actorID = *run.UserSubjectID
+	} else if actorID == uuid.Nil && run.PrincipalID != nil {
+		actorID = *run.PrincipalID
 	}
 	return chatruntime.Scope{
 		OrganizationID:  run.OrganizationID,

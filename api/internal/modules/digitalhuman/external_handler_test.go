@@ -89,6 +89,20 @@ func TestRunScopeFallsBackToExternalPrincipalWithoutPersistingAccountActor(t *te
 	}
 }
 
+func TestRuntimeScopeFallsBackToAnonymousWebAppPrincipal(t *testing.T) {
+	principalID := uuid.New()
+	workspaceID := uuid.New()
+	run := &Run{
+		OrganizationID: uuid.New(), WorkspaceID: workspaceID,
+		PrincipalType: string(invocation.PrincipalExternalUser), PrincipalID: &principalID,
+		Surface: SurfaceWebApp,
+	}
+	scope := runtimeScope(run)
+	if scope.AccountID != principalID || scope.WorkspaceID == nil || *scope.WorkspaceID != workspaceID || !scope.SkipAccessCheck {
+		t.Fatal("anonymous WebApp runtime scope must use its signed principal as the conversation owner")
+	}
+}
+
 func TestExternalRunResponseDoesNotExposeInternalIdentityOrSnapshots(t *testing.T) {
 	now := time.Now().UTC()
 	run := &Run{
