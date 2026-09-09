@@ -32,6 +32,8 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodPatch, "/console/api/digital-humans/:id/draft", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodDelete, "/console/api/digital-humans/:id", workspacemodel.WorkspacePermissionDigitalHumanDelete},
 		{http.MethodPost, "/console/api/digital-humans/:id/publish", workspacemodel.WorkspacePermissionDigitalHumanPublish},
+		{http.MethodPatch, "/console/api/digital-humans/:id/access", workspacemodel.WorkspacePermissionDigitalHumanPublish},
+		{http.MethodPost, "/console/api/digital-humans/:id/api-keys", workspacemodel.WorkspacePermissionDigitalHumanPublish},
 		{http.MethodPost, "/console/api/digital-humans/:id/invocations", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodGet, "/console/api/digital-humans/:id/draft/binding-candidates", workspacemodel.WorkspacePermissionDigitalHumanView},
 		{http.MethodGet, "/console/api/digital-humans/:id/runs/:run_id", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
@@ -76,13 +78,14 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 		Runtime:                 digitalHumanRoutesRuntime{},
 		Channels:                digitalHumanRoutesChannels{},
 		Tasks:                   digitalHumanRoutesTasks{},
+		Access:                  &digitalhuman.AccessService{},
 		AccountService:          digitalHumanRoutesAccountService{},
 		OrganizationService:     digitalHumanRoutesOrganizationService{},
 		ApplicationErrorCatalog: digitalHumanRoutesCatalog(t),
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 61; got != want {
+	if got, want := len(routes), 67; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -99,6 +102,12 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 		"GET /console/api/digital-humans/:id/draft/bindings":                                                              false,
 		"PUT /console/api/digital-humans/:id/draft/bindings":                                                              false,
 		"POST /console/api/digital-humans/:id/invocations":                                                                false,
+		"GET /console/api/digital-humans/:id/access":                                                                      false,
+		"PATCH /console/api/digital-humans/:id/access":                                                                    false,
+		"GET /console/api/digital-humans/:id/api-keys":                                                                    false,
+		"POST /console/api/digital-humans/:id/api-keys":                                                                   false,
+		"PATCH /console/api/digital-humans/:id/api-keys/:api_key_id":                                                      false,
+		"DELETE /console/api/digital-humans/:id/api-keys/:api_key_id":                                                     false,
 		"GET /console/api/digital-humans/:id/memory":                                                                      false,
 		"POST /console/api/digital-humans/:id/memory/proposals":                                                           false,
 		"PATCH /console/api/digital-humans/:id/memory/state":                                                              false,

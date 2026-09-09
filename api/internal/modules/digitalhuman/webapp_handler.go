@@ -43,11 +43,16 @@ func (h *ExternalHandler) RegisterWebAppRoutes(router *gin.RouterGroup) {
 	protected.POST("/runs/:run_id/stop", h.StopWebAppRun)
 	protected.POST("/runs/:run_id/runtime-input", h.SubmitWebAppRunRuntimeInput)
 	protected.GET("/conversations", h.ListWebAppConversations)
+	protected.GET("/search", h.SearchWebAppConversations)
 	protected.GET("/conversations/search", h.SearchWebAppConversations)
 	protected.GET("/conversations/:conversation_id", h.GetWebAppConversation)
 	protected.PATCH("/conversations/:conversation_id", h.UpdateWebAppConversation)
 	protected.DELETE("/conversations/:conversation_id", h.DeleteWebAppConversation)
 	protected.GET("/conversations/:conversation_id/messages", h.ListWebAppConversationMessages)
+	protected.GET("/conversations/:conversation_id/events", h.StreamWebAppConversationEvents)
+	protected.POST("/conversations/:conversation_id/stop", h.StopWebAppConversation)
+	protected.POST("/conversations/:conversation_id/messages/:message_id/runtime-inputs", h.SubmitWebAppConversationRuntimeInput)
+	protected.GET("/files/upload", h.GetWebAppUploadConfig)
 	protected.POST("/files/upload", h.UploadWebAppFile)
 }
 
@@ -368,6 +373,94 @@ func (h *ExternalHandler) ListWebAppConversationMessages(c *gin.Context) {
 	writeExternalData(c, http.StatusOK, runtimedto.ListResponse[runtimedto.MessageResponse]{
 		Data: responses, Page: page, Limit: limit, Total: total, HasMore: int64(page*limit) < total,
 	})
+}
+
+// StreamWebAppConversationEvents is the shared ChatRuntime UI compatibility
+// surface. The public API remains run-oriented, while the first-party landing
+// page can reuse the same recovery state machine as other ZGI chat surfaces.
+func (h *ExternalHandler) StreamWebAppConversationEvents(c *gin.Context) {
+	scope, access, conversationID, ok := h.webAppConversationRequest(c)
+	if !ok {
+		return
+	}
+	messageID, err := uuid.Parse(strings.TrimSpace(c.Query("message_id")))
+	if err != nil || messageID == uuid.Nil {
+		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.webapp.conversation.events.message")
+		return
+	}
+	afterID := strings.TrimSpace(c.Query("after_id"))
+	if afterID == "" {
+		afterID = strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	}
+	writer := newDigitalHumanSSEWriter(c)
+	writer.start(c.Request.Context())
+	err = h.runtime.StreamConversationEvents(
+		c.Request.Context(), scope, access.Definition.ID, conversationID, messageID, afterID,
+		func(event runtimeservice.StreamEvent) error {
+			return writer.write(event.ID, event.EventType, redactConversationValue(event.Payload))
+		},
+	)
+	if err != nil && c.Request.Context().Err() == nil {
+		_ = h.writeStreamError(writer, uuid.Nil, err)
+	}
+}
+
+func (h *ExternalHandler) StopWebAppConversation(c *gin.Context) {
+	h.withWebAppConversation(c, "stop", func(scope Scope, access *PublishedAccess, conversationID uuid.UUID) (any, error) {
+		result, err := h.runtime.StopConversation(c.Request.Context(), scope, access.Definition.ID, conversationID)
+		if err != nil {
+			return nil, err
+		}
+		return digitalHumanStopConversationResponse(result), nil
+	})
+}
+
+func (h *ExternalHandler) SubmitWebAppConversationRuntimeInput(c *gin.Context) {
+	scope, access, conversationID, ok := h.webAppConversationRequest(c)
+	if !ok {
+		return
+	}
+	messageID, err := uuid.Parse(strings.TrimSpace(c.Param("message_id")))
+	if err != nil || messageID == uuid.Nil {
+		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.webapp.conversation.runtime_input.message")
+		return
+	}
+	var request runtimedto.SubmitRuntimeInputRequest
+	if !h.base.decode(c, &request) {
+		return
+	}
+	clientInputID, err := uuid.Parse(strings.TrimSpace(request.ClientInputID))
+	if err != nil || clientInputID == uuid.Nil {
+		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.webapp.conversation.runtime_input.client_input")
+		return
+	}
+	result, err := h.runtime.SubmitRuntimeInput(c.Request.Context(), scope, access.Definition.ID, runtimeservice.SubmitRuntimeInputRequest{
+		ConversationID:  conversationID,
+		TargetMessageID: messageID,
+		ClientInputID:   clientInputID,
+		Content:         request.Content,
+	})
+	if err != nil {
+		h.writeApplicationError(c, err, "digital_human.webapp.conversation.runtime_input")
+		return
+	}
+	writeExternalData(c, http.StatusOK, runtimedto.SubmitRuntimeInputResponse{
+		Input:       digitalHumanRuntimeInputResponse(result.Input),
+		Disposition: string(result.Disposition),
+		Created:     result.Created,
+	})
+}
+
+func (h *ExternalHandler) GetWebAppUploadConfig(c *gin.Context) {
+	_, _, identity, ok := h.webAppScope(c)
+	if !ok {
+		return
+	}
+	if !identity.Authenticated {
+		h.writeAuthError(c, true)
+		return
+	}
+	writeExternalData(c, http.StatusOK, h.fileService.GetUploadConfig())
 }
 
 func (h *ExternalHandler) UploadWebAppFile(c *gin.Context) {

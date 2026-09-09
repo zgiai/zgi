@@ -1,6 +1,7 @@
 package digitalhuman
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -9,6 +10,29 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 )
+
+func TestRegisterWebAppRoutesIncludesSharedChatRuntimeCompatibility(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	(&ExternalHandler{}).RegisterWebAppRoutes(router.Group("/api"))
+	routes := make(map[string]bool)
+	for _, route := range router.Routes() {
+		routes[route.Method+" "+route.Path] = true
+	}
+	for _, required := range []string{
+		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/config",
+		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/chat",
+		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/events",
+		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/stop",
+		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/conversations/:conversation_id/messages/:message_id/runtime-inputs",
+		http.MethodGet + " /api/v1/digital-human-webapps/:web_app_id/files/upload",
+		http.MethodPost + " /api/v1/digital-human-webapps/:web_app_id/files/upload",
+	} {
+		if !routes[required] {
+			t.Fatalf("webapp route %q was not registered", required)
+		}
+	}
+}
 
 func TestWebAppScopeSeparatesAnonymousPrincipalFromAccountMemorySubject(t *testing.T) {
 	gin.SetMode(gin.TestMode)

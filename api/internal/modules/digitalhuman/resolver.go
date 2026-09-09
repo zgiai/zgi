@@ -147,7 +147,12 @@ func invocationAllowsUserMemory(event invocation.Event) bool {
 	case SurfaceAPI:
 		return event.Sender.Type == invocation.PrincipalService
 	default:
-		return false
+		// Legacy console invocations predate the explicit surface field. Keep
+		// those account-authenticated manual calls memory-capable without
+		// broadening channel, task, or external-user access.
+		return event.Type == invocation.EventTypeManual &&
+			event.Origin.Kind == invocation.OriginManual &&
+			event.Sender.Type == invocation.PrincipalAccount
 	}
 }
 

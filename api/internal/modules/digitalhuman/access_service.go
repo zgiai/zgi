@@ -127,8 +127,8 @@ func (s *AccessService) ListAPIKeys(ctx context.Context, scope Scope, digitalHum
 		return nil, err
 	}
 	items := make([]*APIKey, 0)
-	if err := s.db.WithContext(ctx).Where("digital_human_id = ? AND organization_id = ? AND workspace_id = ? AND status <> ?",
-		digitalHumanID, definition.OrganizationID, definition.WorkspaceID, APIKeyStatusRevoked).
+	if err := s.db.WithContext(ctx).Where("digital_human_id = ? AND organization_id = ? AND workspace_id = ?",
+		digitalHumanID, definition.OrganizationID, definition.WorkspaceID).
 		Order("created_at DESC, id DESC").Find(&items).Error; err != nil {
 		return nil, fmt.Errorf("list DigitalHuman API keys: %w", err)
 	}
@@ -202,9 +202,21 @@ func (s *AccessService) UpdateAPIKey(ctx context.Context, scope Scope, digitalHu
 }
 
 func (s *AccessService) DeleteAPIKey(ctx context.Context, scope Scope, digitalHumanID, keyID uuid.UUID) error {
-	status := APIKeyStatusRevoked
-	_, err := s.UpdateAPIKey(ctx, scope, digitalHumanID, keyID, APIKeyUpdateRequest{Status: &status})
-	return err
+	definition, err := s.repo.Definition(ctx, scope, digitalHumanID)
+	if err != nil {
+		return err
+	}
+	result := s.db.WithContext(ctx).Where(
+		"id = ? AND digital_human_id = ? AND organization_id = ? AND workspace_id = ?",
+		keyID, digitalHumanID, definition.OrganizationID, definition.WorkspaceID,
+	).Delete(&APIKey{})
+	if result.Error != nil {
+		return fmt.Errorf("delete DigitalHuman API key: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *AccessService) ResolveAPIKey(ctx context.Context, rawKey string) (*APIKey, *PublishedAccess, error) {
