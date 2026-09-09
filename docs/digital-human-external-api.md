@@ -9,7 +9,8 @@ machine-readable contract is available from a running API service at
 ### Enable and publish
 
 An administrator must publish a DigitalHuman before either public surface can
-be used. In **Access and publishing**, enable the surfaces independently:
+be used. Open the DigitalHuman's standalone **External access** page and enable
+the surfaces independently:
 
 - **Public landing page** exposes `/digital-human/{web_app_id}`.
 - **API access** enables API keys bound to this DigitalHuman.
@@ -162,16 +163,15 @@ It cannot be reused by another `user` or another DigitalHuman.
 The canonical URL is `/digital-human/{web_app_id}`. The legacy
 `/digital-human/{web_app_id}/chat` URL redirects to it.
 
-- When relationship memory is disabled, an unauthenticated visitor receives a
-  signed anonymous session and can use text chat.
-- When relationship memory is enabled, chatting requires a ZGI login. The
-  public configuration remains readable so the page can explain the login
-  requirement.
+- An unauthenticated visitor receives a signed anonymous session and can use
+  text chat without relationship memory.
 - File upload always requires login.
 - Anonymous sessions own conversations only and never create or read user
   relationship memory.
-- Logged-in sessions use the account subject, so relationship memory can
-  continue across conversations according to the published policy.
+- Logged-in sessions use the account subject, so relationship memory is enabled
+  by default across conversations. Memory and automatic capture remain under
+  the user's relationship settings; DigitalHuman configuration cannot override
+  them.
 
 The landing page never receives or stores a DigitalHuman API key.
 
@@ -179,8 +179,7 @@ The landing page never receives or stores a DigitalHuman API key.
 
 ### 启用与发布
 
-数字人必须先发布，外部入口才能使用。在数字人的“访问与发布”区域中，可以
-独立开启：
+数字人必须先发布，外部入口才能使用。在数字人的独立“外接”页面中，可以独立开启：
 
 - **公开落地页**：访问路径为 `/digital-human/{web_app_id}`；
 - **API 访问**：允许使用绑定到该数字人的 API Key。
@@ -302,11 +301,10 @@ curl --request POST \
 规范地址为 `/digital-human/{web_app_id}`；旧地址
 `/digital-human/{web_app_id}/chat` 会重定向到规范地址。
 
-- 关系记忆关闭时，未登录访客会获得服务端签名的匿名会话，可进行纯文本对话；
-- 关系记忆开启时，公开配置仍可读取，但开始聊天必须登录 ZGI；
+- 未登录访客会获得服务端签名的匿名会话，可进行不使用关系记忆的纯文本对话；
 - 文件上传始终要求登录；
 - 匿名身份只拥有会话，永远不会读取或创建用户关系记忆；
-- 登录用户使用账号主体，可按发布策略在不同会话间延续关系记忆。
+- 登录用户使用账号主体，默认启用跨会话关系记忆；是否启用记忆和自动提取完全由用户自己的关系设置控制，数字人配置无权覆盖。
 
 公开落地页不会接收或保存数字人 API Key。
 
