@@ -2,7 +2,15 @@
 
 import type { MouseEvent } from 'react';
 import { usePathname } from 'next/navigation';
-import { BrainCircuit, History, House, ListTodo, RadioTower, Settings2 } from 'lucide-react';
+import {
+  BrainCircuit,
+  History,
+  House,
+  ListTodo,
+  PanelsTopLeft,
+  RadioTower,
+  Settings2,
+} from 'lucide-react';
 import {
   ResourceSidebar,
   ResourceSidebarHeader,
@@ -42,6 +50,11 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
       isActive: currentPathname => currentPathname === `/console/digital-humans/${id}`,
     },
     configurationItem,
+    {
+      title: t('digitalHumans.tabs.external'),
+      href: `/console/digital-humans/${id}/external`,
+      icon: PanelsTopLeft,
+    },
     {
       title: t('digitalHumans.tabs.channels'),
       href: `/console/digital-humans/${id}/channels`,

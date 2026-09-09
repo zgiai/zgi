@@ -251,7 +251,6 @@ function CreateDigitalHumanDialog({
       memory_policy: {
         enabled: false,
         ownership: 'digital_human',
-        user_relationship: { enabled: false, auto_capture_allowed: false },
       },
       trigger_policy: { manual: true },
     });

@@ -11,14 +11,12 @@ import {
 import {
   AlertTriangle,
   ArrowLeft,
-  Brain,
   CheckCircle2,
   ChevronRight,
   CircleDashed,
   CircleHelp,
   Loader2,
   MessageSquareText,
-  PanelsTopLeft,
   Pencil,
   Plus,
   Search,
@@ -28,7 +26,6 @@ import {
 import { toast } from 'sonner';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import { DigitalHumanResourceBindings } from '@/components/digital-human/digital-human-resource-bindings';
-import { DigitalHumanAccessPanel } from '@/components/digital-human/digital-human-access-panel';
 import { useDigitalHumanDraftPersistence } from '@/components/digital-human/use-digital-human-draft-persistence';
 import {
   useDigitalHumanDraftStore,
@@ -61,11 +58,10 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type {
   DigitalHumanPersonaTemplate,
-  DigitalHumanPresentationPolicy,
   UpdateDigitalHumanDraftRequest,
 } from '@/services/types/digital-human';
 
-export type DigitalHumanConfigurationPanel = 'response' | 'memory' | 'access';
+export type DigitalHumanConfigurationPanel = 'response';
 
 export function DigitalHumanConfigurationEditor({
   id,
@@ -141,16 +137,6 @@ function ConfigurationEditor({
   const [acknowledgementEnabled, setAcknowledgementEnabled] = useState(
     detail?.draft.trigger_policy?.channel_response?.acknowledgement_enabled ?? true
   );
-  const [presentation, setPresentation] = useState<DigitalHumanPresentationPolicy>(() =>
-    normalizePresentationPolicy(detail?.draft.presentation_policy)
-  );
-  const initialUserRelationshipPolicy = relationshipMemoryPolicy(detail?.draft.memory_policy);
-  const [userRelationshipMemoryEnabled, setUserRelationshipMemoryEnabled] = useState(
-    initialUserRelationshipPolicy.enabled
-  );
-  const [userRelationshipAutoCaptureAllowed, setUserRelationshipAutoCaptureAllowed] = useState(
-    initialUserRelationshipPolicy.autoCaptureAllowed
-  );
   const [activePanel, setActivePanel] = useState<DigitalHumanConfigurationPanel | null>(
     initialPanel ?? null
   );
@@ -166,11 +152,6 @@ function ConfigurationEditor({
       goals: detail?.draft.goals ?? [],
       rules: detail?.draft.rules ?? [],
       default_model: detail?.draft.default_model ?? '',
-      memory_policy: withRelationshipMemoryPolicy(
-        detail?.draft.memory_policy,
-        initialUserRelationshipPolicy.enabled,
-        initialUserRelationshipPolicy.autoCaptureAllowed
-      ),
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
@@ -180,7 +161,6 @@ function ConfigurationEditor({
           acknowledgement_enabled: acknowledgementEnabled,
         },
       },
-      presentation_policy: normalizePresentationPolicy(detail?.draft.presentation_policy),
     },
   });
   const savedDraftSignatureRef = useRef(serializeEditorPart(initialSnapshotRef.current.draft));
@@ -197,11 +177,6 @@ function ConfigurationEditor({
       goals: normalizedGoals,
       rules: normalizedRules,
       default_model: model,
-      memory_policy: withRelationshipMemoryPolicy(
-        detail?.draft.memory_policy,
-        userRelationshipMemoryEnabled,
-        userRelationshipAutoCaptureAllowed
-      ),
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
@@ -211,23 +186,13 @@ function ConfigurationEditor({
           acknowledgement_enabled: acknowledgementEnabled,
         },
       },
-      presentation_policy: {
-        ...presentation,
-        suggested_questions: presentation.suggested_questions
-          .map(item => item.trim())
-          .filter(Boolean)
-          .slice(0, 6),
-      },
     },
   };
-  const presentationValid =
-    !presentation.theme_color.trim() || /^#[0-9a-f]{6}$/i.test(presentation.theme_color.trim());
   const persistence = useDigitalHumanDraftPersistence({
     currentPayload: currentSnapshot,
     initialPayload: initialSnapshotRef.current,
     enabled: canUpdate && Boolean(detail),
-    canSave: () =>
-      Boolean(identityName.trim() && persona.trim() && model.trim() && presentationValid),
+    canSave: () => Boolean(identityName.trim() && persona.trim() && model.trim()),
     savePayload: async snapshot => {
       const draftSignature = serializeEditorPart(snapshot.draft);
       const draftChanged = draftSignature !== savedDraftSignatureRef.current;
@@ -247,7 +212,7 @@ function ConfigurationEditor({
   });
 
   const manualSave = async () => {
-    if (!identityName.trim() || !persona.trim() || !model.trim() || !presentationValid) {
+    if (!identityName.trim() || !persona.trim() || !model.trim()) {
       toast.error(t('errors.required'));
       return false;
     }
@@ -464,26 +429,6 @@ function ConfigurationEditor({
                       count: Number(intermediateMessagesEnabled) + Number(acknowledgementEnabled),
                     })}
                     onClick={() => setActivePanel('response')}
-                  />
-                  <ConfigurationMenuItem
-                    id="configuration-memory"
-                    icon={<Brain className="size-4" />}
-                    title={t('preferences.relationshipMemoryTitle')}
-                    description={t('preferences.relationshipMemoryDescription')}
-                    summary={
-                      userRelationshipMemoryEnabled
-                        ? t('preferences.relationshipMemoryEnabled')
-                        : t('preferences.relationshipMemoryDisabled')
-                    }
-                    onClick={() => setActivePanel('memory')}
-                  />
-                  <ConfigurationMenuItem
-                    id="configuration-access"
-                    icon={<PanelsTopLeft className="size-4" />}
-                    title={t('access.title')}
-                    description={t('access.description')}
-                    summary={detail.published ? t('access.ready') : t('access.publishFirstShort')}
-                    onClick={() => setActivePanel('access')}
                     last
                   />
                 </div>
@@ -492,13 +437,7 @@ function ConfigurationEditor({
           ) : (
             <div className="min-w-0">
               <ConfigurationPanelHeader
-                title={
-                  activePanel === 'response'
-                    ? t('preferences.channelResponseTitle')
-                    : activePanel === 'memory'
-                      ? t('preferences.relationshipMemoryTitle')
-                      : t('access.title')
-                }
+                title={t('preferences.channelResponseTitle')}
                 onBack={() => setActivePanel(null)}
                 backLabel={t('configurationHub.backToSettings')}
               />
@@ -524,43 +463,6 @@ function ConfigurationEditor({
                     />
                   </div>
                 </div>
-              ) : null}
-              {activePanel === 'memory' ? (
-                <div className="p-4 md:p-5">
-                  <p className="mb-4 text-xs leading-5 text-muted-foreground">
-                    {t('preferences.relationshipMemoryDescription')}
-                  </p>
-                  <div className="min-w-0 divide-y rounded-lg border px-4">
-                    <PreferenceSwitch
-                      title={t('preferences.relationshipMemory')}
-                      description={t('preferences.relationshipMemoryHint')}
-                      checked={userRelationshipMemoryEnabled}
-                      onCheckedChange={enabled => {
-                        setUserRelationshipMemoryEnabled(enabled);
-                        if (!enabled) setUserRelationshipAutoCaptureAllowed(false);
-                      }}
-                      disabled={!canUpdate}
-                    />
-                    <PreferenceSwitch
-                      title={t('preferences.relationshipAutoCapture')}
-                      description={t('preferences.relationshipAutoCaptureHint')}
-                      checked={userRelationshipAutoCaptureAllowed}
-                      onCheckedChange={setUserRelationshipAutoCaptureAllowed}
-                      disabled={!canUpdate || !userRelationshipMemoryEnabled}
-                    />
-                  </div>
-                </div>
-              ) : null}
-              {activePanel === 'access' ? (
-                <DigitalHumanAccessPanel
-                  id={id}
-                  webAppId={detail.definition.web_app_id}
-                  published={Boolean(detail.published)}
-                  canPublish={permissions.hasPermission('digital_human.publish')}
-                  canUpdatePresentation={canUpdate}
-                  presentation={presentation}
-                  onPresentationChange={setPresentation}
-                />
               ) : null}
             </div>
           )}
@@ -1240,51 +1142,4 @@ function Field({
       {children}
     </div>
   );
-}
-
-function relationshipMemoryPolicy(policy?: Record<string, unknown>) {
-  const value = policy?.user_relationship;
-  const relationship =
-    value && typeof value === 'object' && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-  return {
-    enabled: relationship.enabled === true,
-    autoCaptureAllowed: relationship.auto_capture_allowed === true,
-  };
-}
-
-function normalizePresentationPolicy(
-  policy?: Partial<DigitalHumanPresentationPolicy>
-): DigitalHumanPresentationPolicy {
-  return {
-    home_title: policy?.home_title ?? '',
-    opening_statement: policy?.opening_statement ?? '',
-    input_placeholder: policy?.input_placeholder ?? '',
-    theme_color: policy?.theme_color ?? '',
-    suggested_questions: (policy?.suggested_questions ?? []).slice(0, 6),
-  };
-}
-
-function withRelationshipMemoryPolicy(
-  policy: Record<string, unknown> | undefined,
-  enabled: boolean,
-  autoCaptureAllowed: boolean
-): Record<string, unknown> {
-  const existing =
-    policy?.user_relationship &&
-    typeof policy.user_relationship === 'object' &&
-    !Array.isArray(policy.user_relationship)
-      ? (policy.user_relationship as Record<string, unknown>)
-      : {};
-  return {
-    ...(policy ?? {}),
-    enabled: policy?.enabled === true,
-    ownership: 'digital_human',
-    user_relationship: {
-      ...existing,
-      enabled,
-      auto_capture_allowed: enabled && autoCaptureAllowed,
-    },
-  };
 }

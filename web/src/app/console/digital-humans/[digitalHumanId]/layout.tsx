@@ -9,6 +9,7 @@ import {
   House,
   ListTodo,
   Loader2,
+  PanelsTopLeft,
   RadioTower,
   Settings2,
   X,
@@ -54,7 +55,9 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
   const permissions = useAccountPermissions();
   const detailQuery = useDigitalHuman(id);
   const configurationHref = `/console/digital-humans/${id}/configuration`;
+  const externalHref = `/console/digital-humans/${id}/external`;
   const isConfigurationPage = pathname.startsWith(configurationHref);
+  const isExternalPage = pathname.startsWith(externalHref);
   const isInitialSetup = Boolean(detailQuery.data?.data && !detailQuery.data.data.published);
   const restrictToConfiguration = detailQuery.isLoading || isInitialSetup;
 
@@ -112,6 +115,12 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
     },
     configurationItem,
     {
+      href: externalHref,
+      label: t('tabs.external'),
+      icon: PanelsTopLeft,
+      active: isExternalPage,
+    },
+    {
       href: `/console/digital-humans/${id}/channels`,
       label: t('tabs.channels'),
       icon: RadioTower,
@@ -147,7 +156,9 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
     <div className="flex h-full min-h-0 min-w-0 bg-background">
       <DigitalHumanSidebar id={id} onNavigate={navigateAfterSaving} />
       <div className="flex h-full min-h-0 w-0 min-w-0 grow flex-col overflow-hidden">
-        {isConfigurationPage ? <DigitalHumanHeader id={id} onOpenTest={openTestChat} /> : null}
+        {isConfigurationPage || isExternalPage ? (
+          <DigitalHumanHeader id={id} onOpenTest={openTestChat} />
+        ) : null}
         <nav
           className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-2 py-1 md:hidden"
           aria-label={t('tabs.navigation')}

@@ -78,7 +78,9 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
     versionsOpen && Boolean(selectedVersionId)
   );
   const detail = detailQuery.data?.data;
-  const isConfigurationPage = pathname.startsWith(`/console/digital-humans/${id}/configuration`);
+  const isDraftEditingPage =
+    pathname.startsWith(`/console/digital-humans/${id}/configuration`) ||
+    pathname.startsWith(`/console/digital-humans/${id}/external`);
   const hasUnpublishedChanges = Boolean(
     detail && (!detail.published || detail.draft.revision !== detail.published.revision)
   );
@@ -251,7 +253,7 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
-          {isConfigurationPage ? (
+          {isDraftEditingPage ? (
             <div
               className={cn(
                 'hidden items-center gap-1.5 text-xs text-muted-foreground xl:flex',
@@ -267,7 +269,7 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
             </div>
           ) : null}
 
-          {isConfigurationPage && draftEditor?.canUpdate ? (
+          {isDraftEditingPage && draftEditor?.canUpdate ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="relative">
