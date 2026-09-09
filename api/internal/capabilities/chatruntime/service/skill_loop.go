@@ -141,6 +141,8 @@ func (s *service) runPreparedToolLoop(
 		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
 	}
 	executionContext := s.skillExecutionContext(prepared)
+	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(prepared)
+	executionContext.ScriptModel = scriptModel
 	var externalActionProjections []integrationmetatools.ActionProjection
 	if nativeLoop {
 		externalActionProjections = s.resolveExternalActionProjections(ctx, prepared, resolved, executionContext)
@@ -261,6 +263,7 @@ func (s *service) runPreparedToolLoop(
 		err = presentationErr
 	}
 	s.persistAgentTurnTranscript(persistCtx, prepared, contextManager, answer, err != nil)
+	usage = addUsageCloned(usage, scriptModelUsage())
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}

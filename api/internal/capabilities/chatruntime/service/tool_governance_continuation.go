@@ -412,6 +412,8 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		callID = strings.TrimSpace(frozen.ID)
 	}
 	executionContext := s.skillExecutionContext(prepared)
+	scriptModel, scriptModelUsage := s.newSkillScriptModelChannel(prepared)
+	executionContext.ScriptModel = scriptModel
 	executionContext.RuntimeParameters = skills.WithToolGovernanceCorrelationID(
 		executionContext.RuntimeParameters,
 		frozen.CorrelationID,
@@ -507,6 +509,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
+	usage = addUsageCloned(usage, scriptModelUsage())
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {

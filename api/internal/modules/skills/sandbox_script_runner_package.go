@@ -168,6 +168,7 @@ func zipSkillDirectoryBase64(root string, manifestRaw []byte) (string, error) {
 }
 
 type skillScriptManifest struct {
+	ModelCalls           int                             `json:"model_calls,omitempty"`
 	Entrypoint           string                          `json:"entrypoint"`
 	Language             string                          `json:"language"`
 	DependencyProfile    string                          `json:"dependency_profile"`
@@ -267,6 +268,9 @@ func loadSkillScriptManifest(root string) (skillScriptManifest, error) {
 func normalizeSkillScriptManifest(root string, fallbackTimeoutSeconds int, allowManagedProfile bool, manifest *skillScriptManifest) error {
 	if manifest == nil {
 		return fmt.Errorf("skill manifest is empty")
+	}
+	if manifest.ModelCalls < 0 || manifest.ModelCalls > 3 {
+		return fmt.Errorf("model_calls must be between 0 and 3")
 	}
 	manifest.Entrypoint = filepath.ToSlash(strings.TrimSpace(manifest.Entrypoint))
 	if manifest.Entrypoint == "" {
