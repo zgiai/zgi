@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { organizationService } from '@/services/organization.service';
 import { accountService } from '@/services/account.service';
@@ -13,10 +13,7 @@ import { useT } from '@/i18n';
 import { ORGANIZATION_KEYS, PROFILE_KEYS, WORKSPACE_KEYS } from '../query-keys';
 import { sessionManager } from '@/lib/auth/session-manager';
 import { clearProfileClientCache } from '@/utils/client-cache';
-import {
-  shouldRetryAccessLoadError,
-  shouldShowAccessLoadToast,
-} from '@/utils/access-load-error';
+import { shouldRetryAccessLoadError } from '@/utils/access-load-error';
 
 interface UseOrganizationsResult {
   organizations: Organization[];
@@ -50,15 +47,12 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
   const shouldAutoLoad =
     autoLoad && isAuthenticated && !isLoggingOut && !isSwitchingOrganization;
 
-  const hasErrorProcessed = useRef(false);
-
   /* ----------------------------- Data fetching ----------------------------- */
   // Fetch organizations list
   const {
     data: fetchedOrganizations,
     isLoading: listLoading,
     isFetching: listFetching,
-    error: listError,
   } = useQuery({
     queryKey: ORGANIZATION_KEYS.list({ page: 1, limit: 100 }),
     enabled: shouldAutoLoad,
@@ -79,7 +73,7 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
   }, [fetchedOrganizations, setOrganizations]);
 
   // Fetch current organization
-  const { data: fetchedCurrentOrganization, error: currentOrganizationError } = useQuery({
+  const { data: fetchedCurrentOrganization } = useQuery({
     queryKey: ORGANIZATION_KEYS.current(),
     enabled: shouldAutoLoad,
     staleTime: 5 * 60 * 1000,
@@ -97,27 +91,6 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
       setCurrentOrganization(fetchedCurrentOrganization);
     }
   }, [fetchedCurrentOrganization, setCurrentOrganization]);
-
-  // Error handling
-  useEffect(() => {
-    if (!listError && !currentOrganizationError) {
-      hasErrorProcessed.current = false;
-      return;
-    }
-    if (
-      (listError || currentOrganizationError) &&
-      !hasErrorProcessed.current &&
-      shouldAutoLoad
-    ) {
-      const error = listError || currentOrganizationError;
-      if (shouldShowAccessLoadToast(error)) {
-        hasErrorProcessed.current = true;
-        toast.error(t('common.organization.fetchOrgFailed'), {
-          id: 'organization-load-error',
-        });
-      }
-    }
-  }, [listError, currentOrganizationError, t, shouldAutoLoad]);
 
   // If still no currentOrganization
   useEffect(() => {
