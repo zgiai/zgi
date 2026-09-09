@@ -956,12 +956,20 @@ func (s *webAppRuntimePermissionAppService) GetWebAppRuntimeCapability(_ context
 
 type agentRuntimePermissionAppService struct {
 	AgentsService
-	ids webAppRuntimePermissionIDs
+	ids          webAppRuntimePermissionIDs
+	published    *dto.AgentWebAppRuntimeConfigResponse
+	publishedErr error
 }
 
 func (s *agentRuntimePermissionAppService) GetPublishedAgentRuntimeConfig(_ context.Context, agentID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	if s.publishedErr != nil {
+		return nil, s.publishedErr
+	}
 	if agentID != s.ids.agentID.String() {
 		return nil, runtimeservice.ErrNotFound
+	}
+	if s.published != nil {
+		return s.published, nil
 	}
 	return &dto.AgentWebAppRuntimeConfigResponse{
 		AgentID:        s.ids.agentID.String(),
@@ -1004,6 +1012,7 @@ type webAppRuntimePermissionService struct {
 	continuationBindingID       string
 	continuationAgentID         string
 	prepareRegenerationErr      error
+	userInputContinuationErr    error
 	getConversationCalled       bool
 	updateConversationCalled    bool
 	deleteConversationCalled    bool
@@ -1015,13 +1024,22 @@ type webAppRuntimePermissionService struct {
 	prepareRegenerationCalled   bool
 	runPreparedStreamCalled     bool
 	userInputContinuationCalled bool
+	toolGovernanceCalled        bool
+	clientActionCalled          bool
+	toolGovernanceErr           error
+	clientActionErr             error
+	streamForCallerErr          error
 	lastScope                   runtimeservice.Scope
 	lastCaller                  runtimeservice.Caller
 	lastRunConfig               runtimeservice.RunConfig
 	lastConversationID          uuid.UUID
 	lastMessageID               uuid.UUID
 	lastRequestID               string
+	lastCorrelationID           string
+	lastActionID                string
 	lastUserInputRequest        runtimedto.UserInputContinuationRequest
+	lastToolGovernanceRequest   runtimedto.ToolGovernanceDecisionRequest
+	lastClientActionRequest     runtimedto.ClientActionResultRequest
 	activeMessageID             *uuid.UUID
 	messageMetadata             map[string]interface{}
 }
@@ -1123,7 +1141,7 @@ func (s *webAppRuntimePermissionService) StreamConversationEventsForCaller(_ con
 	s.lastCaller = caller
 	s.lastConversationID = conversationID
 	s.lastMessageID = messageID
-	return nil
+	return s.streamForCallerErr
 }
 
 func (s *webAppRuntimePermissionService) BeginWorkflowApprovalContinuation(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, conversationID, messageID uuid.UUID) (*runtimeservice.WorkflowApprovalContinuation, error) {
@@ -1187,6 +1205,65 @@ func (s *webAppRuntimePermissionService) RunConfiguredUserInputContinuationStrea
 	s.lastMessageID = messageID
 	s.lastRequestID = requestID
 	s.lastUserInputRequest = req
+	if s.userInputContinuationErr != nil {
+		return nil, s.userInputContinuationErr
+	}
+	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func (s *webAppRuntimePermissionService) RunConfiguredToolGovernanceDecisionStream(
+	_ context.Context,
+	scope runtimeservice.Scope,
+	caller runtimeservice.Caller,
+	config runtimeservice.RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	correlationID string,
+	req runtimedto.ToolGovernanceDecisionRequest,
+	onEvent func(runtimeservice.StreamEvent) error,
+) (*runtimeservice.ChatResult, error) {
+	s.toolGovernanceCalled = true
+	s.lastScope = scope
+	s.lastCaller = caller
+	s.lastRunConfig = config
+	s.lastConversationID = conversationID
+	s.lastMessageID = messageID
+	s.lastCorrelationID = correlationID
+	s.lastToolGovernanceRequest = req
+	if s.toolGovernanceErr != nil {
+		return nil, s.toolGovernanceErr
+	}
+	if err := onEvent(runtimeservice.StreamEvent{EventType: "message_end", Payload: map[string]interface{}{"status": runtimemodel.MessageStatusCompleted}}); err != nil {
+		return nil, err
+	}
+	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func (s *webAppRuntimePermissionService) RunConfiguredClientActionContinuationStream(
+	_ context.Context,
+	scope runtimeservice.Scope,
+	caller runtimeservice.Caller,
+	config runtimeservice.RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	actionID string,
+	req runtimedto.ClientActionResultRequest,
+	onEvent func(runtimeservice.StreamEvent) error,
+) (*runtimeservice.ChatResult, error) {
+	s.clientActionCalled = true
+	s.lastScope = scope
+	s.lastCaller = caller
+	s.lastRunConfig = config
+	s.lastConversationID = conversationID
+	s.lastMessageID = messageID
+	s.lastActionID = actionID
+	s.lastClientActionRequest = req
+	if s.clientActionErr != nil {
+		return nil, s.clientActionErr
+	}
+	if err := onEvent(runtimeservice.StreamEvent{EventType: "message_end", Payload: map[string]interface{}{"status": runtimemodel.MessageStatusCompleted}}); err != nil {
+		return nil, err
+	}
 	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted}, nil
 }
 

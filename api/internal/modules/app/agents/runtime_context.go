@@ -642,13 +642,19 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 }
 
 func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
+	externalInvocation := isExternalAgentInvocation(c)
 	var bindingErr *agentBindingAPIError
 	if errors.As(err, &bindingErr) && bindingErr != nil {
-		response.SpecialFail(c, gin.H{
+		payload := gin.H{
 			"code":    bindingErr.Code,
 			"message": bindingErr.Message,
 			"data":    bindingErr.Data,
-		})
+		}
+		if externalInvocation {
+			c.JSON(http.StatusConflict, payload)
+		} else {
+			response.SpecialFail(c, payload)
+		}
 		return
 	}
 	switch {
@@ -671,26 +677,52 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 	case errors.Is(err, runtimeservice.ErrUnauthorized):
 		response.Fail(c, response.ErrUnauthorized)
 	case errors.Is(err, runtimeservice.ErrPermissionDenied):
-		response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+		if externalInvocation {
+			c.JSON(http.StatusForbidden, response.Response{Code: "403001", Message: "Permission denied"})
+		} else {
+			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+		}
 	case errors.Is(err, runtimeservice.ErrWorkflowBindingUnavailable):
-		response.SpecialFail(c, gin.H{
+		payload := gin.H{
 			"code":    agentWorkflowBindingUnavailableCode,
 			"message": "workflow binding is no longer available",
 			"data": gin.H{
 				"status": "denied",
 				"reason": "unavailable",
 			},
-		})
+		}
+		if externalInvocation {
+			c.JSON(http.StatusConflict, payload)
+		} else {
+			response.SpecialFail(c, payload)
+		}
 	case errors.Is(err, errAgentWebAppOffline):
 		response.Fail(c, response.ErrWebAppOffline)
 	case errors.Is(err, errAgentWebAppNotPublished):
 		response.Fail(c, response.ErrWebAppNotPublished)
+	case errors.Is(err, errAgentWebAppNotAgentRuntime):
+		response.FailWithMessage(c, response.ErrInvalidParam, "runtime is not an Agent")
 	case errors.Is(err, errAgentPromptTooLong):
 		response.Fail(c, response.ErrAgentPromptTooLong)
 	default:
 		logger.ErrorContext(c.Request.Context(), "agent runtime request failed", err)
+		if externalInvocation {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 	}
+}
+
+func isExternalAgentInvocation(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	if c.GetString("invoke_from") == string(runtimemodel.ConversationSourceExternalAPI) {
+		return true
+	}
+	source, _ := c.Request.Context().Value("invoke_from").(string)
+	return source == string(runtimemodel.ConversationSourceExternalAPI)
 }
 
 func (h *AgentsHandler) failWebAppRuntime(c *gin.Context, err error) {
