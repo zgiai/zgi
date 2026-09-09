@@ -178,4 +178,27 @@ func TestResolverAllowsRelationshipMemoryOnlyForManualAccountInvocation(t *testi
 	if resolved.Snapshot.UseUserMemory || resolved.Snapshot.UserMemoryAutoCaptureAllowed {
 		t.Fatalf("channel snapshot unexpectedly enabled memory = %#v", resolved.Snapshot)
 	}
+
+	webAppAnonymous := manual
+	webAppAnonymous.ID = "webapp-anonymous-memory"
+	webAppAnonymous.Context = map[string]any{"surface": SurfaceWebApp}
+	webAppAnonymous.Sender = invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: uuid.NewString()}
+	resolved, err = resolver.Resolve(t.Context(), webAppAnonymous, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Snapshot.UseUserMemory || resolved.Snapshot.UserMemoryAutoCaptureAllowed {
+		t.Fatalf("anonymous webapp snapshot unexpectedly enabled memory = %#v", resolved.Snapshot)
+	}
+
+	webAppAccount := manual
+	webAppAccount.ID = "webapp-account-memory"
+	webAppAccount.Context = map[string]any{"surface": SurfaceWebApp}
+	resolved, err = resolver.Resolve(t.Context(), webAppAccount, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.Snapshot.UseUserMemory || !resolved.Snapshot.UserMemoryAutoCaptureAllowed {
+		t.Fatalf("account webapp snapshot = %#v", resolved.Snapshot)
+	}
 }

@@ -143,7 +143,7 @@ func invocationAllowsUserMemory(event invocation.Event) bool {
 	case SurfaceConsole:
 		return event.Sender.Type == invocation.PrincipalAccount
 	case SurfaceWebApp:
-		return event.Sender.Type == invocation.PrincipalAccount || event.Sender.Type == invocation.PrincipalExternalUser
+		return event.Sender.Type == invocation.PrincipalAccount
 	case SurfaceAPI:
 		return event.Sender.Type == invocation.PrincipalService
 	default:
