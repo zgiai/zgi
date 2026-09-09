@@ -1,39 +1,30 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Copy, ExternalLink, KeyRound, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useMemo, useState, type CSSProperties } from 'react';
+import { Copy, ExternalLink, Globe2, SendHorizontal, Settings2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
+import { ChatOpeningGuideView } from '@/components/chat/ui/chat-opening-guide-view';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { Button } from '@/components/ui/button';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
+import OpeningStatementDialog from '@/components/workflow/ui/features-panel/opening-statement-dialog';
 import {
   useDigitalHumanAccess,
   useDigitalHumanAccessMutations,
-  useDigitalHumanAPIKeys,
 } from '@/hooks/digital-human/use-digital-human-access';
 import { useT } from '@/i18n';
-import { API_URL } from '@/lib/config';
+import { ICON_BG } from '@/lib/config';
 import type {
-  DigitalHumanAPIKey,
+  DigitalHumanDefinition,
   DigitalHumanPresentationPolicy,
 } from '@/services/types/digital-human';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 interface DigitalHumanAccessPanelProps {
   id: string;
-  webAppId: string;
+  definition: DigitalHumanDefinition;
   published: boolean;
   canPublish: boolean;
   canUpdatePresentation: boolean;
@@ -43,7 +34,7 @@ interface DigitalHumanAccessPanelProps {
 
 export function DigitalHumanAccessPanel({
   id,
-  webAppId,
+  definition,
   published,
   canPublish,
   canUpdatePresentation,
@@ -52,28 +43,26 @@ export function DigitalHumanAccessPanel({
 }: DigitalHumanAccessPanelProps) {
   const t = useT('digitalHumans.access');
   const access = useDigitalHumanAccess(id, canPublish);
-  const keys = useDigitalHumanAPIKeys(id, canPublish && published);
   const mutations = useDigitalHumanAccessMutations(id);
-  const [keyDialogOpen, setKeyDialogOpen] = useState(false);
-  const [editingKey, setEditingKey] = useState<DigitalHumanAPIKey | null>(null);
-  const [revealedKey, setRevealedKey] = useState('');
+  const [openingDialogOpen, setOpeningDialogOpen] = useState(false);
   const landingURL = useMemo(
     () =>
       typeof window === 'undefined'
-        ? `/digital-human/${webAppId}`
-        : `${window.location.origin}/digital-human/${webAppId}`,
-    [webAppId]
+        ? `/digital-human/${definition.web_app_id}`
+        : `${window.location.origin}/digital-human/${definition.web_app_id}`,
+    [definition.web_app_id]
   );
   const settings = access.data?.data;
+  const openingGuideBrand = useMemo(() => resolveOpeningGuideBrand(definition), [definition]);
 
-  const copy = async (value: string, successMessage: string) => {
+  const copy = async (value: string) => {
     await navigator.clipboard.writeText(value);
-    toast.success(successMessage);
+    toast.success(t('linkCopied'));
   };
 
-  const updateSurface = async (field: 'webapp_enabled' | 'api_enabled', enabled: boolean) => {
+  const updateWebAppSurface = async (enabled: boolean) => {
     try {
-      await mutations.updateAccess.mutateAsync({ [field]: enabled });
+      await mutations.updateAccess.mutateAsync({ webapp_enabled: enabled });
       toast.success(t('surfaceUpdated'));
     } catch (error) {
       toast.error(getErrorMessage(error) || t('surfaceUpdateFailed'));
@@ -86,35 +75,26 @@ export function DigitalHumanAccessPanel({
   ) => onPresentationChange({ ...presentation, [field]: value });
 
   return (
-    <div className="space-y-6 p-4 md:p-5">
+    <div className="space-y-6 p-4 md:p-6">
       <section className="space-y-3">
         <div>
-          <h3 className="text-sm font-semibold">{t('surfacesTitle')}</h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('surfacesDescription')}</p>
+          <h3 className="text-sm font-semibold">{t('webAppTitle')}</h3>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('webAppDescription')}</p>
         </div>
         {!published ? (
           <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning-foreground">
             {t('publishFirst')}
           </div>
         ) : null}
-        <div className="divide-y rounded-lg border px-4">
+        <div className="rounded-lg border px-4">
           <AccessSwitch
             title={t('webAppTitle')}
-            description={t('webAppDescription')}
+            description={t('surfacesDescription')}
             checked={settings?.webapp_enabled ?? false}
             disabled={
               !canPublish || !published || access.isLoading || mutations.updateAccess.isPending
             }
-            onCheckedChange={enabled => void updateSurface('webapp_enabled', enabled)}
-          />
-          <AccessSwitch
-            title={t('apiTitle')}
-            description={t('apiDescription')}
-            checked={settings?.api_enabled ?? false}
-            disabled={
-              !canPublish || !published || access.isLoading || mutations.updateAccess.isPending
-            }
-            onCheckedChange={enabled => void updateSurface('api_enabled', enabled)}
+            onCheckedChange={enabled => void updateWebAppSurface(enabled)}
           />
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-3">
@@ -124,12 +104,7 @@ export function DigitalHumanAccessPanel({
             className="min-w-0 flex-1"
             aria-label={t('landingURL')}
           />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void copy(landingURL, t('linkCopied'))}
-          >
+          <Button type="button" variant="outline" size="sm" onClick={() => void copy(landingURL)}>
             <Copy className="mr-2 size-4" />
             {t('copy')}
           </Button>
@@ -149,273 +124,177 @@ export function DigitalHumanAccessPanel({
             {t('presentationDescription')}
           </p>
         </div>
-        <div className="grid gap-4">
-          <AccessField label={t('homeTitle')} description={t('homeTitleDescription')}>
-            <Input
-              value={presentation.home_title}
-              onChange={event => updatePresentation('home_title', event.target.value)}
-              disabled={!canUpdatePresentation}
-              maxLength={120}
-            />
-          </AccessField>
-          <AccessField label={t('openingStatement')} description={t('openingStatementDescription')}>
-            <Textarea
-              rows={3}
-              value={presentation.opening_statement}
-              onChange={event => updatePresentation('opening_statement', event.target.value)}
-              disabled={!canUpdatePresentation}
-              maxLength={1000}
-            />
-          </AccessField>
-          <AccessField label={t('inputPlaceholder')} description={t('inputPlaceholderDescription')}>
-            <Input
-              value={presentation.input_placeholder}
-              onChange={event => updatePresentation('input_placeholder', event.target.value)}
-              disabled={!canUpdatePresentation}
-              maxLength={120}
-            />
-          </AccessField>
-          <AccessField label={t('themeColor')} description={t('themeColorDescription')}>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={
-                  /^#[0-9a-f]{6}$/i.test(presentation.theme_color)
-                    ? presentation.theme_color
-                    : '#6366f1'
-                }
-                onChange={event => updatePresentation('theme_color', event.target.value)}
-                disabled={!canUpdatePresentation}
-                className="size-9 cursor-pointer rounded-md border bg-background p-1 disabled:cursor-not-allowed"
-                aria-label={t('themeColor')}
-              />
-              <Input
-                value={presentation.theme_color}
-                onChange={event => updatePresentation('theme_color', event.target.value)}
-                disabled={!canUpdatePresentation}
-                placeholder="#6366f1"
-                maxLength={32}
-              />
-            </div>
-          </AccessField>
-          <AccessField
-            label={t('suggestedQuestions')}
-            description={t('suggestedQuestionsDescription')}
-          >
-            <div className="space-y-2">
-              {presentation.suggested_questions.map((question, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <Input
-                    value={question}
-                    onChange={event => {
-                      const next = [...presentation.suggested_questions];
-                      next[index] = event.target.value;
-                      updatePresentation('suggested_questions', next);
-                    }}
-                    disabled={!canUpdatePresentation}
-                    maxLength={200}
-                    aria-label={t('suggestionNumber', { number: index + 1 })}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    isIcon
-                    aria-label={t('removeSuggestion')}
-                    disabled={!canUpdatePresentation}
-                    onClick={() =>
-                      updatePresentation(
-                        'suggested_questions',
-                        presentation.suggested_questions.filter(
-                          (_, itemIndex) => itemIndex !== index
-                        )
-                      )
-                    }
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
+
+        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,440px)_minmax(420px,1fr)]">
+          <div className="space-y-5 rounded-xl border bg-background p-4">
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-sm font-semibold">{t('openingGuideTitle')}</div>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t('openingGuideDescription')}
+                  </p>
                 </div>
-              ))}
-              {presentation.suggested_questions.length < 6 ? (
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
+                  size="xs"
+                  className="shrink-0 gap-1.5"
                   disabled={!canUpdatePresentation}
-                  onClick={() =>
-                    updatePresentation('suggested_questions', [
-                      ...presentation.suggested_questions,
-                      '',
-                    ])
-                  }
+                  onClick={() => setOpeningDialogOpen(true)}
                 >
-                  <Plus className="mr-2 size-4" />
-                  {t('addSuggestion')}
+                  <Settings2 className="size-3.5" />
+                  {t('configureOpeningGuide')}
                 </Button>
-              ) : null}
-            </div>
-          </AccessField>
-        </div>
-      </section>
-
-      <section className="space-y-4 border-t pt-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold">{t('keysTitle')}</h3>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('keysDescription')}</p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" asChild>
-              <a href={`${API_URL}/api/openapi.yaml`} target="_blank" rel="noreferrer">
-                {t('openAPIDocument')}
-              </a>
-            </Button>
-            <Button
-              size="sm"
-              disabled={!canPublish || !published}
-              onClick={() => {
-                setEditingKey(null);
-                setKeyDialogOpen(true);
-              }}
-            >
-              <Plus className="mr-2 size-4" />
-              {t('createKey')}
-            </Button>
-          </div>
-        </div>
-        {keys.isLoading ? (
-          <div className="flex items-center justify-center rounded-lg border py-8 text-muted-foreground">
-            <Loader2 className="mr-2 size-4 animate-spin" />
-            {t('loadingKeys')}
-          </div>
-        ) : (keys.data?.data.api_keys.length ?? 0) === 0 ? (
-          <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-            <KeyRound className="mx-auto mb-2 size-6" />
-            {t('noKeys')}
-          </div>
-        ) : (
-          <div className="divide-y overflow-hidden rounded-lg border">
-            {keys.data?.data.api_keys.map(key => (
-              <div key={key.id} className="flex flex-wrap items-center gap-3 p-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium">{key.name}</span>
-                    <Badge variant={key.status === 'active' ? 'success' : 'secondary'}>
-                      {key.status === 'active' ? t('active') : t('revoked')}
-                    </Badge>
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-muted-foreground">
-                    <span>{key.key_prefix}…</span>
-                    <span>
-                      {key.expires_at
-                        ? t('expiresAt', { date: new Date(key.expires_at).toLocaleString() })
-                        : t('neverExpires')}
-                    </span>
-                  </div>
-                </div>
-                {key.status === 'active' ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setEditingKey(key);
-                        setKeyDialogOpen(true);
-                      }}
-                    >
-                      <Pencil className="mr-2 size-3.5" />
-                      {t('editKey')}
-                    </Button>
-                    <ConfirmDialog
-                      title={t('revokeTitle')}
-                      description={t('revokeDescription', { name: key.name })}
-                      confirmText={t('revoke')}
-                      cancelText={t('cancel')}
-                      variant="warning"
-                      onConfirm={() =>
-                        void mutations.updateAPIKey
-                          .mutateAsync({ keyId: key.id, request: { status: 'revoked' } })
-                          .then(() => toast.success(t('keyRevoked')))
-                          .catch(error =>
-                            toast.error(getErrorMessage(error) || t('keyUpdateFailed'))
-                          )
-                      }
-                      trigger={
-                        <Button type="button" variant="outline" size="sm">
-                          {t('revoke')}
-                        </Button>
-                      }
-                    />
-                  </>
-                ) : null}
-                <ConfirmDialog
-                  title={t('deleteTitle')}
-                  description={t('deleteDescription', { name: key.name })}
-                  confirmText={t('delete')}
-                  cancelText={t('cancel')}
-                  variant="danger"
-                  onConfirm={() =>
-                    void mutations.deleteAPIKey
-                      .mutateAsync(key.id)
-                      .then(() => toast.success(t('keyDeleted')))
-                      .catch(error => toast.error(getErrorMessage(error) || t('keyDeleteFailed')))
-                  }
-                  trigger={
-                    <Button type="button" variant="ghost" size="sm" isIcon aria-label={t('delete')}>
-                      <Trash2 className="size-4" />
-                    </Button>
-                  }
+              </div>
+              <div className="max-h-80 overflow-y-auto rounded-lg border border-border/70 bg-muted/20 px-3 py-4">
+                <ChatOpeningGuideView
+                  title={presentation.home_title.trim() || definition.name}
+                  message={presentation.opening_statement}
+                  iconType={openingGuideBrand.iconType}
+                  icon={openingGuideBrand.icon}
+                  iconBackground={openingGuideBrand.iconBackground}
+                  iconSrc={openingGuideBrand.iconSrc}
+                  suggestions={presentation.suggested_questions}
                 />
               </div>
-            ))}
+            </div>
+
+            <AccessField
+              label={t('inputPlaceholder')}
+              description={t('inputPlaceholderDescription')}
+            >
+              <Input
+                value={presentation.input_placeholder}
+                onChange={event => updatePresentation('input_placeholder', event.target.value)}
+                disabled={!canUpdatePresentation}
+                maxLength={120}
+                showCharacterCount
+              />
+            </AccessField>
+
+            <AccessField label={t('themeColor')} description={t('themeColorDescription')}>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={resolvedThemeColor(presentation.theme_color)}
+                  onChange={event => updatePresentation('theme_color', event.target.value)}
+                  disabled={!canUpdatePresentation}
+                  className="size-9 cursor-pointer rounded-md border bg-background p-1 disabled:cursor-not-allowed"
+                  aria-label={t('themeColor')}
+                />
+                <Input
+                  value={presentation.theme_color}
+                  onChange={event => updatePresentation('theme_color', event.target.value)}
+                  disabled={!canUpdatePresentation}
+                  placeholder="#6366f1"
+                  maxLength={32}
+                />
+              </div>
+            </AccessField>
           </div>
-        )}
+
+          <div className="space-y-2 xl:sticky xl:top-4">
+            <div>
+              <div className="text-sm font-semibold">{t('livePreview')}</div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {t('livePreviewDescription')}
+              </p>
+            </div>
+            <DigitalHumanLandingPreview
+              definition={definition}
+              presentation={presentation}
+              openingGuideBrand={openingGuideBrand}
+            />
+          </div>
+        </div>
       </section>
 
-      <APIKeyEditorDialog
-        open={keyDialogOpen}
-        onOpenChange={setKeyDialogOpen}
-        apiKey={editingKey}
-        pending={mutations.createAPIKey.isPending || mutations.updateAPIKey.isPending}
-        onSubmit={async values => {
-          try {
-            if (editingKey) {
-              await mutations.updateAPIKey.mutateAsync({ keyId: editingKey.id, request: values });
-              toast.success(t('keyUpdated'));
-            } else {
-              const response = await mutations.createAPIKey.mutateAsync(values);
-              setRevealedKey(response.data.api_key);
-            }
-            setKeyDialogOpen(false);
-          } catch (error) {
-            toast.error(getErrorMessage(error) || t('keyUpdateFailed'));
-          }
+      <OpeningStatementDialog
+        open={openingDialogOpen}
+        onOpenChange={setOpeningDialogOpen}
+        value={{
+          title: presentation.home_title,
+          message: presentation.opening_statement,
+          suggestedQuestions: presentation.suggested_questions,
         }}
+        previewBrand={openingGuideBrand}
+        onSave={value =>
+          onPresentationChange({
+            ...presentation,
+            home_title: value.title,
+            opening_statement: value.message,
+            suggested_questions: value.suggestedQuestions,
+          })
+        }
       />
-      <Dialog open={Boolean(revealedKey)} onOpenChange={open => !open && setRevealedKey('')}>
-        <DialogContent size="md">
-          <DialogHeader>
-            <DialogTitle>{t('keyCreatedTitle')}</DialogTitle>
-            <DialogDescription>{t('keyCreatedDescription')}</DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-            <div className="flex gap-2">
-              <Input value={revealedKey} readOnly className="font-mono" />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void copy(revealedKey, t('keyCopied'))}
-              >
-                <Copy className="size-4" />
-              </Button>
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button onClick={() => setRevealedKey('')}>{t('done')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+    </div>
+  );
+}
+
+function DigitalHumanLandingPreview({
+  definition,
+  presentation,
+  openingGuideBrand,
+}: {
+  definition: DigitalHumanDefinition;
+  presentation: DigitalHumanPresentationPolicy;
+  openingGuideBrand: OpeningGuideBrand;
+}) {
+  const t = useT('digitalHumans.access');
+  const themeColor = resolvedThemeColor(presentation.theme_color);
+  const style = { '--digital-human-preview-theme': themeColor } as CSSProperties;
+
+  return (
+    <div
+      style={style}
+      className="flex min-h-[520px] flex-col overflow-hidden rounded-xl border bg-muted/20 shadow-sm"
+    >
+      <div className="flex h-14 shrink-0 items-center gap-2.5 border-b bg-background px-4">
+        <IconPreview
+          iconType={openingGuideBrand.iconType === 'image' ? 'image' : 'text'}
+          src={openingGuideBrand.iconSrc}
+          icon={openingGuideBrand.icon}
+          iconBackground={openingGuideBrand.iconBackground}
+          alt={definition.name}
+          size="xs"
+          editable={false}
+        />
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold">{definition.name}</div>
+          {definition.description ? (
+            <div className="truncate text-xs text-muted-foreground">{definition.description}</div>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col bg-background p-4">
+        <div className="flex flex-1 items-center justify-center overflow-y-auto px-2 py-6">
+          <ChatOpeningGuideView
+            title={presentation.home_title.trim() || definition.name}
+            message={presentation.opening_statement}
+            iconType={openingGuideBrand.iconType}
+            icon={openingGuideBrand.icon}
+            iconBackground={openingGuideBrand.iconBackground}
+            iconSrc={openingGuideBrand.iconSrc}
+            suggestions={presentation.suggested_questions}
+          />
+        </div>
+        <div className="mx-auto flex w-full max-w-2xl items-center gap-2 rounded-xl border bg-background p-2 shadow-sm">
+          <div className="min-w-0 flex-1 truncate px-2 text-sm text-muted-foreground">
+            {presentation.input_placeholder.trim() || t('previewInputPlaceholder')}
+          </div>
+          <span
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-white"
+            style={{ backgroundColor: 'var(--digital-human-preview-theme)' }}
+          >
+            <SendHorizontal className="size-4" />
+          </span>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 border-t bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+        <Globe2 className="size-3.5" />
+        {t('previewFooter')}
+      </div>
     </div>
   );
 }
@@ -454,7 +333,7 @@ function AccessField({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-2 md:grid-cols-[180px_minmax(0,1fr)] md:items-start">
+    <label className="grid gap-2">
       <span>
         <span className="block text-sm font-medium">{label}</span>
         <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
@@ -464,72 +343,33 @@ function AccessField({
   );
 }
 
-function APIKeyEditorDialog({
-  open,
-  onOpenChange,
-  apiKey,
-  pending,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  apiKey: DigitalHumanAPIKey | null;
-  pending: boolean;
-  onSubmit: (values: { name: string; expires_at?: string }) => Promise<void>;
-}) {
-  const t = useT('digitalHumans.access');
-  const [name, setName] = useState('');
-  const [expiresAt, setExpiresAt] = useState('');
-  useEffect(() => {
-    if (!open) return;
-    setName(apiKey?.name ?? '');
-    setExpiresAt(apiKey?.expires_at ? toLocalDateTime(apiKey.expires_at) : '');
-  }, [apiKey, open]);
-  const submit = () => {
-    const normalized = name.trim();
-    if (!normalized) return;
-    void onSubmit({
-      name: normalized,
-      ...(expiresAt ? { expires_at: new Date(expiresAt).toISOString() } : {}),
-    });
+function resolveOpeningGuideBrand(definition: DigitalHumanDefinition): OpeningGuideBrand {
+  let icon = definition.name.slice(0, 2).toUpperCase();
+  let iconBackground = ICON_BG;
+  if (definition.icon_type === 'text' && definition.icon) {
+    try {
+      const parsed = JSON.parse(definition.icon) as {
+        icon?: string;
+        icon_background?: string;
+      };
+      icon = parsed.icon || icon;
+      iconBackground = parsed.icon_background || iconBackground;
+    } catch {
+      icon = definition.icon.slice(0, 2) || icon;
+    }
+  }
+  return {
+    title: definition.name,
+    iconType: definition.icon_type,
+    icon,
+    iconBackground,
+    iconSrc:
+      definition.icon_type === 'image'
+        ? definition.icon_url || definition.avatar || definition.icon
+        : undefined,
   };
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="md">
-        <DialogHeader>
-          <DialogTitle>{apiKey ? t('editKeyTitle') : t('createKeyTitle')}</DialogTitle>
-          <DialogDescription>
-            {apiKey ? t('editKeyDescription') : t('createKeyDescription')}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          <AccessField label={t('keyName')} description={t('keyNameDescription')}>
-            <Input value={name} onChange={event => setName(event.target.value)} maxLength={255} />
-          </AccessField>
-          <AccessField label={t('keyExpiry')} description={t('keyExpiryDescription')}>
-            <Input
-              type="datetime-local"
-              value={expiresAt}
-              min={toLocalDateTime(new Date().toISOString())}
-              onChange={event => setExpiresAt(event.target.value)}
-            />
-          </AccessField>
-        </DialogBody>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t('cancel')}
-          </Button>
-          <Button disabled={!name.trim() || pending} loading={pending} onClick={submit}>
-            {apiKey ? t('save') : t('create')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
-function toLocalDateTime(value: string): string {
-  const date = new Date(value);
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+function resolvedThemeColor(value: string): string {
+  return /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : '#6366f1';
 }

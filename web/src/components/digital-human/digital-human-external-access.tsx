@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { PanelsTopLeft } from 'lucide-react';
+import { AppWindow } from 'lucide-react';
 import { toast } from 'sonner';
 import { DigitalHumanAccessPanel } from '@/components/digital-human/digital-human-access-panel';
 import {
@@ -94,18 +94,18 @@ function ExternalAccessEditor({ id }: { id: string }) {
     <div className="mx-auto min-h-full w-full max-w-[1200px] px-4 py-6 md:px-8 xl:py-8">
       <header className="flex items-start gap-3 border-b pb-5">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <PanelsTopLeft className="size-5" />
+          <AppWindow className="size-5" />
         </span>
         <div className="min-w-0">
-          <h2 className="text-xl font-semibold">{t('access.title')}</h2>
+          <h2 className="text-xl font-semibold">{t('access.landingPageTitle')}</h2>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
-            {t('access.description')}
+            {t('access.landingPageDescription')}
           </p>
         </div>
       </header>
       <DigitalHumanAccessPanel
         id={id}
-        webAppId={detail.definition.web_app_id}
+        definition={detail.definition}
         published={Boolean(detail.published)}
         canPublish={permissions.hasPermission('digital_human.publish')}
         canUpdatePresentation={canUpdate}
