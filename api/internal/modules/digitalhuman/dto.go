@@ -84,8 +84,10 @@ type UpdateDraftRequest struct {
 
 // PublishRequest promotes the current draft and creates the next mutable draft.
 type PublishRequest struct {
-	ExpectedRevision         int64 `json:"expected_revision"`
-	ExpectedDraftLockVersion int64 `json:"expected_draft_lock_version"`
+	ExpectedRevision         int64  `json:"expected_revision"`
+	ExpectedDraftLockVersion int64  `json:"expected_draft_lock_version"`
+	Name                     string `json:"name,omitempty"`
+	Description              string `json:"description,omitempty"`
 }
 
 // ListQuery controls workspace-scoped DigitalHuman pagination.

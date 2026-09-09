@@ -199,6 +199,16 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	if method == http.MethodPost && strings.HasSuffix(path, "/publish") {
 		return workspacemodel.WorkspacePermissionDigitalHumanPublish
 	}
+	if strings.Contains(path, "/versions") {
+		switch method {
+		case http.MethodGet:
+			return workspacemodel.WorkspacePermissionDigitalHumanView
+		case http.MethodPost:
+			return workspacemodel.WorkspacePermissionDigitalHumanPublish
+		default:
+			return ""
+		}
+	}
 	switch method {
 	case http.MethodGet:
 		return workspacemodel.WorkspacePermissionDigitalHumanView

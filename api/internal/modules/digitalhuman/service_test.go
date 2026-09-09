@@ -61,6 +61,8 @@ func TestServicePublishCreatesImmutableSnapshotAndNextDraft(t *testing.T) {
 	publishedDetail, err := service.Publish(t.Context(), scope, detail.Definition.ID, PublishRequest{
 		ExpectedRevision:         detail.Definition.Revision,
 		ExpectedDraftLockVersion: detail.Draft.LockVersion,
+		Name:                     "  Research-ready release  ",
+		Description:              "  Adds production research behavior.  ",
 	})
 	if err != nil {
 		t.Fatalf("Publish() error = %v", err)
@@ -71,11 +73,17 @@ func TestServicePublishCreatesImmutableSnapshotAndNextDraft(t *testing.T) {
 	if publishedDetail.Published == nil || publishedDetail.Published.State != VersionStatePublished || publishedDetail.Published.VersionNumber != 1 {
 		t.Fatalf("published version = %#v", publishedDetail.Published)
 	}
+	if publishedDetail.Published.Name != "Research-ready release" || publishedDetail.Published.Description != "Adds production research behavior." {
+		t.Fatalf("published release metadata = %#v", publishedDetail.Published)
+	}
 	if !strings.HasPrefix(publishedDetail.Published.Revision, versionRevisionPrefix) || len(publishedDetail.Published.IdentitySnapshot) == 0 {
 		t.Fatalf("published revision/snapshot = %q / %s", publishedDetail.Published.Revision, publishedDetail.Published.IdentitySnapshot)
 	}
 	if publishedDetail.Draft.ID == publishedDetail.Published.ID || publishedDetail.Draft.State != VersionStateDraft || publishedDetail.Draft.LockVersion != 1 {
 		t.Fatalf("next draft = %#v", publishedDetail.Draft)
+	}
+	if publishedDetail.Draft.Name != "" || publishedDetail.Draft.Description != "" {
+		t.Fatalf("next draft inherited release metadata = %#v", publishedDetail.Draft)
 	}
 	if publishedDetail.Draft.Revision != publishedDetail.Published.Revision {
 		t.Fatalf("fresh draft revision = %q, published revision = %q", publishedDetail.Draft.Revision, publishedDetail.Published.Revision)
@@ -114,6 +122,59 @@ func TestServicePublishCreatesImmutableSnapshotAndNextDraft(t *testing.T) {
 	}
 	if err := repo.UpdateDraftCAS(t.Context(), scope, reloaded.Published, reloaded.Published.LockVersion); !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("UpdateDraftCAS(published) error = %v, want revision conflict", err)
+	}
+}
+
+func TestServicePublishRejectsOversizedReleaseMetadata(t *testing.T) {
+	service, _ := newTestService(t)
+	scope := testScope()
+	detail := createPublishableDigitalHuman(t, service, scope, "Release limits")
+
+	tests := []PublishRequest{
+		{
+			ExpectedRevision:         detail.Definition.Revision,
+			ExpectedDraftLockVersion: detail.Draft.LockVersion,
+			Name:                     strings.Repeat("界", maxVersionNameRunes+1),
+		},
+		{
+			ExpectedRevision:         detail.Definition.Revision,
+			ExpectedDraftLockVersion: detail.Draft.LockVersion,
+			Description:              strings.Repeat("界", maxVersionDescriptionRunes+1),
+		},
+	}
+	for _, request := range tests {
+		if _, err := service.Publish(t.Context(), scope, detail.Definition.ID, request); !apperror.IsCode(err, AppCodeRequestInvalid) {
+			t.Fatalf("Publish(oversized metadata) error = %v, want request invalid", err)
+		}
+	}
+
+	reloaded, err := service.Get(t.Context(), scope, detail.Definition.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Published != nil || reloaded.Draft.ID != detail.Draft.ID {
+		t.Fatalf("oversized metadata partially published the draft: %#v", reloaded)
+	}
+}
+
+func TestNormalizePublishRequest(t *testing.T) {
+	normalized, err := normalizePublishRequest(PublishRequest{
+		ExpectedRevision:         2,
+		ExpectedDraftLockVersion: 3,
+		Name:                     "  Research release  ",
+		Description:              "  Production notes  ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Name != "Research release" || normalized.Description != "Production notes" {
+		t.Fatalf("normalizePublishRequest() = %#v", normalized)
+	}
+	if _, err := normalizePublishRequest(PublishRequest{Name: strings.Repeat("界", maxVersionNameRunes+1)}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("normalizePublishRequest(oversized name) error = %v", err)
+	}
+	if _, err := normalizePublishRequest(PublishRequest{Description: strings.Repeat("界", maxVersionDescriptionRunes+1)}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("normalizePublishRequest(oversized description) error = %v", err)
 	}
 }
 
@@ -204,6 +265,8 @@ func TestPublishedVersionsAreNewestFirst(t *testing.T) {
 	first, err := service.Publish(t.Context(), scope, detail.Definition.ID, PublishRequest{
 		ExpectedRevision:         detail.Definition.Revision,
 		ExpectedDraftLockVersion: detail.Draft.LockVersion,
+		Name:                     "First release",
+		Description:              "Initial production version",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -211,6 +274,8 @@ func TestPublishedVersionsAreNewestFirst(t *testing.T) {
 	second, err := service.Publish(t.Context(), scope, detail.Definition.ID, PublishRequest{
 		ExpectedRevision:         first.Definition.Revision,
 		ExpectedDraftLockVersion: first.Draft.LockVersion,
+		Name:                     "Second release",
+		Description:              "Refined production version",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -221,6 +286,10 @@ func TestPublishedVersionsAreNewestFirst(t *testing.T) {
 	}
 	if versions.Total != 2 || len(versions.Items) != 2 || versions.Items[0].VersionNumber != 2 || versions.Items[1].VersionNumber != 1 {
 		t.Fatalf("PublishedVersions() = %#v; latest detail = %#v", versions, second)
+	}
+	if versions.Items[0].Name != "Second release" || versions.Items[0].Description != "Refined production version" ||
+		versions.Items[1].Name != "First release" || versions.Items[1].Description != "Initial production version" {
+		t.Fatalf("PublishedVersions() release metadata = %#v", versions.Items)
 	}
 }
 

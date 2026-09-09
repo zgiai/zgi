@@ -87,6 +87,8 @@ type Version struct {
 	WorkspaceID        uuid.UUID      `gorm:"type:uuid;not null;column:workspace_id" json:"workspace_id"`
 	State              VersionState   `gorm:"type:varchar(16);not null" json:"state"`
 	VersionNumber      int            `gorm:"not null;default:0;column:version_number" json:"version_number"`
+	Name               string         `gorm:"type:varchar(80);not null;default:''" json:"name"`
+	Description        string         `gorm:"type:text;not null;default:''" json:"description"`
 	IdentityName       string         `gorm:"type:varchar(80);not null;default:'';column:identity_name" json:"identity_name"`
 	Persona            string         `gorm:"type:text;not null;default:''" json:"persona"`
 	Goals              datatypes.JSON `gorm:"type:jsonb;not null;default:'[]';column:goals" json:"goals"`

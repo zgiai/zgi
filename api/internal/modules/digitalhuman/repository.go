@@ -274,6 +274,8 @@ func (r *GormRepository) PromoteDraftCAS(ctx context.Context, scope Scope, draft
 		Updates(map[string]any{
 			"state":             VersionStatePublished,
 			"version_number":    draft.VersionNumber,
+			"name":              draft.Name,
+			"description":       draft.Description,
 			"identity_snapshot": draft.IdentitySnapshot,
 			"revision":          draft.Revision,
 			"published_by":      draft.PublishedBy,

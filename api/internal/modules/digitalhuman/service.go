@@ -17,25 +17,27 @@ import (
 )
 
 const (
-	defaultPageSize           = 20
-	maxPageSize               = 100
-	maxNameRunes              = 80
-	maxAvatarRunes            = 2_048
-	maxIconRunes              = 4_096
-	maxDescriptionRunes       = 4_000
-	maxPersonaRunes           = 16_000
-	maxGoals                  = 64
-	maxGoalRunes              = 1_000
-	maxRules                  = 128
-	maxRuleRunes              = 2_000
-	maxDefaultModelRunes      = 255
-	maxPolicyBytes            = 64 * 1024
-	maxPresentationTitleRunes = 120
-	maxOpeningStatementRunes  = 2_000
-	maxInputPlaceholderRunes  = 160
-	maxSuggestedQuestions     = 6
-	maxSuggestedQuestionRunes = 240
-	versionRevisionPrefix     = "sha256:"
+	defaultPageSize            = 20
+	maxPageSize                = 100
+	maxNameRunes               = 80
+	maxAvatarRunes             = 2_048
+	maxIconRunes               = 4_096
+	maxDescriptionRunes        = 4_000
+	maxPersonaRunes            = 16_000
+	maxGoals                   = 64
+	maxGoalRunes               = 1_000
+	maxRules                   = 128
+	maxRuleRunes               = 2_000
+	maxDefaultModelRunes       = 255
+	maxPolicyBytes             = 64 * 1024
+	maxPresentationTitleRunes  = 120
+	maxOpeningStatementRunes   = 2_000
+	maxInputPlaceholderRunes   = 160
+	maxSuggestedQuestions      = 6
+	maxSuggestedQuestionRunes  = 240
+	maxVersionNameRunes        = 80
+	maxVersionDescriptionRunes = 500
+	versionRevisionPrefix      = "sha256:"
 )
 
 // Service owns DigitalHuman lifecycle and publication rules.
@@ -239,8 +241,12 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 	if !validScope(scope) || id == uuid.Nil || request.ExpectedRevision < 1 || request.ExpectedDraftLockVersion < 1 {
 		return nil, applicationError(ErrInvalidRequest, "digital_human.publish")
 	}
+	request, err := normalizePublishRequest(request)
+	if err != nil {
+		return nil, applicationError(ErrInvalidRequest, "digital_human.publish")
+	}
 	var result Detail
-	err := s.repo.Transaction(ctx, func(tx *GormRepository) error {
+	err = s.repo.Transaction(ctx, func(tx *GormRepository) error {
 		definition, err := tx.LockDefinition(ctx, scope, id)
 		if err != nil {
 			return err
@@ -275,6 +281,8 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 		actorID := scope.ActorID
 		draft.State = VersionStatePublished
 		draft.VersionNumber = number
+		draft.Name = request.Name
+		draft.Description = request.Description
 		draft.PublishedBy = &actorID
 		draft.PublishedAt = &now
 		draft.UpdatedBy = &actorID
@@ -316,6 +324,16 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 		return nil, applicationError(err, "digital_human.publish")
 	}
 	return &result, nil
+}
+
+func normalizePublishRequest(request PublishRequest) (PublishRequest, error) {
+	request.Name = strings.TrimSpace(request.Name)
+	request.Description = strings.TrimSpace(request.Description)
+	if utf8.RuneCountInString(request.Name) > maxVersionNameRunes ||
+		utf8.RuneCountInString(request.Description) > maxVersionDescriptionRunes {
+		return PublishRequest{}, ErrInvalidRequest
+	}
+	return request, nil
 }
 
 // PublishedVersions returns immutable publication history.
