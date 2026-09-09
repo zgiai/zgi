@@ -2,13 +2,17 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/datatypes"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestVideoBillingContextFromTaskPreservesProductAttribution(t *testing.T) {
@@ -44,6 +48,43 @@ func TestVideoBillingContextFromTaskPreservesProductAttribution(t *testing.T) {
 	}
 	if billingCtx.AppID == nil || *billingCtx.AppID != appID {
 		t.Fatalf("app id = %#v, want %s", billingCtx.AppID, appID)
+	}
+}
+
+func TestVideoBillingContextRestoresAttemptStartAndRecordsEndToEndTiming(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE billing_attempts (attempt_id TEXT PRIMARY KEY, created_at DATETIME NOT NULL)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	startedAt := time.Now().UTC().Add(-2 * time.Second)
+	if err := db.Exec(`INSERT INTO billing_attempts (attempt_id, created_at) VALUES (?, ?)`, "video-request-2:0", startedAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	selection := &ProviderSelection{Model: llmmodel.LLMModel{ID: uuid.New(), Model: "video-test"}}
+	req := &adapter.VideoTaskRequest{AdditionalParameters: map[string]interface{}{
+		"billing_request_id": "video-request-2",
+		"billing_attempt_id": "video-request-2:0",
+	}}
+	billingCtx, err := (&llmGatewayServiceImpl{db: db}).videoBillingContextFromTask(
+		context.Background(), &apikeymodel.TenantAPIKey{ID: uuid.NewString()}, nil, selection,
+		uuid.New(), uuid.New(), req, 1000,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalizeVideoTimingSnapshot(billingCtx, "succeeded")
+	if billingCtx.ResponseTime < 1500 {
+		t.Fatalf("response time = %dms, want restored end-to-end duration", billingCtx.ResponseTime)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(billingCtx.PricingSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot["video_queue_time"] != "provider_not_reported" || snapshot["video_generation_time"] != "provider_not_reported" {
+		t.Fatalf("timing snapshot = %#v", snapshot)
 	}
 }
 

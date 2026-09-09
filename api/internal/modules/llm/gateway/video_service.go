@@ -687,8 +687,8 @@ func (s *llmGatewayServiceImpl) settleVideoTaskSuccess(
 	}
 	billingCtx.ActualCredits = quote.TotalCredits
 	billingCtx.Status = billingContextStatusSuccess
-	billingCtx.ResponseTime = 0
 	applyPricingQuoteToBillingContext(billingCtx, quote)
+	finalizeVideoTimingSnapshot(billingCtx, resp.Status)
 	if selection.UseSystemProvider && resp.Settlement != nil {
 		billingCtx.DeductionID = resp.Settlement.SettlementID
 		decision, err := s.resolveBillingDecision(selection, billingCtx)
@@ -744,7 +744,6 @@ func (s *llmGatewayServiceImpl) settleVideoTaskFailure(
 	billingCtx.PricingOperation = PricingOperationVideo
 	billingCtx.ActualCredits = 0
 	billingCtx.Status = billingContextStatusError
-	billingCtx.ResponseTime = 0
 	billingCtx.InputUSD = decimal.Zero
 	billingCtx.OutputUSD = decimal.Zero
 	billingCtx.TotalUSD = decimal.Zero
@@ -754,6 +753,7 @@ func (s *llmGatewayServiceImpl) settleVideoTaskFailure(
 	if resp.Error != nil {
 		billingCtx.ErrorMessage = fmt.Sprint(resp.Error)
 	}
+	finalizeVideoTimingSnapshot(billingCtx, resp.Status)
 
 	if err := s.settleVideoBillingContext(ctx, selection, billingCtx); err != nil {
 		return err
@@ -792,8 +792,39 @@ func (s *llmGatewayServiceImpl) videoBillingContextFromTask(
 	)
 	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
 	billingCtx.RoutingStrategy = selection.RoutingStrategy
+	if s != nil && s.db != nil {
+		var attempt BillingAttempt
+		if err := s.db.WithContext(ctx).
+			Select("created_at").
+			Where("attempt_id = ?", attemptID).
+			Take(&attempt).Error; err == nil && !attempt.CreatedAt.IsZero() {
+			billingCtx.RequestCreatedAt = attempt.CreatedAt.UTC()
+		}
+	}
 	_ = ownerID
 	return billingCtx, nil
+}
+
+func finalizeVideoTimingSnapshot(billingCtx *BillingContext, providerStatus string) {
+	if billingCtx == nil {
+		return
+	}
+	finishedAt := time.Now().UTC()
+	if billingCtx.RequestCreatedAt.IsZero() || billingCtx.RequestCreatedAt.After(finishedAt) {
+		billingCtx.RequestCreatedAt = finishedAt
+	}
+	billingCtx.ResponseTime = finishedAt.Sub(billingCtx.RequestCreatedAt).Milliseconds()
+	values := map[string]interface{}{}
+	if len(billingCtx.PricingSnapshot) > 0 && string(billingCtx.PricingSnapshot) != "null" {
+		_ = json.Unmarshal(billingCtx.PricingSnapshot, &values)
+	}
+	values["video_task_submitted_at"] = billingCtx.RequestCreatedAt.Format(time.RFC3339Nano)
+	values["video_task_finalized_at"] = finishedAt.Format(time.RFC3339Nano)
+	values["video_end_to_end_ms"] = billingCtx.ResponseTime
+	values["video_provider_status"] = strings.TrimSpace(providerStatus)
+	values["video_queue_time"] = "provider_not_reported"
+	values["video_generation_time"] = "provider_not_reported"
+	billingCtx.PricingSnapshot = buildPricingSnapshot(values)
 }
 
 func (s *llmGatewayServiceImpl) settleVideoBillingContext(ctx context.Context, selection *ProviderSelection, billingCtx *BillingContext) error {

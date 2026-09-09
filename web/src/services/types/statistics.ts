@@ -147,6 +147,8 @@ export interface InvocationLogItem {
   provider_name: string;
   channel_name: string;
   supplier_name?: string;
+  actual_channel_name?: string;
+  settlement_id?: string;
   status: InvocationStatus;
   attempt_count: number;
   prompt_tokens: number;

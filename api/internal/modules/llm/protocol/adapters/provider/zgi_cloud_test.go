@@ -525,12 +525,17 @@ func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementTrailersAfterDone
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Trailer", headerSettlementID+", "+headerOfficialPoints+", "+headerSettlementStatus)
+		w.Header().Set("Trailer", strings.Join([]string{headerSettlementID, headerOfficialPoints, headerSettlementStatus, headerActualChannelID, headerActualChannelName, headerActualProvider, headerActualProtocol, headerActualUpstreamModel}, ", "))
 		fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n")
 		fmt.Fprint(w, "data: [DONE]\n\n")
 		w.Header().Set(headerSettlementID, "deduction-trailer")
 		w.Header().Set(headerOfficialPoints, "9")
 		w.Header().Set(headerSettlementStatus, "settled")
+		w.Header().Set(headerActualChannelID, "channel-siliconflow")
+		w.Header().Set(headerActualChannelName, "SiliconFlow Primary")
+		w.Header().Set(headerActualProvider, "siliconflow")
+		w.Header().Set(headerActualProtocol, "openai")
+		w.Header().Set(headerActualUpstreamModel, "deepseek-ai/DeepSeek-V4-Pro")
 	}))
 	defer server.Close()
 
@@ -560,6 +565,9 @@ func TestZGICloudAdapterChatCompletionStream_ConsumesSettlementTrailersAfterDone
 	}
 	if done.Settlement == nil || done.Settlement.SettlementID != "deduction-trailer" || done.Settlement.OfficialPoints != 9 {
 		t.Fatalf("done settlement = %+v, want deduction-trailer/9", done.Settlement)
+	}
+	if done.Settlement.ActualChannelID != "channel-siliconflow" || done.Settlement.ActualProvider != "siliconflow" || done.Settlement.ActualUpstreamModel != "deepseek-ai/DeepSeek-V4-Pro" {
+		t.Fatalf("done actual route = %+v", done.Settlement)
 	}
 	if done.Usage == nil || done.Usage.TotalTokens != 5 {
 		t.Fatalf("done usage = %+v, want total 5", done.Usage)

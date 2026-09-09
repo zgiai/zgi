@@ -207,9 +207,10 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`CREATE TABLE llm_usage_bills (
-		request_id TEXT NOT NULL, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
+		request_id TEXT NOT NULL, attempt_id TEXT, organization_id TEXT NOT NULL, app_id TEXT, app_type TEXT,
 		invocation_source TEXT NOT NULL, model_name TEXT NOT NULL, provider_name TEXT NOT NULL,
 		channel_id TEXT,
+		remote_deduction_id TEXT,
 		pricing_snapshot JSON NOT NULL DEFAULT '{}',
 		status TEXT NOT NULL, prompt_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL,
 		total_tokens INTEGER NOT NULL, total_points INTEGER NOT NULL, response_time_ms INTEGER NOT NULL,
@@ -239,7 +240,8 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	}
 	if err := db.Table(usageBillTable).Where("request_id = ?", "req-product").Updates(map[string]any{
 		"app_type": "agent", "model_name": "deepseek-v4-pro", "provider_name": "agicto", "channel_id": "channel-1",
-		"pricing_snapshot": `{"actual_channel_name":"硅基流动"}`,
+		"remote_deduction_id": "settlement-product-1",
+		"pricing_snapshot":    `{"actual_channel_name":"硅基流动","actual_provider":"siliconflow"}`,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +275,7 @@ func TestGetInvocationLogGroupsAttemptsAndIsolatesOrganization(t *testing.T) {
 	if retried == nil || retried.AttemptCount != 2 || retried.Status != "success" || retried.TotalTokens != 30 {
 		t.Fatalf("unexpected retried invocation: %#v", retried)
 	}
-	if product == nil || product.ProviderName != "deepseek" || product.ChannelName != "Official Cloud A" || product.SupplierName != "硅基流动" || !product.ContentAvailable || product.ContentExpiresAt == nil || retried.ContentAvailable {
+	if product == nil || product.ProviderName != "deepseek" || product.ChannelName != "Official Cloud A" || product.SupplierName != "siliconflow" || product.ActualChannelName != "硅基流动" || product.SettlementID != "settlement-product-1" || !product.ContentAvailable || product.ContentExpiresAt == nil || retried.ContentAvailable {
 		t.Fatalf("unexpected content availability: product=%#v retried=%#v", product, retried)
 	}
 

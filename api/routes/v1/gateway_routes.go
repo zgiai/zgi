@@ -74,6 +74,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	// Register routes with authentication middleware
 	// OpenAI-compatible endpoints
 	v1 := router.Group("/v1")
+	v1.Use(gatewayhandler.GatewayBodyLimit(0))
 	v1.Use(authMiddleware)
 	{
 		// OpenAI-compatible endpoints
@@ -94,6 +95,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 
 	// Anthropic-compatible endpoints
 	anthropic := router.Group("/anthropic")
+	anthropic.Use(gatewayhandler.GatewayBodyLimit(0))
 	anthropic.Use(authMiddleware)
 	{
 		anthropic.POST("/v1/messages", llmHandler.CreateAnthropicMessage)
@@ -101,6 +103,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	logger.Info("Anthropic-compatible gateway routes registered", "path", "/anthropic/*")
 
 	gemini := router.Group("/v1beta")
+	gemini.Use(gatewayhandler.GatewayBodyLimit(0))
 	gemini.Use(authMiddleware)
 	{
 		gemini.POST("/models/*modelAction", llmHandler.CreateGeminiContent)

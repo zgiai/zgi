@@ -312,7 +312,7 @@ export function InvocationLogSection({
                         <div className="text-xs text-muted-foreground">{item.provider_name}</div>
                       </TableCell>
                       <TableCell>
-                        <div>{item.channel_name || '-'}</div>
+                        <div>{item.actual_channel_name || item.channel_name || '-'}</div>
                         {item.supplier_name ? (
                           <div className="text-xs text-muted-foreground">
                             {t('usage.invocations.supplierLabel', { name: item.supplier_name })}
@@ -478,7 +478,12 @@ function InvocationDetailSheet({
                 [t('usage.invocations.details.model'), item.model_name],
                 [t('usage.invocations.details.provider'), item.provider_name],
                 [t('usage.invocations.details.channel'), item.channel_name || '-'],
+                [
+                  t('usage.invocations.details.actualChannel'),
+                  item.actual_channel_name || '-',
+                ],
                 [t('usage.invocations.details.supplier'), item.supplier_name || '-'],
+                [t('usage.invocations.details.settlementId'), item.settlement_id || '-'],
                 [
                   t('usage.invocations.details.startedAt'),
                   new Date(item.started_at).toLocaleString(locale),

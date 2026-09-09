@@ -115,7 +115,7 @@ func geminiErrorStatus(status int) string {
 		return "PERMISSION_DENIED"
 	case http.StatusNotFound:
 		return "NOT_FOUND"
-	case http.StatusTooManyRequests:
+	case http.StatusTooManyRequests, http.StatusRequestEntityTooLarge:
 		return "RESOURCE_EXHAUSTED"
 	case http.StatusServiceUnavailable:
 		return "UNAVAILABLE"

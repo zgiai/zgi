@@ -77,28 +77,30 @@ func (value dbTime) Value() (driver.Value, error) {
 }
 
 type invocationBillRow struct {
-	RequestID        string         `gorm:"column:request_id"`
-	AppID            *string        `gorm:"column:app_id"`
-	AppType          *string        `gorm:"column:app_type"`
-	InvocationSource string         `gorm:"column:invocation_source"`
-	ModelName        string         `gorm:"column:model_name"`
-	ProviderName     string         `gorm:"column:provider_name"`
-	ChannelName      string         `gorm:"column:channel_name"`
-	SupplierName     string         `gorm:"column:supplier_name"`
-	Status           string         `gorm:"column:status"`
-	PromptTokens     int64          `gorm:"column:prompt_tokens"`
-	CacheReadTokens  int64          `gorm:"column:cache_read_tokens"`
-	CacheWriteTokens int64          `gorm:"column:cache_write_tokens"`
-	CompletionTokens int64          `gorm:"column:completion_tokens"`
-	TotalTokens      int64          `gorm:"column:total_tokens"`
-	TotalPoints      int64          `gorm:"column:total_points"`
-	BillingLane      string         `gorm:"column:billing_lane"`
-	PricingSource    string         `gorm:"column:pricing_source"`
-	UsageSource      string         `gorm:"column:usage_source"`
-	PricingSnapshot  datatypes.JSON `gorm:"column:pricing_snapshot"`
-	ErrorCode        *string        `gorm:"column:error_code"`
-	RequestCreatedAt time.Time      `gorm:"column:request_created_at"`
-	SettledAt        time.Time      `gorm:"column:settled_at"`
+	RequestID         string         `gorm:"column:request_id"`
+	AppID             *string        `gorm:"column:app_id"`
+	AppType           *string        `gorm:"column:app_type"`
+	InvocationSource  string         `gorm:"column:invocation_source"`
+	ModelName         string         `gorm:"column:model_name"`
+	ProviderName      string         `gorm:"column:provider_name"`
+	ChannelName       string         `gorm:"column:channel_name"`
+	SupplierName      string         `gorm:"column:supplier_name"`
+	ActualChannelName string         `gorm:"column:actual_channel_name"`
+	SettlementID      string         `gorm:"column:settlement_id"`
+	Status            string         `gorm:"column:status"`
+	PromptTokens      int64          `gorm:"column:prompt_tokens"`
+	CacheReadTokens   int64          `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens  int64          `gorm:"column:cache_write_tokens"`
+	CompletionTokens  int64          `gorm:"column:completion_tokens"`
+	TotalTokens       int64          `gorm:"column:total_tokens"`
+	TotalPoints       int64          `gorm:"column:total_points"`
+	BillingLane       string         `gorm:"column:billing_lane"`
+	PricingSource     string         `gorm:"column:pricing_source"`
+	UsageSource       string         `gorm:"column:usage_source"`
+	PricingSnapshot   datatypes.JSON `gorm:"column:pricing_snapshot"`
+	ErrorCode         *string        `gorm:"column:error_code"`
+	RequestCreatedAt  time.Time      `gorm:"column:request_created_at"`
+	SettledAt         time.Time      `gorm:"column:settled_at"`
 }
 
 type invocationContentAvailabilityRow struct {
@@ -305,12 +307,23 @@ func (r *statisticsRepositoryImpl) queryInvocationBills(ctx context.Context, fil
 		usageSourceColumn = "b.usage_source"
 	}
 	supplierNameColumn := "'' AS supplier_name"
+	actualChannelNameColumn := "'' AS actual_channel_name"
 	if hasPricingSnapshot {
 		actualChannelName := "NULLIF(b.pricing_snapshot ->> 'actual_channel_name', '')"
+		actualProvider := "NULLIF(b.pricing_snapshot ->> 'actual_provider', '')"
 		if r.db.Dialector.Name() == "sqlite" {
 			actualChannelName = "NULLIF(json_extract(b.pricing_snapshot, '$.actual_channel_name'), '')"
+			actualProvider = "NULLIF(json_extract(b.pricing_snapshot, '$.actual_provider'), '')"
 		}
-		supplierNameColumn = "COALESCE(" + actualChannelName + ", '') AS supplier_name"
+		supplierNameColumn = "COALESCE(" + actualProvider + ", NULLIF(b.provider_name, ''), '') AS supplier_name"
+		actualChannelNameColumn = "COALESCE(" + actualChannelName + ", '') AS actual_channel_name"
+	}
+	settlementIDColumn := "'' AS settlement_id"
+	hasAttemptID := r.db.Migrator().HasColumn(usageBillTable, "attempt_id")
+	if r.db.Migrator().HasColumn(usageBillTable, "remote_deduction_id") && hasAttemptID {
+		settlementIDColumn = "COALESCE(NULLIF(b.remote_deduction_id, ''), b.attempt_id, '') AS settlement_id"
+	} else if hasAttemptID {
+		settlementIDColumn = "COALESCE(b.attempt_id, '') AS settlement_id"
 	}
 	channelNameColumn := "'' AS channel_name"
 	joinChannel := r.db.Migrator().HasColumn(usageBillTable, "channel_id") &&
@@ -318,12 +331,19 @@ func (r *statisticsRepositoryImpl) queryInvocationBills(ctx context.Context, fil
 		r.db.Migrator().HasColumn("llm_routes", "name")
 	if joinChannel {
 		channelNameColumn = "COALESCE(r.name, '') AS channel_name"
+		if hasPricingSnapshot {
+			actualChannelName := "NULLIF(b.pricing_snapshot ->> 'actual_channel_name', '')"
+			if r.db.Dialector.Name() == "sqlite" {
+				actualChannelName = "NULLIF(json_extract(b.pricing_snapshot, '$.actual_channel_name'), '')"
+			}
+			actualChannelNameColumn = "COALESCE(" + actualChannelName + ", NULLIF(r.name, ''), '') AS actual_channel_name"
+		}
 	}
 	query := r.db.WithContext(ctx).Table(usageBillTable+" b").
 		Select(fmt.Sprintf(`b.request_id, b.app_id, b.app_type, b.invocation_source, b.model_name, b.provider_name,
 			b.status, b.prompt_tokens, b.cache_read_tokens, b.cache_write_tokens, b.completion_tokens, b.total_tokens, b.total_points,
-			b.error_code, b.request_created_at, b.settled_at, %s, %s, %s, %s, %s, %s`,
-			pricingSnapshotColumn, channelNameColumn, supplierNameColumn, billingLaneColumn, pricingSourceColumn, usageSourceColumn)).
+			b.error_code, b.request_created_at, b.settled_at, %s, %s, %s, %s, %s, %s, %s, %s`,
+			pricingSnapshotColumn, channelNameColumn, supplierNameColumn, actualChannelNameColumn, settlementIDColumn, billingLaneColumn, pricingSourceColumn, usageSourceColumn)).
 		Where("b.request_id IN ?", requestIDs)
 	if joinChannel {
 		query = query.Joins("LEFT JOIN llm_routes r ON r.id = b.channel_id")
@@ -404,6 +424,8 @@ func aggregateInvocationBills(page []invocationPageRow, bills []invocationBillRo
 			acc.item.ProviderName = invocationModelVendor(bill.ProviderName, bill.ModelName)
 			acc.item.ChannelName = bill.ChannelName
 			acc.item.SupplierName = bill.SupplierName
+			acc.item.ActualChannelName = bill.ActualChannelName
+			acc.item.SettlementID = bill.SettlementID
 			acc.item.InvocationSource = normalizedInvocationSource(bill.InvocationSource)
 			acc.item.AppType = normalizedAppType(bill.AppType)
 			acc.item.AppID = bill.AppID

@@ -56,13 +56,13 @@ func (h *LLMHandler) ChatCompletions(c *gin.Context) {
 	// 2. Parse request
 	var req adapter.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError(fmt.Sprintf("Invalid request: %v", err)))
+		writeOpenAIProtocolError(c, invalidRequestProtocolError("Invalid JSON request body"))
 		return
 	}
 
 	// 3. Validate required parameters
-	if req.Model == "" {
-		writeOpenAIProtocolError(c, invalidRequestProtocolError("Model field is required"))
+	if err := validatePublicChatRequest(&req); err != nil {
+		writeOpenAIProtocolError(c, invalidRequestProtocolError(err.Error()))
 		return
 	}
 
@@ -129,6 +129,10 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 		writeOpenAIProtocolError(c, invalidRequestProtocolError("Model field is required"))
 		return
 	}
+	if err := validatePublicNativeBody(req.Body, "responses"); err != nil {
+		writeOpenAIProtocolError(c, invalidRequestProtocolError(err.Error()))
+		return
+	}
 
 	if req.Stream {
 		h.handleResponseStream(c, apiKey, req)
@@ -164,6 +168,10 @@ func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 		writeAnthropicProtocolError(c, invalidRequestProtocolError("Model field is required"))
 		return
 	}
+	if err := validatePublicNativeBody(req.Body, "messages"); err != nil {
+		writeAnthropicProtocolError(c, invalidRequestProtocolError(err.Error()))
+		return
+	}
 
 	if req.Stream {
 		h.handleAnthropicMessageStream(c, apiKey, req)
@@ -192,6 +200,10 @@ func (h *LLMHandler) CreateGeminiContent(c *gin.Context) {
 	}
 	req, err := parseGeminiGenerateContentRequest(c)
 	if err != nil {
+		writeGeminiProtocolError(c, invalidRequestProtocolError(err.Error()))
+		return
+	}
+	if err := validatePublicNativeBody(req.Body, "gemini"); err != nil {
 		writeGeminiProtocolError(c, invalidRequestProtocolError(err.Error()))
 		return
 	}
