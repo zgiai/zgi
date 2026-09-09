@@ -37,6 +37,33 @@ func TestAPIEndUserSubjectIsStableTrimmedAndCaseSensitive(t *testing.T) {
 	}
 }
 
+func TestDigitalHumanAPIEndUserSubjectIsStableAndConsumerScoped(t *testing.T) {
+	workspaceID := uuid.New()
+	firstDigitalHumanID := uuid.New()
+	secondDigitalHumanID := uuid.New()
+	first, err := DigitalHumanAPIEndUserSubject(workspaceID, firstDigitalHumanID, " customer_123 ")
+	if err != nil {
+		t.Fatalf("DigitalHumanAPIEndUserSubject() error = %v", err)
+	}
+	repeated, err := DigitalHumanAPIEndUserSubject(workspaceID, firstDigitalHumanID, "customer_123")
+	if err != nil {
+		t.Fatalf("DigitalHumanAPIEndUserSubject() repeated error = %v", err)
+	}
+	other, err := DigitalHumanAPIEndUserSubject(workspaceID, secondDigitalHumanID, "customer_123")
+	if err != nil {
+		t.Fatalf("DigitalHumanAPIEndUserSubject() other consumer error = %v", err)
+	}
+	if first != repeated {
+		t.Fatalf("trimmed subjects differ: %#v vs %#v", first, repeated)
+	}
+	if first.ID == other.ID {
+		t.Fatal("subjects for different DigitalHumans must differ")
+	}
+	if _, err := DigitalHumanAPIEndUserSubject(workspaceID, firstDigitalHumanID, "bad\nuser"); !errors.Is(err, ErrInvalidUser) {
+		t.Fatalf("control character error = %v, want ErrInvalidUser", err)
+	}
+}
+
 func TestAPIEndUserSubjectValidatesOpaqueUserLimit(t *testing.T) {
 	workspaceID, agentID := uuid.New(), uuid.New()
 	for _, input := range []string{"", "   ", strings.Repeat("x", 129)} {

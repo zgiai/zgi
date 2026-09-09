@@ -10,6 +10,8 @@ const (
 	SurfaceAgentWebApp         MemorySurface = "agent_webapp"
 	SurfaceAgentAPI            MemorySurface = "agent_api"
 	SurfaceDigitalHumanConsole MemorySurface = "digital_human_console"
+	SurfaceDigitalHumanWebApp  MemorySurface = "digital_human_webapp"
+	SurfaceDigitalHumanAPI     MemorySurface = "digital_human_api"
 	SurfaceDigitalHumanTask    MemorySurface = "digital_human_task"
 	SurfaceChannel             MemorySurface = "channel"
 	SurfaceAIChat              MemorySurface = "aichat"
@@ -57,11 +59,11 @@ func DecideAccess(identity InvocationIdentity) AccessDecision {
 		return AccessDecision{Reason: "user_subject_missing"}
 	}
 	switch identity.Surface {
-	case SurfaceAgentConsole, SurfaceAgentWebApp, SurfaceDigitalHumanConsole:
+	case SurfaceAgentConsole, SurfaceAgentWebApp, SurfaceDigitalHumanConsole, SurfaceDigitalHumanWebApp:
 		if identity.UserSubject.Kind != UserSubjectAccount {
 			return AccessDecision{Reason: "subject_kind_mismatch"}
 		}
-	case SurfaceAgentAPI:
+	case SurfaceAgentAPI, SurfaceDigitalHumanAPI:
 		if identity.UserSubject.Kind != UserSubjectAPIEndUser {
 			return AccessDecision{Reason: "subject_kind_mismatch"}
 		}

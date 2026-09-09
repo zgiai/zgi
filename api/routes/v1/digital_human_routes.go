@@ -37,6 +37,7 @@ type DigitalHumanRouteDeps struct {
 	Runtime                 digitalhuman.RuntimeHandlerService
 	Channels                digitalhuman.ChannelHandlerService
 	Tasks                   digitalhuman.TaskHandlerService
+	Access                  *digitalhuman.AccessService
 	AccountService          interfaces.AccountService
 	OrganizationService     interfaces.OrganizationService
 	ApplicationErrorCatalog *appcatalog.Catalog
@@ -71,7 +72,7 @@ type DigitalHumanRuntimeBundle struct {
 
 // RegisterDigitalHumanRoutes exposes the DigitalHuman module.
 func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteDeps) {
-	if router == nil || deps.Service == nil || deps.Runtime == nil || deps.Channels == nil || deps.Tasks == nil || deps.AccountService == nil || deps.OrganizationService == nil {
+	if router == nil || deps.Service == nil || deps.Runtime == nil || deps.Channels == nil || deps.Tasks == nil || deps.Access == nil || deps.AccountService == nil || deps.OrganizationService == nil {
 		panic("digital human routes require lifecycle, runtime, channel, account, and permission services")
 	}
 	errorProjector, err := apptransport.NewProjector(deps.ApplicationErrorCatalog)
@@ -86,6 +87,7 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	group.Use(middleware.CurrentWorkspaceRequired())
 	group.Use(digitalHumanPermissionMiddleware(deps.OrganizationService, errorProjector))
 	digitalhuman.NewHandler(deps.Service, errorProjector).RegisterRoutes(group)
+	digitalhuman.NewAccessHandler(deps.Access, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).RegisterRoutes(group)
 	channelHandler.RegisterAuthenticatedRoutes(group)
@@ -144,6 +146,9 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 			return workspacemodel.WorkspacePermissionDigitalHumanRun
 		}
 		return ""
+	}
+	if strings.Contains(path, "/access") || strings.Contains(path, "/api-keys") {
+		return workspacemodel.WorkspacePermissionDigitalHumanPublish
 	}
 	if strings.Contains(path, "/memory") {
 		if method == http.MethodGet {

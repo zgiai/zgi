@@ -232,17 +232,18 @@ func (r *GormRepository) UpdateDraftCAS(ctx context.Context, scope Scope, versio
 		Where("id = ? AND digital_human_id = ? AND organization_id = ? AND workspace_id = ? AND state = ? AND lock_version = ?",
 			version.ID, version.DigitalHumanID, scope.OrganizationID, scope.WorkspaceID, VersionStateDraft, expectedLockVersion).
 		Updates(map[string]any{
-			"identity_name":  version.IdentityName,
-			"persona":        version.Persona,
-			"goals":          version.Goals,
-			"rules":          version.Rules,
-			"default_model":  version.DefaultModel,
-			"memory_policy":  version.MemoryPolicy,
-			"trigger_policy": version.TriggerPolicy,
-			"revision":       version.Revision,
-			"lock_version":   gorm.Expr("lock_version + 1"),
-			"updated_by":     scope.ActorID,
-			"updated_at":     version.UpdatedAt,
+			"identity_name":       version.IdentityName,
+			"persona":             version.Persona,
+			"goals":               version.Goals,
+			"rules":               version.Rules,
+			"default_model":       version.DefaultModel,
+			"memory_policy":       version.MemoryPolicy,
+			"trigger_policy":      version.TriggerPolicy,
+			"presentation_policy": version.PresentationPolicy,
+			"revision":            version.Revision,
+			"lock_version":        gorm.Expr("lock_version + 1"),
+			"updated_by":          scope.ActorID,
+			"updated_at":          version.UpdatedAt,
 		})
 	if result.Error != nil {
 		return fmt.Errorf("update digital human draft: %w", result.Error)

@@ -83,6 +83,7 @@ func (s *Service) RestoreVersion(ctx context.Context, scope Scope, id uuid.UUID,
 		draft.DefaultModel = target.DefaultModel
 		draft.MemoryPolicy = cloneJSON(target.MemoryPolicy)
 		draft.TriggerPolicy = cloneJSON(target.TriggerPolicy)
+		draft.PresentationPolicy = cloneJSON(target.PresentationPolicy)
 		draft.IdentitySnapshot = datatypes.JSON([]byte(`{}`))
 		draft.UpdatedAt = s.now()
 		draft.Revision, err = configRevision(draft)
@@ -146,7 +147,7 @@ func (s *Service) versionRestorePreviewWithRepository(ctx context.Context, repo 
 }
 
 func versionChangedFields(current, target *Version) []string {
-	fields := make([]string, 0, 7)
+	fields := make([]string, 0, 8)
 	if current.IdentityName != target.IdentityName {
 		fields = append(fields, "identity_name")
 	}
@@ -167,6 +168,9 @@ func versionChangedFields(current, target *Version) []string {
 	}
 	if !bytes.Equal(current.TriggerPolicy, target.TriggerPolicy) {
 		fields = append(fields, "trigger_policy")
+	}
+	if !bytes.Equal(current.PresentationPolicy, target.PresentationPolicy) {
+		fields = append(fields, "presentation_policy")
 	}
 	return fields
 }

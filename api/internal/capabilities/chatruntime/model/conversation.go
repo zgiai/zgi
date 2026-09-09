@@ -16,6 +16,7 @@ const (
 	ConversationSourceConsole     = "console"
 	ConversationSourceWebApp      = "webapp"
 	ConversationSourceExternalAPI = "external-api"
+	ConversationSourceChannel     = "channel"
 	ConversationSourceMigration   = "migration"
 
 	ConversationCallerAIChat       = "aichat"

@@ -68,7 +68,7 @@ func (p *CompositeMemoryRuntimeProvider) Finalize(ctx context.Context, run *Run,
 }
 
 // RelationshipMemoryRuntimeProvider exposes only current-user relationship
-// data. It never runs for channels, schedules, service principals, or API users.
+// data. Channels, schedules, and anonymous hosted-page sessions stay excluded.
 type RelationshipMemoryRuntimeProvider struct {
 	service *relationshipmemory.Service
 }
@@ -86,35 +86,40 @@ func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Ru
 	}
 	identity := relationshipmemory.InvocationIdentity{
 		Principal:        relationshipmemory.PrincipalRef{Type: string(event.Sender.Type)},
-		Surface:          relationshipmemory.SurfaceDigitalHumanConsole,
+		Surface:          relationshipMemorySurfaceForRun(run),
 		ConversationType: relationshipmemory.ConversationPrivate,
 	}
-	if event.Origin.Kind == invocation.OriginSchedule {
-		identity.Surface = relationshipmemory.SurfaceDigitalHumanTask
+	if identity.Surface == relationshipmemory.SurfaceDigitalHumanTask {
 		identity.ConversationType = relationshipmemory.ConversationTask
-	} else if event.Origin.Kind != invocation.OriginManual {
-		identity.Surface = relationshipmemory.SurfaceChannel
 	}
-	if event.Sender.Type == invocation.PrincipalAccount && run.ActorID != nil && *run.ActorID != uuid.Nil && strings.TrimSpace(event.Sender.ID) == run.ActorID.String() {
-		subject := relationshipmemory.AccountSubject(*run.ActorID)
-		identity.Principal.ID = *run.ActorID
+	if run.PrincipalID != nil {
+		identity.Principal.ID = *run.PrincipalID
+	}
+	if run.UserSubjectID != nil && *run.UserSubjectID != uuid.Nil {
+		subject := relationshipmemory.UserSubjectRef{Kind: relationshipmemory.UserSubjectKind(run.UserSubjectKind), ID: *run.UserSubjectID}
 		identity.UserSubject = &subject
 	}
 	decision := relationshipmemory.DecideAccess(identity)
 	relationshipmemory.RecordAccessDecision(ctx, relationshipmemory.ConsumerDigitalHuman, identity, decision)
 	// Policy is rechecked at the product edge so an installation owner can
 	// never become a channel end-user by accident.
-	if !decision.Read || event.Origin.Kind != invocation.OriginManual {
+	if !decision.Read || identity.UserSubject == nil {
 		return nil, nil
 	}
-	relationship, err := p.service.EnsureRelationship(ctx, relationshipmemory.EnsureRelationshipRequest{
+	ensureRequest := relationshipmemory.EnsureRelationshipRequest{
 		OrganizationID:       run.OrganizationID,
 		WorkspaceID:          run.WorkspaceID,
-		Subject:              relationshipmemory.AccountSubject(*run.ActorID),
+		Subject:              *identity.UserSubject,
 		ConsumerType:         relationshipmemory.ConsumerDigitalHuman,
 		ConsumerID:           run.DigitalHumanID,
 		ConsumerNameSnapshot: resolved.Snapshot.IdentityName,
-	})
+	}
+	if identity.UserSubject.Kind == relationshipmemory.UserSubjectAPIEndUser {
+		issuerID := run.DigitalHumanID
+		ensureRequest.IssuerType = "digital_human_api"
+		ensureRequest.IssuerID = &issuerID
+	}
+	relationship, err := p.service.EnsureRelationship(ctx, ensureRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +140,24 @@ func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Ru
 		preparation.Tools = []skillloop.RuntimeTool{p.mutationTool(run, relationship, contract)}
 	}
 	return preparation, nil
+}
+
+func relationshipMemorySurfaceForRun(run *Run) relationshipmemory.MemorySurface {
+	if run == nil {
+		return relationshipmemory.SurfaceChannel
+	}
+	switch strings.TrimSpace(run.Surface) {
+	case SurfaceConsole:
+		return relationshipmemory.SurfaceDigitalHumanConsole
+	case SurfaceWebApp:
+		return relationshipmemory.SurfaceDigitalHumanWebApp
+	case SurfaceAPI:
+		return relationshipmemory.SurfaceDigitalHumanAPI
+	case SurfaceTask:
+		return relationshipmemory.SurfaceDigitalHumanTask
+	default:
+		return relationshipmemory.SurfaceChannel
+	}
 }
 
 func renderUserRelationshipMemoryGuidance(contextBlock string, proactiveAllowed bool) string {

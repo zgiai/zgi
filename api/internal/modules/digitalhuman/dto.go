@@ -7,29 +7,52 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 )
 
+const (
+	SurfaceConsole = "digital_human_console"
+	SurfaceWebApp  = "digital_human_webapp"
+	SurfaceAPI     = "digital_human_api"
+	SurfaceTask    = "digital_human_task"
+	SurfaceChannel = "channel"
+)
+
 // Scope is the authenticated organization, workspace, and actor boundary.
 type Scope struct {
-	OrganizationID uuid.UUID
-	WorkspaceID    uuid.UUID
-	ActorID        uuid.UUID
+	OrganizationID  uuid.UUID
+	WorkspaceID     uuid.UUID
+	ActorID         uuid.UUID
+	PrincipalType   string
+	PrincipalID     uuid.UUID
+	UserSubjectKind string
+	UserSubjectID   *uuid.UUID
+	Surface         string
+}
+
+// PresentationPolicy is the versioned public appearance of a DigitalHuman.
+type PresentationPolicy struct {
+	HomeTitle          string   `json:"home_title"`
+	OpeningStatement   string   `json:"opening_statement"`
+	InputPlaceholder   string   `json:"input_placeholder"`
+	ThemeColor         string   `json:"theme_color"`
+	SuggestedQuestions []string `json:"suggested_questions"`
 }
 
 // CreateRequest creates a DigitalHuman and its initial mutable draft.
 type CreateRequest struct {
-	Name          string         `json:"name"`
-	Avatar        string         `json:"avatar"`
-	IconType      string         `json:"icon_type"`
-	Icon          string         `json:"icon"`
-	Description   string         `json:"description"`
-	AutonomyLevel AutonomyLevel  `json:"autonomy_level"`
-	Visibility    Visibility     `json:"visibility"`
-	IdentityName  string         `json:"identity_name"`
-	Persona       string         `json:"persona"`
-	Goals         []string       `json:"goals"`
-	Rules         []string       `json:"rules"`
-	DefaultModel  string         `json:"default_model"`
-	MemoryPolicy  map[string]any `json:"memory_policy"`
-	TriggerPolicy map[string]any `json:"trigger_policy"`
+	Name               string             `json:"name"`
+	Avatar             string             `json:"avatar"`
+	IconType           string             `json:"icon_type"`
+	Icon               string             `json:"icon"`
+	Description        string             `json:"description"`
+	AutonomyLevel      AutonomyLevel      `json:"autonomy_level"`
+	Visibility         Visibility         `json:"visibility"`
+	IdentityName       string             `json:"identity_name"`
+	Persona            string             `json:"persona"`
+	Goals              []string           `json:"goals"`
+	Rules              []string           `json:"rules"`
+	DefaultModel       string             `json:"default_model"`
+	MemoryPolicy       map[string]any     `json:"memory_policy"`
+	TriggerPolicy      map[string]any     `json:"trigger_policy"`
+	PresentationPolicy PresentationPolicy `json:"presentation_policy"`
 }
 
 // UpdateRequest updates aggregate metadata with optimistic concurrency control.
@@ -47,14 +70,15 @@ type UpdateRequest struct {
 
 // UpdateDraftRequest updates the mutable identity draft.
 type UpdateDraftRequest struct {
-	ExpectedLockVersion int64           `json:"expected_lock_version"`
-	IdentityName        *string         `json:"identity_name,omitempty"`
-	Persona             *string         `json:"persona,omitempty"`
-	Goals               *[]string       `json:"goals,omitempty"`
-	Rules               *[]string       `json:"rules,omitempty"`
-	DefaultModel        *string         `json:"default_model,omitempty"`
-	MemoryPolicy        *map[string]any `json:"memory_policy,omitempty"`
-	TriggerPolicy       *map[string]any `json:"trigger_policy,omitempty"`
+	ExpectedLockVersion int64               `json:"expected_lock_version"`
+	IdentityName        *string             `json:"identity_name,omitempty"`
+	Persona             *string             `json:"persona,omitempty"`
+	Goals               *[]string           `json:"goals,omitempty"`
+	Rules               *[]string           `json:"rules,omitempty"`
+	DefaultModel        *string             `json:"default_model,omitempty"`
+	MemoryPolicy        *map[string]any     `json:"memory_policy,omitempty"`
+	TriggerPolicy       *map[string]any     `json:"trigger_policy,omitempty"`
+	PresentationPolicy  *PresentationPolicy `json:"presentation_policy,omitempty"`
 }
 
 // PublishRequest promotes the current draft and creates the next mutable draft.
@@ -132,11 +156,12 @@ type DeleteImpact struct {
 
 // DraftConfig is the normalized, JSON-compatible version content used for hashing.
 type DraftConfig struct {
-	IdentityName  string          `json:"identity_name"`
-	Persona       string          `json:"persona"`
-	Goals         []string        `json:"goals"`
-	Rules         []string        `json:"rules"`
-	DefaultModel  string          `json:"default_model"`
-	MemoryPolicy  json.RawMessage `json:"memory_policy"`
-	TriggerPolicy json.RawMessage `json:"trigger_policy"`
+	IdentityName       string          `json:"identity_name"`
+	Persona            string          `json:"persona"`
+	Goals              []string        `json:"goals"`
+	Rules              []string        `json:"rules"`
+	DefaultModel       string          `json:"default_model"`
+	MemoryPolicy       json.RawMessage `json:"memory_policy"`
+	TriggerPolicy      json.RawMessage `json:"trigger_policy"`
+	PresentationPolicy json.RawMessage `json:"presentation_policy"`
 }

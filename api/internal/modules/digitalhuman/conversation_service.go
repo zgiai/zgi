@@ -14,7 +14,9 @@ import (
 
 const (
 	digitalHumanConversationSource        = runtimemodel.ConversationSourceConsole
-	digitalHumanChannelConversationSource = runtimemodel.ConversationSourceExternalAPI
+	digitalHumanChannelConversationSource = runtimemodel.ConversationSourceChannel
+	digitalHumanWebAppConversationSource  = runtimemodel.ConversationSourceWebApp
+	digitalHumanAPIConversationSource     = runtimemodel.ConversationSourceExternalAPI
 )
 
 // ConversationRuntime is the caller-scoped history surface DigitalHuman uses
@@ -167,8 +169,21 @@ func (s *RuntimeService) conversationContext(scope Scope, digitalHumanID uuid.UU
 	workspaceID := scope.WorkspaceID
 	return runtime,
 		chatruntime.Scope{OrganizationID: scope.OrganizationID, WorkspaceID: &workspaceID, AccountID: scope.ActorID},
-		chatruntime.Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID, Source: digitalHumanConversationSource},
+		chatruntime.Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID, Source: digitalHumanConversationSourceForSurface(scope.Surface)},
 		nil
+}
+
+func digitalHumanConversationSourceForSurface(surface string) string {
+	switch strings.TrimSpace(surface) {
+	case SurfaceWebApp:
+		return digitalHumanWebAppConversationSource
+	case SurfaceAPI:
+		return digitalHumanAPIConversationSource
+	case SurfaceChannel:
+		return digitalHumanChannelConversationSource
+	default:
+		return digitalHumanConversationSource
+	}
 }
 
 func mapConversationRuntimeError(err error) error {

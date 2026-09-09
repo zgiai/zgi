@@ -101,7 +101,7 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 	}
 	now := r.now()
 	userMemoryEnabled, userMemoryAutoCaptureAllowed := digitalHumanUserRelationshipMemoryPolicy(version.MemoryPolicy)
-	userMemoryEnabled = userMemoryEnabled && event.Origin.Kind == invocation.OriginManual && event.Sender.Type == invocation.PrincipalAccount
+	userMemoryEnabled = userMemoryEnabled && invocationAllowsUserMemory(event)
 	userMemoryAutoCaptureAllowed = userMemoryEnabled && userMemoryAutoCaptureAllowed
 	snapshot := ExecutionSnapshot{
 		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: version.ID,
@@ -135,6 +135,20 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 		return nil, err
 	}
 	return &ResolvedExecution{Spec: spec, Snapshot: snapshot}, nil
+}
+
+func invocationAllowsUserMemory(event invocation.Event) bool {
+	surface, _ := event.Context["surface"].(string)
+	switch strings.TrimSpace(surface) {
+	case SurfaceConsole:
+		return event.Sender.Type == invocation.PrincipalAccount
+	case SurfaceWebApp:
+		return event.Sender.Type == invocation.PrincipalAccount || event.Sender.Type == invocation.PrincipalExternalUser
+	case SurfaceAPI:
+		return event.Sender.Type == invocation.PrincipalService
+	default:
+		return false
+	}
 }
 
 func digitalHumanUserRelationshipMemoryPolicy(raw []byte) (bool, bool) {

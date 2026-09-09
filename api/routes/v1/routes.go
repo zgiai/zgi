@@ -8,6 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
@@ -270,7 +271,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
 		Service: serviceContainer.GetDigitalHumanService(), Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
-		Tasks:          automationBundle.DigitalHumanTasks,
+		Tasks: automationBundle.DigitalHumanTasks, Access: digitalhuman.NewAccessService(db),
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
 	})

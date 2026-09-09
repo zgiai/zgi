@@ -10,9 +10,11 @@ import (
 )
 
 type ManualInvocationRequest struct {
-	RequestID      uuid.UUID  `json:"request_id"`
-	Query          string     `json:"query"`
-	ConversationID *uuid.UUID `json:"conversation_id,omitempty"`
+	RequestID       uuid.UUID  `json:"request_id"`
+	Query           string     `json:"query"`
+	ConversationID  *uuid.UUID `json:"conversation_id,omitempty"`
+	ParentMessageID *uuid.UUID `json:"parent_message_id,omitempty"`
+	FileIDs         []string   `json:"file_ids,omitempty"`
 }
 
 type RunListResult struct {

@@ -17,20 +17,25 @@ import (
 )
 
 const (
-	defaultPageSize       = 20
-	maxPageSize           = 100
-	maxNameRunes          = 80
-	maxAvatarRunes        = 2_048
-	maxIconRunes          = 4_096
-	maxDescriptionRunes   = 4_000
-	maxPersonaRunes       = 16_000
-	maxGoals              = 64
-	maxGoalRunes          = 1_000
-	maxRules              = 128
-	maxRuleRunes          = 2_000
-	maxDefaultModelRunes  = 255
-	maxPolicyBytes        = 64 * 1024
-	versionRevisionPrefix = "sha256:"
+	defaultPageSize           = 20
+	maxPageSize               = 100
+	maxNameRunes              = 80
+	maxAvatarRunes            = 2_048
+	maxIconRunes              = 4_096
+	maxDescriptionRunes       = 4_000
+	maxPersonaRunes           = 16_000
+	maxGoals                  = 64
+	maxGoalRunes              = 1_000
+	maxRules                  = 128
+	maxRuleRunes              = 2_000
+	maxDefaultModelRunes      = 255
+	maxPolicyBytes            = 64 * 1024
+	maxPresentationTitleRunes = 120
+	maxOpeningStatementRunes  = 2_000
+	maxInputPlaceholderRunes  = 160
+	maxSuggestedQuestions     = 6
+	maxSuggestedQuestionRunes = 240
+	versionRevisionPrefix     = "sha256:"
 )
 
 // Service owns DigitalHuman lifecycle and publication rules.
@@ -87,12 +92,16 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	if err != nil {
 		return nil, applicationError(err, "digital_human.create")
 	}
+	presentationPolicy, err := marshalPresentationPolicy(request.PresentationPolicy)
+	if err != nil {
+		return nil, applicationError(err, "digital_human.create")
+	}
 	now := s.now()
 	definitionID := uuid.New()
 	draftID := uuid.New()
 	actorID := scope.ActorID
 	definition := &Definition{
-		ID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		ID: definitionID, WebAppID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		Name: request.Name, Avatar: request.Avatar, IconType: request.IconType, Icon: request.Icon, Description: request.Description,
 		Status: StatusDraft, AutonomyLevel: request.AutonomyLevel, Visibility: request.Visibility,
 		Revision: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
@@ -100,7 +109,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	draft := &Version{
 		ID: draftID, DigitalHumanID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		State: VersionStateDraft, IdentityName: request.IdentityName, Persona: request.Persona, Goals: goals, Rules: rules, DefaultModel: request.DefaultModel,
-		MemoryPolicy: memoryPolicy, TriggerPolicy: triggerPolicy, IdentitySnapshot: datatypes.JSON([]byte(`{}`)),
+		MemoryPolicy: memoryPolicy, TriggerPolicy: triggerPolicy, PresentationPolicy: presentationPolicy, IdentitySnapshot: datatypes.JSON([]byte(`{}`)),
 		LockVersion: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 	}
 	draft.Revision, err = configRevision(draft)
@@ -278,7 +287,7 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 		nextDraft := &Version{
 			ID: nextDraftID, DigitalHumanID: definition.ID, OrganizationID: definition.OrganizationID, WorkspaceID: definition.WorkspaceID,
 			State: VersionStateDraft, IdentityName: draft.IdentityName, Persona: draft.Persona, Goals: cloneJSON(draft.Goals), Rules: cloneJSON(draft.Rules), DefaultModel: draft.DefaultModel,
-			MemoryPolicy: cloneJSON(draft.MemoryPolicy), TriggerPolicy: cloneJSON(draft.TriggerPolicy),
+			MemoryPolicy: cloneJSON(draft.MemoryPolicy), TriggerPolicy: cloneJSON(draft.TriggerPolicy), PresentationPolicy: cloneJSON(draft.PresentationPolicy),
 			IdentitySnapshot: datatypes.JSON([]byte(`{}`)), LockVersion: 1,
 			CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 		}
@@ -550,6 +559,14 @@ func applyDraftUpdate(draft *Version, request UpdateDraftRequest) error {
 		draft.TriggerPolicy = encoded
 		changed = true
 	}
+	if request.PresentationPolicy != nil {
+		encoded, err := marshalPresentationPolicy(*request.PresentationPolicy)
+		if err != nil {
+			return err
+		}
+		draft.PresentationPolicy = encoded
+		changed = true
+	}
 	if !changed {
 		return ErrInvalidRequest
 	}
@@ -701,23 +718,64 @@ func marshalPolicy(policy map[string]any) (datatypes.JSON, error) {
 	return datatypes.JSON(encoded), nil
 }
 
+func marshalPresentationPolicy(policy PresentationPolicy) (datatypes.JSON, error) {
+	policy.HomeTitle = strings.TrimSpace(policy.HomeTitle)
+	policy.OpeningStatement = strings.TrimSpace(policy.OpeningStatement)
+	policy.InputPlaceholder = strings.TrimSpace(policy.InputPlaceholder)
+	policy.ThemeColor = strings.TrimSpace(policy.ThemeColor)
+	policy.SuggestedQuestions = normalizeStringList(policy.SuggestedQuestions)
+	if !validRuneLength(policy.HomeTitle, maxPresentationTitleRunes) ||
+		!validRuneLength(policy.OpeningStatement, maxOpeningStatementRunes) ||
+		!validRuneLength(policy.InputPlaceholder, maxInputPlaceholderRunes) ||
+		len(policy.SuggestedQuestions) > maxSuggestedQuestions {
+		return nil, ErrInvalidRequest
+	}
+	for _, question := range policy.SuggestedQuestions {
+		if !validRuneLength(question, maxSuggestedQuestionRunes) {
+			return nil, ErrInvalidRequest
+		}
+	}
+	if policy.ThemeColor != "" && !validThemeColor(policy.ThemeColor) {
+		return nil, ErrInvalidRequest
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil || len(encoded) > maxPolicyBytes {
+		return nil, ErrInvalidRequest
+	}
+	return datatypes.JSON(encoded), nil
+}
+
+func validThemeColor(value string) bool {
+	if len(value) != 7 || value[0] != '#' {
+		return false
+	}
+	for _, char := range value[1:] {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 func configRevision(version *Version) (string, error) {
 	payload := struct {
-		IdentityName  string          `json:"identity_name"`
-		Persona       string          `json:"persona"`
-		Goals         json.RawMessage `json:"goals"`
-		Rules         json.RawMessage `json:"rules"`
-		DefaultModel  string          `json:"default_model"`
-		MemoryPolicy  json.RawMessage `json:"memory_policy"`
-		TriggerPolicy json.RawMessage `json:"trigger_policy"`
+		IdentityName       string          `json:"identity_name"`
+		Persona            string          `json:"persona"`
+		Goals              json.RawMessage `json:"goals"`
+		Rules              json.RawMessage `json:"rules"`
+		DefaultModel       string          `json:"default_model"`
+		MemoryPolicy       json.RawMessage `json:"memory_policy"`
+		TriggerPolicy      json.RawMessage `json:"trigger_policy"`
+		PresentationPolicy json.RawMessage `json:"presentation_policy"`
 	}{
-		IdentityName:  version.IdentityName,
-		Persona:       version.Persona,
-		Goals:         json.RawMessage(cloneJSON(version.Goals)),
-		Rules:         json.RawMessage(cloneJSON(version.Rules)),
-		DefaultModel:  version.DefaultModel,
-		MemoryPolicy:  json.RawMessage(cloneJSON(version.MemoryPolicy)),
-		TriggerPolicy: json.RawMessage(cloneJSON(version.TriggerPolicy)),
+		IdentityName:       version.IdentityName,
+		Persona:            version.Persona,
+		Goals:              json.RawMessage(cloneJSON(version.Goals)),
+		Rules:              json.RawMessage(cloneJSON(version.Rules)),
+		DefaultModel:       version.DefaultModel,
+		MemoryPolicy:       json.RawMessage(cloneJSON(version.MemoryPolicy)),
+		TriggerPolicy:      json.RawMessage(cloneJSON(version.TriggerPolicy)),
+		PresentationPolicy: json.RawMessage(cloneJSON(version.PresentationPolicy)),
 	}
 	return hashRevision(payload)
 }

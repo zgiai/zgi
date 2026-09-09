@@ -2,9 +2,12 @@ package digitalhuman
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +22,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workflowapp "github.com/zgiai/zgi/api/internal/modules/app/workflow"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/datatypes"
 )
 
@@ -133,12 +137,68 @@ func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalH
 			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		},
 		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: scope.ActorID.String()},
-		OccurredAt: s.now(), Context: map[string]any{"query": query},
+		OccurredAt: s.now(), Context: map[string]any{"query": query, "surface": SurfaceConsole},
 	}
+	scope.PrincipalType = string(invocation.PrincipalAccount)
+	scope.PrincipalID = scope.ActorID
+	subjectID := scope.ActorID
+	scope.UserSubjectKind = string(relationshipmemory.UserSubjectAccount)
+	scope.UserSubjectID = &subjectID
+	scope.Surface = SurfaceConsole
+	appendInvocationRequestContext(event.Context, request)
 	if request.ConversationID != nil && *request.ConversationID != uuid.Nil {
 		event.Context["conversation_id"] = request.ConversationID.String()
 	}
 	return s.SubmitInvocation(ctx, scope, event, query, request.ConversationID)
+}
+
+// SubmitAPI accepts an API-key principal while keeping the external user subject
+// as the durable conversation and memory owner.
+func (s *RuntimeService) SubmitAPI(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
+	return s.submitExternalSurface(ctx, scope, digitalHumanID, request, SurfaceAPI)
+}
+
+// SubmitWebApp accepts an authenticated or anonymous hosted-page invocation.
+func (s *RuntimeService) SubmitWebApp(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
+	return s.submitExternalSurface(ctx, scope, digitalHumanID, request, SurfaceWebApp)
+}
+
+func (s *RuntimeService) submitExternalSurface(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest, surface string) (*Run, bool, error) {
+	query := strings.TrimSpace(request.Query)
+	if !validScope(scope) || digitalHumanID == uuid.Nil || request.RequestID == uuid.Nil || query == "" ||
+		!utf8.ValidString(query) || utf8.RuneCountInString(query) > maxManualQueryRunes ||
+		scope.PrincipalID == uuid.Nil || (surface != SurfaceAPI && surface != SurfaceWebApp) {
+		return nil, false, ErrInvalidRequest
+	}
+	eventID := request.RequestID.String()
+	if scope.UserSubjectID != nil && *scope.UserSubjectID != uuid.Nil {
+		eventID = scope.UserSubjectID.String() + ":" + eventID
+	}
+	event := invocation.Event{
+		ID: eventID, Type: invocation.EventTypeAPI,
+		Origin: invocation.Origin{Kind: invocation.OriginAPI, Provider: "zgi"},
+		Target: runtimeidentity.SubjectRef{
+			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
+			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		},
+		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalType(scope.PrincipalType), ID: scope.PrincipalID.String()},
+		OccurredAt: s.now(), Context: map[string]any{"query": query, "surface": surface, "request_id": request.RequestID.String()},
+	}
+	appendInvocationRequestContext(event.Context, request)
+	if request.ConversationID != nil && *request.ConversationID != uuid.Nil {
+		event.Context["conversation_id"] = request.ConversationID.String()
+	}
+	scope.Surface = surface
+	return s.SubmitInvocation(ctx, scope, event, query, request.ConversationID)
+}
+
+func appendInvocationRequestContext(contextValues map[string]any, request ManualInvocationRequest) {
+	if request.ParentMessageID != nil && *request.ParentMessageID != uuid.Nil {
+		contextValues["parent_message_id"] = request.ParentMessageID.String()
+	}
+	if len(request.FileIDs) > 0 {
+		contextValues["file_ids"] = slices.Clone(request.FileIDs)
+	}
 }
 
 // SubmitInvocation durably stores both the run and its outbox record before
@@ -157,7 +217,14 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 		validated.Target.OrganizationID != scope.OrganizationID || validated.Target.WorkspaceID != scope.WorkspaceID {
 		return nil, false, ErrInvalidRequest
 	}
+	fingerprint, err := invocationRequestFingerprint(validated, query, conversationID, scope.UserSubjectID)
+	if err != nil {
+		return nil, false, err
+	}
 	if existing, loadErr := s.store.RunByIdempotency(ctx, scope.OrganizationID, validated.Target.ID, validated.IdempotencyKey); loadErr == nil {
+		if existing.RequestFingerprint != "" && existing.RequestFingerprint != fingerprint {
+			return nil, false, ErrRunConflict
+		}
 		return existing, false, nil
 	} else if !errors.Is(loadErr, ErrRunNotFound) {
 		return nil, false, loadErr
@@ -173,10 +240,13 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 	}
 	now, runID := s.now(), uuid.New()
 	actorID := scope.ActorID
+	principalID := cloneUUIDPointer(&scope.PrincipalID)
 	run := &Run{
 		ID: runID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		DigitalHumanID: validated.Target.ID, DigitalHumanVersionID: resolved.Snapshot.DigitalHumanVersion,
-		ActorID: &actorID, IdempotencyKey: validated.IdempotencyKey,
+		ActorID: &actorID, PrincipalType: normalizedPrincipalType(scope, validated), PrincipalID: principalID,
+		UserSubjectKind: strings.TrimSpace(scope.UserSubjectKind), UserSubjectID: cloneUUIDPointer(scope.UserSubjectID),
+		Surface: normalizedInvocationSurface(scope, validated), RequestFingerprint: fingerprint, IdempotencyKey: validated.IdempotencyKey,
 		InvocationEvent: eventJSON, RunSpec: specJSON, RunSpecRevision: resolved.Spec.Revision,
 		ExecutionSnapshot: snapshotJSON, ExecutionSnapshotRevision: resolved.Snapshot.Revision,
 		ExecutionTrace: datatypes.JSON(`{}`),
@@ -199,6 +269,44 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 	// Failure here is recoverable by Reconcile; acceptance must not be rolled back.
 	_ = s.DispatchPending(ctx, defaultOutboxBatch)
 	return run, true, nil
+}
+
+func invocationRequestFingerprint(event invocation.Event, query string, conversationID, subjectID *uuid.UUID) (string, error) {
+	payload := struct {
+		Query          string         `json:"query"`
+		ConversationID *uuid.UUID     `json:"conversation_id,omitempty"`
+		SubjectID      *uuid.UUID     `json:"subject_id,omitempty"`
+		Context        map[string]any `json:"context,omitempty"`
+	}{Query: query, ConversationID: cloneUUIDPointer(conversationID), SubjectID: cloneUUIDPointer(subjectID), Context: event.Context}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode DigitalHuman request fingerprint: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func normalizedPrincipalType(scope Scope, event invocation.Event) string {
+	if value := strings.TrimSpace(scope.PrincipalType); value != "" {
+		return value
+	}
+	return string(event.Sender.Type)
+}
+
+func normalizedInvocationSurface(scope Scope, event invocation.Event) string {
+	if value := strings.TrimSpace(scope.Surface); value != "" {
+		return value
+	}
+	switch event.Origin.Kind {
+	case invocation.OriginChannel:
+		return SurfaceChannel
+	case invocation.OriginSchedule:
+		return SurfaceTask
+	case invocation.OriginAPI:
+		return SurfaceAPI
+	default:
+		return SurfaceConsole
+	}
 }
 
 func (s *RuntimeService) GetRun(ctx context.Context, scope Scope, digitalHumanID, runID uuid.UUID) (*Run, error) {
@@ -363,6 +471,10 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			"run_spec_revision": resolved.Spec.Revision, "execution_snapshot_revision": resolved.Snapshot.Revision,
 		},
 	}
+	if parentID, ok := stringContextValue(event.Context, "parent_message_id"); ok {
+		chatRequest.ParentID = parentID
+	}
+	chatRequest.FileIDs = stringSliceContextValue(event.Context, "file_ids")
 	if event.Origin.Kind == invocation.OriginChannel {
 		excludedTexts := []string{run.Query}
 		if channelContextPreparation != nil {
@@ -661,6 +773,9 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 }
 
 func digitalHumanConversationSourceForEvent(event invocation.Event) string {
+	if surface, ok := stringContextValue(event.Context, "surface"); ok {
+		return digitalHumanConversationSourceForSurface(surface)
+	}
 	if event.Origin.Kind == invocation.OriginChannel {
 		return digitalHumanChannelConversationSource
 	}
@@ -668,6 +783,9 @@ func digitalHumanConversationSourceForEvent(event invocation.Event) string {
 }
 
 func digitalHumanConversationSourceForRun(run *Run) string {
+	if run != nil && strings.TrimSpace(run.Surface) != "" {
+		return digitalHumanConversationSourceForSurface(run.Surface)
+	}
 	if run == nil || len(run.InvocationEvent) == 0 {
 		return digitalHumanConversationSource
 	}
@@ -740,7 +858,33 @@ func runtimeScope(run *Run) chatruntime.Scope {
 	if run.ActorID != nil {
 		actorID = *run.ActorID
 	}
+	if run.UserSubjectID != nil && *run.UserSubjectID != uuid.Nil {
+		actorID = *run.UserSubjectID
+	}
 	return chatruntime.Scope{OrganizationID: run.OrganizationID, WorkspaceID: &workspaceID, AccountID: actorID}
+}
+
+func stringContextValue(values map[string]any, key string) (string, bool) {
+	value, ok := values[key].(string)
+	value = strings.TrimSpace(value)
+	return value, ok && value != ""
+}
+
+func stringSliceContextValue(values map[string]any, key string) []string {
+	raw, ok := values[key].([]any)
+	if !ok {
+		if typed, typedOK := values[key].([]string); typedOK {
+			return slices.Clone(typed)
+		}
+		return nil
+	}
+	result := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
+			result = append(result, strings.TrimSpace(value))
+		}
+	}
+	return result
 }
 
 func runScope(run *Run) Scope {
