@@ -1,0 +1,129 @@
+# 数字人 API
+
+使用该接口从外部系统调用当前数字人的最新发布版本。接口只支持流式响应，并使用绑定到该数字人的 API Key 鉴权。
+
+<div>
+  ### Base URL
+
+<CodeGroup title="代码">
+
+```text
+{apibase}
+```
+
+</CodeGroup>
+
+### 鉴权与用户身份
+
+请在服务端通过 `Authorization: Bearer` 发送数字人 API Key。每个有状态请求还必须传入稳定、不含个人信息且大小写敏感的 `user`。
+
+- API Key 标识调用方，`user` 标识数据主体。
+- 一个 Key 可以服务多个 `user`，不同 `user` 的会话、文件和关系记忆相互隔离。
+- 轮换 Key 不会改变同一 `user` 的数据归属。
+- 不要在浏览器代码中暴露 API Key。
+
+</div>
+
+---
+
+<Heading
+  url="/api/v1/digital-humans/chat"
+  method="POST"
+  title="发送聊天消息"
+  name="#Create-Digital-Human-Chat"
+/>
+
+<Row>
+  <Col>
+    创建或继续数字人会话，并返回可恢复的 SSE 流。
+
+    ### 请求体
+
+    <Properties>
+      <Property name='request_id' type='uuid' propKey='request_id'>必填。客户端生成的幂等请求 ID。</Property>
+      <Property name='user' type='string' propKey='user'>必填。最大 128 字符的稳定业务用户 ID。</Property>
+      <Property name='query' type='string' propKey='query'>必填。本轮用户输入。</Property>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>可选。继续已有会话。</Property>
+      <Property name='parent_message_id' type='uuid' propKey='parent_message_id'>可选。指定消息分支。</Property>
+      <Property name='file_ids' type='array[uuid]' propKey='file_ids'>可选。当前用户上传的文件。</Property>
+      <Property name='response_mode' type='string' propKey='response_mode'>可选。当前仅支持 `streaming`。</Property>
+    </Properties>
+
+    ### 主要事件
+
+    - `run_accepted`：Durable Run 已接受，包含 `run_id`。
+    - `message_start`：消息已建立，包含 `conversation_id` 和 `message_id`。
+    - `message` / `message_delta`：回答内容片段。
+    - `message_end`：消息终态。
+    - `error`：安全化错误信息。
+    - `run_end`：Run 的唯一终态事件。
+
+    响应头 `X-ZGI-Run-ID` 与 `run_accepted.run_id` 一致。保存事件 `id` 后，可通过 Run Events 接口恢复断开的流。
+
+  </Col>
+  <Col sticky>
+    <CodeGroup title="请求" tag="POST" label="/api/v1/digital-humans/chat" targetCode={`curl --no-buffer '{apibase}/digital-humans/chat' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'Content-Type: application/json' \\\n--data '{"request_id":"00000000-0000-4000-8000-000000000001","user":"customer_123","query":"你好"}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --no-buffer '{apibase}/digital-humans/chat' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "request_id": "00000000-0000-4000-8000-000000000001",
+        "user": "customer_123",
+        "query": "你好",
+        "response_mode": "streaming"
+      }'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/digital-humans/runs/{run_id}/events"
+  method="GET"
+  title="恢复运行流"
+  name="#Recover-Digital-Human-Run"
+/>
+
+通过查询参数传入同一个 `user`，并在请求头中发送最后收到的 `Last-Event-ID`。事件 ID 是不透明值，客户端不应解析或递增。
+
+<CodeGroup title="请求">
+
+```bash
+curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Last-Event-ID: {last_event_id}'
+```
+
+</CodeGroup>
+
+---
+
+## 会话、运行和文件接口
+
+- `GET /digital-humans/config`：读取已发布配置与能力。
+- `GET /digital-humans/runs/{run_id}`：查询运行状态。
+- `POST /digital-humans/runs/{run_id}/stop`：停止运行。
+- `POST /digital-humans/runs/{run_id}/runtime-input`：提交运行时输入。
+- `GET /digital-humans/conversations`：分页读取会话。
+- `GET /digital-humans/conversations/search`：搜索会话。
+- `GET/PATCH/DELETE /digital-humans/conversations/{id}`：管理单个会话。
+- `GET /digital-humans/conversations/{id}/messages`：读取消息历史。
+- `POST /digital-humans/files/upload`：上传当前 `user` 专属文件。
+
+GET 和 DELETE 请求通过 Query 传入 `user`；POST、PATCH 和 multipart 请求通过正文或表单字段传入 `user`。
+
+## 错误与重试
+
+- `400`：请求格式或 `user` 非法。
+- `401`：Key 缺失、无效、过期或已撤销。
+- `403`：数字人 API 入口已关闭。
+- `404`：资源不存在，或不属于当前 `user`。
+- `409`：幂等 ID 对应的请求载荷发生变化，或运行状态冲突。
+
+只对可重试错误使用有上限的指数退避。相同逻辑请求重试时必须复用原 `request_id`。

@@ -3,12 +3,15 @@
 import type { MouseEvent } from 'react';
 import { usePathname } from 'next/navigation';
 import {
+  AppWindow,
   BrainCircuit,
+  FileCode2,
   History,
   House,
+  KeyRound,
   ListTodo,
-  PanelsTopLeft,
   RadioTower,
+  Server,
   Settings2,
 } from 'lucide-react';
 import {
@@ -33,6 +36,7 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
   const permissions = useAccountPermissions();
   const [isCollapsed, setIsCollapsed] = usePersistentSidebarCollapse('digitalHuman', true);
   const configurationHref = `/console/digital-humans/${id}/configuration`;
+  const externalHref = `/console/digital-humans/${id}/external`;
   const isInitialSetup = Boolean(detail.data?.data && !detail.data.data.published);
   const restrictToConfiguration = detail.isLoading || isInitialSetup;
   const configurationItem: ResourceSidebarNavItem = {
@@ -52,8 +56,27 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
     configurationItem,
     {
       title: t('digitalHumans.tabs.external'),
-      href: `/console/digital-humans/${id}/external`,
-      icon: PanelsTopLeft,
+      href: externalHref,
+      icon: Server,
+      isActive: currentPathname => currentPathname.startsWith(externalHref),
+      children: [
+        {
+          title: t('digitalHumans.tabs.landingPage'),
+          href: externalHref,
+          icon: AppWindow,
+          isActive: currentPathname => currentPathname === externalHref,
+        },
+        {
+          title: t('digitalHumans.tabs.apiKeys'),
+          href: `${externalHref}/keys`,
+          icon: KeyRound,
+        },
+        {
+          title: t('digitalHumans.tabs.apiDocs'),
+          href: `${externalHref}/docs`,
+          icon: FileCode2,
+        },
+      ],
     },
     {
       title: t('digitalHumans.tabs.channels'),

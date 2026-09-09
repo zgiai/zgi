@@ -9,8 +9,8 @@ import {
   House,
   ListTodo,
   Loader2,
-  PanelsTopLeft,
   RadioTower,
+  Server,
   Settings2,
   X,
 } from 'lucide-react';
@@ -117,7 +117,7 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
     {
       href: externalHref,
       label: t('tabs.external'),
-      icon: PanelsTopLeft,
+      icon: Server,
       active: isExternalPage,
     },
     {

@@ -1,0 +1,129 @@
+# DigitalHuman API
+
+Use this API to invoke the latest published version of a DigitalHuman from an external system. The API is streaming-only and authenticates with a key bound to that DigitalHuman.
+
+<div>
+  ### Base URL
+
+<CodeGroup title="Code">
+
+```text
+{apibase}
+```
+
+</CodeGroup>
+
+### Authentication and user identity
+
+Send the DigitalHuman API key from your server with `Authorization: Bearer`. Every stateful request must also include a stable, non-identifying, case-sensitive `user` value.
+
+- The API key identifies the integration; `user` identifies the data owner.
+- One key can serve many users, while conversations, files, and relationship memory remain isolated by `user`.
+- Rotating a key does not change data ownership for the same `user`.
+- Never expose the API key in browser code.
+
+</div>
+
+---
+
+<Heading
+  url="/api/v1/digital-humans/chat"
+  method="POST"
+  title="Send a chat message"
+  name="#Create-Digital-Human-Chat"
+/>
+
+<Row>
+  <Col>
+    Create or continue a DigitalHuman conversation and receive a recoverable SSE stream.
+
+    ### Request body
+
+    <Properties>
+      <Property name='request_id' type='uuid' propKey='request_id'>Required. A client-generated idempotency ID.</Property>
+      <Property name='user' type='string' propKey='user'>Required. A stable business user ID with at most 128 characters.</Property>
+      <Property name='query' type='string' propKey='query'>Required. The current user message.</Property>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Optional. Continue an existing conversation.</Property>
+      <Property name='parent_message_id' type='uuid' propKey='parent_message_id'>Optional. Continue from a message branch.</Property>
+      <Property name='file_ids' type='array[uuid]' propKey='file_ids'>Optional. Files uploaded by the current user.</Property>
+      <Property name='response_mode' type='string' propKey='response_mode'>Optional. Only `streaming` is currently supported.</Property>
+    </Properties>
+
+    ### Main events
+
+    - `run_accepted`: the durable run was accepted and includes `run_id`.
+    - `message_start`: the message exists and includes `conversation_id` and `message_id`.
+    - `message` / `message_delta`: response content chunks.
+    - `message_end`: the terminal message state.
+    - `error`: a safe public error.
+    - `run_end`: the single terminal event for the run.
+
+    The `X-ZGI-Run-ID` response header matches `run_accepted.run_id`. Save event IDs so an interrupted stream can be resumed through Run Events.
+
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request" tag="POST" label="/api/v1/digital-humans/chat" targetCode={`curl --no-buffer '{apibase}/digital-humans/chat' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'Content-Type: application/json' \\\n--data '{"request_id":"00000000-0000-4000-8000-000000000001","user":"customer_123","query":"Hello"}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --no-buffer '{apibase}/digital-humans/chat' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "request_id": "00000000-0000-4000-8000-000000000001",
+        "user": "customer_123",
+        "query": "Hello",
+        "response_mode": "streaming"
+      }'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/digital-humans/runs/{run_id}/events"
+  method="GET"
+  title="Resume a run stream"
+  name="#Recover-Digital-Human-Run"
+/>
+
+Supply the same `user` as a query parameter and send the most recent event ID in `Last-Event-ID`. Event IDs are opaque and must not be parsed or incremented.
+
+<CodeGroup title="Request">
+
+```bash
+curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Last-Event-ID: {last_event_id}'
+```
+
+</CodeGroup>
+
+---
+
+## Conversation, run, and file endpoints
+
+- `GET /digital-humans/config`: read the published public configuration.
+- `GET /digital-humans/runs/{run_id}`: inspect run status.
+- `POST /digital-humans/runs/{run_id}/stop`: stop a run.
+- `POST /digital-humans/runs/{run_id}/runtime-input`: submit runtime input.
+- `GET /digital-humans/conversations`: list conversations.
+- `GET /digital-humans/conversations/search`: search conversations.
+- `GET/PATCH/DELETE /digital-humans/conversations/{id}`: manage one conversation.
+- `GET /digital-humans/conversations/{id}/messages`: read message history.
+- `POST /digital-humans/files/upload`: upload a file owned by the current `user`.
+
+GET and DELETE requests receive `user` in the query string. POST, PATCH, and multipart requests receive it in the body or form field.
+
+## Errors and retries
+
+- `400`: invalid request shape or `user`.
+- `401`: missing, invalid, expired, or revoked key.
+- `403`: DigitalHuman API access is disabled.
+- `404`: the resource does not exist or belongs to another `user`.
+- `409`: the idempotency payload changed or the run state conflicts.
+
+Use bounded exponential backoff only for retryable errors. Reuse the original `request_id` when retrying the same logical request.
