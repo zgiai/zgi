@@ -2,7 +2,17 @@
 
 import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
+import type {
+  DigitalHumanResourceBinding,
+  DigitalHumanVersion,
+} from '@/services/types/digital-human';
 import type { DigitalHumanDraftSaveState } from './use-digital-human-draft-persistence';
+
+export interface DigitalHumanVersionPreviewState {
+  version: DigitalHumanVersion;
+  bindings?: DigitalHumanResourceBinding[];
+  hadLocalDraftChanges: boolean;
+}
 
 export interface DigitalHumanDraftEditorState {
   token: symbol;
@@ -17,14 +27,18 @@ export interface DigitalHumanDraftEditorState {
 interface DigitalHumanDraftStoreState {
   editors: Record<string, DigitalHumanDraftEditorState | undefined>;
   resetVersions: Record<string, number | undefined>;
+  versionPreviews: Record<string, DigitalHumanVersionPreviewState | undefined>;
   register: (id: string, editor: DigitalHumanDraftEditorState) => void;
   unregister: (id: string, token: symbol) => void;
   resetFromServer: (id: string) => void;
+  setVersionPreview: (id: string, preview: DigitalHumanVersionPreviewState) => void;
+  clearVersionPreview: (id: string) => void;
 }
 
 export const useDigitalHumanDraftStore = create<DigitalHumanDraftStoreState>(set => ({
   editors: {},
   resetVersions: {},
+  versionPreviews: {},
   register: (id, editor) => set(state => ({ editors: { ...state.editors, [id]: editor } })),
   unregister: (id, token) =>
     set(state => {
@@ -40,6 +54,17 @@ export const useDigitalHumanDraftStore = create<DigitalHumanDraftStoreState>(set
         [id]: (state.resetVersions[id] ?? 0) + 1,
       },
     })),
+  setVersionPreview: (id, preview) =>
+    set(state => ({
+      versionPreviews: { ...state.versionPreviews, [id]: preview },
+    })),
+  clearVersionPreview: id =>
+    set(state => {
+      if (!state.versionPreviews[id]) return state;
+      const versionPreviews = { ...state.versionPreviews };
+      delete versionPreviews[id];
+      return { versionPreviews };
+    }),
 }));
 
 export function useRegisterDigitalHumanDraftEditor(

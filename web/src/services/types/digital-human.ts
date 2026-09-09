@@ -97,6 +97,7 @@ export interface DigitalHumanVersionRestorePreview {
   will_discard_unpublished_changes: boolean;
   changed_fields: string[];
   binding_changes: DigitalHumanVersionRestoreBindingImpact[];
+  bindings: DigitalHumanResourceBinding[];
   impact_token: string;
 }
 

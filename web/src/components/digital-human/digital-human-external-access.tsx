@@ -34,7 +34,9 @@ function ExternalAccessEditor({ id }: { id: string }) {
   const permissions = useAccountPermissions();
   const detail = useDigitalHuman(id).data?.data;
   const mutations = useDigitalHumanMutations(id);
+  const versionPreview = useDigitalHumanDraftStore(state => state.versionPreviews[id]);
   const canUpdate = permissions.hasPermission('digital_human.update');
+  const editingEnabled = canUpdate && !versionPreview;
   const initialPresentation = normalizePresentationPolicy(detail?.draft.presentation_policy);
   const [presentation, setPresentation] = useState(initialPresentation);
   const draftLockVersionRef = useRef(detail?.draft.lock_version ?? 0);
@@ -56,7 +58,7 @@ function ExternalAccessEditor({ id }: { id: string }) {
   const persistence = useDigitalHumanDraftPersistence({
     currentPayload: normalizedPresentation,
     initialPayload: initialPresentation,
-    enabled: canUpdate && Boolean(detail),
+    enabled: editingEnabled && Boolean(detail),
     canSave: () => presentationValid,
     savePayload: async value => {
       const result = await mutations.updateDraft.mutateAsync({
@@ -72,6 +74,7 @@ function ExternalAccessEditor({ id }: { id: string }) {
   });
 
   const saveNow = async () => {
+    if (versionPreview) return false;
     if (!presentationValid) {
       toast.error(t('access.invalidThemeColor'));
       return false;
@@ -80,7 +83,7 @@ function ExternalAccessEditor({ id }: { id: string }) {
   };
 
   useRegisterDigitalHumanDraftEditor(id, {
-    canUpdate,
+    canUpdate: editingEnabled,
     saveState: persistence.saveState,
     lastSavedAt: persistence.lastSavedAt,
     isDirty: persistence.isDirty,
@@ -89,9 +92,19 @@ function ExternalAccessEditor({ id }: { id: string }) {
   });
 
   if (!detail) return null;
+  const displayedPresentation = versionPreview
+    ? normalizePresentationPolicy(versionPreview.version.presentation_policy)
+    : presentation;
 
   return (
     <div className="mx-auto min-h-full w-full max-w-[1200px] px-4 py-6 md:px-8 xl:py-8">
+      {versionPreview ? (
+        <div className="mb-5 rounded-lg border border-primary/20 bg-primary/[0.04] px-4 py-3 text-sm text-primary">
+          {t('versionHistory.previewBanner', {
+            version: versionPreview.version.version_number ?? '',
+          })}
+        </div>
+      ) : null}
       <header className="flex items-start gap-3 border-b pb-5">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <AppWindow className="size-5" />
@@ -107,9 +120,9 @@ function ExternalAccessEditor({ id }: { id: string }) {
         id={id}
         definition={detail.definition}
         published={Boolean(detail.published)}
-        canPublish={permissions.hasPermission('digital_human.publish')}
-        canUpdatePresentation={canUpdate}
-        presentation={presentation}
+        canPublish={permissions.hasPermission('digital_human.publish') && !versionPreview}
+        canUpdatePresentation={editingEnabled}
+        presentation={displayedPresentation}
         onPresentationChange={setPresentation}
       />
     </div>

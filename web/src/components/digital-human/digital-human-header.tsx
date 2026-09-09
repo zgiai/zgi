@@ -66,6 +66,7 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
   const permissions = useAccountPermissions();
   const mutations = useDigitalHumanMutations(id);
   const draftEditor = useDigitalHumanDraftStore(state => state.editors[id]);
+  const versionPreview = useDigitalHumanDraftStore(state => state.versionPreviews[id]);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState('');
   const [publishOpen, setPublishOpen] = useState(false);
@@ -87,6 +88,7 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
   );
   const saveState = draftEditor?.saveState ?? 'saved';
   const isDirty = Boolean(draftEditor?.isDirty);
+  const isVersionPreviewing = Boolean(versionPreview);
   const saveDotClassName =
     saveState === 'error'
       ? 'bg-destructive'
@@ -95,11 +97,15 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
         : saveState === 'saved'
           ? 'bg-emerald-500'
           : 'bg-muted-foreground/40';
-  const saveText = draftEditor
-    ? t(`draftPersistence.${saveState}`)
-    : hasUnpublishedChanges
-      ? t('header.draftSavedPending')
-      : t('header.draftSaved');
+  const saveText = versionPreview
+    ? t('versionHistory.previewingVersion', {
+        version: versionPreview.version.version_number ?? '',
+      })
+    : draftEditor
+      ? t(`draftPersistence.${saveState}`)
+      : hasUnpublishedChanges
+        ? t('header.draftSavedPending')
+        : t('header.draftSaved');
   const publishChecks = detail
     ? [
         {
@@ -126,12 +132,14 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
   );
 
   const saveDraft = async () => {
+    if (useDigitalHumanDraftStore.getState().versionPreviews[id]) return false;
     const editor = useDigitalHumanDraftStore.getState().editors[id];
     if (!editor) return true;
     return editor.saveNow();
   };
 
   const openPublishDialog = async () => {
+    if (useDigitalHumanDraftStore.getState().versionPreviews[id]) return;
     const editor = useDigitalHumanDraftStore.getState().editors[id];
     if (editor && (editor.isDirty || editor.saveState === 'error')) {
       const saved = await editor.saveNow();
@@ -171,6 +179,7 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
         impact_token: preview.impact_token,
       },
     });
+    useDigitalHumanDraftStore.getState().clearVersionPreview(id);
     useDigitalHumanDraftStore.getState().resetFromServer(id);
     setSelectedVersionId('');
     setVersionsOpen(false);
@@ -180,6 +189,48 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
       })
     );
   };
+
+  const clearVersionPreview = () => {
+    useDigitalHumanDraftStore.getState().clearVersionPreview(id);
+    setSelectedVersionId('');
+  };
+
+  const selectVersion = (versionId: string) => {
+    const version = versionsQuery.data?.data.items.find(item => item.id === versionId);
+    if (!version) return;
+    const currentPreview = useDigitalHumanDraftStore.getState().versionPreviews[id];
+    useDigitalHumanDraftStore.getState().setVersionPreview(id, {
+      version,
+      hadLocalDraftChanges: currentPreview?.hadLocalDraftChanges ?? isDirty,
+    });
+    setSelectedVersionId(versionId);
+  };
+
+  useEffect(() => {
+    const preview = restorePreviewQuery.data?.data;
+    const version = versionsQuery.data?.data.items.find(item => item.id === selectedVersionId);
+    if (!preview || !version || preview.version_id !== version.id) return;
+    const currentPreview = useDigitalHumanDraftStore.getState().versionPreviews[id];
+    useDigitalHumanDraftStore.getState().setVersionPreview(id, {
+      version,
+      bindings: preview.bindings,
+      hadLocalDraftChanges: currentPreview?.hadLocalDraftChanges ?? isDirty,
+    });
+  }, [id, isDirty, restorePreviewQuery.data?.data, selectedVersionId, versionsQuery.data?.data]);
+
+  useEffect(() => {
+    if (!selectedVersionId || !restorePreviewQuery.isError) return;
+    useDigitalHumanDraftStore.getState().clearVersionPreview(id);
+    setSelectedVersionId('');
+    toast.error(t('versionHistory.previewFailed'));
+  }, [id, restorePreviewQuery.isError, selectedVersionId, t]);
+
+  useEffect(
+    () => () => {
+      useDigitalHumanDraftStore.getState().clearVersionPreview(id);
+    },
+    [id]
+  );
 
   return (
     <>
@@ -282,7 +333,7 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
                     isIcon
                     interactive="subtle"
                     aria-label={t('configuration.save')}
-                    disabled={draftEditor.isSaving}
+                    disabled={draftEditor.isSaving || isVersionPreviewing}
                     onClick={() => void saveDraft()}
                   >
                     {draftEditor.isSaving ? (
@@ -308,13 +359,13 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
               open={versionsOpen}
               onOpenChange={nextOpen => {
                 setVersionsOpen(nextOpen);
-                if (!nextOpen) setSelectedVersionId('');
+                if (!nextOpen) clearVersionPreview();
               }}
               isLoading={versionsQuery.isLoading}
               isLoadingPreview={restorePreviewQuery.isLoading}
               isRestoring={mutations.restoreVersion.isPending}
               hasUnpublishedChanges={hasUnpublishedChanges}
-              hasLocalDraftChanges={isDirty}
+              hasLocalDraftChanges={versionPreview?.hadLocalDraftChanges ?? isDirty}
               isDraftSaving={Boolean(draftEditor?.isSaving)}
               draftUpdatedAt={detail?.draft.updated_at}
               currentVersionId={detail.published.id}
@@ -323,8 +374,8 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
               restorePreview={restorePreviewQuery.data?.data}
               canOpen={permissions.hasPermission('digital_human.publish')}
               canRestore={permissions.hasPermission('digital_human.publish')}
-              onSelectVersion={setSelectedVersionId}
-              onCancelPreview={() => setSelectedVersionId('')}
+              onSelectVersion={selectVersion}
+              onCancelPreview={clearVersionPreview}
               onRestore={() => void restoreVersion()}
             />
           ) : null}
@@ -344,7 +395,7 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
             <Button
               size="sm"
               className="flex items-center gap-1.5 border border-primary/25 bg-primary/10 px-2 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15 sm:px-3.5"
-              disabled={!detail || mutations.publish.isPending}
+              disabled={!detail || mutations.publish.isPending || isVersionPreviewing}
               onClick={() => void openPublishDialog()}
             >
               {mutations.publish.isPending ? (

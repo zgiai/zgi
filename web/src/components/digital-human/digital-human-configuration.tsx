@@ -117,6 +117,7 @@ function ConfigurationEditor({
   const permissions = useAccountPermissions();
   const detail = useDigitalHuman(id).data?.data;
   const mutations = useDigitalHumanMutations(id);
+  const versionPreview = useDigitalHumanDraftStore(state => state.versionPreviews[id]);
   const availableModels = useAvailableModels({ use_case: 'agent-runtime' });
   const [identityName, setIdentityName] = useState(
     detail?.draft.identity_name || detail?.definition.name || ''
@@ -142,6 +143,7 @@ function ConfigurationEditor({
   );
   const models = availableModels.models;
   const canUpdate = permissions.hasPermission('digital_human.update');
+  const editingEnabled = canUpdate && !versionPreview;
   const normalizedGoals = goals.map(item => item.trim()).filter(Boolean);
   const normalizedRules = rules.map(item => item.trim()).filter(Boolean);
   const draftLockVersionRef = useRef(detail?.draft.lock_version ?? 0);
@@ -191,7 +193,7 @@ function ConfigurationEditor({
   const persistence = useDigitalHumanDraftPersistence({
     currentPayload: currentSnapshot,
     initialPayload: initialSnapshotRef.current,
-    enabled: canUpdate && Boolean(detail),
+    enabled: editingEnabled && Boolean(detail),
     canSave: () => Boolean(identityName.trim() && persona.trim() && model.trim()),
     savePayload: async snapshot => {
       const draftSignature = serializeEditorPart(snapshot.draft);
@@ -212,6 +214,7 @@ function ConfigurationEditor({
   });
 
   const manualSave = async () => {
+    if (versionPreview) return false;
     if (!identityName.trim() || !persona.trim() || !model.trim()) {
       toast.error(t('errors.required'));
       return false;
@@ -219,7 +222,7 @@ function ConfigurationEditor({
     return persistence.saveNow({ force: true });
   };
   useRegisterDigitalHumanDraftEditor(id, {
-    canUpdate,
+    canUpdate: editingEnabled,
     saveState: persistence.saveState,
     lastSavedAt: persistence.lastSavedAt,
     isDirty: persistence.isDirty,
@@ -228,12 +231,32 @@ function ConfigurationEditor({
   });
 
   if (!detail) return null;
-  const selectedModel = models.find(item => item.model === model);
+  const previewVersion = versionPreview?.version;
+  const displayedIdentityName = previewVersion?.identity_name ?? identityName;
+  const displayedPersona = previewVersion?.persona ?? persona;
+  const displayedGoals = previewVersion
+    ? previewVersion.goals.length > 0
+      ? previewVersion.goals
+      : ['']
+    : goals;
+  const displayedRules = previewVersion
+    ? previewVersion.rules.length > 0
+      ? previewVersion.rules
+      : ['']
+    : rules;
+  const displayedModel = previewVersion?.default_model ?? model;
+  const displayedIntermediateMessagesEnabled = previewVersion
+    ? (previewVersion.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true)
+    : intermediateMessagesEnabled;
+  const displayedAcknowledgementEnabled = previewVersion
+    ? (previewVersion.trigger_policy?.channel_response?.acknowledgement_enabled ?? true)
+    : acknowledgementEnabled;
+  const selectedModel = models.find(item => item.model === displayedModel);
   const modelValue: ModelSelectorValue = {
     provider: selectedModel?.provider ?? '',
     model: selectedModel?.model ?? '',
   };
-  const modelUnavailable = Boolean(model && !selectedModel && !availableModels.isLoading);
+  const modelUnavailable = Boolean(displayedModel && !selectedModel && !availableModels.isLoading);
   const isInitialSetup = !detail.published;
   const initialSetupChecks = [
     { label: t('fields.identityName'), ready: Boolean(identityName.trim()) },
@@ -242,7 +265,15 @@ function ConfigurationEditor({
   const initialSetupReadyCount = initialSetupChecks.filter(check => check.ready).length;
   return (
     <div className="flex min-h-full min-w-0 flex-col bg-background lg:h-full lg:min-h-0">
-      {isInitialSetup ? (
+      {versionPreview ? (
+        <section className="shrink-0 border-b border-primary/20 bg-primary/[0.04] px-4 py-3 md:px-5">
+          <p className="text-sm text-primary">
+            {t('versionHistory.previewBanner', {
+              version: versionPreview.version.version_number ?? '',
+            })}
+          </p>
+        </section>
+      ) : isInitialSetup ? (
         <section className="shrink-0 border-b bg-primary/[0.035] px-4 py-3 md:px-5">
           <div className="mx-auto flex max-w-[1440px] flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex min-w-0 items-start gap-3">
@@ -298,7 +329,7 @@ function ConfigurationEditor({
                   value={modelValue}
                   onChange={value => setModel(value.model)}
                   placeholder={t('settings.modelPlaceholder')}
-                  disabled={!canUpdate || availableModels.isLoading}
+                  disabled={!editingEnabled || availableModels.isLoading}
                   hasError={modelUnavailable}
                   className="w-full"
                 />
@@ -319,12 +350,12 @@ function ConfigurationEditor({
                         {t('settings.behaviorDescription')}
                       </p>
                     </div>
-                    {canUpdate ? (
+                    {editingEnabled ? (
                       <PersonaTemplateActions
-                        identityName={identityName}
-                        persona={persona}
-                        goals={normalizedGoals}
-                        rules={normalizedRules}
+                        identityName={displayedIdentityName}
+                        persona={displayedPersona}
+                        goals={displayedGoals.map(item => item.trim()).filter(Boolean)}
+                        rules={displayedRules.map(item => item.trim()).filter(Boolean)}
                         onApply={(nextIdentityName, nextPersona, nextGoals, nextRules) => {
                           setIdentityName(nextIdentityName);
                           setPersona(nextPersona);
@@ -341,9 +372,9 @@ function ConfigurationEditor({
                       required
                     >
                       <Input
-                        value={identityName}
+                        value={displayedIdentityName}
                         onChange={event => setIdentityName(event.target.value)}
-                        disabled={!canUpdate}
+                        disabled={!editingEnabled}
                         placeholder={t('settings.identityNamePlaceholder')}
                         aria-label={t('fields.identityName')}
                         aria-required="true"
@@ -356,9 +387,9 @@ function ConfigurationEditor({
                     >
                       <Textarea
                         rows={5}
-                        value={persona}
+                        value={displayedPersona}
                         onChange={event => setPersona(event.target.value)}
-                        disabled={!canUpdate}
+                        disabled={!editingEnabled}
                         placeholder={t('settings.personaPlaceholder')}
                         aria-label={t('fields.persona')}
                         aria-required="true"
@@ -374,7 +405,7 @@ function ConfigurationEditor({
                           size="sm"
                           className="h-7 shrink-0 gap-1.5 px-2.5"
                           onClick={() => setRules([...rules, ''])}
-                          disabled={!canUpdate}
+                          disabled={!editingEnabled}
                         >
                           <Plus className="size-3.5" />
                           {t('settings.addRule')}
@@ -382,9 +413,9 @@ function ConfigurationEditor({
                       }
                     >
                       <RulesEditor
-                        rules={rules}
+                        rules={displayedRules}
                         onChange={setRules}
-                        disabled={!canUpdate}
+                        disabled={!editingEnabled}
                         removeLabel={t('settings.removeRule')}
                         placeholder={t('settings.rulesPlaceholder')}
                       />
@@ -399,7 +430,7 @@ function ConfigurationEditor({
                           size="sm"
                           className="h-7 shrink-0 gap-1.5 px-2.5"
                           onClick={() => setGoals([...goals, ''])}
-                          disabled={!canUpdate}
+                          disabled={!editingEnabled}
                         >
                           <Plus className="size-3.5" />
                           {t('settings.addGoal')}
@@ -407,9 +438,9 @@ function ConfigurationEditor({
                       }
                     >
                       <RulesEditor
-                        rules={goals}
+                        rules={displayedGoals}
                         onChange={setGoals}
-                        disabled={!canUpdate}
+                        disabled={!editingEnabled}
                         removeLabel={t('settings.removeGoal')}
                         placeholder={t('settings.goalsPlaceholder')}
                       />
@@ -426,7 +457,9 @@ function ConfigurationEditor({
                     title={t('preferences.channelResponseTitle')}
                     description={t('preferences.channelResponseDescription')}
                     summary={t('configurationHub.responseEnabledCount', {
-                      count: Number(intermediateMessagesEnabled) + Number(acknowledgementEnabled),
+                      count:
+                        Number(displayedIntermediateMessagesEnabled) +
+                        Number(displayedAcknowledgementEnabled),
                     })}
                     onClick={() => setActivePanel('response')}
                     last
@@ -450,16 +483,16 @@ function ConfigurationEditor({
                     <PreferenceSwitch
                       title={t('preferences.intermediateMessages')}
                       description={t('preferences.intermediateMessagesDescription')}
-                      checked={intermediateMessagesEnabled}
+                      checked={displayedIntermediateMessagesEnabled}
                       onCheckedChange={setIntermediateMessagesEnabled}
-                      disabled={!canUpdate}
+                      disabled={!editingEnabled}
                     />
                     <PreferenceSwitch
                       title={t('preferences.acknowledgement')}
                       description={t('preferences.acknowledgementDescription')}
-                      checked={acknowledgementEnabled}
+                      checked={displayedAcknowledgementEnabled}
                       onCheckedChange={setAcknowledgementEnabled}
-                      disabled={!canUpdate}
+                      disabled={!editingEnabled}
                     />
                   </div>
                 </div>

@@ -179,6 +179,10 @@ const messages = {
     empty: 'No version has been published yet.',
     current: 'Current',
     previewing: 'Previewing',
+    previewingVersion: 'Previewing published v{version}',
+    previewBanner:
+      'You are viewing published v{version}. Editing and autosave are paused. Cancel preview to return to the current draft.',
+    previewFailed: 'Failed to load version preview',
     fallbackName: 'Version {time}',
     publishedAt: 'Published {time}',
     descriptionTitle: 'Version description',

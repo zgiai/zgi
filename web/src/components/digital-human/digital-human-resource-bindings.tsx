@@ -34,6 +34,7 @@ import {
   AgentWorkflowTypeIcon,
 } from '@/components/agents/agent-runtime/workflow-type-display';
 import { ResourceBindingCard } from '@/components/common/resource-binding';
+import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
 import {
   ResourceSelectionCardIcon,
   ResourceSelectionDialog,
@@ -123,7 +124,11 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
   const [search, setSearch] = useState('');
   const [skillSourceFilter, setSkillSourceFilter] = useState<SkillSourceFilter>('all');
   const deferredSearch = useDeferredValue(search.trim());
+  const versionPreview = useDigitalHumanDraftStore(state => state.versionPreviews[id]);
   const canUpdate = permissions.hasPermission('digital_human.update');
+  const canConfigure = canUpdate && !versionPreview;
+  const displayedItems = versionPreview?.bindings?.map(toBindingInput) ?? items;
+  const isPreviewLoading = Boolean(versionPreview && !versionPreview.bindings);
   const integrationCatalog = useMemo(
     () => integrationCatalogItems(integrationCatalogQuery.data?.data),
     [integrationCatalogQuery.data?.data]
@@ -250,6 +255,16 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
     if (!serverItems) return;
     setItems(serverItems.map(toBindingInput));
   }, [query.data?.data?.items]);
+
+  useEffect(() => {
+    if (!versionPreview) return;
+    setActiveSection(null);
+    setSearch('');
+    setSkillSourceFilter('all');
+    setParentId('');
+    setDatabaseStep('databases');
+    setSelectedDatabaseIds([]);
+  }, [versionPreview]);
 
   const openPicker = (section: BindingSectionDefinition) => {
     setPendingItems(items.map(item => ({ ...item, metadata: { ...item.metadata } })));
@@ -487,7 +502,7 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
     <div className="min-w-0">
       <div className="grid grid-cols-1 items-stretch gap-4">
         {sections.map(section => {
-          const sectionItems = items.filter(item => section.types.includes(item.type));
+          const sectionItems = displayedItems.filter(item => section.types.includes(item.type));
           const SectionIcon = section.icon;
           return (
             <section
@@ -516,14 +531,14 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                   isIcon
                   className="size-8 shrink-0"
                   aria-label={section.add}
-                  disabled={!canUpdate || mutations.replaceBindings.isPending}
+                  disabled={!canConfigure || mutations.replaceBindings.isPending}
                   onClick={() => openPicker(section)}
                 >
                   <Plus className="size-4" />
                 </Button>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
-                {query.isLoading ? (
+                {query.isLoading || isPreviewLoading ? (
                   <div className="space-y-2">
                     <div className="h-20 animate-pulse rounded-lg bg-muted" />
                     <div className="h-20 animate-pulse rounded-lg bg-muted" />
@@ -532,7 +547,7 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                   <button
                     type="button"
                     className="flex min-h-full w-full flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 px-5 py-6 text-center transition-colors hover:border-primary/40 hover:bg-primary/[0.03] disabled:pointer-events-none"
-                    disabled={!canUpdate || mutations.replaceBindings.isPending}
+                    disabled={!canConfigure || mutations.replaceBindings.isPending}
                     onClick={() => openPicker(section)}
                   >
                     <Plus className="mb-2 size-5 text-muted-foreground" />
@@ -544,7 +559,7 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                 ) : section.key === 'databases' ? (
                   <DatabaseBindingCards
                     items={sectionItems}
-                    disabled={!canUpdate || mutations.replaceBindings.isPending}
+                    disabled={!canConfigure || mutations.replaceBindings.isPending}
                     onRemove={item => void remove(item)}
                   />
                 ) : (
@@ -563,9 +578,9 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                           name: item.display_name || item.resource_id,
                         })}
                         onRemove={() => void remove(item)}
-                        disabled={!canUpdate || mutations.replaceBindings.isPending}
+                        disabled={!canConfigure || mutations.replaceBindings.isPending}
                         digitalHumanId={id}
-                        canConfigure={canUpdate}
+                        canConfigure={canConfigure}
                       />
                     ))}
                   </div>

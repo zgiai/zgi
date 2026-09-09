@@ -174,6 +174,10 @@ const messages: DigitalHumansMessages = {
     empty: '还没有发布过版本。',
     current: '当前版本',
     previewing: '正在预览',
+    previewingVersion: '正在预览已发布 v{version}',
+    previewBanner:
+      '当前正在查看已发布 v{version}，编辑和自动保存已暂停。取消预览即可返回当前草稿。',
+    previewFailed: '加载版本预览失败',
     fallbackName: '版本 {time}',
     publishedAt: '发布于 {time}',
     descriptionTitle: '版本描述',
