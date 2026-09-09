@@ -49,6 +49,8 @@ export interface DigitalHumanVersion {
   digital_human_id: string;
   state: DigitalHumanVersionState;
   version_number?: number | null;
+  name: string;
+  description: string;
   lock_version: number;
   revision: string;
   identity_name: string;
@@ -207,6 +209,8 @@ export interface DigitalHumanWebAppConfig {
 export interface PublishDigitalHumanRequest {
   expected_revision: number;
   expected_draft_lock_version: number;
+  name?: string;
+  description?: string;
 }
 
 export interface DigitalHumanPersonaTemplate {

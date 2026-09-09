@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import {
-  AlertTriangle,
   CheckCircle2,
   History,
   Loader2,
@@ -16,18 +15,13 @@ import {
 import { toast } from 'sonner';
 import { DigitalHumanBasicInfoDialog } from '@/components/digital-human/digital-human-basic-info-dialog';
 import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
+import {
+  DigitalHumanPublishVersionDialog,
+  type DigitalHumanPublishVersionDetails,
+} from '@/components/digital-human/digital-human-publish-version-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   Popover,
   PopoverContent,
@@ -59,6 +53,11 @@ interface DigitalHumanHeaderProps {
   onOpenTest: () => void;
 }
 
+const EMPTY_PUBLISH_VERSION_DETAILS: DigitalHumanPublishVersionDetails = {
+  name: '',
+  description: '',
+};
+
 export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) {
   const t = useT('digitalHumans');
   const pathname = usePathname();
@@ -70,6 +69,8 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState('');
   const [publishOpen, setPublishOpen] = useState(false);
+  const [publishVersionDetails, setPublishVersionDetails] =
+    useState<DigitalHumanPublishVersionDetails>(EMPTY_PUBLISH_VERSION_DETAILS);
   const [basicInfoOpen, setBasicInfoOpen] = useState(false);
   const versionsQuery = useDigitalHumanVersions(id, versionsOpen);
   const restorePreviewQuery = useDigitalHumanVersionRestorePreview(
@@ -118,8 +119,6 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
         },
       ]
     : [];
-  const blockingIssues = publishChecks.filter(check => check.blocking && !check.ready);
-  const warningCount = publishChecks.filter(check => !check.blocking && !check.ready).length;
   const textIcon = getAgentTextIconDisplay(
     detail?.definition.icon_type,
     detail?.definition.icon,
@@ -139,6 +138,7 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
       if (!saved) return;
       await Promise.all([detailQuery.refetch(), bindingsQuery.refetch()]);
     }
+    setPublishVersionDetails(EMPTY_PUBLISH_VERSION_DETAILS);
     setPublishOpen(true);
   };
 
@@ -150,6 +150,8 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
       request: {
         expected_revision: current.definition.revision,
         expected_draft_lock_version: current.draft.lock_version,
+        name: publishVersionDetails.name.trim() || undefined,
+        description: publishVersionDetails.description.trim() || undefined,
       },
     });
     setPublishOpen(false);
@@ -319,7 +321,8 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
               versions={versionsQuery.data?.data.items ?? []}
               selectedVersionId={selectedVersionId}
               restorePreview={restorePreviewQuery.data?.data}
-              canRestore={permissions.hasPermission('digital_human.update')}
+              canOpen={permissions.hasPermission('digital_human.publish')}
+              canRestore={permissions.hasPermission('digital_human.publish')}
               onSelectVersion={setSelectedVersionId}
               onCancelPreview={() => setSelectedVersionId('')}
               onRestore={() => void restoreVersion()}
@@ -357,82 +360,18 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
         </div>
       </header>
 
-      <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
-        <DialogContent size="md" className="p-0 text-left">
-          <DialogHeader>
-            <div className="flex items-start gap-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <UploadCloud className="size-5" />
-              </div>
-              <div className="min-w-0">
-                <DialogTitle>
-                  {detail?.published
-                    ? t('publishDialog.updateTitle')
-                    : t('publishDialog.publishTitle')}
-                </DialogTitle>
-                <DialogDescription className="mt-1.5">
-                  {t('publishDialog.description')}
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-          <DialogBody className="space-y-4">
-            <div className="rounded-lg border bg-muted/20 p-3">
-              <div className="mb-2 text-sm font-medium">{t('configuration.preflight.title')}</div>
-              <div className="space-y-2">
-                {publishChecks.map(check => (
-                  <div key={check.label} className="flex items-center gap-2 text-sm">
-                    {check.ready ? (
-                      <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
-                    ) : (
-                      <AlertTriangle
-                        className={cn(
-                          'size-4 shrink-0',
-                          check.blocking ? 'text-destructive' : 'text-amber-500'
-                        )}
-                      />
-                    )}
-                    <span className={check.ready ? 'text-foreground' : 'text-muted-foreground'}>
-                      {check.label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {warningCount > 0 && blockingIssues.length === 0 ? (
-              <p className="text-xs leading-5 text-amber-600 dark:text-amber-400">
-                {t('configuration.preflight.warning', { count: warningCount })}
-              </p>
-            ) : null}
-            <p className="text-xs leading-5 text-muted-foreground">
-              {t('publishDialog.immutableHint')}
-            </p>
-          </DialogBody>
-          <DialogFooter className="border-t bg-muted/20">
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={mutations.publish.isPending}
-              onClick={() => setPublishOpen(false)}
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button
-              type="button"
-              loading={mutations.publish.isPending}
-              disabled={
-                !hasUnpublishedChanges ||
-                mutations.publish.isPending ||
-                bindingsQuery.isLoading ||
-                blockingIssues.length > 0
-              }
-              onClick={() => void publish()}
-            >
-              {detail?.published ? t('configuration.publishChanges') : t('configuration.publish')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DigitalHumanPublishVersionDialog
+        open={publishOpen}
+        isUpdate={Boolean(detail?.published)}
+        isSubmitting={mutations.publish.isPending}
+        hasUnpublishedChanges={hasUnpublishedChanges}
+        isLoadingBindings={bindingsQuery.isLoading}
+        checks={publishChecks}
+        value={publishVersionDetails}
+        onOpenChange={setPublishOpen}
+        onChange={setPublishVersionDetails}
+        onConfirm={() => void publish()}
+      />
 
       <DigitalHumanBasicInfoDialog
         definition={detail?.definition}
@@ -457,10 +396,17 @@ interface DigitalHumanVersionPopoverProps {
   versions: DigitalHumanVersion[];
   selectedVersionId: string;
   restorePreview?: DigitalHumanVersionRestorePreview;
+  canOpen: boolean;
   canRestore: boolean;
   onSelectVersion: (versionId: string) => void;
   onCancelPreview: () => void;
   onRestore: () => void;
+}
+
+function formatVersionTime(version: DigitalHumanVersion): string {
+  return new Date(version.published_at || version.created_at).toLocaleString(undefined, {
+    hour12: false,
+  });
 }
 
 function DigitalHumanVersionPopover({
@@ -477,6 +423,7 @@ function DigitalHumanVersionPopover({
   versions,
   selectedVersionId,
   restorePreview,
+  canOpen,
   canRestore,
   onSelectVersion,
   onCancelPreview,
@@ -494,7 +441,12 @@ function DigitalHumanVersionPopover({
   }, [selectedVersionId, restorePreview?.impact_token]);
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover
+      open={open && canOpen}
+      onOpenChange={nextOpen => {
+        if (canOpen) onOpenChange(nextOpen);
+      }}
+    >
       <Tooltip>
         <PopoverTrigger asChild>
           <TooltipTrigger asChild>
@@ -505,6 +457,7 @@ function DigitalHumanVersionPopover({
               size="sm"
               interactive="subtle"
               aria-label={t('header.versions')}
+              disabled={!canOpen}
             >
               <History className="size-[18px]" />
             </Button>
@@ -550,6 +503,12 @@ function DigitalHumanVersionPopover({
               {versions.map((version, index) => {
                 const current = version.id === currentVersionId;
                 const selected = version.id === selectedVersionId;
+                const publishedAt = formatVersionTime(version);
+                const displayName =
+                  version.name?.trim() ||
+                  t('versionHistory.fallbackName', {
+                    time: publishedAt,
+                  });
                 return (
                   <button
                     key={version.id}
@@ -565,30 +524,30 @@ function DigitalHumanVersionPopover({
                       <span className="absolute -left-[14px] top-6 h-[calc(100%+12px)] w-px bg-border" />
                     ) : null}
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium">
-                        {t('configuration.publishedVersion', {
-                          version: version.version_number ?? versions.length - index,
-                        })}
+                      <span className="truncate text-sm font-medium" title={displayName}>
+                        {displayName}
                       </span>
-                      {current ? (
-                        <Badge variant="subtle" className="gap-1">
-                          <CheckCircle2 className="size-3" />
-                          {t('versionHistory.current')}
-                        </Badge>
-                      ) : null}
+                      <span className="flex shrink-0 items-center gap-1">
+                        {current ? (
+                          <Badge variant="subtle" className="gap-1">
+                            <CheckCircle2 className="size-3" />
+                            {t('versionHistory.current')}
+                          </Badge>
+                        ) : null}
+                        {selected ? (
+                          <Badge variant="outline">{t('versionHistory.previewing')}</Badge>
+                        ) : null}
+                      </span>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {version.published_at
-                        ? t('configuration.publishedAt', {
-                            date: new Date(version.published_at).toLocaleString(),
-                          })
-                        : t('configuration.publishedAvailable')}
+                      {t('versionHistory.publishedAt', {
+                        time: publishedAt,
+                      })}
+                      {' · '}
+                      {t('configuration.publishedVersion', {
+                        version: version.version_number ?? versions.length - index,
+                      })}
                     </p>
-                    {selected ? (
-                      <Badge variant="outline" className="mt-2">
-                        {t('versionHistory.previewing')}
-                      </Badge>
-                    ) : null}
                   </button>
                 );
               })}
@@ -597,13 +556,23 @@ function DigitalHumanVersionPopover({
 
           {selectedVersionId ? (
             <div className="border-t px-4 py-3">
+              {selectedVersion ? (
+                <div className="mb-3">
+                  <div className="text-xs font-medium text-foreground">
+                    {t('versionHistory.descriptionTitle')}
+                  </div>
+                  <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
+                    {selectedVersion.description?.trim() || t('versionHistory.noDescription')}
+                  </p>
+                </div>
+              ) : null}
               {isLoadingPreview ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2 border-t pt-3 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
                   {t('versionHistory.loadingImpact')}
                 </div>
               ) : restorePreview ? (
-                <div className="space-y-3">
+                <div className="space-y-3 border-t pt-3">
                   <div>
                     <div className="text-sm font-medium">{t('versionHistory.impactTitle')}</div>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">

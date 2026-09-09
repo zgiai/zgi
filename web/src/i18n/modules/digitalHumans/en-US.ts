@@ -179,6 +179,10 @@ const messages = {
     empty: 'No version has been published yet.',
     current: 'Current',
     previewing: 'Previewing',
+    fallbackName: 'Version {time}',
+    publishedAt: 'Published {time}',
+    descriptionTitle: 'Version description',
+    noDescription: 'No version description was added for this release.',
     loadingImpact: 'Checking restore impact…',
     impactTitle: 'Restore impact',
     impactSummary: 'This replaces {fields} configuration fields and changes {resources} resources.',
@@ -199,7 +203,21 @@ const messages = {
   publishDialog: {
     publishTitle: 'Publish digital human',
     updateTitle: 'Publish an update',
-    description: 'Validate this draft, then publish it as the active runtime version.',
+    publishDescription:
+      'Add optional release details, validate the draft, and publish its first immutable runtime version.',
+    updateDescription:
+      'Add optional release details, validate the draft, and publish a new immutable runtime version.',
+    nameLabel: 'Version name',
+    optional: 'Optional',
+    namePlaceholder: 'For example: Improved research handoff',
+    nameHelp: 'Use a short name that makes this release easy to find and restore later.',
+    fallbackPreview: 'If left blank, it will appear as “{name}”.',
+    descriptionLabel: 'Version description',
+    descriptionPlaceholder: 'Summarize the main changes in this release',
+    descriptionHelp: 'You can note important behavior, capability, or configuration changes.',
+    fallbackName: 'Version {time}',
+    publish: 'Publish',
+    update: 'Publish update',
     immutableHint: 'Published versions are immutable and remain available in version history.',
   },
   overview: {

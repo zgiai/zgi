@@ -256,7 +256,13 @@ export function useDigitalHumanMutations(id?: string) {
       digitalHumanId: string;
       request: PublishDigitalHumanRequest;
     }) => digitalHumanService.publish(digitalHumanId, request),
-    onSuccess: (_, variables) => invalidateDetail(variables.digitalHumanId),
+    onSuccess: (_, variables) =>
+      Promise.all([
+        invalidateDetail(variables.digitalHumanId),
+        queryClient.invalidateQueries({
+          queryKey: DIGITAL_HUMAN_KEYS.versions(variables.digitalHumanId),
+        }),
+      ]),
     onError: (error, variables) =>
       handleConflict(error, variables.digitalHumanId, t('errors.publish')),
   });
