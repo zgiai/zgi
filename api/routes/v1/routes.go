@@ -20,7 +20,7 @@ import (
 )
 
 // RegisterRoutes registers all v1 version routes
-func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory, applicationErrorCatalog *appcatalog.Catalog) {
+func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory, applicationErrorCatalog *appcatalog.Catalog) *DigitalHumanRuntimeBundle {
 	// Health & setup routes first
 	RegisterHealthRoutes(v1)
 	RegisterSetupRoutes(v1, SetupRouteDeps{
@@ -268,10 +268,11 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		CredentialCipher:    serviceContainer.GetIntegrationCredentialCipher(),
 		Tasks:               automationBundle.DigitalHumanTasks,
 	})
+	digitalHumanRuntime.Access = digitalhuman.NewAccessService(db)
 	serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
 		Service: serviceContainer.GetDigitalHumanService(), Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
-		Tasks: automationBundle.DigitalHumanTasks, Access: digitalhuman.NewAccessService(db),
+		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access,
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
 	})
@@ -385,4 +386,5 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DB:             db,
 		AccountService: accountService,
 	})
+	return digitalHumanRuntime
 }

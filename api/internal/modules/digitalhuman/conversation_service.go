@@ -167,9 +167,22 @@ func (s *RuntimeService) conversationContext(scope Scope, digitalHumanID uuid.UU
 		return nil, chatruntime.Scope{}, chatruntime.Caller{}, fmt.Errorf("digital human conversation runtime is unavailable")
 	}
 	workspaceID := scope.WorkspaceID
+	caller := chatruntime.Caller{
+		Type:   runtimemodel.ConversationCallerDigitalHuman,
+		ID:     &digitalHumanID,
+		Source: digitalHumanConversationSourceForSurface(scope.Surface),
+	}
+	if scope.Surface == SurfaceWebApp && scope.WebAppID != nil && *scope.WebAppID != uuid.Nil {
+		caller.SourceWebAppID = cloneUUIDPointer(scope.WebAppID)
+	}
 	return runtime,
-		chatruntime.Scope{OrganizationID: scope.OrganizationID, WorkspaceID: &workspaceID, AccountID: scope.ActorID},
-		chatruntime.Caller{Type: runtimemodel.ConversationCallerDigitalHuman, ID: &digitalHumanID, Source: digitalHumanConversationSourceForSurface(scope.Surface)},
+		chatruntime.Scope{
+			OrganizationID:  scope.OrganizationID,
+			WorkspaceID:     &workspaceID,
+			AccountID:       scope.ActorID,
+			SkipAccessCheck: scope.Surface == SurfaceAPI || scope.Surface == SurfaceWebApp,
+		},
+		caller,
 		nil
 }
 

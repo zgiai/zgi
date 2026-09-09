@@ -66,6 +66,7 @@ type DigitalHumanRuntimeDeps struct {
 // service on the same repository and invocation pipeline.
 type DigitalHumanRuntimeBundle struct {
 	Runtime   *digitalhuman.RuntimeService
+	Access    *digitalhuman.AccessService
 	Channels  *digitalhuman.ChannelService
 	Receivers *digitalhuman.ChannelReceiverManager
 }

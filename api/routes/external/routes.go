@@ -7,6 +7,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/integrations"
 	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -15,29 +16,33 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"gorm.io/gorm"
 )
 
 type ExternalRouteDeps struct {
-	DB                    *gorm.DB
-	AccountService        interfaces.AccountService
-	FileService           interfaces.FileService
-	ContentExtractor      workflow_file.ContentExtractor
-	QuotaService          interfaces.QuotaService
-	OrganizationService   interfaces.OrganizationService
-	LLMClient             llmclient.LLMClient
-	ToolEngine            *tools.ToolEngine
-	ToolManager           *tools.ToolManager
-	MemoryService         *memory.Service
-	GraphFlowService      *graphflow.Service
-	PromptResolver        promptservice.PromptService
-	DataSourceService     datasourceservice.DataSourceService
-	KnowledgeService      *datasetservice.KnowledgeRetrievalService
-	ResourcePermission    interfaces.ResourcePermissionService
-	WorkflowEngineFactory *graph_engine.EngineFactory
-	SkillManifestResolver skills.ToolGovernanceManifestResolver
-	IntegrationRegistry   *integrations.Registry
-	ActionProjections     integrationmetatools.ActionProjectionResolver
+	DB                      *gorm.DB
+	AccountService          interfaces.AccountService
+	FileService             interfaces.FileService
+	ContentExtractor        workflow_file.ContentExtractor
+	QuotaService            interfaces.QuotaService
+	OrganizationService     interfaces.OrganizationService
+	LLMClient               llmclient.LLMClient
+	ToolEngine              *tools.ToolEngine
+	ToolManager             *tools.ToolManager
+	MemoryService           *memory.Service
+	GraphFlowService        *graphflow.Service
+	PromptResolver          promptservice.PromptService
+	DataSourceService       datasourceservice.DataSourceService
+	KnowledgeService        *datasetservice.KnowledgeRetrievalService
+	ResourcePermission      interfaces.ResourcePermissionService
+	WorkflowEngineFactory   *graph_engine.EngineFactory
+	SkillManifestResolver   skills.ToolGovernanceManifestResolver
+	IntegrationRegistry     *integrations.Registry
+	ActionProjections       integrationmetatools.ActionProjectionResolver
+	DigitalHumanRuntime     *digitalhuman.RuntimeService
+	DigitalHumanAccess      *digitalhuman.AccessService
+	ApplicationErrorCatalog *appcatalog.Catalog
 }
 
 // RegisterExternalRoutes registers all external API routes
@@ -49,6 +54,7 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 	{
 		// Public APIs that don't require authentication
 		RegisterPublicRoutes(externalV1)
+		RegisterDigitalHumanExternalRoutes(externalV1, deps.DigitalHumanRuntime, deps.DigitalHumanAccess, deps.FileService, deps.ApplicationErrorCatalog)
 
 		// APIs that require API key authentication
 		RegisterAPIKeyRoutes(
@@ -115,5 +121,8 @@ func validateExternalRouteDeps(deps ExternalRouteDeps) {
 	}
 	if deps.WorkflowEngineFactory == nil {
 		panic("external routes require workflow engine factory")
+	}
+	if deps.DigitalHumanRuntime == nil || deps.DigitalHumanAccess == nil || deps.ApplicationErrorCatalog == nil {
+		panic("external routes require DigitalHuman runtime, access, and error catalog")
 	}
 }

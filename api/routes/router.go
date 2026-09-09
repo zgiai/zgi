@@ -53,32 +53,35 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 
 	// API v1 routes
 	v1Group := r.Group("/console/api")
-	v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory, applicationErrorCatalog)
+	digitalHumanRuntime := v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory, applicationErrorCatalog)
 
 	var externalActionProjections integrationmetatools.ActionProjectionResolver
 	if currentConfig := config.Current(); currentConfig != nil && currentConfig.ExternalIntegrations.Enabled {
 		externalActionProjections = serviceContainer.GetIntegrationActionProjectionService()
 	}
 	external.RegisterExternalRoutes(r, external.ExternalRouteDeps{
-		DB:                    serviceContainer.GetDB(),
-		AccountService:        serviceContainer.GetAccountService(),
-		FileService:           serviceContainer.GetFileService(),
-		ContentExtractor:      serviceContainer.GetContentExtractor(),
-		QuotaService:          serviceContainer.GetQuotaService(),
-		OrganizationService:   serviceContainer.GetOrganizationService(),
-		LLMClient:             serviceContainer.GetLLMClient(),
-		ToolEngine:            serviceContainer.GetToolEngine(),
-		ToolManager:           serviceContainer.GetToolManager(),
-		MemoryService:         serviceContainer.GetMemoryService(),
-		GraphFlowService:      serviceContainer.GetGraphFlowService(),
-		PromptResolver:        serviceContainer.GetPromptService(),
-		DataSourceService:     serviceContainer.GetDataSourceService(),
-		KnowledgeService:      serviceContainer.GetKnowledgeRetrievalService(),
-		ResourcePermission:    serviceContainer.GetResourcePermissionService(),
-		WorkflowEngineFactory: workflowEngineFactory,
-		SkillManifestResolver: integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
-		IntegrationRegistry:   serviceContainer.GetIntegrationRegistry(),
-		ActionProjections:     externalActionProjections,
+		DB:                      serviceContainer.GetDB(),
+		AccountService:          serviceContainer.GetAccountService(),
+		FileService:             serviceContainer.GetFileService(),
+		ContentExtractor:        serviceContainer.GetContentExtractor(),
+		QuotaService:            serviceContainer.GetQuotaService(),
+		OrganizationService:     serviceContainer.GetOrganizationService(),
+		LLMClient:               serviceContainer.GetLLMClient(),
+		ToolEngine:              serviceContainer.GetToolEngine(),
+		ToolManager:             serviceContainer.GetToolManager(),
+		MemoryService:           serviceContainer.GetMemoryService(),
+		GraphFlowService:        serviceContainer.GetGraphFlowService(),
+		PromptResolver:          serviceContainer.GetPromptService(),
+		DataSourceService:       serviceContainer.GetDataSourceService(),
+		KnowledgeService:        serviceContainer.GetKnowledgeRetrievalService(),
+		ResourcePermission:      serviceContainer.GetResourcePermissionService(),
+		WorkflowEngineFactory:   workflowEngineFactory,
+		SkillManifestResolver:   integrations.NewGovernanceManifestResolver(serviceContainer.GetIntegrationRegistry(), serviceContainer.GetIntegrationActionPolicyService()),
+		IntegrationRegistry:     serviceContainer.GetIntegrationRegistry(),
+		ActionProjections:       externalActionProjections,
+		DigitalHumanRuntime:     digitalHumanRuntime.Runtime,
+		DigitalHumanAccess:      digitalHumanRuntime.Access,
+		ApplicationErrorCatalog: applicationErrorCatalog,
 	})
 
 	registerConsoleInternalRoutes(r, serviceContainer.GetDB())

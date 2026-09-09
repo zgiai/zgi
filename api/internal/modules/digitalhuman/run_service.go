@@ -184,6 +184,9 @@ func (s *RuntimeService) submitExternalSurface(ctx context.Context, scope Scope,
 		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalType(scope.PrincipalType), ID: scope.PrincipalID.String()},
 		OccurredAt: s.now(), Context: map[string]any{"query": query, "surface": surface, "request_id": request.RequestID.String()},
 	}
+	if surface == SurfaceWebApp && scope.WebAppID != nil && *scope.WebAppID != uuid.Nil {
+		event.Context["web_app_id"] = scope.WebAppID.String()
+	}
 	appendInvocationRequestContext(event.Context, request)
 	if request.ConversationID != nil && *request.ConversationID != uuid.Nil {
 		event.Context["conversation_id"] = request.ConversationID.String()
@@ -491,6 +494,11 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	callerID := run.DigitalHumanID
 	caller := chatruntime.Caller{
 		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSourceForEvent(event),
+	}
+	if webAppID, ok := stringContextValue(event.Context, "web_app_id"); ok {
+		if parsed, parseErr := uuid.Parse(webAppID); parseErr == nil && parsed != uuid.Nil {
+			caller.SourceWebAppID = &parsed
+		}
 	}
 	if event.Origin.Kind == invocation.OriginChannel && run.ConversationID != nil {
 		if _, err := s.chat.EnsureConversationForCaller(
@@ -861,7 +869,12 @@ func runtimeScope(run *Run) chatruntime.Scope {
 	if run.UserSubjectID != nil && *run.UserSubjectID != uuid.Nil {
 		actorID = *run.UserSubjectID
 	}
-	return chatruntime.Scope{OrganizationID: run.OrganizationID, WorkspaceID: &workspaceID, AccountID: actorID}
+	return chatruntime.Scope{
+		OrganizationID:  run.OrganizationID,
+		WorkspaceID:     &workspaceID,
+		AccountID:       actorID,
+		SkipAccessCheck: run.Surface == SurfaceAPI || run.Surface == SurfaceWebApp,
+	}
 }
 
 func stringContextValue(values map[string]any, key string) (string, bool) {

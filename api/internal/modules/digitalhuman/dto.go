@@ -24,6 +24,7 @@ type Scope struct {
 	PrincipalID     uuid.UUID
 	UserSubjectKind string
 	UserSubjectID   *uuid.UUID
+	WebAppID        *uuid.UUID
 	Surface         string
 }
 

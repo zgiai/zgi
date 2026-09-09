@@ -35,6 +35,46 @@ func TestListConversationsUsesDigitalHumanCallerAndWorkspaceScope(t *testing.T) 
 	}
 }
 
+func TestListConversationsUsesExternalUserSubjectAndSkipsMembershipForAPI(t *testing.T) {
+	scope, digitalHumanID := testRunScope(), uuid.New()
+	subjectID := uuid.New()
+	scope.ActorID = subjectID
+	scope.UserSubjectID = &subjectID
+	scope.Surface = SurfaceAPI
+	chat := &scopedConversationChat{fakeDigitalHumanChat: &fakeDigitalHumanChat{}}
+	chat.list = func(_ context.Context, gotScope chatruntime.Scope, caller chatruntime.Caller, _, _ int) ([]*runtimemodel.Conversation, int64, error) {
+		if gotScope.AccountID != subjectID || !gotScope.SkipAccessCheck {
+			t.Fatalf("runtime scope = %#v, want external user subject with access already checked", gotScope)
+		}
+		if caller.Source != digitalHumanAPIConversationSource {
+			t.Fatalf("caller source = %q, want %q", caller.Source, digitalHumanAPIConversationSource)
+		}
+		return []*runtimemodel.Conversation{}, 0, nil
+	}
+	service := NewRuntimeService(newFakeRunStore(), fakeExecutionResolver{}, fakeBrainAdapter{}, chat, &fakeRunDispatcher{})
+	if _, _, err := service.ListConversations(context.Background(), scope, digitalHumanID, 1, 20); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListConversationsCarriesWebAppIdentity(t *testing.T) {
+	scope, digitalHumanID := testRunScope(), uuid.New()
+	webAppID := uuid.New()
+	scope.Surface = SurfaceWebApp
+	scope.WebAppID = &webAppID
+	chat := &scopedConversationChat{fakeDigitalHumanChat: &fakeDigitalHumanChat{}}
+	chat.list = func(_ context.Context, gotScope chatruntime.Scope, caller chatruntime.Caller, _, _ int) ([]*runtimemodel.Conversation, int64, error) {
+		if !gotScope.SkipAccessCheck || caller.Source != digitalHumanWebAppConversationSource || caller.SourceWebAppID == nil || *caller.SourceWebAppID != webAppID {
+			t.Fatalf("webapp runtime context = %#v / %#v", gotScope, caller)
+		}
+		return []*runtimemodel.Conversation{}, 0, nil
+	}
+	service := NewRuntimeService(newFakeRunStore(), fakeExecutionResolver{}, fakeBrainAdapter{}, chat, &fakeRunDispatcher{})
+	if _, _, err := service.ListConversations(context.Background(), scope, digitalHumanID, 1, 20); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type scopedConversationChat struct {
 	*fakeDigitalHumanChat
 	ConversationRuntime

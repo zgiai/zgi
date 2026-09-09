@@ -139,6 +139,8 @@ func normalizeConversationSource(value string) string {
 		return runtimemodel.ConversationSourceWebApp
 	case runtimemodel.ConversationSourceExternalAPI:
 		return runtimemodel.ConversationSourceExternalAPI
+	case runtimemodel.ConversationSourceChannel:
+		return runtimemodel.ConversationSourceChannel
 	case runtimemodel.ConversationSourceMigration:
 		return runtimemodel.ConversationSourceMigration
 	default:

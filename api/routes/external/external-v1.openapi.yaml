@@ -1,0 +1,478 @@
+openapi: 3.0.3
+info:
+  title: ZGI External API v1
+  version: 1.0.0
+  description: |
+    Shared external contract for published ZGI Agents and DigitalHumans.
+    DigitalHuman stateful operations use the `user` field as the stable end-user identity.
+    The raw value is never returned and must be an opaque, non-PII business identifier.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: DigitalHumans
+  - name: DigitalHuman runs
+  - name: DigitalHuman conversations
+  - name: DigitalHuman files
+paths:
+  /digital-humans/config:
+    get:
+      tags: [DigitalHumans]
+      summary: Get the published DigitalHuman configuration
+      description: Returns the immutable published presentation and externally available capabilities.
+      operationId: getDigitalHumanConfig
+      responses:
+        '200':
+          description: Published configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigitalHumanConfigEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /digital-humans/chat:
+    post:
+      tags: [DigitalHumans]
+      summary: Create or continue a DigitalHuman conversation
+      description: Accepts a durable run and streams recoverable SSE events. The response includes `X-ZGI-Run-ID`.
+      operationId: chatWithDigitalHuman
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DigitalHumanChatRequest'
+      responses:
+        '200':
+          description: Server-sent event stream
+          headers:
+            X-ZGI-Run-ID:
+              required: true
+              schema: {type: string, format: uuid}
+          content:
+            text/event-stream:
+              schema: {type: string}
+              x-zgi-sse-event-data-schemas:
+                run_accepted: {$ref: '#/components/schemas/RunAcceptedEvent'}
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+                run_end: {$ref: '#/components/schemas/RunEndEvent'}
+        default:
+          $ref: '#/components/responses/Error'
+  /digital-humans/runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/RunID'
+      - $ref: '#/components/parameters/UserQuery'
+    get:
+      tags: [DigitalHuman runs]
+      summary: Get a durable DigitalHuman run
+      description: Returns run status and linked conversation identifiers for the same end user.
+      operationId: getDigitalHumanRun
+      responses:
+        '200':
+          description: Run state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanRunEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/runs/{run_id}/events:
+    parameters:
+      - $ref: '#/components/parameters/RunID'
+      - $ref: '#/components/parameters/UserQuery'
+    get:
+      tags: [DigitalHuman runs]
+      summary: Resume a DigitalHuman run event stream
+      description: Pass the last opaque SSE id in `Last-Event-ID`; the server replays persisted message events.
+      operationId: streamDigitalHumanRunEvents
+      parameters:
+        - $ref: '#/components/parameters/LastEventID'
+      responses:
+        '200':
+          description: Recoverable event stream
+          headers:
+            X-ZGI-Run-ID:
+              required: true
+              schema: {type: string, format: uuid}
+          content:
+            text/event-stream:
+              schema: {type: string}
+              x-zgi-sse-event-data-schemas:
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+                run_end: {$ref: '#/components/schemas/RunEndEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/runs/{run_id}/stop:
+    parameters:
+      - $ref: '#/components/parameters/RunID'
+    post:
+      tags: [DigitalHuman runs]
+      summary: Stop a DigitalHuman run
+      description: Requests cancellation of the durable run and its linked model execution.
+      operationId: stopDigitalHumanRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UserBody'}
+      responses:
+        '200':
+          description: Updated run
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanRunEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/runs/{run_id}/runtime-input:
+    parameters:
+      - $ref: '#/components/parameters/RunID'
+    post:
+      tags: [DigitalHuman runs]
+      summary: Submit input to a running DigitalHuman
+      description: Applies input to the current run checkpoint or queues a durable follow-up.
+      operationId: submitDigitalHumanRuntimeInput
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RuntimeInputRequest'}
+      responses:
+        '200':
+          description: Accepted runtime input
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations:
+    get:
+      tags: [DigitalHuman conversations]
+      summary: List DigitalHuman conversations
+      description: Lists conversations owned by the supplied end user for this DigitalHuman.
+      operationId: listDigitalHumanConversations
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Conversation page
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/search:
+    get:
+      tags: [DigitalHuman conversations]
+      summary: Search DigitalHuman conversations
+      description: Searches titles and messages within the supplied end-user boundary.
+      operationId: searchDigitalHumanConversations
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+        - name: query
+          in: query
+          required: true
+          schema: {type: string, maxLength: 200}
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+    get:
+      tags: [DigitalHuman conversations]
+      summary: Get a DigitalHuman conversation
+      description: Returns one caller-owned conversation.
+      operationId: getDigitalHumanConversation
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+      responses:
+        '200':
+          description: Conversation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      tags: [DigitalHuman conversations]
+      summary: Rename a DigitalHuman conversation
+      description: Updates the title of one caller-owned conversation.
+      operationId: updateDigitalHumanConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConversationUpdateRequest'}
+      responses:
+        '200':
+          description: Updated conversation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [DigitalHuman conversations]
+      summary: Delete a DigitalHuman conversation
+      description: Permanently deletes one caller-owned conversation and its messages.
+      operationId: deleteDigitalHumanConversation
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+      responses:
+        '200':
+          description: Deletion result
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+    get:
+      tags: [DigitalHuman conversations]
+      summary: List DigitalHuman conversation messages
+      description: Returns message history and visible runtime inputs for a caller-owned conversation.
+      operationId: listDigitalHumanConversationMessages
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Message page
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/files/upload:
+    post:
+      tags: [DigitalHuman files]
+      summary: Upload a DigitalHuman chat file
+      description: Uploads a temporary file owned by this DigitalHuman and end-user subject.
+      operationId: uploadDigitalHumanFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [user, file]
+              properties:
+                user: {$ref: '#/components/schemas/User'}
+                file: {type: string, format: binary}
+      responses:
+        '201':
+          description: Uploaded file
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuccessEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ZGI API key
+  parameters:
+    RunID:
+      name: run_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    ConversationID:
+      name: conversation_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    UserQuery:
+      name: user
+      in: query
+      required: true
+      description: Stable opaque end-user identifier; trimmed, case-sensitive, maximum 128 characters.
+      schema: {$ref: '#/components/schemas/User'}
+    LastEventID:
+      name: Last-Event-ID
+      in: header
+      required: false
+      schema: {type: string}
+    Page:
+      name: page
+      in: query
+      schema: {type: integer, minimum: 1, default: 1}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 200, default: 20}
+  responses:
+    Error:
+      description: Safe public error
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+  schemas:
+    User:
+      type: string
+      minLength: 1
+      maxLength: 128
+      example: customer_123
+    UserBody:
+      type: object
+      additionalProperties: false
+      required: [user]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+    DigitalHumanChatRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, user, query]
+      properties:
+        request_id: {type: string, format: uuid}
+        user: {$ref: '#/components/schemas/User'}
+        query: {type: string, minLength: 1, maxLength: 32000}
+        conversation_id: {type: string, format: uuid}
+        parent_message_id: {type: string, format: uuid}
+        file_ids:
+          type: array
+          items: {type: string}
+        response_mode:
+          type: string
+          enum: [streaming]
+          default: streaming
+    RuntimeInputRequest:
+      type: object
+      additionalProperties: false
+      required: [user, client_input_id, content]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        client_input_id: {type: string, format: uuid}
+        content: {type: string, minLength: 1, maxLength: 16000}
+    ConversationUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [user, title]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        title: {type: string, minLength: 1, maxLength: 50}
+    SuccessEnvelope:
+      type: object
+      required: [code, message, data]
+      properties:
+        code: {type: string, enum: ['0']}
+        message: {type: string, enum: [success]}
+        data: {}
+    ErrorResponse:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code: {type: string, example: digital_human.request.invalid}
+        message: {type: string}
+        retryable: {type: boolean}
+    DigitalHumanConfigEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/DigitalHumanConfig'}
+    DigitalHumanConfig:
+      type: object
+      required: [digital_human_id, web_app_id, name, suggested_questions, external_user_required, version, version_uuid]
+      properties:
+        digital_human_id: {type: string, format: uuid}
+        web_app_id: {type: string, format: uuid}
+        name: {type: string}
+        description: {type: string}
+        icon: {type: string}
+        icon_type: {type: string}
+        icon_url: {type: string}
+        home_title: {type: string}
+        opening_statement: {type: string}
+        input_placeholder: {type: string}
+        theme_color: {type: string}
+        suggested_questions:
+          type: array
+          maxItems: 6
+          items: {type: string}
+        file_upload_enabled: {type: boolean}
+        relationship_memory_enabled: {type: boolean}
+        memory_requires_user: {type: boolean}
+        external_user_required: {type: boolean, enum: [true]}
+        runtime_input_enabled: {type: boolean}
+        regenerate_enabled: {type: boolean, enum: [false]}
+        landing_page_enabled: {type: boolean}
+        api_enabled: {type: boolean}
+        version: {type: string}
+        version_uuid: {type: string, format: uuid}
+    DigitalHumanRunEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/DigitalHumanRun'}
+    DigitalHumanRun:
+      type: object
+      required: [run_id, status, created_at, updated_at]
+      properties:
+        run_id: {type: string, format: uuid}
+        status: {type: string, enum: [queued, running, canceling, succeeded, failed, canceled, unknown]}
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        error_code: {type: string}
+        error_message: {type: string}
+        created_at: {type: integer, format: int64}
+        updated_at: {type: integer, format: int64}
+    RunAcceptedEvent:
+      type: object
+      required: [run_id, request_id, status, created]
+      properties:
+        run_id: {type: string, format: uuid}
+        request_id: {type: string, format: uuid}
+        status: {type: string}
+        created: {type: boolean}
+    MessageStartEvent:
+      type: object
+      required: [conversation_id, message_id]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        parent_id: {type: string, format: uuid, nullable: true}
+        title: {type: string}
+        model: {type: string}
+        replace: {type: boolean}
+        created_at: {type: integer, format: int64}
+    MessageDeltaEvent:
+      type: object
+      required: [conversation_id, message_id, answer]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        answer: {type: string}
+    MessageEndEvent:
+      type: object
+      required: [conversation_id, message_id, status]
+      properties:
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        status: {type: string}
+        metadata: {type: object, additionalProperties: true}
+    StreamErrorEvent:
+      type: object
+      required: [run_id, code, message, retryable]
+      properties:
+        run_id: {type: string, format: uuid}
+        code: {type: string}
+        message: {type: string}
+        retryable: {type: boolean}
+    RunEndEvent:
+      type: object
+      required: [run_id, status]
+      properties:
+        run_id: {type: string, format: uuid}
+        status: {type: string}
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
