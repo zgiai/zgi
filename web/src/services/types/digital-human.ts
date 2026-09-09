@@ -3,13 +3,7 @@ import type { AgentRuntimeRunDetail, AgentRuntimeStep } from './agent-runtime-lo
 export type DigitalHumanStatus = 'draft' | 'active' | 'disabled';
 export type DigitalHumanVersionState = 'draft' | 'published';
 export type DigitalHumanRunStatus =
-  | 'queued'
-  | 'running'
-  | 'canceling'
-  | 'succeeded'
-  | 'failed'
-  | 'canceled'
-  | 'unknown';
+  'queued' | 'running' | 'canceling' | 'succeeded' | 'failed' | 'canceled' | 'unknown';
 
 export interface DigitalHumanChannelResponsePolicy {
   intermediate_messages_enabled?: boolean;
@@ -21,8 +15,17 @@ export interface DigitalHumanTriggerPolicy extends Record<string, unknown> {
   channel_response?: DigitalHumanChannelResponsePolicy;
 }
 
+export interface DigitalHumanPresentationPolicy {
+  home_title: string;
+  opening_statement: string;
+  input_placeholder: string;
+  theme_color: string;
+  suggested_questions: string[];
+}
+
 export interface DigitalHumanDefinition {
   id: string;
+  web_app_id: string;
   organization_id: string;
   workspace_id: string;
   name: string;
@@ -55,6 +58,7 @@ export interface DigitalHumanVersion {
   default_model: string;
   memory_policy?: Record<string, unknown>;
   trigger_policy?: DigitalHumanTriggerPolicy;
+  presentation_policy?: DigitalHumanPresentationPolicy;
   published_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -124,6 +128,7 @@ export interface CreateDigitalHumanRequest {
   default_model: string;
   memory_policy?: Record<string, unknown>;
   trigger_policy?: DigitalHumanTriggerPolicy;
+  presentation_policy?: DigitalHumanPresentationPolicy;
 }
 
 export interface UpdateDigitalHumanRequest {
@@ -146,6 +151,57 @@ export interface UpdateDigitalHumanDraftRequest {
   default_model?: string;
   memory_policy?: Record<string, unknown>;
   trigger_policy?: DigitalHumanTriggerPolicy;
+  presentation_policy?: DigitalHumanPresentationPolicy;
+}
+
+export interface DigitalHumanAccessSettings {
+  webapp_enabled: boolean;
+  api_enabled: boolean;
+}
+
+export interface DigitalHumanAPIKey {
+  id: string;
+  digital_human_id: string;
+  key_prefix: string;
+  name: string;
+  status: 'active' | 'revoked';
+  expires_at?: string | null;
+  usage_count: number;
+  last_used_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DigitalHumanAPIKeyList {
+  api_keys: DigitalHumanAPIKey[];
+  total: number;
+}
+
+export interface DigitalHumanAPIKeyCreated extends DigitalHumanAPIKey {
+  api_key: string;
+}
+
+export interface DigitalHumanWebAppConfig {
+  digital_human_id: string;
+  web_app_id: string;
+  name: string;
+  description: string;
+  icon: string;
+  icon_type: 'text' | 'image';
+  icon_url: string;
+  home_title: string;
+  opening_statement: string;
+  input_placeholder: string;
+  theme_color: string;
+  suggested_questions: string[];
+  anonymous_chat_enabled: boolean;
+  login_required: boolean;
+  file_upload_enabled: boolean;
+  file_upload_requires_login: boolean;
+  relationship_memory_enabled: boolean;
+  runtime_input_enabled: boolean;
+  version: string;
+  version_uuid: string;
 }
 
 export interface PublishDigitalHumanRequest {
@@ -206,8 +262,10 @@ export interface DigitalHumanResourceBindingInput {
   metadata: Record<string, unknown>;
 }
 
-export interface DigitalHumanResourceBinding
-  extends Omit<DigitalHumanResourceBindingInput, 'type'> {
+export interface DigitalHumanResourceBinding extends Omit<
+  DigitalHumanResourceBindingInput,
+  'type'
+> {
   id: string;
   binding_type: DigitalHumanBindingType;
   binding_revision: string;
@@ -301,18 +359,9 @@ export interface ManualDigitalHumanInvocationResponse {
 
 export type DigitalHumanMemoryClass = 'self' | 'business';
 export type DigitalHumanMemoryType =
-  | 'identity'
-  | 'experience'
-  | 'decision'
-  | 'fact'
-  | 'open_loop'
-  | 'reflection';
+  'identity' | 'experience' | 'decision' | 'fact' | 'open_loop' | 'reflection';
 export type DigitalHumanMemoryScopeType =
-  | 'workspace'
-  | 'project'
-  | 'customer'
-  | 'campaign'
-  | 'channel';
+  'workspace' | 'project' | 'customer' | 'campaign' | 'channel';
 export type DigitalHumanMemoryStatus = 'active' | 'invalidated' | 'archived';
 
 export interface DigitalHumanMemoryEvidence {
@@ -409,12 +458,7 @@ export interface DigitalHumanMemoryMutationResult {
 export type DigitalHumanChannelInstallationStatus = 'active' | 'disabled';
 export type DigitalHumanChannelEventStatus = 'received' | 'ignored' | 'accepted' | 'failed';
 export type DigitalHumanChannelDeliveryStatus =
-  | 'pending'
-  | 'processing'
-  | 'succeeded'
-  | 'failed'
-  | 'unknown'
-  | 'dismissed';
+  'pending' | 'processing' | 'succeeded' | 'failed' | 'unknown' | 'dismissed';
 
 export interface DigitalHumanChannelInstallation {
   id: string;
@@ -609,13 +653,7 @@ export interface DigitalHumanChannelPage<T> {
 }
 
 export type DigitalHumanTaskStatus =
-  | 'proposed'
-  | 'pending'
-  | 'in_progress'
-  | 'waiting'
-  | 'blocked'
-  | 'completed'
-  | 'canceled';
+  'proposed' | 'pending' | 'in_progress' | 'waiting' | 'blocked' | 'completed' | 'canceled';
 export type DigitalHumanTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type DigitalHumanTaskScheduleType = 'manual' | 'once' | 'cron';
 

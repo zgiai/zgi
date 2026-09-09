@@ -81,7 +81,10 @@ import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/v
 import { useAgentVoiceInput } from '@/components/chat/variants/aichat/voice/use-agent-voice-input';
 import { getVoiceInputErrorKey } from '@/components/chat/variants/aichat/voice/voice-input-errors';
 
-export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
+export type AIChatUploadScope =
+  | { type: 'console' }
+  | { type: 'webapp'; webAppId: string }
+  | { type: 'digital-human-webapp'; webAppId: string };
 
 const FileSelectorDialog = dynamic(() => import('@/components/files/file-selector-dialog'), {
   ssr: false,
@@ -395,8 +398,8 @@ export function AIChatInputArea({
     activeWorkflowApprovalRequest?.approvalToken,
     Boolean(
       canSubmitWorkflowApprovalInline &&
-        activeWorkflowApprovalRequest?.approvalToken &&
-        !activeApprovalForm
+      activeWorkflowApprovalRequest?.approvalToken &&
+      !activeApprovalForm
     )
   );
   const approvalForm = activeApprovalForm ?? approvalFormQuery.data ?? null;
@@ -464,7 +467,7 @@ export function AIChatInputArea({
 
   const { data: uploadConfig } = useUploadConfig({
     enabled: enableUpload,
-    scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
+    scope: uploadScope.type === 'console' ? undefined : uploadScope,
   });
   const currentWorkspace = useCurrentWorkspace();
   const allowedExtensions = useMemo(
@@ -777,11 +780,15 @@ export function AIChatInputArea({
         const response =
           uploadScope.type === 'webapp'
             ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, { onProgress })
-            : await uploadService.uploadSingle(file, {
-                is_temporary: true,
-                workspace_id: currentWorkspace?.id,
-                onProgress,
-              });
+            : uploadScope.type === 'digital-human-webapp'
+              ? await uploadService.uploadDigitalHumanWebAppSingle(uploadScope.webAppId, file, {
+                  onProgress,
+                })
+              : await uploadService.uploadSingle(file, {
+                  is_temporary: true,
+                  workspace_id: currentWorkspace?.id,
+                  onProgress,
+                });
         const uploadedFile = toAIChatMessageFile(response, kind);
         setAttachments(current =>
           current.map(attachment =>

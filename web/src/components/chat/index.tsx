@@ -421,6 +421,7 @@ export {
   DigitalHumanRuntimeTransport,
   createDigitalHumanRuntimeTransport,
 } from '@/components/chat/transports/digital-human-runtime-transport';
+export { createDigitalHumanWebAppTransport } from '@/components/chat/transports/digital-human-webapp-transport';
 export {
   useAIChatController,
   useChatRuntimeController,

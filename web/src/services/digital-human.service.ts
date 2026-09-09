@@ -45,6 +45,10 @@ import type {
   DigitalHumanTaskPage,
   DigitalHumanDirectSkillConfiguration,
   UpdateDigitalHumanDirectSkillConfigurationRequest,
+  DigitalHumanAccessSettings,
+  DigitalHumanAPIKey,
+  DigitalHumanAPIKeyCreated,
+  DigitalHumanAPIKeyList,
 } from './types/digital-human';
 
 class DigitalHumanService extends BaseService {
@@ -87,6 +91,40 @@ class DigitalHumanService extends BaseService {
     data: PublishDigitalHumanRequest
   ): Promise<ApiResponseData<DigitalHumanDetail>> {
     return this.request('post', `/digital-humans/${id}/publish`, data);
+  }
+
+  getAccessSettings(id: string): Promise<ApiResponseData<DigitalHumanAccessSettings>> {
+    return this.request('get', `/digital-humans/${id}/access`);
+  }
+
+  updateAccessSettings(
+    id: string,
+    data: Partial<DigitalHumanAccessSettings>
+  ): Promise<ApiResponseData<DigitalHumanAccessSettings>> {
+    return this.request('patch', `/digital-humans/${id}/access`, data);
+  }
+
+  listAPIKeys(id: string): Promise<ApiResponseData<DigitalHumanAPIKeyList>> {
+    return this.request('get', `/digital-humans/${id}/api-keys`);
+  }
+
+  createAPIKey(
+    id: string,
+    data: { name: string; expires_at?: string }
+  ): Promise<ApiResponseData<DigitalHumanAPIKeyCreated>> {
+    return this.request('post', `/digital-humans/${id}/api-keys`, data);
+  }
+
+  updateAPIKey(
+    id: string,
+    keyId: string,
+    data: { name?: string; status?: DigitalHumanAPIKey['status']; expires_at?: string }
+  ): Promise<ApiResponseData<DigitalHumanAPIKey>> {
+    return this.request('patch', `/digital-humans/${id}/api-keys/${keyId}`, data);
+  }
+
+  deleteAPIKey(id: string, keyId: string): Promise<void> {
+    return this.request('delete', `/digital-humans/${id}/api-keys/${keyId}`);
   }
 
   listVersions(
@@ -416,7 +454,6 @@ class DigitalHumanService extends BaseService {
   ): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
     return this.request('get', `/digital-humans/${id}/tasks/${taskId}/activities`);
   }
-
 }
 
 export const digitalHumanService = new DigitalHumanService();

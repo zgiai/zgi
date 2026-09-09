@@ -454,8 +454,8 @@ export function AIChatShell({
     const matchesSelection = (candidate: ModelSelectorModelProps | null | undefined) =>
       Boolean(
         candidate &&
-          candidate.provider === modelSelectorValue.provider &&
-          candidate.model === modelSelectorValue.model
+        candidate.provider === modelSelectorValue.provider &&
+        candidate.model === modelSelectorValue.model
       );
 
     if (matchesSelection(modelProps)) return modelProps ?? null;
@@ -702,8 +702,8 @@ export function AIChatShell({
   );
   const canStopPendingWorkflowInteraction = Boolean(
     activeWorkflowApprovalRequest ||
-      (activeUserInputMessage?.status === 'waiting_question' &&
-        activeUserInputRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE)
+    (activeUserInputMessage?.status === 'waiting_question' &&
+      activeUserInputRequest?.source === AGENT_WORKFLOW_QUESTION_SOURCE)
   );
   const contextBlockedMessage = useMemo(() => {
     const leafMessageId = activeConversation?.current_leaf_message_id;
@@ -847,7 +847,9 @@ export function AIChatShell({
       [
         'aichat-runtime',
         effectiveRuntimeSurface,
-        uploadScope?.type === 'webapp' ? uploadScope.webAppId : 'console',
+        uploadScope?.type === 'console' || !uploadScope
+          ? 'console'
+          : `${uploadScope.type}:${uploadScope.webAppId}`,
         'conversations',
         'search',
       ] as const,
@@ -898,14 +900,14 @@ export function AIChatShell({
       const conversation = activeConversation;
       return Boolean(
         conversation &&
-          conversation.runtime_status === 'idle' &&
-          conversation.dialogue_count === 1 &&
-          !message.parent_id &&
-          conversation.current_leaf_message_id === message.id &&
-          (message.status === 'completed' ||
-            message.status === 'stopped' ||
-            message.status === 'error') &&
-          activeMessages.length === 1
+        conversation.runtime_status === 'idle' &&
+        conversation.dialogue_count === 1 &&
+        !message.parent_id &&
+        conversation.current_leaf_message_id === message.id &&
+        (message.status === 'completed' ||
+          message.status === 'stopped' ||
+          message.status === 'error') &&
+        activeMessages.length === 1
       );
     },
     [activeConversation, activeMessages.length]

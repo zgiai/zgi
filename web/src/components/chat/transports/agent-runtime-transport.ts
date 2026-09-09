@@ -52,6 +52,7 @@ interface AgentRuntimeTransportOptions {
   chatPath: string;
   client?: RuntimeClient;
   supportsRuntimeInput?: boolean;
+  transformChatPayload?: (payload: AIChatChatRequest) => unknown;
 }
 
 const AGENT_RUNTIME_CONVERSATION_ID_HEADER = 'X-ZGI-Conversation-ID';
@@ -142,17 +143,20 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
   private readonly runtimeBasePath: string;
   private readonly chatPath: string;
   private readonly client: RuntimeClient;
+  private readonly transformChatPayload: (payload: AIChatChatRequest) => unknown;
 
   constructor({
     runtimeBasePath,
     chatPath,
     client = http,
     supportsRuntimeInput = false,
+    transformChatPayload = payload => payload,
   }: AgentRuntimeTransportOptions) {
     this.runtimeBasePath = runtimeBasePath;
     this.chatPath = chatPath;
     this.client = client;
     this.supportsRuntimeInput = supportsRuntimeInput;
+    this.transformChatPayload = transformChatPayload;
   }
 
   async listConversations(params: {
@@ -256,9 +260,9 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ) {
-    return this.client.sse<AIChatSseEnvelope, AIChatChatRequest>(this.chatPath, {
+    return this.client.sse<AIChatSseEnvelope, unknown>(this.chatPath, {
       method: 'POST',
-      body: payload,
+      body: this.transformChatPayload(payload),
       abortSignal,
       idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
       skipErrorHandling: true,

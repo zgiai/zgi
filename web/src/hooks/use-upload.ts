@@ -20,23 +20,25 @@ import { type SupportedFileTypesResponse, fileService } from '@/services/file.se
 const UPLOAD_QUERY_KEY = 'upload';
 
 const getSupportedTypesKey = () => [UPLOAD_QUERY_KEY, 'supported-types'];
-const getUploadConfigKey = (scope?: { type: 'webapp'; webAppId: string }) =>
+type PublicUploadScope =
+  { type: 'webapp'; webAppId: string } | { type: 'digital-human-webapp'; webAppId: string };
+
+const getUploadConfigKey = (scope?: PublicUploadScope) =>
   scope ? [UPLOAD_QUERY_KEY, 'config', scope.type, scope.webAppId] : [UPLOAD_QUERY_KEY, 'config'];
 
 /* -------------------------------------------------------------------------- */
 /* Hook: useUploadConfig                                                       */
 /* -------------------------------------------------------------------------- */
 
-export function useUploadConfig(options?: {
-  enabled?: boolean;
-  scope?: { type: 'webapp'; webAppId: string };
-}) {
+export function useUploadConfig(options?: { enabled?: boolean; scope?: PublicUploadScope }) {
   return useQuery<UploadConfig, Error>({
     queryKey: getUploadConfigKey(options?.scope),
     queryFn: () =>
       options?.scope?.type === 'webapp'
         ? uploadService.getWebAppConfig(options.scope.webAppId)
-        : uploadService.getConfig(),
+        : options?.scope?.type === 'digital-human-webapp'
+          ? uploadService.getDigitalHumanWebAppConfig(options.scope.webAppId)
+          : uploadService.getConfig(),
     staleTime: 0,
     gcTime: 48 * 60 * 60 * 1000,
     enabled: options?.enabled,
