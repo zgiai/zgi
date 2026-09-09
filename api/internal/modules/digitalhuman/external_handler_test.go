@@ -39,6 +39,23 @@ func TestExternalRunOwnershipUsesSubjectNotAPIKeyPrincipal(t *testing.T) {
 	}
 }
 
+func TestAnonymousWebAppRunOwnershipUsesSignedSessionSubject(t *testing.T) {
+	sessionSubjectID := uuid.New()
+	run := &Run{
+		ActorID: &sessionSubjectID, PrincipalID: &sessionSubjectID,
+		Surface: SurfaceWebApp,
+	}
+	scope := Scope{ActorID: sessionSubjectID, PrincipalID: sessionSubjectID}
+	if !externalRunOwnedByScope(run, scope, SurfaceWebApp) {
+		t.Fatal("the issuing anonymous session must own its webapp run")
+	}
+	otherSession := uuid.New()
+	scope.ActorID, scope.PrincipalID = otherSession, otherSession
+	if externalRunOwnedByScope(run, scope, SurfaceWebApp) {
+		t.Fatal("a different anonymous session must not own the webapp run")
+	}
+}
+
 func TestExternalRunResponseDoesNotExposeInternalIdentityOrSnapshots(t *testing.T) {
 	now := time.Now().UTC()
 	run := &Run{

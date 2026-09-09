@@ -173,6 +173,8 @@ func (s *RuntimeService) submitExternalSurface(ctx context.Context, scope Scope,
 	eventID := request.RequestID.String()
 	if scope.UserSubjectID != nil && *scope.UserSubjectID != uuid.Nil {
 		eventID = scope.UserSubjectID.String() + ":" + eventID
+	} else if surface == SurfaceWebApp {
+		eventID = scope.PrincipalID.String() + ":" + eventID
 	}
 	event := invocation.Event{
 		ID: eventID, Type: invocation.EventTypeAPI,

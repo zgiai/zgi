@@ -2,6 +2,7 @@ package external
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -21,5 +22,11 @@ func RegisterDigitalHumanExternalRoutes(
 	if err != nil {
 		panic("digital human external routes require application error projector")
 	}
-	digitalhuman.NewExternalHandler(runtime, access, fileService, projector).RegisterAPIRoutes(router)
+	var sessions *digitalhuman.WebAppSessionSigner
+	if current := config.Current(); current != nil {
+		sessions, _ = digitalhuman.NewWebAppSessionSigner(current.JWT.Secret)
+	}
+	handler := digitalhuman.NewExternalHandler(runtime, access, fileService, projector, sessions)
+	handler.RegisterAPIRoutes(router)
+	handler.RegisterWebAppRoutes(router)
 }

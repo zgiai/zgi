@@ -38,16 +38,17 @@ type ExternalHandler struct {
 	access      *AccessService
 	fileService interfaces.FileService
 	base        *Handler
+	sessions    *WebAppSessionSigner
 	pollEvery   time.Duration
 }
 
-func NewExternalHandler(runtime *RuntimeService, access *AccessService, fileService interfaces.FileService, projector *apptransport.Projector) *ExternalHandler {
+func NewExternalHandler(runtime *RuntimeService, access *AccessService, fileService interfaces.FileService, projector *apptransport.Projector, sessions *WebAppSessionSigner) *ExternalHandler {
 	if runtime == nil || access == nil || fileService == nil || projector == nil {
 		panic("digital human external handler requires runtime, access, file service, and projector")
 	}
 	return &ExternalHandler{
 		runtime: runtime, access: access, fileService: fileService,
-		base: &Handler{projector: projector}, pollEvery: externalRunPollInterval,
+		base: &Handler{projector: projector}, sessions: sessions, pollEvery: externalRunPollInterval,
 	}
 }
 
@@ -143,7 +144,7 @@ func (h *ExternalHandler) Chat(c *gin.Context) {
 		"run_id": run.ID.String(), "request_id": request.RequestID.String(),
 		"status": run.Status, "created": created,
 	})
-	h.streamRun(c, writer, scope, access.Definition.ID, run.ID, "")
+	h.streamRun(c, writer, scope, access.Definition.ID, run.ID, SurfaceAPI, "")
 }
 
 func (h *ExternalHandler) GetRun(c *gin.Context) {
@@ -179,7 +180,7 @@ func (h *ExternalHandler) StreamRunEvents(c *gin.Context) {
 	c.Header("Access-Control-Expose-Headers", "X-ZGI-Run-ID")
 	writer := newDigitalHumanSSEWriter(c)
 	writer.start(c.Request.Context())
-	h.streamRun(c, writer, scope, access.Definition.ID, runID, afterID)
+	h.streamRun(c, writer, scope, access.Definition.ID, runID, SurfaceAPI, afterID)
 }
 
 func (h *ExternalHandler) StopRun(c *gin.Context) {
@@ -429,8 +430,8 @@ func (h *ExternalHandler) UploadFile(c *gin.Context) {
 	})
 }
 
-func (h *ExternalHandler) streamRun(c *gin.Context, writer *digitalHumanSSEWriter, scope Scope, digitalHumanID, runID uuid.UUID, afterID string) {
-	run, err := h.waitForRunMessage(c, scope, digitalHumanID, runID)
+func (h *ExternalHandler) streamRun(c *gin.Context, writer *digitalHumanSSEWriter, scope Scope, digitalHumanID, runID uuid.UUID, surface, afterID string) {
+	run, err := h.waitForRunMessage(c, scope, digitalHumanID, runID, surface)
 	if err != nil {
 		_ = h.writeStreamError(writer, runID, err)
 		_ = writer.write(externalRunEventID(runID, "end"), "run_end", gin.H{"run_id": runID.String(), "status": RunStatusFailed})
@@ -443,7 +444,7 @@ func (h *ExternalHandler) streamRun(c *gin.Context, writer *digitalHumanSSEWrite
 		if err != nil {
 			_ = h.writeStreamError(writer, runID, err)
 		}
-		run, err = h.waitForRunTerminal(c, scope, digitalHumanID, runID)
+		run, err = h.waitForRunTerminal(c, scope, digitalHumanID, runID, surface)
 		if err != nil && c.Request.Context().Err() == nil {
 			_ = h.writeStreamError(writer, runID, err)
 		}
@@ -460,9 +461,9 @@ func (h *ExternalHandler) streamRun(c *gin.Context, writer *digitalHumanSSEWrite
 	})
 }
 
-func (h *ExternalHandler) waitForRunMessage(c *gin.Context, scope Scope, digitalHumanID, runID uuid.UUID) (*Run, error) {
+func (h *ExternalHandler) waitForRunMessage(c *gin.Context, scope Scope, digitalHumanID, runID uuid.UUID, surface string) (*Run, error) {
 	for {
-		run, err := h.ownedRun(c, scope, digitalHumanID, runID)
+		run, err := h.ownedRunForSurface(c, scope, digitalHumanID, runID, surface)
 		if err != nil {
 			return nil, err
 		}
@@ -478,9 +479,9 @@ func (h *ExternalHandler) waitForRunMessage(c *gin.Context, scope Scope, digital
 	}
 }
 
-func (h *ExternalHandler) waitForRunTerminal(c *gin.Context, scope Scope, digitalHumanID, runID uuid.UUID) (*Run, error) {
+func (h *ExternalHandler) waitForRunTerminal(c *gin.Context, scope Scope, digitalHumanID, runID uuid.UUID, surface string) (*Run, error) {
 	for {
-		run, err := h.ownedRun(c, scope, digitalHumanID, runID)
+		run, err := h.ownedRunForSurface(c, scope, digitalHumanID, runID, surface)
 		if err != nil || isTerminalRunStatus(run.Status) {
 			return run, err
 		}
@@ -570,20 +571,29 @@ func (h *ExternalHandler) apiAccess(c *gin.Context) (*APIKey, *PublishedAccess, 
 }
 
 func (h *ExternalHandler) ownedRun(c *gin.Context, scope Scope, digitalHumanID, runID uuid.UUID) (*Run, error) {
+	return h.ownedRunForSurface(c, scope, digitalHumanID, runID, SurfaceAPI)
+}
+
+func (h *ExternalHandler) ownedRunForSurface(c *gin.Context, scope Scope, digitalHumanID, runID uuid.UUID, surface string) (*Run, error) {
 	run, err := h.runtime.GetRun(c.Request.Context(), scope, digitalHumanID, runID)
 	if err != nil {
 		return nil, err
 	}
-	if !externalRunOwnedByScope(run, scope, SurfaceAPI) {
+	if !externalRunOwnedByScope(run, scope, surface) {
 		return nil, ErrRunNotFound
 	}
 	return run, nil
 }
 
 func externalRunOwnedByScope(run *Run, scope Scope, surface string) bool {
-	return run != nil && scope.UserSubjectID != nil && run.UserSubjectID != nil &&
-		*scope.UserSubjectID != uuid.Nil && *scope.UserSubjectID == *run.UserSubjectID &&
-		run.UserSubjectKind == scope.UserSubjectKind && run.Surface == surface
+	if run == nil || run.Surface != surface {
+		return false
+	}
+	if scope.UserSubjectID != nil && *scope.UserSubjectID != uuid.Nil {
+		return run.UserSubjectID != nil && *run.UserSubjectID == *scope.UserSubjectID && run.UserSubjectKind == scope.UserSubjectKind
+	}
+	return surface == SurfaceWebApp && run.UserSubjectID == nil && run.PrincipalID != nil &&
+		run.ActorID != nil && *run.PrincipalID == scope.PrincipalID && *run.ActorID == scope.ActorID
 }
 
 func (h *ExternalHandler) withAPIConversation(c *gin.Context, user, operation string, action func(Scope, *PublishedAccess, uuid.UUID) (any, error)) {
