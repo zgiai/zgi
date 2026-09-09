@@ -54,6 +54,16 @@ for (const tag of ['table', 'del', 'input']) {
 }
 
 for (const [locale, source] of documents) {
+  assert.doesNotMatch(source, /````/, `${locale} docs contain an overlong code fence`);
+  for (const [index, line] of source.split('\n').entries()) {
+    if (!line.includes('```')) continue;
+    assert.match(
+      line,
+      /^\s*```(?:bash|json|text|ts)?\s*$/,
+      `${locale} docs have content on a code-fence line at ${index + 1}`
+    );
+  }
+
   const expectedTables = [...source.matchAll(/^\|\s*:?-{3,}/gm)].length;
   const compiled = String(await compile(source, { remarkPlugins: [remarkGfm] }));
   const renderedTables = [...compiled.matchAll(/_components\.table\b/g)].length;
@@ -199,8 +209,8 @@ for (const [apiPath, pathItem] of Object.entries(spec.paths ?? {})) {
       );
       assert.match(
         block,
-        /```bash[\s\S]*?curl /,
-        `${locale} docs are missing cURL for ${method.toUpperCase()} ${documentedURL}`
+        /<CodeGroup title="(?:Request|请求)">\s*```bash\s*\n[\s\S]*?\bcurl [\s\S]*?\n\s*```\s*<\/CodeGroup>/,
+        `${locale} docs are missing a standalone, closed cURL block for ${method.toUpperCase()} ${documentedURL}`
       );
       assert.match(
         block,

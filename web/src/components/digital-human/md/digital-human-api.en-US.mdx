@@ -377,8 +377,10 @@ On a full page reload, fetch conversation messages first. If a run is still acti
 </Properties>
 
 <CodeGroup title="Request">
-  ```bash curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \ --header 'Authorization:
-  Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -407,8 +409,11 @@ On a full page reload, fetch conversation messages first. If a run is still acti
 </Properties>
 
 <CodeGroup title="Request">
-  ```bash curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}' \ --header 'Last-Event-ID: 1715750400000-0' ```
+```bash
+curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Last-Event-ID: 1715750400000-0'
+```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -420,7 +425,7 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 event: run_end
 data: {"event":"run_end","data":{"run_id":"...","status":"succeeded"}}
 
-````
+```
 </CodeGroup>
 
 <Heading
@@ -441,7 +446,7 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/stop' \
   --header 'Authorization: Bearer {api_key}' \
   --header 'Content-Type: application/json' \
   --data '{"user":"customer_123"}'
-````
+```
 
 </CodeGroup>
 
@@ -512,8 +517,10 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/runtime-input' \
 </Properties>
 
 <CodeGroup title="Request">
-  ```bash curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \ --header
-  'Authorization: Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -542,9 +549,10 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/runtime-input' \
 </Properties>
 
 <CodeGroup title="Request">
-  ```bash curl '{apibase}
-  /digital-humans/conversations/search?user=customer_123&query=option&limit=20' \ --header
-  'Authorization: Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/conversations/search?user=customer_123&query=option&limit=20' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -570,8 +578,10 @@ curl --request POST '{apibase}/digital-humans/runs/{run_id}/runtime-input' \
 </Properties>
 
 <CodeGroup title="Request">
-  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
-  --header 'Authorization: Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -631,8 +641,10 @@ curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' 
 </Properties>
 
 <CodeGroup title="Request">
-  ```bash curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}
-  ?user=customer_123' \ --header 'Authorization: Bearer {api_key}' ```
+```bash
+curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -664,8 +676,10 @@ curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' 
 </Properties>
 
 <CodeGroup title="Request">
-  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}
-  /messages?user=customer_123&page=1&limit=100' \ --header 'Authorization: Bearer {api_key}' ```
+```bash
+curl '{apibase}/digital-humans/conversations/{conversation_id}/messages?user=customer_123&page=1&limit=100' \
+  --header 'Authorization: Bearer {api_key}'
+```
 </CodeGroup>
 
 <CodeGroup title="Response">
@@ -698,8 +712,12 @@ curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' 
 </Properties>
 
 <CodeGroup title="Request">
-  ```bash curl --request POST '{apibase}/digital-humans/files/upload' \ --header 'Authorization:
-  Bearer {api_key}' \ --form 'user=customer_123' \ --form 'file=@./brief.pdf' ```
+```bash
+curl --request POST '{apibase}/digital-humans/files/upload' \
+  --header 'Authorization: Bearer {api_key}' \
+  --form 'user=customer_123' \
+  --form 'file=@./brief.pdf'
+```
 </CodeGroup>
 
 <CodeGroup title="Response">
