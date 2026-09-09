@@ -1,129 +1,741 @@
 # DigitalHuman API
 
-Use this API to invoke the latest published version of a DigitalHuman from an external system. The API is streaming-only and authenticates with a key bound to that DigitalHuman.
+Use this API to build a branded, recoverable chat experience on the latest published version of this DigitalHuman. The API is streaming-only. Its contract follows the Agent external API where the runtime semantics match, while keeping the DigitalHuman durable `run_id` lifecycle explicit.
 
-<div>
-  ### Base URL
+## Integration Overview
 
-<CodeGroup title="Code">
+### Authentication and end-user identity
+
+Send the DigitalHuman API key from your server:
+
+<CodeGroup title="Headers" targetCode={`Authorization: Bearer {api_key}`}>
 
 ```text
-{apibase}
+Authorization: Bearer {api_key}
 ```
 
 </CodeGroup>
 
-### Authentication and user identity
+Never put the key in browser code, a mobile binary, logs, analytics, or a URL. Every stateful request also sends `user`, a stable opaque business identifier with at most 128 characters.
 
-Send the DigitalHuman API key from your server with `Authorization: Bearer`. Every stateful request must also include a stable, non-identifying, case-sensitive `user` value.
+| Concept           | Meaning                                                  | Stability rule                                     |
+| ----------------- | -------------------------------------------------------- | -------------------------------------------------- |
+| API key           | Authenticates the integration and DigitalHuman           | May be rotated without moving user data            |
+| `user`            | Owns conversations, files, runs, and relationship memory | Stable, case-sensitive, non-PII value              |
+| `request_id`      | Makes one chat request idempotent                        | Reuse only when retrying the same payload          |
+| `run_id`          | Tracks durable execution and stream recovery             | Returned by the response header and `run_accepted` |
+| `conversation_id` | Continues multi-turn context                             | Reuse for later chat requests from the same `user` |
+| `message_id`      | Identifies the assistant message                         | Returned by `message_start` and stored in history  |
 
-- The API key identifies the integration; `user` identifies the data owner.
-- One key can serve many users, while conversations, files, and relationship memory remain isolated by `user`.
-- Rotating a key does not change data ownership for the same `user`.
-- Never expose the API key in browser code.
+One key may serve many end users. The same `user` remains the same data subject after key rotation, but is isolated from other `user` values and from the same value used with another DigitalHuman. Do not use email addresses or phone numbers. The raw value is not returned.
 
-</div>
+### Recommended browser topology
+
+```text
+Browser or mobile UI
+        |
+        | your authenticated session
+        v
+Your BFF / API route  -- server-only API key -->  ZGI /api/v1/digital-humans/*
+        |
+        +-- derives a stable `user`
+        +-- streams SSE without buffering
+        +-- enforces authorization, rate limits, and request-size limits
+```
+
+The browser sends no API key and should not be allowed to choose another account's `user`. Derive `user` from your authenticated session on every proxy route, including history, recovery, stop, runtime input, and file upload.
+
+### Minimum production flow
+
+1. Fetch `/digital-humans/config` and render `home_title`, `opening_statement`, `suggested_questions`, `input_placeholder`, and `theme_color`.
+2. Generate a UUID `request_id`, send `/digital-humans/chat`, and save `X-ZGI-Run-ID` immediately.
+3. Parse SSE incrementally. Save `conversation_id`, `message_id`, and the latest non-empty SSE `id`.
+4. Append `message.data.answer`; finish the message on `message_end`; finish durable execution on the single `run_end`.
+5. If the connection drops, recover with the saved `run_id`, same `user`, and `Last-Event-ID`. Do not repeat the chat POST after `message_start`.
+6. After a page refresh, load conversation messages before opening a recovery stream.
+
+## Build a High-Quality Demo
+
+The following client core is framework-neutral and handles split SSE frames, multi-line data, unknown events, recovery cursors, and terminal states.
+
+```ts
+export type ZGIEvent<T = Record<string, unknown>> = {
+  id?: string;
+  event: string;
+  data: T;
+};
+
+export async function readZGISSE(
+  response: Response,
+  onEvent: (event: ZGIEvent) => void
+): Promise<void> {
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({
+      code: `http.${response.status}`,
+      message: response.statusText,
+      retryable: response.status === 429 || response.status >= 500,
+    }));
+    throw Object.assign(new Error(error.message), { status: response.status, ...error });
+  }
+  if (!response.body) throw new Error('ZGI returned an empty stream');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+
+    for (const frame of frames) {
+      let id: string | undefined;
+      let nativeEvent = 'message';
+      const dataLines: string[] = [];
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('id:')) id = line.slice(3).trim();
+        else if (line.startsWith('event:')) nativeEvent = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+      }
+      if (!dataLines.length) continue;
+      const envelope = JSON.parse(dataLines.join('\n')) as {
+        event?: string;
+        data?: Record<string, unknown>;
+      };
+      onEvent({ id, event: envelope.event ?? nativeEvent, data: envelope.data ?? {} });
+    }
+    if (done) break;
+  }
+}
+```
+
+Use a reducer instead of scattering stream state across UI callbacks:
+
+```ts
+type ChatState = {
+  phase: 'idle' | 'accepting' | 'streaming' | 'waiting' | 'completed' | 'error';
+  runId?: string;
+  conversationId?: string;
+  messageId?: string;
+  lastEventId?: string;
+  answer: string;
+  error?: string;
+};
+
+function applyZGIEvent(state: ChatState, event: ZGIEvent): ChatState {
+  const data = event.data;
+  const cursor = event.id || state.lastEventId;
+  switch (event.event) {
+    case 'run_accepted':
+      return { ...state, phase: 'accepting', runId: String(data.run_id), lastEventId: cursor };
+    case 'message_start':
+      return {
+        ...state,
+        phase: 'streaming',
+        conversationId: String(data.conversation_id),
+        messageId: String(data.message_id),
+        answer: data.replace ? '' : state.answer,
+        lastEventId: cursor,
+      };
+    case 'message':
+      if (state.messageId && data.message_id !== state.messageId) return state;
+      return { ...state, answer: state.answer + String(data.answer ?? ''), lastEventId: cursor };
+    case 'message_end': {
+      const status = String(data.status);
+      return {
+        ...state,
+        phase: status.startsWith('waiting_')
+          ? 'waiting'
+          : status === 'completed'
+            ? 'completed'
+            : 'error',
+        lastEventId: cursor,
+      };
+    }
+    case 'error':
+      return {
+        ...state,
+        phase: 'error',
+        error: String(data.message ?? 'Request failed'),
+        lastEventId: cursor,
+      };
+    case 'run_end':
+      return {
+        ...state,
+        phase: data.status === 'succeeded' ? 'completed' : state.phase,
+        lastEventId: cursor,
+      };
+    default:
+      return { ...state, lastEventId: cursor }; // forward-compatible progress event
+  }
+}
+```
+
+For a polished demo, also provide a conversation sidebar, Markdown rendering with HTML disabled or sanitized, stop generation, reconnect feedback, upload progress, responsive empty states, keyboard submission, and accessible live-status announcements. A complete Next.js BFF and page blueprint is maintained in `docs/digital-human-api-quickstart.md`.
+
+## DigitalHuman Event Integration Guide
+
+### Common envelope and recovery fields
+
+ZGI sends a native SSE `event:` plus a JSON envelope with the same event name:
+
+```text
+id: 1715750400000-0
+event: message
+data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"Hello"}}
+```
+
+Dispatch by the JSON `event` or native SSE event. Treat event ids as opaque strings. Ignore unknown event names and unknown fields for forward compatibility.
+
+| Event           | Required client behavior                                                      | Durable meaning                       |
+| --------------- | ----------------------------------------------------------------------------- | ------------------------------------- |
+| `run_accepted`  | Save `run_id`, `request_id`, `status`, and `created`                          | The idempotent request is accepted    |
+| `message_start` | Save `conversation_id` and `message_id`; honor `replace`                      | A persistent assistant message exists |
+| `message`       | Append `answer` for the matching message                                      | Recoverable answer delta              |
+| `message_end`   | Interpret message `status` and `metadata`                                     | Current message phase ended           |
+| `error`         | Show safe `message`; record `code` when present; inspect optional `retryable` | Stream failed after HTTP 200          |
+| `run_end`       | Stop recovery and record final run `status`                                   | Single durable terminal event         |
+
+### Event payload fields
+
+<Properties>
+  <Property name="run_id" type="uuid" propKey="run_id">
+    Durable run identity in `run_accepted`, `error`, and `run_end`.
+  </Property>
+  <Property name="request_id" type="uuid" propKey="request_id">
+    Original idempotency key in `run_accepted`.
+  </Property>
+  <Property name="created" type="boolean" propKey="created">
+    False when the request reused an identical run.
+  </Property>
+  <Property name="conversation_id" type="uuid" propKey="conversation_id">
+    Persistent conversation identity.
+  </Property>
+  <Property name="message_id" type="uuid" propKey="message_id">
+    Persistent assistant-message identity.
+  </Property>
+  <Property name="parent_id" type="uuid | null" propKey="parent_id">
+    Branch parent when present.
+  </Property>
+  <Property name="title" type="string" propKey="title">
+    Conversation title when available.
+  </Property>
+  <Property name="model" type="string" propKey="model">
+    Public model identifier when available.
+  </Property>
+  <Property name="replace" type="boolean" propKey="replace">
+    Clear already rendered answer text before applying replay chunks.
+  </Property>
+  <Property name="created_at" type="unix seconds" propKey="created_at">
+    Message creation time.
+  </Property>
+  <Property name="answer" type="string" propKey="answer">
+    Answer delta, or optional final fallback on `message_end`.
+  </Property>
+  <Property name="status" type="string" propKey="status">
+    Message or durable-run state depending on the event.
+  </Property>
+  <Property name="metadata" type="object" propKey="metadata">
+    Safe message metadata such as usage and continuation snapshots.
+  </Property>
+  <Property name="code" type="string" propKey="code">
+    Stable machine-readable stream error code.
+  </Property>
+  <Property name="message" type="string" propKey="message">
+    Safe stream error message.
+  </Property>
+  <Property name="retryable" type="boolean" propKey="retryable">
+    Whether reconnecting may succeed without changing the request.
+  </Property>
+  <Property name="params" type="object" propKey="params">
+    Optional safe localization parameters.
+  </Property>
+</Properties>
+
+### State and recovery matrix
+
+| Observed state                            | UI state                | Next action                                                                                                          |
+| ----------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Chat accepted, no `message_start` yet     | Starting                | Keep the POST stream open; retain `run_id`                                                                           |
+| `message_start` received                  | Generating              | Render deltas and save the latest SSE id                                                                             |
+| Network drops while run is non-terminal   | Reconnecting            | Call Run Events with `Last-Event-ID`                                                                                 |
+| `message_end=completed`, no `run_end` yet | Finalizing              | Keep listening until `run_end`                                                                                       |
+| `message_end=waiting_*`                   | Unsupported interaction | Retain ids and show a safe fallback; specialized approval/question continuation APIs are not part of DigitalHuman v1 |
+| `run_end` with a terminal status          | Terminal                | Stop reconnecting; history is the source of truth                                                                    |
+
+On a full page reload, fetch conversation messages first. If a run is still active, reconnect without assuming that a locally stored cursor matches what the fresh DOM rendered. De-duplicate by non-empty SSE id and by `(message_id, event id)`.
 
 ---
 
+## Published Configuration
+
 <Heading
-  url="/api/v1/digital-humans/chat"
-  method="POST"
-  title="Send a chat message"
-  name="#Create-Digital-Human-Chat"
+  url="/api/v1/digital-humans/config"
+  method="GET"
+  title="Get Published Configuration"
+  name="#Get-DigitalHuman-Config"
 />
 
 <Row>
   <Col>
-    Create or continue a DigitalHuman conversation and receive a recoverable SSE stream.
-
-    ### Request body
+    Returns the published brand and capability snapshot. This endpoint has no `user` because it does not access end-user state.
 
     <Properties>
-      <Property name='request_id' type='uuid' propKey='request_id'>Required. A client-generated idempotency ID.</Property>
-      <Property name='user' type='string' propKey='user'>Required. A stable business user ID with at most 128 characters.</Property>
-      <Property name='query' type='string' propKey='query'>Required. The current user message.</Property>
-      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Optional. Continue an existing conversation.</Property>
-      <Property name='parent_message_id' type='uuid' propKey='parent_message_id'>Optional. Continue from a message branch.</Property>
-      <Property name='file_ids' type='array[uuid]' propKey='file_ids'>Optional. Files uploaded by the current user.</Property>
-      <Property name='response_mode' type='string' propKey='response_mode'>Optional. Only `streaming` is currently supported.</Property>
+      <Property name='Authorization' type='header' propKey='Bearer'>Required DigitalHuman API key.</Property>
+      <Property name='data' type='DigitalHumanConfig' propKey='data'>Presentation fields, feature flags, and immutable version identity.</Property>
     </Properties>
-
-    ### Main events
-
-    - `run_accepted`: the durable run was accepted and includes `run_id`.
-    - `message_start`: the message exists and includes `conversation_id` and `message_id`.
-    - `message` / `message_delta`: response content chunks.
-    - `message_end`: the terminal message state.
-    - `error`: a safe public error.
-    - `run_end`: the single terminal event for the run.
-
-    The `X-ZGI-Run-ID` response header matches `run_accepted.run_id`. Save event IDs so an interrupted stream can be resumed through Run Events.
 
   </Col>
   <Col sticky>
-    <CodeGroup title="Request" tag="POST" label="/api/v1/digital-humans/chat" targetCode={`curl --no-buffer '{apibase}/digital-humans/chat' \\\n--header 'Authorization: Bearer {api_key}' \\\n--header 'Content-Type: application/json' \\\n--data '{"request_id":"00000000-0000-4000-8000-000000000001","user":"customer_123","query":"Hello"}'`}>
-
-    ```bash {{ title: 'cURL' }}
-    curl --no-buffer '{apibase}/digital-humans/chat' \
-      --header 'Authorization: Bearer {api_key}' \
-      --header 'Content-Type: application/json' \
-      --data '{
-        "request_id": "00000000-0000-4000-8000-000000000001",
-        "user": "customer_123",
-        "query": "Hello",
-        "response_mode": "streaming"
-      }'
+    <CodeGroup title="Request">
+    ```bash
+    curl '{apibase}/digital-humans/config' \
+      --header 'Authorization: Bearer {api_key}'
     ```
-
     </CodeGroup>
-
+    <CodeGroup title="Response">
+    ```json
+    {"code":"0","message":"success","data":{"digital_human_id":"11111111-1111-4111-8111-111111111111","web_app_id":"22222222-2222-4222-8222-222222222222","name":"Research Partner","description":"Turns research into decisions","home_title":"What should we investigate?","opening_statement":"I can compare evidence and propose next steps.","input_placeholder":"Ask a research question","theme_color":"#6366f1","suggested_questions":["Compare three options"],"file_upload_enabled":true,"relationship_memory_enabled":true,"memory_requires_user":true,"external_user_required":true,"runtime_input_enabled":true,"regenerate_enabled":false,"landing_page_enabled":true,"api_enabled":true,"version":"3","version_uuid":"33333333-3333-4333-8333-333333333333"}}
+    ```
+    </CodeGroup>
   </Col>
 </Row>
 
 ---
 
+## Streamed Chat and Durable Runs
+
+<Heading
+  url="/api/v1/digital-humans/chat"
+  method="POST"
+  title="Create or Continue Chat"
+  name="#Create-DigitalHuman-Chat"
+/>
+
+<Row>
+  <Col>
+    Creates or reuses a durable run and immediately opens an SSE response. Identical `(DigitalHuman, user, request_id, payload)` retries reuse the run; changing the payload for the same `request_id` returns `409`.
+
+    <Properties>
+      <Property name='request_id' type='uuid' propKey='request_id'>Required client idempotency key.</Property>
+      <Property name='user' type='string' propKey='user'>Required stable end-user identity.</Property>
+      <Property name='query' type='string' propKey='query'>Required user message, up to 32,000 characters.</Property>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Optional caller-owned conversation to continue.</Property>
+      <Property name='parent_message_id' type='uuid' propKey='parent_message_id'>Optional branch parent.</Property>
+      <Property name='file_ids' type='uuid[]' propKey='file_ids'>Optional files uploaded for the same DigitalHuman and user.</Property>
+      <Property name='response_mode' type='streaming' propKey='response_mode'>Optional; only `streaming` is supported.</Property>
+    </Properties>
+
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+    ```bash
+    curl --no-buffer '{apibase}/digital-humans/chat' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'Content-Type: application/json' \
+      --data '{"request_id":"20a2952d-776d-41c9-a1e2-88739013cd43","user":"customer_123","query":"Compare the attached options","response_mode":"streaming"}'
+    ```
+    </CodeGroup>
+    <CodeGroup title="Response">
+    ```text
+    event: run_accepted
+    data: {"event":"run_accepted","data":{"run_id":"...","request_id":"20a2952d-776d-41c9-a1e2-88739013cd43","status":"queued","created":true}}
+
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"...","message_id":"...","replace":false}}
+
+    id: 1715750400000-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"Option A"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"...","message_id":"...","status":"completed","metadata":{}}}
+
+    event: run_end
+    data: {"event":"run_end","data":{"run_id":"...","status":"succeeded","conversation_id":"...","message_id":"..."}}
+    ```
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+<Heading
+  url="/api/v1/digital-humans/runs/{run_id}"
+  method="GET"
+  title="Get Run State"
+  name="#Get-DigitalHuman-Run"
+/>
+
+<Properties>
+  <Property name="run_id" type="uuid path" propKey="run_id">
+    Required durable run id.
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    Required owning end user.
+  </Property>
+</Properties>
+
+<CodeGroup title="Request">
+  ```bash curl '{apibase}/digital-humans/runs/{run_id}?user=customer_123' \ --header 'Authorization:
+  Bearer {api_key}' ```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":{"run_id":"44444444-4444-4444-8444-444444444444","status":"running","conversation_id":"55555555-5555-4555-8555-555555555555","message_id":"66666666-6666-4666-8666-666666666666","created_at":1715750400,"updated_at":1715750401}}
+```
+</CodeGroup>
+
 <Heading
   url="/api/v1/digital-humans/runs/{run_id}/events"
   method="GET"
-  title="Resume a run stream"
-  name="#Recover-Digital-Human-Run"
+  title="Recover Run Stream"
+  name="#Recover-DigitalHuman-Run"
 />
 
-Supply the same `user` as a query parameter and send the most recent event ID in `Last-Event-ID`. Event IDs are opaque and must not be parsed or incremented.
+<Properties>
+  <Property name="run_id" type="uuid path" propKey="run_id">
+    Required durable run id.
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    Required owning end user.
+  </Property>
+  <Property name="Last-Event-ID" type="header" propKey="Last-Event-ID">
+    Optional last processed opaque SSE id.
+  </Property>
+</Properties>
 
 <CodeGroup title="Request">
+  ```bash curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' \ --header 'Last-Event-ID: 1715750400000-0' ```
+</CodeGroup>
 
+<CodeGroup title="Response">
+```text
+id: 1715750400100-0
+event: message
+data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":" is recommended."}}
+
+event: run_end
+data: {"event":"run_end","data":{"run_id":"...","status":"succeeded"}}
+
+````
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/runs/{run_id}/stop"
+  method="POST"
+  title="Stop Run"
+  name="#Stop-DigitalHuman-Run"
+/>
+
+<Properties>
+  <Property name='run_id' type='uuid path' propKey='run_id'>Required run to cancel.</Property>
+  <Property name='user' type='string body' propKey='user'>Required owning end user.</Property>
+</Properties>
+
+<CodeGroup title="Request">
 ```bash
-curl --no-buffer '{apibase}/digital-humans/runs/{run_id}/events?user=customer_123' \
+curl --request POST '{apibase}/digital-humans/runs/{run_id}/stop' \
   --header 'Authorization: Bearer {api_key}' \
-  --header 'Last-Event-ID: {last_event_id}'
-```
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123"}'
+````
 
+</CodeGroup>
+
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":{"run_id":"44444444-4444-4444-8444-444444444444","status":"canceling","created_at":1715750400,"updated_at":1715750402}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/runs/{run_id}/runtime-input"
+  method="POST"
+  title="Submit Runtime Input"
+  name="#Submit-DigitalHuman-Runtime-Input"
+/>
+
+<Properties>
+  <Property name="run_id" type="uuid path" propKey="run_id">
+    Required active or resumable run.
+  </Property>
+  <Property name="user" type="string body" propKey="user">
+    Required owning end user.
+  </Property>
+  <Property name="client_input_id" type="uuid" propKey="client_input_id">
+    Required idempotency key for this input.
+  </Property>
+  <Property name="content" type="string" propKey="content">
+    Required input, up to 16,000 characters.
+  </Property>
+</Properties>
+
+<CodeGroup title="Request">
+```bash
+curl --request POST '{apibase}/digital-humans/runs/{run_id}/runtime-input' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","client_input_id":"77777777-7777-4777-8777-777777777777","content":"Prioritize cost over delivery speed"}'
+```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":{"input":{"id":"88888888-8888-4888-8888-888888888888","client_input_id":"77777777-7777-4777-8777-777777777777","content":"Prioritize cost over delivery speed","status":"applied_current_run","target_message_id":"66666666-6666-4666-8666-666666666666","sequence":1,"created_at":1715750403},"disposition":"current_run","created":true}}
+```
 </CodeGroup>
 
 ---
 
-## Conversation, run, and file endpoints
+## Conversation Management
 
-- `GET /digital-humans/config`: read the published public configuration.
-- `GET /digital-humans/runs/{run_id}`: inspect run status.
-- `POST /digital-humans/runs/{run_id}/stop`: stop a run.
-- `POST /digital-humans/runs/{run_id}/runtime-input`: submit runtime input.
-- `GET /digital-humans/conversations`: list conversations.
-- `GET /digital-humans/conversations/search`: search conversations.
-- `GET/PATCH/DELETE /digital-humans/conversations/{id}`: manage one conversation.
-- `GET /digital-humans/conversations/{id}/messages`: read message history.
-- `POST /digital-humans/files/upload`: upload a file owned by the current `user`.
+<Heading
+  url="/api/v1/digital-humans/conversations"
+  method="GET"
+  title="List Conversations"
+  name="#List-DigitalHuman-Conversations"
+/>
 
-GET and DELETE requests receive `user` in the query string. POST, PATCH, and multipart requests receive it in the body or form field.
+<Properties>
+  <Property name="user" type="string query" propKey="user">
+    Required end user.
+  </Property>
+  <Property name="page" type="integer query" propKey="page">
+    Optional one-based page, default 1.
+  </Property>
+  <Property name="limit" type="integer query" propKey="limit">
+    Optional page size, default 20.
+  </Property>
+</Properties>
 
-## Errors and retries
+<CodeGroup title="Request">
+  ```bash curl '{apibase}/digital-humans/conversations?user=customer_123&page=1&limit=20' \ --header
+  'Authorization: Bearer {api_key}' ```
+</CodeGroup>
 
-- `400`: invalid request shape or `user`.
-- `401`: missing, invalid, expired, or revoked key.
-- `403`: DigitalHuman API access is disabled.
-- `404`: the resource does not exist or belongs to another `user`.
-- `409`: the idempotency payload changed or the run state conflicts.
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":{"data":[{"id":"55555555-5555-4555-8555-555555555555","organization_id":"99999999-9999-4999-8999-999999999999","account_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","title":"Option comparison","status":"active","runtime_status":"idle","conversation_type":"chat","dialogue_count":2,"source":"external-api","created_at":1715750400,"updated_at":1715750450}],"page":1,"limit":20,"total":1,"has_more":false}}
+```
+</CodeGroup>
 
-Use bounded exponential backoff only for retryable errors. Reuse the original `request_id` when retrying the same logical request.
+<Heading
+  url="/api/v1/digital-humans/conversations/search"
+  method="GET"
+  title="Search Conversations"
+  name="#Search-DigitalHuman-Conversations"
+/>
+
+<Properties>
+  <Property name="user" type="string query" propKey="user">
+    Required end user.
+  </Property>
+  <Property name="query" type="string query" propKey="query">
+    Required title or message search text.
+  </Property>
+  <Property name="limit" type="integer query" propKey="limit">
+    Optional result limit, maximum 50 at runtime.
+  </Property>
+</Properties>
+
+<CodeGroup title="Request">
+  ```bash curl '{apibase}
+  /digital-humans/conversations/search?user=customer_123&query=option&limit=20' \ --header
+  'Authorization: Bearer {api_key}' ```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":[{"type":"conversation","conversation_id":"55555555-5555-4555-8555-555555555555","conversation_title":"Option comparison","snippet":"Option comparison","updated_at":1715750450}]}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}"
+  method="GET"
+  title="Get Conversation"
+  name="#Get-DigitalHuman-Conversation"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">
+    Required conversation id.
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    Required owning end user.
+  </Property>
+</Properties>
+
+<CodeGroup title="Request">
+  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}?user=customer_123' \
+  --header 'Authorization: Bearer {api_key}' ```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":{"id":"55555555-5555-4555-8555-555555555555","organization_id":"99999999-9999-4999-8999-999999999999","account_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","title":"Option comparison","status":"active","runtime_status":"idle","conversation_type":"chat","dialogue_count":2,"source":"external-api","created_at":1715750400,"updated_at":1715750450}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}"
+  method="PATCH"
+  title="Rename Conversation"
+  name="#Rename-DigitalHuman-Conversation"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">
+    Required conversation id.
+  </Property>
+  <Property name="user" type="string body" propKey="user">
+    Required owning end user.
+  </Property>
+  <Property name="title" type="string body" propKey="title">
+    Required title, 1–50 characters.
+  </Property>
+</Properties>
+
+<CodeGroup title="Request">
+```bash
+curl --request PATCH '{apibase}/digital-humans/conversations/{conversation_id}' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'Content-Type: application/json' \
+  --data '{"user":"customer_123","title":"Q3 option decision"}'
+```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":{"id":"55555555-5555-4555-8555-555555555555","organization_id":"99999999-9999-4999-8999-999999999999","account_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","title":"Q3 option decision","status":"active","runtime_status":"idle","conversation_type":"chat","dialogue_count":2,"source":"external-api","created_at":1715750400,"updated_at":1715750500}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}"
+  method="DELETE"
+  title="Delete Conversation"
+  name="#Delete-DigitalHuman-Conversation"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">
+    Required conversation id.
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    Required owning end user.
+  </Property>
+</Properties>
+
+<CodeGroup title="Request">
+  ```bash curl --request DELETE '{apibase}/digital-humans/conversations/{conversation_id}
+  ?user=customer_123' \ --header 'Authorization: Bearer {api_key}' ```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":{"result":"success"}}
+```
+</CodeGroup>
+
+<Heading
+  url="/api/v1/digital-humans/conversations/{conversation_id}/messages"
+  method="GET"
+  title="List Conversation Messages"
+  name="#List-DigitalHuman-Messages"
+/>
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">
+    Required conversation id.
+  </Property>
+  <Property name="user" type="string query" propKey="user">
+    Required owning end user.
+  </Property>
+  <Property name="page" type="integer query" propKey="page">
+    Optional one-based page.
+  </Property>
+  <Property name="limit" type="integer query" propKey="limit">
+    Optional page size.
+  </Property>
+</Properties>
+
+<CodeGroup title="Request">
+  ```bash curl '{apibase}/digital-humans/conversations/{conversation_id}
+  /messages?user=customer_123&page=1&limit=100' \ --header 'Authorization: Bearer {api_key}' ```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":{"data":[{"id":"66666666-6666-4666-8666-666666666666","conversation_id":"55555555-5555-4555-8555-555555555555","query":"Compare the options","answer":"Option A is recommended.","status":"completed","model_name":"published-model","runtime_inputs":[],"created_at":1715750400,"updated_at":1715750450}],"page":1,"limit":100,"total":1,"has_more":false}}
+```
+</CodeGroup>
+
+---
+
+## File Upload
+
+<Heading
+  url="/api/v1/digital-humans/files/upload"
+  method="POST"
+  title="Upload Chat File"
+  name="#Upload-DigitalHuman-File"
+/>
+
+<Properties>
+  <Property name="user" type="multipart field" propKey="user">
+    Required owning end user.
+  </Property>
+  <Property name="file" type="binary multipart field" propKey="file">
+    Required file, subject to the deployment policy and 100 MiB request limit.
+  </Property>
+  <Property name="data.id" type="uuid" propKey="file_id">
+    Pass the returned id in a later chat `file_ids` array.
+  </Property>
+</Properties>
+
+<CodeGroup title="Request">
+  ```bash curl --request POST '{apibase}/digital-humans/files/upload' \ --header 'Authorization:
+  Bearer {api_key}' \ --form 'user=customer_123' \ --form 'file=@./brief.pdf' ```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```json
+{"code":"0","message":"success","data":{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"brief.pdf","size":48231,"extension":"pdf","mime_type":"application/pdf","created_at":1715750600}}
+```
+</CodeGroup>
+
+---
+
+## JSON Errors, Retries, and Security
+
+Before SSE starts, errors use the HTTP status plus a safe JSON body:
+
+```json
+{ "code": "digital_human.request.invalid", "message": "Invalid request.", "retryable": false }
+```
+
+| HTTP  | Typical cause                                                   | Automatic retry                  |
+| ----- | --------------------------------------------------------------- | -------------------------------- |
+| `400` | Invalid UUID, missing/invalid `user`, unsupported response mode | No                               |
+| `401` | Missing, invalid, expired, inactive, or revoked key             | No                               |
+| `403` | API surface or deployment gate disabled                         | No                               |
+| `404` | Run, conversation, message, or publication outside caller scope | No                               |
+| `409` | Idempotency payload or durable state conflict                   | Only after reconciling state     |
+| `413` | Upload exceeds the request limit                                | No                               |
+| `415` | Unsupported file type                                           | No                               |
+| `429` | Rate or upstream limit                                          | Yes, bounded exponential backoff |
+| `500` | Internal failure                                                | Only when `retryable=true`       |
+
+After HTTP 200 SSE begins, consume `error` and `run_end`; there is no second HTTP status. Log safe `code`, `run_id`, and your own request trace id—never the API key, raw `user`, prompts, uploaded content, or model output. Apply timeouts separately to connection establishment and inactive streams, keep proxy buffering disabled, and rate-limit per authenticated user rather than per shared API key alone.
+
+## Notes
+
+- The API runs the latest published version. Draft configuration is never exposed.
+- An API key can access only the DigitalHuman it is bound to.
+- Relationship memory follows the same `user` identity but has no public management endpoint in this release.
+- Message regeneration is intentionally unavailable; `regenerate_enabled` is `false`.
+- The machine-readable contract is available at `/api/openapi.yaml`.

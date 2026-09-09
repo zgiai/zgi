@@ -57,12 +57,12 @@ export function Toc({ rootRef, variant = 'inline', className }: TocProps) {
 
       // Collect headings within provided root
       currentHeadings = Array.from(
-        root.querySelectorAll('h1,h2,h3,h4,h5,h6')
+        root.querySelectorAll('[data-toc-entry="true"]')
       ) as HTMLHeadingElement[];
       const parsed: TocItem[] = currentHeadings
         .filter(h => !!h.id)
         .map(h => {
-          const level = Number(h.tagName.substring(1));
+          const level = Number(h.dataset.tocLevel || h.tagName.substring(1));
           const text = (h.textContent || '').replace(/\s*#\s*$/, '').trim();
           return { id: h.id, text, level };
         });
@@ -106,7 +106,7 @@ export function Toc({ rootRef, variant = 'inline', className }: TocProps) {
     // Watch for DOM changes to re-setup observer when headings are added/removed
     const mutationObserver = new MutationObserver(() => {
       // Debounce: only re-setup if heading count changed
-      const newHeadings = root.querySelectorAll('h1,h2,h3,h4,h5,h6');
+      const newHeadings = root.querySelectorAll('[data-toc-entry="true"]');
       if (newHeadings.length !== currentHeadings.length) {
         setupObserver();
       }
@@ -136,6 +136,12 @@ export function Toc({ rootRef, variant = 'inline', className }: TocProps) {
       default:
         return 'pl-10';
     }
+  };
+
+  const itemClass = (level: number) => {
+    if (level === 1) return 'font-semibold text-foreground';
+    if (level === 2) return 'mt-3 font-medium text-foreground';
+    return '';
   };
 
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>, id: string) => {
@@ -187,7 +193,7 @@ export function Toc({ rootRef, variant = 'inline', className }: TocProps) {
           {items.map(item => {
             const isActive = item.id === activeId;
             return (
-              <li key={item.id} className={indentClass(item.level)}>
+              <li key={item.id} className={cn(indentClass(item.level), itemClass(item.level))}>
                 <a
                   href={`#${item.id}`}
                   onClick={e => handleClick(e, item.id)}

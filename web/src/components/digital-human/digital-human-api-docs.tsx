@@ -49,6 +49,12 @@ export function DigitalHumanAPIDocs() {
     ol: Ol,
     li: Li,
     code: InlineCode,
+    table: MDComponents.Table,
+    thead: MDComponents.TableHead,
+    tbody: MDComponents.TableBody,
+    tr: MDComponents.TableRow,
+    th: MDComponents.TableHeaderCell,
+    td: MDComponents.TableCell,
   };
 
   return (

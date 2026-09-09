@@ -4,6 +4,9 @@ This guide describes the public runtime for a published ZGI DigitalHuman. The
 machine-readable contract is available from a running API service at
 `/api/openapi.yaml`.
 
+For a copy-ready Next.js BFF, robust SSE parser, recovery state machine, and
+production checklist, use the [DigitalHuman API quickstart](digital-human-api-quickstart.md).
+
 ## English
 
 ### Enable and publish
