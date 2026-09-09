@@ -827,8 +827,8 @@ An empty `message_start.parent_id` identifies a root message. `replace=true` mea
     Required in `message_end`. Public runtime metadata that may contain usage and waiting context;
     unknown keys may be added.
   </Property>
-  <Property name="message / code / params" type="string / string? / object?" propKey="message">
-    The `error` event's safe text, optional stable error code, and optional structured context.
+  <Property name="message / code / params" type="string / (string | number)? / object?" propKey="message">
+    The `error` event's safe text, optional stable error code, and optional structured context. Accept both legacy numeric application codes and string runtime codes.
   </Property>
 </Properties>
 

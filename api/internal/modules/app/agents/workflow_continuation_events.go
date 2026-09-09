@@ -260,15 +260,6 @@ func agentWorkflowContinuationFinalPassthroughAnswer(outputs map[string]interfac
 	return "", false
 }
 
-func agentWorkflowContinuationWaiting(metadata map[string]interface{}) bool {
-	state, ok := metadata["agent_workflow_continuation"].(map[string]interface{})
-	if !ok {
-		return false
-	}
-	status := strings.TrimSpace(fmt.Sprint(state["status"]))
-	return strings.EqualFold(status, "waiting_approval") || strings.EqualFold(status, "waiting_question")
-}
-
 func agentWorkflowQuestionUserInputEvent(continuation *runtimeservice.WorkflowApprovalContinuation, data map[string]interface{}) gin.H {
 	if continuation == nil || len(data) == 0 {
 		return nil

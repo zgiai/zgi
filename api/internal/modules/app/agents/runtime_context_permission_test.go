@@ -1012,6 +1012,7 @@ type webAppRuntimePermissionService struct {
 	continuationBindingID       string
 	continuationAgentID         string
 	prepareRegenerationErr      error
+	userInputContinuationErr    error
 	getConversationCalled       bool
 	updateConversationCalled    bool
 	deleteConversationCalled    bool
@@ -1204,6 +1205,9 @@ func (s *webAppRuntimePermissionService) RunConfiguredUserInputContinuationStrea
 	s.lastMessageID = messageID
 	s.lastRequestID = requestID
 	s.lastUserInputRequest = req
+	if s.userInputContinuationErr != nil {
+		return nil, s.userInputContinuationErr
+	}
 	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted}, nil
 }
 

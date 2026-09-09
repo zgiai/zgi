@@ -168,6 +168,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		"parent_id":       uuidPtrToString(prepared.Message.ParentID),
 		"title":           prepared.Conversation.Title,
 		"model":           prepared.Message.ModelName,
+		"replace":         prepared.ReplaceRoot,
 		"created_at":      prepared.Message.CreatedAt.Unix(),
 	})
 	result, err := h.chatRuntimeService.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
@@ -180,6 +181,9 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
+		if runtimeservice.IsFinalizedStreamError(err) {
+			return
+		}
 		status := runtimemodel.MessageStatusError
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
 			status = runtimemodel.MessageStatusStopped
@@ -193,17 +197,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		})
 		return
 	}
-	if agentWorkflowContinuationWaiting(result.Metadata) {
-		return
-	}
-	_ = writeAgentSSE(c, "message_end", gin.H{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"status":          runtimemodel.MessageStatusCompleted,
-		"metadata": gin.H{
-			"usage": result.Metadata["usage"],
-		},
-	})
+	writeAgentChatEnd(c, prepared, result)
 }
 
 func externalAgentInvocationContext(ctx context.Context) context.Context {

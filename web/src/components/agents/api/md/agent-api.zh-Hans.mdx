@@ -810,8 +810,8 @@ function applyAgentEvent(frame: AgentEvent) {
   <Property name="metadata" type="object" propKey="metadata">
     必填于 `message_end`。公开运行元数据，可包含 usage 和等待上下文；允许增加未知键。
   </Property>
-  <Property name="message / code / params" type="string / string? / object?" propKey="message">
-    `error` 的安全错误文本、可选稳定错误码和可选结构化上下文。
+  <Property name="message / code / params" type="string / (string | number)? / object?" propKey="message">
+    `error` 的安全错误文本、可选稳定错误码和可选结构化上下文。兼容历史应用错误码的数字形式与 runtime 错误码的字符串形式。
   </Property>
 </Properties>
 

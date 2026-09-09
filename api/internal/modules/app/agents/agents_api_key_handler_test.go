@@ -110,6 +110,36 @@ func TestContinueAPIKeyAgentRuntimeUserInputUsesPublishedExternalScope(t *testin
 	}
 }
 
+func TestContinueAPIKeyAgentRuntimeUserInputSanitizesUnexpectedStreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(), workspaceID: uuid.New(), accountID: uuid.New(), agentID: uuid.New(),
+		conversationID: uuid.New(), messageID: uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{userInputContinuationErr: errors.New("redis password leaked by internal error")}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/conversations/"+ids.conversationID.String()+"/messages/"+ids.messageID.String()+"/user-input/ask-1/continue?user=end-user-1", bytes.NewBufferString(`{"answers":{"target":"Published Agent"}}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{
+		{Key: "conversation_id", Value: ids.conversationID.String()},
+		{Key: "message_id", Value: ids.messageID.String()},
+		{Key: "request_id", Value: "ask-1"},
+	}
+	setAPIKeyAgentTestContext(c, ids)
+	handler.ContinueAPIKeyAgentRuntimeUserInput(c)
+
+	body := w.Body.String()
+	if strings.Contains(body, "redis password") || !strings.Contains(body, response.ErrSystemError.Message) {
+		t.Fatalf("continuation stream error was not sanitized: %s", body)
+	}
+	if !strings.Contains(body, `"code":399001`) {
+		t.Fatalf("continuation stream error has no stable public code: %s", body)
+	}
+}
+
 func TestStreamAPIKeyAgentRuntimeEventsUsesCallerScopeAndSanitizesErrors(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ids := webAppRuntimePermissionIDs{
@@ -331,7 +361,7 @@ func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	if got := w.Header().Get(agentSSEMessageIDHeader); got != ids.messageID.String() {
 		t.Fatalf("message header = %q, want %s", got, ids.messageID)
 	}
-	for _, expected := range []string{`"event":"message_start"`, `"event":"message"`, `"answer":"verified scientific result"`, `"event":"skill_call_end"`, `"event":"message_end"`, `"status":"completed"`} {
+	for _, expected := range []string{`"event":"message_start"`, `"replace":false`, `"event":"message"`, `"answer":"verified scientific result"`, `"event":"skill_call_end"`, `"event":"message_end"`, `"status":"completed"`} {
 		if !strings.Contains(w.Body.String(), expected) {
 			t.Fatalf("SSE body missing %q: %s", expected, w.Body.String())
 		}
@@ -339,6 +369,91 @@ func TestChatAPIKeyAgentStreamsPublishedRuntimeSSE(t *testing.T) {
 	assertExternalAgentRuntimeCallerScope(t, runtimeSvc.lastScope, runtimeSvc.lastCaller, ids)
 	if runtimeSvc.lastRunConfig.BillingAppID != ids.agentID.String() || runtimeSvc.lastRunConfig.BillingAppType != runtimemodel.ConversationCallerAgent {
 		t.Fatalf("billing app = %q/%q, want %s/%s", runtimeSvc.lastRunConfig.BillingAppID, runtimeSvc.lastRunConfig.BillingAppType, ids.agentID, runtimemodel.ConversationCallerAgent)
+	}
+}
+
+func TestChatAPIKeyAgentWritesRecoverableWaitingMessageEnd(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name     string
+		status   string
+		metadata map[string]interface{}
+	}{
+		{
+			name:   "workflow approval",
+			status: runtimemodel.MessageStatusWaitingApproval,
+			metadata: map[string]interface{}{
+				"agent_workflow_continuation": map[string]interface{}{"status": "waiting_approval"},
+			},
+		},
+		{
+			name:   "skill user input",
+			status: runtimemodel.MessageStatusWaitingQuestion,
+			metadata: map[string]interface{}{
+				"user_input_request": map[string]interface{}{"request_id": "ask-1"},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ids := webAppRuntimePermissionIDs{
+				organizationID: uuid.New(), workspaceID: uuid.New(), accountID: uuid.New(), agentID: uuid.New(),
+				conversationID: uuid.New(), messageID: uuid.New(),
+			}
+			runtimeSvc := &apiKeyChatRuntimeService{
+				ids: ids,
+				result: &runtimeservice.ChatResult{
+					Status:            test.status,
+					Metadata:          test.metadata,
+					MessageEndEventID: "event-message-end-1",
+				},
+			}
+			handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/chat", strings.NewReader(`{"query":"continue the workflow"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			setAPIKeyAgentTestContext(c, ids)
+			handler.ChatAPIKeyAgent(c)
+
+			body := w.Body.String()
+			if count := strings.Count(body, `"event":"message_end"`); count != 1 {
+				t.Fatalf("message_end count = %d, want 1; body=%s", count, body)
+			}
+			if !strings.Contains(body, `id: event-message-end-1`) || !strings.Contains(body, `"status":"`+test.status+`"`) {
+				t.Fatalf("waiting message_end lost status or event id: %s", body)
+			}
+			if strings.Contains(body, `"status":"completed"`) {
+				t.Fatalf("waiting stream was marked completed: %s", body)
+			}
+		})
+	}
+}
+
+func TestChatAPIKeyAgentSanitizesUnexpectedStreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(), workspaceID: uuid.New(), accountID: uuid.New(), agentID: uuid.New(),
+		conversationID: uuid.New(), messageID: uuid.New(),
+	}
+	runtimeSvc := &apiKeyChatRuntimeService{ids: ids, runErr: errors.New("database password leaked by internal error")}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/agents/chat", strings.NewReader(`{"query":"hello"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	setAPIKeyAgentTestContext(c, ids)
+	handler.ChatAPIKeyAgent(c)
+
+	body := w.Body.String()
+	if strings.Contains(body, "database password") || !strings.Contains(body, response.ErrSystemError.Message) {
+		t.Fatalf("chat stream error was not sanitized: %s", body)
+	}
+	if strings.Count(body, `"event":"error"`) != 1 || strings.Count(body, `"event":"message_end"`) != 1 {
+		t.Fatalf("chat stream error has inconsistent terminal events: %s", body)
 	}
 }
 
@@ -439,6 +554,8 @@ type apiKeyChatRuntimeService struct {
 	lastScope     runtimeservice.Scope
 	lastCaller    runtimeservice.Caller
 	lastRunConfig runtimeservice.RunConfig
+	result        *runtimeservice.ChatResult
+	runErr        error
 }
 
 func (s *apiKeyChatRuntimeService) PrepareConfiguredChat(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, _ runtimedto.ChatRequest) (*runtimeservice.PreparedChat, error) {
@@ -455,6 +572,9 @@ func (s *apiKeyChatRuntimeService) PrepareConfiguredChat(_ context.Context, scop
 }
 
 func (s *apiKeyChatRuntimeService) RunPreparedStream(_ context.Context, _ *runtimeservice.PreparedChat, onChunk func(string) error, onEvents ...func(runtimeservice.StreamEvent) error) (*runtimeservice.ChatResult, error) {
+	if s.runErr != nil {
+		return nil, s.runErr
+	}
 	if err := onChunk("verified scientific result"); err != nil {
 		return nil, err
 	}
@@ -462,6 +582,9 @@ func (s *apiKeyChatRuntimeService) RunPreparedStream(_ context.Context, _ *runti
 		if err := onEvents[0](runtimeservice.StreamEvent{ID: "event-1", EventType: "skill_call_end", Payload: map[string]interface{}{"method": "ordinary_least_squares"}}); err != nil {
 			return nil, err
 		}
+	}
+	if s.result != nil {
+		return s.result, nil
 	}
 	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted, Metadata: map[string]interface{}{"usage": map[string]interface{}{"total_tokens": 42}}}, nil
 }

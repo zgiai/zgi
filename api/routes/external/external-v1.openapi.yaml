@@ -758,7 +758,11 @@ components:
           required: [message]
           properties:
             message: {type: string, description: Client-safe error message.}
-            code: {type: string, description: Stable structured code when available.}
+            code:
+              description: Stable structured code when available. Legacy application codes are integers; runtime-specific codes are strings.
+              oneOf:
+                - type: integer
+                - type: string
             params: {type: object, additionalProperties: true, description: Optional structured context safe to expose to clients.}
     AgentProgressEventData:
       description: Coarse model-processing progress without private reasoning text.
