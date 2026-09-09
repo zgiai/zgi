@@ -593,7 +593,7 @@ func externalRunOwnedByScope(run *Run, scope Scope, surface string) bool {
 		return run.UserSubjectID != nil && *run.UserSubjectID == *scope.UserSubjectID && run.UserSubjectKind == scope.UserSubjectKind
 	}
 	return surface == SurfaceWebApp && run.UserSubjectID == nil && run.PrincipalID != nil &&
-		run.ActorID != nil && *run.PrincipalID == scope.PrincipalID && *run.ActorID == scope.ActorID
+		*run.PrincipalID == scope.PrincipalID
 }
 
 func (h *ExternalHandler) withAPIConversation(c *gin.Context, user, operation string, action func(Scope, *PublishedAccess, uuid.UUID) (any, error)) {

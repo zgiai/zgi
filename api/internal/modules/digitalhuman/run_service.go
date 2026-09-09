@@ -244,14 +244,16 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 		return nil, false, err
 	}
 	now, runID := s.now(), uuid.New()
-	actorID := scope.ActorID
+	principalType := normalizedPrincipalType(scope, validated)
+	surface := normalizedInvocationSurface(scope, validated)
+	actorID := persistedRunActorID(scope, principalType, surface)
 	principalID := cloneUUIDPointer(&scope.PrincipalID)
 	run := &Run{
 		ID: runID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		DigitalHumanID: validated.Target.ID, DigitalHumanVersionID: resolved.Snapshot.DigitalHumanVersion,
-		ActorID: &actorID, PrincipalType: normalizedPrincipalType(scope, validated), PrincipalID: principalID,
+		ActorID: actorID, PrincipalType: principalType, PrincipalID: principalID,
 		UserSubjectKind: strings.TrimSpace(scope.UserSubjectKind), UserSubjectID: cloneUUIDPointer(scope.UserSubjectID),
-		Surface: normalizedInvocationSurface(scope, validated), RequestFingerprint: fingerprint, IdempotencyKey: validated.IdempotencyKey,
+		Surface: surface, RequestFingerprint: fingerprint, IdempotencyKey: validated.IdempotencyKey,
 		InvocationEvent: eventJSON, RunSpec: specJSON, RunSpecRevision: resolved.Spec.Revision,
 		ExecutionSnapshot: snapshotJSON, ExecutionSnapshotRevision: resolved.Snapshot.Revision,
 		ExecutionTrace: datatypes.JSON(`{}`),
@@ -906,8 +908,29 @@ func runScope(run *Run) Scope {
 	actorID := uuid.Nil
 	if run.ActorID != nil {
 		actorID = *run.ActorID
+	} else if run.PrincipalID != nil {
+		actorID = *run.PrincipalID
 	}
-	return Scope{OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID, ActorID: actorID}
+	return Scope{
+		OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID, ActorID: actorID,
+		PrincipalType: run.PrincipalType, PrincipalID: valueOrNil(run.PrincipalID),
+		UserSubjectKind: run.UserSubjectKind, UserSubjectID: cloneUUIDPointer(run.UserSubjectID), Surface: run.Surface,
+	}
+}
+
+func persistedRunActorID(scope Scope, principalType, surface string) *uuid.UUID {
+	if scope.ActorID == uuid.Nil || surface == SurfaceAPI ||
+		(surface == SurfaceWebApp && principalType != string(invocation.PrincipalAccount)) {
+		return nil
+	}
+	return cloneUUIDPointer(&scope.ActorID)
+}
+
+func valueOrNil(value *uuid.UUID) uuid.UUID {
+	if value == nil {
+		return uuid.Nil
+	}
+	return *value
 }
 
 func cloneUUIDPointer(value *uuid.UUID) *uuid.UUID {

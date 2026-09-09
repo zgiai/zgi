@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 )
 
@@ -42,8 +43,8 @@ func TestExternalRunOwnershipUsesSubjectNotAPIKeyPrincipal(t *testing.T) {
 func TestAnonymousWebAppRunOwnershipUsesSignedSessionSubject(t *testing.T) {
 	sessionSubjectID := uuid.New()
 	run := &Run{
-		ActorID: &sessionSubjectID, PrincipalID: &sessionSubjectID,
-		Surface: SurfaceWebApp,
+		PrincipalID: &sessionSubjectID,
+		Surface:     SurfaceWebApp,
 	}
 	scope := Scope{ActorID: sessionSubjectID, PrincipalID: sessionSubjectID}
 	if !externalRunOwnedByScope(run, scope, SurfaceWebApp) {
@@ -53,6 +54,38 @@ func TestAnonymousWebAppRunOwnershipUsesSignedSessionSubject(t *testing.T) {
 	scope.ActorID, scope.PrincipalID = otherSession, otherSession
 	if externalRunOwnedByScope(run, scope, SurfaceWebApp) {
 		t.Fatal("a different anonymous session must not own the webapp run")
+	}
+}
+
+func TestPersistedRunActorIDKeepsOnlyAccountBackedActors(t *testing.T) {
+	accountID := uuid.New()
+	accountScope := Scope{ActorID: accountID}
+	if actorID := persistedRunActorID(accountScope, string(invocation.PrincipalAccount), SurfaceWebApp); actorID == nil || *actorID != accountID {
+		t.Fatal("an authenticated WebApp run must retain its account actor")
+	}
+
+	apiScope := Scope{ActorID: uuid.New()}
+	if actorID := persistedRunActorID(apiScope, string(invocation.PrincipalService), SurfaceAPI); actorID != nil {
+		t.Fatal("an API end-user subject must not be persisted in the account actor foreign key")
+	}
+
+	anonymousScope := Scope{ActorID: uuid.New()}
+	if actorID := persistedRunActorID(anonymousScope, string(invocation.PrincipalExternalUser), SurfaceWebApp); actorID != nil {
+		t.Fatal("an anonymous WebApp session must not be persisted in the account actor foreign key")
+	}
+}
+
+func TestRunScopeFallsBackToExternalPrincipalWithoutPersistingAccountActor(t *testing.T) {
+	principalID := uuid.New()
+	subjectID := uuid.New()
+	run := &Run{
+		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), PrincipalType: string(invocation.PrincipalService),
+		PrincipalID: &principalID, UserSubjectKind: string(relationshipmemory.UserSubjectAPIEndUser),
+		UserSubjectID: &subjectID, Surface: SurfaceAPI,
+	}
+	scope := runScope(run)
+	if scope.ActorID != principalID || scope.PrincipalID != principalID || scope.UserSubjectID == nil || *scope.UserSubjectID != subjectID {
+		t.Fatal("external runtime scope must retain principal and user-subject boundaries")
 	}
 }
 
