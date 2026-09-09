@@ -57,6 +57,9 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
+	// ScriptModel is server-owned and never serialized into tool arguments.
+	ScriptModel       *ScriptModelChannel `json:"-"`
+	scriptModelPath   string
 	OrganizationID    string
 	UserID            string
 	ConversationID    string

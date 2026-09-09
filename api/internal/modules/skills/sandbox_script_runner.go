@@ -223,6 +223,9 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 			}
 		}
 	}
+	if manifest.ModelCalls > 0 && (execCtx.ScriptModel == nil || execCtx.ScriptModel.Complete == nil || execCtx.OrganizationID == "" || execCtx.UserID == "") {
+		return nil, fmt.Errorf("skill model channel is unavailable for this execution")
+	}
 	inputFiles, err := r.resolveInputFiles(ctx, arguments, execCtx, manifest)
 	if err != nil {
 		recordSkillScriptError(&trace, start, err)
@@ -308,7 +311,7 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 	var artifacts []skillScriptArtifact
 	var artifactErr error
 	if hasManifest {
-		runResult, err := r.runSkill(ctx, sandboxID, string(stdin), execCtx, skillScriptTimeoutSeconds(manifest.TimeoutMS))
+		runResult, err := r.runSkillWithModel(ctx, sandboxID, string(stdin), execCtx, manifest)
 		if err != nil {
 			recordSkillScriptError(&trace, start, err)
 			return &ToolInvocationResult{Trace: trace}, err
@@ -351,6 +354,10 @@ func (r *SandboxScriptRunner) RunSkillScript(ctx context.Context, doc SkillDocum
 
 func skillScriptEnv(execCtx ExecutionContext) map[string]string {
 	env := map[string]string{}
+	if execCtx.scriptModelPath != "" && execCtx.ScriptModel != nil {
+		env["ZGI_MODEL_CHANNEL"] = execCtx.scriptModelPath
+		env["MODEL_NAME"] = execCtx.ScriptModel.Model
+	}
 	if value := strings.TrimSpace(execCtx.OrganizationID); value != "" {
 		env["ZGI_ORGANIZATION_ID"] = value
 	}

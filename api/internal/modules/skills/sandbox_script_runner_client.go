@@ -410,6 +410,7 @@ type sandboxFileInfo struct {
 }
 
 type sandboxFileContent struct {
+	MaxBytes int64  `json:"max_bytes,omitempty"`
 	Path     string `json:"path"`
 	Content  string `json:"content"`
 	Encoding string `json:"encoding"`
