@@ -24,6 +24,7 @@ import {
   useDigitalHumanAPIKeys,
 } from '@/hooks/digital-human/use-digital-human-access';
 import { useT } from '@/i18n';
+import { API_URL } from '@/lib/config';
 import type {
   DigitalHumanAPIKey,
   DigitalHumanPresentationPolicy,
@@ -265,7 +266,7 @@ export function DigitalHumanAccessPanel({
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" asChild>
-              <a href="/api/openapi.yaml" target="_blank" rel="noreferrer">
+              <a href={`${API_URL}/api/openapi.yaml`} target="_blank" rel="noreferrer">
                 {t('openAPIDocument')}
               </a>
             </Button>
