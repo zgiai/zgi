@@ -131,15 +131,29 @@ type VersionRestoreBindingImpact struct {
 	DisplayName      string                       `json:"display_name,omitempty"`
 }
 
+// VersionRestoreBindingSnapshot is the credential-free resource state rendered while previewing a publication.
+type VersionRestoreBindingSnapshot struct {
+	ID               uuid.UUID                    `json:"id"`
+	Type             resourcebindings.BindingType `json:"binding_type"`
+	ResourceID       string                       `json:"resource_id"`
+	ParentResourceID string                       `json:"parent_resource_id,omitempty"`
+	DisplayName      string                       `json:"display_name,omitempty"`
+	AccessMode       resourcebindings.AccessMode  `json:"access_mode"`
+	ResourceRevision string                       `json:"resource_revision"`
+	BindingRevision  string                       `json:"binding_revision"`
+	Metadata         map[string]any               `json:"metadata"`
+}
+
 // VersionRestorePreview is a point-in-time summary of restoring a publication to the draft.
 type VersionRestorePreview struct {
-	VersionID                     uuid.UUID                     `json:"version_id"`
-	VersionNumber                 int                           `json:"version_number"`
-	IsCurrent                     bool                          `json:"is_current"`
-	WillDiscardUnpublishedChanges bool                          `json:"will_discard_unpublished_changes"`
-	ChangedFields                 []string                      `json:"changed_fields"`
-	BindingChanges                []VersionRestoreBindingImpact `json:"binding_changes"`
-	ImpactToken                   string                        `json:"impact_token"`
+	VersionID                     uuid.UUID                       `json:"version_id"`
+	VersionNumber                 int                             `json:"version_number"`
+	IsCurrent                     bool                            `json:"is_current"`
+	WillDiscardUnpublishedChanges bool                            `json:"will_discard_unpublished_changes"`
+	ChangedFields                 []string                        `json:"changed_fields"`
+	BindingChanges                []VersionRestoreBindingImpact   `json:"binding_changes"`
+	Bindings                      []VersionRestoreBindingSnapshot `json:"bindings"`
+	ImpactToken                   string                          `json:"impact_token"`
 }
 
 // RestoreVersionRequest restores an immutable publication into the current mutable draft.

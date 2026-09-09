@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -124,6 +125,10 @@ func (s *Service) versionRestorePreviewWithRepository(ctx context.Context, repo 
 	}
 	changedFields := versionChangedFields(draft, target)
 	bindingChanges := versionBindingChanges(currentBindings, targetBindings)
+	bindingSnapshots, err := versionBindingSnapshots(targetBindings)
+	if err != nil {
+		return nil, err
+	}
 	token, err := hashRevision(struct {
 		ActorID            uuid.UUID                     `json:"actor_id"`
 		DigitalHumanID     uuid.UUID                     `json:"digital_human_id"`
@@ -142,8 +147,35 @@ func (s *Service) versionRestorePreviewWithRepository(ctx context.Context, repo 
 		VersionID: target.ID, VersionNumber: target.VersionNumber,
 		IsCurrent:                     definition.PublishedVersionID != nil && *definition.PublishedVersionID == target.ID,
 		WillDiscardUnpublishedChanges: len(changedFields) > 0 || len(bindingChanges) > 0,
-		ChangedFields:                 changedFields, BindingChanges: bindingChanges, ImpactToken: token,
+		ChangedFields:                 changedFields, BindingChanges: bindingChanges, Bindings: bindingSnapshots, ImpactToken: token,
 	}, nil
+}
+
+func versionBindingSnapshots(bindings []*ResourceBinding) ([]VersionRestoreBindingSnapshot, error) {
+	snapshots := make([]VersionRestoreBindingSnapshot, 0, len(bindings))
+	for _, binding := range bindings {
+		if binding == nil {
+			continue
+		}
+		metadata := make(map[string]any)
+		if len(binding.Metadata) > 0 {
+			if err := json.Unmarshal(binding.Metadata, &metadata); err != nil {
+				return nil, fmt.Errorf("decode digital human binding metadata: %w", err)
+			}
+		}
+		snapshots = append(snapshots, VersionRestoreBindingSnapshot{
+			ID:               binding.ID,
+			Type:             binding.BindingType,
+			ResourceID:       binding.ResourceID,
+			ParentResourceID: binding.ParentResourceID,
+			DisplayName:      binding.DisplayName,
+			AccessMode:       binding.AccessMode,
+			ResourceRevision: binding.ResourceRevision,
+			BindingRevision:  binding.BindingRevision,
+			Metadata:         metadata,
+		})
+	}
+	return snapshots, nil
 }
 
 func versionChangedFields(current, target *Version) []string {

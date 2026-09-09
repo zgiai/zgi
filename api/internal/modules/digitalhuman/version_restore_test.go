@@ -1,9 +1,12 @@
 package digitalhuman
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	"gorm.io/datatypes"
 )
@@ -20,6 +23,35 @@ func TestVersionChangedFields(t *testing.T) {
 	want := []string{"persona", "goals", "default_model", "trigger_policy"}
 	if got := versionChangedFields(current, target); !reflect.DeepEqual(got, want) {
 		t.Fatalf("versionChangedFields() = %#v, want %#v", got, want)
+	}
+}
+
+func TestVersionBindingSnapshotsExcludeCredentialReferences(t *testing.T) {
+	bindingID := uuid.New()
+	snapshots, err := versionBindingSnapshots([]*ResourceBinding{{
+		ID:               bindingID,
+		BindingType:      resourcebindings.BindingTypeIntegrationConnection,
+		ResourceID:       "connection-1",
+		ParentResourceID: "feishu",
+		DisplayName:      "Project group",
+		AccessMode:       resourcebindings.AccessModeExecute,
+		ResourceRevision: "resource:v1",
+		BindingRevision:  "binding:v1",
+		CredentialRef:    "vault/private-reference",
+		Metadata:         datatypes.JSON(`{"allowed_action_ids":["send_message"]}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].ID != bindingID || snapshots[0].ResourceID != "connection-1" {
+		t.Fatalf("versionBindingSnapshots() = %#v", snapshots)
+	}
+	encoded, err := json.Marshal(snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "vault/private-reference") || strings.Contains(string(encoded), "credential_ref") {
+		t.Fatalf("version binding preview leaked credential reference: %s", encoded)
 	}
 }
 

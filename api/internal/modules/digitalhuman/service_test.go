@@ -364,6 +364,9 @@ func TestRestorePublishedVersionReplacesOnlyCurrentDraft(t *testing.T) {
 	if preview.IsCurrent || !preview.WillDiscardUnpublishedChanges || preview.ImpactToken == "" || len(preview.ChangedFields) == 0 || len(preview.BindingChanges) != 2 {
 		t.Fatalf("PreviewVersionRestore() = %#v", preview)
 	}
+	if len(preview.Bindings) != 1 || preview.Bindings[0].ResourceID != "skill.first" {
+		t.Fatalf("PreviewVersionRestore().Bindings = %#v", preview.Bindings)
+	}
 	restored, err := service.RestoreVersion(t.Context(), scope, detail.Definition.ID, RestoreVersionRequest{
 		VersionID: first.Published.ID, ExpectedRevision: second.Definition.Revision,
 		ExpectedDraftLockVersion: changedBindings.DraftLockVersion, ImpactToken: preview.ImpactToken,
