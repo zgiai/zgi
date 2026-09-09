@@ -96,7 +96,6 @@ func (h *ExternalHandler) GetConfig(c *gin.Context) {
 		return
 	}
 	policy := presentationPolicy(access.Version, access.Definition)
-	memoryEnabled, _ := digitalHumanUserRelationshipMemoryPolicy(access.Version.MemoryPolicy)
 	writeExternalData(c, http.StatusOK, ExternalConfigResponse{
 		DigitalHumanID: access.Definition.ID.String(),
 		WebAppID:       access.Definition.WebAppID.String(),
@@ -105,8 +104,8 @@ func (h *ExternalHandler) GetConfig(c *gin.Context) {
 		HomeTitle: policy.HomeTitle, OpeningStatement: policy.OpeningStatement,
 		InputPlaceholder: policy.InputPlaceholder, ThemeColor: policy.ThemeColor,
 		SuggestedQuestions: nonNilStrings(policy.SuggestedQuestions),
-		FileUploadEnabled:  true, RelationshipMemoryEnabled: memoryEnabled,
-		MemoryRequiresUser: memoryEnabled, ExternalUserRequired: true,
+		FileUploadEnabled:  true, RelationshipMemoryEnabled: true,
+		MemoryRequiresUser: true, ExternalUserRequired: true,
 		RuntimeInputEnabled: true, RegenerateEnabled: false,
 		LandingPageEnabled: access.Settings.WebAppEnabled, APIEnabled: access.Settings.APIEnabled,
 		Version: strconv.Itoa(access.Version.VersionNumber), VersionUUID: access.Version.ID.String(),

@@ -277,9 +277,9 @@ func (h *Handler) accountRelationship(c *gin.Context) (*RelationshipDetail, bool
 
 func (h *Handler) managementContract(c *gin.Context, detail *RelationshipDetail) (ConsumerMemoryContract, error) {
 	if detail.ConsumerType == ConsumerDigitalHuman {
-		var row struct{ MemoryPolicy datatypes.JSON }
+		var row struct{ Revision string }
 		err := h.service.db.WithContext(c.Request.Context()).Table("digital_humans AS consumer").
-			Select("published.memory_policy").
+			Select("published.revision").
 			Joins("JOIN digital_human_versions AS published ON published.id = consumer.published_version_id AND published.state = ?", "published").
 			Where("consumer.id = ? AND consumer.workspace_id = ? AND consumer.deleted_at IS NULL", detail.ConsumerID, detail.WorkspaceID).
 			Take(&row).Error
@@ -289,16 +289,7 @@ func (h *Handler) managementContract(c *gin.Context, detail *RelationshipDetail)
 		if err != nil {
 			return ConsumerMemoryContract{}, err
 		}
-		var policy struct {
-			UserRelationship struct {
-				Enabled            bool `json:"enabled"`
-				AutoCaptureAllowed bool `json:"auto_capture_allowed"`
-			} `json:"user_relationship"`
-		}
-		if err := json.Unmarshal(row.MemoryPolicy, &policy); err != nil {
-			return ConsumerMemoryContract{}, fmt.Errorf("%w: invalid published memory policy", ErrPolicyRejected)
-		}
-		return ConsumerMemoryContract{Enabled: policy.UserRelationship.Enabled, DefinitionMode: "dynamic", AllowedCategories: []string{"profile", "preference", "constraint", "relationship"}, AutoCaptureAllowed: policy.UserRelationship.AutoCaptureAllowed, RenderBudgetChars: defaultRenderBudget}, nil
+		return ConsumerMemoryContract{Enabled: true, DefinitionMode: "dynamic", AllowedCategories: []string{"profile", "preference", "constraint", "relationship"}, AutoCaptureAllowed: true, ConfigRevision: row.Revision, RenderBudgetChars: defaultRenderBudget}, nil
 	}
 	var row struct{ ConfigSnapshot datatypes.JSON }
 	err := h.service.db.WithContext(c.Request.Context()).Table("agent_published_versions").

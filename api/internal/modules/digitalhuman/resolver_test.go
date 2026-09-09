@@ -33,7 +33,7 @@ func (s *resolverStoreStub) Verify(context.Context, resourcebindings.SnapshotRef
 	return resourcebindings.Decision{}, nil
 }
 
-func TestResolverSealsPinnedMemoryFreeExecution(t *testing.T) {
+func TestResolverSealsPinnedExecutionWithAccountRelationshipMemory(t *testing.T) {
 	subject := runtimeidentity.SubjectRef{
 		Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New(),
 	}
@@ -72,7 +72,7 @@ func TestResolverSealsPinnedMemoryFreeExecution(t *testing.T) {
 	if len(resolved.Spec.Roles) != 0 || len(resolved.Spec.Capabilities) != 0 || len(resolved.Spec.SOPs) != 0 || len(resolved.Spec.Bindings) != 1 {
 		t.Fatalf("RunSpec references = %#v", resolved.Spec)
 	}
-	if resolved.Snapshot.UseUserMemory || resolved.Snapshot.UseAgentMemory || resolved.Snapshot.Revision == "" {
+	if !resolved.Snapshot.UseUserMemory || !resolved.Snapshot.UserMemoryAutoCaptureAllowed || resolved.Snapshot.UseAgentMemory || resolved.Snapshot.Revision == "" {
 		t.Fatalf("execution snapshot memory/revision = %#v", resolved.Snapshot)
 	}
 	if resolved.Snapshot.IdentityName != "Atlas Runtime" || len(resolved.Snapshot.Goals) != 1 || resolved.Snapshot.Goals[0] != "Track research risks" {
@@ -141,7 +141,7 @@ func TestResolverAllowsIdentityWithoutRoleAssignment(t *testing.T) {
 	}
 }
 
-func TestResolverAllowsRelationshipMemoryOnlyForManualAccountInvocation(t *testing.T) {
+func TestResolverAllowsRelationshipMemoryByIdentityNotPublishedConfiguration(t *testing.T) {
 	subject := runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New()}
 	store := &resolverStoreStub{
 		definition: &Definition{ID: subject.ID, Name: "Atlas", Status: StatusActive},
@@ -149,7 +149,7 @@ func TestResolverAllowsRelationshipMemoryOnlyForManualAccountInvocation(t *testi
 			ID: uuid.New(), DigitalHumanID: subject.ID, State: VersionStatePublished, VersionNumber: 1,
 			Persona: "Be direct", Rules: datatypes.JSON(`[]`), DefaultModel: "gpt-5",
 			IdentitySnapshot: datatypes.JSON(`{"name":"Atlas"}`), Revision: "sha256:version",
-			MemoryPolicy: datatypes.JSON(`{"enabled":true,"ownership":"digital_human","user_relationship":{"enabled":true,"auto_capture_allowed":true}}`),
+			MemoryPolicy: datatypes.JSON(`{"enabled":true,"ownership":"digital_human","user_relationship":{"enabled":false,"auto_capture_allowed":false}}`),
 		},
 	}
 	resolver := NewResolver(store)

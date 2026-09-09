@@ -62,7 +62,6 @@ func (h *ExternalHandler) GetWebAppConfig(c *gin.Context) {
 		return
 	}
 	policy := presentationPolicy(access.Version, access.Definition)
-	memoryEnabled, _ := digitalHumanUserRelationshipMemoryPolicy(access.Version.MemoryPolicy)
 	writeExternalData(c, http.StatusOK, WebAppConfigResponse{
 		DigitalHumanID: access.Definition.ID.String(), WebAppID: access.Definition.WebAppID.String(),
 		Name: access.Definition.Name, Description: access.Definition.Description,
@@ -70,21 +69,16 @@ func (h *ExternalHandler) GetWebAppConfig(c *gin.Context) {
 		HomeTitle: policy.HomeTitle, OpeningStatement: policy.OpeningStatement,
 		InputPlaceholder: policy.InputPlaceholder, ThemeColor: policy.ThemeColor,
 		SuggestedQuestions:   nonNilStrings(policy.SuggestedQuestions),
-		AnonymousChatEnabled: !memoryEnabled, LoginRequired: memoryEnabled,
+		AnonymousChatEnabled: true, LoginRequired: false,
 		FileUploadEnabled: true, FileUploadRequiresLogin: true,
-		RelationshipMemoryEnabled: memoryEnabled, RuntimeInputEnabled: true,
+		RelationshipMemoryEnabled: true, RuntimeInputEnabled: true,
 		Version: access.Version.VersionNumber, VersionUUID: access.Version.ID.String(),
 	})
 }
 
 func (h *ExternalHandler) CreateWebAppSession(c *gin.Context) {
-	webAppID, access, ok := h.resolveWebApp(c)
+	webAppID, _, ok := h.resolveWebApp(c)
 	if !ok {
-		return
-	}
-	memoryEnabled, _ := digitalHumanUserRelationshipMemoryPolicy(access.Version.MemoryPolicy)
-	if memoryEnabled {
-		writeExternalData(c, http.StatusOK, WebAppSessionResponse{AnonymousEnabled: false, LoginRequired: true})
 		return
 	}
 	if h.sessions == nil {
@@ -136,12 +130,6 @@ func (h *ExternalHandler) authenticateWebApp(c *gin.Context) {
 			return
 		}
 		identity.Authenticated = true
-	}
-	memoryEnabled, _ := digitalHumanUserRelationshipMemoryPolicy(access.Version.MemoryPolicy)
-	if memoryEnabled && !identity.Authenticated {
-		h.writeAuthError(c, false)
-		c.Abort()
-		return
 	}
 	c.Set(webAppAccessContext, access)
 	c.Set(webAppIdentityContext, identity)

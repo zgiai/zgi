@@ -100,14 +100,15 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 		identityName = definition.Name
 	}
 	now := r.now()
-	userMemoryEnabled, userMemoryAutoCaptureAllowed := digitalHumanUserRelationshipMemoryPolicy(version.MemoryPolicy)
-	userMemoryEnabled = userMemoryEnabled && invocationAllowsUserMemory(event)
-	userMemoryAutoCaptureAllowed = userMemoryEnabled && userMemoryAutoCaptureAllowed
+	userMemoryEnabled := invocationAllowsUserMemory(event)
 	snapshot := ExecutionSnapshot{
 		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: version.ID,
 		IdentityName: identityName, Persona: version.Persona, Goals: goals, Rules: rules, Model: version.DefaultModel, Bindings: bindings,
 		UseUserMemory: userMemoryEnabled, UseAgentMemory: false,
-		UserMemoryAutoCaptureAllowed: userMemoryAutoCaptureAllowed,
+		// Kept in the v1 snapshot for compatibility with persisted runs. DigitalHuman
+		// relationship memory is a product capability now; the user's relationship
+		// setting is the only per-user automatic-capture control.
+		UserMemoryAutoCaptureAllowed: userMemoryEnabled,
 		ChannelResponsePolicy:        channelResponsePolicyPointer(channelResponsePolicyFromTriggerPolicy(version.TriggerPolicy)),
 		ResolvedAt:                   now,
 	}
@@ -154,19 +155,6 @@ func invocationAllowsUserMemory(event invocation.Event) bool {
 			event.Origin.Kind == invocation.OriginManual &&
 			event.Sender.Type == invocation.PrincipalAccount
 	}
-}
-
-func digitalHumanUserRelationshipMemoryPolicy(raw []byte) (bool, bool) {
-	var policy struct {
-		UserRelationship struct {
-			Enabled            bool `json:"enabled"`
-			AutoCaptureAllowed bool `json:"auto_capture_allowed"`
-		} `json:"user_relationship"`
-	}
-	if len(raw) == 0 || json.Unmarshal(raw, &policy) != nil {
-		return false, false
-	}
-	return policy.UserRelationship.Enabled, policy.UserRelationship.AutoCaptureAllowed
 }
 
 func executionSnapshotRevision(snapshot ExecutionSnapshot) (string, error) {
