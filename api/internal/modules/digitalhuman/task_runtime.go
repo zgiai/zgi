@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -54,6 +55,7 @@ type taskRuntimeBoundary struct {
 	conversationType string
 	replyTo          *invocation.ReplyAddress
 	currentTaskID    uuid.UUID
+	access           TaskAccessContext
 	writable         bool
 }
 
@@ -62,6 +64,11 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 		return nil, ErrInvalidRequest
 	}
 	boundary := taskBoundary(event)
+	access, err := taskAccessForRun(run, event, boundary)
+	if err != nil {
+		return nil, err
+	}
+	boundary.access = access
 	switch event.Origin.Kind {
 	case invocation.OriginChannel:
 		boundary.writable = true
@@ -81,7 +88,7 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 
 func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 	guidance := []string{
-		"You can manage the visible todo list owned by this DigitalHuman.",
+		"You can manage only the task namespace made visible to this invocation.",
 		"When the current user explicitly and unambiguously asks to create a task, reminder, or schedule, use create to commit it in one operation. Do not propose and then confirm the same explicit request.",
 		"When ordinary discussion merely suggests possible future work, use propose and ask the user to confirm it. Never silently turn inferred work into a confirmed task.",
 		"When the user confirms an earlier proposal, list proposed tasks from this conversation first. Confirm the single matching proposal using its returned ID and revision. If several proposals could match, ask which one instead of guessing.",
@@ -93,6 +100,11 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 	}
 	if boundary.currentTaskID != uuid.Nil {
 		guidance = append(guidance, "This is a scheduled execution. The scheduler owns successful completion: do not mark the task completed. You may only update the current task to waiting or blocked when the work genuinely cannot finish; do not create, confirm, reschedule, rerun, or cancel tasks from this run.")
+	} else if boundary.access.Owner.Kind == TaskOwnerUserSubject {
+		guidance = append(guidance,
+			"Task visibility is restricted to the current signed-in user. Shared DigitalHuman tasks and other users' private tasks are intentionally hidden.",
+			"When answering a task list or status question, describe the result as the current user's tasks, not the DigitalHuman's complete shared todo list.",
+		)
 	}
 	if boundary.conversationID != "" {
 		conversationScope := "current external conversation"
@@ -133,6 +145,58 @@ func taskBoundary(event invocation.Event) taskRuntimeBoundary {
 	return result
 }
 
+func taskAccessForRun(run *Run, event invocation.Event, boundary taskRuntimeBoundary) (TaskAccessContext, error) {
+	if run == nil || run.OrganizationID == uuid.Nil || run.WorkspaceID == uuid.Nil || run.DigitalHumanID == uuid.Nil {
+		return TaskAccessContext{}, ErrInvalidRequest
+	}
+	access := TaskAccessContext{
+		OrganizationID: run.OrganizationID,
+		WorkspaceID:    run.WorkspaceID,
+		DigitalHumanID: run.DigitalHumanID,
+		Principal:      event.Sender,
+		Surface:        run.Surface,
+	}
+	switch event.Origin.Kind {
+	case invocation.OriginManual:
+		if run.UserSubjectID == nil || *run.UserSubjectID == uuid.Nil {
+			return TaskAccessContext{}, ErrTaskPolicyRejected
+		}
+		access.Owner = UserTaskOwner(usersubject.Ref{Kind: usersubject.Kind(run.UserSubjectKind), ID: *run.UserSubjectID})
+		access.Surface = SurfaceConsole
+	case invocation.OriginChannel:
+		conversationID, err := channelTaskConversationID(run.OrganizationID, run.WorkspaceID, run.DigitalHumanID, event.Origin.Provider, event.Origin.InstallationID, boundary.conversationID)
+		if err != nil {
+			return TaskAccessContext{}, err
+		}
+		access.Owner = ConversationTaskOwner(conversationID)
+		access.Surface = SurfaceChannel
+	case invocation.OriginSchedule:
+		if boundary.currentTaskID == uuid.Nil || event.Sender.Type != invocation.PrincipalSystem {
+			return TaskAccessContext{}, ErrTaskPolicyRejected
+		}
+		currentTaskID := boundary.currentTaskID
+		access.CurrentTaskID = &currentTaskID
+		access.Surface = SurfaceTask
+	default:
+		return TaskAccessContext{}, ErrTaskPolicyRejected
+	}
+	if access.Principal.Type == "" || strings.TrimSpace(access.Principal.ID) == "" {
+		return TaskAccessContext{}, ErrTaskPolicyRejected
+	}
+	return access, nil
+}
+
+func channelTaskConversationID(organizationID, workspaceID, digitalHumanID uuid.UUID, provider, installationID, conversationID string) (uuid.UUID, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	installationID = strings.TrimSpace(installationID)
+	conversationID = strings.TrimSpace(conversationID)
+	if organizationID == uuid.Nil || workspaceID == uuid.Nil || digitalHumanID == uuid.Nil || provider == "" || installationID == "" || conversationID == "" {
+		return uuid.Nil, ErrInvalidRequest
+	}
+	seed := strings.Join([]string{"zgi", "digital-human-task-conversation", organizationID.String(), workspaceID.String(), digitalHumanID.String(), provider, installationID, conversationID}, "\x00")
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed)), nil
+}
+
 func (p *DefaultTaskRuntimeProvider) listTool(run *Run, boundary taskRuntimeBoundary) skillloop.RuntimeTool {
 	definition := adapter.Tool{Type: "function", Function: adapter.Function{Name: taskListToolName, Description: taskListToolDescription(boundary), Parameters: map[string]any{"type": "object", "properties": map[string]any{
 		"view":          map[string]any{"type": "string", "enum": []string{taskListViewOpen, taskListViewCompleted, taskListViewCanceled}, "description": "Task collection to read. Defaults to open."},
@@ -153,17 +217,17 @@ func (p *DefaultTaskRuntimeProvider) listTool(run *Run, boundary taskRuntimeBoun
 			return taskToolFailure("invalid_arguments", true)
 		}
 		if boundary.currentTaskID != uuid.Nil {
-			item, err := p.service.GetTask(ctx, runScopeWithActor(run), run.DigitalHumanID, boundary.currentTaskID, "")
+			item, err := p.service.GetTask(ctx, boundary.access, boundary.currentTaskID)
 			if err != nil {
 				return taskToolFailure("task_not_found", false)
 			}
 			return taskToolSuccess(call, map[string]any{"view": taskListViewOpen, "scope": taskListScope(boundary), "items": []taskListToolItem{newTaskListToolItem(item)}, "total": 1, "has_more": false})
 		}
-		query, view, err := p.taskListQuery(args.View, args.Query, args.HistorySince, args.HistoryUntil, args.Limit, boundary.conversationID)
+		query, view, err := p.taskListQuery(args.View, args.Query, args.HistorySince, args.HistoryUntil, args.Limit)
 		if err != nil {
 			return taskToolFailure("invalid_arguments", true)
 		}
-		result, err := p.service.ListTasks(ctx, runScopeWithActor(run), run.DigitalHumanID, query)
+		result, err := p.service.ListTasks(ctx, boundary.access, query)
 		if err != nil {
 			return taskToolFailure(taskErrorCode(err), false)
 		}
@@ -196,7 +260,7 @@ func taskListScope(boundary taskRuntimeBoundary) taskListToolScope {
 	if boundary.conversationID != "" {
 		return taskListToolScope{Visibility: "current_conversation", ConversationType: boundary.conversationType}
 	}
-	return taskListToolScope{Visibility: "all_digital_human_tasks"}
+	return taskListToolScope{Visibility: "current_user"}
 }
 
 type taskListToolItem struct {
@@ -216,7 +280,7 @@ func newTaskListToolItem(task *Task) taskListToolItem {
 	return taskListToolItem{ID: task.ID, Name: task.Name, Goal: task.Goal, WorkStatus: task.WorkStatus, Priority: task.Priority, NextRunAt: task.NextRunAt, LastRunAt: task.LastRunAt, LastRunStatus: task.LastRunStatus, Revision: task.Revision, UpdatedAt: task.UpdatedAt}
 }
 
-func (p *DefaultTaskRuntimeProvider) taskListQuery(view, keyword, historySince, historyUntil string, limit int, conversationID string) (TaskListQuery, string, error) {
+func (p *DefaultTaskRuntimeProvider) taskListQuery(view, keyword, historySince, historyUntil string, limit int) (TaskListQuery, string, error) {
 	view = strings.TrimSpace(view)
 	if view == "" {
 		view = taskListViewOpen
@@ -231,7 +295,7 @@ func (p *DefaultTaskRuntimeProvider) taskListQuery(view, keyword, historySince, 
 	if limit < 1 || limit > taskListMaximumLimit {
 		return TaskListQuery{}, "", ErrInvalidRequest
 	}
-	query := TaskListQuery{Statuses: statuses, Query: keyword, Page: 1, PageSize: limit, SourceConversationID: conversationID}
+	query := TaskListQuery{Statuses: statuses, Query: keyword, Page: 1, PageSize: limit}
 	if !historical {
 		if strings.TrimSpace(historySince) != "" || strings.TrimSpace(historyUntil) != "" {
 			return TaskListQuery{}, "", ErrInvalidRequest
@@ -289,7 +353,7 @@ func (p *DefaultTaskRuntimeProvider) getTool(run *Run, boundary taskRuntimeBound
 		if decodeStrict(call.Function.Arguments, &args) != nil || args.TaskID == uuid.Nil || (boundary.currentTaskID != uuid.Nil && args.TaskID != boundary.currentTaskID) {
 			return taskToolFailure("invalid_arguments", true)
 		}
-		result, err := p.service.GetTask(ctx, runScopeWithActor(run), run.DigitalHumanID, args.TaskID, boundary.conversationID)
+		result, err := p.service.GetTask(ctx, boundary.access, args.TaskID)
 		if err != nil {
 			return taskToolFailure(taskErrorCode(err), false)
 		}
@@ -328,7 +392,7 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 		}
 		if args.Action == "create" || args.Action == "propose" {
 			mutation.Proposed = args.Action == "propose"
-			result, err := p.service.CreateTask(ctx, runScopeWithActor(run), run.DigitalHumanID, CreateTaskRequest{Name: args.Name, Goal: args.Goal, SuccessCriteria: args.SuccessCriteria, Priority: args.Priority, Schedule: valueSchedule(args.Schedule), DeliveryMode: args.DeliveryMode, ExecutionTimeoutSeconds: args.ExecutionTimeoutSeconds, MaxAttempts: args.MaxAttempts}, mutation)
+			result, err := p.service.CreateTask(ctx, boundary.access, CreateTaskRequest{Name: args.Name, Goal: args.Goal, SuccessCriteria: args.SuccessCriteria, Priority: args.Priority, Schedule: valueSchedule(args.Schedule), DeliveryMode: args.DeliveryMode, ExecutionTimeoutSeconds: args.ExecutionTimeoutSeconds, MaxAttempts: args.MaxAttempts}, mutation)
 			if err != nil {
 				return taskToolFailure(taskErrorCode(err), errors.Is(err, ErrInvalidRequest))
 			}
@@ -345,22 +409,22 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 		var err error
 		switch args.Action {
 		case "confirm":
-			result, err = p.service.ApplyTaskAction(ctx, runScopeWithActor(run), run.DigitalHumanID, *args.TaskID, TaskActionConfirm, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
+			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionConfirm, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
 		case "decline":
-			result, err = p.service.ApplyTaskAction(ctx, runScopeWithActor(run), run.DigitalHumanID, *args.TaskID, TaskActionDecline, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
+			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionDecline, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
 		case "run_now":
-			result, err = p.service.ApplyTaskAction(ctx, runScopeWithActor(run), run.DigitalHumanID, *args.TaskID, TaskActionRunNow, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
+			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionRunNow, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
 		case "cancel":
-			result, err = p.service.ApplyTaskAction(ctx, runScopeWithActor(run), run.DigitalHumanID, *args.TaskID, TaskActionCancel, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
+			result, err = p.service.ApplyTaskAction(ctx, boundary.access, *args.TaskID, TaskActionCancel, ApplyTaskActionRequest{ExpectedRevision: args.ExpectedRevision}, mutation)
 		case "set_status":
-			result, err = p.service.SetTaskWorkStatus(ctx, runScopeWithActor(run), run.DigitalHumanID, *args.TaskID, args.Status, args.ExpectedRevision, mutation)
+			result, err = p.service.SetTaskWorkStatus(ctx, boundary.access, *args.TaskID, args.Status, args.ExpectedRevision, mutation)
 		case "schedule":
 			if args.Schedule == nil {
 				return taskToolFailure("invalid_arguments", true)
 			}
-			result, err = p.service.UpdateTask(ctx, runScopeWithActor(run), run.DigitalHumanID, *args.TaskID, UpdateTaskRequest{ExpectedRevision: args.ExpectedRevision, Schedule: args.Schedule}, mutation)
+			result, err = p.service.UpdateTask(ctx, boundary.access, *args.TaskID, UpdateTaskRequest{ExpectedRevision: args.ExpectedRevision, Schedule: args.Schedule}, mutation)
 		case "update":
-			result, err = p.service.UpdateTask(ctx, runScopeWithActor(run), run.DigitalHumanID, *args.TaskID, updateRequest(args), mutation)
+			result, err = p.service.UpdateTask(ctx, boundary.access, *args.TaskID, updateRequest(args), mutation)
 		default:
 			return taskToolFailure("invalid_arguments", true)
 		}

@@ -16,6 +16,7 @@ import (
 
 type taskRuntimeService struct {
 	TaskHandlerService
+	accesses        *[]TaskAccessContext
 	statusCalls     *[]TaskWorkStatus
 	createCalls     *[]CreateTaskRequest
 	createMutations *[]TaskMutationContext
@@ -23,14 +24,20 @@ type taskRuntimeService struct {
 	listResult      *TaskListResult
 }
 
-func (s taskRuntimeService) SetTaskWorkStatus(_ context.Context, _ Scope, _ uuid.UUID, taskID uuid.UUID, status TaskWorkStatus, revision int64, _ TaskMutationContext) (*Task, error) {
+func (s taskRuntimeService) SetTaskWorkStatus(_ context.Context, access TaskAccessContext, taskID uuid.UUID, status TaskWorkStatus, revision int64, _ TaskMutationContext) (*Task, error) {
+	if s.accesses != nil {
+		*s.accesses = append(*s.accesses, access)
+	}
 	if s.statusCalls != nil {
 		*s.statusCalls = append(*s.statusCalls, status)
 	}
 	return &Task{ID: taskID, WorkStatus: status, Revision: revision + 1}, nil
 }
 
-func (s taskRuntimeService) CreateTask(_ context.Context, _ Scope, digitalHumanID uuid.UUID, req CreateTaskRequest, mutation TaskMutationContext) (*Task, error) {
+func (s taskRuntimeService) CreateTask(_ context.Context, access TaskAccessContext, req CreateTaskRequest, mutation TaskMutationContext) (*Task, error) {
+	if s.accesses != nil {
+		*s.accesses = append(*s.accesses, access)
+	}
 	if s.createCalls != nil {
 		*s.createCalls = append(*s.createCalls, req)
 	}
@@ -41,10 +48,13 @@ func (s taskRuntimeService) CreateTask(_ context.Context, _ Scope, digitalHumanI
 	if mutation.Proposed {
 		status = TaskWorkStatusProposed
 	}
-	return &Task{ID: uuid.New(), DigitalHumanID: digitalHumanID, Name: req.Name, Goal: req.Goal, WorkStatus: status, Revision: 1}, nil
+	return &Task{ID: uuid.New(), DigitalHumanID: access.DigitalHumanID, OwnerKind: access.Owner.Kind, Name: req.Name, Goal: req.Goal, WorkStatus: status, Revision: 1}, nil
 }
 
-func (s taskRuntimeService) ListTasks(_ context.Context, _ Scope, _ uuid.UUID, query TaskListQuery) (*TaskListResult, error) {
+func (s taskRuntimeService) ListTasks(_ context.Context, access TaskAccessContext, query TaskListQuery) (*TaskListResult, error) {
+	if s.accesses != nil {
+		*s.accesses = append(*s.accesses, access)
+	}
 	if s.listQueries != nil {
 		*s.listQueries = append(*s.listQueries, query)
 	}
@@ -88,6 +98,7 @@ func TestTaskRuntimeManualAndCurrentScheduleAreWritable(t *testing.T) {
 
 	scheduled := manual
 	scheduled.Origin = invocation.Origin{Kind: invocation.OriginSchedule}
+	scheduled.Sender = invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}
 	scheduled.Context = map[string]any{"task_id": uuid.NewString()}
 	prepared, err = provider.Prepare(t.Context(), run, scheduled)
 	if err != nil || len(prepared.Tools) != 3 {
@@ -193,21 +204,22 @@ func TestTaskRuntimeListDefaultsToOpenTasks(t *testing.T) {
 		t.Fatalf("list view = %#v, want %q", data["view"], taskListViewOpen)
 	}
 	scope, ok := data["scope"].(taskListToolScope)
-	if !ok || scope.Visibility != "all_digital_human_tasks" {
-		t.Fatalf("manual list scope = %#v, want all digital-human tasks", data["scope"])
+	if !ok || scope.Visibility != "current_user" {
+		t.Fatalf("manual list scope = %#v, want current user tasks", data["scope"])
 	}
 }
 
 func TestTaskRuntimeChannelListDisclosesConversationScope(t *testing.T) {
 	queries := []TaskListQuery{}
-	provider := NewTaskRuntimeProvider(taskRuntimeService{listQueries: &queries})
+	accesses := []TaskAccessContext{}
+	provider := NewTaskRuntimeProvider(taskRuntimeService{listQueries: &queries, accesses: &accesses})
 	run, event := taskRuntimeFixture(invocation.OriginChannel)
 	prepared, err := provider.Prepare(t.Context(), run, event)
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
 	}
 	result := prepared.Tools[0].Handler(t.Context(), adapter.ToolCall{ID: "list-channel", Function: adapter.FunctionCall{Name: taskListToolName, Arguments: `{}`}})
-	if result.Status != "success" || len(queries) != 1 || queries[0].SourceConversationID != "chat-1" {
+	if result.Status != "success" || len(queries) != 1 || len(accesses) != 1 || accesses[0].Owner.Kind != TaskOwnerConversation || accesses[0].Owner.ConversationID == uuid.Nil {
 		t.Fatalf("channel list result = %#v, queries = %#v", result, queries)
 	}
 	data := result.Result["data"].(map[string]any)
@@ -257,16 +269,46 @@ func TestTaskRuntimeFailureGivesModelSafeRecoveryAction(t *testing.T) {
 	}
 }
 
+func TestTaskAccessForRunIsolatesAccountAndChannelOwners(t *testing.T) {
+	manualRun, manualEvent := taskRuntimeFixture(invocation.OriginManual)
+	manualAccess, err := taskAccessForRun(manualRun, manualEvent, taskBoundary(manualEvent))
+	if err != nil || manualAccess.Owner.Kind != TaskOwnerUserSubject || manualAccess.Owner.Subject.ID != *manualRun.UserSubjectID {
+		t.Fatalf("manual access = %#v, error = %v", manualAccess, err)
+	}
+
+	channelRun, channelEvent := taskRuntimeFixture(invocation.OriginChannel)
+	first, err := taskAccessForRun(channelRun, channelEvent, taskBoundary(channelEvent))
+	if err != nil || first.Owner.Kind != TaskOwnerConversation {
+		t.Fatalf("channel access = %#v, error = %v", first, err)
+	}
+	second, err := taskAccessForRun(channelRun, channelEvent, taskBoundary(channelEvent))
+	if err != nil || second.Owner.ConversationID != first.Owner.ConversationID {
+		t.Fatalf("repeated channel owner = %#v, want %s", second.Owner, first.Owner.ConversationID)
+	}
+	otherEvent := channelEvent
+	otherEvent.ReplyTo = &invocation.ReplyAddress{Provider: channelEvent.ReplyTo.Provider, InstallationID: channelEvent.ReplyTo.InstallationID, ConversationID: "other-chat"}
+	other, err := taskAccessForRun(channelRun, otherEvent, taskBoundary(otherEvent))
+	if err != nil || other.Owner.ConversationID == first.Owner.ConversationID {
+		t.Fatalf("other channel owner = %#v, original = %s, error = %v", other.Owner, first.Owner.ConversationID, err)
+	}
+}
+
 func taskRuntimeFixture(kind invocation.OriginKind) (*Run, invocation.Event) {
 	organizationID, workspaceID, digitalHumanID, actorID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	run := &Run{ID: uuid.New(), OrganizationID: organizationID, WorkspaceID: workspaceID, DigitalHumanID: digitalHumanID, ActorID: &actorID}
+	run := &Run{ID: uuid.New(), OrganizationID: organizationID, WorkspaceID: workspaceID, DigitalHumanID: digitalHumanID, ActorID: &actorID, PrincipalType: string(invocation.PrincipalAccount), PrincipalID: &actorID, UserSubjectKind: "account", UserSubjectID: &actorID, Surface: SurfaceConsole}
 	event := invocation.Event{
 		Origin:  invocation.Origin{Kind: kind, Provider: "feishu", InstallationID: uuid.NewString()},
 		Target:  runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID},
+		Sender:  invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: actorID.String()},
 		ReplyTo: &invocation.ReplyAddress{Provider: "feishu", InstallationID: uuid.NewString(), ConversationID: "chat-1"},
 	}
 	if kind == invocation.OriginChannel {
+		run.UserSubjectKind, run.UserSubjectID, run.Surface = "", nil, SurfaceChannel
+		event.Sender = invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: "external-user"}
 		event.Context = map[string]any{"conversation_type": "group"}
+	} else if kind == invocation.OriginSchedule {
+		run.Surface = SurfaceTask
+		event.Sender = invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}
 	}
 	return run, event
 }

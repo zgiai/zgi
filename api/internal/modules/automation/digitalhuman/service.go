@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
@@ -41,12 +42,12 @@ func NewService(db *gorm.DB, dispatcher RunDispatcher, runner automationaction.D
 	return &Service{db: db, dispatcher: dispatcher, runner: runner, now: func() time.Time { return time.Now().UTC() }}
 }
 
-func (s *Service) ListTasks(ctx context.Context, scope digitalhuman.Scope, digitalHumanID uuid.UUID, query digitalhuman.TaskListQuery) (*digitalhuman.TaskListResult, error) {
-	if err := validateBoundary(scope, digitalHumanID); err != nil {
+func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessContext, query digitalhuman.TaskListQuery) (*digitalhuman.TaskListResult, error) {
+	if err := validateBoundary(access); err != nil {
 		return nil, err
 	}
 	page, pageSize := normalizePage(query.Page, query.PageSize)
-	base := s.taskQuery(ctx, scope, digitalHumanID, query.SourceConversationID)
+	base := s.taskQuery(ctx, access)
 	if len(query.Statuses) > 0 {
 		base = base.Where("work_status IN ?", stringValues(query.Statuses))
 	}
@@ -83,13 +84,13 @@ func (s *Service) ListTasks(ctx context.Context, scope digitalhuman.Scope, digit
 		Count  int64
 	}
 	var countRows []countRow
-	if err := s.taskQuery(ctx, scope, digitalHumanID, query.SourceConversationID).Select("work_status AS status, COUNT(*) AS count").Group("work_status").Scan(&countRows).Error; err != nil {
+	if err := s.taskQuery(ctx, access).Select("work_status AS status, COUNT(*) AS count").Group("work_status").Scan(&countRows).Error; err != nil {
 		return nil, fmt.Errorf("count digital human tasks by status: %w", err)
 	}
 	for _, row := range countRows {
 		counts[digitalhuman.TaskWorkStatus(row.Status)] = row.Count
 	}
-	successfulRunCount, err := s.countSuccessfulRuns(ctx, scope, digitalHumanID, query)
+	successfulRunCount, err := s.countSuccessfulRuns(ctx, access, query)
 	if err != nil {
 		return nil, err
 	}
@@ -104,14 +105,14 @@ func (s *Service) ListTasks(ctx context.Context, scope digitalhuman.Scope, digit
 	return &digitalhuman.TaskListResult{Items: items, Counts: counts, SuccessfulRunCount: successfulRunCount, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
 }
 
-func (s *Service) countSuccessfulRuns(ctx context.Context, scope digitalhuman.Scope, digitalHumanID uuid.UUID, query digitalhuman.TaskListQuery) (int64, error) {
+func (s *Service) countSuccessfulRuns(ctx context.Context, access digitalhuman.TaskAccessContext, query digitalhuman.TaskListQuery) (int64, error) {
 	if query.RunFinishedAfter == nil && query.RunFinishedBefore == nil {
 		return 0, nil
 	}
 	if query.RunFinishedAfter != nil && query.RunFinishedBefore != nil && !query.RunFinishedBefore.After(*query.RunFinishedAfter) {
 		return 0, digitalhuman.ErrInvalidRequest
 	}
-	taskIDs := s.taskQuery(ctx, scope, digitalHumanID, query.SourceConversationID).Select("id")
+	taskIDs := s.taskQuery(ctx, access).Select("id")
 	runs := s.db.WithContext(ctx).Model(&automationmodel.AutomationTaskRun{}).
 		Where("task_id IN (?) AND status = ?", taskIDs, automationmodel.AutomationTaskRunStatusSucceeded)
 	if query.RunFinishedAfter != nil {
@@ -127,9 +128,12 @@ func (s *Service) countSuccessfulRuns(ctx context.Context, scope digitalhuman.Sc
 	return count, nil
 }
 
-func (s *Service) CreateTask(ctx context.Context, scope digitalhuman.Scope, digitalHumanID uuid.UUID, req digitalhuman.CreateTaskRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
-	if err := validateBoundary(scope, digitalHumanID); err != nil {
+func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccessContext, req digitalhuman.CreateTaskRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
+	if err := validateBoundary(access); err != nil {
 		return nil, err
+	}
+	if access.CurrentTaskID != nil {
+		return nil, digitalhuman.ErrTaskPolicyRejected
 	}
 	if err := validateCreate(req); err != nil {
 		return nil, err
@@ -137,10 +141,8 @@ func (s *Service) CreateTask(ctx context.Context, scope digitalhuman.Scope, digi
 	if mutation.OperationID == uuid.Nil {
 		mutation.OperationID = uuid.New()
 	}
-	if mutation.SourceConversationID != "" {
-		if existing, err := s.taskByOperation(ctx, scope, digitalHumanID, mutation.OperationID); err == nil {
-			return publicTask(existing)
-		}
+	if existing, err := s.taskByOperation(ctx, access, mutation.OperationID); err == nil {
+		return publicTask(existing)
 	}
 	scheduleType, timezone, config, nextRunAt, err := compileSchedule(req.Schedule)
 	if err != nil {
@@ -163,15 +165,18 @@ func (s *Service) CreateTask(ctx context.Context, scope digitalhuman.Scope, digi
 		return nil, err
 	}
 	goal := strings.TrimSpace(req.Goal)
-	subjectID, sourceOperationID := digitalHumanID.String(), mutation.OperationID.String()
+	subjectID, sourceOperationID := access.DigitalHumanID.String(), mutation.OperationID.String()
 	sourceRef := strings.TrimSpace(mutation.Source)
 	if sourceRef == "" {
 		sourceRef = "console"
 	}
-	createdBy := scope.ActorID.String()
+	createdBy := accessActorID(access).String()
+	ownerKind, ownerSubjectKind, ownerSubjectID, ownerConversationID := storedOwner(access.Owner)
+	originSurface := strings.TrimSpace(access.Surface)
 	task := &automationmodel.AutomationTask{
-		OrganizationID: scope.OrganizationID.String(), WorkspaceID: scope.WorkspaceID.String(), Name: strings.TrimSpace(req.Name),
+		OrganizationID: access.OrganizationID.String(), WorkspaceID: access.WorkspaceID.String(), Name: strings.TrimSpace(req.Name),
 		TaskKind: automationmodel.AutomationTaskKindDigitalHuman, SubjectType: stringPointer(subjectTypeDigitalHuman), SubjectID: &subjectID,
+		OwnerKind: &ownerKind, OwnerSubjectKind: ownerSubjectKind, OwnerSubjectID: ownerSubjectID, OwnerConversationID: ownerConversationID, OriginSurface: &originSurface,
 		WorkStatus: &workStatus, Priority: &priority, Goal: &goal, SuccessCriteria: cleanStrings(req.SuccessCriteria),
 		ExecutionTimeoutSeconds: defaultInt(req.ExecutionTimeoutSeconds, defaultTimeoutSeconds), MaxAttempts: clampAttempts(req.MaxAttempts), Revision: 1,
 		DeliveryConfig: delivery, SourceOperationID: &sourceOperationID, ProposalExpiresAt: proposalExpiresAt,
@@ -182,6 +187,9 @@ func (s *Service) CreateTask(ctx context.Context, scope digitalhuman.Scope, digi
 	action := &automationmodel.AutomationTaskAction{ActionType: automationmodel.AutomationActionTypeRunDigitalHuman, ActionOrder: 1, Enabled: true, Config: map[string]any{}}
 	activity := newActivity(task.ID, mutation, "created", "Task created", map[string]any{"work_status": workStatus})
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ensureStoredOwner(ctx, tx, access.Owner); err != nil {
+			return err
+		}
 		if err := tx.Create(task).Error; err != nil {
 			return err
 		}
@@ -192,7 +200,7 @@ func (s *Service) CreateTask(ctx context.Context, scope digitalhuman.Scope, digi
 		return tx.Create(activity).Error
 	})
 	if err != nil {
-		if existing, loadErr := s.taskByOperation(ctx, scope, digitalHumanID, mutation.OperationID); loadErr == nil {
+		if existing, loadErr := s.taskByOperation(ctx, access, mutation.OperationID); loadErr == nil {
 			return publicTask(existing)
 		}
 		return nil, fmt.Errorf("create digital human task: %w", err)
@@ -200,21 +208,24 @@ func (s *Service) CreateTask(ctx context.Context, scope digitalhuman.Scope, digi
 	return publicTask(task)
 }
 
-func (s *Service) GetTask(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, taskID uuid.UUID, sourceConversationID string) (*digitalhuman.Task, error) {
-	task, err := s.loadTask(ctx, s.db, scope, digitalHumanID, taskID, sourceConversationID, false)
+func (s *Service) GetTask(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID) (*digitalhuman.Task, error) {
+	task, err := s.loadTask(ctx, s.db, access, taskID, false)
 	if err != nil {
 		return nil, err
 	}
 	return publicTask(task)
 }
 
-func (s *Service) UpdateTask(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, taskID uuid.UUID, req digitalhuman.UpdateTaskRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
+func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, req digitalhuman.UpdateTaskRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
+	if access.CurrentTaskID != nil {
+		return nil, digitalhuman.ErrTaskPolicyRejected
+	}
 	if req.ExpectedRevision <= 0 {
 		return nil, digitalhuman.ErrInvalidRequest
 	}
 	var updated *automationmodel.AutomationTask
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		task, err := s.loadTask(ctx, tx, scope, digitalHumanID, taskID, mutation.SourceConversationID, true)
+		task, err := s.loadTask(ctx, tx, access, taskID, true)
 		if err != nil {
 			return err
 		}
@@ -289,7 +300,7 @@ func (s *Service) UpdateTask(ctx context.Context, scope digitalhuman.Scope, digi
 			task.DeliveryConfig, changes["delivery_mode"] = cfg, *req.DeliveryMode
 		}
 		task.Revision++
-		task.UpdatedBy = scope.ActorID.String()
+		task.UpdatedBy = accessActorID(access).String()
 		values, err := taskUpdateValues(task, s.now())
 		if err != nil {
 			return err
@@ -315,14 +326,17 @@ func (s *Service) UpdateTask(ctx context.Context, scope digitalhuman.Scope, digi
 	return publicTask(updated)
 }
 
-func (s *Service) ApplyTaskAction(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, taskID uuid.UUID, action digitalhuman.TaskAction, req digitalhuman.ApplyTaskActionRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
+func (s *Service) ApplyTaskAction(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, action digitalhuman.TaskAction, req digitalhuman.ApplyTaskActionRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
+	if access.CurrentTaskID != nil {
+		return nil, digitalhuman.ErrTaskPolicyRejected
+	}
 	if req.ExpectedRevision <= 0 {
 		return nil, digitalhuman.ErrInvalidRequest
 	}
 	var result *automationmodel.AutomationTask
 	var runID string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		task, err := s.loadTask(ctx, tx, scope, digitalHumanID, taskID, mutation.SourceConversationID, true)
+		task, err := s.loadTask(ctx, tx, access, taskID, true)
 		if err != nil {
 			return err
 		}
@@ -343,7 +357,7 @@ func (s *Service) ApplyTaskAction(ctx context.Context, scope digitalhuman.Scope,
 			runID = run.ID
 		}
 		task.Revision++
-		task.UpdatedBy = scope.ActorID.String()
+		task.UpdatedBy = accessActorID(access).String()
 		values, err := taskUpdateValues(task, s.now())
 		if err != nil {
 			return err
@@ -372,12 +386,12 @@ func (s *Service) ApplyTaskAction(ctx context.Context, scope digitalhuman.Scope,
 		}
 	}
 	if action == digitalhuman.TaskActionCancel {
-		_ = s.cancelActiveRuns(ctx, scope, digitalHumanID, taskID)
+		_ = s.cancelActiveRuns(ctx, access, taskID)
 	}
 	return publicTask(result)
 }
 
-func (s *Service) cancelActiveRuns(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, taskID uuid.UUID) error {
+func (s *Service) cancelActiveRuns(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID) error {
 	if s.runner == nil {
 		return nil
 	}
@@ -393,7 +407,7 @@ func (s *Service) cancelActiveRuns(ctx context.Context, scope digitalhuman.Scope
 	}
 	for _, row := range rows {
 		if row.ExternalRunID != "" {
-			if err := runner.CancelDigitalHumanRun(ctx, scope.OrganizationID.String(), scope.WorkspaceID.String(), digitalHumanID.String(), row.ExternalRunID); err != nil {
+			if err := runner.CancelDigitalHumanRun(ctx, access.OrganizationID.String(), access.WorkspaceID.String(), access.DigitalHumanID.String(), row.ExternalRunID); err != nil {
 				return err
 			}
 		}
@@ -401,17 +415,20 @@ func (s *Service) cancelActiveRuns(ctx context.Context, scope digitalhuman.Scope
 	return nil
 }
 
-func (s *Service) SetTaskWorkStatus(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, taskID uuid.UUID, status digitalhuman.TaskWorkStatus, revision int64, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
+func (s *Service) SetTaskWorkStatus(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, status digitalhuman.TaskWorkStatus, revision int64, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
 	if !validWorkStatus(status) {
 		return nil, digitalhuman.ErrInvalidRequest
 	}
-	return s.setStatus(ctx, scope, digitalHumanID, taskID, status, revision, mutation)
+	if access.CurrentTaskID != nil && status != digitalhuman.TaskWorkStatusWaiting && status != digitalhuman.TaskWorkStatusBlocked {
+		return nil, digitalhuman.ErrTaskPolicyRejected
+	}
+	return s.setStatus(ctx, access, taskID, status, revision, mutation)
 }
 
-func (s *Service) setStatus(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, taskID uuid.UUID, status digitalhuman.TaskWorkStatus, revision int64, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
+func (s *Service) setStatus(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, status digitalhuman.TaskWorkStatus, revision int64, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
 	var task *automationmodel.AutomationTask
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		loaded, err := s.loadTask(ctx, tx, scope, digitalHumanID, taskID, mutation.SourceConversationID, true)
+		loaded, err := s.loadTask(ctx, tx, access, taskID, true)
 		if err != nil {
 			return err
 		}
@@ -426,7 +443,7 @@ func (s *Service) setStatus(ctx context.Context, scope digitalhuman.Scope, digit
 		value := automationmodel.AutomationWorkStatus(status)
 		loaded.WorkStatus = &value
 		loaded.Revision++
-		loaded.UpdatedBy = scope.ActorID.String()
+		loaded.UpdatedBy = accessActorID(access).String()
 		values, err := taskUpdateValues(loaded, s.now())
 		if err != nil {
 			return err
@@ -452,8 +469,8 @@ func (s *Service) setStatus(ctx context.Context, scope digitalhuman.Scope, digit
 	return publicTask(task)
 }
 
-func (s *Service) ListTaskRuns(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, taskID uuid.UUID, page, pageSize int, sourceConversationID string) (*digitalhuman.TaskRunListResult, error) {
-	if _, err := s.loadTask(ctx, s.db, scope, digitalHumanID, taskID, sourceConversationID, false); err != nil {
+func (s *Service) ListTaskRuns(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, page, pageSize int) (*digitalhuman.TaskRunListResult, error) {
+	if _, err := s.loadTask(ctx, s.db, access, taskID, false); err != nil {
 		return nil, err
 	}
 	page, pageSize = normalizePage(page, pageSize)
@@ -489,8 +506,8 @@ func (s *Service) ListTaskRuns(ctx context.Context, scope digitalhuman.Scope, di
 	return &digitalhuman.TaskRunListResult{Items: items, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
 }
 
-func (s *Service) ListTaskActivities(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, taskID uuid.UUID, page, pageSize int, sourceConversationID string) (*digitalhuman.TaskActivityListResult, error) {
-	if _, err := s.loadTask(ctx, s.db, scope, digitalHumanID, taskID, sourceConversationID, false); err != nil {
+func (s *Service) ListTaskActivities(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, page, pageSize int) (*digitalhuman.TaskActivityListResult, error) {
+	if _, err := s.loadTask(ctx, s.db, access, taskID, false); err != nil {
 		return nil, err
 	}
 	page, pageSize = normalizePage(page, pageSize)
@@ -510,23 +527,18 @@ func (s *Service) ListTaskActivities(ctx context.Context, scope digitalhuman.Sco
 	return &digitalhuman.TaskActivityListResult{Items: items, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
 }
 
-func (s *Service) taskQuery(ctx context.Context, scope digitalhuman.Scope, digitalHumanID uuid.UUID, sourceConversationID string) *gorm.DB {
+func (s *Service) taskQuery(ctx context.Context, access digitalhuman.TaskAccessContext) *gorm.DB {
 	query := s.db.WithContext(ctx).Model(&automationmodel.AutomationTask{}).
-		Where("organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_type = ? AND subject_id = ? AND status <> ?", scope.OrganizationID, scope.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, subjectTypeDigitalHuman, digitalHumanID, automationmodel.AutomationTaskStatusArchived)
-	if sourceConversationID != "" {
-		query = query.Where("source_snapshot ->> 'conversation_id' = ?", sourceConversationID)
-	}
-	return query
+		Where("organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_type = ? AND subject_id = ? AND status <> ?", access.OrganizationID, access.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, subjectTypeDigitalHuman, access.DigitalHumanID, automationmodel.AutomationTaskStatusArchived)
+	return applyOwnerScope(query, access)
 }
 
-func (s *Service) loadTask(ctx context.Context, db *gorm.DB, scope digitalhuman.Scope, digitalHumanID, taskID uuid.UUID, sourceConversationID string, lock bool) (*automationmodel.AutomationTask, error) {
-	if err := validateBoundary(scope, digitalHumanID); err != nil || taskID == uuid.Nil {
+func (s *Service) loadTask(ctx context.Context, db *gorm.DB, access digitalhuman.TaskAccessContext, taskID uuid.UUID, lock bool) (*automationmodel.AutomationTask, error) {
+	if err := validateBoundary(access); err != nil || taskID == uuid.Nil {
 		return nil, digitalhuman.ErrInvalidRequest
 	}
-	query := db.WithContext(ctx).Where("id = ? AND organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_id = ?", taskID, scope.OrganizationID, scope.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, digitalHumanID)
-	if sourceConversationID != "" {
-		query = query.Where("source_snapshot ->> 'conversation_id' = ?", sourceConversationID)
-	}
+	query := db.WithContext(ctx).Where("id = ? AND organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_id = ?", taskID, access.OrganizationID, access.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, access.DigitalHumanID)
+	query = applyOwnerScope(query, access)
 	if lock {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
@@ -539,9 +551,10 @@ func (s *Service) loadTask(ctx context.Context, db *gorm.DB, scope digitalhuman.
 	return &task, nil
 }
 
-func (s *Service) taskByOperation(ctx context.Context, scope digitalhuman.Scope, digitalHumanID, operationID uuid.UUID) (*automationmodel.AutomationTask, error) {
+func (s *Service) taskByOperation(ctx context.Context, access digitalhuman.TaskAccessContext, operationID uuid.UUID) (*automationmodel.AutomationTask, error) {
 	var task automationmodel.AutomationTask
-	err := s.db.WithContext(ctx).Where("organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_id = ? AND source_operation_id = ?", scope.OrganizationID, scope.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, digitalHumanID, operationID).First(&task).Error
+	query := s.db.WithContext(ctx).Where("organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_id = ? AND source_operation_id = ?", access.OrganizationID, access.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, access.DigitalHumanID, operationID)
+	err := applyOwnerScope(query, access).First(&task).Error
 	return &task, err
 }
 
@@ -583,7 +596,11 @@ func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error)
 	if err != nil {
 		return nil, err
 	}
-	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: deliveryMode(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	ownerKind := digitalhuman.TaskOwnerKind(pointerValue(row.OwnerKind))
+	if ownerKind != digitalhuman.TaskOwnerDigitalHuman && ownerKind != digitalhuman.TaskOwnerUserSubject && ownerKind != digitalhuman.TaskOwnerConversation {
+		return nil, fmt.Errorf("invalid stored digital human task owner")
+	}
+	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: deliveryMode(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.LastRunStatus != nil {
 		result.LastRunStatus = *row.LastRunStatus
 	}
@@ -751,11 +768,71 @@ func applyTransition(task *automationmodel.AutomationTask, action digitalhuman.T
 	return nil
 }
 
-func validateBoundary(scope digitalhuman.Scope, digitalHumanID uuid.UUID) error {
-	if scope.OrganizationID == uuid.Nil || scope.WorkspaceID == uuid.Nil || scope.ActorID == uuid.Nil || digitalHumanID == uuid.Nil {
+func validateBoundary(access digitalhuman.TaskAccessContext) error {
+	if access.OrganizationID == uuid.Nil || access.WorkspaceID == uuid.Nil || access.DigitalHumanID == uuid.Nil ||
+		access.Principal.Type == "" || strings.TrimSpace(access.Principal.ID) == "" || strings.TrimSpace(access.Surface) == "" {
+		return digitalhuman.ErrInvalidRequest
+	}
+	if access.CurrentTaskID != nil {
+		if *access.CurrentTaskID == uuid.Nil || access.Surface != digitalhuman.SurfaceTask || access.Principal.Type != "system" {
+			return digitalhuman.ErrTaskPolicyRejected
+		}
+		return nil
+	}
+	if !access.Owner.Valid() {
 		return digitalhuman.ErrInvalidRequest
 	}
 	return nil
+}
+
+func applyOwnerScope(query *gorm.DB, access digitalhuman.TaskAccessContext) *gorm.DB {
+	if access.CurrentTaskID != nil {
+		return query.Where("id = ?", *access.CurrentTaskID)
+	}
+	switch access.Owner.Kind {
+	case digitalhuman.TaskOwnerDigitalHuman:
+		return query.Where("owner_kind = ? AND owner_subject_id IS NULL AND owner_conversation_id IS NULL", automationmodel.AutomationTaskOwnerDigitalHuman)
+	case digitalhuman.TaskOwnerUserSubject:
+		return query.Where("owner_kind = ? AND owner_subject_kind = ? AND owner_subject_id = ? AND owner_conversation_id IS NULL", automationmodel.AutomationTaskOwnerUserSubject, access.Owner.Subject.Kind, access.Owner.Subject.ID)
+	case digitalhuman.TaskOwnerConversation:
+		return query.Where("owner_kind = ? AND owner_subject_id IS NULL AND owner_conversation_id = ?", automationmodel.AutomationTaskOwnerConversation, access.Owner.ConversationID)
+	default:
+		return query.Where("1 = 0")
+	}
+}
+
+func storedOwner(owner digitalhuman.TaskOwnerRef) (automationmodel.AutomationTaskOwnerKind, *string, *string, *string) {
+	kind := automationmodel.AutomationTaskOwnerKind(owner.Kind)
+	switch owner.Kind {
+	case digitalhuman.TaskOwnerUserSubject:
+		subjectKind, subjectID := string(owner.Subject.Kind), owner.Subject.ID.String()
+		return kind, &subjectKind, &subjectID, nil
+	case digitalhuman.TaskOwnerConversation:
+		conversationID := owner.ConversationID.String()
+		return kind, nil, nil, &conversationID
+	default:
+		return kind, nil, nil, nil
+	}
+}
+
+func ensureStoredOwner(ctx context.Context, tx *gorm.DB, owner digitalhuman.TaskOwnerRef) error {
+	if owner.Kind != digitalhuman.TaskOwnerUserSubject {
+		return nil
+	}
+	registry := usersubject.NewService(tx)
+	if owner.Subject.Kind == usersubject.Account {
+		_, err := registry.Ensure(ctx, usersubject.EnsureRequest{Subject: owner.Subject})
+		return err
+	}
+	_, err := registry.Require(ctx, owner.Subject)
+	return err
+}
+
+func accessActorID(access digitalhuman.TaskAccessContext) uuid.UUID {
+	if id, err := uuid.Parse(strings.TrimSpace(access.Principal.ID)); err == nil && id != uuid.Nil {
+		return id
+	}
+	return access.DigitalHumanID
 }
 func validateCreate(req digitalhuman.CreateTaskRequest) error {
 	invalidTimeout := req.ExecutionTimeoutSeconds != 0 && (req.ExecutionTimeoutSeconds < 30 || req.ExecutionTimeoutSeconds > 1800)

@@ -145,18 +145,17 @@ type Task struct {
 
 // TaskListQuery contains bounded task filters.
 type TaskListQuery struct {
-	Statuses             []TaskWorkStatus
-	Priorities           []TaskPriority
-	ScheduleType         TaskScheduleType
-	Source               string
-	Query                string
-	UpdatedAfter         *time.Time
-	UpdatedBefore        *time.Time
-	RunFinishedAfter     *time.Time
-	RunFinishedBefore    *time.Time
-	Page                 int
-	PageSize             int
-	SourceConversationID string
+	Statuses          []TaskWorkStatus
+	Priorities        []TaskPriority
+	ScheduleType      TaskScheduleType
+	Source            string
+	Query             string
+	UpdatedAfter      *time.Time
+	UpdatedBefore     *time.Time
+	RunFinishedAfter  *time.Time
+	RunFinishedBefore *time.Time
+	Page              int
+	PageSize          int
 }
 
 // TaskListResult is a page of tasks and state summary counts.
@@ -276,12 +275,12 @@ type TaskMutationContext struct {
 // TaskHandlerService is the DigitalHuman task application boundary shared by
 // HTTP, runtime tools, and the scheduler integration.
 type TaskHandlerService interface {
-	ListTasks(context.Context, Scope, uuid.UUID, TaskListQuery) (*TaskListResult, error)
-	CreateTask(context.Context, Scope, uuid.UUID, CreateTaskRequest, TaskMutationContext) (*Task, error)
-	GetTask(context.Context, Scope, uuid.UUID, uuid.UUID, string) (*Task, error)
-	UpdateTask(context.Context, Scope, uuid.UUID, uuid.UUID, UpdateTaskRequest, TaskMutationContext) (*Task, error)
-	ApplyTaskAction(context.Context, Scope, uuid.UUID, uuid.UUID, TaskAction, ApplyTaskActionRequest, TaskMutationContext) (*Task, error)
-	SetTaskWorkStatus(context.Context, Scope, uuid.UUID, uuid.UUID, TaskWorkStatus, int64, TaskMutationContext) (*Task, error)
-	ListTaskRuns(context.Context, Scope, uuid.UUID, uuid.UUID, int, int, string) (*TaskRunListResult, error)
-	ListTaskActivities(context.Context, Scope, uuid.UUID, uuid.UUID, int, int, string) (*TaskActivityListResult, error)
+	ListTasks(context.Context, TaskAccessContext, TaskListQuery) (*TaskListResult, error)
+	CreateTask(context.Context, TaskAccessContext, CreateTaskRequest, TaskMutationContext) (*Task, error)
+	GetTask(context.Context, TaskAccessContext, uuid.UUID) (*Task, error)
+	UpdateTask(context.Context, TaskAccessContext, uuid.UUID, UpdateTaskRequest, TaskMutationContext) (*Task, error)
+	ApplyTaskAction(context.Context, TaskAccessContext, uuid.UUID, TaskAction, ApplyTaskActionRequest, TaskMutationContext) (*Task, error)
+	SetTaskWorkStatus(context.Context, TaskAccessContext, uuid.UUID, TaskWorkStatus, int64, TaskMutationContext) (*Task, error)
+	ListTaskRuns(context.Context, TaskAccessContext, uuid.UUID, int, int) (*TaskRunListResult, error)
+	ListTaskActivities(context.Context, TaskAccessContext, uuid.UUID, int, int) (*TaskActivityListResult, error)
 }

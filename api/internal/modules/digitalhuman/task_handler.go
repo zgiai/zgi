@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
@@ -57,7 +58,7 @@ func (h *TaskHandler) list(c *gin.Context) {
 	for _, value := range append(c.QueryArray("priority"), c.QueryArray("priority[]")...) {
 		query.Priorities = append(query.Priorities, TaskPriority(value))
 	}
-	result, err := h.service.ListTasks(c.Request.Context(), scope, id, query)
+	result, err := h.service.ListTasks(c.Request.Context(), sharedTaskAccess(scope, id), query)
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.task.list"))
 		return
@@ -86,7 +87,7 @@ func (h *TaskHandler) create(c *gin.Context) {
 	if !h.base.decode(c, &req) {
 		return
 	}
-	result, err := h.service.CreateTask(c.Request.Context(), scope, id, req, accountMutation(scope))
+	result, err := h.service.CreateTask(c.Request.Context(), sharedTaskAccess(scope, id), req, accountMutation(scope))
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.task.create"))
 		return
@@ -99,7 +100,7 @@ func (h *TaskHandler) get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.GetTask(c.Request.Context(), scope, id, taskID, "")
+	result, err := h.service.GetTask(c.Request.Context(), sharedTaskAccess(scope, id), taskID)
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.task.get"))
 		return
@@ -115,7 +116,7 @@ func (h *TaskHandler) update(c *gin.Context) {
 	if !h.base.decode(c, &req) {
 		return
 	}
-	result, err := h.service.UpdateTask(c.Request.Context(), scope, id, taskID, req, accountMutation(scope))
+	result, err := h.service.UpdateTask(c.Request.Context(), sharedTaskAccess(scope, id), taskID, req, accountMutation(scope))
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.task.update"))
 		return
@@ -133,7 +134,7 @@ func (h *TaskHandler) applyAction(c *gin.Context) {
 	if !h.base.decode(c, &req) {
 		return
 	}
-	result, err := h.service.ApplyTaskAction(c.Request.Context(), scope, id, taskID, action, req, accountMutation(scope))
+	result, err := h.service.ApplyTaskAction(c.Request.Context(), sharedTaskAccess(scope, id), taskID, action, req, accountMutation(scope))
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.task.action"))
 		return
@@ -146,7 +147,7 @@ func (h *TaskHandler) runs(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.ListTaskRuns(c.Request.Context(), scope, id, taskID, intQuery(c, "page"), intQuery(c, "page_size"), "")
+	result, err := h.service.ListTaskRuns(c.Request.Context(), sharedTaskAccess(scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.task.runs"))
 		return
@@ -158,7 +159,7 @@ func (h *TaskHandler) activities(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.ListTaskActivities(c.Request.Context(), scope, id, taskID, intQuery(c, "page"), intQuery(c, "page_size"), "")
+	result, err := h.service.ListTaskActivities(c.Request.Context(), sharedTaskAccess(scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.task.activities"))
 		return
@@ -180,6 +181,16 @@ func (h *TaskHandler) ids(c *gin.Context) (Scope, uuid.UUID, uuid.UUID, bool) {
 }
 func accountMutation(scope Scope) TaskMutationContext {
 	return TaskMutationContext{ActorType: "account", ActorRef: scope.ActorID.String(), OperationID: uuid.New(), Source: "console"}
+}
+func sharedTaskAccess(scope Scope, digitalHumanID uuid.UUID) TaskAccessContext {
+	return TaskAccessContext{
+		OrganizationID: scope.OrganizationID,
+		WorkspaceID:    scope.WorkspaceID,
+		DigitalHumanID: digitalHumanID,
+		Principal:      invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: scope.ActorID.String()},
+		Owner:          SharedTaskOwner(),
+		Surface:        SurfaceConsole,
+	}
 }
 func intQuery(c *gin.Context, key string) int {
 	value, _ := strconv.Atoi(strings.TrimSpace(c.Query(key)))

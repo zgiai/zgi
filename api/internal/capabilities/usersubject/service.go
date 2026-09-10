@@ -62,6 +62,25 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (*Subject, erro
 	return &stored, nil
 }
 
+// Require loads a previously registered subject and verifies its kind. It is
+// used when the caller does not possess the subject's private issuer input.
+func (s *Service) Require(ctx context.Context, ref Ref) (*Subject, error) {
+	if ref.ID == uuid.Nil || (ref.Kind != Account && ref.Kind != APIEndUser) {
+		return nil, ErrInvalidSubject
+	}
+	var subject Subject
+	if err := s.db.WithContext(ctx).First(&subject, "id = ?", ref.ID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrInvalidSubject
+		}
+		return nil, fmt.Errorf("read user subject: %w", err)
+	}
+	if subject.Kind != ref.Kind {
+		return nil, ErrIssuerMismatch
+	}
+	return &subject, nil
+}
+
 func cloneUUID(value *uuid.UUID) *uuid.UUID {
 	if value == nil {
 		return nil
