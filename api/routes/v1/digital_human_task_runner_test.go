@@ -35,7 +35,7 @@ func TestDigitalHumanTaskPreflightRejectsRevokedWorkspaceAccess(t *testing.T) {
 	organizationID, workspaceID, digitalHumanID, accountID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "digital_humans"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "user_subjects"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`SELECT count\(\*\) FROM "workspace_members"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM workspace_members AS members`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
 	err := runner.preflight(t.Context(), organizationID, workspaceID, digitalHumanID,
 		digitalhuman.UserTaskOwner(usersubject.AccountSubject(accountID)),
@@ -58,6 +58,24 @@ func TestDigitalHumanTaskPreflightRejectsUserOwnerOutsideConsole(t *testing.T) {
 	err := runner.preflight(t.Context(), organizationID, workspaceID, digitalHumanID,
 		digitalhuman.UserTaskOwner(usersubject.AccountSubject(accountID)),
 		automationaction.DigitalHumanRunRequest{OriginSurface: digitalhuman.SurfaceAPI},
+	)
+	if !errors.Is(err, errDigitalHumanTaskExecutionUnavailable) {
+		t.Fatalf("preflight error = %v, want execution unavailable", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDigitalHumanTaskPreflightRejectsAPIEndUserOwner(t *testing.T) {
+	db, mock := taskRunnerMockDB(t)
+	runner := &digitalHumanAutomationRunner{db: db}
+	organizationID, workspaceID, digitalHumanID, subjectID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "digital_humans"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	err := runner.preflight(t.Context(), organizationID, workspaceID, digitalHumanID,
+		digitalhuman.UserTaskOwner(usersubject.Ref{Kind: usersubject.APIEndUser, ID: subjectID}),
+		automationaction.DigitalHumanRunRequest{OriginSurface: digitalhuman.SurfaceConsole},
 	)
 	if !errors.Is(err, errDigitalHumanTaskExecutionUnavailable) {
 		t.Fatalf("preflight error = %v, want execution unavailable", err)

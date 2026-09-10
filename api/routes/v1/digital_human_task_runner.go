@@ -14,6 +14,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
 
@@ -112,7 +114,10 @@ func (r *digitalHumanAutomationRunner) preflight(ctx context.Context, organizati
 			return errDigitalHumanTaskExecutionUnavailable
 		}
 	case digitalhuman.TaskOwnerUserSubject:
-		if req.OriginSurface != digitalhuman.SurfaceConsole {
+		// API/WebApp task tools are deliberately unavailable in this release.
+		// A scheduled private task must therefore belong to an account and have
+		// originated from the authenticated console surface.
+		if req.OriginSurface != digitalhuman.SurfaceConsole || owner.Subject.Kind != usersubject.Account {
 			return errDigitalHumanTaskExecutionUnavailable
 		}
 		count = 0
@@ -122,8 +127,11 @@ func (r *digitalHumanAutomationRunner) preflight(ctx context.Context, organizati
 		}
 		if owner.Subject.Kind == usersubject.Account {
 			count = 0
-			if err := r.db.WithContext(ctx).Table("workspace_members").
-				Where("workspace_id = ? AND account_id = ?", workspaceID, owner.Subject.ID).Count(&count).Error; err != nil || count != 1 {
+			if err := r.db.WithContext(ctx).Table("workspace_members AS members").
+				Joins("JOIN workspaces ON workspaces.id = members.workspace_id").
+				Joins("JOIN accounts ON accounts.id = members.account_id AND accounts.deleted_at IS NULL").
+				Where("members.workspace_id = ? AND members.account_id = ? AND workspaces.organization_id = ? AND workspaces.status = ? AND accounts.status = ?", workspaceID, owner.Subject.ID, organizationID, workspacemodel.WorkspaceStatusNormal, authmodel.AccountStatusActive).
+				Count(&count).Error; err != nil || count != 1 {
 				return errDigitalHumanTaskExecutionUnavailable
 			}
 		}
