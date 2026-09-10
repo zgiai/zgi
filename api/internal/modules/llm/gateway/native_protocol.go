@@ -23,6 +23,12 @@ const (
 	modelCategoryAnthropicMessages = "anthropic_messages"
 	protocolGeminiGenerateContent  = "gemini_generate_content"
 	modelCategoryGemini            = "gemini_generate_content"
+	// Native protocol providers may report input tokens for protocol framing,
+	// system instructions, or other server-side prompt material that is not
+	// present in the public JSON body. Reservations are refunded to actual usage,
+	// so a small floor prevents a successful response from failing settlement
+	// without increasing the final charge.
+	nativeProtocolInputReservationOverheadTokens = 128
 )
 
 func (s *llmGatewayServiceImpl) CreateResponseRaw(
@@ -686,8 +692,22 @@ func (s *llmGatewayServiceImpl) estimateNativeProtocolTokens(body json.RawMessag
 	}
 
 	promptTokens := s.tokenEstimator.EstimateTextTokensForModel(model, nativePromptTokenSource(body, payload))
+	promptTokens = saturatingAddPositive(promptTokens, nativeProtocolInputReservationOverheadTokens)
 	completionTokens := s.tokenEstimator.EstimateCompletionTokens(rawMaxTokens(payload), model)
 	return promptTokens, completionTokens
+}
+
+func saturatingAddPositive(value, overhead int) int {
+	if value < 0 {
+		value = 0
+	}
+	if overhead <= 0 {
+		return value
+	}
+	if value > int(^uint(0)>>1)-overhead {
+		return int(^uint(0) >> 1)
+	}
+	return value + overhead
 }
 
 func nativePromptTokenSource(body json.RawMessage, payload map[string]json.RawMessage) string {

@@ -790,6 +790,41 @@ func TestZGICloudAdapterCreateResponseRawRejectsEmbeddedHTTP200Error(t *testing.
 	}
 }
 
+func TestZGICloudAdapterCreateResponseRawDoesNotRetrySettlementFailure(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"message":"Response could not be finalized","type":"api_error","code":"billing_settlement_failed"}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:    server.URL + "/v1/internal",
+		AuthHook:   func(*http.Request) {},
+		MaxRetries: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	_, err = a.CreateResponseRaw(context.Background(), &adapter.RawResponseRequest{
+		Model: "deepseek-v4-pro",
+		Body:  json.RawMessage(`{"model":"deepseek-v4-pro","input":"hello","max_output_tokens":16}`),
+	})
+	if err == nil {
+		t.Fatal("CreateResponseRaw() error = nil, want settlement failure")
+	}
+	var rawErr *adapter.RawProtocolError
+	if !errors.As(err, &rawErr) || rawErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("error = %T %v, want HTTP 500 RawProtocolError", err, err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want 1 because repeating may repurchase upstream output", requestCount)
+	}
+}
+
 func TestZGICloudAdapterCreateResponseStream_ConsumesSettlementEvent(t *testing.T) {
 	t.Helper()
 

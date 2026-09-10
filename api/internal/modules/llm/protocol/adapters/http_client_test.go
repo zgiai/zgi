@@ -164,6 +164,29 @@ func TestHTTPClientDoesNotRetryTerminalPlatformChannelError(t *testing.T) {
 	}
 }
 
+func TestHTTPClientDoesNotRetryBillingSettlementFailure(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"Response could not be finalized","type":"api_error","code":"billing_settlement_failed"}}`))
+	}))
+	defer server.Close()
+
+	client := NewHTTPClientWithOptions(time.Second, 3, HTTPClientOptions{})
+	response, err := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("DoRequestDetailed() error = %v, want structured terminal response", err)
+	}
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusInternalServerError)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want 1 because settlement failure must not repeat a billable upstream call", requestCount)
+	}
+}
+
 func TestHTTPClientStreamRejectsDomainResolvingToPrivateIP(t *testing.T) {
 	client := NewHTTPClientWithOptions(0, 1, HTTPClientOptions{
 		GuardOutboundURL: true,

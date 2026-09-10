@@ -429,7 +429,8 @@ func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
 		return false
 	}
 	return payload.Error.Code == ErrorCodePlatformChannelUnavailable ||
-		payload.Error.Type == ErrorCodePlatformChannelUnavailable
+		payload.Error.Type == ErrorCodePlatformChannelUnavailable ||
+		payload.Error.Code == "billing_settlement_failed"
 }
 
 // DoStreamRequest executes streaming HTTP request
