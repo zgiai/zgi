@@ -64,11 +64,6 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 		return nil, ErrInvalidRequest
 	}
 	boundary := taskBoundary(event)
-	access, err := taskAccessForRun(run, event, boundary)
-	if err != nil {
-		return nil, err
-	}
-	boundary.access = access
 	switch event.Origin.Kind {
 	case invocation.OriginChannel:
 		boundary.writable = true
@@ -80,6 +75,11 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 	if !boundary.writable {
 		return &TaskRuntimePreparation{SystemPromptAddendum: "Task management is not enabled for this invocation. Do not claim that a task was created, scheduled, or changed."}, nil
 	}
+	access, err := taskAccessForRun(run, event, boundary)
+	if err != nil {
+		return nil, err
+	}
+	boundary.access = access
 	return &TaskRuntimePreparation{
 		SystemPromptAddendum: taskRuntimeGuidance(boundary),
 		Tools:                []skillloop.RuntimeTool{p.listTool(run, boundary), p.getTool(run, boundary), p.manageTool(run, boundary)},
@@ -164,7 +164,7 @@ func taskAccessForRun(run *Run, event invocation.Event, boundary taskRuntimeBoun
 		access.Owner = UserTaskOwner(usersubject.Ref{Kind: usersubject.Kind(run.UserSubjectKind), ID: *run.UserSubjectID})
 		access.Surface = SurfaceConsole
 	case invocation.OriginChannel:
-		conversationID, err := channelTaskConversationID(run.OrganizationID, run.WorkspaceID, run.DigitalHumanID, event.Origin.Provider, event.Origin.InstallationID, boundary.conversationID)
+		conversationID, err := ChannelTaskConversationID(run.OrganizationID, run.WorkspaceID, run.DigitalHumanID, event.Origin.Provider, event.Origin.InstallationID, boundary.conversationID)
 		if err != nil {
 			return TaskAccessContext{}, err
 		}
@@ -186,7 +186,9 @@ func taskAccessForRun(run *Run, event invocation.Event, boundary taskRuntimeBoun
 	return access, nil
 }
 
-func channelTaskConversationID(organizationID, workspaceID, digitalHumanID uuid.UUID, provider, installationID, conversationID string) (uuid.UUID, error) {
+// ChannelTaskConversationID derives the non-sensitive task owner shared by
+// invocations from exactly one provider conversation.
+func ChannelTaskConversationID(organizationID, workspaceID, digitalHumanID uuid.UUID, provider, installationID, conversationID string) (uuid.UUID, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	installationID = strings.TrimSpace(installationID)
 	conversationID = strings.TrimSpace(conversationID)

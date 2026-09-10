@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	automationrepo "github.com/zgiai/zgi/api/internal/modules/automation/repository"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
@@ -155,6 +156,11 @@ func (e *Executor) ExecuteTaskRun(ctx context.Context, runID string) error {
 		if err := e.runRepo.UpdateActionRun(ctx, e.db, actionRun); err != nil {
 			return err
 		}
+		if execErr != nil && task != nil && task.TaskKind == automationmodel.AutomationTaskKindDigitalHuman {
+			if err := e.blockDigitalHumanTask(ctx, task); err != nil {
+				return err
+			}
+		}
 	}
 	if pending {
 		return nil
@@ -185,6 +191,39 @@ func (e *Executor) ExecuteTaskRun(ctx context.Context, runID string) error {
 		}
 	}
 	return nil
+}
+
+func (e *Executor) blockDigitalHumanTask(ctx context.Context, task *automationmodel.AutomationTask) error {
+	if task == nil {
+		return nil
+	}
+	blocked := automationmodel.AutomationWorkStatusBlocked
+	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		updates := map[string]any{
+			"work_status": blocked,
+			"status":      automationmodel.AutomationTaskStatusPaused,
+			"next_run_at": nil,
+			"revision":    gorm.Expr("revision + 1"),
+			"updated_at":  time.Now().UTC(),
+		}
+		if err := tx.Model(&automationmodel.AutomationTask{}).
+			Where("id = ? AND task_kind = ?", task.ID, automationmodel.AutomationTaskKindDigitalHuman).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+		activity := &automationmodel.AutomationTaskActivity{
+			TaskID: task.ID, OperationID: uuid.NewString(),
+			ActorType: automationmodel.AutomationTaskActivityActorSystem, ActorRef: "scheduler",
+			Action: "blocked", Summary: "Task blocked before execution",
+			Changes: map[string]any{"reason": "execution_unavailable"},
+		}
+		if err := tx.Create(activity).Error; err != nil {
+			return err
+		}
+		task.WorkStatus, task.Status, task.NextRunAt = &blocked, automationmodel.AutomationTaskStatusPaused, nil
+		task.Revision++
+		return nil
+	})
 }
 
 func shouldCancelRunForTaskState(task *automationmodel.AutomationTask, run *automationmodel.AutomationTaskRun) bool {

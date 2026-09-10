@@ -199,7 +199,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			if digitalHumanRuntime == nil || digitalHumanRuntime.Runtime == nil {
 				return nil
 			}
-			return &digitalHumanAutomationRunner{runtime: digitalHumanRuntime.Runtime}
+			return &digitalHumanAutomationRunner{runtime: digitalHumanRuntime.Runtime, db: db}
 		},
 		AccountService:             accountService,
 		OrganizationService:        serviceContainer.GetOrganizationService(),

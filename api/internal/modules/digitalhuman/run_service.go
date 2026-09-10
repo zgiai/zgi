@@ -879,7 +879,7 @@ func runtimeScope(run *Run) chatruntime.Scope {
 		OrganizationID:  run.OrganizationID,
 		WorkspaceID:     &workspaceID,
 		AccountID:       actorID,
-		SkipAccessCheck: run.Surface == SurfaceAPI || run.Surface == SurfaceWebApp,
+		SkipAccessCheck: run.Surface == SurfaceAPI || run.Surface == SurfaceWebApp || run.Surface == SurfaceTask,
 	}
 }
 

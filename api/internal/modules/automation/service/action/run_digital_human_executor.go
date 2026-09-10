@@ -12,18 +12,25 @@ import (
 
 // DigitalHumanRunRequest is the narrow Automation-to-DigitalHuman invocation contract.
 type DigitalHumanRunRequest struct {
-	ActionRunID     string
-	OrganizationID  string
-	WorkspaceID     string
-	DigitalHumanID  string
-	ActorID         string
-	TaskID          string
-	TaskRunID       string
-	Name            string
-	Goal            string
-	SuccessCriteria []string
-	TimeoutSeconds  int
-	ReplyTo         *invocation.ReplyAddress
+	ActionRunID           string
+	OrganizationID        string
+	WorkspaceID           string
+	DigitalHumanID        string
+	OwnerKind             string
+	OwnerSubjectKind      string
+	OwnerSubjectID        string
+	OwnerConversationID   string
+	OriginSurface         string
+	ChannelProvider       string
+	ChannelInstallationID string
+	ChannelConversationID string
+	TaskID                string
+	TaskRunID             string
+	Name                  string
+	Goal                  string
+	SuccessCriteria       []string
+	TimeoutSeconds        int
+	ReplyTo               *invocation.ReplyAddress
 }
 
 type DigitalHumanRunResult struct{ RunID string }
@@ -69,8 +76,13 @@ func (e *RunDigitalHumanExecutor) ExecuteAction(ctx context.Context, req ActionE
 	request := DigitalHumanRunRequest{
 		ActionRunID: req.ActionRun.ID, OrganizationID: req.Task.OrganizationID, WorkspaceID: req.Task.WorkspaceID,
 		DigitalHumanID: *req.Task.SubjectID, TaskID: req.Task.ID, TaskRunID: req.TaskRun.ID,
-		ActorID: req.Task.CreatedBy,
-		Name:    req.Task.Name, Goal: stringValue(req.Task.Goal), SuccessCriteria: append([]string(nil), req.Task.SuccessCriteria...),
+		OwnerKind: stringValue(req.Task.OwnerKind), OwnerSubjectKind: stringValue(req.Task.OwnerSubjectKind),
+		OwnerSubjectID: stringValue(req.Task.OwnerSubjectID), OwnerConversationID: stringValue(req.Task.OwnerConversationID),
+		OriginSurface:         stringValue(req.Task.OriginSurface),
+		ChannelProvider:       strings.TrimPrefix(stringValue(req.Task.SourceRef), "channel:"),
+		ChannelInstallationID: mapStringValue(req.Task.SourceSnapshot, "installation_id"),
+		ChannelConversationID: mapStringValue(req.Task.SourceSnapshot, "conversation_id"),
+		Name:                  req.Task.Name, Goal: stringValue(req.Task.Goal), SuccessCriteria: append([]string(nil), req.Task.SuccessCriteria...),
 		TimeoutSeconds: req.Task.ExecutionTimeoutSeconds, ReplyTo: replyAddress(req.Task.DeliveryConfig),
 	}
 	result, err := runner.RunDigitalHuman(ctx, request)
@@ -103,9 +115,17 @@ func replyAddress(config map[string]any) *invocation.ReplyAddress {
 	return &reply
 }
 
-func stringValue(value *string) string {
+func stringValue[T ~string](value *T) string {
 	if value == nil {
 		return ""
 	}
-	return *value
+	return string(*value)
+}
+
+func mapStringValue(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, _ := values[key].(string)
+	return strings.TrimSpace(value)
 }
