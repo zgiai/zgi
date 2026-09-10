@@ -95,6 +95,30 @@ func TestTaskOwnershipPostgresIsolationAndConstraints(t *testing.T) {
 	if _, err := service.GetTask(t.Context(), accountBAccess, created["account A"].ID); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
 		t.Fatalf("account B GetTask(account A) error = %v, want not found", err)
 	}
+	accountAOwnerWithBActor := base
+	accountAOwnerWithBActor.Principal.ID = accountB.String()
+	accountAOwnerWithBActor.Owner = owners["account A"]
+	updatedName := "account A task updated by another authorized operator"
+	updated, err := service.UpdateTask(t.Context(), accountAOwnerWithBActor, created["account A"].ID, digitalhuman.UpdateTaskRequest{
+		ExpectedRevision: created["account A"].Revision,
+		Name:             &updatedName,
+	}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: accountB.String(), OperationID: uuid.New(), Source: digitalhuman.SurfaceConsole})
+	if err != nil {
+		t.Fatalf("update account A task with a different actor: %v", err)
+	}
+	if updated.OwnerKind != digitalhuman.TaskOwnerUserSubject {
+		t.Fatalf("updated task owner kind = %q, want %q", updated.OwnerKind, digitalhuman.TaskOwnerUserSubject)
+	}
+	var persistedOwnerSubjectID *string
+	if err := tx.Model(&automationmodel.AutomationTask{}).
+		Select("owner_subject_id").
+		Where("id = ?", updated.ID).
+		Scan(&persistedOwnerSubjectID).Error; err != nil {
+		t.Fatalf("read updated task owner: %v", err)
+	}
+	if persistedOwnerSubjectID == nil || *persistedOwnerSubjectID != accountA.String() {
+		t.Fatalf("updated task owner subject = %v, want %s", persistedOwnerSubjectID, accountA)
+	}
 	base.Owner = digitalhuman.SharedTaskOwner()
 	if result, err := service.ListTasks(t.Context(), base, digitalhuman.TaskListQuery{}); err != nil || result.Total != 1 || result.Items[0].OwnerKind != digitalhuman.TaskOwnerDigitalHuman {
 		t.Fatalf("shared namespace list = %#v, error = %v", result, err)
