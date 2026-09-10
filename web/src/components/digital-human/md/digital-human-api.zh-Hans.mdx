@@ -197,6 +197,19 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
 | `error`         | 展示安全 `message`；存在时记录 `code`；检查可选 `retryable` | HTTP 200 后的流式错误 |
 | `run_end`       | 停止恢复并记录最终 `status`                                 | 唯一 Durable 终态事件 |
 
+数字人 API 同时提供与 Agent API 一致的过程事件和载荷分组，可用于实现更完整的运行过程界面：
+
+| 事件分组 | 事件 | 推荐呈现方式 |
+| -------- | ---- | ------------ |
+| 回答修正 | `message_retract` | 根据 `presentation_disposition` 把候选回答移入过程区或丢弃 |
+| 运行进度 | `agent_progress`、`agent_intermediate_answer` | 展示简洁活动状态和独立的阶段答案卡片，禁止自行补写推理过程 |
+| 用户输入 | `user_input_requested`、`runtime_input_accepted`、`runtime_input_applied`、`runtime_input_follow_up_started`、`runtime_input_canceled`、`runtime_input_failed` | 渲染问题，使用新的 `client_input_id` 提交，并展示返回的处理方式 |
+| 文件准备 | `file_parse_start`、`file_parse_end`、`file_parse_error` | 按 `file_id` 更新单个文件状态，只展示安全错误信息 |
+| Skill 与工具 | `skill_load_start`、`skill_load_end`、`skill_reference_read`、`skill_call_start`、`skill_call_end`、`skill_call_error`、`skill_artifact_created` | 按 `invocation_id` 分组，展示公开摘要和可下载产物 |
+| 治理与宿主动作 | `tool_governance_decision`、`client_action_required` | 展示决策；仅按宿主白名单执行动作，并遵守 `blocking` |
+| 用户关系记忆 | `memory_create`、`memory_update`、`memory_delete`、`memory_clear` | 展示轻量确认，不在公开客户端提供记忆管理编辑器 |
+| 工作流生命周期 | `workflow_started`、`node_started`、`node_finished`、`workflow_paused`、`workflow_resumed`、`approval_requested`、`approval_result_filled`、`approval_expired`、`question_answer_requested`、`question_answer_submitted`、`iteration_started`、`iteration_next`、`iteration_completed`、`iteration_succeeded`、`iteration_failed`、`loop_started`、`loop_next`、`loop_completed`、`loop_succeeded`、`loop_failed`、`workflow_finished`、`workflow_failed`、`workflow_stopped`、`text_chunk`、`text_replace` | 按 `workflow_run_id` 构建过程时间线；保留未知字段，只使用服务端明确给出的续接控件 |
+
 ### 事件载荷字段
 
 <Properties>
@@ -250,6 +263,21 @@ data: {"event":"message","data":{"conversation_id":"...","message_id":"...","ans
   </Property>
   <Property name="params" type="object" propKey="params">
     可选的安全本地化参数。
+  </Property>
+  <Property name="file_id" type="uuid" propKey="file_id">
+    文件解析和产物事件共享的文件标识。
+  </Property>
+  <Property name="skill_id" type="string" propKey="skill_id">
+    Skill 加载、工具、产物和治理事件共享的 Skill 标识。
+  </Property>
+  <Property name="action_id" type="string" propKey="action_id">
+    `client_action_required` 中的稳定宿主动作标识。
+  </Property>
+  <Property name="input_id" type="uuid" propKey="input_id">
+    一次运行时输入生命周期的服务端标识。
+  </Property>
+  <Property name="workflow_run_id" type="string" propKey="workflow_run_id">
+    关联工作流、节点、审批、迭代、循环和文本事件。
   </Property>
 </Properties>
 

@@ -2,7 +2,7 @@
 
 This guide describes the public runtime for a published ZGI DigitalHuman. The
 machine-readable contract is available from a running API service at
-`/api/openapi.yaml`.
+`/api/digital-human-openapi.yaml`.
 
 For a copy-ready Next.js BFF, robust SSE parser, recovery state machine, and
 production checklist, use the [DigitalHuman API quickstart](digital-human-api-quickstart.md).
@@ -84,7 +84,9 @@ events are:
 ```text
 run_accepted
 message_start
-message / tool / runtime_input events
+message / message_retract / agent_progress / agent_intermediate_answer
+file_parse_* / skill_* / tool_governance_decision / client_action_required
+memory_* / runtime_input_* / workflow and node events
 message_end
 error
 run_end
@@ -94,6 +96,10 @@ run_end
 `run_end` is emitted once and is the terminal event for the run. An `error`
 event contains a safe public code, message, and retryability flag; internal
 stack traces, provider responses, prompts, and secrets are never exposed.
+The exact payload for every event name is published in `/api/digital-human-openapi.yaml`
+under `x-zgi-sse-event-data-schemas`, using the same process-event families as
+the Agent API. Clients must preserve unknown fields, ignore unknown events,
+and never execute `client_action_required` without an explicit host allow-list.
 
 ### Resume an interrupted stream
 
@@ -247,7 +253,9 @@ curl --no-buffer \
 ```text
 run_accepted
 message_start
-message / tool / runtime_input 等过程事件
+message / message_retract / agent_progress / agent_intermediate_answer
+file_parse_* / skill_* / tool_governance_decision / client_action_required
+memory_* / runtime_input_* / workflow 与 node 等过程事件
 message_end
 error
 run_end
@@ -256,6 +264,9 @@ run_end
 `message_start` 会返回持久化后的 `conversation_id` 和 `message_id`；
 `run_end` 只发送一次，是运行的最终事件。`error` 只包含安全错误码、消息和是否
 可重试，不会暴露堆栈、模型响应、提示词或密钥。
+`/api/digital-human-openapi.yaml` 的 `x-zgi-sse-event-data-schemas` 给出了每个事件名的精确
+载荷，并与 Agent API 使用相同的过程事件分组。客户端需要保留未知字段、忽略
+未知事件，且只能通过明确的宿主白名单执行 `client_action_required`。
 
 ### 断线恢复
 

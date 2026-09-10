@@ -7,8 +7,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-//go:embed external-v1.openapi.yaml
-var externalV1OpenAPI []byte
+// The DigitalHuman contract has its own source file so it can evolve without
+// conflicting with the Agent external-v1 specification. Both products share
+// envelope, error, pagination, and SSE event conventions.
+//go:embed digital-human-v1.openapi.yaml
+var digitalHumanV1OpenAPI []byte
 
 // RegisterPublicRoutes registers public API routes that don't require authentication
 func RegisterPublicRoutes(r *gin.RouterGroup) {
@@ -25,8 +28,8 @@ func RegisterPublicRoutes(r *gin.RouterGroup) {
 	r.GET("/docs", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message":       "ZGI External API Documentation",
-			"openapi":       "/api/openapi.yaml",
-			"openapi_scope": "external-v1 shared Agent and DigitalHuman contract",
+			"openapi":       "/api/digital-human-openapi.yaml",
+			"openapi_scope": "DigitalHuman external-v1 contract aligned with Agent conventions",
 			"sse_contract":  "OpenAPI x-zgi-sse-event-data-schemas",
 			"endpoints": gin.H{
 				"health":         "/api/health",
@@ -39,6 +42,9 @@ func RegisterPublicRoutes(r *gin.RouterGroup) {
 	})
 
 	r.GET("/openapi.yaml", func(c *gin.Context) {
-		c.Data(http.StatusOK, "application/yaml; charset=utf-8", externalV1OpenAPI)
+		c.Data(http.StatusOK, "application/yaml; charset=utf-8", digitalHumanV1OpenAPI)
+	})
+	r.GET("/digital-human-openapi.yaml", func(c *gin.Context) {
+		c.Data(http.StatusOK, "application/yaml; charset=utf-8", digitalHumanV1OpenAPI)
 	})
 }

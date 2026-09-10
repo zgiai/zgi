@@ -62,7 +62,7 @@ export function DigitalHumanAPIDocs() {
       <ApiDocsProvider apibase={apiBase}>
         <div className="mx-auto mb-3 flex w-full max-w-[1360px] justify-end">
           <Button variant="outline" size="sm" asChild>
-            <a href={`${API_URL}/api/openapi.yaml`} target="_blank" rel="noreferrer">
+            <a href={`${API_URL}/api/digital-human-openapi.yaml`} target="_blank" rel="noreferrer">
               {t('openAPIDocument')}
             </a>
           </Button>

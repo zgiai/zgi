@@ -327,7 +327,17 @@ The minimum client state machine uses these six DigitalHuman lifecycle events:
 | `error` | Show the safe message, log only the stable code, and inspect `retryable` |
 | `run_end` | Stop reconnecting and record the final durable run status |
 
-ZGI may emit additional progress, tool, file, memory, or runtime-input events from the shared chat runtime. A basic client can ignore them. A richer client can render them after adding the corresponding payload contract; never render hidden reasoning or arbitrary HTML from an event.
+ZGI also emits the same typed process-event families used by the Agent API. They are fully described by `x-zgi-sse-event-data-schemas` in `/api/digital-human-openapi.yaml`:
+
+| Family | Events to handle in a polished client |
+| --- | --- |
+| Progress | `agent_progress`, `agent_intermediate_answer`, `message_retract` |
+| User interaction | `user_input_requested`, `runtime_input_*`, `client_action_required` |
+| Files and tools | `file_parse_*`, `skill_*`, `tool_governance_decision` |
+| Relationship memory | `memory_create`, `memory_update`, `memory_delete`, `memory_clear` |
+| Workflow | `workflow_*`, `node_*`, `approval_*`, `question_answer_*`, `iteration_*`, `loop_*`, `text_chunk`, `text_replace` |
+
+A basic client can ignore these after saving the event id. A richer client should render only the documented public summaries, treat host actions as allow-listed data, and never display hidden reasoning or arbitrary HTML.
 
 ## 5. Build the client state machine
 
@@ -354,10 +364,14 @@ export type ChatState = {
   requestId?: string;
   lastEventId?: string;
   answer: string;
+  activity?: string;
+  intermediateAnswer?: string;
+  pendingInput?: Record<string, unknown>;
+  artifacts: Array<{ id: string; name: string; url?: string }>;
   error?: string;
 };
 
-export const initialChatState: ChatState = { phase: 'idle', answer: '' };
+export const initialChatState: ChatState = { phase: 'idle', answer: '', artifacts: [] };
 
 export function applyZGIEvent(state: ChatState, event: ZGIEvent): ChatState {
   const data = event.data;
@@ -394,6 +408,55 @@ export function applyZGIEvent(state: ChatState, event: ZGIEvent): ChatState {
     case 'message':
       if (state.messageId && String(data.message_id) !== state.messageId) return state;
       return { ...state, answer: state.answer + String(data.answer ?? ''), lastEventId };
+    case 'message_retract': {
+      const candidate = String(data.answer ?? '');
+      const answer = candidate && state.answer.endsWith(candidate)
+        ? state.answer.slice(0, -candidate.length)
+        : state.answer;
+      return { ...state, answer, lastEventId };
+    }
+    case 'agent_progress':
+      return { ...state, activity: String(data.activity ?? data.status ?? ''), lastEventId };
+    case 'agent_intermediate_answer':
+      return {
+        ...state,
+        intermediateAnswer: data.delta
+          ? (state.intermediateAnswer ?? '') + String(data.content ?? '')
+          : String(data.content ?? ''),
+        lastEventId,
+      };
+    case 'user_input_requested':
+      return { ...state, pendingInput: data, activity: String(data.message ?? 'Input required'), lastEventId };
+    case 'runtime_input_applied':
+    case 'runtime_input_follow_up_started':
+      return { ...state, pendingInput: undefined, activity: String(data.status ?? 'Input applied'), lastEventId };
+    case 'file_parse_start':
+    case 'file_parse_end':
+    case 'file_parse_error':
+      return { ...state, activity: `${String(data.name ?? 'File')}: ${String(data.status ?? event.event)}`, lastEventId };
+    case 'skill_call_start':
+    case 'skill_call_end':
+    case 'skill_call_error':
+      return { ...state, activity: `${String(data.tool_name ?? 'Tool')}: ${String(data.status ?? event.event)}`, lastEventId };
+    case 'skill_artifact_created': {
+      const artifact = {
+        id: String(data.artifact_id ?? data.file_id),
+        name: String(data.filename ?? 'Generated file'),
+        url: data.download_url ? String(data.download_url) : data.url ? String(data.url) : undefined,
+      };
+      return { ...state, artifacts: [...state.artifacts, artifact], lastEventId };
+    }
+    case 'workflow_started':
+    case 'node_started':
+    case 'node_finished':
+    case 'workflow_paused':
+    case 'workflow_resumed':
+    case 'workflow_finished':
+    case 'workflow_failed':
+      return { ...state, activity: String(data.title ?? data.status ?? event.event), lastEventId };
+    case 'client_action_required':
+      // Never navigate or mutate assets automatically. Route only explicitly allow-listed actions.
+      return { ...state, activity: String(data.label ?? data.reason ?? 'Action required'), lastEventId };
     case 'message_end': {
       const status = String(data.status);
       return {
@@ -552,6 +615,17 @@ export default function DigitalHumanPage() {
         {state.answer || 'Choose a suggestion or ask a question.'}
       </section>
 
+      {state.activity && <p role="status">{state.activity}</p>}
+      {state.intermediateAnswer && <aside aria-label="Intermediate result">{state.intermediateAnswer}</aside>}
+      {state.pendingInput && <aside>More input is required to continue this run.</aside>}
+      {state.artifacts.length > 0 && (
+        <ul>
+          {state.artifacts.map(file => (
+            <li key={file.id}>{file.url ? <a href={file.url}>{file.name}</a> : file.name}</li>
+          ))}
+        </ul>
+      )}
+
       {state.error && (
         <div role="alert">
           {state.error}
@@ -599,6 +673,8 @@ For a polished demo, add:
 - Responsive layout, visible keyboard focus, `aria-live` status, and mobile composer behavior.
 - Bounded reconnect backoff with a visible retry action.
 - Deduplication by non-empty SSE id and active `message_id`.
+- Typed progress, file, tool, artifact, runtime-input, and workflow views driven by the OpenAPI event map.
+- An explicit allow-list for `client_action_required`; never navigate or perform asset operations from arbitrary payload data.
 - Observability using stable error codes and host request ids only—never API keys, raw `user`, prompts, or answers.
 
 ## 7. Complete the product surface
@@ -665,4 +741,4 @@ Do not blindly repeat `POST /chat` after a connection failure. If ZGI accepted t
 - Logs contain stable error/request ids but no secrets, raw `user`, prompts, answers, or files.
 - API access can be disabled immediately without deleting keys or history.
 
-The running ZGI server exposes the machine-readable contract at `/api/openapi.yaml` and Swagger UI at `/swagger/index.html`. The in-product **External access → API docs** page provides the same endpoint, event, identity, and error contract in Chinese and English.
+The running ZGI server exposes the machine-readable contract at `/api/digital-human-openapi.yaml` (with `/api/openapi.yaml` retained as a compatibility alias on deployments that do not yet host the Agent specification) and Swagger UI at `/swagger/index.html`. The in-product **External access → API docs** page provides the same endpoint, event, identity, and error contract in Chinese and English.

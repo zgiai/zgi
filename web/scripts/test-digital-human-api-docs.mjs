@@ -8,7 +8,7 @@ import YAML from 'yaml';
 const root = process.cwd();
 const read = relativePath => readFileSync(path.join(root, relativePath), 'utf8');
 
-const spec = YAML.parse(read('../api/routes/external/external-v1.openapi.yaml'));
+const spec = YAML.parse(read('../api/routes/external/digital-human-v1.openapi.yaml'));
 const quickstart = read('../docs/digital-human-api-quickstart.md');
 const documents = [
   ['en-US', read('src/components/digital-human/md/digital-human-api.en-US.mdx')],
@@ -116,34 +116,75 @@ for (const [name, schema] of Object.entries(spec.components?.schemas ?? {})) {
 
 const publicEventMap = spec['x-zgi-sse-event-data-schemas'] ?? {};
 const publicEventNames = Object.keys(publicEventMap).sort();
+const requiredLifecycleEvents = [
+  'error',
+  'message',
+  'message_end',
+  'message_start',
+  'run_accepted',
+  'run_end',
+];
+const requiredSharedRuntimeEvents = [
+  'agent_intermediate_answer',
+  'agent_progress',
+  'approval_expired',
+  'approval_requested',
+  'approval_result_filled',
+  'client_action_required',
+  'file_parse_end',
+  'file_parse_error',
+  'file_parse_start',
+  'iteration_completed',
+  'iteration_failed',
+  'iteration_next',
+  'iteration_started',
+  'iteration_succeeded',
+  'loop_completed',
+  'loop_failed',
+  'loop_next',
+  'loop_started',
+  'loop_succeeded',
+  'memory_clear',
+  'memory_create',
+  'memory_delete',
+  'memory_update',
+  'message_retract',
+  'node_finished',
+  'node_started',
+  'question_answer_requested',
+  'question_answer_submitted',
+  'runtime_input_accepted',
+  'runtime_input_applied',
+  'runtime_input_canceled',
+  'runtime_input_failed',
+  'runtime_input_follow_up_started',
+  'skill_artifact_created',
+  'skill_call_end',
+  'skill_call_error',
+  'skill_call_start',
+  'skill_load_end',
+  'skill_load_start',
+  'skill_reference_read',
+  'text_chunk',
+  'text_replace',
+  'tool_governance_decision',
+  'user_input_requested',
+  'workflow_failed',
+  'workflow_finished',
+  'workflow_paused',
+  'workflow_resumed',
+  'workflow_started',
+  'workflow_stopped',
+];
 assert.deepEqual(
   publicEventNames,
-  ['error', 'message', 'message_end', 'message_start', 'run_accepted', 'run_end'],
-  'DigitalHuman must publish its six stable lifecycle events'
+  [...requiredLifecycleEvents, ...requiredSharedRuntimeEvents].sort(),
+  'DigitalHuman must publish the lifecycle and shared ChatRuntime event contract'
 );
 
-const collectPropertyNames = (schema, names = new Set(), visitedRefs = new Set()) => {
-  if (!schema || typeof schema !== 'object') return names;
-  if (schema.$ref) {
-    if (visitedRefs.has(schema.$ref)) return names;
-    visitedRefs.add(schema.$ref);
-    const schemaName = schema.$ref.split('/').at(-1);
-    return collectPropertyNames(spec.components?.schemas?.[schemaName], names, visitedRefs);
-  }
-  for (const [name, property] of Object.entries(schema.properties ?? {})) {
-    names.add(name);
-    collectPropertyNames(property, names, visitedRefs);
-  }
-  for (const child of [...(schema.allOf ?? []), ...(schema.oneOf ?? []), ...(schema.anyOf ?? [])]) {
-    collectPropertyNames(child, names, visitedRefs);
-  }
-  collectPropertyNames(schema.items, names, visitedRefs);
-  return names;
-};
-
-const publicEventPropertyNames = new Set();
-for (const schemaRef of Object.values(publicEventMap)) {
-  collectPropertyNames({ $ref: schemaRef }, publicEventPropertyNames);
+for (const [eventName, schemaRef] of Object.entries(publicEventMap)) {
+  const schemaName = schemaRef.split('/').at(-1);
+  assert.ok(spec.components?.schemas?.[schemaName], `${eventName} references missing ${schemaName}`);
 }
 
 for (const [locale, source] of documents) {
@@ -154,8 +195,14 @@ for (const [locale, source] of documents) {
   const guideEnd = source.indexOf('\n---\n\n## ', guideStart);
   assert.ok(guideEnd > guideStart, `${locale} DigitalHuman event guide has no end marker`);
   const guide = source.slice(guideStart, guideEnd);
+  const eventTableStart = guide.search(/^\|/m);
+  const eventTableEnd = guide.indexOf('\n### ', eventTableStart);
+  const eventTable = guide.slice(
+    eventTableStart,
+    eventTableEnd > eventTableStart ? eventTableEnd : guide.length
+  );
   const documentedEventRows = new Set(
-    [...guide.matchAll(/^\|\s*`([a-z0-9_]+)`\s*\|/gm)].map(match => match[1])
+    [...eventTable.matchAll(/`([a-z0-9_]+)`/g)].map(match => match[1])
   );
 
   for (const eventName of publicEventNames) {
@@ -164,7 +211,19 @@ for (const [locale, source] of documents) {
       `${locale} DigitalHuman event guide is missing ${eventName}`
     );
   }
-  for (const propertyName of publicEventPropertyNames) {
+  for (const propertyName of [
+    'run_id',
+    'request_id',
+    'conversation_id',
+    'message_id',
+    'answer',
+    'status',
+    'file_id',
+    'skill_id',
+    'action_id',
+    'input_id',
+    'workflow_run_id',
+  ]) {
     assert.ok(
       guide.includes(propertyName),
       `${locale} DigitalHuman event guide is missing payload field ${propertyName}`
@@ -290,5 +349,5 @@ for (const [locale, source] of documents) {
 }
 
 console.log(
-  `DigitalHuman API docs contract passed: ${expectedHeadings.length} operations, ${publicEventNames.length} lifecycle events, ${documents.length} locales.`
+  `DigitalHuman API docs contract passed: ${expectedHeadings.length} operations, ${publicEventNames.length} SSE events, ${documents.length} locales.`
 );

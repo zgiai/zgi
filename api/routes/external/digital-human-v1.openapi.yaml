@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: ZGI External API v1
+  title: ZGI DigitalHuman External API v1
   version: 1.0.0
   description: |
     Public contract for invoking a published ZGI DigitalHuman.
@@ -25,8 +25,58 @@ x-zgi-sse-event-data-schemas:
   run_accepted: '#/components/schemas/RunAcceptedEvent'
   message_start: '#/components/schemas/MessageStartEvent'
   message: '#/components/schemas/MessageDeltaEvent'
+  message_retract: '#/components/schemas/MessageRetractEvent'
   message_end: '#/components/schemas/MessageEndEvent'
   error: '#/components/schemas/StreamErrorEvent'
+  agent_progress: '#/components/schemas/AgentProgressEvent'
+  agent_intermediate_answer: '#/components/schemas/IntermediateAnswerEvent'
+  user_input_requested: '#/components/schemas/UserInputRequestedEvent'
+  file_parse_start: '#/components/schemas/FileParseEvent'
+  file_parse_end: '#/components/schemas/FileParseEvent'
+  file_parse_error: '#/components/schemas/FileParseEvent'
+  skill_load_start: '#/components/schemas/SkillEvent'
+  skill_load_end: '#/components/schemas/SkillEvent'
+  skill_reference_read: '#/components/schemas/SkillEvent'
+  skill_call_start: '#/components/schemas/SkillEvent'
+  skill_call_end: '#/components/schemas/SkillEvent'
+  skill_call_error: '#/components/schemas/SkillEvent'
+  skill_artifact_created: '#/components/schemas/SkillArtifactEvent'
+  tool_governance_decision: '#/components/schemas/ToolGovernanceDecisionEvent'
+  client_action_required: '#/components/schemas/ClientActionRequiredEvent'
+  memory_create: '#/components/schemas/MemoryMutationEvent'
+  memory_update: '#/components/schemas/MemoryMutationEvent'
+  memory_delete: '#/components/schemas/MemoryMutationEvent'
+  memory_clear: '#/components/schemas/MemoryMutationEvent'
+  runtime_input_accepted: '#/components/schemas/RuntimeInputEvent'
+  runtime_input_applied: '#/components/schemas/RuntimeInputEvent'
+  runtime_input_follow_up_started: '#/components/schemas/RuntimeInputEvent'
+  runtime_input_canceled: '#/components/schemas/RuntimeInputEvent'
+  runtime_input_failed: '#/components/schemas/RuntimeInputEvent'
+  workflow_started: '#/components/schemas/WorkflowEvent'
+  node_started: '#/components/schemas/WorkflowEvent'
+  node_finished: '#/components/schemas/WorkflowEvent'
+  workflow_paused: '#/components/schemas/WorkflowEvent'
+  workflow_resumed: '#/components/schemas/WorkflowEvent'
+  approval_requested: '#/components/schemas/ApprovalRequestedEvent'
+  approval_result_filled: '#/components/schemas/WorkflowEvent'
+  approval_expired: '#/components/schemas/WorkflowEvent'
+  question_answer_requested: '#/components/schemas/WorkflowEvent'
+  question_answer_submitted: '#/components/schemas/WorkflowEvent'
+  iteration_started: '#/components/schemas/WorkflowEvent'
+  iteration_next: '#/components/schemas/WorkflowEvent'
+  iteration_completed: '#/components/schemas/WorkflowEvent'
+  iteration_succeeded: '#/components/schemas/WorkflowEvent'
+  iteration_failed: '#/components/schemas/WorkflowEvent'
+  loop_started: '#/components/schemas/WorkflowEvent'
+  loop_next: '#/components/schemas/WorkflowEvent'
+  loop_completed: '#/components/schemas/WorkflowEvent'
+  loop_succeeded: '#/components/schemas/WorkflowEvent'
+  loop_failed: '#/components/schemas/WorkflowEvent'
+  workflow_finished: '#/components/schemas/WorkflowEvent'
+  workflow_failed: '#/components/schemas/WorkflowEvent'
+  workflow_stopped: '#/components/schemas/WorkflowEvent'
+  text_chunk: '#/components/schemas/WorkflowTextEvent'
+  text_replace: '#/components/schemas/WorkflowTextEvent'
   run_end: '#/components/schemas/RunEndEvent'
 paths:
   /digital-humans/config:
@@ -541,6 +591,236 @@ components:
         status: {type: string, enum: [succeeded, failed, canceled, unknown], description: Final run status.}
         conversation_id: {type: string, format: uuid, description: Linked conversation when established.}
         message_id: {type: string, format: uuid, description: Linked message when established.}
+    RuntimeEventIdentity:
+      type: object
+      description: Identity and replay metadata shared by persisted ChatRuntime events.
+      required: [conversation_id, message_id]
+      properties:
+        conversation_id: {type: string, format: uuid, description: Conversation that owns the event.}
+        message_id: {type: string, format: uuid, description: Assistant message whose execution emitted the event.}
+        event_id: {type: string, description: Recoverable opaque SSE id when copied into the payload.}
+        sequence: {type: integer, format: int64, description: Monotonic sequence when supplied by the runtime.}
+        created_at: {type: integer, format: int64, description: Creation time in Unix seconds.}
+        created_at_ms: {type: integer, format: int64, description: Creation time in Unix milliseconds when available.}
+    MessageRetractEvent:
+      description: Removes previously streamed candidate text from the final answer.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [presentation_disposition]
+          properties:
+            presentation_disposition: {type: string, enum: [process, discard], description: Move candidate text to process UI or discard it.}
+            answer: {type: string, description: Candidate text affected by the retraction when supplied.}
+    AgentProgressEvent:
+      description: Coarse processing progress that never contains hidden reasoning.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [phase, activity, status]
+          properties:
+            phase: {type: string, description: Stable progress family such as model_processing.}
+            progress_id: {type: string, description: Stable identifier grouping progress updates.}
+            activity: {type: string, description: User-safe high-level activity.}
+            stage: {type: string, description: Elapsed-time stage such as initial or long_running.}
+            source: {type: string, description: Runtime or provider source of the progress signal.}
+            status: {type: string, description: Current progress status.}
+            round: {type: integer, minimum: 1, description: One-based model round.}
+            elapsed_ms: {type: integer, format: int64, minimum: 0, description: Milliseconds elapsed in the current round.}
+    IntermediateAnswerEvent:
+      description: Structured interim answer rendered separately from the final answer.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [answer_id, content, delta, index, done, status]
+          properties:
+            answer_id: {type: string, description: Stable identifier grouping one intermediate answer.}
+            title: {type: string, description: Optional user-facing title.}
+            content: {type: string, description: Full content or a delta according to delta.}
+            delta: {type: boolean, description: Append content when true; replace when false.}
+            index: {type: integer, minimum: 0, description: Zero-based chunk or item index.}
+            done: {type: boolean, description: Whether this intermediate answer is complete.}
+            status: {type: string, description: Intermediate answer lifecycle status.}
+    UserInputRequestedEvent:
+      description: Pauses execution until runtime input is submitted.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [request_id, questions]
+          properties:
+            request_id: {type: string, description: Correlation identifier for the request.}
+            source: {type: string, description: Runtime source used to route the answer.}
+            message: {type: string, description: Optional user-facing instruction.}
+            questions:
+              type: array
+              description: Questions to present to the end user.
+              items:
+                type: object
+                additionalProperties: true
+    FileParseEvent:
+      description: Start, completion, or failure while preparing one uploaded file.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [file_id, name, status]
+          properties:
+            file_id: {type: string, format: uuid, description: Uploaded file being parsed.}
+            name: {type: string, description: Original filename for progress display.}
+            kind: {type: string, description: File or content category selected by the parser.}
+            index: {type: integer, minimum: 1, description: One-based file position.}
+            total: {type: integer, minimum: 1, description: Total files being prepared.}
+            status: {type: string, description: Current parse status.}
+            content_status: {type: string, description: Extracted-content availability.}
+            content_chars: {type: integer, minimum: 0, description: Number of extracted text characters.}
+            from_cache: {type: boolean, description: Whether parsed content was reused.}
+            filtered_reason: {type: string, description: Why content was filtered or unavailable.}
+            message: {type: string, description: Safe parse error message.}
+    SkillEvent:
+      description: Common public payload for Skill loading, reference reads, and tool invocation lifecycle.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [skill_id]
+          properties:
+            skill_id: {type: string, description: Skill that owns the reference or tool.}
+            tool_name: {type: string, description: Invoked tool name when applicable.}
+            invocation_id: {type: string, description: Correlates start, end, error, and artifact events.}
+            kind: {type: string, description: Reference or invocation kind.}
+            path: {type: string, description: Skill reference path.}
+            arguments_summary: {type: object, additionalProperties: true, description: Redacted compact argument summary.}
+            status: {type: string, description: Skill or tool lifecycle status.}
+            duration_ms: {type: integer, format: int64, minimum: 0, description: Invocation duration in milliseconds.}
+            result: {type: object, additionalProperties: true, description: Public summarized result.}
+            message: {type: string, description: Client-safe status or failure message.}
+            error_code: {type: string, description: Stable invocation error code.}
+            governance: {type: object, additionalProperties: true, description: Public governance decision metadata.}
+    SkillArtifactEvent:
+      description: Public metadata for a file artifact created by a Skill invocation.
+      allOf:
+        - $ref: '#/components/schemas/SkillEvent'
+        - type: object
+          properties:
+            artifact_id: {type: string, description: Runtime artifact identifier.}
+            artifact_type: {type: string, description: Artifact category.}
+            file_id: {type: string, description: Public file identifier.}
+            filename: {type: string, description: Suggested download filename.}
+            extension: {type: string, description: Filename extension without a leading dot.}
+            mime_type: {type: string, description: Artifact media type.}
+            size: {type: integer, format: int64, minimum: 0, description: Artifact size in bytes.}
+            url: {type: string, description: Public or signed artifact URL when available.}
+            download_url: {type: string, description: Download-specific URL when available.}
+            lifecycle: {type: string, description: Retention or persistence state.}
+    ToolGovernanceDecisionEvent:
+      description: Non-interactive authorization decision for a published tool invocation.
+      allOf:
+        - $ref: '#/components/schemas/SkillEvent'
+        - type: object
+          required: [correlation_id, decision]
+          properties:
+            correlation_id: {type: string, description: Correlates the decision with tool lifecycle events.}
+            decision: {type: string, description: Non-interactive authorization result.}
+            requires_approval: {type: boolean, description: Whether runtime policy requires approval.}
+            reason: {type: string, description: User-facing decision rationale.}
+            risk_level: {type: string, description: Public risk classification.}
+            effect: {type: string, description: Expected external side effect.}
+            asset_type: {type: string, description: Asset category affected by the tool.}
+            tool_id: {type: string, description: Governed runtime tool identifier.}
+    ClientActionRequiredEvent:
+      description: Requests a host-side action such as navigation or an asset observation.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [action_id, action_type, continuation_policy, blocking, status]
+          properties:
+            action_id: {type: string, description: Stable action correlation identifier.}
+            action_type: {type: string, description: Host action category.}
+            href: {type: string, description: Safe route requested for navigation actions.}
+            label: {type: string, description: User-facing action label.}
+            reason: {type: string, description: User-facing reason for the action.}
+            continuation_policy: {type: string, enum: [resume_model, record_only], description: Whether completion resumes the model.}
+            blocking: {type: boolean, description: Whether the run waits for this action.}
+            effect: {type: string, description: External effect associated with the action.}
+            asset_type: {type: string, description: Asset category associated with the action.}
+            assets: {type: array, description: Safe asset references, items: {type: object, additionalProperties: true}}
+            correlation_id: {type: string, description: Correlation id shared with governance events.}
+            status: {type: string, description: Current client-action status.}
+    MemoryMutationEvent:
+      description: User-relationship memory mutation notification for the current DigitalHuman user.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [memory_scope, action, status]
+          properties:
+            memory_scope: {type: string, description: Runtime memory scope.}
+            action: {type: string, enum: [create, update, delete, clear], description: Mutation performed.}
+            key: {type: string, description: Memory key when the mutation targets one item.}
+            display_name: {type: string, description: User-facing memory label.}
+            entry_id: {type: string, description: Dynamic memory entry identifier.}
+            category: {type: string, description: Controlled memory category.}
+            memory_type: {type: string, description: Runtime memory type.}
+            status: {type: string, description: Overall mutation event status.}
+            mutation_status: {type: string, description: Mutation result.}
+            source_kind: {type: string, description: Mutation source.}
+            operation_id: {type: string, format: uuid, description: Operation identifier when available.}
+            revision: {type: integer, format: int64, minimum: 0, description: Revision after the mutation.}
+            undoable_until: {type: string, format: date-time, description: Undo deadline when available.}
+    RuntimeInputEvent:
+      description: Acceptance, application, follow-up, cancellation, or failure of runtime input.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          properties:
+            input_id: {type: string, format: uuid, description: Server runtime-input identifier.}
+            client_input_id: {type: string, format: uuid, description: Client idempotency identifier.}
+            target_message_id: {type: string, format: uuid, description: Message targeted by the input.}
+            consumed_message_id: {type: string, format: uuid, description: Message that consumed the input.}
+            batch_id: {type: string, format: uuid, description: Follow-up batch identifier.}
+            disposition: {type: string, description: Current-run or follow-up disposition.}
+            status: {type: string, description: Runtime-input lifecycle status.}
+            content: {type: string, description: Applied input content when the runtime exposes it.}
+            checkpoint: {type: string, description: Runtime checkpoint that applied the input.}
+            model_round: {type: integer, minimum: 1, description: Model round that consumed the input.}
+            applied_at: {type: integer, format: int64, description: Application time in Unix seconds.}
+    WorkflowEvent:
+      description: Workflow, node, iteration, or loop lifecycle payload. Preserve unknown fields.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          properties:
+            id: {type: string, description: Workflow run, node execution, or container identifier.}
+            workflow_run_id: {type: string, description: Stable workflow execution identifier.}
+            workflow_id: {type: string, description: Published workflow definition identifier.}
+            node_id: {type: string, description: Workflow graph node identifier.}
+            node_type: {type: string, description: Workflow node kind.}
+            title: {type: string, description: User-facing node or container title.}
+            status: {type: string, description: Runtime lifecycle status.}
+            index: {type: integer, minimum: 0, description: Zero-based iteration or loop index.}
+            inputs: {type: object, additionalProperties: true, description: Public runtime inputs.}
+            outputs: {type: object, additionalProperties: true, description: Public runtime outputs.}
+            metadata: {type: object, additionalProperties: true, description: Public workflow metadata.}
+            error: {description: Client-safe workflow error in runtime-provided form.}
+          additionalProperties: true
+    ApprovalRequestedEvent:
+      description: Workflow approval wait projected into the public stream.
+      allOf:
+        - $ref: '#/components/schemas/WorkflowEvent'
+        - type: object
+          required: [workflow_run_id, node_id, approval_form_id, ui_approval_allowed]
+          properties:
+            approval_form_id: {type: string, description: Stable approval form identifier.}
+            approval_token: {type: string, description: Opaque continuation credential when inline approval is allowed.}
+            approval_url: {type: string, description: Optional out-of-band approval URL.}
+            ui_approval_allowed: {type: boolean, description: Whether this client may render and submit approval.}
+            approval_form: {type: object, additionalProperties: true, description: Runtime-defined form and actions.}
+          additionalProperties: true
+    WorkflowTextEvent:
+      description: Incremental or replacement text emitted by a workflow.
+      allOf:
+        - $ref: '#/components/schemas/WorkflowEvent'
+        - type: object
+          properties:
+            text: {type: string, description: Workflow text chunk or replacement.}
+            answer: {type: string, description: Compatibility text field when supplied.}
+          additionalProperties: true
     RuntimeInputSubmissionEnvelope:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'

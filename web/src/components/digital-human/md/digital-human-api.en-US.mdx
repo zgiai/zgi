@@ -197,6 +197,19 @@ Dispatch by the JSON `event` or native SSE event. Treat event ids as opaque stri
 | `error`         | Show safe `message`; record `code` when present; inspect optional `retryable` | Stream failed after HTTP 200          |
 | `run_end`       | Stop recovery and record final run `status`                                   | Single durable terminal event         |
 
+The same event names and payload families used by the Agent API are available for a richer process UI:
+
+| Event family | Events | Recommended rendering |
+| ------------ | ------ | --------------------- |
+| Answer correction | `message_retract` | Move or discard provisional answer text according to `presentation_disposition` |
+| Progress | `agent_progress`, `agent_intermediate_answer` | Show a compact activity indicator and a separate interim-answer card; never invent reasoning text |
+| User input | `user_input_requested`, `runtime_input_accepted`, `runtime_input_applied`, `runtime_input_follow_up_started`, `runtime_input_canceled`, `runtime_input_failed` | Render questions, submit with a new `client_input_id`, and show the returned disposition |
+| File preparation | `file_parse_start`, `file_parse_end`, `file_parse_error` | Update one file row by `file_id`; show only the safe error message |
+| Skills and tools | `skill_load_start`, `skill_load_end`, `skill_reference_read`, `skill_call_start`, `skill_call_end`, `skill_call_error`, `skill_artifact_created` | Group by `invocation_id`; render public summaries and downloadable artifacts |
+| Governance and host actions | `tool_governance_decision`, `client_action_required` | Show the decision; perform host actions only from an explicit allow-list and honor `blocking` |
+| Relationship memory | `memory_create`, `memory_update`, `memory_delete`, `memory_clear` | Show a small confirmation; do not expose a memory-management editor in the public client |
+| Workflow lifecycle | `workflow_started`, `node_started`, `node_finished`, `workflow_paused`, `workflow_resumed`, `approval_requested`, `approval_result_filled`, `approval_expired`, `question_answer_requested`, `question_answer_submitted`, `iteration_started`, `iteration_next`, `iteration_completed`, `iteration_succeeded`, `iteration_failed`, `loop_started`, `loop_next`, `loop_completed`, `loop_succeeded`, `loop_failed`, `workflow_finished`, `workflow_failed`, `workflow_stopped`, `text_chunk`, `text_replace` | Build a process timeline keyed by `workflow_run_id`; preserve unknown fields and use only advertised continuation controls |
+
 ### Event payload fields
 
 <Properties>
@@ -250,6 +263,21 @@ Dispatch by the JSON `event` or native SSE event. Treat event ids as opaque stri
   </Property>
   <Property name="params" type="object" propKey="params">
     Optional safe localization parameters.
+  </Property>
+  <Property name="file_id" type="uuid" propKey="file_id">
+    File identity shared by file parsing and artifact events.
+  </Property>
+  <Property name="skill_id" type="string" propKey="skill_id">
+    Skill identity shared by loading, tool, artifact, and governance events.
+  </Property>
+  <Property name="action_id" type="string" propKey="action_id">
+    Stable host-action identity in `client_action_required`.
+  </Property>
+  <Property name="input_id" type="uuid" propKey="input_id">
+    Server identity for a runtime input lifecycle.
+  </Property>
+  <Property name="workflow_run_id" type="string" propKey="workflow_run_id">
+    Correlates workflow, node, approval, iteration, loop, and text events.
   </Property>
 </Properties>
 
@@ -756,4 +784,4 @@ After HTTP 200 SSE begins, consume `error` and `run_end`; there is no second HTT
 - An API key can access only the DigitalHuman it is bound to.
 - Relationship memory follows the same `user` identity but has no public management endpoint in this release.
 - Message regeneration is intentionally unavailable; `regenerate_enabled` is `false`.
-- The machine-readable contract is available at `/api/openapi.yaml`.
+- The machine-readable contract is available at `/api/digital-human-openapi.yaml`.

@@ -17,12 +17,13 @@ func TestPublicDocumentationExposesDigitalHumanExternalContract(t *testing.T) {
 
 	docs := httptest.NewRecorder()
 	router.ServeHTTP(docs, httptest.NewRequest(http.MethodGet, "/api/docs", nil))
-	if docs.Code != http.StatusOK || !strings.Contains(docs.Body.String(), "/api/v1/digital-humans") {
+	if docs.Code != http.StatusOK || !strings.Contains(docs.Body.String(), "/api/v1/digital-humans") ||
+		!strings.Contains(docs.Body.String(), "/api/digital-human-openapi.yaml") {
 		t.Fatalf("docs response = %d %s", docs.Code, docs.Body.String())
 	}
 
 	spec := httptest.NewRecorder()
-	router.ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil))
+	router.ServeHTTP(spec, httptest.NewRequest(http.MethodGet, "/api/digital-human-openapi.yaml", nil))
 	if spec.Code != http.StatusOK || !strings.Contains(spec.Header().Get("Content-Type"), "application/yaml") {
 		t.Fatalf("OpenAPI response = %d %q", spec.Code, spec.Header().Get("Content-Type"))
 	}
