@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 )
 
@@ -86,7 +86,7 @@ func TestWebAppScopeSeparatesAnonymousPrincipalFromAccountMemorySubject(t *testi
 		handler := &ExternalHandler{}
 		scope, _, _, ok := handler.webAppScope(context)
 		if !ok || scope.UserSubjectID == nil || *scope.UserSubjectID != identity.ID ||
-			scope.UserSubjectKind != string(relationshipmemory.UserSubjectAccount) || scope.PrincipalType != string(invocation.PrincipalAccount) {
+			scope.UserSubjectKind != string(usersubject.Account) || scope.PrincipalType != string(invocation.PrincipalAccount) {
 			t.Fatalf("authenticated scope = %#v", scope)
 		}
 	})

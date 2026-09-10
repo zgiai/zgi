@@ -8,19 +8,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 )
 
 func TestExternalRunOwnershipUsesSubjectNotAPIKeyPrincipal(t *testing.T) {
 	subjectID := uuid.New()
 	run := &Run{
-		UserSubjectKind: string(relationshipmemory.UserSubjectAPIEndUser),
+		UserSubjectKind: string(usersubject.APIEndUser),
 		UserSubjectID:   &subjectID,
 		Surface:         SurfaceAPI,
 		PrincipalID:     uuidPointer(uuid.New()),
 	}
 	scopeAfterKeyRotation := Scope{
-		UserSubjectKind: string(relationshipmemory.UserSubjectAPIEndUser),
+		UserSubjectKind: string(usersubject.APIEndUser),
 		UserSubjectID:   &subjectID,
 		PrincipalID:     uuid.New(),
 	}
@@ -80,7 +80,7 @@ func TestRunScopeFallsBackToExternalPrincipalWithoutPersistingAccountActor(t *te
 	subjectID := uuid.New()
 	run := &Run{
 		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), PrincipalType: string(invocation.PrincipalService),
-		PrincipalID: &principalID, UserSubjectKind: string(relationshipmemory.UserSubjectAPIEndUser),
+		PrincipalID: &principalID, UserSubjectKind: string(usersubject.APIEndUser),
 		UserSubjectID: &subjectID, Surface: SurfaceAPI,
 	}
 	scope := runScope(run)

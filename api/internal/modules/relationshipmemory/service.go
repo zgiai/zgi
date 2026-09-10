@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -54,7 +55,7 @@ func NewService(db *gorm.DB, codecs ...MemoryContentCodec) *Service {
 type EnsureRelationshipRequest struct {
 	OrganizationID       uuid.UUID
 	WorkspaceID          uuid.UUID
-	Subject              UserSubjectRef
+	Subject              usersubject.Ref
 	IssuerType           string
 	IssuerID             *uuid.UUID
 	ConsumerType         string
@@ -67,7 +68,7 @@ func (s *Service) EnsureRelationship(ctx context.Context, req EnsureRelationship
 	if s == nil || s.db == nil || req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil || req.Subject.ID == uuid.Nil || req.ConsumerID == uuid.Nil {
 		return nil, ErrAccessDenied
 	}
-	if req.Subject.Kind != UserSubjectAccount && req.Subject.Kind != UserSubjectAPIEndUser {
+	if req.Subject.Kind != usersubject.Account && req.Subject.Kind != usersubject.APIEndUser {
 		return nil, fmt.Errorf("%w: invalid subject kind", ErrPolicyRejected)
 	}
 	if req.ConsumerType != ConsumerAgent && req.ConsumerType != ConsumerDigitalHuman {
@@ -75,22 +76,9 @@ func (s *Service) EnsureRelationship(ctx context.Context, req EnsureRelationship
 	}
 	var relationship UserMemoryRelationship
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		subject := UserMemorySubject{ID: req.Subject.ID, Kind: req.Subject.Kind, IssuerType: strings.TrimSpace(req.IssuerType), IssuerID: req.IssuerID}
-		if req.Subject.Kind == UserSubjectAccount {
-			accountID := req.Subject.ID
-			subject.AccountID = &accountID
-			subject.IssuerType = ""
-			subject.IssuerID = nil
-		}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&subject).Error; err != nil {
-			return fmt.Errorf("ensure user memory subject: %w", err)
-		}
-		var storedSubject UserMemorySubject
-		if err := tx.First(&storedSubject, "id = ?", req.Subject.ID).Error; err != nil {
-			return fmt.Errorf("read user memory subject: %w", err)
-		}
-		if storedSubject.Kind != req.Subject.Kind || (req.Subject.Kind == UserSubjectAPIEndUser && (storedSubject.IssuerID == nil || req.IssuerID == nil || *storedSubject.IssuerID != *req.IssuerID || storedSubject.IssuerType != req.IssuerType)) {
-			return fmt.Errorf("%w: subject issuer mismatch", ErrPolicyRejected)
+		subjectService := usersubject.NewService(tx)
+		if _, err := subjectService.Ensure(ctx, usersubject.EnsureRequest{Subject: req.Subject, IssuerType: req.IssuerType, IssuerID: req.IssuerID}); err != nil {
+			return fmt.Errorf("%w: %v", ErrPolicyRejected, err)
 		}
 
 		relationship = UserMemoryRelationship{
@@ -182,8 +170,8 @@ func (s *Service) ListAccountRelationships(ctx context.Context, req ListRelation
 		pageSize = 100
 	}
 	query := s.db.WithContext(ctx).Table("user_memory_relationships AS relationships").
-		Joins("JOIN user_memory_subjects AS subjects ON subjects.id = relationships.subject_id").
-		Where("relationships.organization_id = ? AND subjects.kind = ? AND subjects.account_id = ?", req.OrganizationID, UserSubjectAccount, req.AccountID)
+		Joins("JOIN user_subjects AS subjects ON subjects.id = relationships.subject_id").
+		Where("relationships.organization_id = ? AND subjects.kind = ? AND subjects.account_id = ?", req.OrganizationID, usersubject.Account, req.AccountID)
 	if req.WorkspaceID != nil {
 		query = query.Where("relationships.workspace_id = ?", *req.WorkspaceID)
 	}
@@ -222,8 +210,8 @@ type RelationshipDetail struct {
 func (s *Service) GetAccountRelationship(ctx context.Context, organizationID, accountID, relationshipID uuid.UUID) (*RelationshipDetail, error) {
 	var relationship UserMemoryRelationship
 	err := s.db.WithContext(ctx).Table("user_memory_relationships AS relationships").
-		Joins("JOIN user_memory_subjects AS subjects ON subjects.id = relationships.subject_id").
-		Where("relationships.id = ? AND relationships.organization_id = ? AND subjects.kind = ? AND subjects.account_id = ?", relationshipID, organizationID, UserSubjectAccount, accountID).
+		Joins("JOIN user_subjects AS subjects ON subjects.id = relationships.subject_id").
+		Where("relationships.id = ? AND relationships.organization_id = ? AND subjects.kind = ? AND subjects.account_id = ?", relationshipID, organizationID, usersubject.Account, accountID).
 		Select("relationships.*").Take(&relationship).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrRelationshipNotFound

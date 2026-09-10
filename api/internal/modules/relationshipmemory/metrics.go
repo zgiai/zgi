@@ -5,6 +5,7 @@ import (
 	"errors"
 	"unicode/utf8"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -65,7 +66,7 @@ func memoryResult(err error) string {
 		return "success"
 	case errors.Is(err, ErrRevisionConflict):
 		return "conflict"
-	case errors.Is(err, ErrPolicyRejected), errors.Is(err, ErrInvalidUser):
+	case errors.Is(err, ErrPolicyRejected), errors.Is(err, usersubject.ErrInvalidUser):
 		return "rejected"
 	case errors.Is(err, ErrAccessDenied):
 		return "denied"

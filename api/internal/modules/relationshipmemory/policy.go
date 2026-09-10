@@ -1,6 +1,9 @@
 package relationshipmemory
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
+)
 
 type MemorySurface string
 type ConversationType string
@@ -34,7 +37,7 @@ type ExternalIdentityHint struct {
 
 type InvocationIdentity struct {
 	Principal        PrincipalRef
-	UserSubject      *UserSubjectRef
+	UserSubject      *usersubject.Ref
 	Surface          MemorySurface
 	ConversationType ConversationType
 	ExternalHint     *ExternalIdentityHint
@@ -60,11 +63,11 @@ func DecideAccess(identity InvocationIdentity) AccessDecision {
 	}
 	switch identity.Surface {
 	case SurfaceAgentConsole, SurfaceAgentWebApp, SurfaceDigitalHumanConsole, SurfaceDigitalHumanWebApp:
-		if identity.UserSubject.Kind != UserSubjectAccount {
+		if identity.UserSubject.Kind != usersubject.Account {
 			return AccessDecision{Reason: "subject_kind_mismatch"}
 		}
 	case SurfaceAgentAPI, SurfaceDigitalHumanAPI:
-		if identity.UserSubject.Kind != UserSubjectAPIEndUser {
+		if identity.UserSubject.Kind != usersubject.APIEndUser {
 			return AccessDecision{Reason: "subject_kind_mismatch"}
 		}
 	default:

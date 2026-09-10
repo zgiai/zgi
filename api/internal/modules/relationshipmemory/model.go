@@ -8,12 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type UserSubjectKind string
-
 const (
-	UserSubjectAccount    UserSubjectKind = "account"
-	UserSubjectAPIEndUser UserSubjectKind = "api_end_user"
-
 	ConsumerAgent        = "agent"
 	ConsumerDigitalHuman = "digital_human"
 
@@ -27,29 +22,6 @@ const (
 	SourceAutomatic = "automatic"
 	SourceManager   = "manager"
 )
-
-type UserSubjectRef struct {
-	Kind UserSubjectKind `json:"kind"`
-	ID   uuid.UUID       `json:"id"`
-}
-
-type UserMemorySubject struct {
-	ID         uuid.UUID       `gorm:"type:uuid;primaryKey" json:"id"`
-	Kind       UserSubjectKind `gorm:"type:varchar(32);not null;index" json:"kind"`
-	AccountID  *uuid.UUID      `gorm:"type:uuid;uniqueIndex:idx_user_memory_subject_account,where:account_id IS NOT NULL" json:"account_id,omitempty"`
-	IssuerType string          `gorm:"type:varchar(32);not null;default:'';index:idx_user_memory_subject_issuer,priority:1" json:"issuer_type,omitempty"`
-	IssuerID   *uuid.UUID      `gorm:"type:uuid;index:idx_user_memory_subject_issuer,priority:2" json:"issuer_id,omitempty"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
-}
-
-func (UserMemorySubject) TableName() string { return "user_memory_subjects" }
-func (s *UserMemorySubject) BeforeCreate(*gorm.DB) error {
-	if s.ID == uuid.Nil {
-		s.ID = uuid.New()
-	}
-	return nil
-}
 
 type UserMemoryRelationship struct {
 	ID                   uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`

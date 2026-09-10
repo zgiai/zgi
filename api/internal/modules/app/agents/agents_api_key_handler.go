@@ -10,8 +10,8 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -319,7 +319,7 @@ func publishedAgentConfigRequiresExternalUser(cfg dto.AgentConfigResponse) bool 
 }
 
 func externalAgentMemoryUserID(workspaceID, agentID uuid.UUID, externalUser string) uuid.UUID {
-	subject, err := relationshipmemory.APIEndUserSubject(workspaceID, agentID, externalUser)
+	subject, err := usersubject.AgentAPIEndUserSubject(workspaceID, agentID, externalUser)
 	if err != nil {
 		return uuid.Nil
 	}

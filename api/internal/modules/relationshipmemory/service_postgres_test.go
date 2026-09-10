@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/migrations"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -31,7 +32,7 @@ func TestRelationshipMemoryPostgresIsolationCASAndEpochFence(t *testing.T) {
 	t.Cleanup(func() { _ = tx.Rollback().Error })
 	service := NewService(tx)
 	organizationID, workspaceID, agentID := uuid.New(), uuid.New(), uuid.New()
-	userA, userB := AccountSubject(uuid.New()), AccountSubject(uuid.New())
+	userA, userB := usersubject.AccountSubject(uuid.New()), usersubject.AccountSubject(uuid.New())
 	relationshipA, err := service.EnsureRelationship(t.Context(), EnsureRelationshipRequest{
 		OrganizationID: organizationID, WorkspaceID: workspaceID, Subject: userA,
 		ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: "Support",

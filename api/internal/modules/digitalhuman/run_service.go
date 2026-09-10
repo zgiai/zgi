@@ -20,9 +20,9 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runspec"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workflowapp "github.com/zgiai/zgi/api/internal/modules/app/workflow"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/datatypes"
 )
 
@@ -142,7 +142,7 @@ func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalH
 	scope.PrincipalType = string(invocation.PrincipalAccount)
 	scope.PrincipalID = scope.ActorID
 	subjectID := scope.ActorID
-	scope.UserSubjectKind = string(relationshipmemory.UserSubjectAccount)
+	scope.UserSubjectKind = string(usersubject.Account)
 	scope.UserSubjectID = &subjectID
 	scope.Surface = SurfaceConsole
 	appendInvocationRequestContext(event.Context, request)

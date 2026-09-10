@@ -15,8 +15,8 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -554,7 +554,7 @@ func (h *ExternalHandler) apiUserScope(c *gin.Context, key *APIKey, access *Publ
 		h.writeAuthError(c, false)
 		return Scope{}, false
 	}
-	subject, err := relationshipmemory.DigitalHumanAPIEndUserSubject(access.Definition.WorkspaceID, access.Definition.ID, user)
+	subject, err := usersubject.DigitalHumanAPIEndUserSubject(access.Definition.WorkspaceID, access.Definition.ID, user)
 	if err != nil {
 		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.external.user")
 		return Scope{}, false

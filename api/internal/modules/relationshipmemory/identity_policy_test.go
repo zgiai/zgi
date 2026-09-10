@@ -6,23 +6,24 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 )
 
 func TestAPIEndUserSubjectIsStableTrimmedAndCaseSensitive(t *testing.T) {
 	workspaceID, agentID := uuid.New(), uuid.New()
-	first, err := APIEndUserSubject(workspaceID, agentID, "  customer_123  ")
+	first, err := usersubject.AgentAPIEndUserSubject(workspaceID, agentID, "  customer_123  ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := APIEndUserSubject(workspaceID, agentID, "customer_123")
+	second, err := usersubject.AgentAPIEndUserSubject(workspaceID, agentID, "customer_123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	upper, err := APIEndUserSubject(workspaceID, agentID, "Customer_123")
+	upper, err := usersubject.AgentAPIEndUserSubject(workspaceID, agentID, "Customer_123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherAgent, err := APIEndUserSubject(workspaceID, uuid.New(), "customer_123")
+	otherAgent, err := usersubject.AgentAPIEndUserSubject(workspaceID, uuid.New(), "customer_123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,15 +42,15 @@ func TestDigitalHumanAPIEndUserSubjectIsStableAndConsumerScoped(t *testing.T) {
 	workspaceID := uuid.New()
 	firstDigitalHumanID := uuid.New()
 	secondDigitalHumanID := uuid.New()
-	first, err := DigitalHumanAPIEndUserSubject(workspaceID, firstDigitalHumanID, " customer_123 ")
+	first, err := usersubject.DigitalHumanAPIEndUserSubject(workspaceID, firstDigitalHumanID, " customer_123 ")
 	if err != nil {
 		t.Fatalf("DigitalHumanAPIEndUserSubject() error = %v", err)
 	}
-	repeated, err := DigitalHumanAPIEndUserSubject(workspaceID, firstDigitalHumanID, "customer_123")
+	repeated, err := usersubject.DigitalHumanAPIEndUserSubject(workspaceID, firstDigitalHumanID, "customer_123")
 	if err != nil {
 		t.Fatalf("DigitalHumanAPIEndUserSubject() repeated error = %v", err)
 	}
-	other, err := DigitalHumanAPIEndUserSubject(workspaceID, secondDigitalHumanID, "customer_123")
+	other, err := usersubject.DigitalHumanAPIEndUserSubject(workspaceID, secondDigitalHumanID, "customer_123")
 	if err != nil {
 		t.Fatalf("DigitalHumanAPIEndUserSubject() other consumer error = %v", err)
 	}
@@ -59,7 +60,7 @@ func TestDigitalHumanAPIEndUserSubjectIsStableAndConsumerScoped(t *testing.T) {
 	if first.ID == other.ID {
 		t.Fatal("subjects for different DigitalHumans must differ")
 	}
-	if _, err := DigitalHumanAPIEndUserSubject(workspaceID, firstDigitalHumanID, "bad\nuser"); !errors.Is(err, ErrInvalidUser) {
+	if _, err := usersubject.DigitalHumanAPIEndUserSubject(workspaceID, firstDigitalHumanID, "bad\nuser"); !errors.Is(err, usersubject.ErrInvalidUser) {
 		t.Fatalf("control character error = %v, want ErrInvalidUser", err)
 	}
 }
@@ -67,17 +68,17 @@ func TestDigitalHumanAPIEndUserSubjectIsStableAndConsumerScoped(t *testing.T) {
 func TestAPIEndUserSubjectValidatesOpaqueUserLimit(t *testing.T) {
 	workspaceID, agentID := uuid.New(), uuid.New()
 	for _, input := range []string{"", "   ", strings.Repeat("x", 129)} {
-		if _, err := APIEndUserSubject(workspaceID, agentID, input); !errors.Is(err, ErrInvalidUser) {
+		if _, err := usersubject.AgentAPIEndUserSubject(workspaceID, agentID, input); !errors.Is(err, usersubject.ErrInvalidUser) {
 			t.Fatalf("APIEndUserSubject(%q) error = %v", input, err)
 		}
 	}
-	if _, err := APIEndUserSubject(workspaceID, agentID, strings.Repeat("界", 128)); err != nil {
+	if _, err := usersubject.AgentAPIEndUserSubject(workspaceID, agentID, strings.Repeat("界", 128)); err != nil {
 		t.Fatalf("128-rune user rejected: %v", err)
 	}
 }
 
 func TestDecideAccessNeverResolvesChannelsTasksOrAIChat(t *testing.T) {
-	subject := AccountSubject(uuid.New())
+	subject := usersubject.AccountSubject(uuid.New())
 	tests := []struct {
 		name     string
 		identity InvocationIdentity
@@ -104,8 +105,8 @@ func TestDecideAccessNeverResolvesChannelsTasksOrAIChat(t *testing.T) {
 }
 
 func TestDecideAccessRequiresARecognizedSurfaceAndMatchingSubjectKind(t *testing.T) {
-	account := AccountSubject(uuid.New())
-	apiUser := UserSubjectRef{Kind: UserSubjectAPIEndUser, ID: uuid.New()}
+	account := usersubject.AccountSubject(uuid.New())
+	apiUser := usersubject.Ref{Kind: usersubject.APIEndUser, ID: uuid.New()}
 	tests := []struct {
 		name     string
 		identity InvocationIdentity

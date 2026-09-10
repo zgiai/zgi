@@ -12,6 +12,7 @@ import (
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -96,7 +97,7 @@ func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Ru
 		identity.Principal.ID = *run.PrincipalID
 	}
 	if run.UserSubjectID != nil && *run.UserSubjectID != uuid.Nil {
-		subject := relationshipmemory.UserSubjectRef{Kind: relationshipmemory.UserSubjectKind(run.UserSubjectKind), ID: *run.UserSubjectID}
+		subject := usersubject.Ref{Kind: usersubject.Kind(run.UserSubjectKind), ID: *run.UserSubjectID}
 		identity.UserSubject = &subject
 	}
 	decision := relationshipmemory.DecideAccess(identity)
@@ -114,7 +115,7 @@ func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Ru
 		ConsumerID:           run.DigitalHumanID,
 		ConsumerNameSnapshot: resolved.Snapshot.IdentityName,
 	}
-	if identity.UserSubject.Kind == relationshipmemory.UserSubjectAPIEndUser {
+	if identity.UserSubject.Kind == usersubject.APIEndUser {
 		issuerID := run.DigitalHumanID
 		ensureRequest.IssuerType = "digital_human_api"
 		ensureRequest.IssuerID = &issuerID

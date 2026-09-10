@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
@@ -120,7 +121,7 @@ func agentRelationshipMemoryIdentity(scope Scope, parts *chatRequestParts) relat
 			identity.Surface = relationshipmemory.SurfaceAgentWebApp
 		}
 		if scope.AccountID != uuid.Nil {
-			subject := relationshipmemory.AccountSubject(scope.AccountID)
+			subject := usersubject.AccountSubject(scope.AccountID)
 			identity.UserSubject = &subject
 		}
 	case agentmemory.UserScopeEndUser:
@@ -129,7 +130,7 @@ func agentRelationshipMemoryIdentity(scope Scope, parts *chatRequestParts) relat
 		// An API end-user is valid only when the API edge explicitly resolved
 		// `user`; falling back to the API key owner's account ID is forbidden.
 		if scope.AgentMemoryUserID != nil && *scope.AgentMemoryUserID != uuid.Nil {
-			subject := relationshipmemory.UserSubjectRef{Kind: relationshipmemory.UserSubjectAPIEndUser, ID: *scope.AgentMemoryUserID}
+			subject := usersubject.Ref{Kind: usersubject.APIEndUser, ID: *scope.AgentMemoryUserID}
 			identity.UserSubject = &subject
 		}
 	}

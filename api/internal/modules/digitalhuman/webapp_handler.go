@@ -12,8 +12,8 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
@@ -564,7 +564,7 @@ func (h *ExternalHandler) webAppScope(c *gin.Context) (Scope, *PublishedAccess, 
 		WebAppID: &webAppID, Surface: SurfaceWebApp,
 	}
 	if identity.Authenticated {
-		subject := relationshipmemory.AccountSubject(identity.ID)
+		subject := usersubject.AccountSubject(identity.ID)
 		subjectID := subject.ID
 		scope.PrincipalType = string(invocation.PrincipalAccount)
 		scope.UserSubjectKind = string(subject.Kind)

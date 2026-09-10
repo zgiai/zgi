@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -72,11 +73,11 @@ func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uu
 	if workspaceID == uuid.Nil || agentID == uuid.Nil || userID == uuid.Nil {
 		return nil, agentmemory.ErrUnauthorized
 	}
-	kind := UserSubjectAccount
+	kind := usersubject.Account
 	issuerType := ""
 	var issuerID *uuid.UUID
 	if userScope == agentmemory.UserScopeEndUser {
-		kind = UserSubjectAPIEndUser
+		kind = usersubject.APIEndUser
 		issuerType = "agent_api"
 		value := agentID
 		issuerID = &value
@@ -99,7 +100,7 @@ func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uu
 		}
 		return nil, agentmemory.ErrUnauthorized
 	}
-	relationship, err := a.service.EnsureRelationship(ctx, EnsureRelationshipRequest{OrganizationID: *scope.OrganizationID, WorkspaceID: workspaceID, Subject: UserSubjectRef{Kind: kind, ID: userID}, IssuerType: issuerType, IssuerID: issuerID, ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: scope.Name})
+	relationship, err := a.service.EnsureRelationship(ctx, EnsureRelationshipRequest{OrganizationID: *scope.OrganizationID, WorkspaceID: workspaceID, Subject: usersubject.Ref{Kind: kind, ID: userID}, IssuerType: issuerType, IssuerID: issuerID, ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: scope.Name})
 	return relationship, mapAgentMemoryError(err)
 }
 
@@ -773,12 +774,12 @@ func (a *AgentAdapter) agentExtractionJob(ctx context.Context, job *UserMemoryEx
 	if err := a.service.db.WithContext(ctx).First(&relationship, "id = ?", job.RelationshipID).Error; err != nil {
 		return nil, err
 	}
-	var subject UserMemorySubject
+	var subject usersubject.Subject
 	if err := a.service.db.WithContext(ctx).First(&subject, "id = ?", relationship.SubjectID).Error; err != nil {
 		return nil, err
 	}
 	userScope := agentmemory.UserScopeAccount
-	if subject.Kind == UserSubjectAPIEndUser {
+	if subject.Kind == usersubject.APIEndUser {
 		userScope = agentmemory.UserScopeEndUser
 	}
 	return &agentmemory.AgentMemoryExtractionJob{
@@ -851,7 +852,7 @@ func mapAgentMemoryError(err error) error {
 		return nil
 	case errors.Is(err, ErrRevisionConflict), errors.Is(err, ErrUndoUnavailable), errors.Is(err, ErrCapacityExceeded):
 		return fmt.Errorf("%w: %v", agentmemory.ErrConflict, err)
-	case errors.Is(err, ErrPolicyRejected), errors.Is(err, ErrInvalidUser):
+	case errors.Is(err, ErrPolicyRejected), errors.Is(err, usersubject.ErrInvalidUser):
 		return fmt.Errorf("%w: %v", agentmemory.ErrInvalidInput, err)
 	case errors.Is(err, ErrRelationshipNotFound):
 		return fmt.Errorf("%w: %v", agentmemory.ErrNotFound, err)

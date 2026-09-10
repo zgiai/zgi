@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -28,7 +29,7 @@ func TestAgentRelationshipMemoryIdentityRequiresExplicitAPIEndUser(t *testing.T)
 	subjectID := uuid.New()
 	identity = agentRelationshipMemoryIdentity(Scope{AccountID: uuid.New(), AgentMemoryUserID: &subjectID}, parts)
 	decision = relationshipmemory.DecideAccess(identity)
-	if !decision.Read || identity.Surface != relationshipmemory.SurfaceAgentAPI || identity.UserSubject == nil || identity.UserSubject.Kind != relationshipmemory.UserSubjectAPIEndUser || identity.UserSubject.ID != subjectID {
+	if !decision.Read || identity.Surface != relationshipmemory.SurfaceAgentAPI || identity.UserSubject == nil || identity.UserSubject.Kind != usersubject.APIEndUser || identity.UserSubject.ID != subjectID {
 		t.Fatalf("identity/decision = %#v/%#v, want allowed Agent API subject", identity, decision)
 	}
 }
@@ -38,7 +39,7 @@ func TestAgentRelationshipMemoryIdentityUsesAccountForWebApp(t *testing.T) {
 	parts := &chatRequestParts{AgentMemoryUserScope: agentmemory.UserScopeAccount, AgentMemoryConfigScope: agentmemory.ConfigScopePublished}
 	identity := agentRelationshipMemoryIdentity(Scope{AccountID: accountID}, parts)
 	decision := relationshipmemory.DecideAccess(identity)
-	if !decision.Read || identity.Surface != relationshipmemory.SurfaceAgentWebApp || identity.UserSubject == nil || identity.UserSubject.Kind != relationshipmemory.UserSubjectAccount || identity.UserSubject.ID != accountID {
+	if !decision.Read || identity.Surface != relationshipmemory.SurfaceAgentWebApp || identity.UserSubject == nil || identity.UserSubject.Kind != usersubject.Account || identity.UserSubject.ID != accountID {
 		t.Fatalf("identity/decision = %#v/%#v, want allowed WebApp account subject", identity, decision)
 	}
 }

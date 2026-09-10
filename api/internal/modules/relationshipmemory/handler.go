@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -354,7 +355,7 @@ func writeMemoryError(c *gin.Context, err error) {
 		status, code, message = http.StatusForbidden, ErrorCodeAccessDenied, ErrAccessDenied.Error()
 	case errors.Is(err, ErrRevisionConflict):
 		status, code, message = http.StatusConflict, ErrorCodeRevisionConflict, ErrRevisionConflict.Error()
-	case errors.Is(err, ErrPolicyRejected), errors.Is(err, ErrInvalidUser):
+	case errors.Is(err, ErrPolicyRejected), errors.Is(err, usersubject.ErrInvalidUser):
 		status, code, message = http.StatusBadRequest, ErrorCodePolicyRejected, err.Error()
 	case errors.Is(err, ErrUndoUnavailable):
 		status, code, message = http.StatusConflict, ErrorCodeUndoUnavailable, ErrUndoUnavailable.Error()
