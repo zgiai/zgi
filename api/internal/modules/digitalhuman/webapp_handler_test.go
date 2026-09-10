@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 )
 
 func TestRegisterWebAppRoutesIncludesSharedChatRuntimeCompatibility(t *testing.T) {
@@ -30,6 +31,27 @@ func TestRegisterWebAppRoutesIncludesSharedChatRuntimeCompatibility(t *testing.T
 	} {
 		if !routes[required] {
 			t.Fatalf("webapp route %q was not registered", required)
+		}
+	}
+}
+
+func TestWebAppAccountStatusMatchesAuthenticatedAccountPolicy(t *testing.T) {
+	for _, status := range []authmodel.AccountStatus{
+		authmodel.AccountStatusActive,
+		authmodel.AccountStatusPending,
+		authmodel.AccountStatusUninitialized,
+	} {
+		if !webAppAccountStatusAccepted(status) {
+			t.Fatalf("status %q should be accepted", status)
+		}
+	}
+	for _, status := range []authmodel.AccountStatus{
+		authmodel.AccountStatusBanned,
+		authmodel.AccountStatusFrozen,
+		authmodel.AccountStatusClosed,
+	} {
+		if webAppAccountStatusAccepted(status) {
+			t.Fatalf("status %q should be rejected", status)
 		}
 	}
 }

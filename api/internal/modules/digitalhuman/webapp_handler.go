@@ -15,6 +15,8 @@ import (
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
 	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
 )
 
@@ -129,6 +131,13 @@ func (h *ExternalHandler) authenticateWebApp(c *gin.Context) {
 			c.Abort()
 			return
 		}
+		status, err := statuscache.GetAccountStatus(c.Request.Context(), identity.ID.String())
+		if err != nil || !webAppAccountStatusAccepted(status) {
+			h.writeAuthError(c, false)
+			c.Abort()
+			return
+		}
+		statuscache.TouchAccountLastActive(identity.ID.String())
 		identity.Authenticated = true
 	}
 	c.Set(webAppAccessContext, access)
@@ -148,6 +157,10 @@ func (h *ExternalHandler) ChatWebApp(c *gin.Context) {
 	responseMode := strings.TrimSpace(request.ResponseMode)
 	if responseMode != "" && responseMode != "streaming" {
 		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.webapp.chat.response_mode")
+		return
+	}
+	if err := h.access.ValidateExternalFiles(c.Request.Context(), scope, access.Definition.ID, request.FileIDs, SurfaceWebApp); err != nil {
+		h.writeApplicationError(c, err, "digital_human.webapp.chat.files")
 		return
 	}
 	run, created, err := h.runtime.SubmitWebApp(c.Request.Context(), scope, access.Definition.ID, request.ManualInvocationRequest)
@@ -499,11 +512,26 @@ func (h *ExternalHandler) UploadWebAppFile(c *gin.Context) {
 		}
 		return
 	}
+	uploadedID, err := uuid.Parse(strings.TrimSpace(uploaded.ID))
+	if err != nil || uploadedID == uuid.Nil || h.access.BindExternalFile(c.Request.Context(), scope, access.Definition.ID, uploadedID, SurfaceWebApp) != nil {
+		_ = h.fileService.DeleteFiles(c.Request.Context(), []string{uploaded.ID})
+		h.writeInternalError(c)
+		return
+	}
 	writeExternalData(c, http.StatusCreated, ExternalFileResponse{
 		ID: uploaded.ID, Name: uploaded.Name, Size: uploaded.Size,
 		Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(file.Filename)), "."),
 		MimeType:  uploaded.MimeType, CreatedAt: uploaded.CreatedAt.Unix(),
 	})
+}
+
+func webAppAccountStatusAccepted(status authmodel.AccountStatus) bool {
+	switch status {
+	case authmodel.AccountStatusBanned, authmodel.AccountStatusFrozen, authmodel.AccountStatusClosed:
+		return false
+	default:
+		return true
+	}
 }
 
 func (h *ExternalHandler) resolveWebApp(c *gin.Context) (uuid.UUID, *PublishedAccess, bool) {

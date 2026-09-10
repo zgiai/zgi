@@ -130,6 +130,10 @@ func (h *ExternalHandler) Chat(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if err := h.access.ValidateExternalFiles(c.Request.Context(), scope, access.Definition.ID, request.FileIDs, SurfaceAPI); err != nil {
+		h.writeApplicationError(c, err, "digital_human.external.chat.files")
+		return
+	}
 	run, created, err := h.runtime.SubmitAPI(c.Request.Context(), scope, access.Definition.ID, request.ManualInvocationRequest)
 	if err != nil {
 		h.writeApplicationError(c, err, "digital_human.external.chat")
@@ -420,6 +424,12 @@ func (h *ExternalHandler) UploadFile(c *gin.Context) {
 		default:
 			h.writeInternalError(c)
 		}
+		return
+	}
+	uploadedID, err := uuid.Parse(strings.TrimSpace(uploaded.ID))
+	if err != nil || uploadedID == uuid.Nil || h.access.BindExternalFile(c.Request.Context(), scope, access.Definition.ID, uploadedID, SurfaceAPI) != nil {
+		_ = h.fileService.DeleteFiles(c.Request.Context(), []string{uploaded.ID})
+		h.writeInternalError(c)
 		return
 	}
 	writeExternalData(c, http.StatusCreated, ExternalFileResponse{
