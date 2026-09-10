@@ -6,7 +6,68 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 )
+
+// TaskOwnerKind identifies the private namespace containing a DigitalHuman
+// task. It is immutable after task creation.
+type TaskOwnerKind string
+
+const (
+	TaskOwnerDigitalHuman TaskOwnerKind = "digital_human"
+	TaskOwnerUserSubject  TaskOwnerKind = "user_subject"
+	TaskOwnerConversation TaskOwnerKind = "conversation"
+)
+
+// TaskOwnerRef contains only the stable identifier needed to enforce task
+// ownership. External channel member identifiers never become user subjects.
+type TaskOwnerRef struct {
+	Kind           TaskOwnerKind
+	Subject        usersubject.Ref
+	ConversationID uuid.UUID
+}
+
+// SharedTaskOwner returns the namespace used by the DigitalHuman task console.
+func SharedTaskOwner() TaskOwnerRef {
+	return TaskOwnerRef{Kind: TaskOwnerDigitalHuman}
+}
+
+// UserTaskOwner returns the namespace private to one canonical user subject.
+func UserTaskOwner(subject usersubject.Ref) TaskOwnerRef {
+	return TaskOwnerRef{Kind: TaskOwnerUserSubject, Subject: subject}
+}
+
+// ConversationTaskOwner returns the namespace private to one external
+// conversation.
+func ConversationTaskOwner(conversationID uuid.UUID) TaskOwnerRef {
+	return TaskOwnerRef{Kind: TaskOwnerConversation, ConversationID: conversationID}
+}
+
+// Valid reports whether exactly the fields required by the owner kind are set.
+func (o TaskOwnerRef) Valid() bool {
+	switch o.Kind {
+	case TaskOwnerDigitalHuman:
+		return o.Subject.ID == uuid.Nil && o.Subject.Kind == "" && o.ConversationID == uuid.Nil
+	case TaskOwnerUserSubject:
+		return o.Subject.ID != uuid.Nil && (o.Subject.Kind == usersubject.Account || o.Subject.Kind == usersubject.APIEndUser) && o.ConversationID == uuid.Nil
+	case TaskOwnerConversation:
+		return o.Subject.ID == uuid.Nil && o.Subject.Kind == "" && o.ConversationID != uuid.Nil
+	default:
+		return false
+	}
+}
+
+// TaskAccessContext is the only authorization input accepted by task
+// operations. Audit actors and source conversations do not grant access.
+type TaskAccessContext struct {
+	OrganizationID uuid.UUID
+	WorkspaceID    uuid.UUID
+	DigitalHumanID uuid.UUID
+	Principal      invocation.PrincipalRef
+	Owner          TaskOwnerRef
+	Surface        string
+	CurrentTaskID  *uuid.UUID
+}
 
 // TaskWorkStatus is the operator-visible state of a DigitalHuman-owned task.
 type TaskWorkStatus string
@@ -60,6 +121,7 @@ type TaskSchedule struct {
 type Task struct {
 	ID                      uuid.UUID        `json:"id"`
 	DigitalHumanID          uuid.UUID        `json:"digital_human_id"`
+	OwnerKind               TaskOwnerKind    `json:"owner_kind"`
 	Name                    string           `json:"name"`
 	Goal                    string           `json:"goal"`
 	SuccessCriteria         []string         `json:"success_criteria"`

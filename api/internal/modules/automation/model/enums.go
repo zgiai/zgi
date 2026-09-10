@@ -20,6 +20,16 @@ const (
 	AutomationTaskKindDigitalHuman AutomationTaskKind = "digital_human"
 )
 
+// AutomationTaskOwnerKind separates a DigitalHuman's shared work from work
+// owned by one user subject or one external conversation.
+type AutomationTaskOwnerKind string
+
+const (
+	AutomationTaskOwnerDigitalHuman AutomationTaskOwnerKind = "digital_human"
+	AutomationTaskOwnerUserSubject  AutomationTaskOwnerKind = "user_subject"
+	AutomationTaskOwnerConversation AutomationTaskOwnerKind = "conversation"
+)
+
 // AutomationWorkStatus is the user-facing lifecycle of a DigitalHuman task.
 // It is intentionally separate from AutomationTaskStatus, which controls
 // whether the scheduler may dispatch the definition.
