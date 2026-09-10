@@ -22,6 +22,13 @@ const header = await readFile(
   new URL('../src/components/digital-human/digital-human-header.tsx', import.meta.url),
   'utf8'
 );
+const publishVersionDialog = await readFile(
+  new URL(
+    '../src/components/digital-human/digital-human-publish-version-dialog.tsx',
+    import.meta.url
+  ),
+  'utf8'
+);
 const basicInfoDialog = await readFile(
   new URL('../src/components/digital-human/digital-human-basic-info-dialog.tsx', import.meta.url),
   'utf8'
@@ -209,9 +216,9 @@ assert.doesNotMatch(
   'DigitalHuman configuration must not require raw IDs, revisions, or metadata JSON'
 );
 assert.match(
-  header,
+  publishVersionDialog,
   /configuration\.preflight\.title/,
-  'DigitalHuman publication must show a preflight checklist'
+  'DigitalHuman publication dialog must show a preflight checklist'
 );
 assert.match(
   header,
@@ -389,10 +396,19 @@ assert.match(
   /ResourceSidebar[\s\S]*usePersistentSidebarCollapse\('digitalHuman'[\s\S]*tabs\.configuration[\s\S]*tabs\.channels[\s\S]*tabs\.runs/,
   'DigitalHuman detail sidebar must expose configuration as one primary workbench entry'
 );
+const configurationSidebarItem = sidebar.slice(
+  sidebar.indexOf('const configurationItem'),
+  sidebar.indexOf('const publishedNavItems')
+);
 assert.doesNotMatch(
   sidebar,
-  /configurationHub\.sections\.|children:/,
+  /configurationHub\.sections\./,
   'DigitalHuman primary sidebar must leave configuration sections to the workbench secondary navigation'
+);
+assert.doesNotMatch(
+  configurationSidebarItem,
+  /children:/,
+  'DigitalHuman configuration item must not duplicate workbench section navigation'
 );
 assert.doesNotMatch(
   layout,
