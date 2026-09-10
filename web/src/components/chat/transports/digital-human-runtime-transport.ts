@@ -41,6 +41,8 @@ export class DigitalHumanRuntimeTransport
         request_id: crypto.randomUUID(),
         query: payload.query,
         conversation_id: payload.conversation_id,
+        parent_message_id: payload.parent_id,
+        file_ids: payload.file_ids ?? [],
       });
       submittedRun = response.data.run;
       if (abortSignal?.aborted) throw abortError();

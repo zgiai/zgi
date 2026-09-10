@@ -421,8 +421,13 @@ assert.doesNotMatch(
 );
 assert.match(
   layout,
-  /label: t\('tabs\.chat'\)/,
+  /hasPermission\('digital_human\.run'\)[\s\S]*label: t\('tabs\.chat'\)/,
   'DigitalHuman formal chat must occupy a permission-gated primary navigation tab'
+);
+assert.match(
+  sidebar,
+  /hasPermission\('digital_human\.run'\)[\s\S]*tabs\.chat[\s\S]*\/chat/,
+  'DigitalHuman desktop navigation must hide formal chat without run permission'
 );
 assert.doesNotMatch(
   layout,
@@ -682,6 +687,26 @@ assert.match(
   runtimeTransport,
   /supportsRuntimeInput:\s*true/,
   'DigitalHuman console chat must reuse the shared running-input queue'
+);
+assert.match(
+  runtimeTransport,
+  /parent_message_id:\s*payload\.parent_id[\s\S]*file_ids:\s*payload\.file_ids \?\? \[\]/,
+  'DigitalHuman console chat must preserve parent message and attachment references'
+);
+assert.match(
+  chat,
+  /enableUpload[\s\S]*uploadScope=\{\{ type: 'console' \}\}[\s\S]*showFileLibraryPicker=\{false\}/,
+  'DigitalHuman console chat must allow account uploads without exposing the file library'
+);
+assert.match(
+  chat,
+  /chat\.manageMemory/,
+  'DigitalHuman console chat must use route-loaded translations for its memory shortcut'
+);
+assert.doesNotMatch(
+  chat,
+  /useT\('profile'\)/,
+  'DigitalHuman console chat must not depend on the profile route translation bundle'
 );
 assert.doesNotMatch(
   `${chat}\n${runtimeTransport}`,

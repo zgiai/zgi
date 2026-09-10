@@ -33,6 +33,9 @@ var (
 	ErrRunConflict = errors.New("digital human run state conflict")
 	// ErrConversationNotFound indicates that a caller-scoped conversation does not exist.
 	ErrConversationNotFound = errors.New("digital human conversation not found")
+	// ErrConsoleFileNotAccessible hides whether a requested console attachment
+	// exists outside the current account and workspace boundary.
+	ErrConsoleFileNotAccessible = errors.New("digital human console file not accessible")
 	// ErrMemoryNotFound indicates that scoped DigitalHuman memory does not exist.
 	ErrMemoryNotFound = errors.New("digital human memory not found")
 	// ErrMemoryConflict indicates a stale revision, configuration, epoch, or operation.

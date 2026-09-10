@@ -30,6 +30,7 @@ var (
 	AppCodeRunNotFound                  = apperror.MustCode("digital_human.run.not_found")
 	AppCodeRunConflict                  = apperror.MustCode("digital_human.run.conflict")
 	AppCodeConversationNotFound         = apperror.MustCode("digital_human.conversation.not_found")
+	AppCodeConsoleFileNotAccessible     = apperror.MustCode("digital_human.file.not_found")
 	AppCodeMemoryNotFound               = apperror.MustCode("digital_human.memory.not_found")
 	AppCodeMemoryConflict               = apperror.MustCode("digital_human.memory.conflict")
 	AppCodeMemoryPolicyRejected         = apperror.MustCode("digital_human.memory.policy_rejected")
@@ -84,6 +85,8 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The DigitalHuman run cannot transition from its current state.", "该数字人运行无法从当前状态继续转换。"),
 		digitalHumanDefinition(AppCodeConversationNotFound, appcatalog.CategoryNotFound, 404,
 			"The DigitalHuman conversation was not found.", "未找到该数字人的会话。"),
+		digitalHumanDefinition(AppCodeConsoleFileNotAccessible, appcatalog.CategoryNotFound, 404,
+			"The file was not found or is not available for this conversation.", "未找到该文件，或该文件无法用于当前会话。"),
 		digitalHumanDefinition(AppCodeMemoryNotFound, appcatalog.CategoryNotFound, 404,
 			"The DigitalHuman memory was not found.", "未找到该数字人的记忆。"),
 		digitalHumanDefinition(AppCodeMemoryConflict, appcatalog.CategoryConflict, 409,

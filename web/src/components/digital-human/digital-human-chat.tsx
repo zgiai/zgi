@@ -26,7 +26,6 @@ const conversationParam = 'conversation';
 
 export function DigitalHumanChat({ id }: { id: string }) {
   const t = useT('digitalHumans');
-  const tProfile = useT('profile');
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -170,7 +169,8 @@ export function DigitalHumanChat({ id }: { id: string }) {
         requireModel={false}
         showMemoryToggle={false}
         forcedUseMemory={false}
-        enableUpload={false}
+        enableUpload
+        uploadScope={{ type: 'console' }}
         showFileLibraryPicker={false}
         allowWorkspaceSwitch={false}
         enableMessageReplay={false}
@@ -203,7 +203,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
               href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
             >
               <Brain className="mr-2 size-4" />
-              {tProfile('memory.title')}
+              {t('chat.manageMemory')}
             </Link>
           </Button>
         }

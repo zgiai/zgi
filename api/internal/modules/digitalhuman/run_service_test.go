@@ -50,6 +50,54 @@ func TestRuntimeServiceSubmitIsDurableAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestRuntimeServiceValidatesConsoleFilesBeforeCreatingRun(t *testing.T) {
+	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
+	service := newTestRuntimeService(t, store, dispatcher, chat)
+	fileID := uuid.NewString()
+	validator := &manualInvocationFileValidatorStub{normalized: []string{fileID}}
+	service.manualFiles = validator
+	scope, digitalHumanID := testRunScope(), uuid.New()
+	parentMessageID := uuid.New()
+
+	run, created, err := service.SubmitManual(t.Context(), scope, digitalHumanID, ManualInvocationRequest{
+		RequestID: uuid.New(), Query: "review the attachment", ParentMessageID: &parentMessageID,
+		FileIDs: []string{"  " + fileID + "  "},
+	})
+	if err != nil || !created {
+		t.Fatalf("SubmitManual() = %#v, created %v, error %v", run, created, err)
+	}
+	if validator.scope.Surface != SurfaceConsole || validator.scope.ActorID != scope.ActorID {
+		t.Fatalf("validator scope = %#v", validator.scope)
+	}
+	_, event, err := decodeAndVerifyRun(run)
+	if err != nil {
+		t.Fatalf("decode run: %v", err)
+	}
+	if got := stringSliceContextValue(event.Context, "file_ids"); len(got) != 1 || got[0] != fileID {
+		t.Fatalf("immutable file IDs = %v, want [%s]", got, fileID)
+	}
+	if got, ok := stringContextValue(event.Context, "parent_message_id"); !ok || got != parentMessageID.String() {
+		t.Fatalf("immutable parent message ID = %q, %v, want %s", got, ok, parentMessageID)
+	}
+	if err := service.Execute(t.Context(), run.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if chat.request.ParentID != parentMessageID.String() || len(chat.request.FileIDs) != 1 || chat.request.FileIDs[0] != fileID {
+		t.Fatalf("ChatRuntime request = %#v", chat.request)
+	}
+
+	validator.err = ErrConsoleFileNotAccessible
+	failed, failedCreated, err := service.SubmitManual(t.Context(), scope, digitalHumanID, ManualInvocationRequest{
+		RequestID: uuid.New(), Query: "use another attachment", FileIDs: []string{uuid.NewString()},
+	})
+	if failed != nil || failedCreated || !errors.Is(err, ErrConsoleFileNotAccessible) {
+		t.Fatalf("SubmitManual(inaccessible) = %#v, created %v, error %v", failed, failedCreated, err)
+	}
+	if len(store.runs) != 1 || len(store.outbox) != 1 {
+		t.Fatalf("inaccessible file created durable state: runs=%d outbox=%d", len(store.runs), len(store.outbox))
+	}
+}
+
 func TestRuntimeServiceSubmitsRuntimeInputFollowUpAsDurableDigitalHumanRun(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)
@@ -1083,6 +1131,17 @@ type fakeMemoryRuntimeProvider struct {
 type fakeChannelContextRuntimeProvider struct {
 	preparation *ChannelContextPreparation
 	err         error
+}
+
+type manualInvocationFileValidatorStub struct {
+	normalized []string
+	err        error
+	scope      Scope
+}
+
+func (v *manualInvocationFileValidatorStub) Validate(_ context.Context, scope Scope, _ []string) ([]string, error) {
+	v.scope = scope
+	return append([]string(nil), v.normalized...), v.err
 }
 
 func (p *fakeChannelContextRuntimeProvider) Prepare(context.Context, *Run, *ResolvedExecution, invocation.Event, string, string) (*ChannelContextPreparation, error) {

@@ -881,6 +881,8 @@ func applicationError(err error, operation string) error {
 		code = AppCodeRunConflict
 	case errors.Is(err, ErrConversationNotFound):
 		code = AppCodeConversationNotFound
+	case errors.Is(err, ErrConsoleFileNotAccessible):
+		code = AppCodeConsoleFileNotAccessible
 	case errors.Is(err, ErrMemoryNotFound):
 		code = AppCodeMemoryNotFound
 	case errors.Is(err, ErrMemoryConflict):

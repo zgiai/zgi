@@ -598,6 +598,7 @@ const messages = {
     conversations: 'Conversations',
     newConversation: 'New conversation',
     conversationListDescription: 'Browse and switch this digital human’s conversations.',
+    manageMemory: 'Manage personal memory',
     homeTitle: 'Start a conversation with {name}',
     homeDescription:
       'Conversations, files, relationship memory, and private tasks are stored separately for your account.',

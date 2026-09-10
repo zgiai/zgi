@@ -101,6 +101,21 @@ func TestRuntimeHandlerAcceptsDurableManualInvocation(t *testing.T) {
 	}
 }
 
+func TestRuntimeHandlerHidesInaccessibleConsoleFile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scope, digitalHumanID := testScope(), uuid.New()
+	service := runtimeHandlerServiceStub{submit: func(context.Context, Scope, uuid.UUID, ManualInvocationRequest) (*Run, bool, error) {
+		return nil, false, ErrConsoleFileNotAccessible
+	}}
+	router := digitalHumanRuntimeHandlerRouter(t, service, scope)
+	request := httptest.NewRequest(http.MethodPost, "/digital-humans/"+digitalHumanID.String()+"/invocations", bytes.NewBufferString(`{"request_id":"`+uuid.NewString()+`","query":"review","file_ids":["`+uuid.NewString()+`"]}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	assertDigitalHumanError(t, recorder, http.StatusNotFound, AppCodeConsoleFileNotAccessible.String())
+}
+
 func TestRuntimeHandlerRejectsClientSuppliedAgentIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	scope, digitalHumanID := testScope(), uuid.New()

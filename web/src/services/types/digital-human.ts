@@ -355,6 +355,8 @@ export interface ManualDigitalHumanInvocationRequest {
   request_id: string;
   query: string;
   conversation_id?: string;
+  parent_message_id?: string;
+  file_ids?: string[];
 }
 
 export interface ManualDigitalHumanInvocationResponse {

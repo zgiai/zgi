@@ -73,6 +73,7 @@ type RuntimeService struct {
 	tasks          TaskRuntimeProvider
 	channelContext ChannelContextRuntimeProvider
 	directSkills   DirectSkillRuntimeProvider
+	manualFiles    ManualInvocationFileValidator
 	now            func() time.Time
 }
 
@@ -123,6 +124,12 @@ func WithDirectSkillRuntime(provider DirectSkillRuntimeProvider) RuntimeServiceO
 	return func(service *RuntimeService) { service.directSkills = provider }
 }
 
+// WithManualInvocationFileValidator validates account-owned console uploads
+// before a durable run and its immutable invocation context are created.
+func WithManualInvocationFileValidator(validator ManualInvocationFileValidator) RuntimeServiceOption {
+	return func(service *RuntimeService) { service.manualFiles = validator }
+}
+
 func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request ManualInvocationRequest) (*Run, bool, error) {
 	query := strings.TrimSpace(request.Query)
 	if !validScope(scope) || digitalHumanID == uuid.Nil || request.RequestID == uuid.Nil || query == "" ||
@@ -145,6 +152,16 @@ func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalH
 	scope.UserSubjectKind = string(usersubject.Account)
 	scope.UserSubjectID = &subjectID
 	scope.Surface = SurfaceConsole
+	if len(request.FileIDs) > 0 {
+		if s.manualFiles == nil {
+			return nil, false, ErrConsoleFileNotAccessible
+		}
+		fileIDs, err := s.manualFiles.Validate(ctx, scope, request.FileIDs)
+		if err != nil {
+			return nil, false, err
+		}
+		request.FileIDs = fileIDs
+	}
 	appendInvocationRequestContext(event.Context, request)
 	if request.ConversationID != nil && *request.ConversationID != uuid.Nil {
 		event.Context["conversation_id"] = request.ConversationID.String()

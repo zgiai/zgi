@@ -288,6 +288,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		digitalhuman.WithChannelTransientDispatcher(transientDispatcher),
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
 		digitalhuman.WithDirectSkillRuntime(digitalhuman.NewExaDirectSkillProvider(repository, deps.CredentialCipher, nil)),
+		digitalhuman.WithManualInvocationFileValidator(digitalhuman.NewConsoleFileValidator(deps.FileService)),
 	)
 	digitalhuman.RegisterRunTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)
 	digitalhuman.RegisterRuntimeInputFollowUpTaskHandler(deps.TaskRegistry, deps.TaskManager, runtime)

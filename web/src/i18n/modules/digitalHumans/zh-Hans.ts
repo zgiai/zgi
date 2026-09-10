@@ -560,6 +560,7 @@ const messages: DigitalHumansMessages = {
     conversations: '数字人会话',
     newConversation: '新会话',
     conversationListDescription: '浏览和切换这个数字人的独立会话。',
+    manageMemory: '管理个人记忆',
     homeTitle: '开始与{name}对话',
     homeDescription: '会话、文件、关系记忆和私有任务均归当前账号独立保存。',
     publishTitle: '发布后才能开始对话',

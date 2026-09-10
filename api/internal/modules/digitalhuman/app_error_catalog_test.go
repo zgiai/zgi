@@ -45,3 +45,20 @@ func TestCatalogDefinitionsExplainUnavailableCredentialStorage(t *testing.T) {
 		t.Fatalf("presentation = %#v", presentation)
 	}
 }
+
+func TestCatalogDefinitionsHideConsoleFileAccessBoundary(t *testing.T) {
+	t.Parallel()
+	definitions := append(appcatalog.DefaultDefinitions(), CatalogDefinitions()...)
+	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	presentation, err := catalog.Present(AppCodeConsoleFileNotAccessible, appcatalog.LocaleChineseSimplified, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if presentation.HTTPStatus != 404 || presentation.Message != "未找到该文件，或该文件无法用于当前会话。" {
+		t.Fatalf("presentation = %#v", presentation)
+	}
+}
