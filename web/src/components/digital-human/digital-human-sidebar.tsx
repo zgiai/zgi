@@ -10,6 +10,7 @@ import {
   House,
   KeyRound,
   ListTodo,
+  MessageSquare,
   RadioTower,
   Server,
   Settings2,
@@ -53,6 +54,15 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
       icon: House,
       isActive: currentPathname => currentPathname === `/console/digital-humans/${id}`,
     },
+    ...(permissions.hasPermission('digital_human.run')
+      ? [
+          {
+            title: t('digitalHumans.tabs.chat'),
+            href: `/console/digital-humans/${id}/chat`,
+            icon: MessageSquare,
+          },
+        ]
+      : []),
     configurationItem,
     {
       title: t('digitalHumans.tabs.external'),

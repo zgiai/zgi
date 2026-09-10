@@ -50,7 +50,7 @@ import type {
 
 interface DigitalHumanHeaderProps {
   id: string;
-  onOpenTest: () => void;
+  onOpenChat: () => void;
 }
 
 const EMPTY_PUBLISH_VERSION_DETAILS: DigitalHumanPublishVersionDetails = {
@@ -58,7 +58,7 @@ const EMPTY_PUBLISH_VERSION_DETAILS: DigitalHumanPublishVersionDetails = {
   description: '',
 };
 
-export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) {
+export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) {
   const t = useT('digitalHumans');
   const pathname = usePathname();
   const detailQuery = useDigitalHuman(id);
@@ -384,10 +384,10 @@ export function DigitalHumanHeader({ id, onOpenTest }: DigitalHumanHeaderProps) 
             <Button
               size="sm"
               className="inline-flex items-center gap-1.5 border border-emerald-600/30 bg-emerald-600 px-2 text-white shadow-none hover:border-emerald-700 hover:bg-emerald-700 sm:px-3.5"
-              onClick={onOpenTest}
+              onClick={onOpenChat}
             >
               <Play className="size-4" fill="currentColor" />
-              <span className="hidden font-semibold sm:inline">{t('header.test')}</span>
+              <span className="hidden font-semibold sm:inline">{t('header.chat')}</span>
             </Button>
           ) : null}
 

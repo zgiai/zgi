@@ -11,7 +11,6 @@ import {
   createDigitalHumanRuntimeTransport,
   useChatRuntimeController,
 } from '@/components/chat';
-import { AIChatEmbeddedConversationControls } from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import {
   resolveConversationRouteSync,
   shouldStartNewConversationForRoute,
@@ -25,12 +24,7 @@ import { useT } from '@/i18n';
 
 const conversationParam = 'conversation';
 
-interface DigitalHumanChatProps {
-  id: string;
-  controlsPortalId?: string;
-}
-
-export function DigitalHumanChat({ id, controlsPortalId }: DigitalHumanChatProps) {
+export function DigitalHumanChat({ id }: { id: string }) {
   const t = useT('digitalHumans');
   const tProfile = useT('profile');
   const router = useRouter();
@@ -172,18 +166,7 @@ export function DigitalHumanChat({ id, controlsPortalId }: DigitalHumanChatProps
           return false;
         }}
         showModelSelector={false}
-        variant="embedded"
-        embeddedConversationMode="drawer"
-        embeddedConversationControlsMode="external"
-        embeddedConversationControlsPortalId={controlsPortalId}
-        renderEmbeddedConversationControls={controls => (
-          <AIChatEmbeddedConversationControls
-            openConversations={controls.openConversations}
-            startNewConversation={controls.startNewConversation}
-            conversationsLabel={t('chat.conversations')}
-            newConversationLabel={t('chat.newConversation')}
-          />
-        )}
+        variant="full"
         requireModel={false}
         showMemoryToggle={false}
         forcedUseMemory={false}
@@ -194,7 +177,7 @@ export function DigitalHumanChat({ id, controlsPortalId }: DigitalHumanChatProps
         showAssistantModelMeta={false}
         surface="digital-human"
         runtimeSurface="external_page_chat"
-        defaultSidebarOpen={false}
+        defaultSidebarOpen
         routeConversationId={initialConversationId}
         isConversationTransitioning={isRestoringConversationRoute}
         conversationListTitle={t('chat.conversations')}

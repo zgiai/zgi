@@ -84,6 +84,10 @@ const detailPage = await readFile(
   new URL('../src/app/console/digital-humans/[digitalHumanId]/page.tsx', import.meta.url),
   'utf8'
 );
+const chatPage = await readFile(
+  new URL('../src/app/console/digital-humans/[digitalHumanId]/chat/page.tsx', import.meta.url),
+  'utf8'
+);
 const dashboard = await readFile(
   new URL('../src/components/digital-human/digital-human-dashboard.tsx', import.meta.url),
   'utf8'
@@ -415,20 +419,25 @@ assert.doesNotMatch(
   /tabs\.(settings|preferences|capabilities)/,
   'DigitalHuman primary navigation must not split one draft across three configuration tabs'
 );
-assert.doesNotMatch(
-  layout,
-  /label: t\('tabs\.chat'\)/,
-  'DigitalHuman test chat must not occupy a primary navigation tab'
-);
 assert.match(
   layout,
-  /test-chat[\s\S]*SheetContent[\s\S]*DigitalHumanChat[\s\S]*controlsPortalId/,
-  'DigitalHuman test chat must open from the header in a responsive Sheet'
+  /label: t\('tabs\.chat'\)/,
+  'DigitalHuman formal chat must occupy a permission-gated primary navigation tab'
 );
 assert.doesNotMatch(
-  `${layout}\n${list}`,
-  /digital-humans\/\$\{[^}]+\}\/chat|list\.open|list\.chat/,
-  'DigitalHuman detail and list surfaces must not expose a standalone chat page'
+  layout,
+  /test-chat|SheetContent|controlsPortalId/,
+  'DigitalHuman layout must not retain the test-chat Sheet or query parameter'
+);
+assert.match(
+  chatPage,
+  /DigitalHumanFeatureGate permission="digital_human\.run"[\s\S]*DigitalHumanChat/,
+  'DigitalHuman chat page must enforce run permission before rendering the formal chat'
+);
+assert.match(
+  `${layout}\n${sidebar}\n${dashboard}`,
+  /digital-humans\/\$\{id\}\/chat/,
+  'DigitalHuman navigation and dashboard actions must link to the canonical chat page'
 );
 assert.match(
   list,
@@ -646,8 +655,8 @@ for (const primitive of [
 }
 assert.match(
   chat,
-  /AIChatShell[\s\S]*createDigitalHumanRuntimeTransport[\s\S]*variant="embedded"[\s\S]*embeddedConversationMode="drawer"/,
-  'DigitalHuman chat must use the shared embedded conversation Sheet UI'
+  /AIChatShell[\s\S]*createDigitalHumanRuntimeTransport[\s\S]*variant="full"/,
+  'DigitalHuman chat must use the shared full-page conversation UI'
 );
 assert.match(
   chat,

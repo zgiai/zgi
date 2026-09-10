@@ -1,29 +1,19 @@
 'use client';
 
-import { useEffect, useId, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, type MouseEvent, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, usePathname, useRouter } from 'next/navigation';
 import {
   BrainCircuit,
   History,
   House,
   ListTodo,
   Loader2,
+  MessageSquare,
   RadioTower,
   Server,
   Settings2,
-  X,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { DigitalHumanChat } from '@/components/digital-human/digital-human-chat';
 import { DigitalHumanFeatureGate } from '@/components/digital-human/feature-gate';
 import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
 import { DigitalHumanHeader } from '@/components/digital-human/digital-human-header';
@@ -32,9 +22,6 @@ import { useDigitalHuman } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-
-const testChatParam = 'test-chat';
-const conversationParam = 'conversation';
 
 export default function DigitalHumanLayout({ children }: { children: ReactNode }) {
   const params = useParams<{ digitalHumanId: string }>();
@@ -49,13 +36,12 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
   const t = useT('digitalHumans');
   const pathname = usePathname();
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const testChatControlsPortalId = useId();
   const draftIsDirty = useDigitalHumanDraftStore(state => Boolean(state.editors[id]?.isDirty));
   const permissions = useAccountPermissions();
   const detailQuery = useDigitalHuman(id);
   const configurationHref = `/console/digital-humans/${id}/configuration`;
   const externalHref = `/console/digital-humans/${id}/external`;
+  const chatHref = `/console/digital-humans/${id}/chat`;
   const isConfigurationPage = pathname.startsWith(configurationHref);
   const isExternalPage = pathname.startsWith(externalHref);
   const isInitialSetup = Boolean(detailQuery.data?.data && !detailQuery.data.data.published);
@@ -82,22 +68,13 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
     if (saved) router.push(href);
   };
 
-  const buildCurrentHref = (params: URLSearchParams) => {
-    const query = params.toString();
-    return query ? `${pathname}?${query}` : pathname;
-  };
-
-  const openTestChat = () => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set(testChatParam, '1');
-    router.push(buildCurrentHref(params), { scroll: false });
-  };
-
-  const closeTestChat = () => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete(testChatParam);
-    params.delete(conversationParam);
-    router.replace(buildCurrentHref(params), { scroll: false });
+  const openChat = async () => {
+    const draftEditor = useDigitalHumanDraftStore.getState().editors[id];
+    if (draftEditor && (draftEditor.isDirty || draftEditor.saveState === 'error')) {
+      const saved = await draftEditor.saveNow();
+      if (!saved) return;
+    }
+    router.push(chatHref);
   };
 
   const configurationItem = {
@@ -113,6 +90,16 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
       icon: House,
       active: pathname === `/console/digital-humans/${id}`,
     },
+    ...(permissions.hasPermission('digital_human.run')
+      ? [
+          {
+            href: chatHref,
+            label: t('tabs.chat'),
+            icon: MessageSquare,
+            active: pathname.startsWith(chatHref),
+          },
+        ]
+      : []),
     configurationItem,
     {
       href: externalHref,
@@ -157,7 +144,7 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
       <DigitalHumanSidebar id={id} onNavigate={navigateAfterSaving} />
       <div className="flex h-full min-h-0 w-0 min-w-0 grow flex-col overflow-hidden">
         {isConfigurationPage || isExternalPage ? (
-          <DigitalHumanHeader id={id} onOpenTest={openTestChat} />
+          <DigitalHumanHeader id={id} onOpenChat={() => void openChat()} />
         ) : null}
         <nav
           className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-2 py-1 md:hidden"
@@ -198,52 +185,6 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
           )}
         </div>
       </div>
-
-      {detailQuery.data?.data.published && permissions.hasPermission('digital_human.run') ? (
-        <Sheet
-          open={searchParams.get(testChatParam) === '1'}
-          onOpenChange={open => {
-            if (!open) closeTestChat();
-          }}
-        >
-          <SheetContent
-            side="right"
-            showClose={false}
-            className="flex h-full min-h-0 w-[min(720px,100vw)] max-w-none flex-col gap-0 p-0 sm:max-w-none"
-          >
-            <SheetHeader className="flex h-14 shrink-0 flex-row items-center justify-between space-y-0 border-b px-4 text-left">
-              <div className="min-w-0">
-                <SheetTitle className="truncate text-sm">{t('chat.sheetTitle')}</SheetTitle>
-                <SheetDescription className="truncate text-xs">
-                  {t('chat.sheetDescription')}
-                </SheetDescription>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <div id={testChatControlsPortalId} className="flex items-center" />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      isIcon
-                      className="size-7"
-                      aria-label={t('chat.close')}
-                      onClick={closeTestChat}
-                    >
-                      <X className="size-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{t('chat.close')}</TooltipContent>
-                </Tooltip>
-              </div>
-            </SheetHeader>
-            <div className="min-h-0 flex-1">
-              <DigitalHumanChat id={id} controlsPortalId={testChatControlsPortalId} />
-            </div>
-          </SheetContent>
-        </Sheet>
-      ) : null}
     </div>
   );
 }

@@ -304,7 +304,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
                 {t('dashboard.viewRun')}
               </Link>
             ) : (
-              <Link href={`/console/digital-humans/${id}?test-chat=1`}>
+              <Link href={`/console/digital-humans/${id}/chat`}>
                 <MessageSquare className="size-4" />
                 {t('dashboard.startRun')}
               </Link>
@@ -340,7 +340,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
             </Button>
           ) : (
             <Button asChild variant="outline" size="sm" className="w-full">
-              <Link href={`/console/digital-humans/${id}?test-chat=1`}>
+              <Link href={`/console/digital-humans/${id}/chat`}>
                 <MessageSquare className="size-4" />
                 {t('dashboard.startRun')}
               </Link>
