@@ -1,6 +1,8 @@
 package digitalhuman
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -27,5 +29,25 @@ func TestTaskOwnerRefRequiresExactlyOneOwnerNamespace(t *testing.T) {
 				t.Fatalf("Valid() = %v, want %v", got, test.valid)
 			}
 		})
+	}
+}
+
+func TestTaskResponseExposesOwnerKindWithoutOwnerIdentifiers(t *testing.T) {
+	payload, err := json.Marshal(Task{
+		ID:             uuid.New(),
+		DigitalHumanID: uuid.New(),
+		OwnerKind:      TaskOwnerUserSubject,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(payload)
+	if !strings.Contains(body, `"owner_kind":"user_subject"`) {
+		t.Fatalf("task response does not expose owner kind: %s", body)
+	}
+	for _, forbidden := range []string{"owner_subject_id", "owner_conversation_id"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("task response exposes %q: %s", forbidden, body)
+		}
 	}
 }

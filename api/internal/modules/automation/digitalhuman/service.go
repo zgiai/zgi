@@ -537,7 +537,7 @@ func (s *Service) loadTask(ctx context.Context, db *gorm.DB, access digitalhuman
 	if err := validateBoundary(access); err != nil || taskID == uuid.Nil {
 		return nil, digitalhuman.ErrInvalidRequest
 	}
-	query := db.WithContext(ctx).Where("id = ? AND organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_id = ?", taskID, access.OrganizationID, access.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, access.DigitalHumanID)
+	query := db.WithContext(ctx).Where("id = ? AND organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_type = ? AND subject_id = ?", taskID, access.OrganizationID, access.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, subjectTypeDigitalHuman, access.DigitalHumanID)
 	query = applyOwnerScope(query, access)
 	if lock {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})

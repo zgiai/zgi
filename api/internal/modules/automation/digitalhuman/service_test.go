@@ -262,6 +262,34 @@ func TestServiceIsolatesUserAndSharedTaskOwners(t *testing.T) {
 	if _, err := service.GetTask(t.Context(), privateB, taskA.ID); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
 		t.Fatalf("account B GetTask(account A) error = %v, want not found", err)
 	}
+	operations := []struct {
+		name string
+		call func() error
+	}{
+		{name: "update", call: func() error {
+			_, err := service.UpdateTask(t.Context(), privateB, taskA.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: taskA.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()})
+			return err
+		}},
+		{name: "cancel", call: func() error {
+			_, err := service.ApplyTaskAction(t.Context(), privateB, taskA.ID, digitalhuman.TaskActionCancel, digitalhuman.ApplyTaskActionRequest{ExpectedRevision: taskA.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()})
+			return err
+		}},
+		{name: "runs", call: func() error {
+			_, err := service.ListTaskRuns(t.Context(), privateB, taskA.ID, 1, 20)
+			return err
+		}},
+		{name: "activities", call: func() error {
+			_, err := service.ListTaskActivities(t.Context(), privateB, taskA.ID, 1, 20)
+			return err
+		}},
+	}
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			if err := operation.call(); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+				t.Fatalf("account B %s(account A) error = %v, want not found", operation.name, err)
+			}
+		})
+	}
 }
 
 func TestServiceLimitsScheduledAccessToCurrentTaskStatus(t *testing.T) {

@@ -661,6 +661,7 @@ export type DigitalHumanTaskStatus =
   'proposed' | 'pending' | 'in_progress' | 'waiting' | 'blocked' | 'completed' | 'canceled';
 export type DigitalHumanTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type DigitalHumanTaskScheduleType = 'manual' | 'once' | 'cron';
+export type DigitalHumanTaskOwnerKind = 'digital_human' | 'user_subject' | 'conversation';
 
 export interface DigitalHumanTaskSchedule {
   type: DigitalHumanTaskScheduleType;
@@ -672,6 +673,7 @@ export interface DigitalHumanTaskSchedule {
 export interface DigitalHumanTask {
   id: string;
   digital_human_id: string;
+  owner_kind: DigitalHumanTaskOwnerKind;
   name: string;
   goal: string;
   success_criteria: string[];

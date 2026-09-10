@@ -49,6 +49,24 @@ func TestDigitalHumanTaskPreflightRejectsRevokedWorkspaceAccess(t *testing.T) {
 	}
 }
 
+func TestDigitalHumanTaskPreflightRejectsUserOwnerOutsideConsole(t *testing.T) {
+	db, mock := taskRunnerMockDB(t)
+	runner := &digitalHumanAutomationRunner{db: db}
+	organizationID, workspaceID, digitalHumanID, accountID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "digital_humans"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	err := runner.preflight(t.Context(), organizationID, workspaceID, digitalHumanID,
+		digitalhuman.UserTaskOwner(usersubject.AccountSubject(accountID)),
+		automationaction.DigitalHumanRunRequest{OriginSurface: digitalhuman.SurfaceAPI},
+	)
+	if !errors.Is(err, errDigitalHumanTaskExecutionUnavailable) {
+		t.Fatalf("preflight error = %v, want execution unavailable", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDigitalHumanTaskPreflightRejectsDisabledChannelBinding(t *testing.T) {
 	db, mock := taskRunnerMockDB(t)
 	runner := &digitalHumanAutomationRunner{db: db}

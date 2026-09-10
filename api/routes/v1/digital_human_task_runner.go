@@ -102,7 +102,7 @@ func taskOwnerFromRunRequest(req automationaction.DigitalHumanRunRequest) (digit
 func (r *digitalHumanAutomationRunner) preflight(ctx context.Context, organizationID, workspaceID, digitalHumanID uuid.UUID, owner digitalhuman.TaskOwnerRef, req automationaction.DigitalHumanRunRequest) error {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&digitalhuman.Definition{}).
-		Where("id = ? AND organization_id = ? AND workspace_id = ? AND status = ? AND published_version_id IS NOT NULL", digitalHumanID, organizationID, workspaceID, digitalhuman.StatusActive).
+		Where("id = ? AND organization_id = ? AND workspace_id = ? AND status = ? AND published_version_id IS NOT NULL AND deleted_at IS NULL", digitalHumanID, organizationID, workspaceID, digitalhuman.StatusActive).
 		Count(&count).Error; err != nil || count != 1 {
 		return errDigitalHumanTaskExecutionUnavailable
 	}
@@ -112,6 +112,9 @@ func (r *digitalHumanAutomationRunner) preflight(ctx context.Context, organizati
 			return errDigitalHumanTaskExecutionUnavailable
 		}
 	case digitalhuman.TaskOwnerUserSubject:
+		if req.OriginSurface != digitalhuman.SurfaceConsole {
+			return errDigitalHumanTaskExecutionUnavailable
+		}
 		count = 0
 		if err := r.db.WithContext(ctx).Model(&usersubject.Subject{}).
 			Where("id = ? AND kind = ?", owner.Subject.ID, owner.Subject.Kind).Count(&count).Error; err != nil || count != 1 {
