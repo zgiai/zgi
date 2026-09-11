@@ -15,7 +15,7 @@ func TestConsoleFileValidatorEnforcesAccountAndWorkspaceOwnership(t *testing.T) 
 	validID := uuid.New()
 	lookup := consoleFileLookupStub{files: map[string]*dto.UploadFile{
 		validID.String(): {
-			ID: validID.String(), OrganizationID: scope.OrganizationID.String(), WorkspaceID: &workspaceID,
+			ID: validID.String(), OrganizationID: uuid.Nil.String(), WorkspaceID: &workspaceID,
 			CreatedByRole: dto.CreatedByRoleAccount, CreatedBy: scope.ActorID.String(), IsTemporary: true,
 		},
 	}}
@@ -30,7 +30,6 @@ func TestConsoleFileValidatorEnforcesAccountAndWorkspaceOwnership(t *testing.T) 
 	tests := map[string]func(*dto.UploadFile){
 		"other account":   func(file *dto.UploadFile) { file.CreatedBy = uuid.NewString() },
 		"other workspace": func(file *dto.UploadFile) { value := uuid.NewString(); file.WorkspaceID = &value },
-		"other org":       func(file *dto.UploadFile) { file.OrganizationID = uuid.NewString() },
 		"end user":        func(file *dto.UploadFile) { file.CreatedByRole = dto.CreatedByRoleEndUser },
 	}
 	for name, mutate := range tests {
@@ -43,6 +42,25 @@ func TestConsoleFileValidatorEnforcesAccountAndWorkspaceOwnership(t *testing.T) 
 			}
 		})
 	}
+
+	t.Run("temporary organization is not an ownership boundary", func(t *testing.T) {
+		clonedFile := *lookup.files[validID.String()]
+		clonedFile.OrganizationID = uuid.NewString()
+		candidate := NewConsoleFileValidator(consoleFileLookupStub{files: map[string]*dto.UploadFile{validID.String(): &clonedFile}})
+		if _, err := candidate.Validate(t.Context(), scope, []string{validID.String()}); err != nil {
+			t.Fatalf("Validate() error = %v, want temporary file to ignore organization ownership", err)
+		}
+	})
+
+	t.Run("persistent file still requires organization ownership", func(t *testing.T) {
+		clonedFile := *lookup.files[validID.String()]
+		clonedFile.IsTemporary = false
+		clonedFile.OrganizationID = uuid.NewString()
+		candidate := NewConsoleFileValidator(consoleFileLookupStub{files: map[string]*dto.UploadFile{validID.String(): &clonedFile}})
+		if _, err := candidate.Validate(t.Context(), scope, []string{validID.String()}); !errors.Is(err, ErrConsoleFileNotAccessible) {
+			t.Fatalf("Validate() error = %v, want ErrConsoleFileNotAccessible", err)
+		}
+	})
 }
 
 func TestConsoleFileValidatorRejectsInvalidAndDuplicateReferences(t *testing.T) {

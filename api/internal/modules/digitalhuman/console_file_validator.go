@@ -65,10 +65,18 @@ func consoleFileBelongsToScope(file *dto.UploadFile, scope Scope) bool {
 		strings.TrimSpace(file.CreatedBy) != scope.ActorID.String() {
 		return false
 	}
+	if file.WorkspaceID == nil || strings.TrimSpace(*file.WorkspaceID) != scope.WorkspaceID.String() {
+		return false
+	}
+	// Temporary uploads use the zero tenant as a storage placeholder and do
+	// not have organization ownership. Their console scope is the creating
+	// account plus the workspace context captured at upload time.
+	if file.IsTemporary {
+		return true
+	}
 	organizationID := strings.TrimSpace(file.OrganizationID)
 	if organizationID == "" {
 		organizationID = strings.TrimSpace(file.TenantID)
 	}
-	return organizationID == scope.OrganizationID.String() && file.WorkspaceID != nil &&
-		strings.TrimSpace(*file.WorkspaceID) == scope.WorkspaceID.String()
+	return organizationID == scope.OrganizationID.String()
 }
