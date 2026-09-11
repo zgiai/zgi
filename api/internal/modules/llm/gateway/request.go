@@ -207,6 +207,22 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		RequestCreatedAt:     requestCreatedAt,
 		AttemptID:            attemptID,
 	}
+	if apiKey.AccessGrantID != nil && apiKey.PrincipalType != nil && apiKey.PrincipalID != nil && apiKey.WorkspaceID != nil {
+		keyAuthorizationVersion := apiKey.AuthorizationVersion
+		billingCtx.QuotaSubjectType = quotaSubjectTypeAccessGrant
+		billingCtx.QuotaSubjectID = *apiKey.AccessGrantID
+		billingCtx.AccessGrantID = *apiKey.AccessGrantID
+		billingCtx.GrantAuthorizationVersion = &keyAuthorizationVersion
+		billingCtx.PrincipalType = *apiKey.PrincipalType
+		billingCtx.PrincipalID = *apiKey.PrincipalID
+		billingCtx.WorkspaceID = *apiKey.WorkspaceID
+		billingCtx.AuthMethod = "personal_api_key"
+		if accountID, parseErr := uuid.Parse(*apiKey.PrincipalID); parseErr == nil {
+			billingCtx.AccountID = &accountID
+		}
+	} else {
+		billingCtx.AuthMethod = "legacy_api_key"
+	}
 	if appCtx != nil {
 		billingCtx.AppID = appCtx.AppID
 		billingCtx.AppType = appCtx.AppType
@@ -247,6 +263,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 	requestCreatedAt time.Time,
 	requestID string,
 	attemptID string,
+	reservationPolicy string,
 ) (*BillingContext, error) {
 	channelID := getChannelID(providerSelection)
 
@@ -263,6 +280,7 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 		attemptID,
 	)
 	billingCtx.InvocationSource = resolveInvocationSource(ctx, appCtx)
+	billingCtx.ReservationPolicy = strings.TrimSpace(reservationPolicy)
 	switch useCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string); llmmodel.UseCase(useCase) {
 	case llmmodel.UseCaseTextToSpeech:
 		billingCtx.PricingOperation = PricingOperationSpeech
@@ -488,6 +506,8 @@ func (s *llmGatewayServiceImpl) handleProviderError(
 	billingCtx.PromptTokens = 0
 	billingCtx.CacheReadTokens = 0
 	billingCtx.CacheWriteTokens = 0
+	billingCtx.CacheWrite5mTokens = 0
+	billingCtx.CacheWrite1hTokens = 0
 	billingCtx.CompletionTokens = 0
 	billingCtx.TotalTokens = 0
 	billingCtx.TotalCost = decimal.Zero
@@ -572,6 +592,8 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 			billingCtx.PromptTokens = usage.UncachedInputTokens
 			billingCtx.CacheReadTokens = usage.CacheReadTokens
 			billingCtx.CacheWriteTokens = usage.CacheWriteTokens
+			billingCtx.CacheWrite5mTokens = usage.CacheWrite5mTokens
+			billingCtx.CacheWrite1hTokens = usage.CacheWrite1hTokens
 			billingCtx.CompletionTokens = usage.CompletionTokens
 			billingCtx.TotalTokens = usage.UncachedInputTokens + usage.CacheReadTokens + usage.CacheWriteTokens + usage.CompletionTokens
 		} else {
@@ -606,7 +628,8 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 
 	quote, err := s.quoteTokenPricingForSettlementUsage(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), TokenUsage{
 		InputTokens: actualPromptTokens, CacheReadTokens: usage.CacheReadTokens,
-		CacheWriteTokens: usage.CacheWriteTokens, OutputTokens: actualCompletionTokens,
+		CacheWriteTokens: usage.CacheWriteTokens, CacheWrite5mTokens: usage.CacheWrite5mTokens,
+		CacheWrite1hTokens: usage.CacheWrite1hTokens, OutputTokens: actualCompletionTokens,
 	})
 	if err != nil {
 		return wrapPricingCalculationError(err)
@@ -617,6 +640,8 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	billingCtx.PromptTokens = actualPromptTokens
 	billingCtx.CacheReadTokens = usage.CacheReadTokens
 	billingCtx.CacheWriteTokens = usage.CacheWriteTokens
+	billingCtx.CacheWrite5mTokens = usage.CacheWrite5mTokens
+	billingCtx.CacheWrite1hTokens = usage.CacheWrite1hTokens
 	billingCtx.CompletionTokens = actualCompletionTokens
 	billingCtx.TotalTokens = actualPromptTokens + usage.CacheReadTokens + usage.CacheWriteTokens + actualCompletionTokens
 
@@ -667,6 +692,8 @@ func clearBillingContextTokenUsage(billingCtx *BillingContext) {
 	billingCtx.PromptTokens = 0
 	billingCtx.CacheReadTokens = 0
 	billingCtx.CacheWriteTokens = 0
+	billingCtx.CacheWrite5mTokens = 0
+	billingCtx.CacheWrite1hTokens = 0
 	billingCtx.CompletionTokens = 0
 	billingCtx.TotalTokens = 0
 }

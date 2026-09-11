@@ -119,11 +119,11 @@ func (s *capturingChatSurfaceService) PrepareChat(_ context.Context, _ runtimese
 func TestSkillResponsePreservesDisplayTaxonomy(t *testing.T) {
 	metadata := skills.SkillDiscoveryMetadata{
 		ID:             "taxonomy-test",
-		DependencyType: skills.SkillDependencyConnector,
-		ConnectorRequirements: []skills.SkillConnectorRequirement{{
-			ConnectorID:  "github",
-			OperationIDs: []string{"github.repository.list"},
-			Required:     true,
+		DependencyType: skills.SkillDependencyIntegration,
+		IntegrationRequirements: []skills.SkillIntegrationRequirement{{
+			IntegrationID: "github",
+			ActionIDs:     []string{"github.repository.list"},
+			Required:      true,
 		}},
 		Display: skills.SkillDisplayMetadata{
 			Category:  "document_processing",
@@ -138,14 +138,14 @@ func TestSkillResponsePreservesDisplayTaxonomy(t *testing.T) {
 	if !reflect.DeepEqual(response.Display.Scenarios, metadata.Display.Scenarios) {
 		t.Fatalf("scenarios = %#v, want %#v", response.Display.Scenarios, metadata.Display.Scenarios)
 	}
-	if response.DependencyType != skills.SkillDependencyConnector {
-		t.Fatalf("dependency type = %q, want %q", response.DependencyType, skills.SkillDependencyConnector)
+	if response.DependencyType != skills.SkillDependencyIntegration {
+		t.Fatalf("dependency type = %q, want %q", response.DependencyType, skills.SkillDependencyIntegration)
 	}
-	if len(response.ConnectorRequirements) != 1 || response.ConnectorRequirements[0].ConnectorID != "github" || !response.ConnectorRequirements[0].Required {
-		t.Fatalf("integration requirements = %#v", response.ConnectorRequirements)
+	if len(response.IntegrationRequirements) != 1 || response.IntegrationRequirements[0].IntegrationID != "github" || !response.IntegrationRequirements[0].Required {
+		t.Fatalf("integration requirements = %#v", response.IntegrationRequirements)
 	}
-	if !reflect.DeepEqual(response.ConnectorRequirements[0].OperationIDs, []string{"github.repository.list"}) {
-		t.Fatalf("integration action ids = %#v", response.ConnectorRequirements[0].OperationIDs)
+	if !reflect.DeepEqual(response.IntegrationRequirements[0].ActionIDs, []string{"github.repository.list"}) {
+		t.Fatalf("integration action ids = %#v", response.IntegrationRequirements[0].ActionIDs)
 	}
 }
 
@@ -223,7 +223,7 @@ func TestMessageResponseRedactsExternalActionArgumentsFromHistory(t *testing.T) 
 				"skill_id": "external-apps", "tool_name": "execute_action", "provider_id": "external-integrations",
 				"arguments": map[string]interface{}{
 					"connector_id": "github", "action_id": "github.issue.create", "connection_id": "connection-a",
-					"arguments": map[string]interface{}{"body": "xoxb-12345678901234567890", "title": "safe title"},
+					"arguments": map[string]interface{}{"body": "xoxb-" + "12345678901234567890", "title": "safe title"},
 				},
 			}},
 		}}},

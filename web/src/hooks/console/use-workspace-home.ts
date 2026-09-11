@@ -32,6 +32,8 @@ export function useWorkspaceHome() {
   const contextStatus = useWorkspaceContextStatus();
   const permissionState = usePermissions();
   const capabilities = useAccountCapabilities();
+  const canOpenModelConfig =
+    capabilities.canAccessOrganizationDashboard && capabilities.canManageModelConfig;
   const accountPermissions = useAccountPermissions();
   const isContextSettled = contextStatus !== 'loading';
   const statsQuery = useDashboardStats(
@@ -99,13 +101,13 @@ export function useWorkspaceHome() {
         ? 'loading'
         : capabilities.error
           ? 'error'
-          : capabilities.canManageModelConfig
+          : canOpenModelConfig
             ? 'available'
             : 'forbidden',
     } satisfies Record<string, WorkspaceHomeAccessState>;
   }, [
     accountPermissions.error,
-    capabilities.canManageModelConfig,
+    canOpenModelConfig,
     capabilities.error,
     capabilities.isLoading,
     navigationContext,
@@ -140,7 +142,7 @@ export function useWorkspaceHome() {
     currentWorkspace,
     contextStatus,
     organizationRole: permissionState.organizationRole,
-    canManageModelConfig: capabilities.canManageModelConfig,
+    canManageModelConfig: canOpenModelConfig,
     actionAccess,
     stats,
     recentWork,

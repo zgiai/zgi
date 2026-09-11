@@ -176,6 +176,8 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
     esac
   done
   if [ "${#migration_targets[@]}" -gt 0 ]; then
+    # CI enforces destructive-operation safety with the Go AST migration tests.
+    # This pass checks names and registration, not destructive rollback bodies.
     for path in "${migration_targets[@]}"; do
       [ "$path" = "api/internal/migrations/20260520000000_initial_schema.go" ] && continue
       file_id="$(basename "$path" .go)"
@@ -189,10 +191,6 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
       fi
       if grep -Eq 'registerMigration\(' "$path"; then
         echo "open-source-check: migrations must use registerSchemaMigration: $path" >&2
-        failures=$((failures + 1))
-      fi
-      if grep -Eq 'AllowDestructive\(' "$path"; then
-        echo "open-source-check: migration files must not call AllowDestructive directly: $path" >&2
         failures=$((failures + 1))
       fi
     done

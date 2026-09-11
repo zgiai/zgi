@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
@@ -697,7 +698,7 @@ func TestGetAccessibleWorkspaceIDsReturnsDirectMembershipsOnly(t *testing.T) {
 func TestTransferOwnerByOrganizationAdminDemotesActualOwner(t *testing.T) {
 	t.Parallel()
 
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.Workspace{}, &model.WorkspaceMember{}))
 
@@ -760,7 +761,7 @@ func TestTransferOwnerByOrganizationAdminDemotesActualOwner(t *testing.T) {
 func TestTransferOwnerNormalizesHistoricalOwnersWhenTargetAlreadyOwner(t *testing.T) {
 	t.Parallel()
 
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.Workspace{}, &model.WorkspaceMember{}))
 
@@ -832,7 +833,7 @@ func TestTransferOwnerNormalizesHistoricalOwnersWhenTargetAlreadyOwner(t *testin
 func TestTransferOwnerByWorkspaceOwnerDemotesSelfToAdmin(t *testing.T) {
 	t.Parallel()
 
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.WorkspaceMember{}))
 

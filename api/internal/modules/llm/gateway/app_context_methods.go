@@ -110,6 +110,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			startTime,
 			requestID,
 			attemptID,
+			quote.ReservationPolicy,
 		)
 		if err != nil {
 			lastErr = err
@@ -256,6 +257,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			startTime,
 			requestID,
 			attemptID,
+			quote.ReservationPolicy,
 		)
 		if err != nil {
 			lastErr = err
@@ -388,6 +390,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			startTime,
 			requestID,
 			attemptID,
+			quote.ReservationPolicy,
 		)
 		if err != nil {
 			lastErr = err

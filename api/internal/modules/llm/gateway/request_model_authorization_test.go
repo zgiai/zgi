@@ -130,6 +130,49 @@ func TestCreateBillingContext_OrganizationSubjectDoesNotUseWorkspaceQuota(t *tes
 	}
 }
 
+func TestCreateBillingContext_PersonalKeyCarriesAuthorizationPeriod(t *testing.T) {
+	svc := &llmGatewayServiceImpl{}
+	organizationID := uuid.New()
+	workspaceID := uuid.NewString()
+	grantID := uuid.NewString()
+	principalType := "user"
+	principalID := uuid.NewString()
+	apiKey := &apikeymodel.TenantAPIKey{
+		ID:                   uuid.NewString(),
+		OrganizationID:       organizationID.String(),
+		WorkspaceID:          &workspaceID,
+		AccessGrantID:        &grantID,
+		PrincipalType:        &principalType,
+		PrincipalID:          &principalID,
+		AuthorizationVersion: 7,
+	}
+	providerSelection := &ProviderSelection{
+		Model:             llmmodel.LLMModel{ID: uuid.New(), Model: "gpt-4o"},
+		Provider:          providermodel.LLMProvider{ID: uuid.New(), Provider: "openai"},
+		UseSystemProvider: true,
+	}
+
+	billingCtx := svc.createBillingContext(
+		apiKey,
+		nil,
+		providerSelection,
+		nil,
+		organizationID,
+		0,
+		false,
+		time.Now(),
+		"req-personal",
+		"attempt-personal",
+	)
+
+	if billingCtx.AuthMethod != "personal_api_key" {
+		t.Fatalf("auth method = %q, want personal_api_key", billingCtx.AuthMethod)
+	}
+	if billingCtx.GrantAuthorizationVersion == nil || *billingCtx.GrantAuthorizationVersion != 7 {
+		t.Fatalf("grant authorization version = %v, want 7", billingCtx.GrantAuthorizationVersion)
+	}
+}
+
 func stringPtr(v string) *string {
 	return &v
 }

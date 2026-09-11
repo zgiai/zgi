@@ -423,6 +423,8 @@ export default function ModelPage() {
       outputPrice: string;
       cacheReadPrice: string;
       cacheWritePrice: string;
+      cacheWrite5mPrice: string;
+      cacheWrite1hPrice: string;
     }) => {
       if (!pricingModel || !canManageModels) return;
 
@@ -432,6 +434,8 @@ export default function ModelPage() {
           output_price: values.outputPrice,
           cache_read_price: values.cacheReadPrice,
           cache_write_price: values.cacheWritePrice,
+          cache_write_5m_price: values.cacheWrite5mPrice,
+          cache_write_1h_price: values.cacheWrite1hPrice,
         });
       } else {
         await configureModel({
@@ -441,6 +445,8 @@ export default function ModelPage() {
           output_price_override: values.outputPrice,
           cache_read_price_override: values.cacheReadPrice,
           cache_write_price_override: values.cacheWritePrice,
+          cache_write_5m_price_override: values.cacheWrite5mPrice,
+          cache_write_1h_price_override: values.cacheWrite1hPrice,
         });
       }
 

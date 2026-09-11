@@ -624,7 +624,7 @@ func (h *Handler) ResumeGenerationTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowRunDraft) {
 		return
 	}
 	task, err := h.service.ResumeGenerationTask(c.Request.Context(), agentID, c.Param("task_id"))
@@ -643,7 +643,7 @@ func (h *Handler) DeleteGenerationTask(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionAgentManage) {
+	if !h.ensureAgentPermission(c, agentID, workspace_model.WorkspacePermissionWorkflowRunDraft) {
 		return
 	}
 	if err := h.service.DeleteGenerationTask(c.Request.Context(), agentID, c.Param("task_id")); err != nil {

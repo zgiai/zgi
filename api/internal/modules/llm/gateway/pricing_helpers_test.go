@@ -69,29 +69,60 @@ func TestQuoteImagePricingWrapsMissingPricingAsBillingUserError(t *testing.T) {
 	}
 }
 
-func TestQuoteTokenPricingForSelectionSkipsLocalPricingForOfficialRoute(t *testing.T) {
+func TestQuoteTokenPricingForSelectionUsesRemoteAuthorityForOfficialRoute(t *testing.T) {
 	engine := &fakePricingEngine{tokenErr: ErrPricingNotConfigured}
-	svc := &llmGatewayServiceImpl{pricingEngine: engine}
+	want := PricingQuote{InputCredits: 10, OutputCredits: 20, TotalCredits: 30}
+	billing := &fakeBillingProvider{platformQuote: want}
+	svc := &llmGatewayServiceImpl{
+		pricingEngine: engine,
+		billing:       billing,
+	}
 	selection := &ProviderSelection{
 		UseSystemProvider: true,
 		BillingLane:       UsageBillingLanePlatform,
+		Model:             llmmodel.LLMModel{ID: uuid.New()},
 	}
 
 	quote, err := svc.quoteTokenPricingForSelection(
 		context.Background(),
 		selection,
-		PricingModelRef{Provider: "openai", Model: "gpt-5.4"},
+		PricingModelRef{ModelID: selection.Model.ID, Provider: "openai", Model: "gpt-5.4"},
 		1,
 		1,
 	)
 	if err != nil {
 		t.Fatalf("quoteTokenPricingForSelection() error = %v, want nil", err)
 	}
-	if !reflect.DeepEqual(quote, PricingQuote{}) {
-		t.Fatalf("quote = %#v, want zero quote", quote)
+	if !reflect.DeepEqual(quote, want) {
+		t.Fatalf("quote = %#v, want %#v", quote, want)
 	}
 	if engine.tokenCalls != 0 {
 		t.Fatalf("local pricing calls = %d, want 0", engine.tokenCalls)
+	}
+	if billing.platformPrompt != 17 || billing.platformCompletion != 1 {
+		t.Fatalf("authoritative quote tokens = (%d, %d), want (17, 1)", billing.platformPrompt, billing.platformCompletion)
+	}
+	if billing.platformModel.ModelID != selection.Model.ID || billing.platformModel.Provider != "openai" || billing.platformModel.Model != "gpt-5.4" {
+		t.Fatalf("authoritative model identity = %#v, want local ID plus openai/gpt-5.4", billing.platformModel)
+	}
+}
+
+func TestQuoteTokenPricingForSelectionUsesReasoningFloorAndPlatformSlack(t *testing.T) {
+	billing := &fakeBillingProvider{platformQuote: PricingQuote{TotalCredits: 1}}
+	svc := &llmGatewayServiceImpl{billing: billing}
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		BillingLane:       UsageBillingLanePlatform,
+		Model:             llmmodel.LLMModel{ID: uuid.New(), SupportsReasoning: true},
+	}
+
+	if _, err := svc.quoteTokenPricingForSelection(
+		context.Background(), selection, PricingModelRef{ModelID: selection.Model.ID, Provider: "qwen", Model: "qwen-reasoning"}, 12, 8,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if billing.platformPrompt != 80 || billing.platformCompletion != reasoningCompletionReservationFloor {
+		t.Fatalf("authoritative reasoning quote tokens = (%d, %d), want (80, %d)", billing.platformPrompt, billing.platformCompletion, reasoningCompletionReservationFloor)
 	}
 }
 
@@ -122,6 +153,41 @@ func TestQuoteTokenPricingForSelectionRequiresLocalPricingForPrivateRoute(t *tes
 	}
 	if engine.tokenCalls != 1 {
 		t.Fatalf("local pricing calls = %d, want 1", engine.tokenCalls)
+	}
+}
+
+func TestQuoteTokenPricingForSelectionUsesConservativeReasoningReservation(t *testing.T) {
+	engine := &fakePricingEngine{}
+	svc := &llmGatewayServiceImpl{pricingEngine: engine}
+	selection := &ProviderSelection{
+		BillingLane: UsageBillingLanePrivate,
+		Model:       llmmodel.LLMModel{SupportsReasoning: true},
+	}
+
+	if _, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "qwen", Model: "qwen-reasoning"},
+		12,
+		8,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if engine.lastPromptTokens != reasoningPromptReservationFloor || engine.lastCompletionTokens != reasoningCompletionReservationFloor {
+		t.Fatalf("quoted tokens = (%d, %d), want (%d, %d)", engine.lastPromptTokens, engine.lastCompletionTokens, reasoningPromptReservationFloor, reasoningCompletionReservationFloor)
+	}
+
+	if _, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "qwen", Model: "qwen-reasoning"},
+		100,
+		0,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if engine.lastPromptTokens != 100 || engine.lastCompletionTokens != 0 {
+		t.Fatalf("non-generation quote tokens = (%d, %d), want (100, 0)", engine.lastPromptTokens, engine.lastCompletionTokens)
 	}
 }
 

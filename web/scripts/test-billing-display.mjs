@@ -16,7 +16,12 @@ import {
   getBillingDisplaySettings,
   normalizedAiCreditsToUSD,
 } from '../src/utils/billing-display.ts';
-import { normalizeAiCreditValue, normalizeModelUsageData } from '../src/utils/ai-credits.ts';
+import {
+  formatAiCreditValue,
+  MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION,
+  normalizeAiCreditValue,
+  normalizeModelUsageData,
+} from '../src/utils/ai-credits.ts';
 import { formatTokenCount } from '../src/utils/token-format.ts';
 
 const usdSettings = {
@@ -28,6 +33,22 @@ const cnySettings = {
   currency: 'CNY',
   usdToCnyRate: 7,
 };
+
+// A detailed invocation must reconcile with the grant down to one internal credit.
+for (const [internal, expected] of [[0, '0'], [1, '0.001'], [45, '0.045'], [180, '0.18']]) {
+  const points = normalizeAiCreditValue(internal, { precision: 3 });
+  assert.equal(formatAiCreditValue(points, {
+    locale: 'en-US',
+    maximumFractionDigits: MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION,
+  }), expected);
+}
+const invocationDetailSource = await readFile(
+  new URL('../src/components/usage/invocation-log-section.tsx', import.meta.url), 'utf8'
+);
+assert.match(invocationDetailSource,
+  /points: formatAiCreditValue\(item\.total_points,\s*\{\s*locale,\s*maximumFractionDigits: MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION/,
+  'invocation detail must opt into internal-credit precision, not the compact display default'
+);
 
 assert.equal(
   formatTokenCount(1_056, 'en-US'),

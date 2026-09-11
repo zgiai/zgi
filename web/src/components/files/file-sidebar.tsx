@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect } from 'react';
-import { Clock3, FolderPlus, Upload, Files, FolderOpen, HardDrive } from 'lucide-react';
+import { Clock3, FolderPlus, FilePlus2, Upload, Files, FolderOpen, HardDrive } from 'lucide-react';
 import { useT, type FilesSuffix } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -55,6 +55,7 @@ function FileSidebarBase({
   activeItemId,
   onItemClick,
   onNewFolder,
+  onCreateTextFile,
   onUpload,
   onFolderCreateChild,
   onFolderRename,
@@ -146,7 +147,7 @@ function FileSidebarBase({
         <Progress value={isLoadingStorage ? 0 : storagePercentage} className="h-1.5" />
       </div>
 
-      {(onNewFolder || onUpload) && (
+      {(onNewFolder || onUpload || onCreateTextFile) && (
         <div className="space-y-2 px-4 pb-5">
           {onUpload && (
             <Button
@@ -156,6 +157,16 @@ function FileSidebarBase({
             >
               <Upload className="h-4 w-4" />
               {t('files.sidebar.uploadFile')}
+            </Button>
+          )}
+          {onCreateTextFile && (
+            <Button
+              className="h-10 w-full justify-center gap-2 rounded-lg text-sm font-semibold shadow-sm"
+              variant="outline"
+              onClick={onCreateTextFile}
+            >
+              <FilePlus2 className="h-4 w-4" />
+              {t('files.sidebar.newTextFile')}
             </Button>
           )}
           {onNewFolder && (

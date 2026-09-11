@@ -7,6 +7,7 @@ import (
 	channelhandler "github.com/zgiai/zgi/api/internal/modules/llm/channel/handler"
 	credentialhandler "github.com/zgiai/zgi/api/internal/modules/llm/credential/handler"
 	defaultmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/developeraccess"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/handler"
 	providerhandler "github.com/zgiai/zgi/api/internal/modules/llm/provider/handler"
@@ -47,6 +48,9 @@ func RegisterConsoleRoutes(r *gin.RouterGroup, m *LLMModule) {
 		// API Key management (new modular structure)
 		if m.APIKeyHandler != nil {
 			apikeyhandler.RegisterAPIKeyRoutes(llmWithOrg, m.APIKeyHandler)
+		}
+		if m.DeveloperAccessHandler != nil {
+			developeraccess.RegisterRoutes(llmWithOrg, m.DeveloperAccessHandler)
 		}
 
 		// Statistics

@@ -70,7 +70,7 @@ func TestProvideGinEngine_ExposesAgentSSEIdentityHeaders(t *testing.T) {
 	engine.ServeHTTP(recorder, req)
 
 	exposed := strings.ToLower(recorder.Header().Get("Access-Control-Expose-Headers"))
-	for _, header := range []string{"x-zgi-app-error-code", "x-zgi-conversation-id", "x-zgi-message-id"} {
+	for _, header := range []string{"x-request-id", "x-zgi-request-id", "x-zgi-app-error-code", "x-zgi-conversation-id", "x-zgi-message-id"} {
 		if !strings.Contains(exposed, header) {
 			t.Fatalf("Access-Control-Expose-Headers = %q, want %q", exposed, header)
 		}

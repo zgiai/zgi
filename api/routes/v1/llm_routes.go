@@ -20,6 +20,8 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	authservice "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
 	"github.com/zgiai/zgi/api/middleware"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
@@ -32,6 +34,7 @@ type LLMRouteDeps struct {
 	OrganizationService        interfaces.OrganizationService
 	ConsoleProvider            pconsole.ConsoleProvider
 	Scheduler                  *pkgscheduler.Scheduler
+	ApplicationErrorCatalog    *appcatalog.Catalog
 }
 
 // RegisterLLMRoutes registers all LLM-related routes
@@ -46,6 +49,11 @@ func RegisterLLMRoutes(router *gin.RouterGroup, deps LLMRouteDeps) *llm.LLMModul
 		logger.Error("failed to create LLM crypto service", err)
 		return nil
 	}
+	errorProjector, err := apptransport.NewProjector(deps.ApplicationErrorCatalog)
+	if err != nil {
+		logger.Error("failed to create developer access error projector", err)
+		return nil
+	}
 	llmV2Module := llm.NewLLMModule(
 		deps.DB,
 		cryptoService,
@@ -53,6 +61,7 @@ func RegisterLLMRoutes(router *gin.RouterGroup, deps LLMRouteDeps) *llm.LLMModul
 		deps.AccountService,
 		deps.OrganizationService,
 		deps.ConsoleProvider,
+		errorProjector,
 	)
 	registerLLMUpstreamPolling(deps.Scheduler, llmV2Module)
 	registerRegistrationProvisioningOutbox(deps, llmV2Module)

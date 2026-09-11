@@ -23,7 +23,9 @@ interface AgentsAIChatContextRegistrationProps {
   workspaceId?: string;
   workspaceName?: string;
   canView: boolean;
-  canManage: boolean;
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
   isLoading: boolean;
   isFetching: boolean;
   permissionsSettled?: boolean;
@@ -118,7 +120,9 @@ function buildAgentListDescription(
 
 function buildAgentListCapabilities(
   canView: boolean,
-  canManage: boolean,
+  canCreate: boolean,
+  canUpdate: boolean,
+  canDelete: boolean,
   assetKind: AgentAssetKind = 'agent'
 ): AIChatCapabilityDescriptor[] {
   if (assetKind === 'workflow') {
@@ -167,8 +171,8 @@ function buildAgentListCapabilities(
       description: 'Create a draft Agent in the current workspace through governed AIChat tools.',
       risk: 'medium',
       requiresConfirmation: true,
-      status: canManage ? 'available' : 'disabled',
-      permissions: ['agent.manage'],
+      status: canCreate ? 'available' : 'disabled',
+      permissions: ['agent.create'],
       metadata: {
         supported_by_aichat_tool: true,
         tool_skill_id: 'agent-management',
@@ -181,8 +185,8 @@ function buildAgentListCapabilities(
       description: 'Update a visible Agent name, description, or icon through governed AIChat tools.',
       risk: 'medium',
       requiresConfirmation: true,
-      status: canManage ? 'available' : 'disabled',
-      permissions: ['agent.manage'],
+      status: canUpdate ? 'available' : 'disabled',
+      permissions: ['agent.update'],
       metadata: {
         supported_by_aichat_tool: true,
         tool_skill_id: 'agent-management',
@@ -195,8 +199,8 @@ function buildAgentListCapabilities(
       description: 'Delete a visible Agent through governed AIChat tools. Deletion always asks first.',
       risk: 'high',
       requiresConfirmation: true,
-      status: canManage ? 'available' : 'disabled',
-      permissions: ['agent.manage'],
+      status: canDelete ? 'available' : 'disabled',
+      permissions: ['agent.delete'],
       metadata: {
         supported_by_aichat_tool: true,
         tool_skill_id: 'agent-management',
@@ -242,7 +246,9 @@ function buildAgentsAIChatContextItems({
   workspaceId,
   workspaceName,
   canView,
-  canManage,
+  canCreate,
+  canUpdate,
+  canDelete,
   isLoading,
   isFetching,
   permissionsSettled = true,
@@ -254,7 +260,7 @@ function buildAgentsAIChatContextItems({
   const resourceLabel = isWorkflowList ? 'Workflow' : 'Agent';
   const resourceLabelPlural = isWorkflowList ? 'Workflows' : 'Agents';
   const visibleAgents = agents.slice(0, AGENTS_CONTEXT_VISIBLE_LIMIT);
-  const capabilities = buildAgentListCapabilities(canView, canManage, assetKind);
+  const capabilities = buildAgentListCapabilities(canView, canCreate, canUpdate, canDelete, assetKind);
   const contextReady = permissionsSettled && canView && !isLoading && !isFetching;
   const queryStatus = !permissionsSettled
     ? 'loading'
@@ -326,7 +332,10 @@ function buildAgentsAIChatContextItems({
         workspace_id: workspaceId,
         workspace_name: workspaceName,
         can_view_assets: canView,
-        can_manage_assets: canManage,
+        can_manage_assets: canCreate || canUpdate || canDelete,
+        can_create_assets: canCreate,
+        can_update_assets: canUpdate,
+        can_delete_assets: canDelete,
         asset_kind: assetKind,
         agent_type_counts: Object.entries(agentTypeCounts)
           .map(([type, count]) => `${type}=${count}`)
@@ -374,8 +383,8 @@ function buildAgentsAIChatContextItems({
                   description: 'Update this Agent name, description, or icon.',
                   risk: 'medium' as const,
                   requiresConfirmation: true,
-                  status: agent.can_edit && canManage ? ('available' as const) : ('disabled' as const),
-                  permissions: ['agent.manage'],
+                  status: agent.can_edit && canUpdate ? ('available' as const) : ('disabled' as const),
+                  permissions: ['agent.update'],
                   metadata: {
                     supported_by_aichat_tool: true,
                     tool_skill_id: 'agent-management',
@@ -389,8 +398,8 @@ function buildAgentsAIChatContextItems({
                   description: 'Delete this Agent. Deletion always asks first.',
                   risk: 'high' as const,
                   requiresConfirmation: true,
-                  status: agent.can_edit && canManage ? ('available' as const) : ('disabled' as const),
-                  permissions: ['agent.manage'],
+                  status: agent.can_edit && canDelete ? ('available' as const) : ('disabled' as const),
+                  permissions: ['agent.delete'],
                   metadata: {
                     supported_by_aichat_tool: true,
                     tool_skill_id: 'agent-management',
@@ -401,11 +410,7 @@ function buildAgentsAIChatContextItems({
               ]
             : []),
         ],
-        permissions: isWorkflowList
-          ? ['workflow.view']
-          : agent.can_edit
-            ? ['agent.view', 'agent.manage']
-            : ['agent.view'],
+        permissions: isWorkflowList ? ['workflow.view'] : ['agent.view'],
         metadata: buildVisibleAgentMetadata(agent, index + 1, assetKind),
       };
     }),
@@ -422,7 +427,9 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
     workspaceId,
     workspaceName,
     canView,
-    canManage,
+    canCreate,
+    canUpdate,
+    canDelete,
     isLoading,
     isFetching,
     permissionsSettled,
@@ -439,7 +446,9 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
         workspaceId,
         workspaceName,
         canView,
-        canManage,
+        canCreate,
+        canUpdate,
+        canDelete,
         isLoading,
         isFetching,
         permissionsSettled,
@@ -448,7 +457,9 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
     [
       agents,
       assetKind,
-      canManage,
+      canCreate,
+      canUpdate,
+      canDelete,
       canView,
       hasNextPage,
       isFetching,
